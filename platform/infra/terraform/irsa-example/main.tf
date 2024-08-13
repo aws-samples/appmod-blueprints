@@ -75,7 +75,7 @@ resource "aws_iam_role" "service_account_role" {
         "Action": "sts:AssumeRoleWithWebIdentity",
         "Condition": {
           "StringEquals": {
-            "${aws_iam_openid_connect_provider.eks.url}:sub": "system:serviceaccount:${var.namespace}:my-service-account"
+            "${aws_iam_openid_connect_provider.eks.url}:sub": "system:serviceaccount:${var.namespace}:${var.service_account_name}"
           }
         }
       }
