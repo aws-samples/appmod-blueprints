@@ -87,9 +87,10 @@ resource "aws_iam_role" "service_account_role" {
 
 resource "aws_iam_role_policy_attachment" "attach_policy" {
 
-  role = aws_iam_role.service_account_role.name
+  for_each = var.iam_policies
+  role     = aws_iam_role.service_account_role.name
 
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
+  policy_arn = "arn:aws:iam::aws:policy/${each.value}"
 
 }
 
@@ -97,7 +98,7 @@ resource "kubernetes_service_account" "service_account" {
 
   metadata {
 
-    name = "my-service-account"
+    name = var.service_account_name
 
     namespace = var.namespace
 

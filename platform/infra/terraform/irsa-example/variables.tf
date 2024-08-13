@@ -16,3 +16,20 @@ variable "namespace" {
   default     = "irsa"
 }
 
+variable "service_account_name" {
+  description = "Name of service account to create for IRSA"
+  type        = string
+  default     = "eks-service-account"
+}
+
+variable "iam_policies" {
+  description = "Map of policies to add to service account role"
+  type        = map(string)
+  default = {
+    "policy1" = "AmazonEKSServicePolicy"
+  }
+}
+
+
+
+
