@@ -64,42 +64,24 @@ resource "aws_iam_role" "service_account_role" {
 
 
   assume_role_policy = <<POLICY
-
-{
-
-  "Version": "2012-10-17",
-
-  "Statement": [
-
-    {
-
-      "Effect": "Allow",
-
-      "Principal": {
-
-        "Federated": "${aws_iam_openid_connect_provider.eks.arn}"
-
-      },
-
-      "Action": "sts:AssumeRoleWithWebIdentity",
-
-      "Condition": {
-
-        "StringEquals": {
-
-          "${aws_iam_openid_connect_provider.eks.url}:sub": "system:serviceaccount:${var.namespace}:my-service-account"
-
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Federated": "${aws_iam_openid_connect_provider.eks.arn}"
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "${aws_iam_openid_connect_provider.eks.url}:sub": "system:serviceaccount:${var.namespace}:my-service-account"
+          }
         }
-
       }
-
-    }
-
-  ]
-
-}
-
-POLICY
+    ]
+  }
+  POLICY
 
 }
 
