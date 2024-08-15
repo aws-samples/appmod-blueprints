@@ -29,8 +29,9 @@ spec:
               default: eks-service-account
             iam_policies:
               description: Map of IAM Policies to attach to Service Account
-              type: map(string)
-              default: {policy1 = AmazonEKSServicePolicy}
+              type: object
+              default: 
+                policy1:  AmazonEKSServicePolicy
           required:
             - aws_region
             - eks_cluster_name
