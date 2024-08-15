@@ -1,0 +1,86 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  description: imports an EKS cluster, creates a namespace and a service account in that namespace with IRSA permissions
+  name: import-cluster-with-irsa
+  title: Creates a Service Account with IRSA Permissions
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - properties:
+        tfVars:
+          properties:
+            aws_region:
+              description: AWS Region
+              type: string
+              default: us-west-2
+            eks_cluster_name:
+              description: EKS Cluster to import
+              type: string
+              default: import-eks-cluster-for-irsa
+            namespace:
+              description: Namespace to create
+              type: string
+              default: irsa
+            service_account_name:
+              description: Name of Service Account to create
+              type: string
+              default: eks-service-account
+            iam_policies:
+              description: Map of IAM Policies to attach to Service Account
+              type: map(string)
+              default: {policy1 = AmazonEKSServicePolicy}
+          required:
+            - aws_region
+            - eks_cluster_name
+          title: Terraform variables
+          type: object
+        name:
+          title: name of this entry
+          type: string
+        namespace:
+          default: flux-system
+          title: namespace within the kubernetes cluster to deploy this
+          type: string
+      title: Configuration Options
+  steps:
+    - action: fetch:template
+      id: fetch-base
+      input:
+        url: ./import-cluster-with-irsa/
+        values:
+          name: ${{ parameters.name }}
+          namespace: ${{ parameters.namespace }}
+          tfVars: ${{ parameters.tfVars }}
+      name: Fetch Base
+    - id: publish
+      name: Publishing to a gitea git repository
+      action: publish:gitea
+      input:
+        description: Example Import cluster and add IRSA
+        # Hard coded value for this demo purposes only.
+        repoUrl: cnoe.localtest.me:8443/gitea?repo=${{parameters.name}}
+        defaultBranch: main
+    - id: create-argocd-app
+      name: Create ArgoCD App
+      action: cnoe:create-argocd-app
+      input:
+        appName: ${{parameters.name}}
+        appNamespace: ${{parameters.namespace}}
+        argoInstance: in-cluster
+        projectName: default
+        # necessary until we generate our own cert
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.name}}
+        path: "manifests"
+    - id: register
+      name: Register
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: 'catalog-info.yaml'
+  output:
+    links:
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}

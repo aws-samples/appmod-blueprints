@@ -1,0 +1,33 @@
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: "eks-cluster-${{values.name}}-terraform"
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  interval: 1m
+  approvePlan: auto
+  path: ./platform/infra/terraform/irsa-example
+  sourceRef:
+    kind: GitRepository
+    name: "eks-cluster-${{values.name}}-git-repository"
+    namespace: flux-system
+  vars:
+    - name: aws_region
+      value: ${{ values.tfVars.aws_region }}
+    - name: eks_cluster_name
+      value: ${{ values.tfVars.eks_cluster_name }}
+    - name: namespace 
+      value: ${{ values.tfVars.namespace }}
+    - name: service_account_name 
+      value: ${{ values.tfVars.service_account_name }}
+    - name: iam_policies 
+      value: ${{ values.tfVars.iam_policies }}
+  retryInterval: 10s
+  destroyResourcesOnDeletion: true
+  runnerPodTemplate:
+    spec:
+      envFrom:
+        - secretRef:
+            name: aws-credentials

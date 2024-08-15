@@ -6,3 +6,4 @@ metadata:
 spec:
   targets:
     - ./rds-cluster/template.yaml
+    - ./import-cluster-with-irsa/import-cluster-with-irsa.yaml
