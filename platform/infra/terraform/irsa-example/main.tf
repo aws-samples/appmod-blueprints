@@ -87,10 +87,10 @@ resource "aws_iam_role" "service_account_role" {
 
 resource "aws_iam_role_policy_attachment" "attach_policy" {
 
-  for_each = var.iam_policies
+  for_each = toset(var.iam_policies)
   role     = aws_iam_role.service_account_role.name
 
-  policy_arn = "arn:aws:iam::aws:policy/${each.value}"
+  policy_arn = "arn:aws:iam::aws:policy/${each.key}"
 
 }
 

@@ -23,11 +23,9 @@ variable "service_account_name" {
 }
 
 variable "iam_policies" {
-  description = "Map of policies to add to service account role"
-  type        = map(string)
-  default = {
-    "policy1" = "AmazonEKSServicePolicy"
-  }
+  description = "List of policies to add to service account role"
+  type        = list(string)
+  default     = ["AmazonEKSServicePolicy"]
 }
 
 
