@@ -31,10 +31,9 @@ spec:
               description: List of IAM Policies to attach to Service Account
               type: array
               items:
-                policy:
-                  description: AWS IAM Policy name
-                  type: string
-                  default: AmazonEKSServicePolicy
+                description: AWS IAM Policy name
+                type: string
+                default: AmazonEKSServicePolicy
           required:
             - aws_region
             - eks_cluster_name
