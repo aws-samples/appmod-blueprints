@@ -51,7 +51,7 @@ spec:
     - action: fetch:template
       id: fetch-base
       input:
-        url: ./import-cluster-with-irsa/
+        url: ./templates-cluster-irsa/
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}

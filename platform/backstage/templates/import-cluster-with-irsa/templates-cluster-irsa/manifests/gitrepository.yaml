@@ -9,4 +9,4 @@ spec:
   interval: 30s
   url: https://github.com/aws-samples/appmod-blueprints.git
   ref:
-    branch: feature/irsa
+    branch: feature-irsa-backstage
