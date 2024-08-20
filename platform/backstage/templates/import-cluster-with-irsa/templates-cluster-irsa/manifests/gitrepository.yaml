@@ -6,6 +6,8 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
+  secretRef:
+    name: appmod-blueprints-secret
   interval: 30s
   url: https://github.com/aws-samples/appmod-blueprints.git
   ref:
