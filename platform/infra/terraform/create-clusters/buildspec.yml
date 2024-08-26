@@ -1,0 +1,39 @@
+version: 0.2
+phases:
+  build:
+    commands:
+      - sudo apt-get update && sudo apt-get install -y gnupg software-properties-common apt-transport-https ca-certificates curl jq
+      # Install aws-cli
+      # - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+      # - unzip awscliv2.zip
+      # - sudo ./aws/install
+      # install terraform
+      - wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+      - echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+      - sudo apt update && sudo apt install terraform
+      # Install kubectl
+      - sudo apt-get update
+      - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      - sudo chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg 
+      - echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+      - sudo chmod 644 /etc/apt/sources.list.d/kubernetes.list
+      - sudo apt-get update
+      - sudo apt-get install -y kubectl
+      # Get S3 Bucket
+      - export TF_VAR_state_s3_bucket=$(aws s3 ls | grep eks-accelerator | awk '{print $3}')
+      # Get DynamoDB Table
+      - export TF_VAR_state_ddb_lock_table=$(aws dynamodb list-tables | jq -r '.TableNames[] | select(startswith("eks-accelerator"))')
+      # Get AMP ID
+      - export TF_VAR_managed_prometheus_workspace_id=$(aws amp list-workspaces | jq -r '.workspaces[] | select(.alias | startswith("aws-observability")) | .workspaceId')
+      # Get AMG ID
+      - export TF_VAR_managed_grafana_workspace_id=$(aws grafana list-workspaces | jq -r '.workspaces[] | select(.name | startswith("aws-observability")) | .id')
+      # Get AMG Key
+      - export PARAMETER_PATH=$(aws ssm get-parameters-by-path --path "/terraform-accelerator/grafana-api-key/" --recursive --with-decryption --query "Parameters[].Name" --output text)
+      - export AMG_API_KEY=$(aws ssm get-parameter --name $PARAMETER_PATH --with-decryption --query "Parameter.Value" --output text | jq -r '.["GF_SECURITY_ADMIN_APIKEY"]')
+      # Clone Gitea repo
+      - export GITEA_REPO=https://cnoe.localtest.me:8443/gitea/giteaAdmin/appmod-blueprints.git
+      - echo "Cloning Gitea repository..."
+      - git -c http.sslVerify=false -c http.curloptResolve="+cnoe.localtest.me:8443:52.13.15.184" clone $GITEA_REPO
+      - cd appmod-blueprints/platform/infra/terraform/
+      - chmod +x ./create-clusters.sh
+      - ./create-clusters.sh
