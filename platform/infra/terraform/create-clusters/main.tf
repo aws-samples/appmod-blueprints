@@ -63,6 +63,10 @@ resource "aws_codebuild_project" "eks_install_script_project" {
       value = var.prod_cluster_name
     }
 
+    environment_variable {
+      name  = "MNGMT_INSTANCE_NAME"
+      value = var.mngmt_cluster_instance_name
+    }
   }
 
   source {

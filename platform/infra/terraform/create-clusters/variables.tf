@@ -3,6 +3,11 @@ variable "aws_region" {
   type        = string
 }
 
+variable "mngmt_cluster_instance_name" {
+  description = "Management Cluster EC2 Instance Name"
+  type        = string
+}
+
 variable "dev_cluster_name" {
   description = "Dev EKS Cluster Name"
   type        = string
