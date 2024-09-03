@@ -30,10 +30,8 @@ phases:
       # Get AMG Key
       - export PARAMETER_PATH=$(aws ssm get-parameters-by-path --path "/terraform-accelerator/grafana-api-key/" --recursive --with-decryption --query "Parameters[].Name" --output text)
       - export AMG_API_KEY=$(aws ssm get-parameter --name $PARAMETER_PATH --with-decryption --query "Parameter.Value" --output text | jq -r '.["GF_SECURITY_ADMIN_APIKEY"]')
-      # Get Management Cluster Public IP
-      - export IP_ADDR=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=$MNGMT_INSTANCE_NAME*" --query "Reservations[].Instances[].PublicIpAddress" --output text)
       # Clone Gitea repo
-      - export GITEA_REPO=https://cnoe.localtest.me:8443/gitea/giteaAdmin/appmod-blueprints.git
+      - export GITEA_REPO=$GITEA_URL/gitea/giteaAdmin/appmod-blueprints.git
       - echo "Cloning Gitea repository..."
       - git -c http.sslVerify=false -c http.curloptResolve="+cnoe.localtest.me:8443:$IP_ADDR" clone $GITEA_REPO
       - cd appmod-blueprints/platform/infra/terraform/

@@ -3,8 +3,8 @@ variable "aws_region" {
   type        = string
 }
 
-variable "mngmt_cluster_instance_name" {
-  description = "Management Cluster EC2 Instance Name"
+variable "mngmt_cluster_gitea_url" {
+  description = "URL of gitea instance in management cluster"
   type        = string
 }
 

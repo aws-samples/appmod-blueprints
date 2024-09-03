@@ -64,8 +64,8 @@ resource "aws_codebuild_project" "eks_install_script_project" {
     }
 
     environment_variable {
-      name  = "MNGMT_INSTANCE_NAME"
-      value = var.mngmt_cluster_instance_name
+      name  = "GITEA_URL"
+      value = var.mngmt_cluster_gitea_url
     }
   }
 
