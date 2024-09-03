@@ -35,5 +35,5 @@ phases:
       - echo "Cloning Gitea repository..."
       - git -c http.sslVerify=false clone $GITEA_REPO
       - cd appmod-blueprints/platform/infra/terraform/
-      - chmod +x ./create-clusters.sh
-      - ./create-clusters.sh
+      - chmod +x ./cluster-outputs.sh
+      - ./cluster-outputs.sh
