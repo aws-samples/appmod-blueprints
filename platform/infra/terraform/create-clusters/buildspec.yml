@@ -22,11 +22,11 @@ phases:
       # Get S3 Bucket
       - export TF_VAR_state_s3_bucket=$(aws s3 ls | grep eks-accelerator | awk '{print $3}')
       # Get DynamoDB Table
-      - export TF_VAR_state_ddb_lock_table=$(aws dynamodb list-tables | jq -r '.TableNames[] | select(startswith("eks-accelerator"))')
+      - export TF_VAR_state_ddb_lock_table=$(aws dynamodb list-tables | jq -r '.TableNames[] | select("eks-accelerator-tf-lock")')
       # Get AMP ID
-      - export TF_VAR_managed_prometheus_workspace_id=$(aws amp list-workspaces | jq -r '.workspaces[] | select(.alias | startswith("aws-observability")) | .workspaceId')
+      - export TF_VAR_managed_prometheus_workspace_id=$(aws amp list-workspaces | jq -r '.workspaces[] | select(.alias=="aws-observability-accelerator-multicluster") | .workspaceId')
       # Get AMG ID
-      - export TF_VAR_managed_grafana_workspace_id=$(aws grafana list-workspaces | jq -r '.workspaces[] | select(.name | startswith("aws-observability")) | .id')
+      - export TF_VAR_managed_grafana_workspace_id=$(aws grafana list-workspaces | jq -r '.workspaces[] | select(.name=="aws-observability-accelerator") | .id')
       # Get AMG Key
       - export PARAMETER_PATH=$(aws ssm get-parameters-by-path --path "/terraform-accelerator/grafana-api-key/" --recursive --with-decryption --query "Parameters[].Name" --output text)
       - export AMG_API_KEY=$(aws ssm get-parameter --name $PARAMETER_PATH --with-decryption --query "Parameter.Value" --output text | jq -r '.["GF_SECURITY_ADMIN_APIKEY"]')
