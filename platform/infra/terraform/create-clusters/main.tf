@@ -14,30 +14,17 @@ provider "aws" {
 }
 
 
-data "aws_iam_policy_document" "assume_role" {
-  statement {
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["codebuild.amazonaws.com"]
-    }
-
-    actions = ["sts:AssumeRole"]
-  }
+data "aws_iam_role" "cluster_creation_role" {
+  name = var.iam_role_name
 }
 
-resource "aws_iam_role" "codebuild_role" {
-  name               = "${var.codebuild_project_name}-codebuild-role"
-  assume_role_policy = data.aws_iam_policy_document.assume_role.json
-}
 # CodeBuild project resource
 
 resource "aws_codebuild_project" "eks_install_script_project" {
 
   name         = var.codebuild_project_name
   description  = "CodeBuild project for EKS install script"
-  service_role = aws_iam_role.codebuild_role.arn
+  service_role = data.aws_iam_role.cluster_creation_role.arn
 
   artifacts {
     type = "NO_ARTIFACTS"
