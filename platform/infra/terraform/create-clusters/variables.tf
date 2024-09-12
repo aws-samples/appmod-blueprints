@@ -3,7 +3,7 @@ variable "aws_region" {
   type        = string
 }
 
-variable "mngmt_cluster_gitea_url" {
+variable "mgmt_cluster_gitea_url" {
   description = "URL of gitea instance in management cluster"
   type        = string
 }

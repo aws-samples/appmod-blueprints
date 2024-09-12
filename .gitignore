@@ -151,6 +151,9 @@ workshop/cdk.out
 # Local .terraform directories
 **/.terraform/*
 
+# terraform variable files for testing
+**.tfvars
+
 # .tfstate files
 *.tfstate
 *.tfstate.*

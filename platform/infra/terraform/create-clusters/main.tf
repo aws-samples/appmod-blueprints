@@ -52,7 +52,7 @@ resource "aws_codebuild_project" "eks_install_script_project" {
 
     environment_variable {
       name  = "GITEA_URL"
-      value = var.mngmt_cluster_gitea_url
+      value = var.mgmt_cluster_gitea_url
     }
   }
 
@@ -62,8 +62,3 @@ resource "aws_codebuild_project" "eks_install_script_project" {
   }
 }
 
-
-resource "aws_iam_role_policy_attachment" "codebuild_policy_attachment" {
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess" # Replace with the desired policy ARN
-  role       = aws_iam_role.codebuild_role.name
-}
