@@ -5,6 +5,7 @@ metadata:
   description: Microservice for ${{values.microserviceName}}
   annotations:
     backstage.io/kubernetes-namespace: backstage
+    argocd/app-name: ${{values.name | dump}}
 spec:
   type: micro-service
   lifecycle: experimental

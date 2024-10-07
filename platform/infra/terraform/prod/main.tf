@@ -19,11 +19,79 @@ provider "aws" {
   region = var.aws_region
 }
 
-module "eks_prod_cluster_with_vpc" {
-  source  = "../terraform-aws-observability-accelerator/examples/eks-cluster-with-vpc"
-  aws_region = var.aws_region
-  cluster_name = var.cluster_name
+locals {
+  tags = {
+    Blueprint  = var.cluster_name
+    GithubRepo = "github.com/aws-observability/terraform-aws-observability-accelerator"
+  }
 }
+
+#---------------------------------------------------------------
+# EKS Blueprints
+#---------------------------------------------------------------
+
+module "eks_blueprints_prod" {
+  source = "github.com/aws-ia/terraform-aws-eks-blueprints?ref=v4.32.1"
+
+  cluster_name    = var.cluster_name
+  cluster_version = var.eks_version
+
+  vpc_id             = var.vpc_id
+  private_subnet_ids = var.vpc_private_subnets
+
+  managed_node_groups = {
+    mg_5 = {
+      node_group_name = "managed-ondemand"
+      instance_types  = [var.managed_node_instance_type]
+      min_size        = var.managed_node_min_size
+      subnet_ids      = var.vpc_private_subnets
+    }
+  }
+
+  tags = local.tags
+}
+
+module "eks_blueprints_kubernetes_addons" {
+  source = "github.com/aws-ia/terraform-aws-eks-blueprints//modules/kubernetes-addons?ref=v4.32.1"
+
+  eks_cluster_id       = module.eks_blueprints_prod.eks_cluster_id
+  eks_cluster_endpoint = module.eks_blueprints_prod.eks_cluster_endpoint
+  eks_oidc_provider    = module.eks_blueprints_prod.oidc_provider
+  eks_cluster_version  = module.eks_blueprints_prod.eks_cluster_version
+
+  # EKS Managed Add-ons
+  enable_amazon_eks_vpc_cni            = true
+  enable_amazon_eks_coredns            = true
+  enable_amazon_eks_kube_proxy         = true
+  enable_amazon_eks_aws_ebs_csi_driver = true
+  enable_crossplane                    = false
+
+  tags = local.tags
+}
+
+module "eks_blueprints_addons_prod" {
+  source = "aws-ia/eks-blueprints-addons/aws"
+  version = "~> 1.16.3" #ensure to update this to the latest/desired version
+
+  cluster_name      = module.eks_blueprints_prod.eks_cluster_id
+  cluster_endpoint  = module.eks_blueprints_prod.eks_cluster_endpoint
+  cluster_version   = module.eks_blueprints_prod.eks_cluster_version
+  oidc_provider_arn = module.eks_blueprints_prod.eks_oidc_provider_arn
+
+  eks_addons = {
+    eks-pod-identity-agent = {
+      most_recent = true
+    }
+  }
+
+  tags = local.tags
+}
+
+# module "eks_prod_cluster_with_vpc" {
+#   source  = "../terraform-aws-observability-accelerator/examples/eks-cluster-with-vpc"
+#   aws_region = var.aws_region
+#   cluster_name = var.cluster_name
+# }
 
 # module "eks_prod_observability_accelerator" {
 #   source  = "../terraform-aws-observability-accelerator/examples/existing-cluster-with-base-and-infra"
@@ -36,10 +104,11 @@ module "eks_prod_cluster_with_vpc" {
 
 module "eks_prod_monitoring" {
   source                 = "../terraform-aws-observability-accelerator/modules/eks-monitoring"
-  eks_cluster_id         = module.eks_prod_cluster_with_vpc.eks_cluster_id
+  eks_cluster_id         = module.eks_blueprints_prod.eks_cluster_id
   enable_amazon_eks_adot = true
   enable_cert_manager    = true
   enable_java            = true
+  enable_nginx           = true
 
   # Since the following were enabled in conjunction with the set up of the
   # eks_cluster_1 EKS cluster, we will skip them with the eks_cluster_2 EKS cluster
@@ -52,6 +121,7 @@ module "eks_prod_monitoring" {
   # Disable additional dashboards
   enable_apiserver_monitoring  = false
   enable_adotcollector_metrics = false
+  enable_nvidia_monitoring     = false
 
   # grafana_api_key = var.grafana_api_key
   # grafana_url     = "https://${data.aws_grafana_workspace.prod_amg_ws.endpoint}"
@@ -79,11 +149,11 @@ data "aws_prometheus_workspace" "prod_amp_ws" {
 }
 
 data "aws_eks_cluster_auth" "prod_cluster_auth" {
-  name = module.eks_prod_cluster_with_vpc.eks_cluster_id
+  name = module.eks_blueprints_prod.eks_cluster_id
 }
 
 data "aws_eks_cluster" "prod_cluster_name" {
-  name = module.eks_prod_cluster_with_vpc.eks_cluster_id
+  name = module.eks_blueprints_prod.eks_cluster_id
 }
 
 provider "kubernetes" {
@@ -106,32 +176,6 @@ provider "kubectl" {
   token                  = data.aws_eks_cluster_auth.prod_cluster_auth.token
   load_config_file       = false
 }
-
-# resource "helm_release" "prod_argocd" {
-#   name             = "argocd"
-#   repository       = "https://argoproj.github.io/argo-helm"
-#   chart            = "argo-cd"
-#   version          = "7.3.10"
-#   namespace        = "argocd"
-#   create_namespace = true
-
-#   set {
-#     name  = "server.service.type"
-#     value = "LoadBalancer"
-#   }
-
-#   set {
-#     name  = "server.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
-#     value = "nlb"
-#   }
-# }
-
-# data "kubernetes_service" "argocd_prod_server" {
-#   metadata {
-#     name      = "argocd-server"
-#     namespace = helm_release.prod_argocd.namespace
-#   }
-# }
 
 # Setup GitOps management for access from Management Cluster
 resource "kubernetes_service_account_v1" "prod_argocd_auth_manager" {
@@ -205,9 +249,54 @@ resource "aws_ssm_parameter" "gitops_prod_argocd_serverurl" {
   type      = "SecureString"
 }
 
+module "crossplane_prod_provider_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.14"
+
+  role_name_prefix = "modernengg-prod-aws"
+  role_policy_arns = {
+    policy = "arn:aws:iam::aws:policy/AdministratorAccess"
+  }
+
+  assume_role_condition_test = "StringLike"
+  oidc_providers = {
+    main = {
+      provider_arn  = module.eks_blueprints_prod.eks_oidc_provider_arn
+      namespace_service_accounts = ["crossplane-system:provider-aws*"]
+    }
+  }
+  tags = local.tags
+}
+
 # resource "helm_release" "app_of_apps" {
 #   name             = "app-of-apps"
 #   chart            = "../deployment/envs/prod"
 #   create_namespace = true
 #   depends_on       = [helm_release.argocd]
+# }
+
+# resource "helm_release" "prod_argocd" {
+#   name             = "argocd"
+#   repository       = "https://argoproj.github.io/argo-helm"
+#   chart            = "argo-cd"
+#   version          = "7.3.10"
+#   namespace        = "argocd"
+#   create_namespace = true
+
+#   set {
+#     name  = "server.service.type"
+#     value = "LoadBalancer"
+#   }
+
+#   set {
+#     name  = "server.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
+#     value = "nlb"
+#   }
+# }
+
+# data "kubernetes_service" "argocd_prod_server" {
+#   metadata {
+#     name      = "argocd-server"
+#     namespace = helm_release.prod_argocd.namespace
+#   }
 # }

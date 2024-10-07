@@ -1,0 +1,69 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  description: Deploys dev and prod clusters on EKS
+  name: create-dev-and-prod-env
+  title: Create Dev and Prod Environment
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - properties:
+        name:
+          title: name of this entry
+          type: string
+        namespace:
+          default: flux-system
+          title: namespace within the kubernetes cluster to deploy this
+          type: string
+        aws_region:
+          default: us-west-2
+          title: aws region with codebuild project
+          type: string
+        repoUrl:
+          title: URL of gitea on management cluster
+          type: string
+      title: Configuration Options
+      required:
+        - repoUrl
+  steps:
+    - action: fetch:template
+      id: fetch-base
+      input:
+        url: ./templates-create-dev-and-prod-env/
+        values:
+          name: ${{ parameters.name }}
+          namespace: ${{ parameters.namespace }}
+          aws_region: ${{ parameters.aws_region }}
+      name: Fetch Base
+    - id: publish
+      name: Publishing to a gitea git repository
+      action: publish:gitea
+      input:
+        description: CodeBuild create clusters template
+        # Hard coded value for this demo purposes only.
+        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.name}}
+        defaultBranch: main
+    - id: create-argocd-app
+      name: Create ArgoCD App
+      action: cnoe:create-argocd-app
+      input:
+        appName: ${{parameters.name}}
+        appNamespace: ${{parameters.namespace}}
+        argoInstance: in-cluster
+        projectName: default
+        # necessary until we generate our own cert
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.name}}
+        path: "manifests"
+    - id: register
+      name: Register
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: 'catalog-info.yaml'
+  output:
+    links:
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+

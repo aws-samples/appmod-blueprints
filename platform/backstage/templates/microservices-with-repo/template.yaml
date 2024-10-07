@@ -1,7 +1,7 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: microservices
+  name: microservices-without-git-repo
   title: MicroServices with Git Repo
   description: Creates a ArgocCD for deploying a microservice for an existing Git Repo
   tags:
@@ -9,7 +9,7 @@ metadata:
     - gitea
     - argocd
 spec:
-  owner: platform-team
+  owner: guest
   type: service
   parameters:
     - title: Provide Microservice Information
@@ -18,7 +18,7 @@ spec:
         - repoPath
         - repoName
       properties:
-        microservice_name:
+        microserviceName:
           title: Microservice Name
           type: string
           description: Name of the microservice

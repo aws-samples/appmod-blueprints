@@ -1,0 +1,48 @@
+apiVersion: rds.aws.upbound.io/v1beta1
+kind: SubnetGroup
+metadata:
+  name: ${{values.name}}-rds-subnetgroup
+  namespace: ${{values.namespace}}
+spec:
+  forProvider:
+    region: ${{values.region}}
+    subnetIds:
+      {% for subnetId in values.subnetIds %}
+      - ${{ subnetId }}
+      {% endfor %}
+---
+apiVersion: rds.aws.upbound.io/v1beta1
+kind: Cluster
+metadata:
+  name: ${{values.name}}-rds-cluster
+  namespace: ${{values.namespace}}
+spec:
+  forProvider:
+    autoGeneratePassword: true
+    engine: aurora-postgresql
+    masterPasswordSecretRef:
+      key: password
+      name: ${{values.name}}-rds-cluster-password
+      namespace: ${{values.namespace}}
+    masterUsername: awsrdsadmin 
+    region: ${{values.region}}
+    dbSubnetGroupNameRef:
+      name: ${{values.name}}-rds-subnetgroup
+    skipFinalSnapshot: true
+  writeConnectionSecretToRef:
+    name: ${{values.name}}-rds-cluster-secret
+    namespace: ${{values.namespace}}
+---
+apiVersion: rds.aws.upbound.io/v1beta1
+kind: ClusterInstance
+metadata:
+  name: ${{values.name}}-rds-clusterinstance
+  namespace: ${{values.namespace}}
+spec:
+  forProvider:
+    region: ${{values.region}}
+    clusterIdentifierRef:
+      name: ${{values.name}}-rds-cluster
+    engine: aurora-postgresql
+    instanceClass: db.r5.large
+

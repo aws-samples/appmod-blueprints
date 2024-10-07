@@ -2,48 +2,29 @@
 	alias: ""
 	annotations: {}
 	attributes: workload: definition: {
-		apiVersion: "aws-service/v1"
-		kind:       "Bucket"
+		apiVersion: "apps/v1"
+		kind:       "Deployment"
 	}
-	description: "AWS S3 Bucket"
+	description: "S3 Bucket"
 	labels: {}
 	type: "component"
 }
 
 template: {
 	output: {
-		apiVersion: "awsblueprints.io/v1alpha1"
-		kind:       "ObjectStorage"
+		apiVersion: "s3.aws.upbound.io/v1beta1"
+		kind:       "Bucket"
 		metadata: {
-          name: context.name
-    }
+			name:  "\(parameter.name)"
+		}
 		spec: {
-		      compositionSelector: {
-					      matchLabels: {
-						    			"awsblueprints.io/provider": "aws"
-						    			"awsblueprints.io/environment": parameter.environment
-						    			"s3.awsblueprints.io/configuration": parameter.configuration
-						    }
-					}
-					writeConnectionSecretToRef: {
-								name: "\(context.name)-info"
-					}
-					resourceConfig: {
-								providerConfigName: parameter.providerConfigName,
-								region: parameter.region,
-								tags: [
-											{
-												"key": "name",
-												"value": context.name
-											}
-								]
-					}
+			forProvider: {
+				region: "\(parameter.region)"
+			}
 		}
 	}
 	parameter: {
-        environment: string
-        configuration: string
-        providerConfigName: string
-        region: string
+    name: string
+    region: string
   }
 }

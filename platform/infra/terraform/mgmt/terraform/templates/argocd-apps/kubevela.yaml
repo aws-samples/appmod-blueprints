@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kubevela-mgmt
+  namespace: argocd
+  labels:
+    env: mgmt
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: vela-core
+    repoURL: ${GITHUB_URL}
+    targetRevision: 1.9.11
+    helm:
+      releaseName: kubevela-mgmt
+  destination:
+    name: 'in-cluster'
+    namespace: vela-system
+  syncPolicy:
+    automated:
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true

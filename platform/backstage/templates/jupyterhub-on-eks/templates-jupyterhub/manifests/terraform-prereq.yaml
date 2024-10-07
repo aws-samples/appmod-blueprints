@@ -1,0 +1,39 @@
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: "eks-cluster-${{values.name}}-terraform-pre"
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  interval: 1m
+  approvePlan: auto
+  path: ./ai-ml/jupyterhub
+  targets:
+    - module.vpc
+    - module.eks
+  sourceRef:
+    kind: GitRepository
+    name: "eks-cluster-${{values.name}}-git-repository"
+    namespace: flux-system
+  vars:
+    - name: acm_certificate_domain
+      value: ${{ values.tfVars.acm_certificate_domain }}
+    - name: cognito_custom_domain
+      value: ${{ values.tfVars.cognito_custom_domain }}
+    - name: eks_cluster_version
+      value: ${{ values.tfVars.eks_cluster_version }}
+    - name: jupyter_hub_auth_mechanism
+      value: ${{ values.tfVars.jupyter_hub_auth_mechanism }}
+    - name: jupyterhub_domain
+      value: ${{ values.tfVars.jupyterhub_domain }}
+    - name: name
+      value: ${{ values.tfVars.name }}
+    - name: region
+      value: ${{ values.tfVars.region }}
+    - name: secondary_cidr_blocks
+      value: [ ${{ values.tfVars.secondary_cidr_blocks }} ]
+    - name: vpc_cidr
+      value: ${{ values.tfVars.vpc_cidr }}
+  retryInterval: 10s
+  destroyResourcesOnDeletion: true

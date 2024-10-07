@@ -25,3 +25,31 @@ spec:
             rewritePath: "/java-app" 
             http:
               /java-app: 8080
+        - type: aws-service-account
+          properties:
+            componentNamesForAccess:
+              - java-s3
+              - java-rds
+            clusterRegion: us-west-2
+            clusterName: modern-engineering
+    - name: java-s3
+      type: s3-bucket
+      properties:
+        region: us-west-2
+        name: java-bucket-12345
+      traits:
+        - type: component-iam-policy
+          properties:
+            service: s3
+    - name: java-rds
+      type: rds-cluster
+      properties:
+        region: us-west-2
+        subnetIds:
+          - subnet-0b19e7279169669f3
+          - subnet-06ca846dc05c99f40
+      traits:
+        - type: component-iam-policy
+          properties:
+            service: rds
+        

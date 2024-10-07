@@ -24,10 +24,14 @@ spec:
                                 providerConfigName: parameter.providerConfigName
                                 region:             parameter.region
                                 tags: [
-                                        {
-                                                key:   "name"
-                                                value: context.name
-                                        },
+                                    {
+                                        key:   "name"
+                                        value: context.name
+                                    },
+                                    {
+                                        key: "other"
+                                        value: "env"
+                                    }
                                 ]
                         }
                 }
@@ -40,5 +44,5 @@ spec:
         }
   workload:
     definition:
-      apiVersion: aws-service/v1
-      kind: Bucket
+      apiVersion: apps/v1
+      kind: Deployment

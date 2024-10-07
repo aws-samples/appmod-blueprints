@@ -44,3 +44,31 @@ variable "grafana_api_key" {
   type        = string
   sensitive   = true
 }
+
+variable "managed_node_instance_type" {
+  description = "Instance type for the cluster managed node groups"
+  type        = string
+  default     = "t3.xlarge"
+}
+
+variable "managed_node_min_size" {
+  description = "Minumum number of instances in the node group"
+  type        = number
+  default     = 2
+}
+
+variable "eks_version" {
+  type        = string
+  description = "EKS Cluster version"
+  default     = "1.29"
+}
+
+variable "vpc_id" {
+  type        = string
+  description = "VPC ID of the EKS Cluster"
+}
+
+variable "vpc_private_subnets" {
+  type        = list(string)
+  description = "EKS Private Subnets of the VPC"
+}

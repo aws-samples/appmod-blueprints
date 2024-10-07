@@ -1,0 +1,9 @@
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: aws-irsa-drc
+spec:
+  serviceAccountTemplate:
+    metadata:
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::940019131157:role/modernengg-dev-aws20240926134819296900000001

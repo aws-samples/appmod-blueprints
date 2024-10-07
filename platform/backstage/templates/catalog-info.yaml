@@ -9,5 +9,16 @@ spec:
     - ./s3-bucket/template.yaml
     - ./microservices/template.yaml
     - ./microservices-with-repo/template.yaml
+    - ./jupyterhub-on-eks/template-jupyterhub-on-eks.yaml
+    - ./spark-on-eks/template-data-on-eks.yaml
+    - ./eks-observability-accelerator/template-infra-monitoring.yaml
+    - ./eks-nvdia-gpu-efa/template-nvidia-gpu-efa.yaml
+    - ./eks-stateful-workload/template-stateful-workload.yaml
+    - ./eks-cost-monitoring/template-cost-monitoring.yaml
+    - ./eks-istio/template-istio.yaml
+    - ./spark-job/template-spark-job.yaml
+    - ./ray-serve/template-ray-serve.yaml
+    - ./serverless-microservice/template-serverless-microservice.yaml
+    - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
 
 

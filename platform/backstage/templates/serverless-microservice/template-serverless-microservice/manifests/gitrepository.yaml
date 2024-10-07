@@ -1,0 +1,12 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: "serverless-microservice-${{values.name}}-git-repository"
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  interval: 30s
+  url: https://github.com/aws-samples/appmod-partners-serverless.git
+  ref:
+    branch: main

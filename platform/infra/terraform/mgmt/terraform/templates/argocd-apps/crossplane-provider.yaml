@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crossplane-prov-mgmt
+  namespace: argocd
+  labels:
+    env: dev
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: modern-engg
+  source:
+    repoURL: ${GITHUB_URL}
+    targetRevision: feature/upgradeToPathBasedRouting
+    path: packages/crossplane-provider/dev/
+    parameters:
+      - name: ROLE_ARN
+        value: ${ROLE_ARN}
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: crossplane-system
+  syncPolicy:
+    automated: {}
+    syncOptions: []

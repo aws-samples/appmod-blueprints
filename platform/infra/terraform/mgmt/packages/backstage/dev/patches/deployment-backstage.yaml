@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage
+  namespace: backstage
+spec:
+  template:
+    spec:
+      serviceAccountName: backstage
+      volumes:
+        - name: backstage-config
+          projected:
+            sources:
+              - secret:
+                  name: integrations
+                  items:
+                    - key: github-integration.yaml
+                      path: github-integration.yaml
+              - configMap:
+                  name: backstage-config
+                  items:
+                    - key: app-config.yaml
+                      path: app-config.yaml
+              - secret:
+                  name: k8s-config
+                  items:
+                    - key: k8s-config.yaml
+                      path: k8s-config.yaml
+      containers:
+        - name: backstage
+          image: ghcr.io/cnoe-io/backstage-app:b8e4f08914af17a48ed6b8b83a3621a9f4b4181d
+          command:
+            - node
+            - packages/backend
+            - --config
+            - config/app-config.yaml
+          volumeMounts:
+            - name: backstage-config
+              mountPath: "/app/config"
+              readOnly: true
+          envFrom:
+            - secretRef:
+                name: backstage-env-vars
+            - secretRef:
+                name: gitea-credentials
+            - secretRef:
+                name: argocd-credentials
+            - secretRef:
+                name: github-token
+

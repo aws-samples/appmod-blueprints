@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kubevela-prod
+  namespace: argocd
+spec:
+  project: default
+  source:
+    chart: vela-core
+    repoURL: https://kubevela.github.io/charts
+    targetRevision: 1.9.11
+    helm:
+      releaseName: kubevela-prod
+  destination:
+    name: 'prod-cluster'
+    namespace: vela-system
+  syncPolicy:
+    automated:
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true

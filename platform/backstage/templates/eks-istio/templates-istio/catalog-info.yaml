@@ -1,0 +1,13 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: eks-cluster-${{values.name}}
+  description: Istio for ${{ values.name }}
+  annotations:
+    backstage.io/kubernetes-namespace: ${{values.namespace}}
+    argocd/app-name: ${{values.name | dump}}
+spec:
+  type: kubernetes-cluster
+  lifecycle: experimental
+  owner: guest
+  system: ${{values.name | dump}}

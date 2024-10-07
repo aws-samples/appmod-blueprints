@@ -1,0 +1,30 @@
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: "eks-cluster-${{values.name}}-terraform"
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  interval: 1m
+  approvePlan: auto
+  path: ./examples/existing-cluster-with-base-and-infra
+  sourceRef:
+    kind: GitRepository
+    name: "eks-cluster-${{values.name}}-git-repository"
+    namespace: flux-system
+  vars:
+    - name: aws_region
+      value: ${{ values.tfVars.aws_region }}
+    - name: eks_cluster_id
+      value: ${{ values.tfVars.eks_cluster_id }}
+    - name: enable_dashboards
+      value: ${{ values.tfVars.enable_dashboards }}
+    - name: grafana_api_key
+      value: ${{ values.tfVars.grafana_api_key }}
+    - name: managed_grafana_workspace_id
+      value: ${{ values.tfVars.managed_grafana_workspace_id }}
+    - name: managed_prometheus_workspace_id
+      value: ${{ values.tfVars.managed_prometheus_workspace_id }}
+  retryInterval: 10s
+  destroyResourcesOnDeletion: true

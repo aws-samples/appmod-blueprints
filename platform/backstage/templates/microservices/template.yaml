@@ -1,15 +1,15 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: microservices
-  title: MicroServices
+  name: microservices-with-git-repo
+  title: MicroServices with Gitea Repo
   description: Creates a new Gitea Repo and ArgocCD for deploying a microservice
   tags:
     - microservices
     - gitea
     - argocd
 spec:
-  owner: platform-team
+  owner: guest
   type: service
   parameters:
     - title: Provide Microservice Information
@@ -33,8 +33,6 @@ spec:
           pattern: ^[a-zA-Z0-9-_.]+$
   steps:
     - id: fetch-base
-  steps:
-    - id: template
       name: Fetch Skeleton + Template
       action: fetch:template
       input:

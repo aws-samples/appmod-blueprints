@@ -1,0 +1,46 @@
+redis-cluster:
+  enabled: false
+postgresql:
+  enabled: false
+postgresql-ha:
+  enabled: false
+
+persistence:
+  enabled: true
+  size: 5Gi
+
+test:
+  enabled: false
+
+gitea:
+  admin:
+    existingSecret: gitea-credential
+  config:
+    database:
+      DB_TYPE: sqlite3
+    session:
+      PROVIDER: memory
+    cache:
+      ADAPTER: memory
+    queue:
+      TYPE: level
+    server:
+      DOMAIN: 'DOMAIN_NAME'
+      ROOT_URL: 'https://DOMAIN_NAME/gitea'
+
+service:
+  ssh:
+    type: NodePort
+    nodePort: 32222
+    externalTrafficPolicy: Local
+
+ingress:
+  # NOTE: The ingress is generated in a later step for path based routing feature See: hack/argo-cd/generate-manifests.sh
+  enabled: false
+
+image:
+  pullPolicy: "IfNotPresent"
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "1.22.0"
+  # Adds -rootless suffix to image name
+  rootless: true

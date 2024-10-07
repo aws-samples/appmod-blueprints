@@ -1,0 +1,23 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-gitea-path
+  namespace: gitea
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 512m
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${GITEA_DOMAIN_NAME}
+      http:
+        paths:
+          - path: /gitea(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: my-gitea-http
+                port:
+                  number: 3000

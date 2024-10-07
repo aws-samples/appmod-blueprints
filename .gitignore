@@ -160,3 +160,5 @@ workshop/cdk.out
 
 # Terraform build files
 .terraform.lock.hcl
+
+platform/infra/terraform/terraform-aws-observability-accelerator

@@ -23,110 +23,120 @@
 
 function configure_keycloak() {
   echo "Configuring keycloak..."
-  REALM_JSON=$(cat <<EOF
+  CLIENT_JSON=$(cat <<EOF
 {
-  "realm": "$KEYCLOAK_REALM",
+  "clientId": "https://${WORKSPACE_ENDPOINT}/saml/metadata",
+  "name": "amazon-managed-grafana",
   "enabled": true,
-  "sslRequired": "none",
-  "roles": {
-    "realm": [
-      {
-        "name": "admin"
-      },
-      {
-        "name": "editor"
-      }
-    ]
+  "protocol": "saml",
+  "adminUrl": "https://${WORKSPACE_ENDPOINT}/login/saml",
+  "redirectUris": [
+    "https://${WORKSPACE_ENDPOINT}/saml/acs"
+  ],
+  "attributes": {
+    "saml.authnstatement": "true",
+    "saml.server.signature": "true",
+    "saml_name_id_format": "email",
+    "saml_force_name_id_format": "true",
+    "saml.assertion.signature": "true",
+    "saml.client.signature": "false"
   },
-  "users": [
+  "defaultClientScopes": [],
+  "protocolMappers": [
     {
-      "username": "admin",
-      "email": "admin@keycloak",
-      "enabled": true,
-      "firstName": "Admin",
-      "realmRoles": [
-         "admin"
-      ]
+      "name": "name",
+      "protocol": "saml",
+      "protocolMapper": "saml-user-property-mapper",
+      "consentRequired": false,
+      "config": {
+        "attribute.nameformat": "Unspecified",
+        "user.attribute": "firstName",
+        "attribute.name": "displayName"
+      }
     },
     {
-      "username": "editor",
-      "email": "editor@keycloak",
-      "enabled": true,
-      "firstName": "Editor",
-      "realmRoles": [
-        "editor"
-      ]
-    }
-  ],
-  "clients": [
-    {
-      "clientId": "https://${WORKSPACE_ENDPOINT}/saml/metadata",
-      "name": "amazon-managed-grafana",
-      "enabled": true,
+      "name": "email",
       "protocol": "saml",
-      "adminUrl": "https://${WORKSPACE_ENDPOINT}/login/saml",
-      "redirectUris": [
-        "https://${WORKSPACE_ENDPOINT}/saml/acs"
-      ],
-      "attributes": {
-        "saml.authnstatement": "true",
-        "saml.server.signature": "true",
-        "saml_name_id_format": "email",
-        "saml_force_name_id_format": "true",
-        "saml.assertion.signature": "true",
-        "saml.client.signature": "false"
-      },
-      "defaultClientScopes": [],
-      "protocolMappers": [
-        {
-          "name": "name",
-          "protocol": "saml",
-          "protocolMapper": "saml-user-property-mapper",
-          "consentRequired": false,
-          "config": {
-            "attribute.nameformat": "Unspecified",
-            "user.attribute": "firstName",
-            "attribute.name": "displayName"
-          }
-        },
-        {
-          "name": "email",
-          "protocol": "saml",
-          "protocolMapper": "saml-user-property-mapper",
-          "consentRequired": false,
-          "config": {
-            "attribute.nameformat": "Unspecified",
-            "user.attribute": "email",
-            "attribute.name": "mail"
-          }
-        },
-        {
-          "name": "role list",
-          "protocol": "saml",
-          "protocolMapper": "saml-role-list-mapper",
-          "config": {
-            "single": "true",
-            "attribute.nameformat": "Unspecified",
-            "attribute.name": "role"
-          }
-        }
-      ]
+      "protocolMapper": "saml-user-property-mapper",
+      "consentRequired": false,
+      "config": {
+        "attribute.nameformat": "Unspecified",
+        "user.attribute": "email",
+        "attribute.name": "mail"
+      }
+    },
+    {
+      "name": "role list",
+      "protocol": "saml",
+      "protocolMapper": "saml-role-list-mapper",
+      "config": {
+        "single": "true",
+        "attribute.nameformat": "Unspecified",
+        "attribute.name": "role"
+      }
     }
   ]
 }
 EOF
 )
+ADMIN_JSON=$(cat <<EOF
+{
+  "username": "monitor-admin",
+  "email": "admin@keycloak",
+  "enabled": true,
+  "firstName": "Admin",
+  "realmRoles": [
+      "grafana-admin"
+  ]
+}
+EOF
+)
+EDITOR_JSON=$(cat <<EOF
+{
+  "username": "monitor-editor",
+  "email": "editor@keycloak",
+  "enabled": true,
+  "firstName": "Editor",
+  "realmRoles": [
+    "grafana-editor"
+  ]
+}
+EOF
+)
+VIEWER_JSON=$(cat <<EOF
+{
+  "username": "monitor-viewer",
+  "email": "viewer@keycloak",
+  "enabled": true,
+  "firstName": "Viewer",
+  "realmRoles": [
+    "grafana-viewer"
+  ]
+}
+EOF
+)
   CMD="unset HISTFILE\n
-cat >/tmp/realm.json <<EOF\n$(echo -e "$REALM_JSON")\nEOF\n
+cat >/tmp/client.json <<EOF\n$(echo -e "$CLIENT_JSON")\nEOF\n
+cat >/tmp/admin.json <<EOF\n$(echo -e "$ADMIN_JSON")\nEOF\n
+cat >/tmp/editor.json <<EOF\n$(echo -e "$EDITOR_JSON")\nEOF\n
+cat >/tmp/viewer.json <<EOF\n$(echo -e "$VIEWER_JSON")\nEOF\n
 while true; do\n
     cd /opt/keycloak/bin/\n
-    ./kcadm.sh config credentials --server http://localhost:8080/ --realm master --user cnoe-admin --password $KEYCLOAK_ADMIN_PASSWORD --config /tmp/kcadm.config\n
+    ./kcadm.sh config credentials --server http://localhost:8080/keycloak --realm master --user modernengg-admin --password $KEYCLOAK_ADMIN_PASSWORD --config /tmp/kcadm.config\n
     ./kcadm.sh update realms/master -s sslRequired=NONE --config /tmp/kcadm.config\n
-    ./kcadm.sh create realms -f /tmp/realm.json --config /tmp/kcadm.config\n
-    USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=admin --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'\"' -f2 | tr -d '\\\n')\n
-    ./kcadm.sh update users/\$USER_ID -r $KEYCLOAK_REALM -s 'credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_ADMIN_PASSWORD\"}]' --config /tmp/kcadm.config\n
-    USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=editor --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'\"' -f2 | tr -d '\\\n')\n
-    ./kcadm.sh update users/\$USER_ID -r $KEYCLOAK_REALM -s 'credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_EDITOR_PASSWORD\"}]' --config /tmp/kcadm.config\n
+    ./kcadm.sh create roles -r $KEYCLOAK_REALM -s name=grafana-admin --config /tmp/kcadm.config\n
+    ./kcadm.sh create roles -r $KEYCLOAK_REALM -s name=grafana-editor --config /tmp/kcadm.config\n
+    ./kcadm.sh create roles -r $KEYCLOAK_REALM -s name=grafana-viewer --config /tmp/kcadm.config\n
+    ./kcadm.sh create users -r $KEYCLOAK_REALM -f /tmp/admin.json --config /tmp/kcadm.config\n
+    ./kcadm.sh create users -r $KEYCLOAK_REALM -f /tmp/editor.json --config /tmp/kcadm.config\n
+    ./kcadm.sh create users -r $KEYCLOAK_REALM -f /tmp/viewer.json --config /tmp/kcadm.config\n
+    ADMIN_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=monitor-admin --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'\"' -f2 | tr -d '\\\n')\n
+    ./kcadm.sh update users/\$ADMIN_USER_ID -r $KEYCLOAK_REALM -s 'credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_ADMIN_PASSWORD\"}]' --config /tmp/kcadm.config\n
+    EDIT_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=monitor-editor --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'\"' -f2 | tr -d '\\\n')\n
+    ./kcadm.sh update users/\$EDIT_USER_ID -r $KEYCLOAK_REALM -s 'credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_EDITOR_PASSWORD\"}]' --config /tmp/kcadm.config\n
+    VIEW_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=monitor-viewer --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'\"' -f2 | tr -d '\\\n')\n
+    ./kcadm.sh update users/\$VIEW_USER_ID -r $KEYCLOAK_REALM -s 'credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_VIEWER_PASSWORD\"}]' --config /tmp/kcadm.config\n
+    ./kcadm.sh create clients -r $KEYCLOAK_REALM -f /tmp/client.json --config /tmp/kcadm.config\n
     break\n
   echo \"Keycloak admin server not available. Waiting for 10 seconds...\"\n
   sleep 10\n
@@ -160,7 +170,7 @@ function update_workspace_saml_auth() {
   ELB_HOSTNAME=$(kubectl get ingress \
               -n $KEYCLOAK_NAMESPACE \
               -o json 2> /dev/null| jq -r '.items[] | .spec.rules[] | .host as $host  | ( $host + .path)' | sort | grep -v ^/)
-  SAML_URL=https://$ELB_HOSTNAME/realms/$KEYCLOAK_REALM/protocol/saml/descriptor
+  SAML_URL=http://$ELB_HOSTNAME/keycloak/realms/$KEYCLOAK_REALM/protocol/saml/descriptor
   EXPECTED_SAML_CONFIG=$(cat <<EOF | jq --sort-keys -r '.'
 {
   "assertionAttributes": {
@@ -175,10 +185,11 @@ function update_workspace_saml_auth() {
   "loginValidityDuration": 120,
   "roleValues": {
     "admin": [
-      "admin"
+      "grafana-admin"
     ],
     "editor": [
-      "editor"
+      "grafana-editor",
+      "grafana-viewer"
     ]
   }
 }

@@ -1,0 +1,21 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-dev-and-prod-env-${{values.name}}
+  namespace: ${{values.namespace}}
+spec:
+  template:
+    spec:
+      containers:
+      - name: trigger
+        image: amazon/aws-cli:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          aws --region ${{values.aws_region}} codebuild start-build --project-name modernengg-codebuild
+        envFrom:
+        - secretRef:
+            name: aws-credentials
+      restartPolicy: Never
+

@@ -1,13 +1,3 @@
-apiVersion: backstage.io/v1alpha1
-kind: Resource
-metadata:
-  name: ${{values.name}}-db-cluster
-  description: database cluster
-  annotations:
-    argocd/app-name: ${{values.name | dump}}
-spec:
-  type: rds-cluster
-  owner: guest
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Component
@@ -16,15 +6,13 @@ metadata:
   description: This is for testing purposes
   annotations:
     backstage.io/kubernetes-label-selector: 'entity-id=${{values.name}}'
-    backstage.io/kubernetes-namespace: default
+    backstage.io/kubernetes-namespace: ${{values.namespace}}
     argocd/app-name: ${{values.name | dump}}
   links:
-    - url: https://cnoe.localtest.me:8443/gitea
+    - url: https://${{values.repoUrl}}?repo=${{values.name}}
       title: Repo URL
       icon: github
 spec:
   owner: guest
   lifecycle: experimental
   type: service
-  dependsOn:
-    - resource:default/${{values.name}}-rds-cluster

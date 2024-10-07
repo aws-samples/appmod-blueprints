@@ -5,8 +5,9 @@ metadata:
   description: S3 Bucket for ${{ values.bucket_name }}
   annotations:
     backstage.io/kubernetes-namespace: ${{values.namespace}}
+    argocd/app-name: ${{values.bucket_name | dump}}
 spec:
   type: s3-bucket
   lifecycle: experimental
   owner: guest
-  system: ${{values.name | dump}}
+  system: ${{values.bucket_name | dump}}

@@ -1,0 +1,40 @@
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: "eks-cluster-${{values.name}}-terraform"
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  interval: 1m
+  approvePlan: auto
+  path: ./analytics/terraform/spark-k8s-operator
+  sourceRef:
+    kind: GitRepository
+    name: "eks-cluster-${{values.name}}-git-repository"
+    namespace: flux-system
+  vars:
+    - name: eks_cluster_version
+      value: ${{ values.tfVars. eks_cluster_version }}
+    - name: eks_data_plane_subnet_secondary_cidr
+      value: [ ${{ values.tfVars.eks_data_plane_subnet_secondary_cidr }} ]
+    - name: enable_amazon_prometheus
+      value: ${{ values.tfVars.enable_amazon_prometheus }}
+    - name: enable_vpc_endpoints
+      value: ${{ values.tfVars.enable_vpc_endpoints }}
+    - name: enable_yunikorn
+      value: ${{ values.tfVars.enable_yunikorn }}
+    - name: private_subnets
+      value: [ ${{ values.tfVars.private_subnets }} ]
+    - name: public_subnets
+      value: [ ${{ values.tfVars.public_subnets }} ]
+    - name: name
+      value: ${{ values.tfVars.name }}
+    - name: region
+      value: ${{ values.tfVars.region }}
+    - name: secondary_cidr_blocks
+      value: [ ${{ values.tfVars.secondary_cidr_blocks }} ]
+    - name: vpc_cidr
+      value: ${{ values.tfVars.vpc_cidr }}
+  retryInterval: 10s
+  destroyResourcesOnDeletion: true

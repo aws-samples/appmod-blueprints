@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://cnoe.localtest.me:8443/gitea/giteaAdmin/argocd-example-apps-dev.git
+    repoURL: https://<DNS_NAME>/gitea/giteaAdmin/argocd-example-apps-dev.git
     targetRevision: HEAD
     path: apps
   destination:

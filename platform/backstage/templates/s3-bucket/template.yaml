@@ -3,9 +3,9 @@ kind: Template
 metadata:
   name: s3-bucket-template
   title: S3 Bucket Template
-  description: Create a new S3 bucket using OAM and CrossPlane
+  description: Create S3 bucket using OAM and CrossPlane
 spec:
-  owner: platform-team
+  owner: guest
   type: service
   parameters:
     - title: Provide S3 Bucket Information
@@ -13,6 +13,7 @@ spec:
         - bucket_name
         - environment
         - region
+        - repoUrl
       properties:
         bucket_name:
           title: Bucket Name
@@ -42,6 +43,10 @@ spec:
           title: Configuration of your S3 Bucket
           type: string
           enum: ['standard', 'intelligent-tiering']
+        repoUrl:
+          title: Gitea URL
+          description: Gitea URL on Management Cluster
+          type: string
   steps:
     - id: template
       name: Fetch Skeleton + Template
@@ -61,6 +66,23 @@ spec:
         description: This is ${{ parameters.bucket_name }}
         repoUrl: 'github.com?owner=platform-team&repo=${{ parameters.bucket_name }}'
         repoVisibility: private
+    - id: publish
+      name: Publishing to a gitea git repository
+      action: publish:gitea
+      input:
+        description: This is an example app
+        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.name}}
+        defaultBranch: main
+    - id: create-argocd-app
+      name: Create ArgoCD App
+      action: cnoe:create-argocd-app
+      input:
+        appName: ${{parameters.name}}
+        appNamespace: default
+        argoInstance: in-cluster
+        projectName: default
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.name}}
+        path: "manifests"
     - id: register
       name: Register
       action: catalog:register
