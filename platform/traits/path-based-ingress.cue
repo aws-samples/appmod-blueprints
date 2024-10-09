@@ -16,7 +16,7 @@ template: {
         domain: string
         http: [string]: int
         class: *"nginx" | string
-        rewritePath: *"/" | string
+        rewritePath: *true | bool
         createService: *false | bool
     }
 
@@ -46,8 +46,10 @@ template: {
         metadata: {
             name: context.name
             annotations: {
-                "nginx.org/rewrites": "serviceName=\(context.name) rewrite=\(parameter.rewritePath)"
-                "nginx.org/mergeable-ingress-type": "minion"
+                if parameter.rewritePath {
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2"
+                    "nginx.ingress.kubernetes.io/use-regex": "true"
+                }
             }
         }
         spec: {
@@ -57,7 +59,7 @@ template: {
                 http: {
                     paths: [
                         for k, v in parameter.http {
-                            path: k
+                            path: "\(k)(/|$)(.*)"
                             pathType: "ImplementationSpecific"
                             backend: {
                                 service: {
