@@ -41,3 +41,5 @@ phases:
       - cd terraform-eks
       - chmod +x ./create-cluster.sh
       - ./create-cluster.sh
+      - chmod +x ./create-database.sh
+      - ./create-database.sh

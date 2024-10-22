@@ -13,7 +13,7 @@ cluster_name: "modern-engineering"
 # If using external DNS, specify the Route53 hosted zone ID. Required if enable_dns_management is set to true
 #hosted_zone_id: Z03804463VDEET6154SUK
 # if external DNS is not used, this value must be provided.
-domain_name: INGRESS_DNS
+domain_name: modern-engg-f7cacad41017e7aa.elb.us-west-2.amazonaws.com
 
 # If set to true, we will store secrets to AWS Secrets Manager, then sync it to the cluster using External Secrets Operator.
 enable_external_secret: true

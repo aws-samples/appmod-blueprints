@@ -22,6 +22,12 @@ variable "prod_cluster_name" {
   default     = "modernengg-prod"
 }
 
+variable "db_codebuild_project_name" {
+  description = "DB CodeBuild Project Name"
+  type        = string
+  default     = "database-modernengg-codebuild"
+}
+
 variable "codebuild_project_name" {
   description = "CodeBuild Project Name"
   type        = string

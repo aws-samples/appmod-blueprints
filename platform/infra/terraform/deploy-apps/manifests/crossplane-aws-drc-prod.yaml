@@ -6,4 +6,4 @@ spec:
   serviceAccountTemplate:
     metadata:
       annotations:
-        eks.amazonaws.com/role-arn: PROD_ROLE_ARN
+        eks.amazonaws.com/role-arn: arn:aws:iam::288947426911:role/modernengg-prod-aws20241022043432256100000006

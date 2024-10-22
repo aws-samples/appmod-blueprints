@@ -15,9 +15,9 @@ spec:
           - name: serviceAccount.name
             value: aws-load-balancer-controller
           - name: clusterName
-            value: DEV_CLUSTER_NAME
+            value: modernengg-dev
           - name: serviceAccount.annotations.eks\.amazonaws\.com/role-arn
-            value: DEV_LB_ROLE_ARN
+            value: arn:aws:iam::288947426911:role/modern-dev-lb-controller-20241022034709231100000007
   destination:
     name: 'dev-cluster'
     namespace: aws-load-balancer-controller

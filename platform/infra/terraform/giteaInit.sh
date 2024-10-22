@@ -64,6 +64,8 @@ cp -r ${REPO_ROOT}/platform/infra/terraform/dev ${REPO_ROOT}/applications/gitea/
 cp -r ${REPO_ROOT}/platform/infra/terraform/prod ${REPO_ROOT}/applications/gitea/terraform-eks/
 cp ${REPO_ROOT}/platform/infra/terraform/.gitignore ${REPO_ROOT}/applications/gitea/terraform-eks/
 cp ${REPO_ROOT}/platform/infra/terraform/create-cluster.sh  ${REPO_ROOT}/applications/gitea/terraform-eks/
+cp -r ${REPO_ROOT}/platform/infra/terraform/database ${REPO_ROOT}/applications/gitea/terraform-eks/ # for database
+cp ${REPO_ROOT}/platform/infra/terraform/create-database.sh  ${REPO_ROOT}/applications/gitea/terraform-eks/ # for database
 git add .
 git -c http.sslVerify=false commit -m "first commit" --no-verify
 git remote remove origin

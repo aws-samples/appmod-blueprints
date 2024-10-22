@@ -15,9 +15,9 @@ spec:
           - name: serviceAccount.name
             value: aws-load-balancer-controller
           - name: clusterName
-            value: PROD_CLUSTER_NAME
+            value: modernengg-prod
           - name: serviceAccount.annotations.eks\.amazonaws\.com/role-arn
-            value: PROD_LB_ROLE_ARN
+            value: arn:aws:iam::288947426911:role/modern-prod-lb-controller-20241022043432268900000007
   destination:
     name: 'prod-cluster'
     namespace: aws-load-balancer-controller
