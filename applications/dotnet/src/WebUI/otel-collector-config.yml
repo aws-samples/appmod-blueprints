@@ -1,0 +1,38 @@
+﻿receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http: null
+processors:
+  batch: null
+exporters:
+  prometheusremotewrite:
+    endpoint: <YOUR-APS-WORKSPACE-ENDPOINT>/api/v1/remote_write
+    auth:
+      authenticator: sigv4auth
+  awsxray:
+    region: us-east-1
+  logging:
+    loglevel: debug
+extensions:
+  sigv4auth:
+    region: us-east-1
+service:
+  extensions:
+    - sigv4auth
+  pipelines:
+    traces:
+      receivers:
+        - otlp
+      processors:
+        - batch
+      exporters:
+        - awsxray
+    metrics:
+      receivers:
+        - otlp
+      processors:
+        - batch
+      exporters:
+        - prometheusremotewrite

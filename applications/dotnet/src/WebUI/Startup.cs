@@ -14,6 +14,19 @@ using Northwind.Application;
 using Northwind.Application.Common.Interfaces;
 using Northwind.WebUI.Common;
 using Northwind.WebUI.Services;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Metrics;
+using OpenTelemetry;
+using OpenTelemetry.Exporter;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics.Metrics;
+using System;
+using OpenTelemetry.Contrib.Extensions.AWSXRay.Trace;
+using OpenTelemetry.Instrumentation.Runtime;
+using OpenTelemetry.Exporter.Prometheus;
+
+
 
 namespace Northwind.WebUI
 {
@@ -51,6 +64,55 @@ namespace Northwind.WebUI
 
             services.AddRazorPages();
 
+            #region OpenTelemetry
+            var serviceName = "Northwind";
+            var serviceVersion = "1.0";
+
+
+            var appResourceBuilder = ResourceBuilder.CreateDefault()
+                    .AddService(serviceName: serviceName, serviceVersion: serviceVersion);
+
+            //Configure important OpenTelemetry settings, the console exporter, and instrumentation library
+
+            var meter = new Meter(serviceName);
+            services.AddSingleton<Meter>(meter);
+            services.AddOpenTelemetry().WithMetrics(metricProviderBuilder =>
+            {
+            metricProviderBuilder
+                .AddConsoleExporter()
+                .AddOtlpExporter(options =>
+                {
+                    options.Protocol = OtlpExportProtocol.Grpc;
+                    options.Endpoint = new Uri(Configuration.GetValue<string>("OTEL_EXPORTER_OTLP_ENDPOINT"));
+                })
+                .AddMeter(meter.Name)
+                .SetResourceBuilder(appResourceBuilder)
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddRuntimeInstrumentation()
+                .AddPrometheusExporter();
+
+            });
+
+            services.AddOpenTelemetry()
+                .WithTracing(tracerProviderBuilder =>
+
+                tracerProviderBuilder
+                    .AddSource(serviceName)
+                    .SetResourceBuilder(appResourceBuilder.AddTelemetrySdk())
+                    .AddAWSInstrumentation()
+                    .AddAspNetCoreInstrumentation()
+                    .AddHttpClientInstrumentation()
+                    .AddConsoleExporter()
+                    .AddOtlpExporter(options =>
+                    {
+                        options.Protocol = OtlpExportProtocol.Grpc;
+                        options.Endpoint = new Uri(Configuration.GetValue<string>("OTEL_EXPORTER_OTLP_ENDPOINT"));
+
+                    }));
+            Sdk.SetDefaultTextMapPropagator(new AWSXRayPropagator());
+            #endregion
+
             // Customise default API behaviour
             services.Configure<ApiBehaviorOptions>(options =>
             {
@@ -74,6 +136,8 @@ namespace Northwind.WebUI
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
         public void Configure(IApplicationBuilder app)
         {
+            app.UsePathBase("/northwind-app");
+            app.UseRouting();
             if (Environment.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
@@ -85,7 +149,7 @@ namespace Northwind.WebUI
                 // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
             }
-
+            app.UseOpenTelemetryPrometheusScrapingEndpoint();
             app.UseCustomExceptionHandler();
             app.UseHealthChecks("/health");
             app.UseHttpsRedirection();
@@ -102,7 +166,8 @@ namespace Northwind.WebUI
                 c.SwaggerEndpoint("/swagger/v1/swagger.json", "Northwind Traders API V1");
             });
 
-            app.UseRouting();
+            
+            
 
             app.UseAuthentication();
             app.UseIdentityServer();

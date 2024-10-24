@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
 using System;
@@ -23,15 +24,31 @@ namespace Northwind.Persistence
         private TContext Create(string basePath, string environmentName)
         {
             
-            var configuration = new ConfigurationBuilder()
+            var configurationbuilder = new ConfigurationBuilder()
                 .SetBasePath(basePath)
                 .AddJsonFile("appsettings.json")
                 .AddJsonFile($"appsettings.Local.json", optional: true)
                 .AddJsonFile($"appsettings.{environmentName}.json", optional: true)
+                .AddKeyPerFile("/opt/secret-volume", optional: true, reloadOnChange: true)
                 .AddEnvironmentVariables()
                 .Build();
 
-            var connectionString = configuration.GetConnectionString(ConnectionStringName);
+            
+            var connectionString = configurationbuilder.GetConnectionString(ConnectionStringName);
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                SqlConnectionStringBuilder sqlConnectionStringBuilder = new SqlConnectionStringBuilder()
+                {
+
+                    DataSource = configurationbuilder["host"],
+                    InitialCatalog = "NorthwindTraders",
+                    PersistSecurityInfo = true,
+                    UserID = configurationbuilder["username"],
+                    Password = configurationbuilder["password"],
+                    MultipleActiveResultSets = true
+                };
+                connectionString = sqlConnectionStringBuilder.ConnectionString;
+            }
 
             return Create(connectionString);
         }

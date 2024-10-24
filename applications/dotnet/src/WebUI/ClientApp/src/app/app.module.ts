@@ -7,11 +7,12 @@ import { BrowserModule } from '@angular/platform-browser';
 import { AppComponent } from './app.component';
 import { HomeComponent } from './home/home.component';
 import { ProductsComponent } from './products/products.component';
+import { OrdersComponent } from './orders/orders.component';
 import { CustomersComponent } from './customers/customers.component';
 import { NavTopMenuComponent } from './nav-top-menu/nav-top-menu.component';
 import { NavSideMenuComponent } from './nav-side-menu/nav-side-menu.component';
 
-import { CustomersClient, ProductsClient, API_BASE_URL } from './northwind-traders-api';
+import { CustomersClient, ProductsClient, API_BASE_URL, OrdersClient } from './northwind-traders-api';
 
 import { CamelCaseToText } from '../pipes/camel-case-to-text';
 import { ApiAuthorizationModule } from 'src/api-authorization/api-authorization.module';
@@ -24,6 +25,7 @@ import { AuthorizeInterceptor } from 'src/api-authorization/authorize.intercepto
     NavSideMenuComponent,
     HomeComponent,
     ProductsComponent,
+    OrdersComponent,
     CustomersComponent,
     CamelCaseToText
   ],
@@ -37,7 +39,8 @@ import { AuthorizeInterceptor } from 'src/api-authorization/authorize.intercepto
   providers: [
       { provide: HTTP_INTERCEPTORS, useClass: AuthorizeInterceptor, multi: true },
       CustomersClient,
-      ProductsClient
+    ProductsClient,
+      OrdersClient
   ],
   bootstrap: [AppComponent]
 })

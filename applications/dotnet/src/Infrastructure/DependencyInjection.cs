@@ -1,22 +1,27 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Security.Claims;
 using Duende.IdentityServer.Models;
 using Duende.IdentityServer.Test;
 using IdentityModel;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Northwind.Application.Common.Interfaces;
 using Northwind.Common;
 using Northwind.Infrastructure.Files;
+using static System.Formats.Asn1.AsnWriter;
 
 namespace Northwind.Infrastructure
 {
     public static class DependencyInjection
     {
+        
         public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration, IWebHostEnvironment environment)
         {
             services.AddScoped<IUserManager, UserManagerService>();
@@ -24,8 +29,38 @@ namespace Northwind.Infrastructure
             services.AddTransient<IDateTime, MachineDateTime>();
             services.AddTransient<ICsvFileBuilder, CsvFileBuilder>();
 
+            var configurationbuilder = new ConfigurationBuilder()
+                .AddJsonFile("appsettings.json")
+                .AddJsonFile($"appsettings.Local.json", optional: true)
+                .AddKeyPerFile("/opt/secret-volume", optional: true, reloadOnChange: true)
+                .AddEnvironmentVariables()
+                .Build();
+
+
+
+            var connectionString = configuration.GetConnectionString("NorthwindDatabase");
+           
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                SqlConnectionStringBuilder sqlConnectionStringBuilder = new SqlConnectionStringBuilder()
+                {
+
+                    DataSource = configurationbuilder["host"],
+                    InitialCatalog = "NorthwindTraders",
+                    PersistSecurityInfo = true,
+                    UserID = configurationbuilder["username"],
+                    Password = configurationbuilder["password"],
+                    MultipleActiveResultSets = true
+                };
+                connectionString = sqlConnectionStringBuilder.ConnectionString;
+
+            }
+            var loggerfactory = services.BuildServiceProvider().GetService<ILoggerFactory>();
+            loggerfactory.CreateLogger<ApplicationDbContext>().LogInformation("CONNECTION STRING: " + connectionString);
+
+
             services.AddDbContext<ApplicationDbContext>(options =>
-                options.UseSqlServer(configuration.GetConnectionString("NorthwindDatabase")));
+                options.UseSqlServer(connectionString));
 
             services.AddDefaultIdentity<ApplicationUser>()
                 .AddEntityFrameworkStores<ApplicationDbContext>();
