@@ -41,6 +41,13 @@ For both of the above commands a new IAM Role will be made with the given name a
 ```
 Note that the ```"system:serviceaccount:argo-rollouts:argo-rollouts"``` is in the format of ```"system:serviceaccount:<namespaceName>:<serviceAccountName>"```.
 
+Ensure that the target service account has the annotation to target the IAM role created by the eksctl command's ARN value.
+- Should look similar to the following: ```eks.amazonaws.com/role-arn: arn:aws:iam::<Insert-Isengard-Account-ID>:role/<Insert-Target-IAM-Role>```
+- Code to apply this annotation can be found below if needed:
+  ```
+  kubectl annotate serviceaccount <Insert-Target-Service-Account> -n <Insert-Namespace> arn:aws:iam::<Insert-Isengard-Account-ID>:role/<Insert-Target-IAM-Role> --overwrite
+  ```
+
 ## Deployment Strategies
 While Argo Rollouts allows for BlueGreen Deployment and Canary Deployment the analysis section works the same. The following doc will break down how to create a Canary Deployment with Analysis Templates to add metric driven deployment.
 
@@ -83,10 +90,10 @@ While Argo Rollouts allows for BlueGreen Deployment and Canary Deployment the an
           - name: rollouts-demo
             image: 913524909446.dkr.ecr.us-west-2.amazonaws.com/prometheus-sample-tomcat-jmx:latest
             env:
-            - name: dummy-variable
-              value: "triggering-rollout-test-3"
+            - name: dummy-variable # (Optional) Adding this allows you to test deployments by updating the value and applying the rollout again to test changes.
+              value: "triggering-rollout-test-1"
   ```
-# Metrics Driven Deployment Code
+# Metrics Driven Deployment Code Breakdown
 ### Rollout File
 ```YAML
 apiVersion: argoproj.io/v1alpha1
@@ -108,7 +115,7 @@ spec:
           - name: service-name # Must match the Analysis Templates spec.args.name variable
             value: tomcat-example # This targets the deployment with the given workload being updated.
       - setWeight: 40
-      - pause: {duration: 1} # Adding a second to test a change to the rollout.
+      - pause: {duration: 1}
       - setWeight: 60
       - pause: {duration: 1}
       - setWeight: 80 # Once finishing testing 80% weight it deploys the remaining 20%.
@@ -133,11 +140,11 @@ spec:
 The key section to keep in mind is the following piece of the code:
 ``` YAML
 - analysis: # Can insert analysis wherever in the rollout and if it fails it will roll back.
-          templates:
-          - templateName: success-rate # This is calling the analysis-template of name success-rate.
-          args:
-          - name: service-name # Must match the Analysis Templates spec.args.name variable
-            value: tomcat-example # This targets the deployment with the given workload being updated.
+    templates:
+    - templateName: success-rate # This is calling the analysis-template of name success-rate.
+    args:
+    - name: service-name # Must match the Analysis Templates spec.args.name variable
+      value: tomcat-example # This targets the deployment with the given workload being updated.
 ```
 You can do analysis for different sections of the rollout, and call a variety of Analysis Templates to test different metrics. Otherwise, the rollout is simply targeting your workload, rolling out the update as you defined it, and testing custom defined metrics along the way. If at any time the workload fails a check it will rollback to the previous stable version.
 ### Analysis Template
@@ -154,9 +161,8 @@ spec:
       secretKeyRef:
         name: workspace-url # Name of the secret you need.
         key: secretURL # Key value containing the needed query address for AMP.
-  - name: service-name # Identifier for rollouts
   metrics:
-  - name: success-rate # Should I leave this name?
+  - name: success-rate
     interval: 1s # The intervals that queries are made
     count: 1
     successCondition: result[0] >= 0 # The query returns an array and result[0] grabs the first value. The successCondition means it passes if true and fails the rollout if it is not met.
@@ -217,7 +223,7 @@ spec:
       - pause: {duration: 1} 
       - setWeight: 60
       - pause: {duration: 1}
-      - analysis: # This points two a second Analysis Template that can pass/fail the rollout at this later stage.
+      - analysis: # This points to a second Analysis Template that can pass/fail the rollout at this later stage.
           templates:
           - templateName: test-two
           args:
