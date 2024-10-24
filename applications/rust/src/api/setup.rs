@@ -1,12 +1,7 @@
-#[path = "../api/types.rs"]
-mod types;
-
 use crate::types::{Category, Image, Product, ProductOption, ProductVariant};
 use aws_config::default_provider::credentials::DefaultCredentialsChain;
-use aws_config::default_provider::region::DefaultRegionChain;
-use aws_config::Region;
+use aws_config::{Region, SdkConfig};
 use aws_sdk_dynamodb::Client;
-use futures::StreamExt;
 use image::GenericImageView;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
@@ -34,31 +29,19 @@ struct CSVOptions {
     option_name: String,
 }
 
-#[tokio::main]
-async fn main() {
-    let profile = std::env::var("PROFILE").unwrap_or(String::from("vshardul+q-apps-Admin"));
-
-    let region = DefaultRegionChain::builder()
-        .profile_name(&profile)
-        .build()
-        .region()
-        .await
-        .unwrap_or(Region::from_static("us-east-1"));
-
-    let creds = DefaultCredentialsChain::builder()
-        .profile_name(&profile)
-        .region(region.clone())
-        .build()
-        .await;
-
-    let config = aws_config::from_env()
-        .credentials_provider(creds)
-        .region(region)
-        .load()
-        .await;
-    let table_name = std::env::var("TABLE_NAME").unwrap_or(String::from("q-apps-table"));
-
+pub async fn setup(config: SdkConfig, table_name: String) {
     let client = Client::new(&config);
+
+    let scan_output = client
+        .scan()
+        .table_name(&table_name)
+        .send()
+        .await
+        .expect("Failed to scan table");
+    if !scan_output.items().is_empty() {
+        println!("Table already has items, skipping setup");
+        return;
+    }
 
     // purge_table(&client, &table_name).await;
 
@@ -148,12 +131,12 @@ fn csv_to_data() -> (Vec<Product>, HashMap<String, Category>) {
     let mut csv_products: Vec<CSVProduct> = Vec::new();
     let mut csv_options: Vec<CSVOptions> = Vec::new();
 
-    let products_file = match File::open("./res/products.csv") {
+    let products_file = match File::open("./src/api/res/products.csv") {
         Ok(file) => file,
         Err(e) => panic!("Required file not found: {}", e),
     };
 
-    let variants_file = match File::open("./res/variants.csv") {
+    let variants_file = match File::open("./src/api/res/variants.csv") {
         Ok(file) => file,
         Err(e) => panic!("Required file not found: {}", e),
     };
@@ -231,7 +214,7 @@ fn csv_to_data() -> (Vec<Product>, HashMap<String, Category>) {
                         let (width, height) = get_image_dimensions(image);
                         Image {
                             url: format!(
-                                "https://d2pxm7bxcihgvo.cloudfront.net/{}",
+                                "/images/{}",
                                 image.to_string()
                             ),
                             alt_text: format!("{} image", csv_product.name),
@@ -271,7 +254,7 @@ fn csv_to_data() -> (Vec<Product>, HashMap<String, Category>) {
 }
 
 fn get_image_dimensions(file_name: &String) -> (usize, usize) {
-    let path = format!("./res/images/{}", file_name);
+    let path = format!("./src/api/res/images/{}", file_name);
     let img = match image::open(path) {
         Ok(img) => img,
         Err(e) => panic!("Error opening image: {}", e),

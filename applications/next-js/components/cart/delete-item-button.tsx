@@ -4,7 +4,7 @@ import { XMarkIcon } from "@heroicons/react/24/outline";
 import clsx from "clsx";
 import { removeItem } from "components/cart/actions";
 import LoadingDots from "components/loading-dots";
-import type { CartItem } from "lib/dynamo/types";
+import type {CartProduct} from "lib/dynamo/types";
 import { useFormState, useFormStatus } from "react-dom";
 
 function SubmitButton() {
@@ -34,9 +34,9 @@ function SubmitButton() {
   );
 }
 
-export function DeleteItemButton({ item }: { item: CartItem }) {
+export function DeleteItemButton({ item }: { item: CartProduct }) {
   const [message, formAction] = useFormState(removeItem, null);
-  const itemId = item.id;
+  const itemId = item.product.id;
   const actionWithVariant = formAction.bind(null, itemId);
 
   return (

@@ -1,9 +1,13 @@
 #![allow(warnings)]
-
 mod services;
 mod types;
 mod utils;
+mod setup;
 
+#[macro_use]
+extern crate tracing;
+
+use std::time::Duration;
 use aws_config::default_provider::credentials::DefaultCredentialsChain;
 use aws_config::default_provider::region::DefaultRegionChain;
 use aws_sdk_dynamodb as ddb;
@@ -13,6 +17,9 @@ use services::product::*;
 use aws_config::Region;
 use services::cart::*;
 use services::ui::*;
+use opentelemetry::{global, trace::{TraceContextExt, Tracer}, KeyValue};
+use opentelemetry_otlp::{WithExportConfig};
+use crate::utils::{init_tracing_subscriber, TracingFairing};
 
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
@@ -35,14 +42,25 @@ async fn main() -> Result<(), rocket::Error> {
         .load()
         .await;
 
-    let table_name = std::env::var("TABLE_NAME").unwrap_or(String::from("q-apps-table"));
+    let rocket_address = std::env::var("ROCKET_ADDRESS").unwrap_or(String::from("0.0.0.0"));
+    let rocket_port = std::env::var("ROCKET_PORT").unwrap_or(String::from("8080"));
+    let table_name = std::env::var("TABLE_NAME").unwrap_or(String::from("rust-service-table"));
+
+    let rocket_config = rocket::Config::figment()
+        .merge(("address", rocket_address))
+        .merge(("port", rocket_port.parse::<u16>().unwrap()));
 
     let prometheus = PrometheusMetrics::new();
 
-    let rocket = rocket::build()
+    let tracing = init_tracing_subscriber();
+
+    setup::setup(config.clone(), table_name.clone()).await;
+
+    let rocket = rocket::custom(rocket_config)
         .manage(ddb::Client::new(&config))
         .manage(table_name)
         .attach(prometheus.clone())
+        .attach(TracingFairing)
         .mount(
             "/",
             routes![
@@ -62,13 +80,6 @@ async fn main() -> Result<(), rocket::Error> {
             ],
         )
         .mount("/metrics", prometheus);
-    // if is_running_on_lambda() {
-    //     // Launch on AWS Lambda
-    //     launch_rocket_on_lambda(rocket).await?;
-    // } else {
-    //     // Launch local server
-    //     let _ = rocket.launch().await?;
-    // }
 
     let _rocket = rocket.launch().await?;
 

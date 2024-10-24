@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: rust-app-deployment
-  namespace: argo-rollouts  # TODO: Change this before going to workshop
+  namespace: rust-msvc
 spec:
   replicas: 3
   selector:
@@ -13,16 +13,51 @@ spec:
       labels:
         app: rust-app
     spec:
-      serviceAccountName: rust-microservice-no-perms
+      serviceAccountName: rust-svc-account
       containers:
         - name: rust-app
-          image: 913524909446.dkr.ecr.us-west-2.amazonaws.com/app/rust-microservice:latest
+          image: 779846826726.dkr.ecr.us-west-2.amazonaws.com/app/rust-svc # TODO: Change to point to your ECR repo
           ports:
-            - containerPort: 8080
+            - containerPort: 8888
+#           removed by request, sensible defaults included in code.
           env:
             - name: ROCKET_ADDRESS
               value: "0.0.0.0"
             - name: ROCKET_PORT
-              value: "8080"
+              value: "8888"
             - name: TABLE_NAME
-              value: "rust-microservice-table"
+              value: "rust-service-table"
+
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rust-app-deployment-canary
+  namespace: rust-msvc
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: rust-app-canary
+  template:
+    metadata:
+      labels:
+        app: rust-app-canary
+    spec:
+      serviceAccountName: rust-svc-account
+      containers:
+        - name: rust-app-canary
+          image: 779846826726.dkr.ecr.us-west-2.amazonaws.com/app/rust-svc # TODO: Change to point to your ECR repo
+          ports:
+            - containerPort: 8888
+          #           removed by request, sensible defaults included in code.
+          env:
+            - name: ROCKET_ADDRESS
+              value: "0.0.0.0"
+            - name: ROCKET_PORT
+              value: "8888"
+            - name: TABLE_NAME
+              value: "rust-service-table"
+

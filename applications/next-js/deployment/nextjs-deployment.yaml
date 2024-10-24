@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: next-js-deployment
+  namespace: rust-msvc
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: next-app
+  template:
+    metadata:
+      labels:
+        app: next-app
+    spec:
+      containers:
+        - name: next-app
+          image: 389706897409.dkr.ecr.us-west-2.amazonaws.com/modernengg/next-app # TODO: Change to point to your ECR repo
+          ports:
+            - containerPort: 8080

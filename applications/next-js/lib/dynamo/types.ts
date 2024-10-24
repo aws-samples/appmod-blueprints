@@ -30,8 +30,7 @@ export type Image = {
 export type CartProduct = {
   product: Product;
   quantity: number;
-  selected_variant: ProductVariants;
-  selected_option: ProductOptions;
+  selectedVariant: ProductVariants | undefined;
 }
 
 export type ProductOptions = {
@@ -57,24 +56,9 @@ export type Product = {
   images: Image[];
 };
 
-export type CartItem = {
-  id: string;
-  quantity: number;
-  cost: string;
-  merchandise: {
-    id: string;
-    title: string;
-    selectedOptions: {
-      name: string;
-      value: string;
-    }[];
-    product: Product;
-  };
-};
-
 export type Cart = {
   id: string;
-  products: CartItem[];
+  products: CartProduct[];
   totalQuantity: number;
   cost: string;
   checkoutUrl: string;

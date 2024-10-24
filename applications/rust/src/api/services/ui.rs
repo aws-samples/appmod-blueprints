@@ -1,8 +1,10 @@
 use crate::types::{Category, Menu, Page, Product, UIResponder};
 use crate::utils::{query_ddb, reconstruct_result, reconstruct_results};
 use aws_sdk_dynamodb as ddb;
+use tracing::{info, instrument};
 use rocket::serde::json::Json;
 use rocket::{error, get, State};
+
 
 #[get("/menu/<menu_id>")]
 pub async fn get_menu(menu_id: &str) -> UIResponder<Vec<Menu>> {
@@ -62,11 +64,14 @@ pub async fn get_page(_page_handle: String) -> UIResponder<Page> {
     UIResponder::Ok(Page::default().into())
 }
 
+
 #[get("/pages")]
 pub async fn get_pages() -> UIResponder<Vec<Page>> {
     UIResponder::Ok(vec![Page::default()].into())
 }
 
+
+#[instrument(skip(db))]
 #[get("/category/<category_handle>")]
 pub async fn get_category(
     category_handle: &str,
@@ -93,6 +98,8 @@ pub async fn get_category(
     };
 }
 
+
+#[instrument(skip(db))]
 #[get("/category/<category_handle>/products")]
 pub async fn get_category_products(
     category_handle: &str,
@@ -119,6 +126,7 @@ pub async fn get_category_products(
     };
 }
 
+#[instrument(skip(db))]
 #[get("/categories")]
 pub async fn get_categories(
     db: &State<ddb::Client>,
@@ -140,6 +148,7 @@ pub async fn get_categories(
     };
 }
 
+#[instrument(skip(db))]
 #[get("/collection/<collection_handle>")]
 pub async fn get_collection(
     collection_handle: &str,

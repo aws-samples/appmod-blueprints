@@ -1,51 +1,64 @@
 apiVersion: core.oam.dev/v1beta1
 kind: Application
 metadata:
-  name: rust-app
+  name: rust-svc
 spec:
   components:
-    - name: rust-app-setup
-      type: job
+    - name: rust-svc
+      type: appmod-service
       properties:
-        image: setup/rust-service
-      traits:
-        - type: scalar
-          properties:
-            replicas: 1  # ensure it's only run once
-            restartPolicy: Never
-        - type: s3
-          properties:
-            allow:
-              - read
-              - write
-        - type: dynamo
-          properties:
-            allow:
-              - read
-              - write
-              - create
-        - type: cdn
-          properties:
-            allow:
-              - read
-              - write
-    - name: rust-app-deployment
-      type: webservice
-      properties:
-        image: app/rust-service
+        image:  771830474512.dkr.ecr.us-west-2.amazonaws.com/app/rust-svc
+        image_name: rust-app
         port: 8080
       traits:
-        - type: dynamo
+        - type: path-based-ingress
           properties:
-            allow:
-              - read
-              - write
-  policies:
-    - name: deploy-ha
+            domain: "*.amazonaws.com"
+            rewritePath: "/rust-app"
+            http:
+              /rust-app: 8080
+        - type: aws-service-account
+          properties:
+            componentNamesForAccess:
+              - rust-ddb
+            clusterRegion: us-west-2
+            clusterName: modern-engineering
+    - name: rust-s3
+      type: s3-bucket
       properties:
-        components:
-          - type: webservice
-            traits:
-              - type: scalar
-                properties:
-                  replicas: 3
+        region: us-west-2
+        name: rust-bucket-12345
+      traits:
+        - type: component-iam-policy
+          properties:
+            service: s3
+    - name: rust-ddb
+      type: dynamodb
+      properties:
+        region: us-west-2
+        tableName: q-apps-table
+        attributeDefinition: [
+          {
+            attributeName: "partition_key",
+            attributeType: "STRING"
+          },
+          {
+            attributeName: "sort_key",
+            attributeType: "STRING"
+          }
+        ]
+        keySchema: [
+          {
+            attributeName: "partition_key",
+            keyType: "HASH"
+          },
+          {
+            attributeName: "sort_key",
+            keyType: "RANGE"
+          }
+        ]
+      traits:
+        - type: component-iam-policy
+          properties:
+            service: dynamodb
+

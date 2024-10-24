@@ -18,30 +18,27 @@ edition = "2021"
 name = "api"
 path = "src/api/main.rs"
 
-[[bin]]
-name = "setup"
-path = "src/setup/main.rs"
-
-[[bin]]
-name = "integration"
-path = "integration/main.rs"
-
-
 [dependencies]
 csv = "1.3.0"
 rand = "0.8.5"
-futures = "0.3.30"
-aws-sdk-s3 = "1.47.0"
-aws-sdk-dynamodb = "1.43.0"
-serde_json = { version = "1.0.127" }
-tokio = { version = "1.40.0", features = ["macros", "rt", "rt-multi-thread"] }
-rocket = { version = "0.5.1", features = ["json"] }
-rocket_prometheus = "0.10.1"
-serde = { version= "1.0.209", features = ["derive"] }
-aws-config = { version = "1.5.5", features = ["behavior-version-latest"] }
-serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
-uuid = { version = "1.10.0", features = ["v4"] }
 image = "0.25.2"
-opentelemetry = { version = "0.24.0", features = ["logs", "metrics", "trace"]}
-opentelemetry_sdk = "0.24.0"
+futures = "0.3.31"
+tracing = "0.1.40"
+aws-sdk-s3 = "1.54.0"
+aws-sdk-dynamodb = "1.49.0"
+rocket_prometheus = "0.10.1"
+serde_json = { version = "1.0.128" }
+uuid = { version = "1.10.0", features = ["v4"] }
+rocket = { version = "0.5.1", features = ["json"] }
+serde = { version= "1.0.209", features = ["derive"] }
+serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
+tokio = { version = "1.40.0", features = ["macros", "rt", "rt-multi-thread"] }
+aws-config = { version = "1.5.5", features = ["behavior-version-latest"] }
 opentelemetry-prometheus = "0.17.0"
+opentelemetry-appender-log = "0.26.0"
+opentelemetry-appender-tracing = "0.26.0"
+tracing-opentelemetry = "0.27.0"
+opentelemetry_sdk = { version = "0.26.0", features = ["rt-tokio"] }
+opentelemetry = { version = "0.26.0", features = ["logs", "metrics", "trace"]}
+opentelemetry-otlp = { version = "0.26.0", features = ["reqwest-client", "reqwest-rustls", "http-proto"] }
+tracing-subscriber = "0.3.18"

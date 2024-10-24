@@ -1,18 +1,18 @@
-"use client";
+'use client';
 
-import { Dialog, Transition } from "@headlessui/react";
-import { ShoppingCartIcon } from "@heroicons/react/24/outline";
-import Price from "components/price";
-import { DEFAULT_OPTION } from "lib/constants";
-import type { Cart } from "lib/dynamo/types";
-import { createUrl } from "lib/utils";
-import Image from "next/image";
-import Link from "next/link";
-import { Fragment, useEffect, useRef, useState } from "react";
-import CloseCart from "./close-cart";
-import { DeleteItemButton } from "./delete-item-button";
-import { EditItemQuantityButton } from "./edit-item-quantity-button";
-import OpenCart from "./open-cart";
+import { Dialog, Transition } from '@headlessui/react';
+import { ShoppingCartIcon } from '@heroicons/react/24/outline';
+import Price from 'components/price';
+import { DEFAULT_OPTION } from 'lib/constants';
+import type { Cart } from 'lib/dynamo/types';
+import { createUrl } from 'lib/utils';
+import Image from 'next/image';
+import Link from 'next/link';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import CloseCart from './close-cart';
+import { DeleteItemButton } from './delete-item-button';
+import { EditItemQuantityButton } from './edit-item-quantity-button';
+import OpenCart from './open-cart';
 
 type MerchandiseSearchParams = {
   [key: string]: string;
@@ -20,27 +20,27 @@ type MerchandiseSearchParams = {
 
 export default function CartModal({ cart }: { cart: Cart | undefined }) {
   const [isOpen, setIsOpen] = useState(false);
-  const quantityRef = useRef(cart?.totalQuantity);
+  const quantityRef = useRef(cart?.products.length);
   const openCart = () => setIsOpen(true);
   const closeCart = () => setIsOpen(false);
 
   useEffect(() => {
     // Open cart modal when quantity changes.
-    if (cart?.totalQuantity !== quantityRef.current) {
+    if (cart?.products.length !== quantityRef.current) {
       // But only if it's not already open (quantity also changes when editing items in cart).
       if (!isOpen) {
         setIsOpen(true);
       }
 
       // Always update the quantity reference
-      quantityRef.current = cart?.totalQuantity;
+      quantityRef.current = cart?.products.length;
     }
-  }, [isOpen, cart?.totalQuantity, quantityRef]);
+  }, [isOpen, cart?.products.length, quantityRef]);
 
   return (
     <>
       <button aria-label="Open cart" onClick={openCart}>
-        <OpenCart quantity={cart?.totalQuantity} />
+        <OpenCart quantity={cart?.products.length} />
       </button>
       <Transition show={isOpen}>
         <Dialog onClose={closeCart} className="relative z-50">
@@ -76,28 +76,23 @@ export default function CartModal({ cart }: { cart: Cart | undefined }) {
               {!cart || cart.products.length === 0 ? (
                 <div className="mt-20 flex w-full flex-col items-center justify-center overflow-hidden">
                   <ShoppingCartIcon className="h-16" />
-                  <p className="mt-6 text-center text-2xl font-bold">
-                    Your cart is empty.
-                  </p>
+                  <p className="mt-6 text-center text-2xl font-bold">Your cart is empty.</p>
                 </div>
               ) : (
                 <div className="flex h-full flex-col justify-between overflow-hidden p-1">
                   <ul className="flex-grow overflow-auto py-4">
                     {cart.products.map((item, i) => {
-                      const merchandiseSearchParams =
-                        {} as MerchandiseSearchParams;
+                      const merchandiseSearchParams = {} as MerchandiseSearchParams;
 
-                      item.merchandise.selectedOptions.forEach(
-                        ({ name, value }) => {
-                          if (value !== DEFAULT_OPTION) {
-                            merchandiseSearchParams[name.toLowerCase()] = value;
-                          }
-                        },
-                      );
+                      item.product.options.forEach(({ name }) => {
+                        if (name !== DEFAULT_OPTION) {
+                          merchandiseSearchParams[name.toLowerCase()] = name;
+                        }
+                      });
 
                       const merchandiseUrl = createUrl(
-                        `/product/${item.merchandise.product.id}`,
-                        new URLSearchParams(merchandiseSearchParams),
+                        `/product/${item.product.id}`,
+                        new URLSearchParams(merchandiseSearchParams)
                       );
 
                       return (
@@ -119,21 +114,16 @@ export default function CartModal({ cart }: { cart: Cart | undefined }) {
                                   className="h-full w-full object-cover"
                                   width={64}
                                   height={64}
-                                  alt={
-                                    item.merchandise.product.images[0]!
-                                      .altText || item.merchandise.product.name
-                                  }
-                                  src={item.merchandise.product.images[0]!.url}
+                                  alt={item.product.images[0]!.altText || item.product.name}
+                                  src={item.product.images[0]!.url}
                                 />
                               </div>
 
                               <div className="flex flex-1 flex-col text-base">
-                                <span className="leading-tight">
-                                  {item.merchandise.product.name}
-                                </span>
-                                {item.merchandise.title !== DEFAULT_OPTION ? (
+                                <span className="leading-tight">{item.product.name}</span>
+                                {item.product.name !== DEFAULT_OPTION ? (
                                   <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                                    {item.merchandise.title}
+                                    {item.product.name}
                                   </p>
                                 ) : null}
                               </div>
@@ -141,23 +131,15 @@ export default function CartModal({ cart }: { cart: Cart | undefined }) {
                             <div className="flex h-16 flex-col justify-between">
                               <Price
                                 className="flex justify-end space-y-2 text-right text-sm"
-                                amount={item.cost}
-                                currencyCode={"USD"}
+                                amount={item.selectedVariant?.price || item.product.price}
+                                currencyCode={'USD'}
                               />
                               <div className="ml-auto flex h-9 flex-row items-center rounded-full border border-neutral-200 dark:border-neutral-700">
-                                <EditItemQuantityButton
-                                  item={item}
-                                  type="minus"
-                                />
+                                <EditItemQuantityButton item={item} type="minus" />
                                 <p className="w-6 text-center">
-                                  <span className="w-full text-sm">
-                                    {item.quantity}
-                                  </span>
+                                  <span className="w-full text-sm">{item.quantity}</span>
                                 </p>
-                                <EditItemQuantityButton
-                                  item={item}
-                                  type="plus"
-                                />
+                                <EditItemQuantityButton item={item} type="plus" />
                               </div>
                             </div>
                           </div>

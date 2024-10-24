@@ -1,0 +1,18 @@
+# A list of scrape configurations.
+scrape_configs:
+  # The job name assigned to scraped metrics by default.
+  - job_name: 'rust-metrics-demo'
+
+    # How frequently to scrape targets from this job.
+    scrape_interval: 5s
+
+    # The HTTP resource path on which to fetch metrics from targets.
+    metrics_path: "/metrics"
+
+    # List of labeled statically configured targets for this job.
+    static_configs:
+      # The targets specified by the static config.
+      - targets: ['host.docker.internal:8080']
+        # Labels assigned to all metrics scraped from the targets.
+        labels:
+          app: 'rust-app'

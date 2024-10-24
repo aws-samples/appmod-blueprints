@@ -1,0 +1,58 @@
+name: Rust Microservice CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Login to Amazon ECR
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+
+      - name: Build and push microservice
+        env:
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        run: |
+          cd ./applications/rust/
+          docker build -t $ECR_REGISTRY/moderneng/rust-microservice:${{ gitea.sha }} .
+          docker push $ECR_REGISTRY/moderneng/rust-microservice:${{ gitea.sha }}
+
+      - name: Build and push test image
+        env:
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        run: |
+          cd ./applications/rust/integration
+          docker build -f Dockerfile -t $ECR_REGISTRY/moderneng/rust-test:${{ gitea.sha }} .
+          docker push $ECR_REGISTRY/moderneng/rust-test:${{ gitea.sha }}
+
+  test:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          profile: minimal
+          toolchain: stable
+
+      - name: Run tests
+        run: |
+          cd ./applications/rust/
+          cargo test
+        # TODO: @vshardul write some tests. Unit tests are usually quite nice

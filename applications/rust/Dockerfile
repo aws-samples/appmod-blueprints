@@ -22,7 +22,7 @@ COPY src/api/ ./src/api/
 # Required for Rocket
 RUN update-ca-certificates
 
-RUN cargo build --bin api --target x86_64-unknown-linux-musl --release && exit 0
+RUN cargo build --bin api --target x86_64-unknown-linux-musl --release
 
 # Copy the statically-linked binary into a scratch container.
 FROM scratch
@@ -37,4 +37,4 @@ USER 1000
 ENV ROCKET_ADDRESS=0.0.0.0
 ENV ROCKET_PORT=8080
 
-CMD ["./lambda"]
+CMD ["./api"]

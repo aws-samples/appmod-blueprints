@@ -1,10 +1,12 @@
 use crate::types::{Product, UIResponder};
-use crate::utils::{reconstruct_result, reconstruct_results};
+use crate::utils::{reconstruct_result, reconstruct_results, TracingSpan};
 use aws_sdk_dynamodb as ddb;
 use aws_sdk_dynamodb::types::AttributeValue;
 use rocket::serde::json::Json;
 use rocket::{error, get, post, State};
+use tracing::instrument;
 
+#[instrument(skip(db))]
 #[get("/product/<id>")]
 pub async fn get_product(
     id: &str,
@@ -33,6 +35,7 @@ pub async fn get_product(
     }
 }
 
+#[instrument(skip(db))]
 #[post("/products", format = "json", data = "<search_val>")]
 pub async fn get_products(
     search_val: Json<String>,
