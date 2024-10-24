@@ -20,5 +20,6 @@ spec:
     - ./ray-serve/template-ray-serve.yaml
     - ./serverless-microservice/template-serverless-microservice.yaml
     - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
+    - ./cicd-pipeline/template-cicd-pipeline.yaml
 
 

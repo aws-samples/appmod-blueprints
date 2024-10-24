@@ -1,0 +1,216 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${{values.namespace}}
+  labels:
+    name: ${{values.namespace}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${{values.appname}}-provisioner
+  namespace: ${{values.namespace}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${{values.appname}}-provisioner-binding
+  namespace: ${{values.namespace}}
+subjects:
+- kind: ServiceAccount
+  name: ${{values.appname}}-provisioner
+  namespace: ${{values.namespace}}
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: operate-workflow-sa
+  namespace: ${{values.namespace}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: operate-workflow-sa-binding
+  namespace: ${{values.namespace}}
+subjects:
+- kind: ServiceAccount
+  name: operate-workflow-sa
+  namespace: ${{values.namespace}}
+roleRef:
+  kind: ClusterRole
+  name: argo-workflows-server
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: cicd-provisioner-${{values.appname}}
+  namespace: ${{values.namespace}}
+spec:
+  entrypoint: cicd-provisioner
+  serviceAccountName: ${{values.appname}}-provisioner
+  arguments:
+    parameters:
+    - name: appname
+      value: ${{values.appname}}
+    - name: namespace
+      value: ${{values.namespace}}
+    - name: aws_region
+      value: ${{values.aws_region}}
+    - name: hostname
+      value: ${{values.hostname}}
+
+  templates:
+  - name: cicd-provisioner
+    dag:
+      tasks:
+        - name: create-aws-credential-secret
+          template: create-aws-credential-secret
+
+        - name: get-ecr-secret
+          template: get-ecr-secret
+          depends: "create-aws-credential-secret"
+
+        - name: create-docker-registry-secret
+          template: create-docker-registry-secret
+          arguments:
+            parameters:
+            - name: ecr_secret
+              value: "{{tasks.get-ecr-secret.outputs.result}}"
+          depends: "get-ecr-secret"
+
+        - name: create-gitea-credential-secret
+          template: create-gitea-credential-secret
+          depends: "create-docker-registry-secret"
+
+        - name: get-gitea-token
+          template: get-gitea-token
+          depends: "create-gitea-credential-secret"
+
+        - name: update-gitea-credential-secret
+          template: update-gitea-credential-secret
+          arguments:
+            parameters:
+            - name: token
+              value: "{{tasks.get-gitea-token.outputs.result}}"
+          depends: "get-gitea-token"
+
+        - name: create-ecr-repository
+          template: create-ecr-repository
+          depends: "update-gitea-credential-secret"
+
+        - name: create-gitea-webhook
+          template: create-gitea-webhook
+          depends: "create-ecr-repository"
+
+
+  - name: create-aws-credential-secret
+    container:
+      image: bitnami/kubectl:latest
+      command: ["/bin/sh", "-c"]
+      args:
+      - |
+        kubectl get secret aws-credentials --namespace=flux-system -o yaml | sed 's/namespace: .*/namespace: "{{workflow.parameters.namespace}}"/' | kubectl apply -f -
+
+  - name: get-ecr-secret
+    container:
+      image: amazon/aws-cli:latest
+      command: ["/bin/bash", "-c"]
+      envFrom:
+      - secretRef:
+          name: aws-credentials
+      args: 
+      - |
+        aws ecr get-login-password --region "{{workflow.parameters.aws_region}}"
+
+  - name: create-docker-registry-secret
+    inputs:
+      parameters:
+      - name: ecr_secret
+    container:
+      image: bitnami/kubectl:latest
+      command: ["/bin/bash", "-c"]
+      args:
+      - |
+        kubectl create secret docker-registry regcred -n "{{workflow.parameters.namespace}}" \
+          --docker-server="{{workflow.parameters.aws_region}}".amazonaws.com \
+          --docker-username=AWS \
+          --docker-password="{{inputs.parameters.ecr_secret}}"
+
+  - name: create-gitea-credential-secret
+    container:
+      image: bitnami/kubectl:latest
+      command: ["/bin/sh", "-c"]
+      args:
+      - |
+        kubectl get secret gitea-credential --namespace=gitea -o yaml | yq e 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.selfLink,.metadata.managedFields,.metadata.annotations."kubectl.kubernetes.io/last-applied-configuration") | .metadata.creationTimestamp=null' - | kubectl apply -n "{{workflow.parameters.namespace}}" -f -
+
+  - name: get-gitea-token
+    container:
+      image: alpine:3.20
+      command: ["/bin/sh", "-c"]
+      envFrom:
+      - secretRef:
+          name: gitea-credential
+      args:
+      - |
+        set -e
+        apk add curl jq 2>&1 > /dev/null
+        gitea_api_url="{{workflow.parameters.hostname}}"/gitea/api/v1/users/giteaAdmin/tokens
+        payload='{"name":"{{workflow.parameters.appname}}-gitea-token","scopes":["write:repository"]}'
+        response=$(curl -X POST -u "$username:$password" -H "Content-Type: application/json" -d $payload $gitea_api_url)
+        echo $response | jq -r .sha1
+
+
+  - name: update-gitea-credential-secret
+    inputs:
+      parameters:
+      - name: token
+    container:
+      image: bitnami/kubectl:latest
+      command: ["/bin/sh", "-c"]
+      args:
+      - |
+        encode_token=$(echo -n "{{inputs.parameters.token}}" | base64)
+        kubectl get secret gitea-credential --namespace="{{workflow.parameters.namespace}}" -o yaml | yq e ".data.token = \"$encode_token\"" - | kubectl apply -f -
+
+
+  - name: create-ecr-repository
+    container:
+      image: amazon/aws-cli:latest
+      command: ["/bin/bash", "-c"]
+      envFrom:
+      - secretRef:
+          name: aws-credentials
+      args:
+      - |
+        aws ecr describe-repositories --repository-names "modengg/{{workflow.parameters.appname}}" --region "{{workflow.parameters.aws_region}}" 2>&1 > /dev/null
+        status=$?
+        if [[ ! "${status}" -eq 0 ]]; then
+            aws ecr create-repository --repository-name "modengg/{{workflow.parameters.appname}}" --region "{{workflow.parameters.aws_region}}" 2>&1 > /dev/null
+        fi
+
+  - name: create-gitea-webhook
+    container:
+      image: alpine:3.20
+      command: ["/bin/sh", "-c"]
+      args:
+      - |
+        apk add curl jq
+        hooks_api_url="{{workflow.parameters.hostname}}"/gitea/api/v1/repos/giteaAdmin/"{{workflow.parameters.appname}}"/hooks
+        webhook_url="http://{{workflow.parameters.hostname}}"/argo-events/"{{workflow.parameters.appname}}"
+        webhook_details=$(curl -k -X 'GET' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${token}" -H "Content-Type: application/json" | jq '.[].config.url')
+        if [ -z "$webhook_details" ]; then
+          echo "Webhook is not found, creating webhook with $webhook_url"
+          curl -k -X 'POST' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${token}" -H "Content-Type: application/json" -d '{"branch_filter": "main","type": "gitea", "events":["push"], "config": {"url": "'${webhook_url}'", "content_type": "json"}, "active": true}'
+        else
+          echo "Webhook is already exists"
+        fi
+      envFrom:
+      - secretRef:
+          name: gitea-credential

@@ -1,0 +1,299 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: ${{values.appname}}-cicd
+  namespace: ${{values.namespace}}
+spec:
+  service:
+    ports:
+      - port: 12000
+        targetPort: 12000
+  webhook:
+    github:
+      port: "12000"
+      endpoint: /
+      method: POST
+      filter: 
+        expression: 'indexOf(body.head_commit.message, "[SKIP CI]") == -1'
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: ${{values.appname}}-cicd
+  namespace: ${{values.namespace}}
+spec:
+  template:
+    serviceAccountName: operate-workflow-sa
+  dependencies:
+    - name: source-dep
+      eventSourceName: ${{values.appname}}-cicd
+      eventName: github
+  triggers:
+    - template:
+        name: "${{values.appname}}-cicd-argo-workflow-trigger"
+        argoWorkflow:
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: ${{values.appname}}-cicd-flow-
+                namespace: ${{values.namespace}}
+                labels:
+                  env: dev
+                  entity-id: ${{values.appname}}-cicd
+              spec:
+                serviceAccountName: admin
+                entrypoint: ci-build
+                arguments:
+                  parameters:
+                    - name: apprepo
+                      value: ${{values.hostname}}/gitea/${{values.gitea_user}}/${{values.appname}}
+                    - name: branch
+                      value: main
+                    - name: tag-version
+                      value: 0.0.1
+                volumeClaimTemplates:
+                - metadata:
+                    name: workdir
+                  spec:
+                    accessModes: ["ReadWriteOnce"]
+                    storageClassName: gp2
+                    resources:
+                      requests:
+                        storage: 256Mi
+                templates:
+                  - name: ci-build
+                    dag:
+                      tasks:
+                        - name: clean
+                          template: cleandir
+
+                        - name: clone
+                          template: clonerepo
+                          arguments:
+                            parameters:
+                              - name: apprepo
+                                value: "{{workflow.parameters.apprepo}}"
+                              - name: branch
+                                value: "{{workflow.parameters.branch}}"
+                          depends: "clean"
+
+                        - name: get-ecr-repo
+                          template: get-ecr-repo
+                          depends: "clone"
+                        
+                        - name: build-and-push-image
+                          template: build-image-kaniko
+                          arguments:
+                            parameters:
+                              - name: image
+                                value: "{{tasks.get-ecr-repo.outputs.result}}"
+                              - name: tag-version
+                                value: "{{workflow.parameters.tag-version}}"
+                          depends: "get-ecr-repo"
+
+                        - name: update-and-push-image-version
+                          template: update-image-tag
+                          arguments:
+                            parameters:
+                              - name: env
+                                value: dev
+                              - name: image
+                                value: "{{tasks.get-ecr-repo.outputs.result}}"
+                              - name: tag
+                                value: "{{workflow.parameters.tag-version}}"
+                              - name: apprepo
+                                value: "{{workflow.parameters.apprepo}}"
+                          depends: "build-and-push-image"
+                        
+                  - name: cleandir 
+                    container:
+                      volumeMounts:
+                        - mountPath: /workdir
+                          name: workdir
+                      image: alpine:3.20
+                      workingDir: /workdir
+                      args:
+                        - /bin/sh
+                        - -c
+                        - |
+                          set -ex
+                          if [ "$(ls -A /workdir)" ]; then
+                            echo "Directory /workdir is not empty. Removing contents..."
+                            rm -rf /workdir/*
+                          fi
+                        
+                  - name: clonerepo
+                    inputs:
+                      parameters:
+                        - name: apprepo
+                        - name: branch
+                    container:
+                      volumeMounts:
+                        - mountPath: /workdir
+                          name: workdir
+                      image: alpine/git:v2.45.1
+                      workingDir: /workdir
+                      args:
+                        - clone
+                        - --depth
+                        - "1"
+                        - --branch
+                        - "{{inputs.parameters.branch}}"
+                        - --single-branch
+                        - "https://{{inputs.parameters.apprepo}}"
+                        - -c
+                        - http.sslVerify=false
+                        - .
+
+                  - name: get-ecr-repo
+                    container:
+                      image: amazon/aws-cli:latest
+                      command: ["/bin/bash", "-c"]
+                      envFrom:
+                      - secretRef:
+                          name: aws-credentials
+                      args:
+                        - |
+                          aws ecr describe-repositories --region ${{values.aws_region}} --repository-names "modengg/${{values.appname}}" --query 'repositories[0].repositoryUri' --output text
+                  
+                  - name: build-image-kaniko
+                    inputs:
+                      parameters:
+                        - name: image
+                        - name: tag-version
+                    volumes:
+                      - name: docker-config
+                        secret:
+                          secretName: regcred
+                    container:
+                      image: gcr.io/kaniko-project/executor:latest
+                      volumeMounts:
+                        - name: workdir
+                          mountPath: /workdir
+                        - name: docker-config
+                          mountPath: /kaniko/.docker
+                      workingDir: /workdir
+                      envFrom:
+                      - secretRef:
+                          name: aws-credentials
+                      resources:
+                        limits:
+                          cpu: 1
+                          memory: 2Gi
+                      env:
+                        - name: DOCKER_CONFIG
+                          value: /kaniko/.docker
+                      args:
+                      - --dockerfile=Dockerfile
+                      - --context=.
+                      - --destination={{inputs.parameters.image}}:{{inputs.parameters.tag-version}}
+                      - --skip-tls-verify
+                      - --cache=false
+
+                  - name: update-image-tag
+                    inputs:
+                      parameters:
+                        - name: env 
+                        - name: image
+                        - name: tag
+                        - name: apprepo
+                    container:
+                      volumeMounts:
+                        - mountPath: /workdir
+                          name: workdir
+                      image: alpine/git:v2.45.2
+                      env:
+                      - name: GITEA_USER
+                        valueFrom:
+                          secretKeyRef:
+                            name: gitea-credential
+                            key: username
+                      - name: GITEA_PWD
+                        valueFrom:
+                          secretKeyRef:
+                            name: gitea-credential
+                            key: password 
+                      workingDir: /workdir
+                      command: ['/bin/sh']
+                      args:
+                        - -c
+                        - |
+                          set -ex
+                          mkdir -p deployment/"{{inputs.parameters.env}}"
+                          echo "{{inputs.parameters.image}}:{{inputs.parameters.tag}}" > ./deployment/"{{inputs.parameters.env}}"/image.txt
+                          m_count=$(git status -s | wc -l)
+                          if [ $m_count == 1 ]; then
+                            git config --global user.email "noreply@aws.com" 
+                            git config --global user.name ARGO
+                            git remote set-url origin https://$GITEA_USER:$GITEA_PWD@"{{inputs.parameters.apprepo}}".git
+                            git add ./deployment
+                            image_version="{{inputs.parameters.tag}}"
+                            git commit -m "[SKIP CI] Updated image version to $image_version"
+                            git push --set-upstream origin main
+                          else
+                            echo "No updates to values file, skipping git push"
+                          fi
+
+
+                        
+
+          parameters:
+            - src:
+                dependencyName: source-dep
+                dataTemplate: "{{ .Input.body.head_commit.id }}"
+              dest: spec.arguments.parameters.2.value
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${{values.appname}}-cicd-webhook-es-svc
+  namespace: ${{values.namespace}}
+  labels:
+    app: argo-events
+    app.kubernetes.io/name: argo-events
+    app.kubernetes.io/instance: my-argo-events
+spec:
+  ports:
+  - port: 12000
+    protocol: TCP
+    targetPort: 12000
+  selector:
+    eventsource-name: ${{values.appname}}-cicd
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${{values.appname}}-cicd-webhook-es-ing
+  namespace: ${{values.namespace}}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 512m
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${{values.hostname}}
+      http:
+        paths:
+          - backend:
+              service:
+                name: ${{values.appname}}-cicd-webhook-es-svc
+                port:
+                  number: 12000
+            path: /argo-events/${{values.appname}}(/|$)(.*)
+            pathType: ImplementationSpecific
+    - host: localhost
+      http:
+        paths:
+          - backend:
+              service:
+                name: ${{values.appname}}-cicd-webhook-es-svc
+                port:
+                  number: 12000
+            path: /argo-events/${{values.appname}}(/|$)(.*)
+            pathType: ImplementationSpecific

@@ -27,27 +27,14 @@ roleRef:
   name: read-all
   apiGroup: rbac.authorization.k8s.io
 ---
-# These are needed for the argo workflow plugin to create workflows during scaffolding.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: backstage-argo-worfklows
-rules:
-- apiGroups: ["argoproj.io"]
-  resources: ["workflows"]
-  verbs: ["create"]
-- apiGroups: [""]
-  resources: ["configmaps"]
-  verbs: ["create"]  
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: backstage-argo-worfklows
+  name: backstage-argo-workflows-admin
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: backstage-argo-worfklows
+  name: cluster-admin
 subjects:
 - kind: ServiceAccount
   name: backstage

@@ -1,0 +1,95 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  description: Deploy an Argo Events based CI/CD Pipeline for your App
+  name: cicd-pipeline
+  title: Deploy CI/CD Pipeline
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - properties:
+        appname:
+          title: name of app for cicd
+          type: string
+        namespace:
+          title: namespace within the kubernetes cluster to deploy this
+          type: string
+        aws_region:
+          default: us-west-2
+          title: aws region for ecr repo
+          type: string
+        hostname:
+          title: URL of management cluster
+          type: string
+      title: Configuration Options
+      required:
+        - appname
+        - namespace
+        - hostname
+  steps:
+    - action: fetch:template
+      name: Fetch Base
+      id: fetch-base
+      input:
+        url: ./skeleton/
+        values:
+          appname: ${{ parameters.appname }}
+          namespace: ${{ parameters.namespace }}
+          aws_region: ${{ parameters.aws_region }}
+          hostname: ${{parameters.hostname}}
+          gitea_user: giteaAdmin
+
+    - id: publish
+      name: Publishing to a gitea git repository
+      action: publish:gitea
+      input:
+        description: CodeBuild create clusters template
+        # Hard coded value for this demo purposes only.
+        repoUrl: ${{parameters.hostname}}/gitea?repo=${{parameters.appname}}-cicd
+        defaultBranch: main
+
+    - action: fetch:template
+      name: Fetch Provisioner
+      id: fetch-provisioner
+      input:
+        url: ./provisioner/
+        values:
+          appname: ${{ parameters.appname }}
+          namespace: ${{ parameters.namespace }}
+          aws_region: ${{ parameters.aws_region }}
+          hostname: ${{parameters.hostname}}
+          gitea_user: giteaAdmin
+
+    - action: cnoe:kubernetes:apply
+      name: Apply Provisioner
+      id: apply-prov
+      input:
+        namespaced: true
+        manifestPath: provisioner.yaml
+        clusterName: local
+
+    - id: create-argocd-app
+      name: Create ArgoCD App
+      action: cnoe:create-argocd-app
+      input:
+        appName: ${{parameters.appname}}-cicd
+        appNamespace: ${{parameters.namespace}}
+        argoInstance: in-cluster
+        projectName: default
+        # necessary until we generate our own cert
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.appname}}-cicd
+        path: "manifests"
+    - id: register
+      name: Register
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: 'catalog-info.yaml'
+  output:
+    links:
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+
+
