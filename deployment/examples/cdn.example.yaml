@@ -1,0 +1,17 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: my-web-service
+spec:
+  components:
+    - name: web-cdn
+      type: cdn
+      properties:
+        region: us-east-1
+    - name: web-server
+      type: webservice
+      properties:
+        image: nginx:latest
+        ports:
+          - port: 80
+            expose: true

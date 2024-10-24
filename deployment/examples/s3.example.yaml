@@ -1,0 +1,20 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: my-s3-application
+spec:
+  components:
+    - name: my-s3-bucket
+      type: s3-bucket
+      properties:
+        environment: "production"
+        configuration: "standard"
+        providerConfigName: "aws-provider"
+        region: "us-west-2"
+    - name: web-server
+      type: webservice
+      properties:
+        image: nginx:latest
+        ports:
+          - port: 80
+            expose: true
