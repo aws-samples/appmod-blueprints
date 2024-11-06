@@ -79,7 +79,7 @@ The following components are installed if you chose the full installation option
 | Name | Version |
 |---|---------|
 | argo-workflows | v3.4.8  |
-| argocd | v2.10.7 |
+| argocd | v2.7.6  |
 | aws-load-balancer-controller | v2.5.3  |
 | backstage | v1.16.0 |
 | cert-manager | v1.12.2 |
