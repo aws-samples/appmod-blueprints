@@ -48,7 +48,7 @@ spec:
       server: https://kubernetes.default.svc
     - namespace: tf-eks-observability
       server: https://kubernetes.default.svc
-    - Name: dev-cluster
-      Namespace: team-*
-    - Name: prod-cluster
-      Namespace: team-*
+    - name: dev-cluster
+      namespace: team-*
+    - name: prod-cluster
+      namespace: team-*

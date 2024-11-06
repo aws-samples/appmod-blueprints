@@ -21154,11 +21154,6 @@ metadata:
   name: argocd-ssh-known-hosts-cm
 ---
 apiVersion: v1
-data:
-  '{{.Host}}': |
-    {{ .SelfSignedCert | indentNewLines 4 }}
-  gitea.{{.Host}}: |
-    {{ .SelfSignedCert | indentNewLines 4 }}
 kind: ConfigMap
 metadata:
   labels:
@@ -22139,11 +22134,9 @@ spec:
       containers:
         - args:
             - /usr/local/bin/argocd-server
-            - '{{if .UsePathRouting}}'
             - --insecure
             - --basehref
             - /argocd
-            - '{{end}}'
           env:
             - name: ARGOCD_SERVER_INSECURE
               valueFrom:
