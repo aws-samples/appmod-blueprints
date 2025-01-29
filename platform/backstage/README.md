@@ -2,21 +2,25 @@
 
 This repo has following backstage templates which can be plugged in to your Internal Developer Portal via backstage readily:
 
+- `apigw-sqs-terraform` backstage template allows you to implement queue based leveling using API Gateway and Amazon SQS.
 - `create-dev-and-prod-env` backstage template enables you to deploy 2 EKS clusters for Dev and Prod application environments
 - `eks-cost-monitoring` backstage template enables you to deploy an EKS cluster with cost monitoring tools on your cluster to enable your Kubernetes cluster with cost monitoring out of the box.
 - `eks-istio` backstage template enables you to deploy an EKS cluster with istio as service mesh for managing networking and telemetry for your micro services.
 - `eks-nvdia-gpu-efa` backstage template enables you to deploy an EKS cluster with GPU infrastructure to run ML and LLM based workloads.
 - `eks-observability-accelerator` backstage template enables you to deploy an EKS cluster with complete suite of open source observability tooling out of the box.
 - `eks-stateful-workload` backstage template enables you to deploy an EKS cluster with all necessary day 2 ops tooling to run stateful workloads on your kubernetes cluster.
+- `eventbridge-schedule-to-lambda-terraform-python` backstage template enables you to invoke a python Lambda function every 5 minutes.
 - `jupyerhub-on-eks` backstage template enables you to deploy an EKS cluster with a setup to run JupyterHub notebook.
 - `microservices` backstage template provides you with an ArgoCD app setup for your Git repo for GitOps based deployment on your EKS cluster.
 - `microservices-with-repo` backstage template provides you with a Git repo and ArgoCD app setup for GitOps based deployment on your EKS cluster.
 - `ray-serve` backstage template provides enables to you serve your ML models on your Kubernetes cluster via Ray Serve.
 - `rds-cluster` backstage template provides you a mechanism to create an Amazon RDS cluster via CrossPlane from your Kubernetes cluster.
 - `s3-bucket` backstage template provides you a mechanism to create an Amazon S3 bucket via CrossPlane from your Kubernetes cluster.
+- `s3-lambda-terraform` backstage template will trigger a Lambda function which will output the upload of an object to S3 event as a log
 - `serverless-microservice` backstage template provides you a setup to deploy microservice on AWS environment via terraform backstage integrations.
 - `spark-job` backstage template enables you to run a Spark Job for Data or ML engineering on your Kubernetes cluster.
 - `spark-on-eks` backstage template enables you to deploy an EKS cluster with Spark operator to run Spark jobs.
+- `stepfunctions-bedrock-terraform` backstage template deploys a Step Functions Express workflow that invokes Amazon Bedrock Anthropic Claude Model v2.1 and returns generated content based on the provided prompt.
 
 Some of above patterns require you to install `crossplane`, `flux`, `tofu-controller`, `ray`, `spark` operators. If you have setup your backstage environment using our [AppMod Blueprints reference implementation on EKS](https://github.com/aws-samples/appmod-blueprints/tree/feature/modern-engg-integratedflow), you should be all set.
 You can import these backstage templates manually via backstage console or you also use below config in `backstage-config` configmap.
