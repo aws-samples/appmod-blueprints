@@ -1,0 +1,74 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  description: Create an API Gateway SQS Terraform template
+  name: apigw-sqs-terraform
+  title: API Gateway SQS Terraform Template
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - properties:
+        tfVars:
+          title: Terraform variables
+          properties:
+            name:
+              title: Name for the build
+              type: string
+            aws_region:
+              description: AWS Region
+              type: string
+          required:
+            - name
+            - aws_region
+          type: object
+        adminRoleName:
+          description: Name of the role to give the administrative rights
+          title: Admin role name
+          type: string
+        namespace:
+          default: flux-system
+          title: Existing namespace to create this resource
+          type: string
+      title: Configuration options
+  steps:
+    - action: fetch:template
+      id: fetch-base
+      input:
+        url: ./template-apigw-sqs-terraform/
+        values:
+          adminRoleName: ${{parameters.adminRoleName}}
+          name: ${{parameters.tfVars.name}}
+          namespace: ${{parameters.namespace}}
+          tfVars: ${{parameters.tfVars}}
+      name: Fetch Base
+    - id: publish
+      name: Publishing to a gitea git repository
+      action: publish:gitea
+      input:
+        description: Example of serverless microservice # change this
+        # Hard coded value for this demo purposes only.
+        repoUrl: cnoe.localtest.me:8443/gitea?repo=${{parameters.tfVars.name}}
+        defaultBranch: main
+    - id: create-argocd-app
+      name: Create ArgoCD App
+      action: cnoe:create-argocd-app
+      input:
+        appName: ${{parameters.tfVars.name}}
+        appNamespace: ${{parameters.namespace}}
+        argoInstance: in-cluster
+        projectName: default
+        # necessary until we generate our own cert
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.tfVars.name}}
+        path: "manifests"
+    - id: register
+      name: Register
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: 'catalog-info.yaml'
+  output:
+    links:
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}

@@ -1,0 +1,13 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: apigw-sqs-terraform-${{values.name}}
+  annotations:
+    backstage.io/kubernetes-namespace: ${{values.namespace}}
+    backstage.io/kubernetes-id: apigw-sqs-terraform-${{values.name}}
+    argo-workflows.cnoe.io/label-selector: env=dev,entity-id=${{values.name}}
+    argo-workflows.cnoe.io/cluster-name: local
+spec:
+  type: service
+  lifecycle: experimental
+  owner: guest
