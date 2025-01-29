@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "stepfunctions-bedrock-terraform-${{values.name}}-tf-cm"
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+data:
+  ${{ values.tfVars | dump }}
