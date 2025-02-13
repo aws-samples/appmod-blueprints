@@ -6,7 +6,7 @@ metadata:
   labels:
     app: postgresql
 spec:
-  storageClassName: gp2
+  storageClassName: gp3
   capacity:
   accessModes:
     - ReadWriteOnce

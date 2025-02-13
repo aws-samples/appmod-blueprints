@@ -1,0 +1,36 @@
+apiVersion: kyverno.io/v2beta1
+kind: PolicyException
+metadata:
+  name: keycloak-cnoe-operation
+  namespace: kyverno
+spec:
+  exceptions:
+    - policyName: disallow-privilege-escalation
+      ruleNames:
+        - privilege-escalation
+        - autogen-privilege-escalation
+    - policyName: disallow-capabilities-strict
+      ruleNames:
+        - require-drop-all
+        - autogen-require-drop-all
+    - policyName: require-run-as-nonroot
+      ruleNames:
+        - run-as-non-root
+        - autogen-run-as-non-root
+    - policyName: restrict-seccomp-strict
+      ruleNames:
+        - check-seccomp-strict
+        - autogen-check-seccomp-strict
+  match:
+    any:
+      - resources:
+          kinds:
+            - Pod
+            - Deployment
+            - ReplicaSet
+            - StatefulSet
+          namespaces:
+            - keycloak
+          names:
+            # TODO: this should be more targeted than blanket *
+            - keycloak*

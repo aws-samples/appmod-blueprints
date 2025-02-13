@@ -1,0 +1,56 @@
+---
+apiVersion: eks.amazonaws.com/v1
+kind: NodeClass
+metadata:
+  name: modern-engineering-nodeclass # Could do with a new name likely
+spec:
+  role: "modern-engineering"
+ # blockDeviceMappings:
+ #   - deviceName: /dev/xvda
+ #     ebs:
+ #       volumeSize: 50Gi
+ #       volumeType: gp3
+  ephemeralStorage: # I believe EKS Auto Mode handles the VolumeType since it is not a configuration option.
+    size: "50Gi"  # Equivalent to blockDeviceMappings in Karpenter
+  subnetSelectorTerms:
+    - tags:
+        eks.amazonaws.com/discovery: modern-engineering
+  securityGroupSelectorTerms:
+    - tags:
+        eks.amazonaws.com/discovery: modern-engineering
+  tags:
+    eks.amazonaws.com/discovery: modern-engineering
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: modern-engineering-nodepool # Could do with a new name likely
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: modern-engineering-nodeclass # Calls the NodeClass above
+      requirements:
+        - key: "eks.amazonaws.com/instance-category"
+          operator: In
+          values: ["c", "m", "r"]
+        - key: "eks.amazonaws.com/instance-cpu"
+          operator: In
+          values: ["4", "8", "16", "32"]
+        - key: "eks.amazonaws.com/instance-hypervisor"
+          operator: In
+          values: ["nitro"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+        - key: "eks.amazonaws.com/instance-generation"
+          operator: Gt
+          values: ["2"]
+  limits:
+    cpu: "1000"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 300s
+  weight: 10
