@@ -1,0 +1,13 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: "eventbridge-schedule-to-lambda-terraform-python-${{values.name}}-git-repository"
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  interval: 5m
+  timeout: 3m
+  url: https://github.com/beautse/serverless-patterns-small-copy.git
+  ref:
+    branch: main

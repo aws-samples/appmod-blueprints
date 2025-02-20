@@ -1,0 +1,25 @@
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: stepfunctions-bedrock-terraform-${{values.name}}
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  path: ./tf-patterns/stepfunctions-bedrock-terraform
+  approvePlan: auto
+  retryInterval: 10s
+  interval: 2m
+  destroyResourcesOnDeletion: true
+  sourceRef:
+    kind: GitRepository
+    name: "stepfunctions-bedrock-terraform-${{values.name}}-git-repository"
+    namespace: flux-system
+  varsFrom:
+    - kind: ConfigMap
+      name: "stepfunctions-bedrock-terraform-${{values.name}}-tf-cm"
+  runnerPodTemplate:
+    spec:
+      envFrom:
+        - secretRef:
+            name: aws-credentials
