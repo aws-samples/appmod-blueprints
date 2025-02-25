@@ -1,10 +1,10 @@
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: s3-lambda-terraform-${{values.name}}
+  name: eventbridge-to-lambda-terraform-${{values.name}}
   annotations:
     backstage.io/kubernetes-namespace: ${{values.namespace}}
-    backstage.io/kubernetes-id: s3-lambda-terraform-${{values.name}}
+    backstage.io/kubernetes-id: eventbridge-to-lambda-terraform-${{values.name}}
     argocd/app-name: ${{values.name | dump}}
 spec:
   type: service

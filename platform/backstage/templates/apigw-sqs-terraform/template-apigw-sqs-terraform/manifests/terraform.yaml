@@ -6,7 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
-  path: ./apigw-sqs-terraform
+  path: ./tf-patterns/apigw-sqs-terraform
   approvePlan: auto
   retryInterval: 10s
   interval: 2m
@@ -18,8 +18,3 @@ spec:
   varsFrom:
     - kind: ConfigMap
       name: "apigw-sqs-terraform-${{values.name}}-tf-cm"
-  runnerPodTemplate:
-    spec:
-      envFrom:
-        - secretRef:
-            name: aws-credentials

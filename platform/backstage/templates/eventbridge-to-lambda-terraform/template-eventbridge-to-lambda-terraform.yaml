@@ -2,7 +2,7 @@ apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
   description: Create an eventbridge schedule to invoke a lambda function
-  name: eventbridge-schedule-to-lambda-terraform-python
+  name: eventbridge-to-lambda-terraform
   title: EventBridge Schedule to Lambda Terraform Python Template
 spec:
   owner: guest
@@ -13,7 +13,7 @@ spec:
           title: Terraform variables
           properties:
             name:
-              title: Name for the build
+              title: Name for the microservice
               type: string
             aws_region:
               description: AWS Region
@@ -22,6 +22,10 @@ spec:
             - name
             - aws_region
           type: object
+        repoUrl:
+          description: Gitea URL on management cluster
+          title: Gitea URL
+          type: string
         adminRoleName:
           description: Name of the role to give the administrative rights
           title: Admin role name
@@ -31,11 +35,13 @@ spec:
           title: Existing namespace to create this resource
           type: string
       title: Configuration options
+      required:
+        - repoUrl
   steps:
     - action: fetch:template
       id: fetch-base
       input:
-        url: ./template-eventbridge-schedule-to-lambda-terraform-python/
+        url: ./template-eventbridge-to-lambda-terraform/
         values:
           adminRoleName: ${{parameters.adminRoleName}}
           name: ${{parameters.tfVars.name}}
@@ -46,9 +52,9 @@ spec:
       name: Publishing to a gitea git repository
       action: publish:gitea
       input:
-        description: Example of serverless microservice # change this
+        description: Example of eventbridge to lambda terraform # change this
         # Hard coded value for this demo purposes only.
-        repoUrl: cnoe.localtest.me:8443/gitea?repo=${{parameters.tfVars.name}}
+        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.tfVars.name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App

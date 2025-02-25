@@ -22,6 +22,10 @@ spec:
             - name
             - aws_region
           type: object
+        repoUrl:
+          description: Gitea URL on management cluster
+          title: Gitea URL
+          type: string
         adminRoleName:
           description: Name of the role to give the administrative rights
           title: Admin role name
@@ -31,6 +35,8 @@ spec:
           title: Existing namespace to create this resource
           type: string
       title: Configuration options
+      required:
+        - repoUrl
   steps:
     - action: fetch:template
       id: fetch-base
@@ -46,9 +52,9 @@ spec:
       name: Publishing to a gitea git repository
       action: publish:gitea
       input:
-        description: Example of serverless microservice # change this
+        description: Example of bedrock stepfunction orchestration
         # Hard coded value for this demo purposes only.
-        repoUrl: cnoe.localtest.me:8443/gitea?repo=${{parameters.tfVars.name}}
+        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.tfVars.name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App

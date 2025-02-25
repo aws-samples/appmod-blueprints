@@ -18,8 +18,3 @@ spec:
   varsFrom:
     - kind: ConfigMap
       name: "stepfunctions-bedrock-terraform-${{values.name}}-tf-cm"
-  runnerPodTemplate:
-    spec:
-      envFrom:
-        - secretRef:
-            name: aws-credentials

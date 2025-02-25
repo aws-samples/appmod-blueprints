@@ -1,7 +1,7 @@
 apiVersion: infra.contrib.fluxcd.io/v1alpha2
 kind: Terraform
 metadata:
-  name: eventbridge-schedule-to-lambda-terraform-python-${{values.name}}
+  name: eventbridge-to-lambda-terraform-${{values.name}}
   namespace: flux-system
   annotations:
     argocd.argoproj.io/sync-wave: "2"
@@ -13,13 +13,8 @@ spec:
   destroyResourcesOnDeletion: true
   sourceRef:
     kind: GitRepository
-    name: "eventbridge-schedule-to-lambda-terraform-python-${{values.name}}-git-repository"
+    name: "eventbridge-to-lambda-terraform-${{values.name}}-git-repository"
     namespace: flux-system
   varsFrom:
     - kind: ConfigMap
-      name: "eventbridge-schedule-to-lambda-terraform-python-${{values.name}}-tf-cm"
-  runnerPodTemplate:
-    spec:
-      envFrom:
-        - secretRef:
-            name: aws-credentials
+      name: "eventbridge-to-lambda-terraform-${{values.name}}-tf-cm"

@@ -1,9 +1,9 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Create an S3 to Lambda with Terraform
+  description: Set up an S3 bucket that triggers a Lambda function to log object creation events
   name: s3-lambda-terraform
-  title: S3 Lambda Terraform
+  title: S3 to Lambda
 spec:
   owner: guest
   type: service
@@ -22,6 +22,10 @@ spec:
             - name
             - aws_region
           type: object
+        repoUrl:
+          description: Gitea URL on management cluster
+          title: Gitea URL
+          type: string
         adminRoleName:
           description: Name of the role to give the administrative rights
           title: Admin role name
@@ -31,6 +35,8 @@ spec:
           title: Existing namespace to create this resource
           type: string
       title: Configuration options
+      required:
+        - repoUrl
   steps:
     - action: fetch:template
       id: fetch-base
@@ -46,9 +52,9 @@ spec:
       name: Publishing to a gitea git repository
       action: publish:gitea
       input:
-        description: Example of serverless microservice # change this
+        description: Example of S3 to Lambda
         # Hard coded value for this demo purposes only.
-        repoUrl: cnoe.localtest.me:8443/gitea?repo=${{parameters.tfVars.name}}
+        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.tfVars.name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App

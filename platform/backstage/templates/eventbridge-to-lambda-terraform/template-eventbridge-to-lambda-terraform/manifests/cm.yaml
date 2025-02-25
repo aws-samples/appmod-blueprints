@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: "eventbridge-schedule-to-lambda-terraform-python-${{values.name}}-tf-cm"
+  name: "eventbridge-to-lambda-terraform-${{values.name}}-tf-cm"
   namespace: flux-system
   annotations:
     argocd.argoproj.io/sync-wave: "0"

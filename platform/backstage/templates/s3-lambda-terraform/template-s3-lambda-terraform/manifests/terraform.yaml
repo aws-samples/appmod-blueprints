@@ -18,8 +18,3 @@ spec:
   varsFrom:
     - kind: ConfigMap
       name: "s3-lambda-terraform-${{values.name}}-tf-cm"
-  runnerPodTemplate:
-    spec:
-      envFrom:
-        - secretRef:
-            name: aws-credentials
