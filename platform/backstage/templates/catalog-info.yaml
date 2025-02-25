@@ -25,4 +25,4 @@ spec:
     - ./s3-lambda-terraform/template-s3-lambda-terraform.yaml
     - ./stepfunctions-bedrock-terraform/template-stepfunctions-bedrock-terraform.yaml
     - ./apigw-sqs-terraform/template-apigw-sqs-terraform.yaml
-    - ./eventbridge-schedule-to-lambda-terraform-python/template-eventbridge-schedule-to-lambda-terraform-python.yaml
+    - ./eventbridge-to-lambda-terraform/template-eventbridge-to-lambda-terraform.yaml
