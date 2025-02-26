@@ -156,7 +156,7 @@ spec:
         		apiVersion: "external-secrets.io/v1beta1"
         		kind:       "ExternalSecret"
         		metadata: {
-        			name:      "amp-workspace-secrets"
+        			name:      "amp-workspace-secrets-\(context.name)"
         			namespace: context.namespace
         		}
         		spec: {
@@ -165,7 +165,7 @@ spec:
         				kind: "ClusterSecretStore"
         			}
         			target: {
-        				name: "amp-workspace"
+        				name: "amp-workspace-\(context.name)"
         				template: type: "Opaque"
         			}
         			data: [
@@ -195,13 +195,13 @@ spec:
         				args: [{
         					name: "amp-workspace-url"
         					valueFrom: secretKeyRef: {
-        						name: "amp-workspace"
+        						name: "amp-workspace-\(context.name)"
         						key:  "amp-workspace-url"
         					}
         				}, {
         					name: "amp-workspace-region"
         					valueFrom: secretKeyRef: {
-        						name: "amp-workspace"
+        						name: "amp-workspace-\(context.name)"
         						key:  "amp-workspace-region"
         					}
         				}]

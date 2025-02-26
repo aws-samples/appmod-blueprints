@@ -164,7 +164,7 @@ template: {
 			apiVersion: "external-secrets.io/v1beta1"
 			kind:       "ExternalSecret"
 			metadata: {
-				name:      "amp-workspace-secrets"
+				name:      "amp-workspace-secrets-\(context.name)"
 				namespace: context.namespace
 			}
 			spec: {
@@ -173,7 +173,7 @@ template: {
 					kind: "ClusterSecretStore"
 				}
 				target: {
-					name: "amp-workspace"
+					name: "amp-workspace-\(context.name)"
 					template: type: "Opaque"
 				}
 				data: [
@@ -205,13 +205,13 @@ template: {
 					args: [{
 						name: "amp-workspace-url"
 						valueFrom: secretKeyRef: {
-							name: "amp-workspace"
+							name: "amp-workspace-\(context.name)"
 							key: "amp-workspace-url"
 						}
 					}, {
 						name: "amp-workspace-region"
 						valueFrom: secretKeyRef: {
-							name: "amp-workspace"
+							name: "amp-workspace-\(context.name)"
 							key: "amp-workspace-region"
 						}
 					}]
@@ -307,7 +307,7 @@ template: {
 														"image": parameter.performanceGate.image,
 														"args": [
 															"\(previewService):\(parameter.port)",
-															"\(parameter.functionalGate.extraArgs)"
+															"\(parameter.performanceGate.extraArgs)"
 															
 														]
 													}
