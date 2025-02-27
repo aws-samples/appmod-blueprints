@@ -8,6 +8,9 @@ metadata:
 spec:
   interval: 5m
   timeout: 3m
-  url: https://github.com/aws-samples/appmod-partners-serverless.git
+  url: https://github.com/aws-samples/serverless-patterns.git
   ref:
     branch: main
+  ignore: |
+    /*
+    !/s3-lambda-terraform/**

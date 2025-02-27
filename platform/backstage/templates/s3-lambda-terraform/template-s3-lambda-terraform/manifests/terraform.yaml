@@ -6,7 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
-  path: ./tf-patterns/s3-lambda-terraform
+  path: ./
   approvePlan: auto
   retryInterval: 10s
   interval: 2m
