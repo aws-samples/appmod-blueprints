@@ -5,8 +5,7 @@ metadata:
   annotations:
     backstage.io/kubernetes-namespace: ${{values.namespace}}
     backstage.io/kubernetes-id: apigw-sqs-terraform-${{values.name}}
-    argo-workflows.cnoe.io/label-selector: env=dev,entity-id=${{values.name}}
-    argo-workflows.cnoe.io/cluster-name: local
+    argocd/app-name: ${{values.name | dump}}
 spec:
   type: service
   lifecycle: experimental
