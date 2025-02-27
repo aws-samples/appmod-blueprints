@@ -11,6 +11,3 @@ spec:
   url: https://github.com/aws-samples/serverless-patterns.git
   ref:
     branch: main
-  ignore: |
-    /*
-    !/s3-lambda-terraform/**
