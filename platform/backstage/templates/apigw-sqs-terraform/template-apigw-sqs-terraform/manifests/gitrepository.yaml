@@ -8,9 +8,6 @@ metadata:
 spec:
   interval: 5m
   timeout: 3m
-  url: https://github.com/aws-samples/serverless-patterns.git
+  url: https://github.com/aws-samples/appmod-partners-serverless.git
   ref:
     branch: main
-  ignore: |
-      /*
-      !/apigw-sqs-terraform/**

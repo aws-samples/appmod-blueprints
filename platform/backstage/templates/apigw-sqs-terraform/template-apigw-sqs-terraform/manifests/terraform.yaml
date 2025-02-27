@@ -6,7 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
-  path: ./
+  path: ./tf-patterns/apigw-sqs-terraform
   approvePlan: auto
   retryInterval: 10s
   interval: 2m
