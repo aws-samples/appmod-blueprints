@@ -18,3 +18,8 @@ spec:
   varsFrom:
     - kind: ConfigMap
       name: "apigw-sqs-terraform-${{values.name}}-tf-cm"
+  runnerPodTemplate:
+    spec:
+      envFrom:
+        - secretRef:
+            name: aws-credentials
