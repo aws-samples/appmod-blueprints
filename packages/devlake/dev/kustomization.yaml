@@ -1,0 +1,3 @@
+patchesStrategicMerge:
+  - patches/deployment-devlake-ui
+  - pathes/deployment-devlake
