@@ -1,4 +1,78 @@
 ################################################################################
+# Security Groups
+################################################################################
+
+resource "aws_security_group" "lb_sg" {
+  name        = "${local.name}-lb-sg"
+  description = "Security group for the ALB"
+  vpc_id      = module.vpc.vpc_id  # Ensure this references the correct VPC
+
+  # Allow inbound traffic for HTTP (80) and HTTPS (443) from all sources
+  ingress {
+    description = "Allow HTTPS traffic from anywhere"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]  # Open to all IPv4 addresses
+  }
+
+  ingress {
+    description = "Allow HTTP traffic from anywhere"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Allow all outbound traffic
+  egress {
+    description = "Allow all outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${local.name}-lb-sg"
+  }
+}
+
+resource "aws_security_group" "node_sg" {
+  name        = "${local.name}-node-sg"
+  description = "Security group for EC2 nodes in EKS Auto Mode"
+  vpc_id      = module.vpc.vpc_id
+
+  # Allow inbound traffic from the ALB security group on ports 80 and 443
+  ingress {
+    description     = "Allow HTTPS from ALB"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+  }
+
+  ingress {
+    description     = "Allow HTTP from ALB"
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+  }
+
+  # Allow all outbound traffic
+  egress {
+    description = "Allow all outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${local.name}-node-sg"
+  }
+}
+
+################################################################################
 # Cluster
 ################################################################################
 
@@ -19,6 +93,27 @@ module "eks" {
     enabled    = true
   }
 
+  # Modify Security Groups to Allow NLB Traffic
+  cluster_security_group_additional_rules = {
+    ingress_from_nlb_80 = {
+      description = "Allow inbound traffic from NLB on port 80"
+      protocol    = "tcp"
+      from_port   = 80
+      to_port     = 80
+      type        = "ingress"
+      source_security_group_id = aws_security_group.node_sg.id  # Attach Load Balancer SG
+    }
+
+    ingress_from_nlb_443 = {
+      description = "Allow inbound traffic from NLB on port 443"
+      protocol    = "tcp"
+      from_port   = 443
+      to_port     = 443
+      type        = "ingress"
+      source_security_group_id = aws_security_group.node_sg.id  # Attach Load Balancer SG
+    }
+  }
+
   cluster_addons = {
     eks-pod-identity-agent = {}
     kube-proxy             = {}
@@ -30,12 +125,12 @@ module "eks" {
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
-    tags = merge(local.tags, {
-     # NOTE - if creating multiple security groups with this module, only tag the
-     # security group that Karpenter should utilize with the following tag
-     # (i.e. - at most, only one security group should have this tag in your account)
-     "eks.amazonaws.com/discovery" = local.name
-    })
+  tags = merge(local.tags, {
+    # NOTE - if creating multiple security groups with this module, only tag the
+    # security group that Karpenter should utilize with the following tag
+    # (i.e. - at most, only one security group should have this tag in your account)
+    "eks.amazonaws.com/discovery" = local.name
+  })
   }
 
 output "configure_kubectl" {
