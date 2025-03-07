@@ -16,10 +16,11 @@ spec:
       helm:
         releaseName: devlake 
         valueFiles:
-          - $values/packages/devlake/dev/values.yaml
+          - $values/packages/devlake/base/values.yaml
     - repoURL: ${GITHUB_URL}
       targetRevision: HEAD
       ref: values
+      path: packages/devlake/dev
   destination:
     server: "https://kubernetes.default.svc"
     namespace: devlake

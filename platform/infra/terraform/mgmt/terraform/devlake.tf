@@ -47,14 +47,14 @@ resource "aws_iam_role_policy_attachment" "external_secrets_role_attach_devlake"
   policy_arn = aws_iam_policy.external-secrets-devlake[0].arn
 }
 
-resource "kubernetes_manifest" "namespace_keycloak" {
+resource "kubernetes_manifest" "namespace_devlake" {
   count = local.secret_count
 
   manifest = {
     "apiVersion" = "v1"
     "kind"       = "Namespace"
     "metadata" = {
-      "name" = "keycloak"
+      "name" = "devlake"
     }
   }
 }
@@ -78,7 +78,7 @@ resource "kubernetes_manifest" "serviceaccount_external_secret_devlake" {
   }
 }
 
-resource "kubectl_manifest" "keycloak_secret_store" {
+resource "kubectl_manifest" "devlake_secret_store" {
   depends_on = [
     kubernetes_manifest.serviceaccount_external_secret_devlake
   ]

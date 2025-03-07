@@ -22,3 +22,4 @@ spec:
     - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
     - ./cicd-pipeline/template-cicd-pipeline.yaml
     - ./create-env-aurora-postgres/template-env-aurora-postgres.yaml
+    - ./devlake-onboarding/template-devlake-onboarding.yaml

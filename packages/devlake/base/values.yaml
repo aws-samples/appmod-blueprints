@@ -1,0 +1,41 @@
+# dependency chart values
+grafana:
+  enabled: false
+  external:
+    url: "http://localhost:4000" # Set to AMG Endpoint in setup-environments
+
+mysql:
+  storage:
+    class: gp3
+
+lake:
+  image:
+    repository: public.ecr.aws/o3w6s6n3/devlake/lake
+    pullPolicy: Always
+    tag: latest
+  # storage for config
+  encryptionSecret:
+    # The name of secret which contains keys named ENCRYPTION_SECRET
+    secretName: devlake-encryption-secret
+
+
+ui:
+  image:
+    repository: public.ecr.aws/o3w6s6n3/devlake/ui
+    pullPolicy: Always
+    tag: latest
+
+  # Look into adding an auth proxy like done: https://github.com/oauth2-proxy/oauth2-proxy/blob/master/contrib/local-environment/docker-compose-keycloak.yaml
+  basicAuth:
+    enabled: true
+    user: admin
+    password: devlake-admin
+    autoCreateSecret: true
+    secretName: "devlake-admin-secret"
+
+service:
+  # service type: NodePort/ClusterIP
+  type: ClusterIP
+
+ingress:
+  enabled: false
