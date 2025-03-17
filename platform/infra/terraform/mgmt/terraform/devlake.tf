@@ -90,11 +90,12 @@ resource "kubectl_manifest" "devlake_secret_store" {
 }
 
 
-resource "terraform_data" "devlake_encryption_secret" {
-  provisioner "local-exec" {
-    command     = "openssl rand -base64 2000 | tr -dc 'A-Z' | fold -w 128 | head -n 1"
-    interpreter = ["/bin/bash", "-c"]
-  }
+resource "random_password" "devlake_encryption_secret" {
+  length  = 128
+  special = false
+  lower   = false
+  upper   = true
+  numeric = false
 }
 
 resource "aws_secretsmanager_secret" "devlake_encryption_secret" {
@@ -110,7 +111,7 @@ resource "aws_secretsmanager_secret_version" "devlake_encryption_secret" {
 
   secret_id = aws_secretsmanager_secret.devlake_encryption_secret[0].id
   secret_string = jsonencode({
-    ENCRYPTION_SECRET = terraform_data.devlake_encryption_secret.result
+    ENCRYPTION_SECRET = random_password.devlake_encryption_secret.result
   })
 }
 

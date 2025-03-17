@@ -1,8 +1,8 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: crossplane
-  namespace: devlake 
+  name: devlake 
+  namespace: argocd
   labels:
     env: dev
   finalizers:
@@ -18,7 +18,7 @@ spec:
         valueFiles:
           - $values/packages/devlake/base/values.yaml
     - repoURL: ${GITHUB_URL}
-      targetRevision: HEAD
+      targetRevision: feat/dora-metrics 
       ref: values
       path: packages/devlake/dev
   destination:

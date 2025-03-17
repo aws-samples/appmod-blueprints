@@ -17,6 +17,7 @@ lake:
   encryptionSecret:
     # The name of secret which contains keys named ENCRYPTION_SECRET
     secretName: devlake-encryption-secret
+    autoCreateSecret: false
 
 
 ui:
