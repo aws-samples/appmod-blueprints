@@ -62,7 +62,6 @@ resource "kubectl_manifest" "applications-argocd-jupyterhub" {
     terraform_data.jupyterhub-setup
   ]
   yaml_body = templatefile("${path.module}/templates/argocd-apps/jupyterhub.yaml", {
-    GITHUB_URL     = local.repo_url,
     JUPYTERHUB_URL = "https://${local.domain_name}/jupyterhub",
     KC_URL         = local.kc_url
     }

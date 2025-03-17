@@ -1,17 +1,17 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: crossplane-provider-dev
+  name: grafana-workload-dashboards
   namespace: argocd
 spec:
   project: default
   source:
-    repoURL: https://github.com/aws-samples/appmod-blueprints
-    targetRevision: HEAD
-    path: packages/crossplane-provider/dev/
+    repoURL: ${GITHUB_URL}
+    targetRevision: ${GITHUB_BRANCH}
+    path: "packages/grafana/manifests/"
   destination:
     name: 'dev-cluster'
-    namespace: crossplane-system
+    namespace: grafana-operator
   syncPolicy:
     automated:
       selfHeal: true

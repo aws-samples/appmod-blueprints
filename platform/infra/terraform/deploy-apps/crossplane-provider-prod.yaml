@@ -6,8 +6,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/aws-samples/appmod-blueprints
-    targetRevision: HEAD
+    repoURL: ${GITHUB_URL}
+    targetRevision: ${GITHUB_BRANCH}
     path: packages/crossplane-provider/dev/
   destination:
     name: 'prod-cluster'

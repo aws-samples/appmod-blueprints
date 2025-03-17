@@ -1,6 +1,7 @@
 resource "kubectl_manifest" "application_argocd_cert_manager" {
   yaml_body = templatefile("${path.module}/templates/argocd-apps/cert-manager.yaml", {
-    REPO_URL = local.repo_url
+    GITHUB_URL = local.repo_url
+    GITHUB_BRANCH = local.repo_branch
   })
 
   provisioner "local-exec" {

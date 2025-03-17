@@ -1,0 +1,29 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  annotations:
+    definition.oam.dev/alias: ""
+    definition.oam.dev/description: S3 Bucket ACK
+  name: s3-bucket-ack
+spec:
+  schematic:
+    cue:
+      template: |
+        output: {
+        	apiVersion: "s3.services.k8s.aws/v1alpha1"
+        	kind:       "Bucket"
+        	metadata: {
+            name: "\(parameter.name)"
+            annotations: "services.k8s.aws/region": "\(parameter.region)"
+          }
+        	spec: name: "\(parameter.name)"
+        }
+        parameter: {
+        	name:   string
+        	region: string
+        }
+  workload:
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+

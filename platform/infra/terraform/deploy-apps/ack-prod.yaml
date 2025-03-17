@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ack-prod
+  namespace: argocd
+  labels:
+    env: dev
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - chart: ack-chart
+      repoURL: public.ecr.aws/aws-controllers-k8s
+      targetRevision: 46.19.33
+      helm:
+        releaseName: ack-chart
+        valueFiles:
+          - $values/packages/ack/dev/values.yaml
+    - repoURL: ${GITHUB_URL}
+      targetRevision: ${GITHUB_BRANCH}
+      ref: values
+  destination:
+    name: "prod-cluster"
+    namespace: ack-system
+  syncPolicy:
+    automated: {}
+    syncOptions:
+      - CreateNamespace=true

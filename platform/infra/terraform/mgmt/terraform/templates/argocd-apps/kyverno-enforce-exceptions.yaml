@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     repoURL: ${GITHUB_URL}
-    targetRevision: HEAD
+    targetRevision: ${GITHUB_BRANCH}
     path: "packages/kyverno/enforce/exceptions"
     directory:
       recurse: true

@@ -34,7 +34,7 @@ module "external_secrets_role_keycloak" {
   count = local.secret_count
 
   role_name_prefix = "modern-engg-external-secrets-"
-  
+
   oidc_providers = {
     main = {
       provider_arn               = data.aws_iam_openid_connect_provider.eks_oidc.arn
@@ -69,7 +69,7 @@ resource "kubernetes_manifest" "serviceaccount_external_secret_keycloak" {
   depends_on = [
     kubernetes_manifest.namespace_keycloak
   ]
-  
+
   manifest = {
     "apiVersion" = "v1"
     "kind" = "ServiceAccount"
@@ -206,6 +206,7 @@ resource "kubectl_manifest" "application_argocd_keycloak" {
 
   yaml_body = templatefile("${path.module}/templates/argocd-apps/keycloak.yaml", {
       GITHUB_URL = local.repo_url
+      GITHUB_BRANCH = local.repo_branch
       PATH = "${local.secret_count == 1 ? "packages/keycloak/dev-external-secrets/" : "packages/keycloak/dev/"}"
     }
   )

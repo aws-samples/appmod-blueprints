@@ -23,7 +23,7 @@ spec:
           - name: server.sso.redirectUrl
             value: ${ARGO_REDIRECT_URL}
     - repoURL: ${GITHUB_URL}
-      targetRevision: HEAD
+      targetRevision: ${GITHUB_BRANCH}
       ref: values
   destination:
     server: "https://kubernetes.default.svc"

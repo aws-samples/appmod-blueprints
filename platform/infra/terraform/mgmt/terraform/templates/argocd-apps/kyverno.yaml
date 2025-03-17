@@ -11,7 +11,7 @@ spec:
   project: modern-engg
   source:
     chart: kyverno
-    repoURL: ${GITHUB_URL}
+    repoURL: https://kyverno.github.io/kyverno
     targetRevision: 3.2.7
     helm:
       releaseName: kyverno

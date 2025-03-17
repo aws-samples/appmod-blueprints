@@ -4,6 +4,12 @@ variable "repo_url" {
   type        = string
 }
 
+variable "repo_branch" {
+  description = "Repository Branch where application definitions are stored"
+  default     = "main"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags to apply to AWS resources"
   default = {

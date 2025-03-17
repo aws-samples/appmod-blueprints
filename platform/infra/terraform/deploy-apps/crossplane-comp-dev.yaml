@@ -1,16 +1,16 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: crossplane-compositions-prod
+  name: crossplane-compositions-dev
   namespace: argocd
 spec:
   project: default
   source:
-    repoURL: https://github.com/aws-samples/appmod-blueprints
-    targetRevision: HEAD
+    repoURL: ${GITHUB_URL}
+    targetRevision: ${GITHUB_BRANCH}
     path: "platform/crossplane/compositions"
   destination:
-    name: 'prod-cluster'
+    name: 'dev-cluster'
     namespace: crossplane-system
   syncPolicy:
     automated:

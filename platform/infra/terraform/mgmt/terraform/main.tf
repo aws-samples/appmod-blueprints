@@ -1,6 +1,7 @@
 
 locals {
   repo_url              = trimsuffix(var.repo_url, "/")
+  repo_branch           = var.repo_branch
   region                = var.region
   tags                  = var.tags
   cluster_name          = var.cluster_name

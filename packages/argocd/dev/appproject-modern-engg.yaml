@@ -16,6 +16,8 @@ spec:
     - group: '*'
       kind: '*'
   destinations:
+    - namespace: ack-system
+      server: https://kubernetes.default.svc
     - namespace: cert-manager
       server: https://kubernetes.default.svc
     - namespace: default

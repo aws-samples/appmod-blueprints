@@ -17,8 +17,8 @@ spec:
         releaseName: cert-manager
         valueFiles:
           - $values/packages/cert-manager/dev/values.yaml
-    - repoURL: ${REPO_URL}
-      targetRevision: HEAD
+    - repoURL: ${GITHUB_URL}
+      targetRevision: ${GITHUB_BRANCH}
       ref: values
   destination:
     server: "https://kubernetes.default.svc"

@@ -6,7 +6,7 @@ metadata:
 spec:
   targets:
     - ./rds-cluster/template.yaml
-    - ./s3-bucket/template.yaml
+    - ./s3-bucket-ack/template.yaml
     - ./app-deploy/template.yaml
     - ./app-deploy-without-repo/template.yaml
     - ./jupyterhub-on-eks/template-jupyterhub-on-eks.yaml
@@ -23,3 +23,7 @@ spec:
     - ./cicd-pipeline/template-cicd-pipeline.yaml
     - ./create-env-aurora-postgres/template-env-aurora-postgres.yaml
     - ./devlake-onboarding/template-devlake-onboarding.yaml
+    - ./s3-lambda-terraform/template-s3-lambda-terraform.yaml
+    - ./stepfunctions-bedrock-terraform/template-stepfunctions-bedrock-terraform.yaml
+    - ./apigw-sqs-terraform/template-apigw-sqs-terraform.yaml
+    - ./eventbridge-to-lambda-terraform/template-eventbridge-to-lambda-terraform.yaml

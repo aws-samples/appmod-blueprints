@@ -11,7 +11,7 @@ spec:
   project: modern-engg
   source:
     repoURL: ${GITHUB_URL}
-    targetRevision: HEAD
+    targetRevision: ${GITHUB_BRANCH}
     path: deployment/addons/kubevela
   destination:
     server: "https://kubernetes.default.svc"

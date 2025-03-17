@@ -72,7 +72,7 @@ resource "terraform_data" "argo_workflows_keycloak_setup" {
   provisioner "local-exec" {
     command = "./install.sh"
     working_dir = "${path.module}/scripts/argo-workflows"
-    
+
     environment = {
       "ARGO_WORKFLOWS_REDIRECT_URL" = "${local.argo_redirect_url}"
     }
@@ -81,7 +81,7 @@ resource "terraform_data" "argo_workflows_keycloak_setup" {
 
   provisioner "local-exec" {
     when = destroy
-    
+
     command = "./uninstall.sh"
     working_dir = "${path.module}/scripts/argo-workflows"
     interpreter = ["/bin/bash", "-c"]
@@ -95,6 +95,7 @@ resource "kubectl_manifest" "application_argocd_argo_workflows" {
 
   yaml_body = templatefile("${path.module}/templates/argocd-apps/argo-workflows.yaml", {
       GITHUB_URL = local.repo_url
+      GITHUB_BRANCH = local.repo_branch
       KEYCLOAK_MODERNENGG_URL = local.kc_url
       ARGO_REDIRECT_URL = local.argo_redirect_url
     }
@@ -108,6 +109,7 @@ resource "kubectl_manifest" "application_argocd_argo_workflows_sso_config" {
 
   yaml_body = templatefile("${path.module}/templates/argocd-apps/argo-workflows-sso-config.yaml", {
       GITHUB_URL = local.repo_url
+      GITHUB_BRANCH = local.repo_branch
     }
   )
 }

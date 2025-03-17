@@ -1,0 +1,49 @@
+s3:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: controller-ack-sa
+  aws:
+    region: us-west-2
+iam:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: controller-ack-sa
+  aws:
+    region: us-west-2
+apigatewayv2:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: controller-ack-sa
+  aws:
+    region: us-west-2
+eks:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: controller-ack-sa
+  aws:
+    region: us-west-2
+lambda:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: controller-ack-sa
+  aws:
+    region: us-west-2
+rds:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: controller-ack-sa
+  aws:
+    region: us-west-2
+dynamodb:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: controller-ack-sa
+  aws:
+    region: us-west-2

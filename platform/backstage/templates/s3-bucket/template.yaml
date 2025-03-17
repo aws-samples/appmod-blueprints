@@ -1,8 +1,8 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: s3-bucket-template
-  title: S3 Bucket Template
+  name: s3-bucket-template-crossplane
+  title: S3 Bucket Template Crosspane
   description: Create S3 bucket using OAM and CrossPlane
 spec:
   owner: guest

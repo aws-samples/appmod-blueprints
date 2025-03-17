@@ -13,6 +13,11 @@ output "crossplane_prod_provider_role_arn" {
   value       = module.crossplane_prod_provider_role.iam_role_arn
 }
 
+output "ack_prod_controller_role_arn" {
+  description = "Controller role of the ACK EKS PROD ServiceAccount for IRSA"
+  value       = module.ack_prod_controller_role.iam_role_arn
+}
+
 output "lb_controller_prod_role_arn" {
   description = "Provider role of the LB controller EKS PROD ServiceAccount for IRSA"
   value       = module.aws_load_balancer_prod_role.iam_role_arn

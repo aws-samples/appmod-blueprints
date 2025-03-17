@@ -315,3 +315,22 @@ module "argo_rollouts_dev_role" {
   tags = local.tags
 }
 
+module "ack_dev_controller_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.14"
+
+  role_name_prefix = "ack-dev-aws"
+  role_policy_arns = {
+    policy = "arn:aws:iam::aws:policy/AdministratorAccess"
+  }
+
+  assume_role_condition_test = "StringLike"
+  oidc_providers = {
+    main = {
+      provider_arn  = module.eks_blueprints_dev.eks_oidc_provider_arn
+      namespace_service_accounts = ["ack-system:controller-ack*"]
+    }
+  }
+  tags = local.tags
+}
+

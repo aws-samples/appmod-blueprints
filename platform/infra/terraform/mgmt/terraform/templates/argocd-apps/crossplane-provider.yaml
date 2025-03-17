@@ -11,7 +11,7 @@ spec:
   project: modern-engg
   source:
     repoURL: ${GITHUB_URL}
-    targetRevision: HEAD
+    targetRevision: ${GITHUB_BRANCH}
     path: packages/crossplane-provider/dev/
     parameters:
       - name: ROLE_ARN

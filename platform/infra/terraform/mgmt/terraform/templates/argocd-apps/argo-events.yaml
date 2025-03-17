@@ -8,9 +8,9 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: modern-engg 
+  project: modern-engg
   source:
-    repoURL: ${GITHUB_URL}
+    repoURL: https://argoproj.github.io/argo-helm
     targetRevision: 2.4.8
     chart: argo-events
     helm:

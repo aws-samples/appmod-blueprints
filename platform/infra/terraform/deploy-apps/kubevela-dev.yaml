@@ -1,16 +1,16 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: kubevela-prod
+  name: kubevela-dev
   namespace: argocd
 spec:
   project: default
   destination:
     namespace: vela-system
-    name: prod-cluster
+    name: dev-cluster
   source:
-    repoURL: https://github.com/aws-samples/appmod-blueprints.git
-    targetRevision: main
+    repoURL: ${GITHUB_URL}
+    targetRevision: ${GITHUB_BRANCH}
     path: deployment/addons/kubevela
   syncPolicy:
     automated:
