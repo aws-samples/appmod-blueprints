@@ -17,7 +17,7 @@ terraform apply -auto-approve
 
 aws eks --region us-west-2 update-kubeconfig --name modern-engineering
 
-kubectl apply -f ./karpenter.yaml
+kubectl apply -f ./auto-mode.yaml # Installs AutoMode to the management cluster.
 
 export GITHUB_URL=$(yq '.repo_url' ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/config.yaml)
 

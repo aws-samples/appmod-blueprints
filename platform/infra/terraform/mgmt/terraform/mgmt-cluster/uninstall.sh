@@ -17,6 +17,6 @@ cd -
 
 cd "${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/mgmt-cluster"
 
-kubectl delete -f ./karpenter.yaml || true
+kubectl delete -f ./auto-mode.yaml || true
 
 terraform destroy -auto-approve
