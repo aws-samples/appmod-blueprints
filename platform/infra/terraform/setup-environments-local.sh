@@ -116,5 +116,5 @@ export AWS_SESSION_TOKEN=$(echo $ASSUME_ROLE_OUTPUT | jq -r '.Credentials.Sessio
 echo "Running script with assumed role credentials"
 echo $(aws sts get-caller-identity)
 
-cd $REPO_ROOT/platform/infra/terraform
-./setup-environments.sh
+#cd $REPO_ROOT/platform/infra/terraform
+#./setup-environments.sh
