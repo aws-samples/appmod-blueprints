@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mysql-user-setup
+spec:
+  template:
+    metadata:
+      name: mysql-user-setup
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: create-grafana-user
+        image: mysql:8
+        command: 
+          - /bin/bash
+          - -c
+          - |
+            until mysql -h devlake-mysql -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
+              echo "Waiting for MySQL to be ready..."
+              sleep 2
+            done
+          
+            echo "Creating Grafana user..."
+            mysql -h devlake-mysql -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+            CREATE USER IF NOT EXISTS 'grafanaReader' IDENTIFIED BY 'grafana_password';
+            GRANT SELECT ON lake.* TO 'grafanaReader';
+            FLUSH PRIVILEGES;
+            "
+
+            echo "User creation completed."
+        envFrom:
+          - secretRef:
+              name: devlake-mysql-auth
+
