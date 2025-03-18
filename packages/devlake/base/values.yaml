@@ -7,11 +7,13 @@ grafana:
 mysql:
   storage:
     class: gp3
+
   securityContext:
     runAsNonRoot: true
     runAsUser: 999
     runAsGroup: 999
     fsGroup: 999
+
   containerSecurityContext:
     allowPrivilegeEscalation: false
     runAsNonRoot: true
@@ -19,6 +21,30 @@ mysql:
       drop: ["ALL"]
     seccompProfile:
       type: RuntimeDefault
+
+  initContainers:
+  - name: create-grafana-user
+    image: mysql:8
+    command: 
+      - /bin/bash
+      - -c
+      - |
+        until mysql -h devlake-mysql -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
+          echo "Waiting for MySQL to be ready..."
+          sleep 2
+        done
+      
+        echo "Creating Grafana user..."
+        mysql -h devlake-mysql -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+        CREATE USER IF NOT EXISTS 'grafanaReader' IDENTIFIED BY 'grafana_password';
+        GRANT SELECT ON lake.* TO 'grafanaReader';
+        FLUSH PRIVILEGES;
+        "
+
+        echo "User creation completed."
+    envFrom:
+      - secretRef:
+          name: devlake-mysql-auth
 
 lake:
   image:
@@ -30,11 +56,13 @@ lake:
     # The name of secret which contains keys named ENCRYPTION_SECRET
     secretName: devlake-encryption-secret
     autoCreateSecret: false
+
   securityContext:
     runAsNonRoot: true
     runAsUser: 1010    
     runAsGroup: 1010   
     fsGroup: 1010      
+
   containerSecurityContext:
     allowPrivilegeEscalation: false
     runAsNonRoot: true
@@ -49,6 +77,7 @@ alpine:
     runAsNonRoot: true
     runAsUser: 1000
     runAsGroup: 1000
+
   containerSecurityContext:
     allowPrivilegeEscalation: false
     runAsNonRoot: true
@@ -62,8 +91,10 @@ ui:
     repository: public.ecr.aws/o3w6s6n3/devlake/ui
     pullPolicy: Always
     tag: latest
+
   securityContext:
     runAsNonRoot: true
+
   containerSecurityContext:
     allowPrivilegeEscalation: false
     runAsNonRoot: true
