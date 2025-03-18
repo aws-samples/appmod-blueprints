@@ -7,6 +7,18 @@ grafana:
 mysql:
   storage:
     class: gp3
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
 
 lake:
   image:
@@ -18,13 +30,48 @@ lake:
     # The name of secret which contains keys named ENCRYPTION_SECRET
     secretName: devlake-encryption-secret
     autoCreateSecret: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1010    
+    runAsGroup: 1010   
+    fsGroup: 1010      
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
 
+
+alpine:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
 
 ui:
   image:
     repository: public.ecr.aws/o3w6s6n3/devlake/ui
     pullPolicy: Always
     tag: latest
+  securityContext:
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
+
 
   # Look into adding an auth proxy like done: https://github.com/oauth2-proxy/oauth2-proxy/blob/master/contrib/local-environment/docker-compose-keycloak.yaml
   basicAuth:
