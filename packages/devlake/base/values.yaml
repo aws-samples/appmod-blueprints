@@ -3,9 +3,6 @@ grafana:
   enabled: false
   external:
     url: "http://localhost:4000" # Set to AMG Endpoint in setup-environments
-commonEnvs:
-  DEVLAKE_PATH_PREFIX: "/devlake"
-
 
 mysql:
   storage:

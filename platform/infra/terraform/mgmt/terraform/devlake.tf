@@ -127,15 +127,3 @@ resource "kubectl_manifest" "application_argocd_devlake" {
 
 }
 
-
-resource "kubectl_manifest" "ingress_devlake" {
-  depends_on = [
-    kubectl_manifest.application_argocd_devlake,
-  ]
-
-  yaml_body = templatefile("${path.module}/templates/manifests/ingress-devlake.yaml", {
-    DEVLAKE_DOMAIN_NAME = local.domain_name
-    }
-  )
-}
-
