@@ -8,6 +8,10 @@ mysql:
   storage:
     class: gp3
 
+  service:
+    type: "NodePort"
+    nodePort: "30306"
+
   securityContext:
     runAsNonRoot: true
     runAsUser: 999

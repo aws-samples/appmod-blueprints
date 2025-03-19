@@ -1,3 +1,16 @@
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "Devlake Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://github.com/apache/incubator-devlake/tree/main/grafana/dashboards/DORA.json"
+---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
@@ -8,4 +21,16 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://github.com/apache/incubator-devlake/tree/main/grafana/dashboards"
+  url: "https://github.com/apache/incubator-devlake/tree/main/grafana/dashboards/DORA.json"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: devlake-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "Devlake Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://github.com/apache/incubator-devlake/tree/main/grafana/dashboards/DORA.json"
