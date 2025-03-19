@@ -30,7 +30,7 @@ spec:
           key: GRAFANA_MYSQL_PASSWORD
     - targetPath: "url"
       valueFrom:
-        configMapRef:
+        configMapKeyRef:
           name: "grafana-mysql-endpoint"
           key: MYSQL_ENDPOINT
   instanceSelector:
@@ -40,6 +40,7 @@ spec:
     name: mysql
     type: mysql
     url: ${MYSQL_ENDPOINT}
+    access: proxy
     user: grafanaReader
     secureJsonData:
       password: ${GRAFANA_MYSQL_PASSWORD}

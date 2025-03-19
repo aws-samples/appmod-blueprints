@@ -62,7 +62,7 @@ ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/install.sh
 cd ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/mgmt-cluster/
 export TF_eks_cluster_vpc_id=$(terraform output -raw eks_cluster_vpc_id)
 export TF_eks_cluster_private_subnets=$(terraform output -json eks_cluster_private_subnets)
-export TF_eks_cluster_node_security_group_id=$(terrafrom output -raw eks_cluster_node_security_group_id)
+export TF_eks_cluster_node_security_group_id=$(terraform output -raw eks_cluster_node_security_group_id)
 echo "private subnets are : " $TF_eks_cluster_private_subnets
 # For Database and EC2 database
 export TF_eks_cluster_vpc_cidr=$(terraform output -raw vpc_cidr)
@@ -122,8 +122,9 @@ git clone https://github.com/aws-observability/terraform-aws-observability-accel
 
 echo "bootstrapping Terraform"
 terraform -chdir=bootstrap init -reconfigure
-terraform -chdir=bootstrap plan
-terraform -chdir=bootstrap apply -auto-approve
+terraform -chdir=bootstrap plan -var eks_cluster_private_subnets="$TF_eks_cluster_private_subnets" -var eks_cluster_node_security_group_id="$TF_eks_cluster_node_security_group_id"
+terraform -chdir=bootstrap apply -var eks_cluster_private_subnets="$TF_eks_cluster_private_subnets" -var eks_cluster_node_security_group_id="$TF_eks_cluster_node_security_group_id" \
+  -auto-approve
 
 export TF_VAR_state_s3_bucket=$(terraform -chdir=bootstrap output -raw eks-accelerator-bootstrap-state-bucket)
 export TF_VAR_state_ddb_lock_table=$(terraform -chdir=bootstrap output -raw eks-accelerator-bootstrap-ddb-lock-table)
@@ -304,7 +305,7 @@ sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANC
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-comp-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-comp-prod.yml
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-provider-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-provider-dev.yml
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-provider-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-provider-prod.yml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" -e "s#\${NODEPORT_ENDPOINT}#${DEVLAKE_MYSQL_NODEPORT}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/grafana-workload-dashboards.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/grafana-workload-dashboards.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" -e "s#\${DEVLAKE_MYSQL_NODEPORT}#${DEVLAKE_MYSQL_NODEPORT}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/grafana-workload-dashboards.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/grafana-workload-dashboards.yml
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/kubevela-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/kubevela-dev.yml
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/kubevela-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/kubevela-prod.yml
 
