@@ -9,6 +9,15 @@ spec:
     repoURL: ${GITHUB_URL}
     targetRevision: ${GITHUB_BRANCH}
     path: "packages/grafana/manifests/"
+    kustomize:
+      patches:
+        - target:
+            kind: ConfigMap
+            name: grafana-mysql-endpoint
+          patch: |-
+            - op: replace
+              path: /data/MYSQL_ENDPOINT
+              value: ${DEVLAKE_MYSQL_NODEPORT}
   destination:
     name: 'dev-cluster'
     namespace: grafana-operator

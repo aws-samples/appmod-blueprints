@@ -100,8 +100,8 @@ module "managed_grafana" {
   saml_idp_metadata_url   = var.grafana_keycloak_idp_url
 
   vpc_configuration = {
-    subnet_ids = var.vpc_private_subnets
-    security_group_ids = var.vpc_security_groups
+    subnet_ids = var.eks_cluster_private_subnets
+    security_group_ids = [var.eks_cluster_node_security_group_id]
   }
 
   tags = local.tags

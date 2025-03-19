@@ -16,13 +16,13 @@ variable "grafana_keycloak_idp_url" {
   default = "http://modern-engg-xxxxxx.elb.us-west-2.amazonaws.com/keycloak/realms/grafana/protocol/saml/descriptor"
 }
 
-variable "vpc_private_subnets" {
+variable "eks_cluster_private_subnets" {
   description = "VPC Private subnets for AMG configuration"
   type = list(string)
 }
 
-variable "vpc_security_groups" {
+variable "eks_cluster_node_security_group_id" {
   description = "VPC security groups for AMG configuration"
-  type = list(string)
+  type = string
 
 }

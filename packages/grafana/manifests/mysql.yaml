@@ -5,7 +5,7 @@ metadata:
   name: grafana-mysql-endpoint # How to do programatically
   namespace: grafana-operator
 data:
-  MYSQL_ENDPOINT: NODEPORT_ENDPOINT
+  MYSQL_ENDPOINT: ${NODEPORT_ENDPOINT}
 ---
 apiVersion: v1
 kind: Secret
