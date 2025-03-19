@@ -99,5 +99,10 @@ module "managed_grafana" {
   # Dummy values for SAML configuration to setup will be updated after keycloak integration
   saml_idp_metadata_url   = var.grafana_keycloak_idp_url
 
+  vpc_configuration = {
+    subnet_ids = var.vpc_private_subnets
+    security_group_ids = var.vpc_security_groups
+  }
+
   tags = local.tags
 }

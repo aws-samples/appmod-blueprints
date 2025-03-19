@@ -1,7 +1,16 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-mysql-endpoint # How to do programatically
+  namespace: grafana-operator
+data:
+  MYSQL_ENDPOINT: NODEPORT_ENDPOINT
+---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: grafana-mysql-creds
+  name: grafana-mysql-creds # USE EXTERNAL-SECRETS
   namespace: grafana-operator
 type: Opaque
 stringData:
@@ -18,14 +27,19 @@ spec:
       valueFrom:
         secretKeyRef:
           name: "grafana-mysql-creds"
-          key: "GRAFANA_MYSQL_PASSWORD"
+          key: GRAFANA_MYSQL_PASSWORD
+    - targetPath: "url"
+      valueFrom:
+        configMapRef:
+          name: "grafana-mysql-endpoint"
+          key: MYSQL_ENDPOINT
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana" 
   datasource:
     name: mysql
     type: mysql
-    url: ${DNS}:3306
+    url: ${MYSQL_ENDPOINT}
     user: grafanaReader
     secureJsonData:
       password: ${GRAFANA_MYSQL_PASSWORD}
