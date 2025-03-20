@@ -234,12 +234,37 @@ resource "aws_ssm_document" "session_manager_prefs" {
   })
 }
 
+# Get latest SQL Server AMI
+data "aws_ami" "sql_server" {
+  most_recent = true
+  owners      = ["amazon"]  # AWS-owned AMIs
+
+  filter {
+    name   = "name"
+    values = ["Windows_Server-2022-English-Full-SQL_2019_Standard*"]  # Adjust version as needed
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+
+  filter {
+    name   = "root-device-type"
+    values = ["ebs"]
+  }
+
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+}
+
 resource "aws_instance" "sql_server_instance" {
-  ami           = "ami-0848f4d849e5b4667"
-  instance_type = "t3a.xlarge"
+  ami           = data.aws_ami.sql_server.id
+  instance_type = "t3a.2xlarge"
   #subnet_id     = var.vpc_private_subnets[0]
   subnet_id     = length(var.vpc_private_subnets) > 0 ? var.vpc_private_subnets[0] : null
-
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
 
@@ -308,6 +333,28 @@ resource "aws_instance" "sql_server_instance" {
               Start-Sleep -Seconds 60
               Invoke-WebRequest -Uri $jreUrl -OutFile "C:\jre-installer.exe"
               Start-Process -FilePath "C:\jre-installer.exe" -ArgumentList "/s" -Wait
+
+              # Verify Java installation
+              $javaVersion = java -version 2>&1
+              Write-Host "Java version installed: $javaVersion"
+
+              # Optional: Set JAVA_HOME environment variable
+              [Environment]::SetEnvironmentVariable(
+                  "JAVA_HOME",
+                  (Get-ChildItem "C:\Program Files\Java\jre*" | Select-Object -First 1).FullName,
+                  [EnvironmentVariableTarget]::Machine
+              )
+
+              # Add Java to system PATH
+              $javaPath = "$env:JAVA_HOME\bin"
+              $currentPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
+              if (-not $currentPath.Contains($javaPath)) {
+                  [Environment]::SetEnvironmentVariable(
+                      "Path",
+                      "$currentPath;$javaPath",
+                      [EnvironmentVariableTarget]::Machine
+                  )
+              }
  
               # Install Babelfish Compass
               $owner = "babelfish-for-postgresql"
