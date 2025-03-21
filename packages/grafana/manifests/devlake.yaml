@@ -9,28 +9,52 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/apache/incubator-devlake/tree/main/grafana/dashboards/DORA.json"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/head/refs/main/grafana/dashboards/DORA.json"
 ---
-# apiVersion: grafana.integreatly.org/v1beta1
-# kind: GrafanaDashboard
-# metadata:
-#   name: devlake-grafanadashboard
-#   namespace: grafana-operator
-# spec:
-#   folder: "Devlake Dashboards"
-#   instanceSelector:
-#     matchLabels:
-#       dashboards: "external-grafana"
-#   url: "https://github.com/apache/incubator-devlake/tree/main/grafana/dashboards/DORA.json"
-# ---
-# apiVersion: grafana.integreatly.org/v1beta1
-# kind: GrafanaDashboard
-# metadata:
-#   name: devlake-grafanadashboard
-#   namespace: grafana-operator
-# spec:
-#   folder: "Devlake Dashboards"
-#   instanceSelector:
-#     matchLabels:
-#       dashboards: "external-grafana"
-#   url: "https://github.com/apache/incubator-devlake/tree/main/grafana/dashboards/DORA.json"
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-deploymentfreq-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "Devlake Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/head/refs/main/grafana/dashboards/DORADetails-DeploymentFrequency.json"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-changefailure-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "Devlake Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/head/refs/main/grafana/dashboards/DORADetails-ChangeFailureRate.json"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-recoverytime-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "Devlake Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/head/refs/main/grafana/dashboards/DORADetails-FailedDeploymentRecoveryTime.json"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-leadtime-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "Devlake Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/head/refs/main/grafana/dashboards/DORADetails-LeadTimeForChanges.json"

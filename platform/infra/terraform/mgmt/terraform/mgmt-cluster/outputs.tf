@@ -10,7 +10,7 @@ output "eks_cluster_private_subnets" {
 
 output "eks_cluster_node_security_group_id" {
   description = "EKS Cluster Node Security Group Id"
-  value = module.eks.cluster_primary_security_group_id
+  value = module.eks.node_security_group_id
 }
 
 output "vpc_cidr" {
