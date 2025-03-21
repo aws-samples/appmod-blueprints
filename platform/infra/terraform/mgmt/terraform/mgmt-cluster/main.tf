@@ -29,12 +29,6 @@ provider "kubernetes" {
   }
 }
 
-# Required for public ECR where Karpenter artifacts are hosted
-provider "aws" {
-  region = "us-east-1"
-  alias  = "virginia"
-}
-
 provider "helm" {
   kubernetes {
     host                   = module.eks.cluster_endpoint
@@ -53,16 +47,13 @@ provider "helm" {
 # Common data/locals
 ################################################################################
 
-data "aws_ecrpublic_authorization_token" "token" {
-  provider = aws.virginia
-}
-
 data "aws_availability_zones" "available" {}
 
 locals {
   name   = "modern-engineering"
   region = "us-west-2"
-
+  eks_version = "1.32"
+  
   vpc_cidr = "10.0.0.0/16"
   azs      = slice(data.aws_availability_zones.available.names, 0, 3)
 
