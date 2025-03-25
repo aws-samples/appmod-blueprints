@@ -13,8 +13,6 @@ spec:
       value: ${{values.namespace}}
     - name: aws_region
       value: ${{values.aws_region}}
-    - name: gitea_token
-      value: ${{values.gitea_token}}
     - name: hostname
       value: ${{values.hostname}}
 
@@ -32,13 +30,6 @@ spec:
             - name: ecr_secret
               value: "{{tasks.get-ecr-secret.outputs.result}}"
           depends: "get-ecr-secret"
-        
-        - name: create-gitea-token-secret
-          template: create-gitea-token-secret
-          arguments:
-            parameters:
-            - name: token
-              value: "{{workflow.parameters.gitea_token}}"
 
         - name: create-ecr-repository
           template: create-ecr-repository
@@ -53,7 +44,6 @@ spec:
 
         - name: create-gitea-webhook
           template: create-gitea-webhook
-          depends: "create-gitea-token-secret"
 
 
   - name: get-ecr-secret
@@ -78,18 +68,6 @@ spec:
           --docker-server="{{workflow.parameters.aws_region}}".amazonaws.com \
           --docker-username=AWS \
           --docker-password="{{inputs.parameters.ecr_secret}}"
-
-  - name: create-gitea-token-secret
-    inputs:
-      parameters:
-      - name: token
-    container:
-      image: bitnami/kubectl:latest
-      command: ["/bin/bash", "-c"]
-      args:
-      - |
-        kubectl delete secret "{{workflow.parameters.appname}}"-gitea-token --ignore-not-found
-        kubectl create secret generic "{{workflow.parameters.appname}}"-gitea-token -n "{{workflow.parameters.namespace}}" --from-literal=token="{{inputs.parameters.token}}"
 
   - name: create-ecr-repository
     container:
@@ -127,16 +105,16 @@ spec:
       command: ["/bin/sh", "-c"]
       envFrom:
       - secretRef:
-          name: "{{workflow.parameters.appname}}-gitea-token"
+          name: gitea-credentials
       args:
       - |
         apk add curl jq
         hooks_api_url="{{workflow.parameters.hostname}}"/gitea/api/v1/repos/giteaAdmin/"{{workflow.parameters.appname}}"/hooks
         webhook_url="http://{{workflow.parameters.hostname}}"/argo-events/"{{workflow.parameters.appname}}"
-        webhook_details=$(curl -k -X 'GET' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${token}" -H "Content-Type: application/json" | jq '.[].config.url')
+        webhook_details=$(curl -k -X 'GET' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" | jq '.[].config.url')
         if [ -z "$webhook_details" ]; then
           echo "Webhook is not found, creating webhook with $webhook_url"
-          curl -k -X 'POST' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${token}" -H "Content-Type: application/json" -d '{"branch_filter": "main","type": "gitea", "events":["push"], "config": {"url": "'${webhook_url}'", "content_type": "json"}, "active": true}'
+          curl -k -X 'POST' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" -d '{"branch_filter": "main","type": "gitea", "events":["push"], "config": {"url": "'${webhook_url}'", "content_type": "json"}, "active": true}'
         else
           echo "Webhook is already exists"
         fi
@@ -291,7 +269,7 @@ spec:
     container:
       envFrom:
       - secretRef:
-          name: "{{workflow.parameters.appname}}-gitea-token"
+          name: gitea-credentials
       - configMapRef:
           name: "{{workflow.parameters.appname}}-ecr-repo"
       volumeMounts:
@@ -310,7 +288,7 @@ spec:
           mkdir -p $DEPLOY_PATH
           git config --global user.email "noreply@aws.com" 
           git config --global user.name ARGO
-          git remote set-url origin https://giteaAdmin:${token}@"{{inputs.parameters.apprepo}}".git
+          git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
           git pull --rebase
           echo "$image:{{inputs.parameters.tag}}" > ./deployment/"{{inputs.parameters.env}}"/image.txt
           if [ -f $DEPLOY_PATH/application.yml ]; then

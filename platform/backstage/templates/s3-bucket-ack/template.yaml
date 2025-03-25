@@ -13,7 +13,6 @@ spec:
         - bucket_name
         - environment
         - region
-        - repoUrl
       properties:
         bucket_name:
           title: Bucket Name
@@ -38,11 +37,12 @@ spec:
           title: Configuration of your S3 Bucket
           type: string
           enum: ['standard', 'intelligent-tiering']
-        repoUrl:
-          title: Gitea URL
-          description: Gitea URL on Management Cluster
-          type: string
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - id: template
       name: Fetch Skeleton + Template
       action: fetch:template
@@ -54,13 +54,13 @@ spec:
           namespace: ${{ parameters.namespace }}
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
-          repoUrl: ${{ parameters.repoUrl }}
+          repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea
     - id: publish
       name: Publishing to a gitea git repository
       action: publish:gitea
       input:
         description: This is an example app
-        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.bucket_name}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.bucket_name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App

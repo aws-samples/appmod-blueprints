@@ -10,7 +10,7 @@ persistence:
   size: 5Gi
   storageClass: gp3
 
-test:
+test: 
   enabled: false
 
 gitea:
@@ -19,6 +19,9 @@ gitea:
   config:
     database:
       DB_TYPE: sqlite3
+    security:
+      MUST_CHANGE_PASSWORD: false
+      DISABLE_PASSWORD_CHANGE: false
     session:
       PROVIDER: memory
     cache:

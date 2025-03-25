@@ -16,10 +16,6 @@ spec:
           default: us-west-2
           title: aws region for ecr repo
           type: string
-        gitea_token:
-          title: personal gitea token to create webhook (must have write:repository privilege)
-          type: string
-          ui:field: Secret
         dockerfile_path:
           title: Relative path to directory containing Dockerfile
           type: string
@@ -28,15 +24,14 @@ spec:
           default: ./deployment
           title: Relative path to deployment directory in repo
           type: string
-        hostname:
-          title: DNS of management cluster. Example - modern-engg-XXXXXXXXXX.elb.us-west-2.amazonaws.com
-          type: string
-      title: Configuration Options
       required:
         - appname
-        - hostname
-        - gitea_token
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - action: fetch:template
       name: Fetch Base
       id: fetch-base
@@ -46,7 +41,7 @@ spec:
           appname: ${{ parameters.appname }}
           namespace: team-${{ parameters.appname }}
           aws_region: ${{ parameters.aws_region }}
-          hostname: ${{parameters.hostname}}
+          hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
           dockerfile_path: ${{parameters.dockerfile_path}}
           deployment_path: ${{parameters.deployment_path}}
 
@@ -56,7 +51,7 @@ spec:
       input:
         description: CodeBuild create clusters template
         # Hard coded value for this demo purposes only.
-        repoUrl: ${{parameters.hostname}}/gitea?repo=${{parameters.appname}}-cicd
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.appname}}-cicd
         defaultBranch: main
 
     - action: fetch:template
@@ -68,8 +63,7 @@ spec:
           appname: ${{ parameters.appname }}
           namespace: team-${{ parameters.appname }}
           aws_region: ${{ parameters.aws_region }}
-          hostname: ${{parameters.hostname}}
-          gitea_token: ${{secrets.gitea_token}}
+          hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
           dockerfile_path: ${{parameters.dockerfile_path}}
           deployment_path: ${{parameters.deployment_path}}
 
@@ -125,7 +119,7 @@ spec:
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
       - title: Open in argo workflows
-        url: https://${{ parameters.hostname }}/argo-workflows/workflows/team-${{ parameters.appname }}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflows/team-${{ parameters.appname }}
 
 
 

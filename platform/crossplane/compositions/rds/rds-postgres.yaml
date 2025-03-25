@@ -117,7 +117,7 @@ spec:
             engineVersion: "14.11"
             skipFinalSnapshot: true
             storageEncrypted: true
-            storageType: gp2
+            storageType: gp3
             publiclyAccessible: false
             vpcSecurityGroupIDs: []
             vpcSecurityGroupIDSelector:
