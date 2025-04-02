@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitea-devlake-webhook-svc
+spec:
+  type: ClusterIP  # Or ClusterIP if using Ingress
+  ports:
+    - port: 12000
+      targetPort: 12000
+      protocol: TCP
+      authSecret:
+        name: 
+  selector:
+    eventsource-name: gitea-devlake-webhook
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+spec:
+  nats:
+    native:
+      replicas: 3
+      auth: token
+---
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: gitea-devlake-webhook
+  labels:
+    eventsource-name: gitea-devlake-webhook
+spec:
+  service:
+    ports:
+      - port: 12000
+        targetPort: 12000
+  webhook:
+    incidents-webhook:
+      port: "12000"
+      endpoint: /webhook/incidents
+      method: POST
+    deployments-webhook:
+      port: "12000"
+      endpoint: /webhook/deployments
+      method: POST
+    pull-requests-webhook:
+      port: "12000"
+      endpoint: "/webhook/pull-requests"
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: gitea-webhook-sensor
+spec:
+  template:
+    serviceAccountName: wf-sa
+  dependencies:
+    - name: incidents-webhook
+      eventSourceName: gitea-webhook
+      eventName: incidents-webhook
+    - name: deployments-webhook
+      eventSourceName: gitea-webhook
+      eventName: deployments-webhook
+    - name: pull-requests-webhook
+      eventSourceName: gitea-webhook
+      eventName: pull-requests-webhook
+  triggers:
+    - template:
+        name: incidents-workflow-trigger
+        conditions: "incidents-webhook"
+        argoWorkflow:
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: incidents-workflow-
+              spec:
+                workflowTemplateRef:
+                  name: incidents-workflow-template
+                arguments:
+                  parameters:
+                    - name: body
+                      value: '{{.Input.body}}'
+                    - name: headers
+                      value: '{{.Input.headers}}'
+                    - name: url
+                      value: http://devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/1/issues
+          parameters:
+            - src:
+                dependencyName: incidents-webhook
+                dataKey: body
+              dest: spec.arguments.parameters.0.value
+
+    - template:
+        name: deployments-workflow-trigger
+        conditions: "deployments-webhook"
+        argoWorkflow:
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: deployments-workflow-
+              spec:
+                workflowTemplateRef:
+                  name: deployments-workflow-template
+                arguments:
+                  parameters:
+                    - name: body
+                      value: '{{.Input.body}}'
+                    - name: headers
+                      value: '{{.Input.headers}}'
+                    - name: url
+                      value: http://devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/1/deployments
+          parameters:
+            - src:
+                dependencyName: deployments-webhook
+                dataKey: body
+              dest: spec.arguments.parameters.0.value
+
+    - template:
+        name: pull-requests-workflow-trigger
+        conditions: "pull-requests-webhook"
+        argoWorkflow:
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: pull-requests-workflow-
+              spec:
+                workflowTemplateRef:
+                  name: pull-requests-workflow-template
+                arguments:
+                  parameters:
+                    - name: body
+                      value: '{{.Input.body}}'
+                    - name: headers
+                      value: '{{.Input.headers}}'
+                    - name: url
+                      value: http://devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/1/pullrequests
+          parameters:
+            - src:
+                dependencyName: pull-requests-webhook
+                dataKey: body
+              dest: spec.arguments.parameters.0.value

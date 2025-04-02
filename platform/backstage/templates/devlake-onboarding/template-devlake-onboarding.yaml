@@ -1,0 +1,102 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  description: Onboard an Application Team to DevLake
+  name: devlake-onboarding
+  title: Onboard App to DevLake
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - properties:
+        appname:
+          title: name of app for onboarding
+          type: string
+      required:
+        - appname
+  steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
+    - action: fetch:template
+      name: Fetch Base
+      id: fetch-base
+      input:
+        url: ./skeleton/
+        values:
+          appname: ${{ parameters.appname }}
+          namespace: team-${{ parameters.appname }}
+          hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
+
+    - id: publish
+      name: Publishing to a gitea git repository
+      action: publish:gitea
+      input:
+        description: Devlake onboarding template
+        # Hard coded value for this demo purposes only.
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.appname}}-devlake
+        defaultBranch: main
+
+    - action: fetch:template
+      name: Fetch Provisioner
+      id: fetch-provisioner
+      input:
+        url: ./provisioner/
+        values:
+          appname: ${{ parameters.appname }}
+          namespace: team-${{ parameters.appname }}
+          hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
+
+    - action: cnoe:kubernetes:apply
+      name: Apply Provisioner rbac
+      id: apply-prov-rbac
+      input:
+        namespaced: true
+        manifestPath: rbac.yaml
+        clusterName: local
+
+    - action: cnoe:kubernetes:apply
+      name: Apply Workflow Templates
+      id: apply-temp
+      input:
+        namespaced: true
+        manifestPath: wf-templates.yaml
+        clusterName: local
+
+    - action: cnoe:kubernetes:apply
+      name: Run Workflow 
+      id: run-wf
+      input:
+        namespaced: true
+        manifestPath: wf-run.yaml
+        clusterName: local
+
+    - id: create-argocd-app
+      name: Create ArgoCD App
+      action: cnoe:create-argocd-app
+      input:
+        appName: ${{parameters.appname}}
+        appNamespace: team-${{ parameters.appname }}
+        argoInstance: in-cluster
+        projectName: default
+        # necessary until we generate our own cert
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.appname}}-devlake
+        path: "manifests"
+    - id: register
+      name: Register
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: 'catalog-info.yaml'
+  output:
+    links:
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: Open in argo workflows
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflows/team-${{ parameters.appname }}
+
+
+

@@ -2,7 +2,7 @@ resource "aws_iam_policy" "external-secrets-devlake" {
   count = local.secret_count
 
   name_prefix = "modern-engg-external-secrets-devlake-"
-  description = "For use with External Secrets Controller for Devlake"
+  description = "For use with External Secrets Controller for DevLake"
   policy = jsonencode(
     {
       "Version" : "2012-10-17",

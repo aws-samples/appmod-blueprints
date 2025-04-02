@@ -1,0 +1,57 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: ${{values.appname}}-devlake-provisioning-
+  namespace: ${{values.namespace}}
+  labels:
+    entity-id: ${{values.appname}}-devlake
+spec:
+  volumeClaimTemplates:
+  - metadata:
+      name: workdir
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: gp3
+      resources:
+        requests:
+          storage: 256Mi
+
+  entrypoint: main
+  serviceAccountName: ${{values.appname}}-devlake-provisioner
+  arguments:
+    parameters:
+    - name: appname
+      value: ${{values.appname}}
+    - name: namespace
+      value: ${{values.namespace}}
+    - name: hostname
+      value: ${{values.hostname}}
+    - name: apprepo
+      value: ${{values.hostname}}/gitea/giteaAdmin/${{values.appname}}
+
+  templates:
+  - name: main
+    steps:
+    - - name: run-provisioner
+        templateRef:
+          name: devlake-provisioner-template
+          template: devlake-provisioner
+        arguments:
+          parameters:
+          - name: appname
+            value: "{{workflow.parameters.appname}}"
+          - name: namespace
+            value: "{{workflow.parameters.namespace}}"
+          - name: hostname
+            value: "{{workflow.parameters.hostname}}"
+
+    - - name: run-init
+        templateRef:
+          name: devlake-data-init-template
+          template: devlake-init
+        arguments:
+          parameters:
+          - name: appname
+            value: "{{workflow.parameters.appname}}"
+          - name: apprepo
+            value: "{{workflow.parameters.apprepo}}"

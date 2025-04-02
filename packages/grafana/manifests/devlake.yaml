@@ -5,7 +5,7 @@ metadata:
   name: dora-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Devlake Dashboards"
+  folder: "DORA Dashboards"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
@@ -17,7 +17,7 @@ metadata:
   name: dora-deploymentfreq-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Devlake Dashboards"
+  folder: "DORA Dashboards"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
@@ -29,7 +29,7 @@ metadata:
   name: dora-changefailure-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Devlake Dashboards"
+  folder: "DORA Dashboards"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
@@ -41,7 +41,7 @@ metadata:
   name: dora-recoverytime-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Devlake Dashboards"
+  folder: "DORA Dashboards"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
@@ -53,7 +53,7 @@ metadata:
   name: dora-leadtime-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Devlake Dashboards"
+  folder: "DORA Dashboards"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"

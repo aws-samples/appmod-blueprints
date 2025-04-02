@@ -1,0 +1,314 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: devlake-provisioner-template
+  namespace: ${{values.namespace}}
+spec:
+  arguments:
+    parameters:
+    - name: appname
+      value: ${{values.appname}}
+    - name: namespace
+      value: ${{values.namespace}}
+    - name: url
+      value: http://devlake-lake.devlake.svc.cluster.local:8080
+  templates:
+  - name: devlake-provisioner
+    dag:
+      tasks:
+        - name: create-devlake-webhook-secret
+          template: create-devlake-webhook-secret
+
+        - name: get-ecr-secret
+          template: get-ecr-secret
+
+        - name: create-docker-registry-secret
+          template: create-docker-registry-secret
+          arguments:
+            parameters:
+            - name: ecr_secret
+              value: "{{tasks.get-ecr-secret.outputs.result}}"
+          depends: "get-ecr-secret"
+
+        - name: create-ecr-repository
+          template: create-ecr-repository
+
+        - name: create-ecr-configmap
+          template: create-ecr-configmap
+          arguments:
+            parameters:
+            - name: image
+              value: "{{tasks.create-ecr-repository.outputs.result}}"
+          depends: "create-ecr-repository"
+
+        - name: create-gitea-webhook
+          template: create-gitea-webhook
+
+  - name: devlake-init
+    inputs:
+      parameters:
+      - name: appname
+      - name: url
+    container: 
+      image: alpine:latest
+      command: ["sh"]
+      args:
+      - |
+        apk install curl
+
+  - name: create-devlake-webhook-secret
+    inputs:
+      parameters:
+      - name: token
+    container: 
+      image: bitnami/kubectl:latest
+      command: ["/bin/bash", "-c"]
+      args:
+      - |
+        kubectl delete secret devlake-webhook-secret --ignore-not-found
+        kubectl create secret generic devlake-webhook-secret -n "{{workflow.parameters.namespace}}" \
+          --from-literal=DEVLAKE_TOKEN="{{inputs.parameter.token}}"
+
+
+  - name: create-gitea-webhook
+    container:
+      image: alpine:3.20
+      command: ["/bin/sh", "-c"]
+      envFrom:
+      - secretRef:
+          name: gitea-credentials
+      args:
+      - |
+        apk add curl jq
+        hooks_api_url="{{workflow.parameters.hostname}}"/gitea/api/v1/repos/giteaAdmin/"{{workflow.parameters.appname}}"/hooks
+        webhook_url="http://{{workflow.parameters.hostname}}"/argo-events/"{{workflow.parameters.appname}}"
+        webhook_details=$(curl -k -X 'GET' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" | jq '.[].config.url')
+        if [ -z "$webhook_details" ]; then
+          echo "Webhook is not found, creating webhook with $webhook_url"
+          curl -k -X 'POST' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" -d '{"branch_filter": "main","type": "gitea", "events":["push"], "config": {"url": "'${webhook_url}'", "content_type": "json"}, "active": true}'
+        else
+          echo "Webhook is already exists"
+        fi
+
+  - name: update-cicd-exit-hook
+    inputs:
+      parameters:
+        - name: apprepo
+    container:
+      envFrom:
+      - secretRef:
+          name: gitea-credentials
+      volumeMounts:
+        - mountPath: /workdir
+          name: workdir
+      image: alpine/git:v2.45.2
+      workingDir: /workdir
+      command: ['/bin/sh']
+      args:
+        - -c
+        - |
+          apk add --no-cache sed
+          set -ex
+          git config --global user.email "noreply@aws.com" 
+          git config --global user.name ARGO
+          git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
+          git pull --rebase
+          if [ -f $DEPLOY_PATH/application.yml ]; then
+            sed  -i 's+image: <image>.*+image: '"${image}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
+            sed  -i 's+image: '"$image"'.*+image: '"${image}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
+          fi
+          m_count=$(git status -s | wc -l)
+          if [ $m_count -ge 1 ]; then
+            git add "{{inputs.parameters.deployment-path}}"
+            image_version="{{inputs.parameters.tag}}"
+            git commit -m "Add Exit Handler for DORA Metrics"
+            git push --set-upstream origin main
+          else
+            echo "No updates to values file, skipping git push"
+          fi
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: devlake-data-init-template
+  namespace: ${{values.namespace}}
+spec:
+  arguments:
+    parameters:
+    - name: appname
+      value: ${{values.appname}}
+    - name: apprepo
+      value: ${{values.hostname}}/gitea/giteaAdmin/${{values.appname}}-cicd
+
+  templates:
+  - name: devlake-init
+    dag:
+      tasks:
+        - name: clean
+          template: cleandir
+
+        - name: clone
+          template: clonerepo
+          arguments:
+            parameters:
+              - name: apprepo
+                value: "{{workflow.parameters.apprepo}}"
+              - name: branch
+                value: main
+          depends: "clean"
+
+        - name: warmup
+          template: build-image-for-cache
+          arguments:
+            parameters:
+              - name: dockerfile-path
+                value: "{{workflow.parameters.dockerfile_path}}"
+              - name: tag-version
+                value: init
+          depends: "clone"
+
+        - name: edit-tag
+          template: update-image-tag
+          arguments:
+            parameters:
+              - name: env
+                value: dev
+              - name: tag
+                value: init
+              - name: apprepo
+                value: "{{workflow.parameters.apprepo}}"
+              - name: deployment-path
+                value: "{{workflow.parameters.deployment_path}}"
+          depends: "warmup"
+
+  - name: cleandir 
+    container:
+      volumeMounts:
+        - mountPath: /workdir
+          name: workdir
+      image: alpine:3.20
+      workingDir: /workdir
+      args:
+        - /bin/sh
+        - -c
+        - |
+          set -ex
+          if [ "$(ls -A /workdir)" ]; then
+            echo "Directory /workdir is not empty. Removing contents..."
+            rm -rf /workdir/*
+          fi
+
+  - name: clonerepo
+    inputs:
+      parameters:
+      - name: apprepo
+      - name: branch
+    container:
+      volumeMounts:
+      - mountPath: /workdir
+        name: workdir
+      image: alpine/git:v2.45.1
+      workingDir: /workdir
+      args:
+        - clone
+        - --depth
+        - "1"
+        - --branch
+        - "{{inputs.parameters.branch}}"
+        - --single-branch
+        - "https://{{inputs.parameters.apprepo}}"
+        - -c
+        - http.sslVerify=false
+        - .
+
+  - name: build-image-for-cache
+    inputs:
+      parameters:
+        - name: tag-version
+        - name: dockerfile-path
+    volumes:
+      - name: docker-config
+        secret:
+          secretName: "{{workflow.parameters.aws_region}}-regcred"
+    container:
+      image: gcr.io/kaniko-project/executor:debug
+      volumeMounts:
+        - name: workdir
+          mountPath: /workdir
+        - name: docker-config
+          mountPath: /kaniko/.docker
+      workingDir: /workdir
+      resources:
+        limits:
+          cpu: 2
+          memory: 5Gi
+      env:
+        - name: DOCKER_CONFIG
+          value: /kaniko/.docker
+        - name: ECR_REPO
+          valueFrom:
+            configMapKeyRef:
+              name: "{{workflow.parameters.appname}}-ecr-repo"
+              key: image
+      command: [
+                "/busybox/sh",
+                "-c",
+                "/kaniko/executor \
+                --dockerfile=Dockerfile \
+                --context={{inputs.parameters.dockerfile-path}} \
+                --destination=${ECR_REPO}:{{inputs.parameters.tag-version}} \
+                --cache=true \
+                --skip-tls-verify"
+                ]
+
+  - name: update-image-tag
+    inputs:
+      parameters:
+        - name: env 
+        - name: tag
+        - name: apprepo
+        - name: deployment-path
+    container:
+      envFrom:
+      - secretRef:
+          name: gitea-credentials
+      - configMapRef:
+          name: "{{workflow.parameters.appname}}-ecr-repo"
+      volumeMounts:
+        - mountPath: /workdir
+          name: workdir
+      image: alpine/git:v2.45.2
+      workingDir: /workdir
+      command: ['/bin/sh']
+      args:
+        - -c
+        - |
+          apk add --no-cache sed
+          set -ex
+          DEPLOY_PATH="{{inputs.parameters.deployment-path}}/{{inputs.parameters.env}}"
+          tag="{{inputs.parameters.tag}}"
+          mkdir -p $DEPLOY_PATH
+          git config --global user.email "noreply@aws.com" 
+          git config --global user.name ARGO
+          git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
+          git pull --rebase
+          echo "$image:{{inputs.parameters.tag}}" > ./deployment/"{{inputs.parameters.env}}"/image.txt
+          if [ -f $DEPLOY_PATH/application.yml ]; then
+            sed  -i 's+image: <image>.*+image: '"${image}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
+            sed  -i 's+image: '"$image"'.*+image: '"${image}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
+          fi
+          m_count=$(git status -s | wc -l)
+          if [ $m_count -ge 1 ]; then
+            git add "{{inputs.parameters.deployment-path}}"
+            image_version="{{inputs.parameters.tag}}"
+            git commit -m "[SKIP CI] Updated image version to $image_version"
+            git push --set-upstream origin main
+          else
+            echo "No updates to values file, skipping git push"
+          fi
+
+
+
+
