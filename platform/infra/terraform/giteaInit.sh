@@ -21,7 +21,7 @@ export USER_PASS="${USERNAME}:${PASSWORD}"
 export ENCODED_USER_PASS=$(echo "$USER_PASS" | tr -d \\n | base64)
 
 # Create gitea Auth Token and add it to gitea-credential
-TOKEN=$(curl -k -X POST -H "Content-Type: application/json" -d '{"name":"token01", "scopes": ["write:repository"]}' -u $USERNAME:$PASSWORD https://$DOMAIN_NAME/gitea/api/v1/users/$USERNAME/tokens | jq -r .sha1 |base64)
+TOKEN=$(curl -k -X POST -H "Content-Type: application/json" -d '{"name":"token01", "scopes": ["write:repository"]}' -u $USERNAME:$PASSWORD https://$DOMAIN_NAME/gitea/api/v1/users/$USERNAME/tokens | jq -r .sha1 | tr -d '\n' | base64 | tr -d '\n')
 kubectl patch secret gitea-credential -p '{"data": {"token": "'"$TOKEN"'"}}' -n gitea
 
 # Create ClusterSecretStore for gitea-credential
