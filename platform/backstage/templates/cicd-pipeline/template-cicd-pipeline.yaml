@@ -80,22 +80,6 @@ spec:
       input:
         seconds: 15
 
-    - action: cnoe:kubernetes:apply
-      name: Apply Workflow Templates
-      id: apply-temp
-      input:
-        namespaced: true
-        manifestPath: wf-templates.yaml
-        clusterName: local
-
-    - action: cnoe:kubernetes:apply
-      name: Run Workflow 
-      id: run-wf
-      input:
-        namespaced: true
-        manifestPath: wf-run.yaml
-        clusterName: local
-
     - id: create-argocd-app
       name: Create ArgoCD App
       action: cnoe:create-argocd-app
@@ -107,6 +91,15 @@ spec:
         # necessary until we generate our own cert
         repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.appname}}-cicd
         path: "manifests"
+
+    - action: cnoe:kubernetes:apply
+      name: Run Workflow 
+      id: run-wf
+      input:
+        namespaced: true
+        manifestPath: wf-run.yaml
+        clusterName: local
+
     - id: register
       name: Register
       action: catalog:register
