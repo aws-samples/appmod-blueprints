@@ -19,11 +19,12 @@ spec:
           type: string
           default: "https://github.com/mlops-on-kubernetes/Book/raw/main/Chapter%206/serve-config.zip"
           description: Path to your Ray Service Multi-application config zip file
-        repoUrl:
-          default: gitea.elamaras.people.aws.dev
-          title: Repo URL of your Gitea Repo integrated with Backstage
-          type: string
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - id: template
       name: Generating component
       action: fetch:template
@@ -37,7 +38,7 @@ spec:
       action: publish:gitea
       input:
         description: This is an Ray Serve app Repo
-        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.name}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App

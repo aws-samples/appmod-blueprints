@@ -27,17 +27,17 @@ spec:
           type: array
           items:
             type: string
-        repoUrl:
-          title: Gitea URL
-          type: string
-          description: Gitea URL on Management cluster
       title: Configuration Options
       required:
         - name
-        - repoUrl
         - region
         - subnetIds
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - action: fetch:template
       id: fetch-base
       input:
@@ -46,7 +46,7 @@ spec:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
           region: ${{ parameters.region }}
-          repoUrl: ${{parameters.repoUrl}}
+          repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea
           subnetIds: ${{parameters.subnetIds}}
       name: Fetch Base
     - id: publish
@@ -55,7 +55,7 @@ spec:
       input:
         description: RDS Cluster manifests
         # Hard coded value for this demo purposes only.
-        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.name}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App

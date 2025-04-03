@@ -1,14 +1,17 @@
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: cicd-${{values.appname}}
+  name: ${{values.appname}}
   description: Deploy CI/CD Pipeline for ${{ values.appname }}
   annotations:
     backstage.io/kubernetes-namespace: ${{values.namespace}}
-    backstage.io/kubernetes-id: cicd-${{values.appname}}
-    argocd/app-name: cicd-${{values.appname | dump}}
+    backstage.io/kubernetes-label-selector: 'entity-id=${{values.appname}}'
+    argocd/app-selector: 'entity-id=${{values.appname}}'
+    argo-workflows.cnoe.io/cluster-name: local
+    argo-workflows.cnoe.io/namespace: team-${{values.appname}}
+    argo-workflows.cnoe.io/label-selector: 'entity-id=${{values.appname}}'
   links:
-    - url: https://${{values.hostname}}/gitea?repo=${{values.appname}}
+    - url: https://${{values.hostname}}/gitea?repo=${{values.appname}}-cicd
       title: Repo URL
       icon: github
 spec:

@@ -12,7 +12,7 @@ spec:
   sources:
     - chart: ack-chart
       repoURL: public.ecr.aws/aws-controllers-k8s
-      targetRevision: 46.19.33
+      targetRevision: 46.20.1
       helm:
         releaseName: ack-chart
         valueFiles:

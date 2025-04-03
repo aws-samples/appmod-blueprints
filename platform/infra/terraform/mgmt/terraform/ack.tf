@@ -29,9 +29,8 @@ resource "kubectl_manifest" "application_argocd_ack" {
   )
 
   provisioner "local-exec" {
-    when = create
 
-    command = "kubectl wait --for=jsonpath=.status.health.status=Healthy -n argocd application/ack --timeout=300s &&  kubectl wait --for=jsonpath=.status.sync.status=Synced --timeout=300s -n argocd application/ack"
+    command = "kubectl wait --for=jsonpath=.status.health.status=Healthy -n argocd application/ack --timeout=900s &&  kubectl wait --for=jsonpath=.status.sync.status=Synced --timeout=900s -n argocd application/ack"
 
     interpreter = ["/bin/bash", "-c"]
   }
