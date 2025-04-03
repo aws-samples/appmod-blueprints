@@ -1,0 +1,120 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: cicd-deployments-exit-handler
+spec:
+  entrypoint: handle-exit
+  serviceAccountName: devlake-webhook-sa
+  arguments:
+    parameters:
+      - name: body
+      - name: headers
+      - name: url
+  templates:
+    - name: process-deployment
+      inputs:
+        parameters:
+          - name: body
+          - name: headers
+          - name: url
+      script:
+        image: alpine
+        command: [sh]
+        env:
+          - name: DEVLAKE_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: devlake-webhook-secret
+                key: token
+        source: |
+          apk add --no-cache jq curl
+          PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+          . as $root |
+          {
+            id: .after,
+            createdDate: (.commits | first | .timestamp),
+            startedDate: (.commits | first | .timestamp),
+            finishedDate: (.commits | last | .timestamp),
+            environment: "PRODUCTION",
+            result: "SUCCESS",
+            name: ("deployment-" + (.after | .[0:7])),
+            deploymentCommits: [
+              .commits[] | {
+                repoUrl: $root.repository.clone_url,
+                refName: $root.ref,
+                startedDate: .timestamp,
+                finishedDate: .timestamp,
+                commitSha: .id,
+                commitMsg: .message,
+                result: "SUCCESS",
+                name: ("deployment-" + (.id | .[0:7]))
+              }
+            ]
+          }')
+          echo "====Transformed Payload===="
+          echo "$PAYLOAD" | jq '.'
+
+          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" '{{inputs.parameters.url}}'
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: pull-requests-workflow-template
+spec:
+  entrypoint: process-pull-request
+  serviceAccountName: devlake-webhook-sa
+  arguments:
+    parameters:
+      - name: body
+      - name: headers
+      - name: url
+  templates:
+    - name: process-pull-request
+      inputs:
+        parameters:
+          - name: body
+          - name: headers
+          - name: url
+      script:
+        image: alpine
+        command: [sh]
+        env:
+          - name: DEVLAKE_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: devlake-webhook-secret
+                key: token
+                  
+        source: |
+          apk add --no-cache jq curl
+          echo '{{inputs.parameters.body}}'
+          PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+          {
+            id: (.pull_request.id | tostring),
+            title: .pull_request.title,
+            description: .pull_request.body,
+            status: (if .pull_request.state == "open" then "OPEN" elif .pull_request.merged then "MERGED" else "CLOSED" end),
+            createdDate: .pull_request.created_at,
+            updatedDate: .pull_request.updated_at,
+            closedDate: .pull_request.closed_at,
+            mergedDate: .pull_request.merged_at,
+            type: "PR",
+            url: .pull_request.html_url,
+            authorId: .pull_request.user.login,
+            authorName: (.pull_request.user.name // .pull_request.user.login),
+            reviewers: [.pull_request.requested_reviewers[].login],
+            comments: (.pull_request.comments // 0),
+            commits: (.pull_request.commits // 0),
+            additions: (.pull_request.additions // 0),
+            deletions: (.pull_request.deletions // 0),
+            changedFiles: (.pull_request.changed_files // 0),
+            baseBranch: .pull_request.base.ref,
+            headBranch: .pull_request.head.ref,
+            repoId: .repository.id,
+            repoName: .repository.full_name
+          }')
+          echo "====Transformed Payload===="
+          echo "$PAYLOAD" | jq '.'
+
+          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" '{{inputs.parameters.url}}'
+

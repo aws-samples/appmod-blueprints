@@ -20,14 +20,15 @@ spec:
       script:
         image: alpine
         command: [sh]
-        env:
-          - name: DEVLAKE_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: devlake-webhook-secret
-                key: token
+        envFrom:
+          - secretRef:
+              name: devlake-webhook-secret
+          - configMapRef:
+              name: devlake-webhook-id
         source: |
           apk add --no-cache jq curl
+          webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/deployments
+
           echo '{{inputs.parameters.body}}'
           PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
           {
@@ -75,12 +76,11 @@ spec:
       script:
         image: alpine
         command: [sh]
-        env:
-          - name: DEVLAKE_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: devlake-webhook-secret
-                key: token
+        envFrom:
+          - secretRef:
+              name: devlake-webhook-secret
+          - configMapRef:
+              name: devlake-webhook-id
         source: |
           apk add --no-cache jq curl
           PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
@@ -133,13 +133,11 @@ spec:
       script:
         image: alpine
         command: [sh]
-        env:
-          - name: DEVLAKE_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: devlake-webhook-secret
-                key: token
-                  
+        envFrom:
+          - secretRef:
+              name: devlake-webhook-secret
+          - configMapRef:
+              name: devlake-webhook-id
         source: |
           apk add --no-cache jq curl
           echo '{{inputs.parameters.body}}'

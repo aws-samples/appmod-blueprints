@@ -1,28 +1,18 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: gitea-devlake-webhook-svc
+  name: devlake-webhook-svc
 spec:
   type: ClusterIP  # Or ClusterIP if using Ingress
   ports:
     - port: 12000
       targetPort: 12000
       protocol: TCP
-      authSecret:
-        name: 
+      #authSecret:
+        #name: 
   selector:
     eventsource-name: gitea-devlake-webhook
 
----
-apiVersion: argoproj.io/v1alpha1
-kind: EventBus
-metadata:
-  name: default
-spec:
-  nats:
-    native:
-      replicas: 3
-      auth: token
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: EventSource
@@ -38,15 +28,15 @@ spec:
   webhook:
     incidents-webhook:
       port: "12000"
-      endpoint: /webhook/incidents
+      endpoint: /incidents
       method: POST
     deployments-webhook:
       port: "12000"
-      endpoint: /webhook/deployments
+      endpoint: /deployments
       method: POST
     pull-requests-webhook:
       port: "12000"
-      endpoint: "/webhook/pull-requests"
+      endpoint: "/pull-requests"
 
 ---
 apiVersion: argoproj.io/v1alpha1

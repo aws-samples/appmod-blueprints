@@ -42,16 +42,8 @@ spec:
             value: "{{workflow.parameters.appname}}"
           - name: namespace
             value: "{{workflow.parameters.namespace}}"
-          - name: hostname
-            value: "{{workflow.parameters.hostname}}"
 
-    - - name: run-init
+    - - name: run-data-gen
         templateRef:
-          name: devlake-data-init-template
-          template: devlake-init
-        arguments:
-          parameters:
-          - name: appname
-            value: "{{workflow.parameters.appname}}"
-          - name: apprepo
-            value: "{{workflow.parameters.apprepo}}"
+          name: devlake-data-gen-template
+          template: devlake-data-gen
