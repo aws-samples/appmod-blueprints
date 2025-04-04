@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${{values.appname}}-devlake-provisioner
+  namespace: ${{values.namespace}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${{values.appname}}-devlake-provisioner-binding
+  namespace: ${{values.namespace}}
+subjects:
+- kind: ServiceAccount
+  name: ${{values.appname}}-devlake-provisioner
+  namespace: ${{values.namespace}}
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io

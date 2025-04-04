@@ -55,8 +55,8 @@ spec:
 
     - - name: run-warmup
         templateRef:
-          name: cicd-cache-warmup-template
-          template: cicd-warmup
+          name: run-cicd-template
+          template: run-cicd
         arguments:
           parameters:
           - name: appname
