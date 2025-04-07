@@ -29,8 +29,8 @@ spec:
           - /bin/bash
           - -c
           - |
-            endpoint=$(kubectl get secret devlake-mysql-db-cluster-connection -n vela-system -o jsonpath='{.data.endpoint}' | base64 --decode
-            password=$(kubectl get secret devlake-mysql-db-cluster-password -n vela-system -o jsonpath='{.data.password}' | base64 --decode
+            endpoint=$(kubectl get secret devlake-mysql-db-cluster-connection -n vela-system -o jsonpath='{.data.endpoint}' | base64 --decode)
+            password=$(kubectl get secret devlake-mysql-db-cluster-password -n vela-system -o jsonpath='{.data.password}' | base64 --decode)
             kubectl create secret generic devlake-mysql-auth \
             --from-literal=MYSQL_USER=merico \
             --from-literal=MYSQL_PASSWORD=merico \
