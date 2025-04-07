@@ -6,8 +6,8 @@ grafana:
 
 mysql:
   useExternal: true
-  externalServer: "${EXTERNAL_SERVER}"
-  externalPort: "${EXTERNAL_PORT}"
+  # externalServer: "${EXTERNAL_SERVER}"
+  # externalPort: "${EXTERNAL_PORT}"
 
 option:
   database: mysql
