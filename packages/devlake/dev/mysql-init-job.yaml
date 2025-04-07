@@ -77,23 +77,4 @@ spec:
         envFrom:
           - secretRef:
               name: devlake-mysql-auth
-      - name: create-secret
-        image: bitnami/kubectl
-        command:
-          - /bin/bash
-          - -c
-          - |
-            kubectl create secret generic devlake-mysql-auth \
-            --from-literal=MYSQL_USER=merico \
-            --from-literal=MYSQL_PASSWORD=merico \
-            --from-literal=MYSQL_DATABASE=lake \
-            --from-literal=MYSQL_ROOT_PASSWORD=$password \
-            --from-literal=DB_URL=$url
-        envFrom:
-          - secretRef:
-              name: devlake-mysql-db-cluster-password
-              namespace: vela-system
-          - secretRef:
-              name: devlake-mysql-db-cluster-connection
-              namespace: vela-system
 
