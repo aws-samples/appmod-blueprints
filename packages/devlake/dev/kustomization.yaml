@@ -3,6 +3,6 @@ resources:
   - mysql-init-job.yaml
   - rds-mysql.yaml
 
-patchesStrategicMerge:
-  - patches/devlake-patch-sa.yaml
+# patchesStrategicMerge:
+#   - patches/devlake-patch-sa.yaml
   
