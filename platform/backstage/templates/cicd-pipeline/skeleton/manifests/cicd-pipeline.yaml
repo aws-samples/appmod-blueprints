@@ -44,7 +44,7 @@ spec:
                   entity-id: ${{values.appname}}
               spec:
                 serviceAccountName: ${{values.appname}}-cicd-sa
-                entrypoint: ci-build
+                entrypoint: run-cicd
                 arguments:
                   parameters:
                     - name: apprepo
@@ -61,6 +61,10 @@ spec:
                       value: ${{values.deployment_path}}
                     - name: appname
                       value: ${{values.appname}}
+                    - name: body
+                      value: ""
+                    - name: headers
+                      value: ""
                 volumeClaimTemplates:
                 - metadata:
                     name: workdir
@@ -71,31 +75,40 @@ spec:
                       requests:
                         storage: 256Mi
                 templates:
-                  - name: run-cicd
-                    templateRef:
-                      name: run-cicd-template
-                      template: run-cicd
-                    arguments:
-                      parameters:
-                      - name: appname
-                        value: "{{workflow.parameters.appname}}"
-                      - name: apprepo
-                        value: "{{workflow.parameters.apprepo}}"
-                      - name: tag-version
-                        value: "{{workflow.parameters.tag-version"
-                      - name: branch
-                        value: "{{workflow.parameters.branch}}"
-                      - name: aws_region
-                        value: "{{workflow.parameters.aws_region}}"
-                      - name: dockerfile_path
-                        value: "{{workflow.parameters.dockerfile_path}}"
-                      - name: deployment_path
-                        value: "{{workflow.parameters.deployment_path}}"
+                  steps:
+                  - - name: run-cicd
+                      templateRef:
+                        name: run-cicd-template
+                        template: run-cicd
+                      arguments:
+                        parameters:
+                        - name: appname
+                          value: "{{workflow.parameters.appname}}"
+                        - name: apprepo
+                          value: "{{workflow.parameters.apprepo}}"
+                        - name: tag-version
+                          value: "{{workflow.parameters.tag-version"
+                        - name: branch
+                          value: "{{workflow.parameters.branch}}"
+                        - name: aws_region
+                          value: "{{workflow.parameters.aws_region}}"
+                        - name: dockerfile_path
+                          value: "{{workflow.parameters.dockerfile_path}}"
+                        - name: deployment_path
+                          value: "{{workflow.parameters.deployment_path}}"
           parameters:
             - src:
                 dependencyName: source-dep
                 dataTemplate: "{{ .Input.body.head_commit.id }}"
               dest: spec.arguments.parameters.2.value
+            - src:
+                dependencyName: source-dep
+                dataTemplate: "{{ .Input.body }}"
+              dest: spec.arguments.parameters.7.value
+            - src:
+                dependencyName: source-dep
+                dataTemplate: "{{ .Input.headers }}"
+              dest: spec.arguments.parameters.8.value
 ---
 apiVersion: v1
 kind: Service

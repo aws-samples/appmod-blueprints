@@ -2,9 +2,8 @@ apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: incidents-workflow-template
+  namespace: ${{values.namespace}}
 spec:
-  entrypoint: process-incident
-  serviceAccountName: devlake-webhook-sa
   arguments:
     parameters:
       - name: body
@@ -27,7 +26,7 @@ spec:
               name: devlake-webhook-id
         source: |
           apk add --no-cache jq curl
-          webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/deployments
+          webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/${DEVLAKE_HOOK_ID}/issues
 
           echo '{{inputs.parameters.body}}'
           PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
@@ -52,72 +51,14 @@ spec:
           echo "====Transformed Payload===="
           echo "$PAYLOAD" | jq '.'
 
-          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" '{{inputs.parameters.url}}'
----
-apiVersion: argoproj.io/v1alpha1
-kind: WorkflowTemplate
-metadata:
-  name: deployments-workflow-template
-spec:
-  entrypoint: process-deployment
-  serviceAccountName: devlake-webhook-sa
-  arguments:
-    parameters:
-      - name: body
-      - name: headers
-      - name: url
-  templates:
-    - name: process-deployment
-      inputs:
-        parameters:
-          - name: body
-          - name: headers
-          - name: url
-      script:
-        image: alpine
-        command: [sh]
-        envFrom:
-          - secretRef:
-              name: devlake-webhook-secret
-          - configMapRef:
-              name: devlake-webhook-id
-        source: |
-          apk add --no-cache jq curl
-          PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
-          . as $root |
-          {
-            id: .after,
-            createdDate: (.commits | first | .timestamp),
-            startedDate: (.commits | first | .timestamp),
-            finishedDate: (.commits | last | .timestamp),
-            environment: "PRODUCTION",
-            result: "SUCCESS",
-            name: ("deployment-" + (.after | .[0:7])),
-            deploymentCommits: [
-              .commits[] | {
-                repoUrl: $root.repository.clone_url,
-                refName: $root.ref,
-                startedDate: .timestamp,
-                finishedDate: .timestamp,
-                commitSha: .id,
-                commitMsg: .message,
-                result: "SUCCESS",
-                name: ("deployment-" + (.id | .[0:7]))
-              }
-            ]
-          }')
-          echo "====Transformed Payload===="
-          echo "$PAYLOAD" | jq '.'
-
-          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" '{{inputs.parameters.url}}'
+          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: pull-requests-workflow-template
+  namespace: ${{values.namespace}}
 spec:
-  entrypoint: process-pull-request
-  serviceAccountName: devlake-webhook-sa
   arguments:
     parameters:
       - name: body
@@ -140,7 +81,8 @@ spec:
               name: devlake-webhook-id
         source: |
           apk add --no-cache jq curl
-          echo '{{inputs.parameters.body}}'
+          webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/${DEVLAKE_HOOK_ID}/pull_requests
+
           PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
           {
             id: (.pull_request.id | tostring),
@@ -169,5 +111,5 @@ spec:
           echo "====Transformed Payload===="
           echo "$PAYLOAD" | jq '.'
 
-          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" '{{inputs.parameters.url}}'
+          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
 

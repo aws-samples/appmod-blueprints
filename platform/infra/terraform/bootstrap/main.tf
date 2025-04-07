@@ -99,10 +99,19 @@ module "managed_grafana" {
   # Dummy values for SAML configuration to setup will be updated after keycloak integration
   saml_idp_metadata_url   = var.grafana_keycloak_idp_url
 
-  create_security_group = false
+  create_security_group = true
+  security_group_rules = {
+    egress_mysql = {
+      description = "Allow egress to MySQL"
+      from_port = 3306
+      to_port = 3306
+      protocol = "tcp"
+      cidr_blocks = var.vpc_cidr
+    }
+  }
+
   vpc_configuration = {
     subnet_ids = var.eks_cluster_private_subnets
-    security_group_ids = [var.eks_cluster_node_security_group_id]
   }
 
   tags = local.tags

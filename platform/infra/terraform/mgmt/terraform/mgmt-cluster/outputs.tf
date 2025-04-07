@@ -18,6 +18,11 @@ output "vpc_cidr" {
   value = local.vpc_cidr
 }
 
+output "database_subnet_ids" {
+  description = "VPC Database Subnet Ids"
+  value = module.vpc.database_subnets
+}
+
 output "availability_zones" {
   description = "Default Availability Zone of the VPC created by the Module"
   value = local.azs

@@ -21,8 +21,7 @@ variable "eks_cluster_private_subnets" {
   type = list(string)
 }
 
-variable "eks_cluster_node_security_group_id" {
-  description = "VPC security groups for AMG configuration"
+variable "vpc_cidr" {
+  description = "VPC CIDR"
   type = string
-
 }

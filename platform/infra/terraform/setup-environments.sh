@@ -62,7 +62,6 @@ ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/install.sh
 cd ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/mgmt-cluster/
 export TF_eks_cluster_vpc_id=$(terraform output -raw eks_cluster_vpc_id)
 export TF_eks_cluster_private_subnets=$(terraform output -json eks_cluster_private_subnets)
-export TF_eks_cluster_node_security_group_id=$(terraform output -raw eks_cluster_node_security_group_id)
 echo "private subnets are : " $TF_eks_cluster_private_subnets
 # For Database and EC2 database
 export TF_eks_cluster_vpc_cidr=$(terraform output -raw vpc_cidr)
@@ -122,8 +121,8 @@ git clone https://github.com/aws-observability/terraform-aws-observability-accel
 
 echo "bootstrapping Terraform"
 terraform -chdir=bootstrap init -reconfigure
-terraform -chdir=bootstrap plan -var eks_cluster_private_subnets="$TF_eks_cluster_private_subnets" -var eks_cluster_node_security_group_id="$TF_eks_cluster_node_security_group_id"
-terraform -chdir=bootstrap apply -var eks_cluster_private_subnets="$TF_eks_cluster_private_subnets" -var eks_cluster_node_security_group_id="$TF_eks_cluster_node_security_group_id" \
+terraform -chdir=bootstrap plan -var eks_cluster_private_subnets="$TF_eks_cluster_private_subnets" -var vpc_cidr="$TF_eks_cluster_vpc_cidr"
+terraform -chdir=bootstrap apply -var eks_cluster_private_subnets="$TF_eks_cluster_private_subnets" -var vpc_cidr="$TF_eks_cluster_vpc_cidr" \
   -auto-approve
 
 export TF_VAR_state_s3_bucket=$(terraform -chdir=bootstrap output -raw eks-accelerator-bootstrap-state-bucket)

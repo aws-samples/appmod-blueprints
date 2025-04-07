@@ -37,6 +37,7 @@ spec:
     pull-requests-webhook:
       port: "12000"
       endpoint: "/pull-requests"
+      method: POST
 
 ---
 apiVersion: argoproj.io/v1alpha1
@@ -69,6 +70,8 @@ spec:
               metadata:
                 generateName: incidents-workflow-
               spec:
+                serviceAccountName: devlake-webhook-sa
+                entrypoint: process-incident
                 workflowTemplateRef:
                   name: incidents-workflow-template
                 arguments:
@@ -112,6 +115,10 @@ spec:
                 dependencyName: deployments-webhook
                 dataKey: body
               dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: deployments-webhook
+                dataKey: headers
+              dest: spec.arguments.parameters.1.value
 
     - template:
         name: pull-requests-workflow-trigger
@@ -127,6 +134,7 @@ spec:
               spec:
                 workflowTemplateRef:
                   name: pull-requests-workflow-template
+                entrypoint: process-pull-request
                 arguments:
                   parameters:
                     - name: body

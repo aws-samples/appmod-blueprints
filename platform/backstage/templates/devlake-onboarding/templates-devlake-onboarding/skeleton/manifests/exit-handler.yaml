@@ -1,34 +1,65 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: cicd-deployments-exit-handler
+  name: cicd-deployments-dora-processing-template
+  namespace: ${{values.namespace}}
 spec:
-  entrypoint: handle-exit
+  entrypoint: handle-rollout-check-and-process-deploy
   serviceAccountName: devlake-webhook-sa
+  volumes:
+    - name: argocd-cluster-secret
+      secret:
+        secretName: dev-cluster-argo-secret
+        namespace: argocd
   arguments:
     parameters:
       - name: body
       - name: headers
       - name: url
+        value: devlake-ui.devlake.svc.cluster.local:4000
+      - name: appname
+        value: ${{values.appName}}
+      - name: namespace
+        value: ${{values.appNamespace}}
   templates:
+    - name: handle-rollout-check-and-process-deploy
+      steps:
+        - - name: check-rollout
+            template: check-rollout-status
+        - - name: process-and-send-deployment
+            template: process-deployment
+            arguments:
+              parameters:
+                - name: status
+                  value: "{{steps.check-rollout.outputs.result}}"
+                - name: body
+                  value: "{{workflow.parameters.body}}"
+                - name: url
+                  value: "{{workflow.parameters.url}}"
+                - name: headers
+                  value: "{{workflow.parameters.headers}}"
+
+
     - name: process-deployment
       inputs:
         parameters:
           - name: body
           - name: headers
           - name: url
+          - name: status
       script:
         image: alpine
         command: [sh]
-        env:
-          - name: DEVLAKE_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: devlake-webhook-secret
-                key: token
+        envFrom:
+          - secretRef:
+              name: devlake-webhook-secret
+          - configMapRef:
+              name: devlake-webhook-id
         source: |
           apk add --no-cache jq curl
-          PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+          RESULT="{{inputs.parameters.status}}
+          webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/${DEVLAKE_HOOK_ID}/deployments          
+          PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
           . as $root |
           {
             id: .after,
@@ -36,7 +67,7 @@ spec:
             startedDate: (.commits | first | .timestamp),
             finishedDate: (.commits | last | .timestamp),
             environment: "PRODUCTION",
-            result: "SUCCESS",
+            result: $result,
             name: ("deployment-" + (.after | .[0:7])),
             deploymentCommits: [
               .commits[] | {
@@ -54,67 +85,42 @@ spec:
           echo "====Transformed Payload===="
           echo "$PAYLOAD" | jq '.'
 
-          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" '{{inputs.parameters.url}}'
----
-apiVersion: argoproj.io/v1alpha1
-kind: WorkflowTemplate
-metadata:
-  name: pull-requests-workflow-template
-spec:
-  entrypoint: process-pull-request
-  serviceAccountName: devlake-webhook-sa
-  arguments:
-    parameters:
-      - name: body
-      - name: headers
-      - name: url
-  templates:
-    - name: process-pull-request
-      inputs:
-        parameters:
-          - name: body
-          - name: headers
-          - name: url
+          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
+
+    - name: check-rollout-status
       script:
-        image: alpine
-        command: [sh]
-        env:
-          - name: DEVLAKE_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: devlake-webhook-secret
-                key: token
-                  
+        image: bitnami/kubectl:latest
+        command: [bash]
+        volumeMounts:
+          - name: argocd-cluster-secret
+            mountPath: /tmp/argocd-cluster
+            readOnly: true
         source: |
-          apk add --no-cache jq curl
-          echo '{{inputs.parameters.body}}'
-          PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
-          {
-            id: (.pull_request.id | tostring),
-            title: .pull_request.title,
-            description: .pull_request.body,
-            status: (if .pull_request.state == "open" then "OPEN" elif .pull_request.merged then "MERGED" else "CLOSED" end),
-            createdDate: .pull_request.created_at,
-            updatedDate: .pull_request.updated_at,
-            closedDate: .pull_request.closed_at,
-            mergedDate: .pull_request.merged_at,
-            type: "PR",
-            url: .pull_request.html_url,
-            authorId: .pull_request.user.login,
-            authorName: (.pull_request.user.name // .pull_request.user.login),
-            reviewers: [.pull_request.requested_reviewers[].login],
-            comments: (.pull_request.comments // 0),
-            commits: (.pull_request.commits // 0),
-            additions: (.pull_request.additions // 0),
-            deletions: (.pull_request.deletions // 0),
-            changedFiles: (.pull_request.changed_files // 0),
-            baseBranch: .pull_request.base.ref,
-            headBranch: .pull_request.head.ref,
-            repoId: .repository.id,
-            repoName: .repository.full_name
-          }')
-          echo "====Transformed Payload===="
-          echo "$PAYLOAD" | jq '.'
+          mkdir -p ~/.kube
+          cp /tmp/argocd-cluster/config ~/.kube/config
 
-          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" '{{inputs.parameters.url}}'
+          # Install kubectl-argo-rollouts plugin
+          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x ./kubectl-argo-rollouts-linux-amd64
+          mv ./kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
 
+          SEARCH_WORD="{{workflow.parameters.appname}}"
+          ROLLOUT_NAME=$(kubectl get rollout -n {{workflow.parameters.namespace}} -o json | \
+            jq -r --arg WORD "$SEARCH_WORD" '.items[] | select(.metadata.name | contains($WORD)) | .metadata.name')
+
+          if [ -z "$ROLLOUT_NAME" ]; then
+            echo "No rollout found containing word: $SEARCH_WORD"
+            exit 1
+          fi
+          # Initialize timeout variables
+          TIMEOUT=600  # 10 minutes timeout
+          INTERVAL=10  # Check every 10 seconds
+          ELAPSED=0
+
+          if kubectl argo rollouts status $ROLLOUT_NAME -n "{{workflow.parameters.namespace}}" --timeout 2m; then
+            echo "SUCCESS"
+            exit 0
+          else 
+            echo "FAILURE"
+            exit 0
+          fi

@@ -1,3 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: devlake-mysql-access-binding
+  namespace: devlake
+subjects:
+- kind: ServiceAccount
+  name: devlake-mysql-access
+  namespace: devlake
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -7,7 +21,28 @@ spec:
     metadata:
       name: mysql-user-setup
     spec:
+      serviceAccountName: devlake-mysql-access
       restartPolicy: OnFailure
+      initContainers:
+      - name: create-secret
+        image: bitnami/kubectl
+        command:
+          - /bin/bash
+          - -c
+          - |
+            kubectl create secret generic devlake-mysql-auth \
+            --from-literal=MYSQL_USER=merico \
+            --from-literal=MYSQL_PASSWORD=merico \
+            --from-literal=MYSQL_DATABASE=lake \
+            --from-literal=MYSQL_ROOT_PASSWORD=$password \
+            --from-literal=DB_URL=$endpoint
+        envFrom:
+          - secretRef:
+              name: devlake-mysql-db-cluster-password
+              namespace: vela-system
+          - secretRef:
+              name: devlake-mysql-db-cluster-connection
+              namespace: vela-system
       containers:
       - name: create-grafana-user
         image: mysql:8
@@ -15,13 +50,24 @@ spec:
           - /bin/bash
           - -c
           - |
-            until mysql -h devlake-mysql -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
+            until mysql -h ${DB_URL} -P 3306 -u awsrdsadmin -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
               echo "Waiting for MySQL to be ready..."
               sleep 2
             done
+
+            mysql -h ${DB_URL} -P 3306 -u awsrdsadmin -p${MYSQL_ROOT_PASSWORD} -e "
+            CREATE DATABASE IF NOT EXISTS lake;
+            "
+
+            echo "Creating devlake user..."
+            mysql -h ${DB_URL} -P 3306 -u awsrdsadmin -p${MYSQL_ROOT_PASSWORD} -e "
+            CREATE USER IF NOT EXISTS 'merico' IDENTIFIED BY 'merico';
+            GRANT ALL PRIVILEGES ON lake.* TO 'merico';
+            FLUSH PRIVILEGES;
+            "
           
             echo "Creating Grafana user..."
-            mysql -h devlake-mysql -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h ${DB_URL} -P 3306 -u awsrdsadmin -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE USER IF NOT EXISTS 'grafanaReader' IDENTIFIED BY 'grafana_password';
             GRANT SELECT ON lake.* TO 'grafanaReader';
             FLUSH PRIVILEGES;
@@ -31,4 +77,23 @@ spec:
         envFrom:
           - secretRef:
               name: devlake-mysql-auth
+      - name: create-secret
+        image: bitnami/kubectl
+        command:
+          - /bin/bash
+          - -c
+          - |
+            kubectl create secret generic devlake-mysql-auth \
+            --from-literal=MYSQL_USER=merico \
+            --from-literal=MYSQL_PASSWORD=merico \
+            --from-literal=MYSQL_DATABASE=lake \
+            --from-literal=MYSQL_ROOT_PASSWORD=$password \
+            --from-literal=DB_URL=$url
+        envFrom:
+          - secretRef:
+              name: devlake-mysql-db-cluster-password
+              namespace: vela-system
+          - secretRef:
+              name: devlake-mysql-db-cluster-connection
+              namespace: vela-system
 

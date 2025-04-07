@@ -2,29 +2,17 @@
 grafana:
   enabled: false
   external:
-    url: "http://localhost:4000" # Set to AMG Endpoint in setup-environments
+    url: "http://localhost:4000" # Set to AMG Endpoint in setup-environments - doesn't work - need some sort of ingress maybe?
 
 mysql:
-  storage:
-    class: gp3
+  useExternal: true
+  externalServer: "${EXTERNAL_SERVER}"
+  externalPort: "${EXTERNAL_PORT}"
 
-  service:
-    type: "NodePort"
-    nodePort: "30306"
-
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 999
-    runAsGroup: 999
-    fsGroup: 999
-
-  containerSecurityContext:
-    allowPrivilegeEscalation: false
-    runAsNonRoot: true
-    capabilities:
-      drop: ["ALL"]
-    seccompProfile:
-      type: RuntimeDefault
+option:
+  database: mysql
+  connectionSecretName: "devlake-mysql-auth"
+  autoCreateSecret: false
 
 
 lake:

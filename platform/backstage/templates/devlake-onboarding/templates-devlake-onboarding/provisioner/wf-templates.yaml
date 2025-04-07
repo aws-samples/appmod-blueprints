@@ -203,13 +203,31 @@ spec:
           git config --global user.name ARGO
           git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
           git pull --rebase
-          if [ -f manifests/cicd-pipeline.yml ]; then
-            yq 'select(.kind == "Sensor").spec.triggers[].template.argoWorkflow.source.resource.spec.onExit = "{{inputs.parameters.exit-hook-name}}"' -i manifests/cicd-pipeline.yaml
+          if [ -f manifests/cicd-pipeline.yaml ]; then
+            yq -i '.spec.triggers[0].template.argoWorkflow.source.resource.spec.templates[0].steps += [[{
+              "name": "send-deployment-status",
+              "templateRef": {
+                "name": "cicd-deployments-dora-processing-template",
+                "template": "handle-rollout-check-and-process-deploy"
+              },
+              "arguments": {
+                "parameters": [
+                  {
+                    "name": "body",
+                    "value": "{{workflow.parameters.body}}"
+                  },
+                  {
+                    "name": "headers",
+                    "value": "{{workflow.parameters.headers}}"
+                  }
+                ]
+              }
+            }]]' manifests/cicd-pipeline.yaml
           fi
           m_count=$(git status -s | wc -l)
           if [ $m_count -ge 1 ]; then
             git add .
-            git commit -m "Add Exit Handler for DORA Metrics"
+            git commit -m "Add Deployment Handler for DORA Metrics"
             git push --set-upstream origin main
           else
             echo "No updates, skipping git push"
