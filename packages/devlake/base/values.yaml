@@ -6,8 +6,8 @@ grafana:
 
 mysql:
   useExternal: true
-  externalServer: "${EXTERNAL_SERVER}"
-  externalPort: "${EXTERNAL_PORT}"
+  externalServer: "devlake-mysql-service"
+  externalPort: "3306"
 
 option:
   database: mysql

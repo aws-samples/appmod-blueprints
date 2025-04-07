@@ -1,8 +1,8 @@
+---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: devlake-mysql-access-binding
-  namespace: devlake
 subjects:
 - kind: ServiceAccount
   name: devlake-mysql-access
@@ -19,7 +19,7 @@ metadata:
 spec:
   template:
     metadata:
-      name: mysql-user-setup
+      generateName: mysql-user-setup-
     spec:
       serviceAccountName: devlake-mysql-access
       restartPolicy: OnFailure
@@ -30,19 +30,15 @@ spec:
           - /bin/bash
           - -c
           - |
+            endpoint=$(kubectl get secret devlake-mysql-db-cluster-connection -n vela-system -o jsonpath='{.data.endpoint}' | base64 --decode)
+            kubectl create service externalname devlake-mysql-service --external-name=$endpoint -n devlake --dry-run=client -o yaml | kubectl apply -f -
+            password=$(kubectl get secret devlake-mysql-db-cluster-password -n vela-system -o jsonpath='{.data.password}' | base64 --decode)
             kubectl create secret generic devlake-mysql-auth \
             --from-literal=MYSQL_USER=merico \
             --from-literal=MYSQL_PASSWORD=merico \
             --from-literal=MYSQL_DATABASE=lake \
             --from-literal=MYSQL_ROOT_PASSWORD=$password \
-            --from-literal=DB_URL=$endpoint
-        envFrom:
-          - secretRef:
-              name: devlake-mysql-db-cluster-password
-              namespace: vela-system
-          - secretRef:
-              name: devlake-mysql-db-cluster-connection
-              namespace: vela-system
+            --from-literal=DB_URL=mysql://merico:merico@devlake-mysql-service:3306/lake?charset=utf8mb4&parseTime=True
       containers:
       - name: create-grafana-user
         image: mysql:8
@@ -77,23 +73,4 @@ spec:
         envFrom:
           - secretRef:
               name: devlake-mysql-auth
-      - name: create-secret
-        image: bitnami/kubectl
-        command:
-          - /bin/bash
-          - -c
-          - |
-            kubectl create secret generic devlake-mysql-auth \
-            --from-literal=MYSQL_USER=merico \
-            --from-literal=MYSQL_PASSWORD=merico \
-            --from-literal=MYSQL_DATABASE=lake \
-            --from-literal=MYSQL_ROOT_PASSWORD=$password \
-            --from-literal=DB_URL=$url
-        envFrom:
-          - secretRef:
-              name: devlake-mysql-db-cluster-password
-              namespace: vela-system
-          - secretRef:
-              name: devlake-mysql-db-cluster-connection
-              namespace: vela-system
 

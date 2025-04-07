@@ -204,7 +204,7 @@ spec:
           git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
           git pull --rebase
           if [ -f manifests/cicd-pipeline.yaml ]; then
-            yq -i '.spec.triggers[0].template.argoWorkflow.source.resource.spec.templates[0].steps += [[{
+            yq -i 'select(.kind =="Sensor").spec.triggers[0].template.argoWorkflow.source.resource.spec.templates | select(.kind == "Sensor") | .steps += [[{
               "name": "send-deployment-status",
               "templateRef": {
                 "name": "cicd-deployments-dora-processing-template",
