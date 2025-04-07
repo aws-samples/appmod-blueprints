@@ -18,7 +18,7 @@ metadata:
 spec:
   template:
     metadata:
-      name: mysql-user-setup
+      generateName: mysql-user-setup-
     spec:
       serviceAccountName: devlake-mysql-access
       restartPolicy: OnFailure
