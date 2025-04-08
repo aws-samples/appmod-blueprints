@@ -1,11 +1,11 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: cicd-deployments-dora-processing-template
+  name: ${{values.appname}}-cicd-deployments-dora-processing-template
   namespace: ${{values.namespace}}
 spec:
   entrypoint: handle-rollout-check-and-process-deploy
-  serviceAccountName: devlake-webhook-sa
+  serviceAccountName: ${{values.appname}}-dora-webhook-sa
   volumes:
     - name: argocd-cluster-secret
       secret:

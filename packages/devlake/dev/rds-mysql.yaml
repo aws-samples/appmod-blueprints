@@ -13,6 +13,8 @@ spec:
           - subnet-xxxxxx1
           - subnet-xxxxxx2
           - subnet-xxxxxx3
+        vpcId: vpc-xxxxx
+        vpcCidr: 10.0.0.0/16
       traits:
         - type: component-iam-policy
           properties:

@@ -55,9 +55,9 @@ spec:
                       value: 0.0.1
                     - name: aws_region
                       value: ${{values.aws_region}}
-                    - name: dockerfile-path
+                    - name: dockerfile_path
                       value: ${{values.dockerfile_path}}
-                    - name: deployment-path
+                    - name: deployment_path
                       value: ${{values.deployment_path}}
                     - name: appname
                       value: ${{values.appname}}
@@ -75,6 +75,7 @@ spec:
                       requests:
                         storage: 256Mi
                 templates:
+                - name: run-cicd
                   steps:
                   - - name: run-cicd
                       templateRef:
@@ -87,7 +88,7 @@ spec:
                         - name: apprepo
                           value: "{{workflow.parameters.apprepo}}"
                         - name: tag-version
-                          value: "{{workflow.parameters.tag-version"
+                          value: "{{workflow.parameters.tag-version}}"
                         - name: branch
                           value: "{{workflow.parameters.branch}}"
                         - name: aws_region
@@ -107,7 +108,7 @@ spec:
               dest: spec.arguments.parameters.7.value
             - src:
                 dependencyName: source-dep
-                dataTemplate: "{{ .Input.headers }}"
+                dataTemplate: "{{ .Input.header }}"
               dest: spec.arguments.parameters.8.value
 ---
 apiVersion: v1

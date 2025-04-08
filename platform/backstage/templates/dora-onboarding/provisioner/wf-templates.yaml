@@ -2,7 +2,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: devlake-provisioner-template
+  name: dora-provisioner-template
   namespace: ${{values.namespace}}
 spec:
   arguments:
@@ -14,7 +14,7 @@ spec:
     - name: url
       value: http://devlake-lake.devlake.svc.cluster.local:8080
   templates:
-  - name: devlake-provisioner
+  - name: dora-provisioner
     dag:
       tasks:
         - name: devlake-init
@@ -24,7 +24,7 @@ spec:
               - name: appname
                 value: "{{workflow.parameters.appname}}"
               - name: url
-                value: "{{workflow.parameters.url}}"
+                value: http://devlake-lake.devlake.svc.cluster.local:8080
 
         - name: create-devlake-webhook-secret-and-cm
           template: create-devlake-webhook-secret-and-cm
@@ -43,7 +43,7 @@ spec:
           arguments:
             parameters:
               - name: apprepo
-                value: "{{workflow.parameters.appname}}-cicd"
+                value: "{{workflow.parameters.apprepo}}-cicd"
 
   - name: devlake-init
     inputs:
@@ -51,13 +51,13 @@ spec:
       - name: appname
       - name: url
     container: 
-      image: alpine:latest
-      command: ["sh"]
+      image: alpine:3.20
+      command: ["/bin/sh", "-c"]
       args:
       - |
-        apk install curl jq
+        apk add curl jq >/dev/null 2>&1
         BASE_URL="{{inputs.parameters.url}}"
-        curl -X GET ${BASE_URL}/proceed-db-migration
+        resp=$(curl -X GET ${BASE_URL}/proceed-db-migration)
         
         projectName="{{inputs.parameters.appname}}"
         
@@ -140,8 +140,8 @@ spec:
       command: ["/bin/bash", "-c"]
       args:
       - |
-        TOKEN=$(echo "{{inputs.parameters.token-and-id}} | cut -d'|' -f1)"
-        ID=$(echo "{{inputs.parameters.token-and-id}} | cut -d'|' -f2)"
+        TOKEN=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f1)
+        ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f2)
         kubectl delete secret devlake-webhook-secret --ignore-not-found -n "{{workflow.parameters.namespace}}" 
         kubectl create secret generic devlake-webhook-secret -n "{{workflow.parameters.namespace}}" \
           --from-literal=DEVLAKE_TOKEN="$TOKEN"
@@ -161,7 +161,7 @@ spec:
       - |
         apk add curl jq
         hooks_api_url="{{workflow.parameters.hostname}}"/gitea/api/v1/repos/giteaAdmin/"{{workflow.parameters.appname}}"/hooks
-        webhook_url="http://{{workflow.parameters.url}}"/argo-events/"{{workflow.parameters.appname}}-dora/incidents"
+        webhook_url="http://{{workflow.parameters.hostname}}"/argo-events/"{{workflow.parameters.appname}}-dora/incidents"
         webhook_exists=$(curl -k -X 'GET' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" | jq --arg url "$webhook_url" 'map(select(.config.url == $url)) | length > 0')
         if ! $webhook_exists; then
           echo "Webhook is not found, creating webhook with $webhook_url"
@@ -170,7 +170,7 @@ spec:
           echo "Webhook with url $webhook_url already exists"
         fi
 
-        webhook_url="http://{{workflow.parameters.url}}"/argo-events/"{{workflow.parameters.appname}}-dora/pull-requests"
+        webhook_url="http://{{workflow.parameters.hostname}}"/argo-events/"{{workflow.parameters.appname}}-dora/pull-requests"
         webhook_exists=$(curl -k -X 'GET' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" | jq --arg url "$webhook_url" 'map(select(.config.url == $url)) | length > 0')
         if ! $webhook_exists; then
           echo "Webhook is not found, creating webhook with $webhook_url"
@@ -183,7 +183,6 @@ spec:
     inputs:
       parameters:
         - name: apprepo
-        - name: exit-hook-name
     container:
       envFrom:
       - secretRef:
@@ -199,12 +198,15 @@ spec:
         - |
           apk add --no-cache yq
           set -ex
+          mkdir ./src
+          git clone https://"{{inputs.parameters.apprepo}}".git -c http.sslVerify=false ./src
+          cd ./src
           git config --global user.email "noreply@aws.com" 
           git config --global user.name ARGO
           git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
           git pull --rebase
           if [ -f manifests/cicd-pipeline.yaml ]; then
-            yq -i 'select(.kind =="Sensor").spec.triggers[0].template.argoWorkflow.source.resource.spec.templates | select(.kind == "Sensor") | .steps += [[{
+            yq -i 'select(.kind =="Sensor").spec.triggers[0].template.argoWorkflow.source.resource.spec.templates[0].steps += [[{
               "name": "send-deployment-status",
               "templateRef": {
                 "name": "cicd-deployments-dora-processing-template",
@@ -214,11 +216,11 @@ spec:
                 "parameters": [
                   {
                     "name": "body",
-                    "value": "{{workflow.parameters.body}}"
+                    "value": {{"'{{workflow.parameters.body}}'"}}
                   },
                   {
                     "name": "headers",
-                    "value": "{{workflow.parameters.headers}}"
+                    "value": {{"'{{workflow.parameters.headers}}'"}}
                   }
                 ]
               }
@@ -237,11 +239,11 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: devlake-data-gen-template
+  name: dora-data-gen-template
   namespace: ${{values.namespace}}
 spec:
   templates:
-  - name: devlake-data-gen
+  - name: dora-data-gen
     dag:
       tasks:
         - name: data-gen 
@@ -250,7 +252,7 @@ spec:
   - name: devlake-generate-data
     container:
       image: debian:12
-      command: [/bin/bash]
+      command: [/bin/bash, -c]
       envFrom:
         - secretRef:
             name: devlake-webhook-secret

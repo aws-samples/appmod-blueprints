@@ -30,6 +30,10 @@ spec:
       value: ${{values.hostname}}
     - name: apprepo
       value: ${{values.hostname}}/gitea/giteaAdmin/${{values.appname}}
+    - name: branch
+      value: main
+    - name: tag-version
+      value: init
     - name: dockerfile_path
       value: ${{values.dockerfile_path}}
     - name: deployment_path
@@ -65,6 +69,10 @@ spec:
             value: "{{workflow.parameters.apprepo}}"
           - name: aws_region
             value: "{{workflow.parameters.aws_region}}"
+          - name: branch
+            value: "{{workflow.parameters.branch}}"
+          - name: tag-version
+            value: "{{workflow.parameters.tag-version}}"
           - name: dockerfile_path
             value: "{{workflow.parameters.dockerfile_path}}"
           - name: deployment_path
