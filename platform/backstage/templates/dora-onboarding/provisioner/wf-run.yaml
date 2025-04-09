@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: ${{values.appname}}-devlake-provisioning-
+  generateName: ${{values.appname}}-dora-provisioning-
   namespace: ${{values.namespace}}
   labels:
-    entity-id: ${{values.appname}}-devlake
+    entity-id: ${{values.appname}}-dora
 spec:
   volumeClaimTemplates:
   - metadata:
@@ -17,7 +17,7 @@ spec:
           storage: 256Mi
 
   entrypoint: main
-  serviceAccountName: ${{values.appname}}-devlake-provisioner
+  serviceAccountName: ${{values.appname}}-dora-provisioner
   arguments:
     parameters:
     - name: appname
@@ -34,8 +34,8 @@ spec:
     steps:
     - - name: run-provisioner
         templateRef:
-          name: devlake-provisioner-template
-          template: devlake-provisioner
+          name: dora-provisioner-template
+          template: dora-provisioner
         arguments:
           parameters:
           - name: appname
@@ -45,5 +45,5 @@ spec:
 
     - - name: run-data-gen
         templateRef:
-          name: devlake-data-gen-template
-          template: devlake-data-gen
+          name: dora-data-gen-template
+          template: dora-data-gen

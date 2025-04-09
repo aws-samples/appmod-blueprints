@@ -2,7 +2,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: devlake-provisioner-template
+  name: dora-provisioner-template
   namespace: ${{values.namespace}}
 spec:
   arguments:
@@ -14,7 +14,7 @@ spec:
     - name: url
       value: http://devlake-lake.devlake.svc.cluster.local:8080
   templates:
-  - name: devlake-provisioner
+  - name: dora-provisioner
     dag:
       tasks:
         - name: devlake-init
@@ -239,11 +239,11 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: devlake-data-gen-template
+  name: dora-data-gen-template
   namespace: ${{values.namespace}}
 spec:
   templates:
-  - name: devlake-data-gen
+  - name: dora-data-gen
     dag:
       tasks:
         - name: data-gen 

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: ${{values.appname}}-devlake-webhook-svc
+  name: ${{values.appname}}-dora-webhook-svc
   namespace: ${{values.namespace}}
 spec:
   type: ClusterIP  # Or ClusterIP if using Ingress
@@ -12,16 +12,16 @@ spec:
       #authSecret:
         #name: 
   selector:
-    eventsource-name: ${{values.appname}}-gitea-devlake-webhook
+    eventsource-name: ${{values.appname}}-gitea-dora-webhook
 
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: EventSource
 metadata:
-  name: ${{values.appname}}-gitea-devlake-webhook
+  name: ${{values.appname}}-gitea-dora-webhook
   namespace: ${{values.namespace}}
   labels:
-    eventsource-name: ${{values.appname}}-gitea-devlake-webhook
+    eventsource-name: ${{values.appname}}-gitea-dora-webhook
 spec:
   service:
     ports:
@@ -49,7 +49,7 @@ metadata:
   namespace: ${{values.namespace}}
 spec:
   template:
-    serviceAccountName: ${{values.appname}}-devlake-webhook-sa
+    serviceAccountName: ${{values.appname}}-dora-webhook-sa
   dependencies:
     - name: incidents-webhook
       eventSourceName: gitea-webhook
@@ -71,9 +71,9 @@ spec:
               apiVersion: argoproj.io/v1alpha1
               kind: Workflow
               metadata:
-                generateName: ${{values.appname}}-devlake-incidents-workflow-
+                generateName: ${{values.appname}}-dora-incidents-workflow-
               spec:
-                serviceAccountName: ${{values.appname}}-devlake-webhook-sa
+                serviceAccountName: ${{values.appname}}-dora-webhook-sa
                 entrypoint: process-incident
                 workflowTemplateRef:
                   name: incidents-workflow-template
@@ -82,7 +82,7 @@ spec:
                     - name: body
                       value: '{{.Input.body}}'
                     - name: headers
-                      value: '{{.Input.headers}}'
+                      value: '{{.Input.header}}'
                     - name: url
                       value: http://devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/1/issues
           parameters:
@@ -92,7 +92,7 @@ spec:
               dest: spec.arguments.parameters.0.value
             - src:
                 dependencyName: incidents-webhook
-                dataKey: headers
+                dataKey: header
               dest: spec.arguments.parameters.1.value
 
     - template:
@@ -105,9 +105,9 @@ spec:
               apiVersion: argoproj.io/v1alpha1
               kind: Workflow
               metadata:
-                generateName: ${{values.appname}}-devlake-deployments-workflow-
+                generateName: ${{values.appname}}-dora-deployments-workflow-
               spec:
-                serviceAccountName: ${{values.appname}}-devlake-webhook-sa
+                serviceAccountName: ${{values.appname}}-dora-webhook-sa
                 workflowTemplateRef:
                   name: deployments-workflow-template
                 arguments:
@@ -115,7 +115,7 @@ spec:
                     - name: body
                       value: '{{.Input.body}}'
                     - name: headers
-                      value: '{{.Input.headers}}'
+                      value: '{{.Input.header}}'
                     - name: url
                       value: http://devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/1/deployments
           parameters:
@@ -125,7 +125,7 @@ spec:
               dest: spec.arguments.parameters.0.value
             - src:
                 dependencyName: deployments-webhook
-                dataKey: headers
+                dataKey: header
               dest: spec.arguments.parameters.1.value
 
     - template:
@@ -138,9 +138,9 @@ spec:
               apiVersion: argoproj.io/v1alpha1
               kind: Workflow
               metadata:
-                generateName: ${{values.appname}}-pull-requests-workflow-
+                generateName: ${{values.appname}}-dora-pull-requests-workflow-
               spec:
-                serviceAccountName: ${{values.appname}}-devlake-webhook-sa
+                serviceAccountName: ${{values.appname}}-dora-webhook-sa
                 workflowTemplateRef:
                   name: pull-requests-workflow-template
                 entrypoint: process-pull-request
@@ -149,7 +149,7 @@ spec:
                     - name: body
                       value: '{{.Input.body}}'
                     - name: headers
-                      value: '{{.Input.headers}}'
+                      value: '{{.Input.header}}'
                     - name: url
                       value: http://devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/1/pullrequests
           parameters:
@@ -159,13 +159,13 @@ spec:
               dest: spec.arguments.parameters.0.value
             - src:
                 dependencyName: pull-requests-webhook
-                dataKey: headers
+                dataKey: header
               dest: spec.arguments.parameters.1.value
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ${{values.appname}}-devlake-webhook-es-ing
+  name: ${{values.appname}}-dora-webhook-ing
   namespace: ${{values.namespace}}
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: 512m
@@ -179,19 +179,19 @@ spec:
         paths:
           - backend:
               service:
-                name: ${{values.appname}}-devlake-webhook-svc
+                name: ${{values.appname}}-dora-webhook-svc
                 port:
                   number: 12000
-            path: /argo-events/${{values.appname}}-devlake(/|$)(.*)
+            path: /argo-events/${{values.appname}}-dora(/|$)(.*)
             pathType: ImplementationSpecific
     - host: localhost
       http:
         paths:
           - backend:
               service:
-                name: ${{values.appname}}-devlake-webhook-svc
+                name: ${{values.appname}}-dora-webhook-svc
                 port:
                   number: 12000
-            path: /argo-events/${{values.appname}}-devlake(/|$)(.*)
+            path: /argo-events/${{values.appname}}-dora(/|$)(.*)
             pathType: ImplementationSpecific
 
