@@ -18,5 +18,5 @@ spec:
   type: service
   lifecycle: experimental
   owner: guest
-  system: ${{values.appname | dump}}-dora
+  system: ${{values.appname | dump}}
 
