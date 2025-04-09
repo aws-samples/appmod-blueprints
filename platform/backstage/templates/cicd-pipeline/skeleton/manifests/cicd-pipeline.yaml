@@ -87,7 +87,7 @@ spec:
                         - name: apprepo
                           value: "{{workflow.parameters.apprepo}}"
                         - name: tag-version
-                          value: "{{workflow.parameters.tag-version"
+                          value: "{{workflow.parameters.tag-version}}"
                         - name: branch
                           value: "{{workflow.parameters.branch}}"
                         - name: aws_region

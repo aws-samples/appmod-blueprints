@@ -8,7 +8,7 @@ metadata:
     backstage.io/kubernetes-label-selector: 'entity-id=${{values.appname}}-devlake'
     argocd/app-selector: 'entity-id=${{values.appname}}-devlake'
     argo-workflows.cnoe.io/cluster-name: local
-    argo-workflows.cnoe.io/namespace: team-${{values.appname}}
+    argo-workflows.cnoe.io/namespace: ${{values.namespace}}
     argo-workflows.cnoe.io/label-selector: 'entity-id=${{values.appname}}-devlake'
   links:
     - url: https://${{values.hostname}}/gitea?repo=${{values.appname}}-devlake

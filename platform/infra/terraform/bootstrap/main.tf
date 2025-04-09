@@ -108,6 +108,14 @@ module "managed_grafana" {
       protocol = "tcp"
       cidr_blocks = [var.vpc_cidr]
     }
+
+    egress_http = {
+      description = "Allow egress to http"
+      from_port = 80
+      to_port = 80
+      protocol = "tcp"
+      cidr_blocks= ["0.0.0.0/0"]
+    }
   }
 
   vpc_configuration = {

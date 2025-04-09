@@ -77,7 +77,7 @@ spec:
       name: Create ArgoCD App
       action: cnoe:create-argocd-app
       input:
-        appName: ${{parameters.appname}}
+        appName: ${{parameters.appname}}-devlake
         appNamespace: team-${{ parameters.appname }}
         argoInstance: in-cluster
         projectName: default

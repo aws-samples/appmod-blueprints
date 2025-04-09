@@ -92,6 +92,12 @@ spec:
         repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.appname}}-cicd
         path: "manifests"
 
+    - action: debug:wait
+      name: Wait for ArgoCD
+      input:
+        seconds: 15
+
+
     - action: cnoe:kubernetes:apply
       name: Run Workflow 
       id: run-wf

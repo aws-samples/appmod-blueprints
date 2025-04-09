@@ -65,6 +65,10 @@ spec:
             value: "{{workflow.parameters.apprepo}}"
           - name: aws_region
             value: "{{workflow.parameters.aws_region}}"
+          - name: branch
+            value: main
+          - name: tag-version
+            value: init
           - name: dockerfile_path
             value: "{{workflow.parameters.dockerfile_path}}"
           - name: deployment_path

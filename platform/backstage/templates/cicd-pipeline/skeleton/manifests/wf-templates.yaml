@@ -183,7 +183,7 @@ spec:
                 value: "{{workflow.parameters.branch}}"
               - name: deployment-path
                 value: "{{workflow.parameters.deployment_path}}"
-          depends: "warmup"
+          depends: "build-image"
 
   - name: cleandir 
     container:
