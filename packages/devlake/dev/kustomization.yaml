@@ -3,6 +3,40 @@ resources:
   - mysql-init-job.yaml
   - rds-mysql.yaml
 
-# patchesStrategicMerge:
-#   - patches/devlake-patch-sa.yaml
-  
+patchesStrategicMerge:
+  - patches/devlake-patch-sa.yaml
+
+configMapGenerator:
+- name: vpc-config
+  envs:
+  - infrastructure-values.env
+
+vars:
+- name: SUBNET_ID_1
+  objref:
+    kind: ConfigMap
+    name: vpc-config
+    apiVersion: v1
+  fieldref:
+    fieldpath: data.subnet_id_1
+- name: SUBNET_ID_2
+  objref:
+    kind: ConfigMap
+    name: vpc-config
+    apiVersion: v1
+  fieldref:
+    fieldpath: data.subnet_id_2
+- name: SUBNET_ID_3
+  objref:
+    kind: ConfigMap
+    name: vpc-config
+    apiVersion: v1
+  fieldref:
+    fieldpath: data.subnet_id_3
+- name: VPC_ID
+  objref:
+    kind: ConfigMap
+    name: vpc-config
+    apiVersion: v1
+  fieldref:
+    fieldpath: data.vpc_id

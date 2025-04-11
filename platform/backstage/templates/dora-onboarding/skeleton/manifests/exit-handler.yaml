@@ -15,17 +15,24 @@ spec:
     parameters:
       - name: body
       - name: headers
-      - name: url
-        value: devlake-ui.devlake.svc.cluster.local:4000
       - name: appname
-        value: ${{values.appName}}
-      - name: namespace
-        value: ${{values.appNamespace}}
+        value: ${{values.appname}}
   templates:
     - name: handle-rollout-check-and-process-deploy
       steps:
+        - - name: fetch-argo-plugin
+            template: download-argo-plugin
+
         - - name: check-rollout
             template: check-rollout-status
+            arguments:
+              parameters:
+                - name: namespace
+                  value: team-"{{workflow.parameters.appname}}"
+              artifacts:
+                - name: rollout_plugin
+                  from: "{{steps.fetch-argo-plugin.outputs.artifacts.rollout_plugin}}"
+
         - - name: process-and-send-deployment
             template: process-deployment
             arguments:
@@ -35,7 +42,7 @@ spec:
                 - name: body
                   value: "{{workflow.parameters.body}}"
                 - name: url
-                  value: "{{workflow.parameters.url}}"
+                  value: devlake-ui.devlake.svc.cluster.local:4000
                 - name: headers
                   value: "{{workflow.parameters.headers}}"
 
@@ -87,25 +94,44 @@ spec:
 
           curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
 
+    - name: download-argo-plugin
+      container:
+        image: alpine/curl:8.12.1
+        command: [/bin/bash, -c]
+        args:
+        - |
+          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x ./kubectl-argo-rollouts-linux-amd64
+          mv ./kubectl-argo-rollouts-linux-amd64 > /tmp/kubectl-argo-rollouts-linux-amd64
+      outputs:
+        artifacts:
+          - name: rollout_plugin
+            path: /tmp/kubectl-argo-rollouts-linux-amd64
+
+
     - name: check-rollout-status
-      script:
+      inputs:
+        parameters:
+          - name: namespace
+        artifacts:
+          - name: rollout_plugin
+            path: /tmp/kubectl-argo-rollouts-linux-amd64
+      container:
         image: bitnami/kubectl:latest
-        command: [bash]
+        command: [/bin/bash, -c]
         volumeMounts:
           - name: argocd-cluster-secret
             mountPath: /tmp/argocd-cluster
             readOnly: true
-        source: |
+        args: 
+        - |
           mkdir -p ~/.kube
           cp /tmp/argocd-cluster/config ~/.kube/config
 
-          # Install kubectl-argo-rollouts plugin
-          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
-          chmod +x ./kubectl-argo-rollouts-linux-amd64
-          mv ./kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+          mv /tmp/kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
 
           SEARCH_WORD="{{workflow.parameters.appname}}"
-          ROLLOUT_NAME=$(kubectl get rollout -n {{workflow.parameters.namespace}} -o json | \
+          ROLLOUT_NAME=$(kubectl get rollout -n "{{inputs.parameters.namespace}}" -o json | \
             jq -r --arg WORD "$SEARCH_WORD" '.items[] | select(.metadata.name | contains($WORD)) | .metadata.name')
 
           if [ -z "$ROLLOUT_NAME" ]; then
@@ -117,7 +143,7 @@ spec:
           INTERVAL=10  # Check every 10 seconds
           ELAPSED=0
 
-          if kubectl argo rollouts status $ROLLOUT_NAME -n "{{workflow.parameters.namespace}}" --timeout 2m; then
+          if kubectl argo rollouts status $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" --timeout 2m; then
             echo "SUCCESS"
             exit 0
           else 

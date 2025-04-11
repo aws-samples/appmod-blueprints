@@ -5,10 +5,9 @@ metadata:
   namespace: ${{values.namespace}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: ${{values.appname}}-dora-webhook-binding
-  namespace: ${{values.namespace}}
 subjects:
 - kind: ServiceAccount
   name: ${{values.appname}}-dora-webhook-sa

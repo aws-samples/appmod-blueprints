@@ -1,23 +1,16 @@
-# do db migration, add some data to devlake
-kubectl wait --for=jsonpath=.status.health.status=Healthy -n argocd application/devlake
-kubectl wait --for=condition=ready pod -l devlakeComponent=lake -n devlake --timeout=60s
-kubectl wait --for=condition=ready pod -l devlakeComponent=mysql -n devlake --timeout=60s
+#!/bin/bash
 
-kubectl port-forward -n devlake svc/devlake-lake 9090:8080 >/dev/null 2>&1 &
-pid=$!
-trap '{
-  kill $pid
-}' EXIT
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <appname>"
+    echo "Example: $0 modengg"
+    exit 1
+fi
 
-echo "waiting for port forward to be ready"
-while ! nc -vz localhost 9090 >/dev/null 2>&1; do
-  sleep 2
-done
 
 echo "Performing DB Migration"
 curl -X GET localhost:9090/proceed-db-migration
 
-projectName="modengg"
+projectName=$1
 
 projectCreateRequest=$(
   cat <<EOF
@@ -51,7 +44,7 @@ echo "Creating Webhook"
 webhookCreateRequest=$(
   cat <<EOF
 {
-  "name": "${projectName}_gitea"
+  "name": "${projectName}_webhook"
 }
 EOF
 )

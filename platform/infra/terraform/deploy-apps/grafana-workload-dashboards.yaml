@@ -17,7 +17,7 @@ spec:
           patch: |-
             - op: replace
               path: /data/MYSQL_ENDPOINT
-              value: ${DEVLAKE_MYSQL_NODEPORT}
+              value: ${DEVLAKE_MYSQL_ENDPOINT}
   destination:
     name: 'dev-cluster'
     namespace: grafana-operator

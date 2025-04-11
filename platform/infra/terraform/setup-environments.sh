@@ -55,6 +55,20 @@ sed -e "s/INGRESS_DNS/${DNS_HOSTNAME}/g" ${REPO_ROOT}/platform/infra/terraform/m
 export GITHUB_URL=$(yq '.repo_url' ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/config.yaml)
 export GITHUB_BRANCH=$(yq '.repo_branch' ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/config.yaml)
 
+VPC_ID=$(terraform output -raw eks_cluster_vpc_id)
+SUBNET_IDS=$(terraform output -json database_subnet_ids | jq -r '.[]')
+
+# Create array from subnet IDs
+readarray -t SUBNET_ARRAY <<< "$SUBNET_IDS"
+
+# Generate the ConfigMap
+cat > ${REPO_ROOT}/packages/devlake/dev/infrastructure-values.env << EOF
+vpc_id=$VPC_ID
+subnet_id_1=${SUBNET_ARRAY[0]}
+subnet_id_2=${SUBNET_ARRAY[1]}
+subnet_id_3=${SUBNET_ARRAY[2]}
+EOF
+
 
 # Deploy the apps on IDP Builder and ArgoCD
 ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/install.sh
@@ -65,6 +79,7 @@ export TF_eks_cluster_private_subnets=$(terraform output -json eks_cluster_priva
 echo "private subnets are : " $TF_eks_cluster_private_subnets
 # For Database and EC2 database
 export TF_eks_cluster_vpc_cidr=$(terraform output -raw vpc_cidr)
+export TF_eks_cluster_db_subnets=$(terraform output -raw database_subnet_ids)
 export TF_eks_cluster_private_az=$(terraform output -json availability_zones)
 echo "private az are : " $TF_eks_cluster_private_az
 export KEYCLOAK_NAMESPACE=keycloak
@@ -291,9 +306,7 @@ terraform -chdir=post-deploy apply -var aws_region="${TF_VAR_aws_region}" \
   -var dev_cluster_name="${TF_VAR_dev_cluster_name}" \
   -var prod_cluster_name="${TF_VAR_prod_cluster_name}" -auto-approve
 
-NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-NODE_PORT=$(kubectl get service devlake-mysql -n devlake -o jsonpath='{.spec.ports[0].nodePort}')
-export DEVLAKE_MYSQL_NODEPORT="${NODE_IP}:${NODE_PORT}"
+export DEVLAKE_MYSQL_ENDPOINT=$(aws rds describe-db-clusters --region ${TF_VAR_aws_region} --db-cluster-identifier devlake-mysql-db-cluster --query 'DBClusters[0].ReaderEndpoint' --output text)
 
 # Setup Applications on Clusters using ArgoCD on the management cluster
 
@@ -304,7 +317,7 @@ sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANC
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-comp-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-comp-prod.yml
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-provider-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-provider-dev.yml
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-provider-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-provider-prod.yml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" -e "s#\${DEVLAKE_MYSQL_NODEPORT}#${DEVLAKE_MYSQL_NODEPORT}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/grafana-workload-dashboards.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/grafana-workload-dashboards.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" -e "s#\${DEVLAKE_MYSQL_ENDPOINT}#${DEVLAKE_MYSQL_ENDPOINT}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/grafana-workload-dashboards.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/grafana-workload-dashboards.yml
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/kubevela-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/kubevela-dev.yml
 sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/kubevela-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/kubevela-prod.yml
 
@@ -314,8 +327,6 @@ kubectl apply -f ${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/
 # Setup Gitea Repo
 ${REPO_ROOT}/platform/infra/terraform/giteaInit.sh
 
-# Add AMG URL to Devlake
-kubectl set env deployment devlake-ui GRAFANA_ENDPOINT="https://$WORKSPACE_ENDPOINT/" -n devlake
 # Sleeping for Crossplane to be ready in DEV and PROD Cluster and restarting backstage pod
 kubectl rollout restart deployment backstage -n backstage
 sleep 120
