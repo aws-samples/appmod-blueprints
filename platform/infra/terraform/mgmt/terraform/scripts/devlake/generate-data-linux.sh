@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 if [ $# -lt 3 ]; then
     echo "Usage: $0 <base_url> <api_key> <connection_id>"

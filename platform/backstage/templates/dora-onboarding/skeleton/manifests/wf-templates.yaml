@@ -83,6 +83,7 @@ spec:
           apk add --no-cache jq curl
           webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/${DEVLAKE_HOOK_ID}/pull_requests
 
+          echo '{{inputs.parameters.body}}'
           PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
           {
             id: (.pull_request.id | tostring),
@@ -97,7 +98,7 @@ spec:
             url: .pull_request.html_url,
             authorId: .pull_request.user.login,
             authorName: (.pull_request.user.name // .pull_request.user.login),
-            reviewers: [.pull_request.requested_reviewers[].login],
+            reviewers: (.pull_request.requested_reviewers // [] | map(.login)),
             comments: (.pull_request.comments // 0),
             commits: (.pull_request.commits // 0),
             additions: (.pull_request.additions // 0),

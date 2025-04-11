@@ -126,9 +126,8 @@ spec:
         
         resp=$(curl -X PATCH -H "Content-Type: application/json" ${BASE_URL}/blueprints/$blueprintID -d "$blueprintPatchRequest")
         
-        resp=$(curl -X POST -H "Content-Type: application/json" ${BASE_URL}/blueprints/${blueprintID}/trigger -d '{"skipCollectors":false,"fullSync":false}')
         
-        echo "$webhookApiKey|$webhookID"
+        echo "$webhookApiKey|$webhookID|$blueprintID"
 
 
   - name: create-devlake-webhook-secret-and-cm
@@ -141,13 +140,18 @@ spec:
       args:
       - |
         TOKEN=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f1)
-        ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f2)
+        HOOK_ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f2)
+        BP_ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f3)
         kubectl delete secret devlake-webhook-secret --ignore-not-found -n "{{workflow.parameters.namespace}}" 
         kubectl create secret generic devlake-webhook-secret -n "{{workflow.parameters.namespace}}" \
           --from-literal=DEVLAKE_TOKEN="$TOKEN"
         kubectl delete configmap devlake-webhook-id --ignore-not-found -n "{{workflow.parameters.namespace}}" 
         kubectl create configmap devlake-webhook-id -n "{{workflow.parameters.namespace}}" \
-          --from-literal=DEVLAKE_HOOK_ID="$ID"
+          --from-literal=DEVLAKE_HOOK_ID="$HOOK_ID" --from-literal=DEVLAKE_BP_ID="$BP_ID"
+
+        kubectl get secret dev-cluster-argo-secret -n argocd -o yaml | \
+        sed 's/namespace: argocd/namespace: "{{workflow.parameters.namespace}}"/' | \
+        kubectl create -f -
 
 
   - name: create-gitea-webhook
@@ -209,22 +213,29 @@ spec:
             yq -i 'select(.kind =="Sensor").spec.triggers[0].template.argoWorkflow.source.resource.spec.templates[0].steps += [[{
               "name": "send-deployment-status",
               "templateRef": {
-                "name": "cicd-deployments-dora-processing-template",
+                "name": "{{workflow.parameters.appname}}"-cicd-deployments-dora-processing-template",
                 "template": "handle-rollout-check-and-process-deploy"
               },
               "arguments": {
                 "parameters": [
                   {
                     "name": "body",
-                    "value": {{"'{{workflow.parameters.body}}'"}}
+                    "value": 'PLACEHOLDER_OPENworkflow.parameters.bodyPLACEHOLDER_CLOSE'
                   },
                   {
                     "name": "headers",
-                    "value": {{"'{{workflow.parameters.headers}}'"}}
+                    "value": 'PLACEHOLDER_OPENworkflow.parameters.headersPLACEHOLDER_CLOSE'
                   }
                 ]
               }
             }]]' manifests/cicd-pipeline.yaml
+            sed -e 's/PLACEHOLDER_OPEN/{{/g' -e 's/PLACEHOLDER_CLOSE/}}/g' manifests/cicd-pipeline.yaml > manifests/cicd-pipeline.yaml.tmp && mv manifests/cicd-pipeline.yaml.tmp manifests/cicd-pipeline.yaml
+            yq -i 'select(.kind =="Sensor").spec.triggers[0].template.argoWorkflow.source.resource.spec.volumes += [{
+              "name": "argocd-cluster-secret",
+              "secret": {
+                "secretName": "dev-cluster-argo-secret",
+              }
+            }]' manifests/cicd-pipeline.yaml
           fi
           m_count=$(git status -s | wc -l)
           if [ $m_count -ge 1 ]; then
@@ -263,8 +274,10 @@ spec:
         apt update
         apt install -y curl openssl coreutils
         BASE_URL="http://devlake-ui.devlake.svc.cluster.local:4000"
+        TRIGGER_URL="http://devlake-lake.devlake.svc.cluster.local:8080"
         API_KEY="$DEVLAKE_TOKEN"
         CONNECTION_ID="$DEVLAKE_HOOK_ID"
+        BLUEPRINT_ID="$DEVLAKE_BP_ID"
         
         
         rand() {
@@ -439,4 +452,8 @@ spec:
         done
         
         echo "Data generation complete. Created $((pr_id - 1)) pull requests, $((deploy_id - 1)) deployments, and $((incident_id - 1)) incidents."
+        sleep 10
+        
+        echo "Triggering DORA Metrics Collection"
+        resp=$(curl -s -X POST -H "Content-Type: application/json" "${TRIGGER_URL}/blueprints/${BLUEPRINT_ID}/trigger" -d '{"skipCollectors":false,"fullSync":false}')
 

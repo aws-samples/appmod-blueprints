@@ -10,10 +10,10 @@ spec:
       properties:
         region: us-west-2
         subnetIds:
-          - subnet-xxxxxx1
-          - subnet-xxxxxx2
-          - subnet-xxxxxx3
-        vpcId: vpc-xxxxx
+          - $(SUBNET_ID_1)
+          - $(SUBNET_ID_2)
+          - $(SUBNET_ID_3)
+        vpcId: $(VPC_ID)
         vpcCidr: 10.0.0.0/16
       traits:
         - type: component-iam-policy

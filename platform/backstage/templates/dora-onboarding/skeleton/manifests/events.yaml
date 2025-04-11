@@ -52,13 +52,13 @@ spec:
     serviceAccountName: ${{values.appname}}-dora-webhook-sa
   dependencies:
     - name: incidents-webhook
-      eventSourceName: gitea-webhook
+      eventSourceName: ${{values.appname}}-gitea-dora-webhook
       eventName: incidents-webhook
     - name: deployments-webhook
-      eventSourceName: gitea-webhook
+      eventSourceName: ${{values.appname}}-gitea-dora-webhook
       eventName: deployments-webhook
     - name: pull-requests-webhook
-      eventSourceName: gitea-webhook
+      eventSourceName: ${{values.appname}}-gitea-dora-webhook
       eventName: pull-requests-webhook
   triggers:
     - template:
@@ -84,7 +84,7 @@ spec:
                     - name: headers
                       value: '{{.Input.header}}'
                     - name: url
-                      value: http://devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/1/issues
+                      value: http://devlake-ui.devlake.svc.cluster.local:4000
           parameters:
             - src:
                 dependencyName: incidents-webhook
@@ -117,7 +117,7 @@ spec:
                     - name: headers
                       value: '{{.Input.header}}'
                     - name: url
-                      value: http://devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/1/deployments
+                      value: http://devlake-ui.devlake.svc.cluster.local:4000
           parameters:
             - src:
                 dependencyName: deployments-webhook
@@ -151,7 +151,7 @@ spec:
                     - name: headers
                       value: '{{.Input.header}}'
                     - name: url
-                      value: http://devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/1/pullrequests
+                      value: http://devlake-ui.devlake.svc.cluster.local:4000
           parameters:
             - src:
                 dependencyName: pull-requests-webhook
