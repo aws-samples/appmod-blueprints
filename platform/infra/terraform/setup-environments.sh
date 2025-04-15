@@ -55,20 +55,22 @@ sed -e "s/INGRESS_DNS/${DNS_HOSTNAME}/g" ${REPO_ROOT}/platform/infra/terraform/m
 export GITHUB_URL=$(yq '.repo_url' ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/config.yaml)
 export GITHUB_BRANCH=$(yq '.repo_branch' ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/config.yaml)
 
-VPC_ID=$(terraform output -raw eks_cluster_vpc_id)
-SUBNET_IDS=$(terraform output -json database_subnet_ids | jq -r '.[]')
+cd ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/mgmt-cluster/
 
-# Create array from subnet IDs
-readarray -t SUBNET_ARRAY <<< "$SUBNET_IDS"
+VPC_ID=$(terraform output -raw eks_cluster_vpc_id)
+SUBNET_ID_1=$(terraform output -json database_subnet_ids | jq -r '.[0]')
+SUBNET_ID_2=$(terraform output -json database_subnet_ids | jq -r '.[1]')
+SUBNET_ID_3=$(terraform output -json database_subnet_ids | jq -r '.[2]')
 
 # Generate the ConfigMap
 cat > ${REPO_ROOT}/packages/devlake/dev/infrastructure-values.env << EOF
 vpc_id=$VPC_ID
-subnet_id_1=${SUBNET_ARRAY[0]}
-subnet_id_2=${SUBNET_ARRAY[1]}
-subnet_id_3=${SUBNET_ARRAY[2]}
+subnet_id_1=$SUBNET_ID_1
+subnet_id_2=$SUBNET_ID_2
+subnet_id_3=$SUBNET_ID_3
 EOF
 
+cd ${REPO_ROOT}/platform/infra/terraform
 
 # Deploy the apps on IDP Builder and ArgoCD
 ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/install.sh

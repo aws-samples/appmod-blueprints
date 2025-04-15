@@ -77,7 +77,7 @@ template: {
           region: "\(parameter.region)"
           ingress: [{
             fromPort: 3306
-            ipProtocol: tcp
+            ipProtocol: "tcp"
             ipRanges: [{
               cidrIp: "\(parameter.vpcCidr)"
             }]
