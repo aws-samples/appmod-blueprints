@@ -62,13 +62,9 @@ SUBNET_ID_1=$(terraform output -json database_subnet_ids | jq -r '.[0]')
 SUBNET_ID_2=$(terraform output -json database_subnet_ids | jq -r '.[1]')
 SUBNET_ID_3=$(terraform output -json database_subnet_ids | jq -r '.[2]')
 
-# Generate the ConfigMap
-cat > ${REPO_ROOT}/packages/devlake/dev/infrastructure-values.env << EOF
-vpc_id=$VPC_ID
-subnet_id_1=$SUBNET_ID_1
-subnet_id_2=$SUBNET_ID_2
-subnet_id_3=$SUBNET_ID_3
-EOF
+# Setup CP Env Config for MGMT Cluster
+sed -e "s#\$SUBNET_ID_1#${SUBNET_ID_1}#g" -e "s#\$SUBNET_ID_2#${SUBNET_ID_2}#g" -e "s#\$SUBNET_ID_3#${SUBNET_ID_3}#g" -e "s#\$VPC_ID#${VPC_ID}#g" ${REPO_ROOT}/platform/infra/terraform/scripts/crossplane/cp-mgmt-env-config.yaml >${REPO_ROOT}/platform/infra/terraform/scripts/crossplane/cp-mgmt-env-config.yml
+kubectl apply -f ${REPO_ROOT}/platform/infra/terraform/scripts/crossplane/cp-mgmt-env-config.yml
 
 cd ${REPO_ROOT}/platform/infra/terraform
 
@@ -220,6 +216,23 @@ terraform -chdir=dev apply "devplan" &
 
 export DEV_EKS_PROCESS=$!
 
+# # Initialize backend for DB PROD cluster
+# terraform -chdir=prod/db init -reconfigure -backend-config="key=prod/db/db-ec2-cluster.tfstate" \
+#   -backend-config="bucket=$TF_VAR_state_s3_bucket" \
+#   -backend-config="region=$TF_VAR_aws_region" \
+#   -backend-config="dynamodb_table=$TF_VAR_state_ddb_lock_table"
+# 
+# # Apply the infrastructure changes to deploy DB PROD cluster
+# terraform -chdir=prod/db plan -var aws_region="${TF_VAR_aws_region}" \
+#   -var vpc_id="${TF_eks_cluster_vpc_id}" \
+#   -var vpc_private_subnets="${TF_eks_cluster_private_subnets}" \
+#   -var availability_zones="${TF_eks_cluster_private_az}" \
+#   -var vpc_cidr="${TF_eks_cluster_vpc_cidr}" \
+#   -var key_name="ws-default-keypair" -var region="${TF_VAR_aws_region}" -out=proddbplan
+# 
+# terraform -chdir=prod/db apply "proddbplan" &
+# 
+# export prod_DB_PROCESS=$!
 
 # Initialize backend for PROD cluster
 terraform -chdir=prod init -reconfigure -backend-config="key=prod/eks-accelerator-vpc.tfstate" \

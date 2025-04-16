@@ -7,8 +7,7 @@ if [ $# -lt 1 ]; then
 fi
 
 
-echo "Performing DB Migration"
-curl -X GET localhost:9090/proceed-db-migration
+resp=$(curl -X GET localhost:9090/proceed-db-migration)
 
 projectName=$1
 
@@ -32,15 +31,11 @@ projectCreateRequest=$(
 }
 EOF
 )
-echo $projectCreateRequest
-echo "Creating Project: $projectName"
 projectCreateResponse=$(curl -X POST -H "Content-Type: application/json" localhost:9090/projects -d "$projectCreateRequest")
-echo $projectCreateResponse
 blueprintID=$(echo $projectCreateResponse | jq -r '.blueprint.id')
 blueprintName=$(echo $projectCreateResponse | jq -r '.blueprint.name')
 # {"name":"modengg","description":"","createdAt":"2025-03-21T23:46:01.144Z","updatedAt":"2025-03-21T23:46:01.144Z","_raw_data_params":"","_raw_data_table":"","_raw_data_id":0,"_raw_data_remark":"","metrics":[{"pluginName":"dora","pluginOption":{},"enable":true},{"pluginName":"issue_trace","pluginOption":{},"enable":true}],"blueprint":{"name":"test-Blueprint","projectName":"test","mode":"NORMAL","plan":null,"enable":true,"cronConfig":"0 0 * * 1","isManual":false,"beforePlan":null,"afterPlan":null,"labels":[],"connections":[],"skipOnFail":false,"timeAfter":"2024-09-21T00:00:00Z","skipCollectors":false,"fullSync":false,"id":1,"createdAt":"2025-03-21T23:46:01.148Z","updatedAt":"2025-03-21T23:46:01.148Z"}}
 
-echo "Creating Webhook"
 webhookCreateRequest=$(
   cat <<EOF
 {
@@ -85,7 +80,7 @@ blueprintPatchRequest=$(
 EOF
 )
 # "createdAt": "2025-03-21T23:46:01.148Z","updatedAt": "2025-03-21T23:46:01.148Z" MIGHT BE NEEDED IN ABOVE
-curl -X PATCH -H "Content-Type: application/json" localhost:9090/blueprints/$blueprintID -d "$blueprintPatchRequest"
+resp=$(curl -X PATCH -H "Content-Type: application/json" localhost:9090/blueprints/$blueprintID -d "$blueprintPatchRequest")
 
 # {"name":"test-Blueprint","projectName":"test","mode":"NORMAL","plan":[[{"plugin":"org","subtasks":["checkTokens"],"options":{"projectConnections":[{"PluginName":"webhook","ConnectionId":1}]}}],[{"plugin":"org","subtasks":["setProjectMapping"],"options":{"projectMappings":[{"projectName":"test","scopes":[{"table":"cicd_scopes","rowId":"webhook:1"},{"table":"boards","rowId":"webhook:1"},{"table":"repos","rowId":"webhook:1"}]}]}}],[{"plugin":"dora","subtasks":["generateDeployments","generateDeploymentCommits","enrichPrevSuccessDeploymentCommits"],"options":{"projectName":"test"}},{"plugin":"issue_trace","subtasks":["ConvertIssueStatusHistory","ConvertIssueAssigneeHistory"],"options":{"projectName":"test","scopeIds":null}}],[{"plugin":"refdiff","subtasks":["calculateDeploymentCommitsDiff"],"options":{"projectName":"test"}}],[{"plugin":"dora","subtasks":["calculateChangeLeadTime","ConvertIssuesToIncidents","ConnectIncidentToDeployment"],"options":{"projectName":"test"}}]],"enable":true,"cronConfig":"0 0 * * 1","isManual":false,"beforePlan":null,"afterPlan":null,"labels":[],"connections":[{"pluginName":"webhook","connectionId":1,"scopes":null}],"skipOnFail":false,"timeAfter":"2024-09-21T00:00:00Z","skipCollectors":false,"fullSync":false,"id":1,"createdAt":"2025-03-21T23:46:01.148Z","updatedAt":"2025-03-21T23:47:42.556Z"}
 
@@ -95,3 +90,4 @@ curl -X PATCH -H "Content-Type: application/json" localhost:9090/blueprints/$blu
 # curl -X POST localhost:9090/blueprints/$blueprintID/trigger
 # {"skipCollectors":false,"fullSync":false}
 # {"id":1,"createdAt":"2025-03-21T23:54:13.4Z","updatedAt":"2025-03-21T23:54:13.419Z","name":"test-Blueprint","blueprintId":1,"plan":[[{"plugin":"org","subtasks":["checkTokens"],"options":{"projectConnections":[{"PluginName":"webhook","ConnectionId":1}]}}],[{"plugin":"org","subtasks":["setProjectMapping"],"options":{"projectMappings":[{"projectName":"test","scopes":[{"table":"cicd_scopes","rowId":"webhook:1"},{"table":"boards","rowId":"webhook:1"},{"table":"repos","rowId":"webhook:1"}]}]}}],[{"plugin":"issue_trace","subtasks":["ConvertIssueStatusHistory","ConvertIssueAssigneeHistory"],"options":{"projectName":"test","scopeIds":null}},{"plugin":"linker","subtasks":["LinkPrToIssue"],"options":{"prToIssueRegexp":"(?mi)(Closes)[\\s]*.*(((and )?#\\d+[ ]*)+)","projectName":"test"}},{"plugin":"dora","subtasks":["generateDeployments","generateDeploymentCommits","enrichPrevSuccessDeploymentCommits"],"options":{"projectName":"test"}}],[{"plugin":"refdiff","subtasks":["calculateDeploymentCommitsDiff"],"options":{"projectName":"test"}}],[{"plugin":"dora","subtasks":["calculateChangeLeadTime","ConvertIssuesToIncidents","ConnectIncidentToDeployment"],"options":{"projectName":"test"}}]],"totalTasks":7,"finishedTasks":0,"beganAt":null,"finishedAt":null,"status":"TASK_CREATED","message":"","errorName":"","spentSeconds":0,"stage":0,"labels":[],"skipOnFail":false,"timeAfter":"2024-09-21T00:00:00Z","skipCollectors":false,"fullSync":false}
+echo "$webhookApiKey|$webhookID|$blueprintID"

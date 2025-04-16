@@ -7,14 +7,6 @@ spec:
   components:
     - name: devlake-mysql-db
       type: rds-cluster-mysql
-      properties:
-        region: us-west-2
-        subnetIds:
-          - $(SUBNET_ID_1)
-          - $(SUBNET_ID_2)
-          - $(SUBNET_ID_3)
-        vpcId: $(VPC_ID)
-        vpcCidr: 10.0.0.0/16
       traits:
         - type: component-iam-policy
           properties:
