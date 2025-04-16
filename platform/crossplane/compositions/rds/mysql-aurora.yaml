@@ -59,12 +59,6 @@ spec:
         spec:
           forProvider:
             description: "rds-mysql-sg"
-            ingress:
-              - ipProtocol: "tcp"
-                fromPort: 3306 
-                toPort: 3306
-                ipRanges:
-                  - cidrIp: "10.0.0.0/8"
       patches:
         - type: PatchSet
           patchSetName: common-fields
@@ -78,7 +72,7 @@ spec:
             mergeOptions:
               appendSlice: true
         - fromFieldPath: "metadata.uid"
-          toFieldPath: "spec.forProvider.groupName"
+          toFieldPath: "spec.forProvider.name"
           transforms:
             - type: string
               string:
@@ -86,6 +80,20 @@ spec:
         - type: FromEnvironmentFieldPath
           fromFieldPath: "vpcId"
           toFieldPath: "spec.forProvider.vpcId"
+    - base:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: SecurityGroupIngressRule
+        spec:
+          forProvider:
+            fromPort: 3306
+            toPort: 3306
+            ipProtocol: "tcp"
+            cidrIpv4: "10.0.0.0/8"
+            securityGroupIdSelector:
+              matchControllerRef: true
+      patches:
+        - type: PatchSet
+          patchSetName: common-fields
     - base:
         apiVersion: rds.aws.upbound.io/v1beta2
         kind: Cluster
