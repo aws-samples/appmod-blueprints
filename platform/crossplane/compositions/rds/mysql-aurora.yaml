@@ -42,7 +42,7 @@ spec:
           toFieldPath: metadata.annotations[crossplane.io/external-name]
   resources:
     - base:
-        apiVersion: rds.aws.crossplane.io/v1beta1
+        apiVersion: rds.aws.upbound.io/v1beta1
         kind: SubnetGroup
         spec:
           forProvider:
@@ -54,7 +54,7 @@ spec:
           fromFieldPath: "dbSubnetIds"
           toFieldPath: spec.forProvider.subnetIds
     - base:
-        apiVersion: ec2.aws.crossplane.io/v1beta1
+        apiVersion: ec2.aws.upbound.io/v1beta1
         kind: SecurityGroup
         spec:
           forProvider:
@@ -87,7 +87,7 @@ spec:
           fromFieldPath: "vpcId"
           toFieldPath: "spec.forProvider.vpcId"
     - base:
-        apiVersion: rds.aws.crossplane.io/v1beta2
+        apiVersion: rds.aws.upbound.io/v1beta2
         kind: Cluster
         spec:
           forProvider:
@@ -143,7 +143,7 @@ spec:
         - fromConnectionSecretKey: endpoint
         - fromConnectionSecretKey: port
     - base:
-        apiVersion: rds.aws.crossplane.io/v1beta1
+        apiVersion: rds.aws.upbound.io/v1beta1
         kind: ClusterInstance
         spec:
           forProvider:
