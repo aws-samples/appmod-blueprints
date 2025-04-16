@@ -31,10 +31,6 @@ spec:
         - type: FromCompositeFieldPath
           fromFieldPath: spec.resourceConfig.tags
           toFieldPath: spec.forProvider.tags
-          transforms:
-            - type: convert
-              convert:
-                toType: "array"
         - type: FromCompositeFieldPath
           fromFieldPath: spec.writeConnectionSecretToRef.namespace
           toFieldPath: spec.writeConnectionSecretToRef.namespace
