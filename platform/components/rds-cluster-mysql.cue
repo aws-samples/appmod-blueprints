@@ -19,19 +19,30 @@ template: {
             namespace: context.namespace
         }
         spec: {
+            compositionSelector: {
+              matchLabels: {
+                "awsblueprints.io/provider": "aws"
+                "awsblueprints.io/environment": "prod"
+                "awsblueprints.io/createDBSubnetGroup": "true"
+              }
+            }
             resourceConfig: {
                 name: context.name
                 deletionPolicy: "Delete"
-                tags: {
-                    Name: context.name
-                    "crossplane-managed": "true"
-                }
+                tags: [
+                  {
+                    key: "env"
+                    value: "prod"
+                  },
+                  {
+                    key: "app"
+                    value: "\(context.name)"
+                  },
+                ]
+                providerConfigName: "default"
+                region: "us-west-2"
             }
             databaseName: "\(context.name)db"
-            writeConnectionSecretToRef: {
-                name:      "\(context.name)-connection"
-                namespace: context.namespace
-            }
         }
     }
 }

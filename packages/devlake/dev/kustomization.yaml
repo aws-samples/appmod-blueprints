@@ -4,5 +4,5 @@ resources:
 - external-secrets.yaml
 - mysql-init-job.yaml
 - rds-mysql.yaml
-patches:
-- path: patches/devlake-patch-sa.yaml
+# patches:
+# - path: patches/devlake-patch-sa.yaml

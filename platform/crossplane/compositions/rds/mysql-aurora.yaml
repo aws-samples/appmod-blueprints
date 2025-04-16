@@ -7,7 +7,7 @@ metadata:
   name: rds-aurora-mysql.awsblueprints.io
   labels:
     awsblueprints.io/provider: aws
-    awsblueprints.io/environment: staging
+    awsblueprints.io/environment: prod
     awsblueprints.io/createDBSubnetGroup: "true"
 spec:
   environment:
@@ -29,54 +29,44 @@ spec:
           fromFieldPath: locations.us
           toFieldPath: spec.forProvider.region
         - type: FromCompositeFieldPath
-          fromFieldPath: spec.resourceConfig.tags
-          toFieldPath: spec.forProvider.tags
-          policy:
-            mergeOptions:
-              appendSlice: true
-        - type: FromCompositeFieldPath
           fromFieldPath: spec.writeConnectionSecretToRef.namespace
           toFieldPath: spec.writeConnectionSecretToRef.namespace
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.resourceConfig.name
-          toFieldPath: metadata.annotations[crossplane.io/external-name]
+    - name: connection-secret
+      patches:
+        - fromFieldPath: "metadata.uid"
+          toFieldPath: "spec.writeConnectionSecretToRef.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-mysql"
+        - fromFieldPath: "spec.writeConnectionSecretToRef.namespace"
+          toFieldPath: "spec.writeConnectionSecretToRef.namespace"
   resources:
     - base:
-        apiVersion: database.aws.crossplane.io/v1beta1
-        kind: DBSubnetGroup
+        apiVersion: rds.aws.upbound.io/v1beta1
+        kind: SubnetGroup
         spec:
           forProvider:
             description: "rds-mysql"
       patches:
         - type: PatchSet
           patchSetName: common-fields
+        - type: PatchSet
+          patchSetName: connection-secret
         - type: FromEnvironmentFieldPath
           fromFieldPath: "dbSubnetIds"
           toFieldPath: spec.forProvider.subnetIds
-        - fromFieldPath: "metadata.uid"
-          toFieldPath: "spec.writeConnectionSecretToRef.name"
-          transforms:
-            - type: string
-              string:
-                fmt: "%s-dbsubnet"
     - base:
-        apiVersion: ec2.aws.crossplane.io/v1beta1
+        apiVersion: ec2.aws.upbound.io/v1beta1
         kind: SecurityGroup
         spec:
           forProvider:
             description: "rds-mysql-sg"
-            ingress:
-              - ipProtocol: "tcp"
-                fromPort: 3306 
-                toPort: 3306
-                ipRanges:
-                  - cidrIp: "10.0.0.0/8"
       patches:
         - type: PatchSet
           patchSetName: common-fields
-        - type: ToCompositeFieldPath
-          fromFieldPath: status.atProvider.securityGroupID
-          toFieldPath: status.securityGroupId
+        - type: PatchSet
+          patchSetName: connection-secret
         - type: FromCompositeFieldPath
           fromFieldPath: spec.IngressRules
           toFieldPath: spec.forProvider.ingress
@@ -84,7 +74,7 @@ spec:
             mergeOptions:
               appendSlice: true
         - fromFieldPath: "metadata.uid"
-          toFieldPath: "spec.forProvider.groupName"
+          toFieldPath: "spec.forProvider.name"
           transforms:
             - type: string
               string:
@@ -92,38 +82,46 @@ spec:
         - type: FromEnvironmentFieldPath
           fromFieldPath: "vpcId"
           toFieldPath: "spec.forProvider.vpcId"
-        - fromFieldPath: "metadata.uid"
-          toFieldPath: "spec.writeConnectionSecretToRef.name"
-          transforms:
-            - type: string
-              string:
-                fmt: "%s-db-sg"
     - base:
-        apiVersion: rds.aws.crossplane.io/v1alpha1
-        kind: DBCluster
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: SecurityGroupIngressRule
         spec:
           forProvider:
+            fromPort: 3306
+            toPort: 3306
+            ipProtocol: "tcp"
+            cidrIpv4: "10.0.0.0/8"
+            securityGroupIdSelector:
+              matchControllerRef: true
+      patches:
+        - type: PatchSet
+          patchSetName: common-fields
+        - type: PatchSet
+          patchSetName: connection-secret
+
+    - base:
+        apiVersion: rds.aws.upbound.io/v1beta2
+        kind: Cluster
+        spec:
+          forProvider:
+            autoGeneratePassword: true
             backupRetentionPeriod: 7
             copyTagsToSnapshot: true
-            dbSubnetGroupNameSelector:
-              matchControllerRef: true
-            enableHTTPEndpoint: false
             engine: aurora-mysql
             engineVersion: "8.0.mysql_aurora.3.05.2"
             finalDBSnapshotIdentifier: "to-be-patched"
-            masterUserPasswordSecretRef:
+            masterPasswordSecretRef:
               key: password
               name: mysql-root-user-password
               namespace: crossplane-system
             masterUsername: root
             preferredBackupWindow: 02:00-03:00
             preferredMaintenanceWindow: sun:04:00-sun:05:00
-            skipFinalSnapshot: false
+            skipFinalSnapshot: true
             storageEncrypted: true
-            vpcSecurityGroupIDs: [] 
-            # This is a workaround for SGs not getting updated properly. https://github.com/crossplane/provider-aws/issues/1153
-            # https://github.com/crossplane/crossplane-runtime/issues/250
-            vpcSecurityGroupIDSelector:
+            dbSubnetGroupNameSelector:
+              matchControllerRef: true
+            vpcSecurityGroupIdSelector:
               matchControllerRef: true
       patches:
         - type: PatchSet
@@ -132,12 +130,18 @@ spec:
           toFieldPath: spec.writeConnectionSecretToRef.namespace
         - fromFieldPath: metadata.labels[crossplane.io/claim-namespace]
           toFieldPath: spec.forProvider.masterUserPasswordSecretRef.namespace
-        - fromFieldPath: "metadata.uid"
+        - fromFieldPath: "metadata.name"
+          toFieldPath: "spec.masterPasswordSecretRef.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-cluster-mysql-master-password"
+        - fromFieldPath: "metadata.name"
           toFieldPath: "spec.writeConnectionSecretToRef.name"
           transforms:
             - type: string
               string:
-                fmt: "%s-mysql"
+                fmt: "%s-cluster-mysql-connection"
         - fromFieldPath: "metadata.name"
           toFieldPath: "spec.forProvider.finalDBSnapshotIdentifier"
           transforms:
@@ -148,35 +152,30 @@ spec:
           toFieldPath: "spec.forProvider.engineVersion"
         - fromFieldPath: "spec.databaseName"
           toFieldPath: "spec.forProvider.databaseName"
-        - type: ToCompositeFieldPath
-          fromFieldPath: status.atProvider.dbClusterIdentifier
-          toFieldPath: status.clusterId
       connectionDetails:
         - fromConnectionSecretKey: username
         - fromConnectionSecretKey: password
         - fromConnectionSecretKey: endpoint
         - fromConnectionSecretKey: port
     - base:
-        apiVersion: rds.aws.crossplane.io/v1alpha1
-        kind: DBInstance
+        apiVersion: rds.aws.upbound.io/v1beta1
+        kind: ClusterInstance
         spec:
           forProvider:
-            autogeneratePassword: true
-            dbClusterIdentifier: "to-be-patched"
+            clusterIdentifierSelector:
+              matchControllerRef: true
             dbSubnetGroupNameSelector:
               matchControllerRef: true
-            dbInstanceClass: db.r5.xlarge
+            instanceClass: db.r5.xlarge
             engine: aurora-mysql
       patches:
         - type: PatchSet
           patchSetName: common-fields
         - fromFieldPath: spec.writeConnectionSecretToRef.namespace
           toFieldPath: spec.writeConnectionSecretToRef.namespace
-        - fromFieldPath: "metadata.uid"
+        - fromFieldPath: "metadata.name"
           toFieldPath: "spec.writeConnectionSecretToRef.name"
           transforms:
             - type: string
               string:
-                fmt: "%s-cluster-mysql"
-        - fromFieldPath: "status.clusterId"
-          toFieldPath: "spec.forProvider.dbClusterIdentifier"
+                fmt: "%s-instance-mysql"
