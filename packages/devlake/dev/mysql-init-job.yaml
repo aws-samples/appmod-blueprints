@@ -30,9 +30,9 @@ spec:
           - /bin/bash
           - -c
           - |
-            endpoint=$(kubectl get secret devlake-mysql-db-cluster-connection -n vela-system -o jsonpath='{.data.endpoint}' | base64 --decode)
+            endpoint=$(kubectl get secret devlake-mysql-db-connection -n devlake -o jsonpath='{.data.endpoint}' | base64 --decode)
             kubectl create service externalname devlake-mysql-service --external-name=$endpoint -n devlake --dry-run=client -o yaml | kubectl apply -f -
-            password=$(kubectl get secret devlake-mysql-db-cluster-password -n vela-system -o jsonpath='{.data.password}' | base64 --decode)
+            password=$(kubectl get secret devlake-mysql-db-connection -n devlake -o jsonpath='{.data.password}' | base64 --decode)
             kubectl create secret generic devlake-mysql-auth \
             --from-literal=MYSQL_USER=merico \
             --from-literal=MYSQL_PASSWORD=merico \
@@ -46,24 +46,24 @@ spec:
           - /bin/bash
           - -c
           - |
-            until mysql -h ${DB_URL} -P 3306 -u awsrdsadmin -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
+            until mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
               echo "Waiting for MySQL to be ready..."
               sleep 2
             done
 
-            mysql -h ${DB_URL} -P 3306 -u awsrdsadmin -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE DATABASE IF NOT EXISTS lake;
             "
 
             echo "Creating devlake user..."
-            mysql -h ${DB_URL} -P 3306 -u awsrdsadmin -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE USER IF NOT EXISTS 'merico' IDENTIFIED BY 'merico';
             GRANT ALL PRIVILEGES ON lake.* TO 'merico';
             FLUSH PRIVILEGES;
             "
           
             echo "Creating Grafana user..."
-            mysql -h ${DB_URL} -P 3306 -u awsrdsadmin -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE USER IF NOT EXISTS 'grafanaReader' IDENTIFIED BY 'grafana_password';
             GRANT SELECT ON lake.* TO 'grafanaReader';
             FLUSH PRIVILEGES;

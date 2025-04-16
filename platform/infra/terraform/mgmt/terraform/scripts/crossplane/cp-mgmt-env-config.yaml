@@ -1,0 +1,13 @@
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: EnvironmentConfig
+metadata:
+  name: mgmt-environment
+data:
+  locations:
+    us: us-west-2
+  dbSubnetIds:
+    - $SUBNET_ID_1
+    - $SUBNET_ID_2
+    - $SUBNET_ID_3
+  vpcId: $VPC_ID
+    
