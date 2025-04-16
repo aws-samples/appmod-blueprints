@@ -70,9 +70,6 @@ spec:
           patchSetName: common-fields
         - type: PatchSet
           patchSetName: connection-secret
-        - type: ToCompositeFieldPath
-          fromFieldPath: status.atProvider.securityGroupID
-          toFieldPath: status.securityGroupId
         - type: FromCompositeFieldPath
           fromFieldPath: spec.IngressRules
           toFieldPath: spec.forProvider.ingress
@@ -152,9 +149,6 @@ spec:
           toFieldPath: "spec.forProvider.engineVersion"
         - fromFieldPath: "spec.databaseName"
           toFieldPath: "spec.forProvider.databaseName"
-        - type: ToCompositeFieldPath
-          fromFieldPath: status.atProvider.dbClusterIdentifier
-          toFieldPath: status.clusterId
       connectionDetails:
         - fromConnectionSecretKey: username
         - fromConnectionSecretKey: password
