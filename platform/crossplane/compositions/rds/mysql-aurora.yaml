@@ -169,7 +169,7 @@ spec:
               matchControllerRef: true
             dbSubnetGroupNameSelector:
               matchControllerRef: true
-            dbInstanceClass: db.r5.xlarge
+            instanceClass: db.r5.xlarge
             engine: aurora-mysql
       patches:
         - type: PatchSet
