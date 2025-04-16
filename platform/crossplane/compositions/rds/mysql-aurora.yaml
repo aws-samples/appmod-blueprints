@@ -110,7 +110,7 @@ spec:
             engine: aurora-mysql
             engineVersion: "8.0.mysql_aurora.3.05.2"
             finalDBSnapshotIdentifier: "to-be-patched"
-            masterUserPasswordSecretRef:
+            masterPasswordSecretRef:
               key: password
               name: mysql-root-user-password
               namespace: crossplane-system
