@@ -31,9 +31,6 @@ spec:
         - type: FromCompositeFieldPath
           fromFieldPath: spec.writeConnectionSecretToRef.namespace
           toFieldPath: spec.writeConnectionSecretToRef.namespace
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.resourceConfig.name
-          toFieldPath: metadata.annotations[crossplane.io/external-name]
     - name: connection-secret
       patches:
         - fromFieldPath: "metadata.uid"
@@ -133,7 +130,7 @@ spec:
           toFieldPath: spec.writeConnectionSecretToRef.namespace
         - fromFieldPath: metadata.labels[crossplane.io/claim-namespace]
           toFieldPath: spec.forProvider.masterUserPasswordSecretRef.namespace
-        - fromFieldPath: "metadata.uid"
+        - fromFieldPath: "metadata.name"
           toFieldPath: "spec.writeConnectionSecretToRef.name"
           transforms:
             - type: string
@@ -170,9 +167,9 @@ spec:
           patchSetName: common-fields
         - fromFieldPath: spec.writeConnectionSecretToRef.namespace
           toFieldPath: spec.writeConnectionSecretToRef.namespace
-        - fromFieldPath: "metadata.uid"
+        - fromFieldPath: "metadata.name"
           toFieldPath: "spec.writeConnectionSecretToRef.name"
           transforms:
             - type: string
               string:
-                fmt: "%s-mysql"
+                fmt: "%s-instance-mysql"
