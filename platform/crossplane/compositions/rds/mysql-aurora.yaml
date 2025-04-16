@@ -31,6 +31,10 @@ spec:
         - type: FromCompositeFieldPath
           fromFieldPath: spec.resourceConfig.tags
           toFieldPath: spec.forProvider.tags
+          transforms:
+            - type: map
+              map:
+                kind: FromMapToObject
           policy:
             mergeOptions:
               appendSlice: true
@@ -40,6 +44,16 @@ spec:
         - type: FromCompositeFieldPath
           fromFieldPath: spec.resourceConfig.name
           toFieldPath: metadata.annotations[crossplane.io/external-name]
+    - name: connection-secret
+      patches:
+        - fromFieldPath: "metadata.uid"
+          toFieldPath: "spec.writeConnectionSecretToRef.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-mysql"
+        - fromFieldPath: "spec.writeConnectionSecretToRef.namespace"
+          toFieldPath: "spec.writeConnectionSecretToRef.namespace"
   resources:
     - base:
         apiVersion: rds.aws.upbound.io/v1beta1
@@ -50,6 +64,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common-fields
+        - type: PatchSet
+          patchSetName: connection-secret
         - type: FromEnvironmentFieldPath
           fromFieldPath: "dbSubnetIds"
           toFieldPath: spec.forProvider.subnetIds
@@ -62,6 +78,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common-fields
+        - type: PatchSet
+          patchSetName: connection-secret
         - type: ToCompositeFieldPath
           fromFieldPath: status.atProvider.securityGroupID
           toFieldPath: status.securityGroupId
@@ -94,6 +112,9 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common-fields
+        - type: PatchSet
+          patchSetName: connection-secret
+
     - base:
         apiVersion: rds.aws.upbound.io/v1beta2
         kind: Cluster
@@ -114,10 +135,9 @@ spec:
             preferredMaintenanceWindow: sun:04:00-sun:05:00
             skipFinalSnapshot: true
             storageEncrypted: true
-            vpcSecurityGroupIDs: [] 
-            # This is a workaround for SGs not getting updated properly. https://github.com/crossplane/provider-aws/issues/1153
-            # https://github.com/crossplane/crossplane-runtime/issues/250
-            vpcSecurityGroupIDSelector:
+            dbSubnetGroupNameSelector:
+              matchControllerRef: true
+            vpcSecurityGroupIdSelector:
               matchControllerRef: true
       patches:
         - type: PatchSet
@@ -131,7 +151,7 @@ spec:
           transforms:
             - type: string
               string:
-                fmt: "%s-mysql"
+                fmt: "%s-cluster-mysql"
         - fromFieldPath: "metadata.name"
           toFieldPath: "spec.forProvider.finalDBSnapshotIdentifier"
           transforms:
@@ -155,9 +175,8 @@ spec:
         kind: ClusterInstance
         spec:
           forProvider:
-            autogeneratePassword: true
             clusterIdentifierSelector:
-            matchControllerRef: true
+              matchControllerRef: true
             dbSubnetGroupNameSelector:
               matchControllerRef: true
             dbInstanceClass: db.r5.xlarge
@@ -172,4 +191,4 @@ spec:
           transforms:
             - type: string
               string:
-                fmt: "%s-cluster-mysql"
+                fmt: "%s-mysql"
