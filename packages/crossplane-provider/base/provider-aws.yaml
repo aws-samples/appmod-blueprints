@@ -91,6 +91,6 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "10"
 spec:
-  package: xpkg.upbound.io/upbound/provider-aws-rds:v1.13.1
+  package: xpkg.upbound.io/upbound/provider-aws-ec2:v1.13.1
   runtimeConfigRef:
     name: aws-irsa-drc
