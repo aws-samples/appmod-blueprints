@@ -41,7 +41,7 @@ spec:
             endpoint=$(kubectl get secret $CONN_SECRET_NAME -n crossplane-system -o jsonpath='{.data.endpoint}' | base64 --decode)
             kubectl create service externalname devlake-mysql-service --external-name=$endpoint -n devlake --dry-run=client -o yaml | kubectl apply -f -
             password=$(kubectl get secret $CONN_SECRET_NAME -n crossplane-system -o jsonpath='{.data.attribute\.master_password}' | base64 --decode)
-            kubectl create secret generic devlake-mysql-auth -n devlake \
+            kubectl create secret generic devlake-mysql-auth \
             --from-literal=MYSQL_USER=merico \
             --from-literal=MYSQL_PASSWORD=merico \
             --from-literal=MYSQL_DATABASE=lake \
