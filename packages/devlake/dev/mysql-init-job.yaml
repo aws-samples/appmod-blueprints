@@ -38,10 +38,11 @@ spec:
                 echo "Waiting for secret to be available..."
                 sleep 5
             done
-            endpoint=$(kubectl get secret $CONN_SECRET_NAME -n crossplane-system -o jsonpath='{.data.endpoint}' | base64 --decode)
+            echo $CONN_SECRET_NAME
+            endpoint=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.endpoint}' | base64 --decode)
             echo $endpoint
-            kubectl create service externalname devlake-mysql-service --external-name=$endpoint -n devlake
-            password=$(kubectl get secret $CONN_SECRET_NAME -n crossplane-system -o jsonpath='{.data.attribute\.master_password}' | base64 --decode)
+            kubectl create service externalname devlake-mysql-service --external-name=${endpoint} -n devlake
+            password=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.attribute\.master_password}' | base64 --decode)
             kubectl create secret generic devlake-mysql-auth -n devlake \
             --from-literal=MYSQL_USER=merico \
             --from-literal=MYSQL_PASSWORD=merico \
