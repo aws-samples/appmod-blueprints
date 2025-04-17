@@ -31,7 +31,7 @@ spec:
           - -c
           - |
             while true; do
-                CONN_SECRET_NAME=$(kubectl get secrets -o custom-columns=NAME:.metadata.name | grep "^devlake-mysql.*cluster-mysql-connection$" || true)
+                CONN_SECRET_NAME=$(kubectl get secrets -n crossplane-system -o custom-columns=NAME:.metadata.name | grep "^devlake-mysql.*cluster-mysql-connection$" || true)
                 if [ -n "$CONN_SECRET_NAME" ]; then
                     break
                 fi
