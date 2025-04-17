@@ -5,9 +5,13 @@ metadata:
 data:
   locations:
     us: us-west-2
+  privateSubnetIds:
+    - $PRIV_SUBNET_ID_1
+    - $PRIV_SUBNET_ID_2
+    - $PRIV_SUBNET_ID_3
   dbSubnetIds:
-    - $SUBNET_ID_1
-    - $SUBNET_ID_2
-    - $SUBNET_ID_3
+    - $DB_SUBNET_ID_1
+    - $DB_SUBNET_ID_2
+    - $DB_SUBNET_ID_3
   vpcId: $VPC_ID
     
