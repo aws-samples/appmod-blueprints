@@ -28,9 +28,6 @@ spec:
         - type: FromEnvironmentFieldPath
           fromFieldPath: locations.us
           toFieldPath: spec.forProvider.region
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.writeConnectionSecretToRef.namespace
-          toFieldPath: spec.writeConnectionSecretToRef.namespace
     - name: connection-secret
       patches:
         - fromFieldPath: "metadata.uid"
@@ -51,8 +48,6 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common-fields
-        - type: PatchSet
-          patchSetName: connection-secret
         - type: FromEnvironmentFieldPath
           fromFieldPath: "dbSubnetIds"
           toFieldPath: spec.forProvider.subnetIds
@@ -65,8 +60,6 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common-fields
-        - type: PatchSet
-          patchSetName: connection-secret
         - type: FromCompositeFieldPath
           fromFieldPath: spec.IngressRules
           toFieldPath: spec.forProvider.ingress
@@ -96,8 +89,6 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common-fields
-        - type: PatchSet
-          patchSetName: connection-secret
 
     - base:
         apiVersion: rds.aws.upbound.io/v1beta2
@@ -171,11 +162,3 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common-fields
-        - fromFieldPath: spec.writeConnectionSecretToRef.namespace
-          toFieldPath: spec.writeConnectionSecretToRef.namespace
-        - fromFieldPath: "metadata.name"
-          toFieldPath: "spec.writeConnectionSecretToRef.name"
-          transforms:
-            - type: string
-              string:
-                fmt: "%s-instance-mysql"
