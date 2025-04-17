@@ -58,12 +58,17 @@ export GITHUB_BRANCH=$(yq '.repo_branch' ${REPO_ROOT}/platform/infra/terraform/m
 cd ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/mgmt-cluster/
 
 VPC_ID=$(terraform output -raw eks_cluster_vpc_id)
-SUBNET_ID_1=$(terraform output -json database_subnet_ids | jq -r '.[0]')
-SUBNET_ID_2=$(terraform output -json database_subnet_ids | jq -r '.[1]')
-SUBNET_ID_3=$(terraform output -json database_subnet_ids | jq -r '.[2]')
+
+PRIV_SUBNET_ID_1=$(terraform output -json eks_cluster_private_subnets | jq -r '.[0]')
+PRIV_SUBNET_ID_2=$(terraform output -json eks_cluster_private_subnets | jq -r '.[1]')
+PRIV_SUBNET_ID_3=$(terraform output -json eks_cluster_private_subnets | jq -r '.[2]')
+
+DB_SUBNET_ID_1=$(terraform output -json database_subnet_ids | jq -r '.[0]')
+DB_SUBNET_ID_2=$(terraform output -json database_subnet_ids | jq -r '.[1]')
+DB_SUBNET_ID_3=$(terraform output -json database_subnet_ids | jq -r '.[2]')
 
 # Setup CP Env Config for MGMT Cluster
-sed -e "s#\$SUBNET_ID_1#${SUBNET_ID_1}#g" -e "s#\$SUBNET_ID_2#${SUBNET_ID_2}#g" -e "s#\$SUBNET_ID_3#${SUBNET_ID_3}#g" -e "s#\$VPC_ID#${VPC_ID}#g" ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yaml >${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yml
+sed -e "s#\$PRIV_SUBNET_ID_1#${PRIV_SUBNET_ID_1}#g" -e "s#\$PRIV_SUBNET_ID_2#${PRIV_SUBNET_ID_2}#g"  -e "s#\$PRIV_SUBNET_ID_3#${PRIV_SUBNET_ID_3}#g" -e "s#\$DB_SUBNET_ID_1#${DB_SUBNET_ID_1}#g" -e "s#\$DB_SUBNET_ID_2#${DB_SUBNET_ID_2}#g" -e "s#\$DB_SUBNET_ID_3#${DB_SUBNET_ID_3}#g" -e "s#\$VPC_ID#${VPC_ID}#g" ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yaml >${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yml
 kubectl apply -f ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yml
 
 cd ${REPO_ROOT}/platform/infra/terraform
