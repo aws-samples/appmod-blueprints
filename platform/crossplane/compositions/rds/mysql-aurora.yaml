@@ -103,7 +103,6 @@ spec:
             finalDBSnapshotIdentifier: "to-be-patched"
             masterPasswordSecretRef:
               key: password
-              name: mysql-root-user-password
               namespace: crossplane-system
             masterUsername: root
             preferredBackupWindow: 02:00-03:00
@@ -119,10 +118,8 @@ spec:
           patchSetName: common-fields
         - fromFieldPath: spec.writeConnectionSecretToRef.namespace
           toFieldPath: spec.writeConnectionSecretToRef.namespace
-        - fromFieldPath: metadata.labels[crossplane.io/claim-namespace]
-          toFieldPath: spec.forProvider.masterUserPasswordSecretRef.namespace
         - fromFieldPath: "metadata.name"
-          toFieldPath: "spec.masterPasswordSecretRef.name"
+          toFieldPath: "spec.forProvider.masterPasswordSecretRef.name"
           transforms:
             - type: string
               string:

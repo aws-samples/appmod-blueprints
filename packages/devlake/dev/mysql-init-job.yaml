@@ -30,10 +30,19 @@ spec:
           - /bin/bash
           - -c
           - |
-            CONN_SECRET_NAME=$(kubectl get secrets -o custom-columns=NAME:.metadata.name | grep "^devlake-mysql.*cluster-mysql-connection$")
-            endpoint=$(kubectl get secret $CONN_SECRET_NAME -n crossplane-system -o jsonpath='{.data.endpoint}' | base64 --decode)
-            kubectl create service externalname devlake-mysql-service --external-name=$endpoint -n devlake --dry-run=client -o yaml | kubectl apply -f -
-            password=$(kubectl get secret $CONN_SECRET_NAME -n crossplane-system -o jsonpath='{.data.attribute\.master_password}' | base64 --decode)
+            while true; do
+                CONN_SECRET_NAME=$(kubectl get secrets -n crossplane-system -o custom-columns=NAME:.metadata.name | grep "^devlake-mysql.*cluster-mysql-connection$" || true)
+                if [ -n "$CONN_SECRET_NAME" ]; then
+                    break
+                fi
+                echo "Waiting for secret to be available..."
+                sleep 5
+            done
+            echo $CONN_SECRET_NAME
+            endpoint=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.endpoint}' | base64 --decode)
+            echo $endpoint
+            kubectl create service externalname devlake-mysql-service --external-name=${endpoint} -n devlake
+            password=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.attribute\.master_password}' | base64 --decode)
             kubectl create secret generic devlake-mysql-auth -n devlake \
             --from-literal=MYSQL_USER=merico \
             --from-literal=MYSQL_PASSWORD=merico \
