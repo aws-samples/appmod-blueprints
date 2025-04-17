@@ -119,7 +119,7 @@ spec:
         - fromFieldPath: spec.writeConnectionSecretToRef.namespace
           toFieldPath: spec.writeConnectionSecretToRef.namespace
         - fromFieldPath: "metadata.name"
-          toFieldPath: "spec.masterPasswordSecretRef.name"
+          toFieldPath: "spec.forProvider.masterPasswordSecretRef.name"
           transforms:
             - type: string
               string:
