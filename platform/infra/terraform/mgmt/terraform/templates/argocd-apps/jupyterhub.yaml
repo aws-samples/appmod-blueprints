@@ -8,7 +8,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: modern-engg 
+  project: modern-engg
   sources:
     - repoURL: 'https://jupyterhub.github.io/helm-chart/'
       targetRevision: 3.3.7
@@ -43,6 +43,8 @@ spec:
                 allow_all: true # Allows all oauth authenticated users to use Jupyterhub. For finer grained control, you can use `allowed_users`: https://jupyterhub.readthedocs.io/en/stable/tutorial/getting-started/authenticators-users-basics.html#deciding-who-is-allowed
               JupyterHub:
                 authenticator_class: generic-oauth
+              KubeSpawner:
+                k8s_api_request_timeout: 300
           singleuser:
             storage:
               dynamic:
