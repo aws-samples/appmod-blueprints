@@ -38,9 +38,7 @@ spec:
                 echo "Waiting for secret to be available..."
                 sleep 5
             done
-            echo $CONN_SECRET_NAME
             endpoint=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.endpoint}' | base64 --decode)
-            echo $endpoint
             kubectl create service externalname devlake-mysql-service --external-name=${endpoint} -n devlake
             password=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.attribute\.master_password}' | base64 --decode)
             kubectl create secret generic devlake-mysql-auth -n devlake \
@@ -48,7 +46,7 @@ spec:
             --from-literal=MYSQL_PASSWORD=merico \
             --from-literal=MYSQL_DATABASE=lake \
             --from-literal=MYSQL_ROOT_PASSWORD=$password \
-            --from-literal=DB_URL=mysql://merico:merico@devlake-mysql-service:3306/lake?charset=utf8mb4&parseTime=True
+            --from-literal=DB_URL="mysql://merico:merico@devlake-mysql-service:3306/lake?charset=utf8mb4&parseTime=True"
       containers:
       - name: create-grafana-user
         image: mysql:8
@@ -56,24 +54,24 @@ spec:
           - /bin/bash
           - -c
           - |
-            until mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
+            until mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
               echo "Waiting for MySQL to be ready..."
               sleep 2
             done
 
-            mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE DATABASE IF NOT EXISTS lake;
             "
 
             echo "Creating devlake user..."
-            mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE USER IF NOT EXISTS 'merico' IDENTIFIED BY 'merico';
             GRANT ALL PRIVILEGES ON lake.* TO 'merico';
             FLUSH PRIVILEGES;
             "
           
             echo "Creating Grafana user..."
-            mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE USER IF NOT EXISTS 'grafanaReader' IDENTIFIED BY 'grafana_password';
             GRANT SELECT ON lake.* TO 'grafanaReader';
             FLUSH PRIVILEGES;
