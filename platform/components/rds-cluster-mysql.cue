@@ -42,7 +42,7 @@ template: {
                 providerConfigName: "default"
                 region: "us-west-2"
             }
-            databaseName: "\(context.name)db"
+            databaseName: "initdb"
         }
     }
 }
