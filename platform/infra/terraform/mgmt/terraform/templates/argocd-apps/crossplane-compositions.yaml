@@ -13,6 +13,8 @@ spec:
     repoURL: ${GITHUB_URL}
     targetRevision: ${GITHUB_BRANCH}
     path: "platform/crossplane/compositions"
+    directory:
+      recurse: true
   destination:
     server: "https://kubernetes.default.svc"
     namespace: crossplane-system

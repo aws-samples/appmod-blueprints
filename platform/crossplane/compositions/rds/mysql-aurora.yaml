@@ -131,11 +131,17 @@ spec:
         - fromFieldPath: metadata.labels[crossplane.io/claim-namespace]
           toFieldPath: spec.forProvider.masterUserPasswordSecretRef.namespace
         - fromFieldPath: "metadata.name"
+          toFieldPath: "spec.masterPasswordSecretRef.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-cluster-mysql-master-password"
+        - fromFieldPath: "metadata.name"
           toFieldPath: "spec.writeConnectionSecretToRef.name"
           transforms:
             - type: string
               string:
-                fmt: "%s-cluster-mysql"
+                fmt: "%s-cluster-mysql-connection"
         - fromFieldPath: "metadata.name"
           toFieldPath: "spec.forProvider.finalDBSnapshotIdentifier"
           transforms:
