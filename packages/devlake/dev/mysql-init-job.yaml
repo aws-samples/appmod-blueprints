@@ -54,24 +54,24 @@ spec:
           - /bin/bash
           - -c
           - |
-            until mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
+            until mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do
               echo "Waiting for MySQL to be ready..."
               sleep 2
             done
 
-            mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE DATABASE IF NOT EXISTS lake;
             "
 
             echo "Creating devlake user..."
-            mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE USER IF NOT EXISTS 'merico' IDENTIFIED BY 'merico';
             GRANT ALL PRIVILEGES ON lake.* TO 'merico';
             FLUSH PRIVILEGES;
             "
           
             echo "Creating Grafana user..."
-            mysql -h ${DB_URL} -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+            mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
             CREATE USER IF NOT EXISTS 'grafanaReader' IDENTIFIED BY 'grafana_password';
             GRANT SELECT ON lake.* TO 'grafanaReader';
             FLUSH PRIVILEGES;
