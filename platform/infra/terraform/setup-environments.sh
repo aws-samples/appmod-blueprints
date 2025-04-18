@@ -55,6 +55,10 @@ sed -e "s/INGRESS_DNS/${DNS_HOSTNAME}/g" ${REPO_ROOT}/platform/infra/terraform/m
 export GITHUB_URL=$(yq '.repo_url' ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/config.yaml)
 export GITHUB_BRANCH=$(yq '.repo_branch' ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/config.yaml)
 
+# Deploy the apps on IDP Builder and ArgoCD
+${REPO_ROOT}/platform/infra/terraform/mgmt/setups/install.sh
+
+
 cd ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/mgmt-cluster/
 
 VPC_ID=$(terraform output -raw eks_cluster_vpc_id)
@@ -71,12 +75,6 @@ DB_SUBNET_ID_3=$(terraform output -json database_subnet_ids | jq -r '.[2]')
 sed -e "s#\$PRIV_SUBNET_ID_1#${PRIV_SUBNET_ID_1}#g" -e "s#\$PRIV_SUBNET_ID_2#${PRIV_SUBNET_ID_2}#g"  -e "s#\$PRIV_SUBNET_ID_3#${PRIV_SUBNET_ID_3}#g" -e "s#\$DB_SUBNET_ID_1#${DB_SUBNET_ID_1}#g" -e "s#\$DB_SUBNET_ID_2#${DB_SUBNET_ID_2}#g" -e "s#\$DB_SUBNET_ID_3#${DB_SUBNET_ID_3}#g" -e "s#\$VPC_ID#${VPC_ID}#g" ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yaml >${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yml
 kubectl apply -f ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yml
 
-cd ${REPO_ROOT}/platform/infra/terraform
-
-# Deploy the apps on IDP Builder and ArgoCD
-${REPO_ROOT}/platform/infra/terraform/mgmt/setups/install.sh
-
-cd ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/mgmt-cluster/
 export TF_eks_cluster_vpc_id=$(terraform output -raw eks_cluster_vpc_id)
 export TF_eks_cluster_private_subnets=$(terraform output -json eks_cluster_private_subnets)
 echo "private subnets are : " $TF_eks_cluster_private_subnets
