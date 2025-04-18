@@ -202,7 +202,8 @@ spec:
         - |
           apk add --no-cache yq
           set -ex
-          mkdir ./src
+          rm -rf src
+          mkdir src
           git clone https://"{{inputs.parameters.apprepo}}".git -c http.sslVerify=false ./src
           cd ./src
           git config --global user.email "noreply@aws.com" 
@@ -213,29 +214,31 @@ spec:
             yq -i 'select(.kind =="Sensor").spec.triggers[0].template.argoWorkflow.source.resource.spec.templates[0].steps += [[{
               "name": "send-deployment-status",
               "templateRef": {
-                "name": "{{workflow.parameters.appname}}"-cicd-deployments-dora-processing-template",
+                "name": "{{workflow.parameters.appname}}-cicd-deployments-dora-processing-template",
                 "template": "handle-rollout-check-and-process-deploy"
               },
               "arguments": {
                 "parameters": [
                   {
                     "name": "body",
-                    "value": 'PLACEHOLDER_OPENworkflow.parameters.bodyPLACEHOLDER_CLOSE'
+                    "value": "\"_OPAREN__OPAREN_workflow.parameters.body_CPAREN__CPAREN_\""
                   },
                   {
                     "name": "headers",
-                    "value": 'PLACEHOLDER_OPENworkflow.parameters.headersPLACEHOLDER_CLOSE'
+                    "value": "\"_OPAREN__OPAREN_workflow.parameters.body_CPAREN__CPAREN_\""
                   }
                 ]
               }
             }]]' manifests/cicd-pipeline.yaml
-            sed -e 's/PLACEHOLDER_OPEN/{{/g' -e 's/PLACEHOLDER_CLOSE/}}/g' manifests/cicd-pipeline.yaml > manifests/cicd-pipeline.yaml.tmp && mv manifests/cicd-pipeline.yaml.tmp manifests/cicd-pipeline.yaml
             yq -i 'select(.kind =="Sensor").spec.triggers[0].template.argoWorkflow.source.resource.spec.volumes += [{
               "name": "argocd-cluster-secret",
               "secret": {
-                "secretName": "dev-cluster-argo-secret",
+                "secretName": "dev-cluster-argo-secret"
               }
             }]' manifests/cicd-pipeline.yaml
+
+            sed -i 's/"_OPAREN__OPAREN_/{{/g; s/_CPAREN__CPAREN_"/}}/g' manifests/cicd-pipeline.yaml
+
           fi
           m_count=$(git status -s | wc -l)
           if [ $m_count -ge 1 ]; then
