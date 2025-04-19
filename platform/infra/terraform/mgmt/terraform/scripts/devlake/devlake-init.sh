@@ -1,8 +1,8 @@
 #!/bin/bash
 
 kubectl wait --for=jsonpath=.status.health.status=Healthy -n argocd application/devlake
-kubectl wait --for=condition=ready pod -l devlakeComponent=lake -n devlake --timeout=60s
-kubectl wait --for=condition=ready pod -l devlakeComponent=mysql -n devlake --timeout=60s
+kubectl wait --for=condition=ready pod -l devlakeComponent=lake -n devlake --timeout=600s
+kubectl wait --for=condition=ready pod -l devlakeComponent=mysql -n devlake --timeout=600s
 
 kubectl port-forward -n devlake svc/devlake-lake 9090:8080 >/dev/null 2>&1 &
 pid=$!

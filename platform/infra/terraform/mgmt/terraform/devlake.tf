@@ -122,9 +122,23 @@ resource "kubectl_manifest" "application_argocd_devlake" {
 
   yaml_body = templatefile("${path.module}/templates/argocd-apps/devlake.yaml", {
     GITHUB_URL    = local.repo_url
-    GITHUB_BRANCH = "feat/dora-metrics" #TODO:SWITCH BEFORE PR
+    GITHUB_BRANCH = local.repo_branch
     }
   )
+
+}
+
+resource "terraform_data" "devlake_init_scripts" {
+  depends_on = [
+    kubectl_manifest.application_argocd_devlake
+  ]
+
+    provisioner "local-exec" {
+    command = "./devlake-init.sh ${local.domain_name}"
+
+    working_dir = "${path.module}/scripts/devlake"
+    interpreter = ["/bin/bash", "-c"]
+  }
 
 }
 
