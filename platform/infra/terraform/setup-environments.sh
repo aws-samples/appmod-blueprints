@@ -55,16 +55,32 @@ sed -e "s/INGRESS_DNS/${DNS_HOSTNAME}/g" ${REPO_ROOT}/platform/infra/terraform/m
 export GITHUB_URL=$(yq '.repo_url' ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/config.yaml)
 export GITHUB_BRANCH=$(yq '.repo_branch' ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/config.yaml)
 
-
 # Deploy the apps on IDP Builder and ArgoCD
 ${REPO_ROOT}/platform/infra/terraform/mgmt/setups/install.sh
 
+
 cd ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/mgmt-cluster/
+
+VPC_ID=$(terraform output -raw eks_cluster_vpc_id)
+
+PRIV_SUBNET_ID_1=$(terraform output -json eks_cluster_private_subnets | jq -r '.[0]')
+PRIV_SUBNET_ID_2=$(terraform output -json eks_cluster_private_subnets | jq -r '.[1]')
+PRIV_SUBNET_ID_3=$(terraform output -json eks_cluster_private_subnets | jq -r '.[2]')
+
+DB_SUBNET_ID_1=$(terraform output -json database_subnet_ids | jq -r '.[0]')
+DB_SUBNET_ID_2=$(terraform output -json database_subnet_ids | jq -r '.[1]')
+DB_SUBNET_ID_3=$(terraform output -json database_subnet_ids | jq -r '.[2]')
+
+# Setup CP Env Config for MGMT Cluster
+sed -e "s#\$PRIV_SUBNET_ID_1#${PRIV_SUBNET_ID_1}#g" -e "s#\$PRIV_SUBNET_ID_2#${PRIV_SUBNET_ID_2}#g"  -e "s#\$PRIV_SUBNET_ID_3#${PRIV_SUBNET_ID_3}#g" -e "s#\$DB_SUBNET_ID_1#${DB_SUBNET_ID_1}#g" -e "s#\$DB_SUBNET_ID_2#${DB_SUBNET_ID_2}#g" -e "s#\$DB_SUBNET_ID_3#${DB_SUBNET_ID_3}#g" -e "s#\$VPC_ID#${VPC_ID}#g" ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yaml >${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yml
+kubectl apply -f ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yml
+
 export TF_eks_cluster_vpc_id=$(terraform output -raw eks_cluster_vpc_id)
 export TF_eks_cluster_private_subnets=$(terraform output -json eks_cluster_private_subnets)
 echo "private subnets are : " $TF_eks_cluster_private_subnets
 # For Database and EC2 database
 export TF_eks_cluster_vpc_cidr=$(terraform output -raw vpc_cidr)
+export TF_eks_cluster_db_subnets=$(terraform output -raw database_subnet_ids)
 export TF_eks_cluster_private_az=$(terraform output -json availability_zones)
 echo "private az are : " $TF_eks_cluster_private_az
 export KEYCLOAK_NAMESPACE=keycloak
@@ -121,8 +137,9 @@ git clone https://github.com/aws-observability/terraform-aws-observability-accel
 
 echo "bootstrapping Terraform"
 terraform -chdir=bootstrap init -reconfigure
-terraform -chdir=bootstrap plan
-terraform -chdir=bootstrap apply -auto-approve
+terraform -chdir=bootstrap plan -var eks_cluster_private_subnets="$TF_eks_cluster_private_subnets" -var vpc_cidr="$TF_eks_cluster_vpc_cidr"
+terraform -chdir=bootstrap apply -var eks_cluster_private_subnets="$TF_eks_cluster_private_subnets" -var vpc_cidr="$TF_eks_cluster_vpc_cidr" \
+  -auto-approve
 
 export TF_VAR_state_s3_bucket=$(terraform -chdir=bootstrap output -raw eks-accelerator-bootstrap-state-bucket)
 export TF_VAR_state_ddb_lock_table=$(terraform -chdir=bootstrap output -raw eks-accelerator-bootstrap-ddb-lock-table)
@@ -201,7 +218,6 @@ terraform -chdir=dev plan -var aws_region="${TF_VAR_aws_region}" \
 terraform -chdir=dev apply "devplan" &
 
 export DEV_EKS_PROCESS=$!
-
 
 # Initialize backend for PROD cluster
 terraform -chdir=prod init -reconfigure -backend-config="key=prod/eks-accelerator-vpc.tfstate" \
@@ -290,18 +306,30 @@ terraform -chdir=post-deploy apply -var aws_region="${TF_VAR_aws_region}" \
   -var dev_cluster_name="${TF_VAR_dev_cluster_name}" \
   -var prod_cluster_name="${TF_VAR_prod_cluster_name}" -auto-approve
 
+# Get DEVLAKE ENDPOINT
+
+while true; do
+    CONN_SECRET_NAME=$(kubectl get secrets -n crossplane-system -o custom-columns=NAME:.metadata.name | grep "^devlake-mysql.*cluster-mysql-connection$" || true)
+    if [ -n "$CONN_SECRET_NAME" ]; then
+        break
+    fi
+    echo "Waiting for secret to be available..."
+    sleep 5
+done
+export DEVLAKE_MYSQL_ENDPOINT=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.reader_endpoint}' | base64 --decode)
+
 # Setup Applications on Clusters using ArgoCD on the management cluster
 
 # Substitute the GITHUB_URL and GITHUB_BRANCH in the manifests
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/ack-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/ack-dev.yaml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/ack-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/ack-prod.yaml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-comp-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-comp-dev.yaml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-comp-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-comp-prod.yaml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-provider-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-provider-dev.yaml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-provider-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-provider-prod.yaml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/grafana-workload-dashboards.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/grafana-workload-dashboards.yaml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/kubevela-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/kubevela-dev.yaml
-sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/kubevela-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/kubevela-prod.yaml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/ack-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/ack-dev.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/ack-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/ack-prod.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-comp-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-comp-dev.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-comp-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-comp-prod.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-provider-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-provider-dev.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/crossplane-provider-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/crossplane-provider-prod.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" -e "s#\${DEVLAKE_MYSQL_ENDPOINT}#${DEVLAKE_MYSQL_ENDPOINT}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/grafana-workload-dashboards.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/grafana-workload-dashboards.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/kubevela-dev.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/kubevela-dev.yml
+sed -e "s#\${GITHUB_URL}#${GITHUB_URL}#g" -e "s#\${GITHUB_BRANCH}#${GITHUB_BRANCH}#g" ${REPO_ROOT}/platform/infra/terraform/deploy-apps/kubevela-prod.yaml >${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/kubevela-prod.yml
 
 # Apply the manifests to the management cluster
 kubectl apply -f ${REPO_ROOT}/platform/infra/terraform/deploy-apps/manifests/

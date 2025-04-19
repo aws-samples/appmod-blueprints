@@ -1,28 +1,16 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Deploy an Argo Events based CI/CD Pipeline for your App
-  name: cicd-pipeline
-  title: Deploy CI/CD Pipeline
+  description: Onboard an Application Team to DORA monitoring
+  name: dora-onboarding
+  title: Onboard App to DORA
 spec:
   owner: guest
   type: service
   parameters:
     - properties:
         appname:
-          title: name of app for cicd
-          type: string
-        aws_region:
-          default: us-west-2
-          title: aws region for ecr repo
-          type: string
-        dockerfile_path:
-          title: Relative path to directory containing Dockerfile
-          type: string
-          default: .
-        deployment_path:
-          default: ./deployment
-          title: Relative path to deployment directory in repo
+          title: name of app for onboarding
           type: string
       required:
         - appname
@@ -40,18 +28,15 @@ spec:
         values:
           appname: ${{ parameters.appname }}
           namespace: team-${{ parameters.appname }}
-          aws_region: ${{ parameters.aws_region }}
           hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
-          dockerfile_path: ${{parameters.dockerfile_path}}
-          deployment_path: ${{parameters.deployment_path}}
 
     - id: publish
       name: Publishing to a gitea git repository
       action: publish:gitea
       input:
-        description: CodeBuild create clusters template
+        description: DORA onboarding template
         # Hard coded value for this demo purposes only.
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.appname}}-cicd
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.appname}}-dora
         defaultBranch: main
 
     - action: fetch:template
@@ -62,41 +47,23 @@ spec:
         values:
           appname: ${{ parameters.appname }}
           namespace: team-${{ parameters.appname }}
-          aws_region: ${{ parameters.aws_region }}
           hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
-          dockerfile_path: ${{parameters.dockerfile_path}}
-          deployment_path: ${{parameters.deployment_path}}
 
     - action: cnoe:kubernetes:apply
-      name: Apply Provisioner IAM
-      id: apply-prov-iam
+      name: Apply Provisioner rbac
+      id: apply-prov-rbac
       input:
         namespaced: true
-        manifestPath: podidentity.yaml
+        manifestPath: rbac.yaml
         clusterName: local
 
-    - action: debug:wait
-      name: Wait for IAM
+    - action: cnoe:kubernetes:apply
+      name: Apply Workflow Templates
+      id: apply-temp
       input:
-        seconds: 15
-
-    - id: create-argocd-app
-      name: Create ArgoCD App
-      action: cnoe:create-argocd-app
-      input:
-        appName: ${{parameters.appname}}
-        appNamespace: team-${{ parameters.appname }}
-        argoInstance: in-cluster
-        projectName: default
-        # necessary until we generate our own cert
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.appname}}-cicd
-        path: "manifests"
-
-    - action: debug:wait
-      name: Wait for ArgoCD
-      input:
-        seconds: 15
-
+        namespaced: true
+        manifestPath: wf-templates.yaml
+        clusterName: local
 
     - action: cnoe:kubernetes:apply
       name: Run Workflow 
@@ -106,6 +73,17 @@ spec:
         manifestPath: wf-run.yaml
         clusterName: local
 
+    - id: create-argocd-app
+      name: Create ArgoCD App
+      action: cnoe:create-argocd-app
+      input:
+        appName: ${{parameters.appname}}-dora
+        appNamespace: team-${{ parameters.appname }}
+        argoInstance: in-cluster
+        projectName: default
+        # necessary until we generate our own cert
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.appname}}-dora
+        path: "manifests"
     - id: register
       name: Register
       action: catalog:register

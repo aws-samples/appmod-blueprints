@@ -1,0 +1,60 @@
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "DORA Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORA.json"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-deploymentfreq-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "DORA Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORADetails-DeploymentFrequency.json"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-changefailure-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "DORA Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORADetails-ChangeFailureRate.json"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-recoverytime-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "DORA Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORADetails-FailedDeploymentRecoveryTime.json"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dora-leadtime-grafanadashboard
+  namespace: grafana-operator
+spec:
+  folder: "DORA Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORADetails-LeadTimeforChanges.json"
