@@ -86,8 +86,9 @@ spec:
           echo '{{inputs.parameters.body}}'
           PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
           {
-            id: (.pull_request.id | tostring),
-            title: .pull_request.title,
+            id: ("PR-"+(.pull_request.id | tostring)),
+            pullRequestKey: (.pull_request.id | tostring),
+            displayTitle: .pull_request.title,
             description: .pull_request.body,
             status: (if .pull_request.state == "open" then "OPEN" elif .pull_request.merged then "MERGED" else "CLOSED" end),
             createdDate: .pull_request.created_at,
