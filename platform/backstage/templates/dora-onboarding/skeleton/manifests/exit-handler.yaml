@@ -5,7 +5,6 @@ metadata:
   namespace: ${{values.namespace}}
 spec:
   entrypoint: handle-rollout-check-and-process-deploy
-  serviceAccountName: ${{values.appname}}-dora-webhook-sa
   volumes:
     - name: argocd-cluster-secret
       secret:
@@ -20,18 +19,12 @@ spec:
   templates:
     - name: handle-rollout-check-and-process-deploy
       steps:
-        - - name: fetch-argo-plugin
-            template: download-argo-plugin
-
         - - name: check-rollout
             template: check-rollout-status
             arguments:
               parameters:
                 - name: namespace
                   value: team-"{{workflow.parameters.appname}}"
-              artifacts:
-                - name: rollout_plugin
-                  from: "{{steps.fetch-argo-plugin.outputs.artifacts.rollout_plugin}}"
 
         - - name: process-and-send-deployment
             template: process-deployment
@@ -64,12 +57,12 @@ spec:
               name: devlake-webhook-id
         source: |
           apk add --no-cache jq curl
-          RESULT="{{inputs.parameters.status}}
+          RESULT="{{inputs.parameters.status}}"
           webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/${DEVLAKE_HOOK_ID}/deployments          
           PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
           . as $root |
           {
-            id: .after,
+            id: ("deployment-" + (.id | .[0:7])),
             createdDate: (.commits | first | .timestamp),
             startedDate: (.commits | first | .timestamp),
             finishedDate: (.commits | last | .timestamp),
@@ -85,7 +78,6 @@ spec:
                 commitSha: .id,
                 commitMsg: .message,
                 result: "SUCCESS",
-                name: ("deployment-" + (.id | .[0:7]))
               }
             ]
           }')
@@ -94,28 +86,10 @@ spec:
 
           curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
 
-    - name: download-argo-plugin
-      container:
-        image: alpine/curl:8.12.1
-        command: [/bin/bash, -c]
-        args:
-        - |
-          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
-          chmod +x ./kubectl-argo-rollouts-linux-amd64
-          mv ./kubectl-argo-rollouts-linux-amd64 > /tmp/kubectl-argo-rollouts-linux-amd64
-      outputs:
-        artifacts:
-          - name: rollout_plugin
-            path: /tmp/kubectl-argo-rollouts-linux-amd64
-
-
     - name: check-rollout-status
       inputs:
         parameters:
           - name: namespace
-        artifacts:
-          - name: rollout_plugin
-            path: /tmp/kubectl-argo-rollouts-linux-amd64
       container:
         image: bitnami/kubectl:latest
         command: [/bin/bash, -c]
@@ -126,27 +100,63 @@ spec:
         args: 
         - |
           mkdir -p ~/.kube
-          cp /tmp/argocd-cluster/config ~/.kube/config
+      
+          # Read the secret components
+          SERVER=$(cat /tmp/argocd-cluster/server)
+          NAME=$(cat /tmp/argocd-cluster/name)
+          TOKEN=$(cat /tmp/argocd-cluster/config | jq -r .bearerToken)
+          CA_DATA=$(cat /tmp/argocd-cluster/config | jq -r .tlsClientConfig.caData)
+          
+          # Create kubeconfig
+          cat > ~/.kube/config <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - name: ${NAME}
+            cluster:
+              certificate-authority-data: ${CA_DATA}
+              server: ${SERVER}
+          users:
+          - name: ${NAME}-user
+            user:
+              token: ${TOKEN}
+          contexts:
+          - name: ${NAME}-context
+            context:
+              cluster: ${NAME} 
+              user: ${NAME}-user
+          current-context: ${NAME}-context
+          EOF
 
-          mv /tmp/kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
-
+          SA="system:serviceaccount:kube-system:dev-argocd-manager"
+    
           SEARCH_WORD="{{workflow.parameters.appname}}"
-          ROLLOUT_NAME=$(kubectl get rollout -n "{{inputs.parameters.namespace}}" -o json | \
+          ROLLOUT_NAME=$(kubectl --as=$SA get rollout -n "{{inputs.parameters.namespace}}" -o json | \
             jq -r --arg WORD "$SEARCH_WORD" '.items[] | select(.metadata.name | contains($WORD)) | .metadata.name')
 
           if [ -z "$ROLLOUT_NAME" ]; then
             echo "No rollout found containing word: $SEARCH_WORD"
             exit 1
           fi
-          # Initialize timeout variables
-          TIMEOUT=600  # 10 minutes timeout
-          INTERVAL=10  # Check every 10 seconds
-          ELAPSED=0
+          # Check rollout status using kubectl
+          timeout=600  # 10 minutes timeout
+          interval=10  # Check every 10 seconds
+          elapsed=0
 
-          if kubectl argo rollouts status $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" --timeout 2m; then
-            echo "SUCCESS"
-            exit 0
-          else 
-            echo "FAILURE"
-            exit 0
-          fi
+          while [ $elapsed -lt $timeout ]; do
+            phase=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
+            
+            if [ "$phase" = "Healthy" ]; then
+              echo "SUCCESS"
+              exit 0
+            elif [ "$phase" = "Degraded" ]; then
+              echo "FAILURE"
+              exit 0
+            fi
+            
+            sleep $interval
+            elapsed=$((elapsed + interval))
+          done
+
+          echo "FAILURE"
+          exit 0

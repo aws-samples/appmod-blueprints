@@ -62,9 +62,9 @@ spec:
                     - name: appname
                       value: ${{values.appname}}
                     - name: body
-                      value: ""
+                      value: "{{ .Input.body }}"
                     - name: headers
-                      value: ""
+                      value: "{{ .Input.header }}"
                 volumeClaimTemplates:
                 - metadata:
                     name: workdir
@@ -104,11 +104,11 @@ spec:
               dest: spec.arguments.parameters.2.value
             - src:
                 dependencyName: source-dep
-                dataTemplate: "{{ .Input.body }}"
+                dataKey: body
               dest: spec.arguments.parameters.7.value
             - src:
                 dependencyName: source-dep
-                dataTemplate: "{{ .Input.header }}"
+                dataKey: header
               dest: spec.arguments.parameters.8.value
 ---
 apiVersion: v1

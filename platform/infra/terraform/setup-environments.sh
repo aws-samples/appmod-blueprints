@@ -306,7 +306,17 @@ terraform -chdir=post-deploy apply -var aws_region="${TF_VAR_aws_region}" \
   -var dev_cluster_name="${TF_VAR_dev_cluster_name}" \
   -var prod_cluster_name="${TF_VAR_prod_cluster_name}" -auto-approve
 
-export DEVLAKE_MYSQL_ENDPOINT=$(aws rds describe-db-clusters --region ${TF_VAR_aws_region} --db-cluster-identifier devlake-mysql-db-cluster --query 'DBClusters[0].ReaderEndpoint' --output text)
+# Get DEVLAKE ENDPOINT
+
+while true; do
+    CONN_SECRET_NAME=$(kubectl get secrets -n crossplane-system -o custom-columns=NAME:.metadata.name | grep "^devlake-mysql.*cluster-mysql-connection$" || true)
+    if [ -n "$CONN_SECRET_NAME" ]; then
+        break
+    fi
+    echo "Waiting for secret to be available..."
+    sleep 5
+done
+export DEVLAKE_MYSQL_ENDPOINT=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.reader_endpoint}' | base64 --decode)
 
 # Setup Applications on Clusters using ArgoCD on the management cluster
 
