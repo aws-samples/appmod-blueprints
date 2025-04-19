@@ -54,7 +54,7 @@ resource "terraform_data" "gitea_setup" {
 
 resource "kubectl_manifest" "ingress_gitea" {
   depends_on = [
-    terraform_data.gitea_setup
+    kubernetes_manifest.namespace_gitea
   ]
 
   yaml_body = templatefile("${path.module}/templates/manifests/ingress-gitea.yaml", {
