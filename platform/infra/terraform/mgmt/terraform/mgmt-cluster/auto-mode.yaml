@@ -1,0 +1,88 @@
+---
+apiVersion: eks.amazonaws.com/v1
+kind: NodeClass
+metadata:
+  name: modern-engineering-nodeclass
+spec:
+  role: "modern-engineering"
+  ephemeralStorage: # EKS Auto Mode section that handles temporary storage.
+    size: "50Gi"
+  subnetSelectorTerms:
+    - tags:
+        eks.amazonaws.com/discovery: modern-engineering
+  securityGroupSelectorTerms:
+    - tags:
+        eks.amazonaws.com/discovery: modern-engineering
+  tags:
+    eks.amazonaws.com/discovery: modern-engineering
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: modern-engineering-nodepool
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: modern-engineering-nodeclass # Calls the NodeClass modern-engineering-nodeclass in this file.
+      requirements:
+        # - key: "eks.amazonaws.com/instance-category"
+        #   operator: In
+        #   values: ["c", "m", "r"]
+        # - key: "eks.amazonaws.com/instance-cpu"
+        #   operator: In
+        #   values: ["4", "8", "16", "32"]
+        # - key: "eks.amazonaws.com/instance-hypervisor"
+        #   operator: In
+        #   values: ["nitro"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+        # - key: "eks.amazonaws.com/instance-generation"
+        #   operator: Gt
+        #   values: ["2"]
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand"]
+        - key: "node.kubernetes.io/instance-type"
+          operator: In
+          values: ["m5.2xlarge"]
+  limits:
+    cpu: "1000"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 1800s
+  weight: 10
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: pause-pods
+value: -1
+globalDefault: false
+description: "Priority class used by pause-pods for overprovisioning."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pause-pods
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      run: pause-pods
+  template:
+    metadata:
+      labels:
+        run: pause-pods
+    spec:
+      priorityClassName: pause-pods
+      containers:
+        - name: reserve-resources
+          image: registry.k8s.io/pause
+          resources:
+            requests:
+              cpu: "7"

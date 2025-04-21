@@ -31,9 +31,6 @@ spec:
           title: Repo Name of your Gitea Repo
           type: string
           pattern: ^[a-zA-Z0-9-_.]+$
-        repoUrl:
-          title: Repo URL of your Gitea Repo integrated with Backstage
-          type: string
         appNamespace:
           title: App Namespace
           type: string
@@ -41,6 +38,11 @@ spec:
           default: default
     - title: Provide Gitea Instance Information
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - id: fetch-base
       name: Fetch Skeleton + Template
       action: fetch:template
@@ -54,7 +56,7 @@ spec:
       action: publish:gitea
       input:
         description: App with ${{parameters.appName}} for ${{parameters.environment}}
-        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.repoName}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.repoName}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App

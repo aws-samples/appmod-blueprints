@@ -89,3 +89,8 @@ spec:
               volumeMounts:
                 - name: "test-volume"
                   mountPath: "/tmp"
+            sparkConf:
+              "spark.kubernetes.submission.connectionTimeout": "300000"
+              "spark.kubernetes.submission.requestTimeout": "300000"
+              "spark.kubernetes.driver.connectionTimeout": "300000"
+              "spark.kubernetes.driver.requestTimeout": "300000"

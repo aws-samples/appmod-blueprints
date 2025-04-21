@@ -16,6 +16,7 @@ test:
 gitea:
   admin:
     existingSecret: gitea-credential
+    passwordMode: initialOnlyNoReset
   config:
     database:
       DB_TYPE: sqlite3
@@ -38,10 +39,3 @@ service:
 ingress:
   # NOTE: The ingress is generated in a later step for path based routing feature See: hack/argo-cd/generate-manifests.sh
   enabled: false
-
-image:
-  pullPolicy: "IfNotPresent"
-  # Overrides the image tag whose default is the chart appVersion.
-  tag: "1.22.0"
-  # Adds -rootless suffix to image name
-  rootless: true

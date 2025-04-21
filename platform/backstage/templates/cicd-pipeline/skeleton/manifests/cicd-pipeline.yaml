@@ -41,8 +41,7 @@ spec:
                 generateName: ${{values.appname}}-cicd-flow-
                 namespace: ${{values.namespace}}
                 labels:
-                  env: dev
-                  entity-id: ${{values.appname}}-cicd
+                  entity-id: ${{values.appname}}
               spec:
                 serviceAccountName: ${{values.appname}}-cicd-sa
                 entrypoint: ci-build
@@ -209,7 +208,7 @@ spec:
                     container:
                       envFrom:
                       - secretRef:
-                          name: "{{workflow.parameters.appname}}-gitea-token"
+                          name: gitea-credentials
                       - configMapRef:
                           name: "{{workflow.parameters.appname}}-ecr-repo"
                       volumeMounts:
@@ -228,7 +227,7 @@ spec:
                           mkdir -p $DEPLOY_PATH
                           git config --global user.email "noreply@aws.com" 
                           git config --global user.name ARGO
-                          git remote set-url origin https://giteaAdmin:${token}@"{{inputs.parameters.apprepo}}".git
+                          git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
                           git pull --rebase
                           echo "$image:{{inputs.parameters.tag}}" > ./deployment/"{{inputs.parameters.env}}"/image.txt
                           if [ -f $DEPLOY_PATH/application.yml ]; then

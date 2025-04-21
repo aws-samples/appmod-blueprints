@@ -112,7 +112,7 @@ data:
       locations:
         # Examples from a public GitHub repository.
         - type: url
-          target: https://github.com/aws-samples/appmod-blueprints/blob/main/platform/backstage/templates/catalog-info.yaml
+          target: https://${DOMAIN_NAME}/gitea/giteaAdmin/platform/src/branch/main/backstage/templates/catalog-info.yaml
           rules:
             - allow: [User, Group]
         ## Uncomment these lines to add an example org

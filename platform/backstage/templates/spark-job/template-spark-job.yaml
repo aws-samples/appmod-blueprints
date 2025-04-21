@@ -19,11 +19,12 @@ spec:
           type: string
           default: 'local:///opt/spark/examples/jars/spark-examples_2.12-3.1.3.jar'
           description: Path to the main application file
-        repoUrl:
-          default: gitea.elamaras.people.aws.dev
-          title: Repo URL of your Gitea Repo integrated with Backstage
-          type: string
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - id: template
       name: Generating component
       action: fetch:template
@@ -31,13 +32,13 @@ spec:
         url: ./skeleton
         values:
           name: ${{parameters.name}}
-          repoUrl: ${{parameters.repoUrl}}
+          repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea
     - id: publish
       name: Publishing to a gitea git repository
       action: publish:gitea
       input:
         description: This is an example app
-        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.name}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
