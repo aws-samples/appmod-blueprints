@@ -26,6 +26,8 @@ spec:
     - ./stepfunctions-bedrock-terraform/template-stepfunctions-bedrock-terraform.yaml
     - ./apigw-sqs-terraform/template-apigw-sqs-terraform.yaml
     - ./eventbridge-to-lambda-terraform/template-eventbridge-to-lambda-terraform.yaml
+    - ./ephemeral-cluster/template-ephemeral-cluster.yaml
+
 ---
 apiVersion: backstage.io/v1alpha1
 kind: System
