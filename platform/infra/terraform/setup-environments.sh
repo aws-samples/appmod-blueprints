@@ -313,7 +313,7 @@ while true; do
     if [ -n "$CONN_SECRET_NAME" ]; then
         break
     fi
-    echo "Waiting for secret to be available..."
+    echo "Waiting for devlake connection secret to be available..."
     sleep 5
 done
 export DEVLAKE_MYSQL_ENDPOINT=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.reader_endpoint}' | base64 --decode)
