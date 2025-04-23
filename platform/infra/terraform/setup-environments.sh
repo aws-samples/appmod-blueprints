@@ -72,8 +72,8 @@ DB_SUBNET_ID_2=$(terraform output -json database_subnet_ids | jq -r '.[1]')
 DB_SUBNET_ID_3=$(terraform output -json database_subnet_ids | jq -r '.[2]')
 
 # Setup CP Env Config for MGMT Cluster
-sed -e "s#\$PRIV_SUBNET_ID_1#${PRIV_SUBNET_ID_1}#g" -e "s#\$PRIV_SUBNET_ID_2#${PRIV_SUBNET_ID_2}#g"  -e "s#\$PRIV_SUBNET_ID_3#${PRIV_SUBNET_ID_3}#g" -e "s#\$DB_SUBNET_ID_1#${DB_SUBNET_ID_1}#g" -e "s#\$DB_SUBNET_ID_2#${DB_SUBNET_ID_2}#g" -e "s#\$DB_SUBNET_ID_3#${DB_SUBNET_ID_3}#g" -e "s#\$VPC_ID#${VPC_ID}#g" ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yaml >${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yml
-kubectl apply -f ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yml
+sed -e "s#\$PRIV_SUBNET_ID_1#${PRIV_SUBNET_ID_1}#g" -e "s#\$PRIV_SUBNET_ID_2#${PRIV_SUBNET_ID_2}#g"  -e "s#\$PRIV_SUBNET_ID_3#${PRIV_SUBNET_ID_3}#g" -e "s#\$DB_SUBNET_ID_1#${DB_SUBNET_ID_1}#g" -e "s#\$DB_SUBNET_ID_2#${DB_SUBNET_ID_2}#g" -e "s#\$DB_SUBNET_ID_3#${DB_SUBNET_ID_3}#g" -e "s#\$VPC_ID#${VPC_ID}#g" ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yaml >${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yaml.gen
+kubectl apply -f ${REPO_ROOT}/platform/infra/terraform/mgmt/terraform/scripts/crossplane/cp-mgmt-env-config.yaml.gen
 
 export TF_eks_cluster_vpc_id=$(terraform output -raw eks_cluster_vpc_id)
 export TF_eks_cluster_private_subnets=$(terraform output -json eks_cluster_private_subnets)

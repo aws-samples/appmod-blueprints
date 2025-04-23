@@ -2,6 +2,8 @@ apiVersion: apiextensions.crossplane.io/v1alpha1
 kind: EnvironmentConfig
 metadata:
   name: mgmt-environment
+  labels:
+    env: mgmt
 data:
   locations:
     us: us-west-2

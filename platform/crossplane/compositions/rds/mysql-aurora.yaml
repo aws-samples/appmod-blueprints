@@ -12,9 +12,13 @@ metadata:
 spec:
   environment:
     environmentConfigs:
-    - type: Reference
-      ref:
-        name: mgmt-environment
+    - type: Selector
+      selector:
+        mode: Single
+        matchLabels:
+        - key: env
+          type: FromCompositeFieldPath
+          valueFromFieldPath: spec.parameters.deploy
   writeConnectionSecretsToNamespace: crossplane-system
   compositeTypeRef:
     apiVersion: awsblueprints.io/v1alpha1
