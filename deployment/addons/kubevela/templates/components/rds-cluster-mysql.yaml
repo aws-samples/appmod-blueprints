@@ -21,6 +21,7 @@ spec:
         			"awsblueprints.io/provider":            "aws"
         			"awsblueprints.io/environment":         "prod"
         			"awsblueprints.io/createDBSubnetGroup": "true"
+        			"awsblueprints.io/dbEngine":            "mysql"
         		}
         		resourceConfig: {
         			name:           context.name
@@ -35,12 +36,12 @@ spec:
         					value: "\(context.name)"
         				},
         			]
-        			providerConfigName: "default"
-        			region:             "us-west-2"
         		}
         		databaseName: "initdb"
+        		deploy:       "\(parameter.deploy)"
         	}
         }
+        parameter: deploy: string
   workload:
     definition:
       apiVersion: apps/v1
