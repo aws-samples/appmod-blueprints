@@ -34,7 +34,7 @@ for str in "${STRINGS[@]}"; do
       exit 1
       ;;
   esac
-  curl -X POST localhost:9090/blueprints/$bp/trigger
+  curl -X POST localhost:9090/blueprints/$bp/trigger -d '{"skipCollectors":false,"fullSync":false}'
 
 done
 
