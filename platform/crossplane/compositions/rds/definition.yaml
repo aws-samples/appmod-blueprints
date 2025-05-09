@@ -93,10 +93,10 @@ spec:
                       type: array
                   required:
                   - tags
-                  - deploy
                   type: object
               required:
               - resourceConfig
+              - deploy
               type: object
             status:
               properties:
