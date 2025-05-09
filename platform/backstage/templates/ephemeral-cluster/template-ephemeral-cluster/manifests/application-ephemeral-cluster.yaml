@@ -18,11 +18,16 @@ spec:
           fromHost:
             nodes:
               enabled: true
+            storageClasses:
+              enabled: true
         controlPlane:
           advanced:
             virtualScheduler:
               enabled: true
           statefulSet:
+            persistence:
+              volumeClaim:
+                storageClass: "gp3"
             scheduling:
               podManagementPolicy: OrderedReady
   destination:
