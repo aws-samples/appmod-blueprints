@@ -32,4 +32,4 @@ spec:
           namespaces:
             - ephemeral-cluster
           names: 
-            - ephemeral-cluster*
+            - "*"
