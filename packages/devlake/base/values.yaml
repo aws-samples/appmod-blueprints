@@ -72,14 +72,7 @@ ui:
     seccompProfile:
       type: RuntimeDefault
 
-
-  # Look into adding an auth proxy like done: https://github.com/oauth2-proxy/oauth2-proxy/blob/master/contrib/local-environment/docker-compose-keycloak.yaml
-  basicAuth:
-    enabled: true
-    user: admin
-    password: devlake-admin
-    autoCreateSecret: true
-    secretName: "devlake-admin-secret"
+  # Look into adding an auth proxy like here: https://github.com/oauth2-proxy/oauth2-proxy/blob/master/contrib/local-environment/docker-compose-keycloak.yaml
 
 service:
   # service type: NodePort/ClusterIP
