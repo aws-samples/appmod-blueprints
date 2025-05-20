@@ -22,10 +22,6 @@ spec:
             - name
             - aws_region
           type: object
-        repoUrl:
-          description: Gitea URL on management cluster
-          title: Gitea URL
-          type: string
         adminRoleName:
           description: Name of the role to give the administrative rights
           title: Admin role name
@@ -53,7 +49,7 @@ spec:
       action: publish:gitea
       input:
         description: Example of ephemeral cluster
-        repoUrl: ${{parameters.repoUrl}}?repo=${{parameters.tfVars.name}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.tfVars.name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
