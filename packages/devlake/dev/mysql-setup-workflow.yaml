@@ -1,11 +1,16 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: devlake-mysql-setup-sa
+  namespace: devlake
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: devlake-mysql-access-binding
+  name: devlake-mysql-setup-access-binding
 subjects:
 - kind: ServiceAccount
-  name: devlake-mysql-access
+  name: devlake-mysql-setup-sa
   namespace: devlake
 roleRef:
   kind: ClusterRole
@@ -17,10 +22,8 @@ kind: Workflow
 metadata:
   name: mysql-setup-workflow
   namespace: devlake
-  annotations:
-    argocd.argoproj.io/sync-wave: "2"
 spec:
-  serviceAccountName: devlake-mysql-access
+  serviceAccountName: devlake-mysql-setup-sa
   entrypoint: mysql-setup
   templates:
   - name: mysql-setup
