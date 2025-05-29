@@ -17,6 +17,8 @@ kind: Workflow
 metadata:
   name: mysql-setup-workflow
   namespace: devlake
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   serviceAccountName: devlake-mysql-access
   entrypoint: mysql-setup
