@@ -62,7 +62,7 @@ spec:
           PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
           . as $root |
           {
-            id: ("deployment-" + (.id | .[0:7])),
+            id: ("deployment-" + (.after | .[0:7])),
             createdDate: (.commits | first | .timestamp),
             startedDate: (.commits | first | .timestamp),
             finishedDate: (.commits | last | .timestamp),
@@ -143,6 +143,7 @@ spec:
           interval=10  # Check every 10 seconds
           elapsed=0
 
+          # NEED TO CHECK ROLLOUT IMAGE TAG FOR COMMIT HASH - make sure checking right rollout
           while [ $elapsed -lt $timeout ]; do
             phase=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
             
