@@ -10,7 +10,7 @@ import {
   Wishlist
 } from './types';
 
-const API_URL = process.env.API_BASE_URL ?? 'http://rust-backend.team-rust-test.svc.cluster.local';
+const API_URL = process.env.API_BASE_URL ?? 'http://rust-backend.team-rust.svc.cluster.local';
 
 // Helper function to handle fetch requests with error handling
 async function fetchWithErrorHandling<T>(url: string, options?: RequestInit): Promise<T | Error> {

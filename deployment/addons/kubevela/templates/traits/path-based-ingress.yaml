@@ -45,11 +45,11 @@ spec:
         	metadata: {
         		name: context.name
         		annotations: {
-        			if parameter.rewritePath {
-        				"nginx.ingress.kubernetes.io/rewrite-target": "/$2"
-        				"nginx.ingress.kubernetes.io/use-regex":      "true"
-        			}
-        		}
+              "nginx.ingress.kubernetes.io/use-regex": "true"
+              if parameter.rewritePath {
+                "nginx.ingress.kubernetes.io/rewrite-target": "/$2"
+              }
+            }
         	}
         	spec: {
         		ingressClassName: parameter.class
