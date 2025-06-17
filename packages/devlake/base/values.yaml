@@ -57,9 +57,9 @@ alpine:
 
 ui:
   image:
-    repository: public.ecr.aws/o3w6s6n3/devlake/ui
+    repository: devlake.docker.scarf.sh/apache/devlake-config-ui
     pullPolicy: Always
-    tag: latest
+    tag: v1.0.3-beta1
 
   securityContext:
     runAsNonRoot: true
