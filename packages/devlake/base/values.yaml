@@ -17,9 +17,9 @@ option:
 
 lake:
   image:
-    repository: public.ecr.aws/o3w6s6n3/devlake/lake
+    repository: devlake.docker.scarf.sh/apache/devlake
     pullPolicy: Always
-    tag: latest
+    tag: v1.0.3-beta1
   # storage for config
   encryptionSecret:
     # The name of secret which contains keys named ENCRYPTION_SECRET
