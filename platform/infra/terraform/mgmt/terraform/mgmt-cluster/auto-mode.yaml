@@ -28,21 +28,48 @@ spec:
         kind: NodeClass
         name: modern-engineering-nodeclass # Calls the NodeClass modern-engineering-nodeclass in this file.
       requirements:
-        # - key: "eks.amazonaws.com/instance-category"
-        #   operator: In
-        #   values: ["c", "m", "r"]
-        # - key: "eks.amazonaws.com/instance-cpu"
-        #   operator: In
-        #   values: ["4", "8", "16", "32"]
-        # - key: "eks.amazonaws.com/instance-hypervisor"
-        #   operator: In
-        #   values: ["nitro"]
+        - key: "eks.amazonaws.com/instance-category"
+          operator: In
+          values: ["c", "m", "r"]
+        - key: "eks.amazonaws.com/instance-cpu"
+          operator: In
+          values: ["4", "8", "16", "32"]
+        - key: "eks.amazonaws.com/instance-hypervisor"
+          operator: In
+          values: ["nitro"]
         - key: "kubernetes.io/arch"
           operator: In
           values: ["amd64"]
-        # - key: "eks.amazonaws.com/instance-generation"
-        #   operator: Gt
-        #   values: ["2"]
+        - key: "eks.amazonaws.com/instance-generation"
+          operator: Gt
+          values: ["2"]
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand"]
+  limits:
+    cpu: "1000"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 1800s
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: modern-engineering-mgmt-nodepool
+spec:
+  template:
+    metadata:
+      labels:
+        team: platform
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: modern-engineering-nodeclass # Calls the NodeClass modern-engineering-nodeclass in this file.
+      requirements:
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
         - key: "karpenter.sh/capacity-type"
           operator: In
           values: ["on-demand"]
@@ -50,11 +77,10 @@ spec:
           operator: In
           values: ["m5.2xlarge"]
   limits:
-    cpu: "1000"
+    cpu: "16"
   disruption:
     consolidationPolicy: WhenEmpty
     consolidateAfter: 1800s
-  weight: 10
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -80,9 +106,11 @@ spec:
         run: pause-pods
     spec:
       priorityClassName: pause-pods
+      nodeSelector:
+        team: platform
       containers:
         - name: reserve-resources
           image: registry.k8s.io/pause
           resources:
             requests:
-              cpu: "7"
+              cpu: "4"
