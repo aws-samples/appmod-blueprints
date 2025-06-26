@@ -46,9 +46,9 @@ template: {
         metadata: {
             name: context.name
             annotations: {
+                "nginx.ingress.kubernetes.io/use-regex": "true"
                 if parameter.rewritePath {
                     "nginx.ingress.kubernetes.io/rewrite-target": "/$2"
-                    "nginx.ingress.kubernetes.io/use-regex": "true"
                 }
             }
         }
