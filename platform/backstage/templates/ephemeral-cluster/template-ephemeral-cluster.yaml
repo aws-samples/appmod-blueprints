@@ -31,8 +31,6 @@ spec:
           title: Existing namespace to create this resource
           type: string
       title: Configuration options
-      required:
-        - repoUrl
   steps:
     - action: fetch:template
       id: fetch-base
