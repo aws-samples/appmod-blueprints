@@ -32,6 +32,11 @@ spec:
           type: string
       title: Configuration options
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - action: fetch:template
       id: fetch-base
       input:
