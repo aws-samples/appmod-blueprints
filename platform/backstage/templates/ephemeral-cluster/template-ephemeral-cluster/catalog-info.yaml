@@ -1,0 +1,12 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ephemeral-cluster-${{values.name}}
+  annotations:
+    backstage.io/kubernetes-namespace: ${{values.namespace}}
+    backstage.io/kubernetes-id: ephemeral-cluster-${{values.name}}
+    argocd/app-name: ${{values.name | dump}}
+spec:
+  type: service
+  lifecycle: experimental
+  owner: guest
