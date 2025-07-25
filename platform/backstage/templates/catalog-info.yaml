@@ -36,4 +36,4 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  hostname: HOSTNAME
+  hostname: modern-engg-591204cb6d7471ff.elb.us-west-2.amazonaws.com #HOSTNAME
