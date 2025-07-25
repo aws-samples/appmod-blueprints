@@ -239,7 +239,7 @@ spec:
       resources:
         limits:
           cpu: 2
-          memory: 5Gi
+          memory: 6Gi
       env:
         - name: DOCKER_CONFIG
           value: /kaniko/.docker

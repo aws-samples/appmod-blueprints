@@ -12,7 +12,7 @@ spec:
         tfVars:
           properties:
             eks_cluster_version:
-              default: "1.30"
+              default: "1.32"
               description: EKS Cluster version
               type: string
             enable_amazon_prometheus:

@@ -7,10 +7,15 @@ module "vpc" {
 
   azs             = local.azs
   private_subnets = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 4, k)]
-  public_subnets  = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 8, k + 48)]
+  database_subnets = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 4, k + 4)]
+  public_subnets  = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 4, k + 8)]
 
   enable_nat_gateway = true
   single_nat_gateway = true
+
+  create_database_subnet_route_table = true
+  create_database_internet_gateway_route = false
+  create_database_nat_gateway_route = true
 
   public_subnet_tags = {
     "kubernetes.io/role/elb" = 1

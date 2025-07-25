@@ -1,0 +1,166 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: rds-aurora-mysql.awsblueprints.io
+  labels:
+    awsblueprints.io/provider: aws
+    awsblueprints.io/environment: prod
+    awsblueprints.io/createDBSubnetGroup: "true"
+    awsblueprints.io/dbEngine: mysql
+spec:
+  environment:
+    environmentConfigs:
+    - type: Selector
+      selector:
+        mode: Single
+        matchLabels:
+        - key: env
+          type: FromCompositeFieldPath
+          valueFromFieldPath: spec.deploy
+  writeConnectionSecretsToNamespace: crossplane-system
+  compositeTypeRef:
+    apiVersion: awsblueprints.io/v1alpha1
+    kind: XRelationalDatabase
+  patchSets:
+    - name: common-fields
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.resourceConfig.deletionPolicy
+          toFieldPath: spec.deletionPolicy
+        - type: FromEnvironmentFieldPath
+          fromFieldPath: locations.us
+          toFieldPath: spec.forProvider.region
+    - name: connection-secret
+      patches:
+        - fromFieldPath: "metadata.uid"
+          toFieldPath: "spec.writeConnectionSecretToRef.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-mysql"
+        - fromFieldPath: "spec.writeConnectionSecretToRef.namespace"
+          toFieldPath: "spec.writeConnectionSecretToRef.namespace"
+  resources:
+    - base:
+        apiVersion: rds.aws.upbound.io/v1beta1
+        kind: SubnetGroup
+        spec:
+          forProvider:
+            description: "rds-mysql"
+      patches:
+        - type: PatchSet
+          patchSetName: common-fields
+        - type: FromEnvironmentFieldPath
+          fromFieldPath: "dbSubnetIds"
+          toFieldPath: spec.forProvider.subnetIds
+    - base:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: SecurityGroup
+        spec:
+          forProvider:
+            description: "rds-mysql-sg"
+      patches:
+        - type: PatchSet
+          patchSetName: common-fields
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.IngressRules
+          toFieldPath: spec.forProvider.ingress
+          policy:
+            mergeOptions:
+              appendSlice: true
+        - fromFieldPath: "metadata.uid"
+          toFieldPath: "spec.forProvider.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "rds-mysql-sg-%s"
+        - type: FromEnvironmentFieldPath
+          fromFieldPath: "vpcId"
+          toFieldPath: "spec.forProvider.vpcId"
+    - base:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: SecurityGroupIngressRule
+        spec:
+          forProvider:
+            fromPort: 3306
+            toPort: 3306
+            ipProtocol: "tcp"
+            cidrIpv4: "10.0.0.0/8"
+            securityGroupIdSelector:
+              matchControllerRef: true
+      patches:
+        - type: PatchSet
+          patchSetName: common-fields
+
+    - base:
+        apiVersion: rds.aws.upbound.io/v1beta2
+        kind: Cluster
+        spec:
+          forProvider:
+            autoGeneratePassword: true
+            backupRetentionPeriod: 7
+            copyTagsToSnapshot: true
+            engine: aurora-mysql
+            engineVersion: "8.0.mysql_aurora.3.05.2"
+            finalDBSnapshotIdentifier: "to-be-patched"
+            masterPasswordSecretRef:
+              key: password
+              namespace: crossplane-system
+            masterUsername: root
+            preferredBackupWindow: 02:00-03:00
+            preferredMaintenanceWindow: sun:04:00-sun:05:00
+            skipFinalSnapshot: true
+            storageEncrypted: true
+            dbSubnetGroupNameSelector:
+              matchControllerRef: true
+            vpcSecurityGroupIdSelector:
+              matchControllerRef: true
+      patches:
+        - type: PatchSet
+          patchSetName: common-fields
+        - fromFieldPath: spec.writeConnectionSecretToRef.namespace
+          toFieldPath: spec.writeConnectionSecretToRef.namespace
+        - fromFieldPath: "metadata.name"
+          toFieldPath: "spec.forProvider.masterPasswordSecretRef.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-cluster-mysql-master-password"
+        - fromFieldPath: "metadata.name"
+          toFieldPath: "spec.writeConnectionSecretToRef.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-cluster-mysql-connection"
+        - fromFieldPath: "metadata.name"
+          toFieldPath: "spec.forProvider.finalDBSnapshotIdentifier"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-final-snapshot"
+        - fromFieldPath: "spec.engineVersion"
+          toFieldPath: "spec.forProvider.engineVersion"
+        - fromFieldPath: "spec.databaseName"
+          toFieldPath: "spec.forProvider.databaseName"
+      connectionDetails:
+        - fromConnectionSecretKey: username
+        - fromConnectionSecretKey: password
+        - fromConnectionSecretKey: endpoint
+        - fromConnectionSecretKey: port
+    - base:
+        apiVersion: rds.aws.upbound.io/v1beta1
+        kind: ClusterInstance
+        spec:
+          forProvider:
+            clusterIdentifierSelector:
+              matchControllerRef: true
+            dbSubnetGroupNameSelector:
+              matchControllerRef: true
+            instanceClass: db.r5.xlarge
+            engine: aurora-mysql
+      patches:
+        - type: PatchSet
+          patchSetName: common-fields
