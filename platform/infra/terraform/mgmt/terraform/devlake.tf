@@ -127,18 +127,3 @@ resource "kubectl_manifest" "application_argocd_devlake" {
   )
 
 }
-
-# resource "terraform_data" "devlake_init_scripts" {
-#   depends_on = [
-#     kubectl_manifest.application_argocd_devlake
-#   ]
-# 
-#     provisioner "local-exec" {
-#     command = "./devlake-init.sh ${local.domain_name}"
-# 
-#     working_dir = "${path.module}/scripts/devlake"
-#     interpreter = ["/bin/bash", "-c"]
-#   }
-# 
-# }
-# 
