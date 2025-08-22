@@ -344,6 +344,8 @@ echo "ArgoCD URL is: https://$DNS_HOSTNAME/argocd"
 
 echo "GITEA URL is: https://$DNS_HOSTNAME/gitea"
 
+echo "GITLAB URL is: http://$GITLAB_DOMAIN_NAME"
+
 echo "Keycloak URL is: https://$DNS_HOSTNAME/keycloak"
 
 echo "Backstage URL is: https://$DNS_HOSTNAME/"
