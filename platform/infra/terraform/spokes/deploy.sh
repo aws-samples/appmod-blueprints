@@ -62,7 +62,6 @@ echo "Using S3 bucket: ${TFSTATE_BUCKET_NAME}"
 echo "Using AWS region: ${AWS_REGION}"
 echo "Deploying $env with workspaces/${env}.tfvars ..."
 
-<<<<<<< HEAD
 # Wait for GitLab CloudFront distribution to be created by hub cluster
 echo "Waiting for GitLab CloudFront distribution to be created by hub cluster..."
 GITLAB_DOMAIN=""
