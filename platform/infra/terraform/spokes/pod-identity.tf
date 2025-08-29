@@ -127,32 +127,6 @@ module "aws_lb_controller_pod_identity" {
 }
 
 ################################################################################
-# Karpenter EKS Access
-################################################################################
-
-module "karpenter" {
-  source  = "terraform-aws-modules/eks/aws//modules/karpenter"
-  version = "~> 20.36.0"
-
-  cluster_name = module.eks.cluster_name
-
-  enable_pod_identity             = true
-  create_pod_identity_association = true
-
-  namespace = local.karpenter.namespace
-  service_account = local.karpenter.service_account
-
-  # Used to attach additional IAM policies to the Karpenter node IAM role
-  # Adding IAM policy needed for fluentbit
-  node_iam_role_additional_policies = {
-    AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-    CloudWatchAgentServerPolicy = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
-  }
-
-  tags = local.tags
-}
-
-################################################################################
 # VPC CNI Helper
 ################################################################################
 resource "aws_iam_policy" "cni_metrics_helper_pod_identity_policy" {

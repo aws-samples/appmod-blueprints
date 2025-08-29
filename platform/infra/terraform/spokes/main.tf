@@ -57,10 +57,6 @@ locals {
     namespace       = "kube-system"
     service_account = "aws-load-balancer-controller-sa"
   }
-  karpenter = {
-    namespace       = "kube-system"
-    service_account = "karpenter"
-  }
 
 
   aws_addons = {
@@ -132,12 +128,6 @@ locals {
       aws_region       = local.region
       aws_account_id   = data.aws_caller_identity.current.account_id
       aws_vpc_id       = module.vpc.vpc_id
-    },
-    {
-      karpenter_namespace = local.karpenter.namespace
-      karpenter_service_account = local.karpenter.service_account
-      karpenter_node_iam_role_name = module.karpenter.node_iam_role_name
-      karpenter_sqs_queue_name = module.karpenter.queue_name
     },
     {
       external_secrets_namespace = local.external_secrets.namespace
@@ -292,20 +282,21 @@ module "eks_blueprints_addons" {
 #tfsec:ignore:aws-eks-enable-control-plane-logging
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 20.36.0"
+  version = "~> 20.31.6"
 
   cluster_name                   = local.name
   cluster_version                = local.cluster_version
   cluster_endpoint_public_access = true
-  authentication_mode            = "API"
-
-  # Disabling encryption for workshop purposes
-  cluster_encryption_config = {}
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
   enable_cluster_creator_admin_permissions = true
+
+  cluster_compute_config = {
+    enabled    = true
+    node_pools = ["general-purpose", "system"]
+  }
 
   access_entries = {
     # This is the role that will be assume by the hub cluster role to access the spoke cluster
@@ -332,68 +323,6 @@ module "eks" {
       principal_arn     = data.aws_ssm_parameter.frontend_team_view_role.value
     }
   }
-
-
-  eks_managed_node_groups = {
-    "${local.name}" = {
-      ami_type = "BOTTLEROCKET_x86_64"
-      instance_types = ["m5.large"]
-
-      # Attach additional IAM policies to the Karpenter node IAM role
-      # Adding IAM policy needed for fluentbit
-      iam_role_additional_policies = {
-        AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-        CloudWatchAgentServerPolicy = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
-      }
-
-      min_size     = 2
-      max_size     = 6
-      desired_size = 2
-
-      taints = local.aws_addons.enable_karpenter ? {
-        dedicated = {
-          key    = "CriticalAddonsOnly"
-          operator   = "Exists"
-          effect    = "NO_SCHEDULE"
-        }
-      } : {}
-    }
-  }
-
-  # EKS Addons
-  cluster_addons = {
-    coredns    = {
-      addon_version  = "v1.11.3-eksbuild.2"
-    }
-    kube-proxy = {
-      addon_version  = "v1.31.1-eksbuild.2"
-    }
-    amazon-cloudwatch-observability = {
-      addon_version  = "v2.2.1-eksbuild.1"
-    }
-    aws-ebs-csi-driver = {
-      addon_version  = "v1.36.0-eksbuild.1"
-    }
-    eks-pod-identity-agent = {
-      addon_version  = "v1.3.2-eksbuild.2"
-      before_compute = true
-    }
-    vpc-cni = {
-      # Specify the VPC CNI addon should be deployed before compute to ensure
-      # the addon is configured before data plane compute resources are created
-      # See README for further details
-      before_compute = true
-      addon_version  = "v1.18.5-eksbuild.1"
-      configuration_values = jsonencode({
-        env = {
-          # Reference docs https://docs.aws.amazon.com/eks/latest/userguide/cni-increase-ip-addresses.html
-          ENABLE_PREFIX_DELEGATION = "true"
-          WARM_PREFIX_TARGET       = "1"
-        },
-        enableNetworkPolicy = "true"
-      })
-    }
-  }
   node_security_group_additional_rules = {
       # Allows Control Plane Nodes to talk to Worker nodes vpc cni metrics port
       vpc_cni_metrics_traffic = {
@@ -406,10 +335,7 @@ module "eks" {
       }
     }
   node_security_group_tags = merge(local.tags, {
-    # NOTE - if creating multiple security groups with this module, only tag the
-    # security group that Karpenter should utilize with the following tag
-    # (i.e. - at most, only one security group should have this tag in your account)
-    "karpenter.sh/discovery" = local.name
+    # EKS Auto Mode handles node provisioning automatically
   })
   tags = local.tags
 }
@@ -438,10 +364,28 @@ module "vpc" {
 
   private_subnet_tags = {
     "kubernetes.io/role/internal-elb" = 1
-    # Tags subnets for Karpenter auto-discovery
-    "karpenter.sh/discovery" = local.name
   }
 
   tags = local.tags
+}
+
+################################################################################
+# ACK Controller Pod Identity Associations
+################################################################################
+
+# Get ACK controller IAM roles created by hub cluster
+data "aws_iam_role" "ack_controller" {
+  for_each = toset(["iam", "ec2", "eks"])
+  name     = "ack-${each.key}-controller-role-mgmt"
+}
+
+# Create pod identity associations for ACK controllers
+resource "aws_eks_pod_identity_association" "ack_controller" {
+  for_each = toset(["iam", "ec2", "eks"])
+
+  cluster_name    = local.name
+  namespace       = "ack-system"
+  service_account = "ack-${each.key}-controller"
+  role_arn        = data.aws_iam_role.ack_controller[each.key].arn
 }
 
