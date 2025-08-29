@@ -506,3 +506,29 @@ variable "create_github_repos" {
 4. **Monitoring Systems**: Prometheus, Grafana (optional)
 
 This architecture provides a production-ready platform engineering solution that combines infrastructure automation, GitOps workflows, developer productivity tools, and enterprise security in a scalable, maintainable manner.
+
+## Deployment and Git Configuration (2025-08-29)
+
+### Load Balancer Naming Fix
+- Fixed ingress load balancer naming from "hub-ingress" to "peeks-hub-ingress"
+- Updated terraform.tfvars: `ingress_name = "peeks-hub-ingress"`
+- Fixed Git conflict marker in spokes/deploy.sh script
+- Successfully deployed hub and spoke staging clusters
+
+### Git Push Configuration
+- **Origin (GitLab)**: Push `cdk-fleet:main` 
+- **GitHub**: Push `cdk-fleet` branch
+- Both deployments completed successfully with correct security groups and naming
+
+### Key Commands
+```bash
+# Deploy hub cluster
+cd platform/infra/terraform/hub && ./deploy.sh
+
+# Deploy spoke staging
+cd platform/infra/terraform/spokes && TFSTATE_BUCKET_NAME=tcat-peeks-workshop-test--tfstatebackendbucketf0fc-8s2mpevyblwi ./deploy.sh staging
+
+# Git push to both remotes
+git push origin cdk-fleet:main
+git push github cdk-fleet
+```
