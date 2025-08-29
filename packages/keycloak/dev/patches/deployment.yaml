@@ -28,6 +28,15 @@ spec:
                 secretKeyRef:
                   name: postgresql-config
                   key: POSTGRES_PASSWORD
+            # Add environment variables for proxy and security
+            - name: KC_PROXY
+              value: "edge"
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HOSTNAME_STRICT_BACKCHANNEL
+              value: "false"
+            - name: KC_HTTP_ENABLED
+              value: "true"
           envFrom:
             - secretRef:
                 name: keycloak-config
@@ -37,6 +46,12 @@ spec:
             httpGet:
               path: /keycloak/realms/master
               port: 8080  
+          livenessProbe:
+            httpGet:
+              path: /keycloak/realms/master
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
           volumeMounts:
             - name: keycloak-config
               mountPath: "/opt/keycloak/conf"

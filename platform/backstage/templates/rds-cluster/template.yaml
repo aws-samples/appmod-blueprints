@@ -55,7 +55,7 @@ spec:
       input:
         description: RDS Cluster manifests
         # Hard coded value for this demo purposes only.
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/d31l55m8hkb7r3.cloudfront.net/user1?repo=${{parameters.name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
@@ -79,4 +79,3 @@ spec:
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
-
