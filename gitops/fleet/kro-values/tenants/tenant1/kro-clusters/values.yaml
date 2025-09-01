@@ -38,7 +38,7 @@ clusters:
   #     fleetRepoUrl: "https://d1vvjck0a1cre3.cloudfront.net/user1/platform-on-eks-workshop.git"
   #     platformRepoUrl: "https://d1vvjck0a1cre3.cloudfront.net/user1/platform-on-eks-workshop.git"
   #     workloadRepoUrl: "https://d1vvjck0a1cre3.cloudfront.net/user1/platform-on-eks-workshop.git"
-  #   addons:
+:ekscl  #   addons:
   #     enable_ingress_class_alb: "true"
   #     enable_argo_rollouts: "true"
   #     enable_metrics_server: "true"
