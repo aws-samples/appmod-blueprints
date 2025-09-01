@@ -113,6 +113,7 @@ sleep 5
 
 # Force sync to HEAD
 kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
+sleep 5
 
 print_step "Waiting for the multi-acct application to be synced and healthy"
 # Wait for sync with timeout, but check status manually
@@ -156,8 +157,8 @@ s/^  # cluster-prod:/  cluster-prod:/g
 /^  cluster-dev:/,/^  cluster-prod:/ {
   s/^  #/  /g
 }
-/^  cluster-prod:/,/^  # workload-cluster1:/ {
-  /^  # workload-cluster1:/!s/^  #/  /g
+/^  cluster-prod:/,/^  # END MARKER FOR SED:/ {
+  /^  # END MARKER FOR SED:/!s/^  #/  /g
 }' $WORKSPACE_PATH/$WORKING_REPO/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
 
 print_info "Cluster values.yaml file updated"
