@@ -121,11 +121,16 @@ print_step "Waiting for the multi-acct application to be synced and healthy"
 kubectl wait --for=condition=Synced application/multi-acct-hub-cluster -n argocd --timeout=300s || print_warning "Sync timeout, but continuing..."
 kubectl wait --for=condition=Healthy application/multi-acct-hub-cluster -n argocd --timeout=300s || print_warning "Health timeout, but continuing..."
 
-print_step "Updating cluster definitions with Management account ID"
-sed -i 's/MANAGEMENT_ACCOUNT_ID/'"$MGMT_ACCOUNT_ID"'/g' "$WORKSPACE_PATH/$WORKING_REPO/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml"
-sed -i 's|GITLAB_URL|'"$GITLAB_URL"'|g' "$WORKSPACE_PATH/$WORKING_REPO/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml"
-sed -i 's/GIT_USERNAME/'"$GIT_USERNAME"'/g' "$WORKSPACE_PATH/$WORKING_REPO/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml"
-sed -i 's/WORKING_REPO/'"$WORKING_REPO"'/g' "$WORKSPACE_PATH/$WORKING_REPO/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml"
+print_step "Updating cluster definitions with Management account ID and Git URLs"
+# Replace specific patterns in kro-clusters values.yaml - works with any existing values
+sed -i \
+  -e 's/managementAccountId: "[^"]*"/managementAccountId: "'"$MGMT_ACCOUNT_ID"'"/g' \
+  -e 's/accountId: "[^"]*"/accountId: "'"$MGMT_ACCOUNT_ID"'"/g' \
+  -e 's|addonsRepoUrl: "[^"]*"|addonsRepoUrl: "'"$GITLAB_URL"'/'"$GIT_USERNAME"'/'"$WORKING_REPO"'.git"|g' \
+  -e 's|fleetRepoUrl: "[^"]*"|fleetRepoUrl: "'"$GITLAB_URL"'/'"$GIT_USERNAME"'/'"$WORKING_REPO"'.git"|g' \
+  -e 's|platformRepoUrl: "[^"]*"|platformRepoUrl: "'"$GITLAB_URL"'/'"$GIT_USERNAME"'/'"$WORKING_REPO"'.git"|g' \
+  -e 's|workloadRepoUrl: "[^"]*"|workloadRepoUrl: "'"$GITLAB_URL"'/'"$GIT_USERNAME"'/'"$WORKING_REPO"'.git"|g' \
+  "$WORKSPACE_PATH/$WORKING_REPO/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml"
 
 print_step "Enabling fleet spoke clusters"
 sed -i '
