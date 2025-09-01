@@ -106,11 +106,34 @@ else
 fi
 
 print_step "Syncing the multi-acct application"
-kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
+# First refresh to detect changes
+kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"info":[{"name":"Reason","value":"Refresh after config update"}]}}'
+sleep 2
 
-print_step "Waiting for the multi-acct application to be synced and healthy"
-kubectl wait --for=condition=Synced application/multi-acct-peeks-hub-cluster -n argocd --timeout=300s || print_warning "Sync timeout, but continuing..."
-kubectl wait --for=condition=Healthy application/multi-acct-peeks-hub-cluster -n argocd --timeout=300s || print_warning "Health timeout, but continuing..."
+# Check if sync is needed
+SYNC_STATUS=$(kubectl get application multi-acct-peeks-hub-cluster -n argocd -o jsonpath='{.status.sync.status}')
+if [ "$SYNC_STATUS" = "OutOfSync" ]; then
+    print_info "Application is OutOfSync, triggering sync..."
+    kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
+    
+    print_step "Waiting for the multi-acct application to be synced and healthy"
+    # Wait for sync with shorter timeout and better error handling
+    if ! kubectl wait --for=condition=Synced application/multi-acct-peeks-hub-cluster -n argocd --timeout=120s; then
+        print_warning "Sync timeout after 120s, checking status..."
+        FINAL_STATUS=$(kubectl get application multi-acct-peeks-hub-cluster -n argocd -o jsonpath='{.status.sync.status}')
+        print_info "Final sync status: $FINAL_STATUS"
+        if [ "$FINAL_STATUS" != "Synced" ]; then
+            print_warning "Application not synced, but continuing..."
+        fi
+    fi
+    
+    # Check health with shorter timeout
+    if ! kubectl wait --for=condition=Healthy application/multi-acct-peeks-hub-cluster -n argocd --timeout=60s; then
+        print_warning "Health check timeout, but continuing..."
+    fi
+else
+    print_info "Application is already synced: $SYNC_STATUS"
+fi
 
 print_step "Updating cluster definitions with Management account ID and Git URLs"
 # Replace specific patterns in kro-clusters values.yaml - works with any existing values
@@ -159,8 +182,25 @@ fi
 sleep 10
 
 print_step "Syncing clusters application in ArgoCD"
-kubectl patch application clusters -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
-kubectl wait --for=condition=Synced application/clusters -n argocd --timeout=300s || print_warning "Clusters sync timeout, but continuing..."
+# First refresh to detect changes
+kubectl patch application clusters -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"info":[{"name":"Reason","value":"Refresh after cluster config update"}]}}'
+sleep 2
+
+# Check if sync is needed
+CLUSTERS_SYNC_STATUS=$(kubectl get application clusters -n argocd -o jsonpath='{.status.sync.status}')
+if [ "$CLUSTERS_SYNC_STATUS" = "OutOfSync" ]; then
+    print_info "Clusters application is OutOfSync, triggering sync..."
+    kubectl patch application clusters -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
+    
+    # Wait for sync with shorter timeout
+    if ! kubectl wait --for=condition=Synced application/clusters -n argocd --timeout=180s; then
+        print_warning "Clusters sync timeout, checking status..."
+        FINAL_CLUSTERS_STATUS=$(kubectl get application clusters -n argocd -o jsonpath='{.status.sync.status}')
+        print_info "Final clusters sync status: $FINAL_CLUSTERS_STATUS"
+    fi
+else
+    print_info "Clusters application is already synced: $CLUSTERS_SYNC_STATUS"
+fi
 
 print_info "Checking EKS cluster creation status"
 kubectl get EksClusterwithvpcs -A 2>/dev/null || print_info "No EKS clusters found yet, they may still be creating..."
