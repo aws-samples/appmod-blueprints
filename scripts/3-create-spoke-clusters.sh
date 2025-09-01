@@ -105,12 +105,12 @@ else
     fi
 fi
 
-print_step "Syncing the cluster-workloads application"
-kubectl patch application multi-acct-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
+print_step "Syncing the multi-acct application"
+kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
 
 print_step "Waiting for the multi-acct application to be synced and healthy"
-kubectl wait --for=condition=Synced application/multi-acct-hub-cluster -n argocd --timeout=300s || print_warning "Sync timeout, but continuing..."
-kubectl wait --for=condition=Healthy application/multi-acct-hub-cluster -n argocd --timeout=300s || print_warning "Health timeout, but continuing..."
+kubectl wait --for=condition=Synced application/multi-acct-peeks-hub-cluster -n argocd --timeout=300s || print_warning "Sync timeout, but continuing..."
+kubectl wait --for=condition=Healthy application/multi-acct-peeks-hub-cluster -n argocd --timeout=300s || print_warning "Health timeout, but continuing..."
 
 print_step "Updating cluster definitions with Management account ID and Git URLs"
 # Replace specific patterns in kro-clusters values.yaml - works with any existing values
