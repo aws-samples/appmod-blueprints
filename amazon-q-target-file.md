@@ -72,6 +72,16 @@ This platform assumes the following infrastructure has been created by the Cloud
 - **VSCode IDE Environment**: Browser-based development environment with Gitea
 - **Environment Variables**: `GIT_PASSWORD`, cluster configurations, domain settings
 
+### AWS Service Limits
+- **Elastic IP Addresses**: Increase VPC Elastic IP limit from default 5 to at least 15
+  ```bash
+  aws service-quotas request-service-quota-increase \
+    --service-code ec2 \
+    --quota-code L-0263D0A3 \
+    --desired-value 15 \
+    --region us-west-2
+  ```
+
 ### Development Environment
 - **Gitea Service**: Local Git repository hosting with SSH access
 - **Docker Support**: Container development capabilities
