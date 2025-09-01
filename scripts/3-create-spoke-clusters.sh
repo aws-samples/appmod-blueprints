@@ -34,7 +34,7 @@
 #############################################################################
 
 set -e  # Exit on any error
-set -x
+#set -x
 
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
