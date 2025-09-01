@@ -95,7 +95,8 @@ validate_prerequisites
 create_ack_workload_roles
 
 print_step "Configuring spoke cluster accounts in Argo CD application for ACK controller"
-sed -i 's/MANAGEMENT_ACCOUNT_ID/'"$MGMT_ACCOUNT_ID"'/g' "$WORKSPACE_PATH/$WORKING_REPO/gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml"
+# Replace any existing account ID values (including MANAGEMENT_ACCOUNT_ID placeholder) with the actual management account ID
+sed -i 's/: "[0-9]*"/: "'"$MGMT_ACCOUNT_ID"'"/g; s/MANAGEMENT_ACCOUNT_ID/'"$MGMT_ACCOUNT_ID"'/g' "$WORKSPACE_PATH/$WORKING_REPO/gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml"
 
 print_step "Activating the account numbers"
 sed -i 's/# \(cluster-test: "[0-9]*"\)/\1/g; s/# \(cluster-pre-prod: "[0-9]*"\)/\1/g; s/# \(cluster-prod-eu: "[0-9]*"\)/\1/g; s/# \(cluster-prod-us: "[0-9]*"\)/\1/g' $WORKSPACE_PATH/$WORKING_REPO/gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml
