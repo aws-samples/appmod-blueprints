@@ -99,7 +99,7 @@ print_step "Configuring spoke cluster accounts in Argo CD application for ACK co
 sed -i 's/: "[0-9]*"/: "'"$MGMT_ACCOUNT_ID"'"/g; s/MANAGEMENT_ACCOUNT_ID/'"$MGMT_ACCOUNT_ID"'/g' "$WORKSPACE_PATH/$WORKING_REPO/gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml"
 
 print_step "Activating the account numbers"
-sed -i 's/# \(cluster-test: "[0-9]*"\)/\1/g; s/# \(cluster-pre-prod: "[0-9]*"\)/\1/g; s/# \(cluster-prod-eu: "[0-9]*"\)/\1/g; s/# \(cluster-prod-us: "[0-9]*"\)/\1/g' $WORKSPACE_PATH/$WORKING_REPO/gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml
+sed -i 's/# \(cluster-dev: "[0-9]*"\)/\1/g; s/# \(cluster-prod: "[0-9]*"\)/\1/g' $WORKSPACE_PATH/$WORKING_REPO/gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml
 
 print_info "Multi-acct values.yaml file updated"
 if command -v code-server >/dev/null 2>&1; then
@@ -135,22 +135,14 @@ sed -i \
 print_step "Enabling fleet spoke clusters"
 sed -i '
 # First uncomment the section headers
-s/^  # cluster-test:/  cluster-test:/g
-s/^  # cluster-pre-prod:/  cluster-pre-prod:/g
-s/^  # cluster-prod-us:/  cluster-prod-us:/g
-s/^  # cluster-prod-eu:/  cluster-prod-eu:/g
+s/^  # cluster-dev:/  cluster-dev:/g
+s/^  # cluster-prod:/  cluster-prod:/g
 
 # Then uncomment the content under each section, but stop before workload-cluster1
-/^  cluster-test:/,/^  cluster-pre-prod:/ {
+/^  cluster-dev:/,/^  cluster-prod:/ {
   s/^  #/  /g
 }
-/^  cluster-pre-prod:/,/^  cluster-prod-us:/ {
-  s/^  #/  /g
-}
-/^  cluster-prod-us:/,/^  cluster-prod-eu:/ {
-  s/^  #/  /g
-}
-/^  cluster-prod-eu:/,/^  # workload-cluster1:/ {
+/^  cluster-prod:/,/^  # workload-cluster1:/ {
   /^  # workload-cluster1:/!s/^  #/  /g
 }' $WORKSPACE_PATH/$WORKING_REPO/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
 
