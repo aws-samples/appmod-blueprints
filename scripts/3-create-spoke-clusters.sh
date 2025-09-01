@@ -34,6 +34,7 @@
 #############################################################################
 
 set -e  # Exit on any error
+set -x
 
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -106,12 +107,33 @@ else
 fi
 
 print_step "Syncing the multi-acct application"
-# Force refresh to detect new commits
-kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"info":[{"name":"Reason","value":"Force refresh after config update"}],"sync":{"revision":"HEAD","syncStrategy":{"hook":{}}}}}'
+# Hard refresh first to detect new commits
+kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"info":[{"name":"Reason","value":"Hard refresh"}]}}'
+sleep 5
+
+# Force sync to HEAD
+kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
 
 print_step "Waiting for the multi-acct application to be synced and healthy"
-kubectl wait --for=condition=Synced application/multi-acct-peeks-hub-cluster -n argocd --timeout=180s || print_warning "Sync timeout, but continuing..."
-kubectl wait --for=condition=Healthy application/multi-acct-peeks-hub-cluster -n argocd --timeout=120s || print_warning "Health timeout, but continuing..."
+# Wait for sync with timeout, but check status manually
+for i in {1..12}; do
+    SYNC_STATUS=$(kubectl get application multi-acct-peeks-hub-cluster -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    HEALTH_STATUS=$(kubectl get application multi-acct-peeks-hub-cluster -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    
+    if [ "$SYNC_STATUS" = "Synced" ] && [ "$HEALTH_STATUS" = "Healthy" ]; then
+        print_success "Multi-acct application is synced and healthy"
+        break
+    fi
+    
+    print_info "Attempt $i/12: Sync=$SYNC_STATUS, Health=$HEALTH_STATUS"
+    sleep 15
+done
+
+# Check final status
+FINAL_SYNC=$(kubectl get application multi-acct-peeks-hub-cluster -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+if [ "$FINAL_SYNC" != "Synced" ]; then
+    print_warning "Application not fully synced ($FINAL_SYNC), but continuing..."
+fi
 
 print_step "Updating cluster definitions with Management account ID and Git URLs"
 # Replace specific patterns in kro-clusters values.yaml - works with any existing values
@@ -160,9 +182,25 @@ fi
 sleep 10
 
 print_step "Syncing clusters application in ArgoCD"
-# Force sync to latest commit
-kubectl patch application clusters -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"info":[{"name":"Reason","value":"Force sync after cluster config update"}],"sync":{"revision":"HEAD","syncStrategy":{"hook":{}}}}}'
-kubectl wait --for=condition=Synced application/clusters -n argocd --timeout=180s || print_warning "Clusters sync timeout, but continuing..."
+# Hard refresh first
+kubectl patch application clusters -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"info":[{"name":"Reason","value":"Hard refresh"}]}}'
+sleep 5
+
+# Force sync
+kubectl patch application clusters -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
+
+# Wait with manual status checking
+for i in {1..8}; do
+    CLUSTERS_SYNC=$(kubectl get application clusters -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    
+    if [ "$CLUSTERS_SYNC" = "Synced" ]; then
+        print_success "Clusters application is synced"
+        break
+    fi
+    
+    print_info "Attempt $i/8: Clusters sync=$CLUSTERS_SYNC"
+    sleep 15
+done
 
 print_info "Checking EKS cluster creation status"
 kubectl get EksClusterwithvpcs -A 2>/dev/null || print_info "No EKS clusters found yet, they may still be creating..."
