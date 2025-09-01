@@ -48,6 +48,13 @@ validate_prerequisites() {
     for var in "${required_vars[@]}"; do
         if [ -z "${!var}" ]; then
             print_error "Required environment variable $var is not set"
+            print_info "Please set all required variables:"
+            print_info "  export MGMT_ACCOUNT_ID=\$(aws sts get-caller-identity --query Account --output text)"
+            print_info "  export WORKSPACE_PATH=/home/ec2-user/environment"
+            print_info "  export WORKING_REPO=platform-on-eks-workshop"
+            print_info "  export GITLAB_URL=https://your-gitlab-url"
+            print_info "  export GIT_USERNAME=your-username"
+            print_info "  export WORKSHOP_GIT_BRANCH=your-branch"
             exit 1
         fi
     done
@@ -89,8 +96,12 @@ print_step "Committing changes for namespaces and resources"
 cd $WORKSPACE_PATH/$WORKING_REPO/
 git status
 git add .
-git commit -m "add namespaces and resources for clusters"
-git push origin $WORKSHOP_GIT_BRANCH:main
+if git diff --staged --quiet; then
+    print_info "No changes to commit for multi-acct configuration"
+else
+    git commit -m "add namespaces and resources for clusters"
+    git push origin $WORKSHOP_GIT_BRANCH:main
+fi
 
 print_step "Syncing the cluster-workloads application"
 kubectl patch application multi-acct-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
@@ -134,8 +145,12 @@ print_step "Committing changes to Git repository"
 cd $WORKSPACE_PATH/$WORKING_REPO/
 git status
 git add .
-git commit -m "add clusters definitions"
-git push origin $WORKSHOP_GIT_BRANCH:main
+if git diff --staged --quiet; then
+    print_info "No changes to commit for cluster definitions"
+else
+    git commit -m "add clusters definitions"
+    git push origin $WORKSHOP_GIT_BRANCH:main
+fi
 
 sleep 10
 
