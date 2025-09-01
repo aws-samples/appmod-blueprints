@@ -1,12 +1,12 @@
 clusters:
 
 #New cluster
-  # cluster-test:
+  # cluster-dev:
   #   managementAccountId: "MANAGEMENT_ACCOUNT_ID"
   #   accountId: "MANAGEMENT_ACCOUNT_ID"
   #   tenant: "tenant1"
-  #   environment: "test"
-  #   region: "eu-central-1"
+  #   environment: "dev"
+  #   region: "us-east-1"
   #   k8sVersion: "1.31"
   #   gitops:
   #     addonsRepoUrl: "GITLAB_URL/GIT_USERNAME/WORKING_REPO.git"
@@ -25,12 +25,12 @@ clusters:
   #     enable_ack_eks: "false"
   #     enable_ack_efs: "false"
   #     enable_aws_efs_csi_driver: "false"
-  # cluster-pre-prod:
+  # cluster-prod:
   #   managementAccountId: "MANAGEMENT_ACCOUNT_ID"
   #   accountId: "MANAGEMENT_ACCOUNT_ID"
   #   tenant: "tenant1"
-  #   environment: "pre-prod"
-  #   region: "us-west-2"
+  #   environment: "prod"
+  #   region: "us-east-1"
   #   k8sVersion: "1.31"
   #   gitops:
   #     addonsRepoUrl: "GITLAB_URL/GIT_USERNAME/WORKING_REPO.git"
