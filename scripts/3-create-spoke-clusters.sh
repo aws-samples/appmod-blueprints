@@ -100,7 +100,9 @@ if git diff --staged --quiet; then
     print_info "No changes to commit for multi-acct configuration"
 else
     git commit -m "add namespaces and resources for clusters"
-    git push origin $WORKSHOP_GIT_BRANCH:main
+    if ! git push origin $WORKSHOP_GIT_BRANCH:main; then
+        print_warning "Git push failed, but continuing with local changes..."
+    fi
 fi
 
 print_step "Syncing the cluster-workloads application"
@@ -149,7 +151,9 @@ if git diff --staged --quiet; then
     print_info "No changes to commit for cluster definitions"
 else
     git commit -m "add clusters definitions"
-    git push origin $WORKSHOP_GIT_BRANCH:main
+    if ! git push origin $WORKSHOP_GIT_BRANCH:main; then
+        print_warning "Git push failed, but continuing with local changes..."
+    fi
 fi
 
 sleep 10
