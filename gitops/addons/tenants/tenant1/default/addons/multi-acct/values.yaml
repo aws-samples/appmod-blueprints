@@ -1,8 +1,3 @@
 clusters:
-  cluster-test: "665742499430"
-  cluster-pre-prod: "665742499430"
-  cluster-prod-eu: "665742499430"
-  cluster-prod-us: "665742499430"
-
-
-  cluster-test: "665742499430"
+  # cluster-dev: "123456789101"
+  # cluster-prod-us: "123456789101"
