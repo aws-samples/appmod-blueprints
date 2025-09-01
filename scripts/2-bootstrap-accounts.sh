@@ -33,8 +33,19 @@ source "$SCRIPT_DIR/colors.sh"
 
 print_header "Bootstrapping Management and Spoke Accounts"
 
-#print_step "Creating ACK workload roles"
-#$SCRIPT_DIR/create_ack_workload_roles.sh
+print_step "Creating ACK workload roles"
+if [ -f "$SCRIPT_DIR/create_ack_workload_roles.sh" ]; then
+    MGMT_ACCOUNT_ID="$MGMT_ACCOUNT_ID" "$SCRIPT_DIR/create_ack_workload_roles.sh"
+    if [ $? -eq 0 ]; then
+        print_success "ACK workload roles created successfully"
+    else
+        print_error "ACK workload roles creation failed"
+        exit 1
+    fi
+else
+    print_error "ACK workload roles script not found at $SCRIPT_DIR/create_ack_workload_roles.sh"
+    exit 1
+fi
 
 print_header "Checking ResourceGraphDefinitions Status"
 

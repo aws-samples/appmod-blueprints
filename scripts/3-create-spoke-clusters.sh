@@ -7,12 +7,11 @@
 # DESCRIPTION:
 #   This script creates the spoke EKS clusters in different regions. It:
 #   1. Validates prerequisites and environment variables
-#   2. Creates ACK workload roles for cross-account access
-#   3. Configures spoke cluster accounts in ArgoCD for ACK controller
-#   4. Updates cluster definitions with management account ID and Git URLs
-#   5. Enables and configures the peeks spoke clusters
-#   6. Syncs the clusters application in ArgoCD
-#   7. Creates the EKS clusters using KRO
+#   2. Configures spoke cluster accounts in ArgoCD for ACK controller
+#   3. Updates cluster definitions with management account ID and Git URLs
+#   4. Enables and configures the peeks spoke clusters
+#   5. Syncs the clusters application in ArgoCD
+#   6. Creates the EKS clusters using KRO
 #
 # USAGE:
 #   ./3-create-spoke-clusters.sh
@@ -68,31 +67,10 @@ validate_prerequisites() {
     print_success "Prerequisites validation passed"
 }
 
-# Create ACK workload roles
-create_ack_workload_roles() {
-    print_step "Creating ACK workload roles for cross-account access"
-    
-    if [ -f "$SCRIPT_DIR/create_ack_workload_roles.sh" ]; then
-        print_info "Running ACK workload roles creation script"
-        cd "$SCRIPT_DIR"
-        MGMT_ACCOUNT_ID="$MGMT_ACCOUNT_ID" ./create_ack_workload_roles.sh
-        if [ $? -eq 0 ]; then
-            print_success "ACK workload roles created successfully"
-        else
-            print_warning "ACK workload roles creation failed, but continuing..."
-        fi
-    else
-        print_warning "ACK workload roles script not found, skipping..."
-    fi
-}
-
 print_header "Creating Spoke EKS Clusters"
 
 # Validate prerequisites first
 validate_prerequisites
-
-# Create ACK workload roles
-create_ack_workload_roles
 
 print_step "Configuring spoke cluster accounts in Argo CD application for ACK controller"
 # Replace any existing account ID values (including MANAGEMENT_ACCOUNT_ID placeholder) with the actual management account ID
