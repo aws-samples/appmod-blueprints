@@ -153,12 +153,13 @@ sed -i '
 s/^  # cluster-dev:/  cluster-dev:/g
 s/^  # cluster-prod:/  cluster-prod:/g
 
-# Then uncomment the content under each section, but stop before workload-cluster1
-/^  cluster-dev:/,/^  cluster-prod:/ {
-  s/^  #/  /g
+# Uncomment content between cluster-dev and its END MARKER
+/^  cluster-dev:/,/^  # #END MARKER FOR SED/ {
+  /^  # #END MARKER FOR SED/!s/^  #/  /g
 }
-/^  cluster-prod:/,/^  # END MARKER FOR SED:/ {
-  /^  # END MARKER FOR SED:/!s/^  #/  /g
+# Uncomment content between cluster-prod and its END MARKER (if it exists)
+/^  cluster-prod:/,/^  # #END MARKER FOR SED/ {
+  /^  # #END MARKER FOR SED/!s/^  #/  /g
 }' $WORKSPACE_PATH/$WORKING_REPO/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
 
 print_info "Cluster values.yaml file updated"
