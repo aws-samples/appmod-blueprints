@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# Git repository setup script
+# This script sets up GitOps repositories and is called by the 0-install.sh script
+
 set -euo pipefail
 set -x
 
@@ -12,6 +15,9 @@ GITOPS_DIR=${GITOPS_DIR:-$SCRIPTDIR/environment/gitops-repos}
 echo $GITOPS_DIR
 
 PROJECT_CONTEXT_PREFIX=${PROJECT_CONTEXT_PREFIX:-peeks-workshop-gitops}
+
+echo "Setting up Git repositories..."
+
 # Clone and initialize the gitops repositories
 gitops_workload_url="$(aws secretsmanager get-secret-value --secret-id ${PROJECT_CONTEXT_PREFIX}-workloads --query SecretString --output text | jq -r .url)"
 GIT_USER="$(aws secretsmanager get-secret-value --secret-id ${PROJECT_CONTEXT_PREFIX}-workloads --query SecretString --output text | jq -r .username)"
@@ -92,3 +98,5 @@ cp -r ${ROOTDIR}/gitops/fleet/* ${GITOPS_DIR}/fleet/
 git -C ${GITOPS_DIR}/fleet add . || true
 git -C ${GITOPS_DIR}/fleet commit -m "initial commit" || true
 git -C ${GITOPS_DIR}/fleet push -u origin main -f || true
+
+echo "Git repositories setup completed successfully"

@@ -18,6 +18,7 @@ ARGOCD_CHECK_INTERVAL=30 # 30 seconds
 
 # Define scripts to run in order
 SCRIPTS=(
+    "setup-git.sh"
     "1-argocd-gitlab-setup.sh"
     "2-bootstrap-accounts.sh"
     "6-tools-urls.sh"
