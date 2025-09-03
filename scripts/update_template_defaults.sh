@@ -3,9 +3,13 @@
 # Exit on error
 set -e
 
-# Source environment variables
-if [ -f /home/ec2-user/.bashrc.d/env.bash ]; then
-    source /home/ec2-user/.bashrc.d/env.bash
+# Source all environment files in .bashrc.d
+if [ -d /home/ec2-user/.bashrc.d ]; then
+    for file in /home/ec2-user/.bashrc.d/*.bash; do
+        if [ -f "$file" ]; then
+            source "$file"
+        fi
+    done
 fi
 
 # Source colors for output formatting

@@ -1,8 +1,21 @@
 #!/bin/bash
-set -ex
+set -e
 
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
+# Source environment variables if available
+if [ -d /home/ec2-user/.bashrc.d ]; then
+    for file in /home/ec2-user/.bashrc.d/*.bash; do
+        if [ -f "$file" ]; then
+            source "$file"
+        fi
+    done
+fi
+
+# Set defaults if environment variables are not set
+AWS_REGION=${AWS_REGION:-us-east-1}
+ACCOUNT_ID=${ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}
 
 # Use a single variable for app name, repository, service, and cluster
 APP_NAME="peeks-backstage"
@@ -26,6 +39,14 @@ else
 fi
 
 echo "Building and pushing Docker image to ECR in region $AWS_REGION"
+
+# Create ECR repository if it doesn't exist
+if ! aws ecr describe-repositories --repository-names $APP_NAME --region $AWS_REGION >/dev/null 2>&1; then
+    echo "Creating ECR repository: $APP_NAME"
+    aws ecr create-repository --repository-name $APP_NAME --region $AWS_REGION
+else
+    echo "ECR repository $APP_NAME already exists"
+fi
 
 # Login to ECR
 aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
