@@ -41,18 +41,6 @@ update_kubeconfig_if_needed_with_role() {
     fi
 }
 
-# Update kubeconfig for each cluster
-
-# Setup kubectx for EKS clusters as Team
-export BACKEND_TEAM_ROLE_ARN=$(aws ssm --region $AWS_REGION get-parameter --name peeks-workshop-gitops-backend-team-view-role --with-decryption --query "Parameter.Value" --output text)
-# Update kubeconfig for backend team
-update_kubeconfig_if_needed_with_role "$SPOKE_DEV_CLUSTER" "${SPOKE_DEV_CLUSTER}-backend" "${SPOKE_DEV_CLUSTER}-backend" "$BACKEND_TEAM_ROLE_ARN"
-update_kubeconfig_if_needed_with_role "$SPOKE_PROD_CLUSTER" "${SPOKE_PROD_CLUSTER}-backend" "${SPOKE_PROD_CLUSTER}-backend" "$BACKEND_TEAM_ROLE_ARN"
-
-export FRONTEND_TEAM_ROLE_ARN=$(aws ssm --region $AWS_REGION get-parameter --name peeks-workshop-gitops-frontend-team-view-role --with-decryption --query "Parameter.Value" --output text)
-update_kubeconfig_if_needed_with_role "$SPOKE_DEV_CLUSTER" "${SPOKE_DEV_CLUSTER}-frontend" "${SPOKE_DEV_CLUSTER}-frontend" "$FRONTEND_TEAM_ROLE_ARN"
-update_kubeconfig_if_needed_with_role "$SPOKE_PROD_CLUSTER" "${SPOKE_PROD_CLUSTER}-frontend" "${SPOKE_PROD_CLUSTER}-frontend" "$FRONTEND_TEAM_ROLE_ARN"
-
 # Setup kubectx for EKS clusters as Admin
 update_kubeconfig_if_needed "$SPOKE_PROD_CLUSTER" "${SPOKE_PROD_CLUSTER}"
 update_kubeconfig_if_needed "$SPOKE_DEV_CLUSTER" "${SPOKE_DEV_CLUSTER}"

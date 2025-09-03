@@ -5,7 +5,7 @@ set -e
 
 # Source all environment files in .bashrc.d
 if [ -d /home/ec2-user/.bashrc.d ]; then
-    for file in /home/ec2-user/.bashrc.d/*.bash; do
+    for file in /home/ec2-user/.bashrc.d/*.sh; do
         if [ -f "$file" ]; then
             source "$file"
         fi

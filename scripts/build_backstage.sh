@@ -6,7 +6,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 # Source environment variables if available
 if [ -d /home/ec2-user/.bashrc.d ]; then
-    for file in /home/ec2-user/.bashrc.d/*.bash; do
+    for file in /home/ec2-user/.bashrc.d/*.sh; do
         if [ -f "$file" ]; then
             source "$file"
         fi

@@ -45,20 +45,20 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-# Function to update or add environment variable to /etc/profile.d/workshop.sh
+# Function to update or add environment variable to ~/.bashrc.d/platform.sh
 update_workshop_var() {
     local var_name="$1"
     local var_value="$2"
-    local workshop_file="/etc/profile.d/workshop.sh"
+    local workshop_file="$HOME/.bashrc.d/platform.sh"
     
     # Check if variable already exists in the file
     if grep -q "^export ${var_name}=" "$workshop_file" 2>/dev/null; then
         # Variable exists, update it
-        sudo sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${var_value}\"|" "$workshop_file"
+        sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${var_value}\"|" "$workshop_file"
         print_info "Updated ${var_name} in ${workshop_file}"
     else
         # Variable doesn't exist, add it
-        echo "export ${var_name}=\"${var_value}\"" | sudo tee -a "$workshop_file" > /dev/null
+        echo "export ${var_name}=\"${var_value}\"" >> "$workshop_file"
         print_info "Added ${var_name} to ${workshop_file}"
     fi
 }
@@ -91,6 +91,10 @@ update_workshop_var "WORKSPACE_PATH" "$HOME/environment"
 update_workshop_var "WORKING_REPO" "platform-on-eks-workshop"
 
 source /etc/profile.d/workshop.sh
+# Source all bashrc.d files
+for file in ~/.bashrc.d/*.sh; do
+  [ -f "$file" ] && source "$file" || true
+done
 
 print_info "Creating GitLab SSH keys"
 $SCRIPT_DIR/gitlab_create_keys.sh
