@@ -2,7 +2,8 @@
 
 # Disable Terraform color output to prevent ANSI escape sequences
 export TF_CLI_ARGS="-no-color"
-set -uo pipefail
+
+set -euo pipefail
 
 SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
@@ -10,376 +11,274 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 
 source "${ROOTDIR}/terraform/common.sh"
 
-# Enhanced function to clean up ArgoCD applications in the correct order
-cleanup_argocd_resources() {
-  local env=$1
-  echo "Starting enhanced ArgoCD cleanup for $env environment..."
-  
-  if ! kubectl get crd applications.argoproj.io &>/dev/null; then
-    echo "ArgoCD CRDs not found, skipping cleanup"
-    return 0
-  fi
+# Logging functions
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
 
-  # 1. First list all applications to understand what we're dealing with
-  echo "Current ArgoCD applications:"
-  kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null || echo "No applications found"
+log_error() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >&2
+}
+
+log_warning() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1" >&2
+}
+
+log_success() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"
+}
+
+# Enhanced retry function with exponential backoff
+retry_with_backoff() {
+  local max_attempts=$1
+  local delay=$2
+  local command="${@:3}"
+  local attempt=1
   
-  # 2. Delete workload applications first (non-addon applications)
-  echo "Deleting workload applications first..."
-  kubectl get applications.argoproj.io -n argocd -o json 2>/dev/null | \
-    jq -r '.items[] | select(.metadata.name | test("cluster-addons|.*-addon") | not) | .metadata.name' | \
-    while read -r app; do
-      if [[ -n "$app" ]]; then
-        echo "Removing finalizers from workload application: $app"
-        kubectl patch applications.argoproj.io "$app" -n argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-        echo "Deleting workload application: $app"
-        kubectl delete applications.argoproj.io "$app" -n argocd --force --grace-period=0 --wait=false 2>/dev/null || true
-      fi
-    done
-  
-  # 3. Wait for workload applications to be deleted
-  echo "Waiting for workload applications to be deleted..."
-  sleep 15
-  
-  # 4. Delete LoadBalancer services before removing the controller
-  echo "Cleaning up LoadBalancer services..."
-  kubectl get services --all-namespaces --field-selector spec.type=LoadBalancer -o json 2>/dev/null | \
-    jq -r '.items[]? | "\(.metadata.name) \(.metadata.namespace)"' | \
-    while read -r name namespace; do
-      if [ -n "$name" ] && [ -n "$namespace" ]; then
-        echo "Deleting LoadBalancer: $name in $namespace"
-        kubectl patch service "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-        kubectl delete service "$name" -n "$namespace" --force --grace-period=0 --wait=false 2>/dev/null || true
-      fi
-    done
-  
-  # 5. Scale down Karpenter nodes if available
-  scale_down_karpenter_nodes
-  
-  # 6. Delete addon applications in specific order
-  echo "Deleting addon applications in specific order..."
-  
-  # Define the order of addon deletion - leave critical addons for last
-  ADDON_ORDER=(
-    # Delete monitoring addons first
-    "prometheus"
-    "metrics-server"
-    "cloudwatch-metrics"
-    "aws-cloudwatch-metrics"
+  while [ $attempt -le $max_attempts ]; do
+    log "Attempt $attempt/$max_attempts: $command"
     
-    # Delete non-critical addons
-    "cert-manager"
-    "external-dns"
-    "external-secrets"
-    "aws-efs-csi-driver"
-    "aws-fsx-csi-driver"
-    "aws-cloudwatch-observability"
-    
-    # Delete critical addons last
-    "aws-ebs-csi-driver"
-    "vpc-cni"
-    "coredns"
-    "aws-load-balancer-controller"
-    "karpenter"
-  )
-  
-  # Get all addon applications
-  ADDON_APPS=$(kubectl get applications.argoproj.io -n argocd -o json 2>/dev/null | \
-    jq -r '.items[] | select(.metadata.name | test("cluster-addons|.*-addon")) | .metadata.name')
-  
-  # First delete the addons in the specified order
-  for addon in "${ADDON_ORDER[@]}"; do
-    for app in $ADDON_APPS; do
-      if [[ "$app" == *"$addon"* ]]; then
-        echo "Removing finalizers from addon application: $app"
-        kubectl patch applications.argoproj.io "$app" -n argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-        echo "Deleting addon application: $app"
-        kubectl delete applications.argoproj.io "$app" -n argocd --force --grace-period=0 --wait=false 2>/dev/null || true
-        # Wait a bit for the deletion to process
-        sleep 5
+    if eval "$command"; then
+      log_success "Command succeeded on attempt $attempt"
+      return 0
+    else
+      if [ $attempt -eq $max_attempts ]; then
+        log_error "Command failed after $max_attempts attempts"
+        return 1
       fi
-    done
-  done
-  
-  # Delete any remaining addon applications not in the specific order
-  echo "Deleting any remaining addon applications..."
-  kubectl get applications.argoproj.io -n argocd -o json 2>/dev/null | \
-    jq -r '.items[] | select(.metadata.name | test("cluster-addons|.*-addon")) | .metadata.name' | \
-    while read -r app; do
-      if [[ -n "$app" ]]; then
-        echo "Removing finalizers from remaining addon application: $app"
-        kubectl patch applications.argoproj.io "$app" -n argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-        echo "Deleting remaining addon application: $app"
-        kubectl delete applications.argoproj.io "$app" -n argocd --force --grace-period=0 --wait=false 2>/dev/null || true
-      fi
-    done
-  
-  # 7. Delete the cluster-addons ApplicationSet if it exists
-  echo "Deleting cluster-addons ApplicationSet..."
-  kubectl patch applicationsets.argoproj.io -n argocd cluster-addons --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-  kubectl delete applicationsets.argoproj.io -n argocd cluster-addons --force --grace-period=0 --wait=false 2>/dev/null || true
-  
-  # 8. Final check and cleanup of any remaining ArgoCD resources
-  echo "Final cleanup of any remaining ArgoCD resources..."
-  
-  # Clean up any remaining applications
-  kubectl get applications.argoproj.io -n argocd -o name 2>/dev/null | while read -r app; do
-    if [[ -n "$app" ]]; then
-      echo "Force removing finalizers from $app"
-      kubectl patch "$app" -n argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-      echo "Force deleting $app"
-      kubectl delete "$app" -n argocd --force --grace-period=0 --wait=false 2>/dev/null || true
-    fi
-  done
-  
-  # Clean up any remaining applicationsets
-  kubectl get applicationsets.argoproj.io -n argocd -o name 2>/dev/null | while read -r appset; do
-    if [[ -n "$appset" ]]; then
-      echo "Force removing finalizers from $appset"
-      kubectl patch "$appset" -n argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-      echo "Force deleting $appset"
-      kubectl delete "$appset" -n argocd --force --grace-period=0 --wait=false 2>/dev/null || true
-    fi
-  done
-  
-  echo "ArgoCD cleanup completed for $env environment"
-}
-
-# Function to check if ArgoCD applications are stuck due to Git connectivity issues or Unknown status
-check_argocd_git_connectivity() {
-  local stuck_apps=()
-  
-  # Check each application for Git connectivity errors or Unknown status
-  while IFS= read -r app_name; do
-    if [[ -n "$app_name" ]]; then
-      local error_msg=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.conditions[?(@.type=="ComparisonError")].message}' 2>/dev/null || echo "")
-      local sync_status=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
       
-      if [[ "$error_msg" == *"context deadline exceeded"* ]] || [[ "$error_msg" == *"timeout"* ]] || [[ "$error_msg" == *"connection refused"* ]] || [[ "$sync_status" == "Unknown" ]]; then
-        stuck_apps+=("$app_name")
-        echo "Found stuck application: $app_name (Status: $sync_status)"
-        if [[ -n "$error_msg" ]]; then
-          echo "Error: $error_msg"
-        fi
-      fi
+      log_warning "Command failed, waiting ${delay}s before retry..."
+      sleep $delay
+      delay=$((delay * 2))  # Exponential backoff
+      attempt=$((attempt + 1))
     fi
-  done < <(kubectl get applications.argoproj.io -n argocd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n')
-  
-  if [[ ${#stuck_apps[@]} -gt 0 ]]; then
-    echo "Found ${#stuck_apps[@]} applications stuck due to Git connectivity issues or Unknown status"
-    return 0  # Found stuck apps
-  else
-    return 1  # No stuck apps found
-  fi
+  done
 }
 
-# Function to check if any applications have Unknown status
-check_unknown_status_apps() {
-  local unknown_apps=()
+# Validate required environment variables
+validate_backend_config() {
+  log "Validating S3 backend configuration..."
   
-  while IFS= read -r line; do
-    if [[ -n "$line" ]]; then
-      local app_name=$(echo "$line" | awk '{print $1}')
-      local sync_status=$(echo "$line" | awk '{print $2}')
-      
-      if [[ "$sync_status" == "Unknown" ]]; then
-        unknown_apps+=("$app_name")
-      fi
-    fi
-  done < <(kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null)
-  
-  if [[ ${#unknown_apps[@]} -gt 0 ]]; then
-    echo "Found ${#unknown_apps[@]} applications with Unknown status: ${unknown_apps[*]}"
-    return 0  # Found unknown apps
-  else
-    return 1  # No unknown apps found
-  fi
-}
-
-if [[ $# -eq 0 ]] ; then
-    echo "No arguments supplied"
-    echo "Usage: destroy.sh <environment>"
-    echo "Example: destroy.sh dev"
+  if [[ -z "${TFSTATE_BUCKET_NAME:-}" ]]; then
+    log_error "TFSTATE_BUCKET_NAME environment variable is required"
     exit 1
-fi
-env=$1
-echo "Destroying $env ..."
+  fi
+  
+  if [[ -z "${TFSTATE_LOCK_TABLE:-}" ]]; then
+    log_error "TFSTATE_LOCK_TABLE environment variable is required"
+    exit 1
+  fi
+  
+  local region="${AWS_REGION:-us-east-1}"
+  
+  # Check if S3 bucket exists and is accessible
+  if ! aws s3api head-bucket --bucket "${TFSTATE_BUCKET_NAME}" 2>/dev/null; then
+    log_error "S3 bucket '${TFSTATE_BUCKET_NAME}' does not exist or is not accessible"
+    exit 1
+  fi
+  
+  # Check if DynamoDB table exists
+  if ! aws dynamodb describe-table --table-name "${TFSTATE_LOCK_TABLE}" --region "${region}" >/dev/null 2>&1; then
+    log_error "DynamoDB table '${TFSTATE_LOCK_TABLE}' does not exist or is not accessible in region '${region}'"
+    exit 1
+  fi
+  
+  log_success "Backend configuration validated"
+  log "S3 Bucket: ${TFSTATE_BUCKET_NAME}"
+  log "DynamoDB Table: ${TFSTATE_LOCK_TABLE}"
+  log "Region: ${region}"
+}
 
-if [[ -n "${TFSTATE_BUCKET_NAME:-}" && -n "${TFSTATE_LOCK_TABLE:-}" ]]; then
-  terraform -chdir=$SCRIPTDIR init --upgrade \
+# Initialize Terraform with S3 backend
+initialize_terraform() {
+  local env=$1
+  log "Initializing Terraform with S3 backend for environment: $env"
+  
+  if ! terraform -chdir=$SCRIPTDIR init --upgrade \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
     -backend-config="key=spokes/${env}/terraform.tfstate" \
     -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}" \
-    -backend-config="region=${AWS_REGION:-us-east-1}"
-else
-  # Try to get backend config from SSM parameters
-  BUCKET_NAME=$(aws ssm get-parameter --name tf-backend-bucket --query 'Parameter.Value' --output text 2>/dev/null || echo "")
-  LOCK_TABLE=$(aws ssm get-parameter --name tf-backend-lock-table --query 'Parameter.Value' --output text 2>/dev/null || echo "")
-  
-  if [[ -n "$BUCKET_NAME" && -n "$LOCK_TABLE" ]]; then
-    terraform -chdir=$SCRIPTDIR init --upgrade \
-      -backend-config="bucket=${BUCKET_NAME}" \
-      -backend-config="key=spokes/${env}/terraform.tfstate" \
-      -backend-config="dynamodb_table=${LOCK_TABLE}" \
-      -backend-config="region=${AWS_REGION:-us-east-1}"
-  else
-    terraform -chdir=$SCRIPTDIR init --upgrade
-    echo "WARNING: Backend configuration not found in environment variables or SSM parameters."
-    echo "WARNING: Terraform state will be stored locally and may be lost!"
+    -backend-config="region=${AWS_REGION:-us-east-1}"; then
+    log_error "Terraform initialization failed"
+    exit 1
   fi
-fi
-terraform -chdir=$SCRIPTDIR workspace select -or-create $env
-
-# Configure kubectl to access the cluster
-TMPFILE=$(mktemp)
-terraform -chdir=$SCRIPTDIR output -raw configure_kubectl > "$TMPFILE"
-# check if TMPFILE contains the string "No outputs found"
-if [[ ! $(cat $TMPFILE) == *"No outputs found"* ]]; then
-  source "$TMPFILE"
-fi
-
-# Check if cluster is accessible and perform ArgoCD cleanup
-if kubectl get nodes &>/dev/null; then
-  echo "Cluster is accessible. Proceeding with ArgoCD cleanup..."
   
-  # Check if ArgoCD CRDs exist
-  if kubectl get crd applications.argoproj.io &>/dev/null; then
-    echo "ArgoCD CRDs found. Starting cleanup process..."
-    
-    # Set a timeout to prevent infinite waiting (30 minutes max)
-    TIMEOUT=1800  # 30 minutes in seconds
-    ELAPSED=0
-    SLEEP_INTERVAL=60
-    GIT_CHECK_INTERVAL=180  # Check for Git connectivity issues every 3 minutes
-    UNKNOWN_CHECK_INTERVAL=120  # Check for Unknown status every 2 minutes
-    
-    # Check for stuck applications immediately
-    if check_argocd_git_connectivity || check_unknown_status_apps; then
-      echo "Detected stuck applications. Initiating immediate cleanup..."
-      cleanup_argocd_resources "$env"
-    else
-      # Wait for hub cluster to delete applications
-      echo "Waiting for hub cluster to delete ArgoCD applications..."
-      
-      while [[ $(kubectl get applications.argoproj.io -n argocd 2>&1) != *"No resources found"* ]] && [[ $ELAPSED -lt $TIMEOUT ]]; do
-        echo "Waiting for all argocd applications to be deleted by hub cluster: ${ELAPSED}s / ${TIMEOUT}s"
+  terraform -chdir=$SCRIPTDIR workspace select -or-create $env
+  log_success "Terraform initialized successfully"
+}
+
+# Configure kubectl with fallback
+configure_kubectl_with_fallback() {
+  log "Configuring kubectl access..."
+  
+  local tmpfile=$(mktemp)
+  if terraform -chdir=$SCRIPTDIR output -raw configure_kubectl > "$tmpfile" 2>/dev/null; then
+    if [[ ! $(cat "$tmpfile") == *"No outputs found"* ]]; then
+      if source "$tmpfile"; then
+        configure_eks_access
+        log_success "kubectl configured successfully"
         
-        # Show current Applications status
-        echo "Current Applications:"
-        kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null | awk '{print "  - " $1 " (Status: " $2 ", Health: " $3 ")"}' || echo "  No applications found or error accessing them"
-        
-        # Check for Unknown status applications
-        if [[ $((ELAPSED % UNKNOWN_CHECK_INTERVAL)) -eq 0 ]] && [[ $ELAPSED -gt 0 ]]; then
-          if check_unknown_status_apps; then
-            echo "Detected Applications with Unknown status. Initiating cleanup..."
-            cleanup_argocd_resources "$env"
-            break
-          fi
+        # Test kubectl connection
+        if kubectl get nodes --request-timeout=10s &>/dev/null; then
+          log_success "kubectl can connect to cluster"
+          rm -f "$tmpfile"
+          return 0
+        else
+          log_warning "kubectl configured but cannot connect to cluster"
         fi
-        
-        # Check for Git connectivity issues
-        if [[ $((ELAPSED % GIT_CHECK_INTERVAL)) -eq 0 ]] && [[ $ELAPSED -gt 0 ]]; then
-          if check_argocd_git_connectivity; then
-            echo "Detected Git connectivity issues. Initiating cleanup..."
-            cleanup_argocd_resources "$env"
-            break
-          fi
-        fi
-        
-        sleep $SLEEP_INTERVAL
-        ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
-        
-        # If we've waited more than 5 minutes, check if all apps are in Unknown status
-        if [[ $ELAPSED -ge 300 ]]; then
-          all_unknown=true
-          while IFS= read -r line; do
-            if [[ -n "$line" ]]; then
-              sync_status=$(echo "$line" | awk '{print $2}')
-              if [[ "$sync_status" != "Unknown" ]]; then
-                all_unknown=false
-                break
-              fi
-            fi
-          done < <(kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null)
-          
-          if [[ "$all_unknown" == "true" ]]; then
-            echo "All applications are in Unknown status. Initiating cleanup..."
-            cleanup_argocd_resources "$env"
-            break
-          fi
-        fi
-      done
-      
-      # If timeout reached, force cleanup
-      if [[ $ELAPSED -ge $TIMEOUT ]]; then
-        echo "Timeout reached. Initiating force cleanup..."
-        cleanup_argocd_resources "$env"
       fi
     fi
-  else
-    echo "ArgoCD CRDs not found. Skipping ArgoCD cleanup."
   fi
   
-  # Delete all load balancers
-  echo "Deleting all LoadBalancer services..."
-  kubectl get services --all-namespaces -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,TYPE:.spec.type" | \
-  grep LoadBalancer | \
-  while read -r name namespace type; do
-    echo "Deleting service $name in namespace $namespace of type $type"
-    kubectl delete --cascade='foreground' service "$name" -n "$namespace" --force --grace-period=0 || true
+  rm -f "$tmpfile"
+  log_warning "kubectl configuration failed"
+  return 1
+}
+
+# Enhanced cleanup function for ArgoCD resources
+cleanup_argocd_resources() {
+  local env=$1
+  log "Starting ArgoCD cleanup for $env environment..."
+  
+  if ! kubectl get crd applications.argoproj.io &>/dev/null; then
+    log "ArgoCD CRDs not found, skipping cleanup"
+    return 0
+  fi
+
+  # Delete workload applications first
+  local workload_apps=(peeks-members peeks-spoke-argocd peeks-members-init peeks-control-plane)
+  
+  for app in "${workload_apps[@]}"; do
+    log "Deleting workload application: $app"
+    kubectl patch applicationsets.argoproj.io -n argocd $app --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+    timeout 60s kubectl delete applicationsets.argoproj.io -n argocd $app --ignore-not-found=true --wait=false --force --grace-period=0 2>/dev/null || true
   done
-fi
+  
+  # Clean up remaining ArgoCD applications and ApplicationSets
+  kubectl get applications.argoproj.io -n argocd -o name 2>/dev/null | while read -r app; do
+    kubectl patch "$app" -n argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+    kubectl delete "$app" -n argocd --ignore-not-found=true --wait=false --force --grace-period=0 2>/dev/null || true
+  done
+  
+  kubectl get applicationsets.argoproj.io -n argocd -o name 2>/dev/null | while read -r appset; do
+    kubectl patch "$appset" -n argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+    kubectl delete "$appset" -n argocd --ignore-not-found=true --wait=false --force --grace-period=0 2>/dev/null || true
+  done
+  
+  # Delete LoadBalancer services
+  kubectl get services --all-namespaces --field-selector spec.type=LoadBalancer -o json 2>/dev/null | \
+  jq -r '.items[]? | "\(.metadata.name) \(.metadata.namespace)"' | \
+  while read -r name namespace; do
+    if [ -n "$name" ] && [ -n "$namespace" ]; then
+      log "Deleting LoadBalancer: $name in $namespace"
+      kubectl patch service "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+      timeout 60s kubectl delete service "$name" -n "$namespace" --ignore-not-found=true --wait=false --force --grace-period=0 || true
+    fi
+  done
+  
+  # Scale down Karpenter nodes
+  scale_down_karpenter_nodes
+  
+  # Delete cluster-addons
+  kubectl patch applicationsets.argoproj.io -n argocd cluster-addons --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+  timeout 60s kubectl delete applicationsets.argoproj.io -n argocd cluster-addons --ignore-not-found=true --wait=false --force --grace-period=0 2>/dev/null || true
+  
+  log_success "ArgoCD cleanup completed for $env"
+}
 
-# Terraform destroy in proper order with better error handling
-echo "Starting Terraform destroy process..."
+# Cleanup Kubernetes resources with fallback
+cleanup_kubernetes_resources_with_fallback() {
+  local env=$1
+  log "Attempting to clean up Kubernetes resources for $env..."
+  
+  # Test if kubectl is working
+  if ! kubectl get nodes --request-timeout=10s &>/dev/null; then
+    log_warning "kubectl cannot connect to cluster, skipping Kubernetes cleanup"
+    return 0
+  fi
+  
+  log_success "kubectl is working, proceeding with resource cleanup"
+  cleanup_argocd_resources "$env"
+}
 
-# Track overall success/failure
-overall_success=true
+# Destroy Terraform resources
+destroy_terraform_resources() {
+  local env=$1
+  log "Starting Terraform resource destruction for $env..."
+  
+  local targets=("module.gitops_bridge_bootstrap_hub" "module.eks_blueprints_addons" "module.eks")
+  
+  for target in "${targets[@]}"; do
+    log "Destroying $target..."
+    
+    if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"$target\" -auto-approve -var-file=\"workspaces/${env}.tfvars\""; then
+      log_success "Successfully destroyed $target"
+    else
+      log_error "Failed to destroy $target after all attempts"
+      log_warning "Continuing with next target..."
+    fi
+  done
+  
+  # Force delete VPC if requested
+  if [[ "${FORCE_DELETE_VPC:-false}" == "true" ]]; then
+    log "Force deleting VPC..."
+    force_delete_vpc "peeks-spoke-${env}"
+  fi
+  
+  # Destroy VPC
+  log "Destroying VPC..."
+  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"module.vpc\" -auto-approve -var-file=\"workspaces/${env}.tfvars\""; then
+    log_success "Successfully destroyed VPC"
+  else
+    log_error "Failed to destroy VPC after all attempts"
+    log_warning "Continuing with final destroy..."
+  fi
+  
+  # Final destroy
+  log "Running final terraform destroy..."
+  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -auto-approve -var-file=\"workspaces/${env}.tfvars\""; then
+    log_success "Successfully completed final destroy"
+  else
+    log_error "Failed final destroy after all attempts. Manual cleanup may be required."
+    return 1
+  fi
+}
 
-# First destroy the gitops bridge bootstrap
-echo "Destroying gitops_bridge_bootstrap_hub module..."
-if ! terraform -chdir=$SCRIPTDIR destroy -target="module.gitops_bridge_bootstrap_hub" -auto-approve -var-file="workspaces/${env}.tfvars"; then
-  echo "WARNING: Failed to destroy gitops_bridge_bootstrap_hub module, continuing..."
-fi
+# Main function
+main() {
+  if [[ $# -eq 0 ]]; then
+    echo "Usage: destroy.sh <environment>"
+    echo "Example: destroy.sh dev"
+    exit 1
+  fi
 
-# Then destroy the EKS addons
-echo "Destroying eks_blueprints_addons module..."
-if ! terraform -chdir=$SCRIPTDIR destroy -target="module.eks_blueprints_addons" -auto-approve -var-file="workspaces/${env}.tfvars"; then
-  echo "WARNING: Failed to destroy eks_blueprints_addons module, continuing..."
-fi
+  local env=$1
+  log "Starting destroy script for environment: $env"
+  
+  # Validate backend configuration
+  validate_backend_config
+  
+  # Initialize Terraform
+  initialize_terraform "$env"
+  
+  # Configure kubectl with fallback
+  if ! configure_kubectl_with_fallback; then
+    log_warning "kubectl configuration failed, but continuing with destroy"
+  fi
+  
+  # Clean up Kubernetes resources with fallback
+  if ! cleanup_kubernetes_resources_with_fallback "$env"; then
+    log_warning "Kubernetes cleanup had issues, but continuing with Terraform destroy"
+  fi
+  
+  # Destroy Terraform resources
+  if ! destroy_terraform_resources "$env"; then
+    log_error "Critical failure: Terraform destroy failed"
+    exit 1
+  fi
+  
+  log_success "Destroy script completed successfully for $env"
+}
 
-# Then destroy the EKS cluster
-echo "Destroying eks module..."
-if ! terraform -chdir=$SCRIPTDIR destroy -target="module.eks" -auto-approve -var-file="workspaces/${env}.tfvars"; then
-  echo "ERROR: Failed to destroy EKS cluster - this is critical"
-  overall_success=false
-fi
-
-# Force delete VPC if requested
-if [[ "${FORCE_DELETE_VPC:-false}" == "true" ]]; then
-  echo "Force deleting VPC resources..."
-  force_delete_vpc "peeks-spoke-${env}"
-fi
-
-# Destroy VPC
-echo "Destroying vpc module..."
-if ! terraform -chdir=$SCRIPTDIR destroy -target="module.vpc" -auto-approve -var-file="workspaces/${env}.tfvars"; then
-  echo "ERROR: Failed to destroy VPC - this is critical"
-  overall_success=false
-fi
-
-# Final destroy to clean up any remaining resources
-echo "Running final terraform destroy..."
-if ! terraform -chdir=$SCRIPTDIR destroy -auto-approve -var-file="workspaces/${env}.tfvars"; then
-  echo "ERROR: Final terraform destroy failed - this is critical"
-  overall_success=false
-fi
-
-# Check final status and exit appropriately
-if [ "$overall_success" = true ]; then
-  echo "SUCCESS: Destroy script completed successfully for $env environment"
-  exit 0
-else
-  echo "ERROR: Destroy script completed with critical errors for $env environment"
-  exit 1
-fi
+# Run main function
+main "$@"

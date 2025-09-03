@@ -2,10 +2,8 @@
 
 # Disable Terraform color output to prevent ANSI escape sequences
 export TF_CLI_ARGS="-no-color"
-set -uo pipefail
 
-# Disable Terraform color output to prevent ANSI escape sequences
-export TF_CLI_ARGS="-no-color"
+set -euo pipefail
 
 SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
@@ -13,7 +11,7 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 
 source "${ROOTDIR}/terraform/common.sh"
 
-# Enhanced logging functions
+# Logging functions
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
@@ -57,57 +55,83 @@ retry_with_backoff() {
   done
 }
 
-# Pre-flight checks
+# Validate required environment variables and backend resources
+validate_backend_config() {
+  log "Validating S3 backend configuration..."
+  
+  if [[ -z "${TFSTATE_BUCKET_NAME:-}" ]]; then
+    log_error "TFSTATE_BUCKET_NAME environment variable is required"
+    exit 1
+  fi
+  
+  if [[ -z "${TFSTATE_LOCK_TABLE:-}" ]]; then
+    log_error "TFSTATE_LOCK_TABLE environment variable is required"
+    exit 1
+  fi
+  
+  local region="${AWS_REGION:-us-east-1}"
+  
+  # Check if S3 bucket exists and is accessible
+  if ! aws s3api head-bucket --bucket "${TFSTATE_BUCKET_NAME}" 2>/dev/null; then
+    log_error "S3 bucket '${TFSTATE_BUCKET_NAME}' does not exist or is not accessible"
+    exit 1
+  fi
+  
+  # Check if DynamoDB table exists
+  if ! aws dynamodb describe-table --table-name "${TFSTATE_LOCK_TABLE}" --region "${region}" >/dev/null 2>&1; then
+    log_error "DynamoDB table '${TFSTATE_LOCK_TABLE}' does not exist or is not accessible in region '${region}'"
+    exit 1
+  fi
+  
+  log_success "Backend configuration validated"
+  log "S3 Bucket: ${TFSTATE_BUCKET_NAME}"
+  log "DynamoDB Table: ${TFSTATE_LOCK_TABLE}"
+  log "Region: ${region}"
+}
+
+# Initialize Terraform with S3 backend
+initialize_terraform() {
+  log "Initializing Terraform with S3 backend..."
+  
+  if ! terraform -chdir=$SCRIPTDIR init --upgrade \
+    -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
+    -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}" \
+    -backend-config="region=${AWS_REGION:-us-east-1}"; then
+    log_error "Terraform initialization failed"
+    exit 1
+  fi
+  
+  log_success "Terraform initialized successfully"
+}
+
+# Check current AWS account and cluster status
 preflight_checks() {
   log "Running pre-flight checks..."
   
-  # Check if we're in the right AWS account
+  # Check AWS account
   CURRENT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
   if [ -z "$CURRENT_ACCOUNT" ]; then
     log_error "Cannot determine current AWS account. Check AWS credentials."
     exit 1
   fi
-  
   log "Current AWS Account: $CURRENT_ACCOUNT"
   
-  # Check if Terraform is initialized
-  if [ ! -d ".terraform" ]; then
-    log "Terraform not initialized, running terraform init..."
-    if [[ -n "${TFSTATE_BUCKET_NAME:-}" && -n "${TFSTATE_LOCK_TABLE:-}" ]]; then
-      terraform -chdir=$SCRIPTDIR init --upgrade -backend-config="bucket=${TFSTATE_BUCKET_NAME}" -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}"
-    else
-      # Try to get backend config from SSM parameters
-      BUCKET_NAME=$(aws ssm get-parameter --name tf-backend-bucket --query 'Parameter.Value' --output text 2>/dev/null || echo "")
-      LOCK_TABLE=$(aws ssm get-parameter --name tf-backend-lock-table --query 'Parameter.Value' --output text 2>/dev/null || echo "")
-      
-      if [[ -n "$BUCKET_NAME" && -n "$LOCK_TABLE" ]]; then
-        terraform -chdir=$SCRIPTDIR init --upgrade -backend-config="bucket=${BUCKET_NAME}" -backend-config="dynamodb_table=${LOCK_TABLE}"
-      else
-        terraform -chdir=$SCRIPTDIR init --upgrade
-        echo "WARNING: Backend configuration not found in environment variables or SSM parameters."
-        echo "WARNING: Terraform state will be stored locally and may be lost!"
-      fi
-    fi
+  # Check if we can access terraform state
+  if ! terraform -chdir=$SCRIPTDIR state list >/dev/null 2>&1; then
+    log_warning "Cannot access Terraform state - may be empty"
+    return 0
   fi
   
-  # Check if cluster exists
+  # Check if cluster exists in state
   CLUSTER_NAME=$(terraform -chdir=$SCRIPTDIR output -raw cluster_name 2>/dev/null || echo "")
   if [ -n "$CLUSTER_NAME" ]; then
-    log "Found cluster: $CLUSTER_NAME"
+    log "Found cluster in state: $CLUSTER_NAME"
     
-    # Check cluster status
+    # Check cluster status in AWS
     CLUSTER_STATUS=$(aws eks describe-cluster --name "$CLUSTER_NAME" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
-    log "Cluster status: $CLUSTER_STATUS"
+    log "Cluster status in AWS: $CLUSTER_STATUS"
   else
     log_warning "No cluster found in Terraform state"
-  fi
-}
-
-# Backup Terraform state
-backup_terraform_state() {
-  if [ -f "terraform.tfstate" ]; then
-    cp terraform.tfstate "terraform.tfstate.backup.$(date +%Y%m%d_%H%M%S)"
-    log "Terraform state backed up"
   fi
 }
 
@@ -144,7 +168,6 @@ remove_kubernetes_helm_resources_from_state() {
   log "Removing Kubernetes and Helm resources from Terraform state..."
   
   local k8s_helm_resources=(
-    # Kubernetes resources
     "kubernetes_namespace.argocd"
     "kubernetes_namespace.gitlab"
     "kubernetes_namespace.ingress_nginx"
@@ -153,7 +176,6 @@ remove_kubernetes_helm_resources_from_state() {
     "kubernetes_secret.git_secrets"
     "kubernetes_service.gitlab_nlb"
     "kubernetes_ingress_v1.argocd_nlb"
-    # Helm resources
     "helm_release.ingress_nginx"
     "helm_release.argocd"
     "helm_release.gitlab"
@@ -166,20 +188,10 @@ remove_kubernetes_helm_resources_from_state() {
     fi
   done
   
-  # Also remove any other helm_release resources that might exist
-  log "Scanning for additional helm_release resources..."
-  terraform -chdir=$SCRIPTDIR state list | grep "helm_release" | while read -r resource; do
+  # Remove any additional helm_release and kubernetes resources
+  terraform -chdir=$SCRIPTDIR state list | grep -E "(helm_release|kubernetes_)" | while read -r resource; do
     if [ -n "$resource" ]; then
-      log "Removing additional helm resource: $resource"
-      terraform -chdir=$SCRIPTDIR state rm "$resource" 2>/dev/null || true
-    fi
-  done
-  
-  # Remove any kubernetes resources that might exist
-  log "Scanning for additional kubernetes resources..."
-  terraform -chdir=$SCRIPTDIR state list | grep "kubernetes_" | while read -r resource; do
-    if [ -n "$resource" ]; then
-      log "Removing additional kubernetes resource: $resource"
+      log "Removing additional resource: $resource"
       terraform -chdir=$SCRIPTDIR state rm "$resource" 2>/dev/null || true
     fi
   done
@@ -187,75 +199,36 @@ remove_kubernetes_helm_resources_from_state() {
   log_success "Kubernetes and Helm resources removed from state"
 }
 
-# Test if Terraform Kubernetes and Helm providers can connect
-test_kubernetes_helm_providers() {
-  log "Testing Terraform Kubernetes and Helm provider connections..."
-  
-  local providers_working=true
-  
-  # Test Kubernetes provider
-  if ! terraform -chdir=$SCRIPTDIR plan -target="kubernetes_namespace.argocd" &>/dev/null; then
-    log_warning "Terraform Kubernetes provider cannot connect"
-    providers_working=false
-  fi
-  
-  # Test Helm provider
-  if ! terraform -chdir=$SCRIPTDIR plan -target="helm_release.ingress_nginx" &>/dev/null; then
-    log_warning "Terraform Helm provider cannot connect"
-    providers_working=false
-  fi
-  
-  if [ "$providers_working" = true ]; then
-    log_success "Both Terraform Kubernetes and Helm providers are working"
-    return 0
-  else
-    log_warning "One or more Terraform providers cannot connect to Kubernetes"
-    return 1
-  fi
-}
-
 # Enhanced cleanup function for ArgoCD resources
 cleanup_argocd_resources() {
-  log "Starting enhanced ArgoCD cleanup..."
+  log "Starting ArgoCD cleanup..."
   
   if ! kubectl get ns argocd &>/dev/null; then
     log "ArgoCD namespace not found, skipping cleanup"
     return 0
   fi
 
-  # 1. Delete workload applications first (but keep cluster-addons for last)
+  # Delete workload applications first
   local WORKLOAD_APPS=(peeks-members peeks-spoke-argocd peeks-members-init peeks-control-plane)
   
   for app in "${WORKLOAD_APPS[@]}"; do
     log "Deleting workload application: $app"
-    # Remove finalizers first
     kubectl patch applicationsets.argoproj.io -n argocd $app --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-    # Force delete with longer timeout
     timeout 60s kubectl delete applicationsets.argoproj.io -n argocd $app --ignore-not-found=true --wait=false --force --grace-period=0 2>/dev/null || true
   done
   
-  # 2. Clean up any remaining ArgoCD applications
-  log "Cleaning up remaining ArgoCD applications..."
+  # Clean up remaining ArgoCD applications and ApplicationSets
   kubectl get applications.argoproj.io -n argocd -o name 2>/dev/null | while read -r app; do
-    log "Removing finalizers from $app"
     kubectl patch "$app" -n argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
     kubectl delete "$app" -n argocd --ignore-not-found=true --wait=false --force --grace-period=0 2>/dev/null || true
   done
   
-  # 3. Clean up any remaining ApplicationSets
-  log "Cleaning up remaining ApplicationSets..."
   kubectl get applicationsets.argoproj.io -n argocd -o name 2>/dev/null | while read -r appset; do
-    log "Removing finalizers from $appset"
     kubectl patch "$appset" -n argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
     kubectl delete "$appset" -n argocd --ignore-not-found=true --wait=false --force --grace-period=0 2>/dev/null || true
   done
   
-  # 4. Wait for workloads to terminate
-  log "Waiting for workloads to terminate..."
-  sleep 15
-  
-  # 5. Delete LoadBalancer services before removing the controller
-  log "Cleaning up LoadBalancer services..."
+  # Delete LoadBalancer services
   kubectl get services --all-namespaces --field-selector spec.type=LoadBalancer -o json 2>/dev/null | \
   jq -r '.items[]? | "\(.metadata.name) \(.metadata.namespace)"' | \
   while read -r name namespace; do
@@ -266,58 +239,30 @@ cleanup_argocd_resources() {
     fi
   done
   
-  # 6. Delete cluster-addons (controllers like load-balancer-controller)
-  log "Deleting cluster-addons (controllers)..."
+  # Delete cluster-addons
   kubectl patch applicationsets.argoproj.io -n argocd cluster-addons --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
   timeout 60s kubectl delete applicationsets.argoproj.io -n argocd cluster-addons --ignore-not-found=true --wait=false --force --grace-period=0 2>/dev/null || true
-  
-  # 7. Force cleanup of ArgoCD namespace if it's stuck
-  log "Checking ArgoCD namespace status..."
-  if kubectl get ns argocd -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Terminating"; then
-    log "ArgoCD namespace is stuck in Terminating state, attempting force cleanup..."
-    
-    # Remove finalizers from the namespace
-    kubectl patch namespace argocd --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
-    
-    # Try to delete any remaining resources in the namespace
-    kubectl delete all --all -n argocd --force --grace-period=0 2>/dev/null || true
-    kubectl delete pvc --all -n argocd --force --grace-period=0 2>/dev/null || true
-    kubectl delete secrets --all -n argocd --force --grace-period=0 2>/dev/null || true
-    kubectl delete configmaps --all -n argocd --force --grace-period=0 2>/dev/null || true
-    
-    # Final attempt to delete the namespace
-    kubectl delete namespace argocd --force --grace-period=0 2>/dev/null || true
-  fi
   
   log_success "ArgoCD cleanup completed"
 }
 
-# Enhanced cleanup function with fallback for Kubernetes and Helm provider issues
+# Cleanup Kubernetes resources with fallback
 cleanup_kubernetes_resources_with_fallback() {
   log "Attempting to clean up Kubernetes resources..."
   
   # Test if kubectl is working
   if ! kubectl get nodes --request-timeout=10s &>/dev/null; then
-    log_warning "kubectl cannot connect to cluster, skipping Kubernetes cleanup"
-    log "Kubernetes resources will be cleaned up when cluster is destroyed"
+    log_warning "kubectl cannot connect to cluster, removing resources from state only"
     remove_kubernetes_helm_resources_from_state
     return 0
   fi
   
-  # Test if Terraform can connect to Kubernetes and Helm providers
-  if ! test_kubernetes_helm_providers; then
-    log_warning "Terraform Kubernetes/Helm providers cannot connect"
-    remove_kubernetes_helm_resources_from_state
-    log "Kubernetes and Helm resources removed from state, will be cleaned up with cluster"
-    return 0
-  fi
-  
-  # If we get here, both kubectl and Terraform providers are working
-  log_success "kubectl and Terraform Kubernetes/Helm providers are working"
+  log_success "kubectl is working, proceeding with resource cleanup"
   cleanup_argocd_resources
+  remove_kubernetes_helm_resources_from_state
 }
 
-# Destroy Terraform resources with improved error handling
+# Destroy Terraform resources
 destroy_terraform_resources() {
   log "Starting Terraform resource destruction..."
   
@@ -340,7 +285,7 @@ destroy_terraform_resources() {
     force_delete_vpc "peeks-hub-cluster"
   fi
   
-  # Destroy VPC with retries
+  # Destroy VPC
   log "Destroying VPC..."
   if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"module.vpc\" -auto-approve"; then
     log_success "Successfully destroyed VPC"
@@ -349,7 +294,7 @@ destroy_terraform_resources() {
     log_warning "Continuing with final destroy..."
   fi
   
-  # Final destroy with retries
+  # Final destroy
   log "Running final terraform destroy..."
   if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -auto-approve"; then
     log_success "Successfully completed final destroy"
@@ -363,49 +308,14 @@ destroy_terraform_resources() {
 main() {
   log "Starting enhanced destroy script..."
   
-  # Track overall success/failure
-  local overall_success=true
-  
-  # Pre-flight checks
-  if ! preflight_checks; then
-    log_error "Pre-flight checks failed"
-    overall_success=false
-  fi
-  
-  # Backup state
-  backup_terraform_state
+  # Validate backend configuration
+  validate_backend_config
   
   # Initialize Terraform
-  if [[ -n "${TFSTATE_BUCKET_NAME:-}" && -n "${TFSTATE_LOCK_TABLE:-}" ]]; then
-    if ! terraform -chdir=$SCRIPTDIR init --upgrade \
-      -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
-      -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}" \
-      -backend-config="region=${AWS_REGION:-us-east-1}"; then
-      log_error "Terraform init failed with remote backend"
-      overall_success=false
-    fi
-  else
-    # Try to get backend config from SSM parameters
-    BUCKET_NAME=$(aws ssm get-parameter --name tf-backend-bucket --query 'Parameter.Value' --output text 2>/dev/null || echo "")
-    LOCK_TABLE=$(aws ssm get-parameter --name tf-backend-lock-table --query 'Parameter.Value' --output text 2>/dev/null || echo "")
-    
-    if [[ -n "$BUCKET_NAME" && -n "$LOCK_TABLE" ]]; then
-      if ! terraform -chdir=$SCRIPTDIR init --upgrade \
-        -backend-config="bucket=${BUCKET_NAME}" \
-        -backend-config="dynamodb_table=${LOCK_TABLE}" \
-        -backend-config="region=${AWS_REGION:-us-east-1}"; then
-        log_error "Terraform init failed with SSM backend config"
-        overall_success=false
-      fi
-    else
-      if ! terraform -chdir=$SCRIPTDIR init --upgrade; then
-        log_error "Terraform init failed with local backend"
-        overall_success=false
-      fi
-      echo "WARNING: Backend configuration not found in environment variables or SSM parameters."
-      echo "WARNING: Terraform state will be stored locally and may be lost!"
-    fi
-  fi
+  initialize_terraform
+  
+  # Pre-flight checks
+  preflight_checks
   
   # Configure kubectl with fallback
   if ! configure_kubectl_with_fallback; then
@@ -417,20 +327,13 @@ main() {
     log_warning "Kubernetes cleanup had issues, but continuing with Terraform destroy"
   fi
   
-  # Destroy Terraform resources - this is critical
+  # Destroy Terraform resources
   if ! destroy_terraform_resources; then
     log_error "Critical failure: Terraform destroy failed"
-    overall_success=false
+    exit 1
   fi
   
-  # Final status check
-  if [ "$overall_success" = true ]; then
-    log_success "Destroy script completed successfully"
-    return 0
-  else
-    log_error "Destroy script completed with critical errors"
-    return 1
-  fi
+  log_success "Destroy script completed successfully"
 }
 
 # Run main function
