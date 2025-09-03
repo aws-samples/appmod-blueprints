@@ -11,7 +11,7 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 
 # Logging functions
 log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >&2
 }
 
 log_error() {
@@ -19,7 +19,7 @@ log_error() {
 }
 
 log_success() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1" >&2
 }
 
 # Validate required environment variables
@@ -80,10 +80,12 @@ wait_for_gitlab_distribution() {
   while [[ $attempt -lt $max_attempts ]]; do
     log "Attempt $((attempt + 1))/$max_attempts: Checking for GitLab CloudFront distribution..."
     
+    # Capture domain separately from logging to avoid mixing output
     gitlab_domain=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'gitlab')].DomainName | [0]" --output text 2>/dev/null || echo "None")
     
     if [[ "$gitlab_domain" != "None" && -n "$gitlab_domain" ]]; then
       log_success "Found GitLab CloudFront distribution: ${gitlab_domain}"
+      # Return only the domain name, no log output
       echo "$gitlab_domain"
       return 0
     fi
