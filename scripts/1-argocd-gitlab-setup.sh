@@ -107,14 +107,7 @@ git add . && git commit -m "Update Backstage Templates" || true
 set -x
 pwd
 # Push the local branch (WORKSHOP_GIT_BRANCH) to the remote main branch
-if ! git push --set-upstream origin $WORKSHOP_GIT_BRANCH:main; then
-    print_info "Push failed, attempting to pull and merge remote changes"
-    git pull origin main --rebase || {
-        print_info "Rebase failed, trying merge strategy"
-        git pull origin main --no-rebase
-    }
-    git push --set-upstream origin $WORKSHOP_GIT_BRANCH:main
-fi
+git push --set-upstream origin $WORKSHOP_GIT_BRANCH:main
 set +x
 
 print_step "Creating GitLab access token for ArgoCD"
