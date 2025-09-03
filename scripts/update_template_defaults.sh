@@ -3,6 +3,11 @@
 # Exit on error
 set -e
 
+# Source environment variables
+if [ -f /home/ec2-user/.bashrc.d/env.bash ]; then
+    source /home/ec2-user/.bashrc.d/env.bash
+fi
+
 # Source colors for output formatting
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
