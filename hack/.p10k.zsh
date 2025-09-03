@@ -1407,7 +1407,7 @@
   #   typeset -g POWERLEVEL9K_KUBECONTEXT_TEST_CONTENT_EXPANSION='> ${P9K_CONTENT} <'
   typeset -g POWERLEVEL9K_KUBECONTEXT_CLASSES=(
        '*prod*'  PROD    # These values are examples that are unlikely
-       '*staging*'  STAGING    # to match your needs. Customize them as needed.
+       '*dev*'  DEV    # to match your needs. Customize them as needed.
       '*'       DEFAULT)
   typeset -g POWERLEVEL9K_KUBECONTEXT_DEFAULT_FOREGROUND=7
   typeset -g POWERLEVEL9K_KUBECONTEXT_DEFAULT_BACKGROUND=5
@@ -1417,9 +1417,9 @@
   typeset -g POWERLEVEL9K_KUBECONTEXT_PROD_BACKGROUND='purple'
   typeset -g POWERLEVEL9K_KUBECONTEXT_PROD_VISUAL_IDENTIFIER_EXPANSION='⭐'
 
-  typeset -g POWERLEVEL9K_KUBECONTEXT_STAGING_FOREGROUND=0
-  typeset -g POWERLEVEL9K_KUBECONTEXT_STAGING_BACKGROUND=2
-  typeset -g POWERLEVEL9K_KUBECONTEXT_STAGING_VISUAL_IDENTIFIER_EXPANSION='○'
+  typeset -g POWERLEVEL9K_KUBECONTEXT_DEV_FOREGROUND=0
+  typeset -g POWERLEVEL9K_KUBECONTEXT_DEV_BACKGROUND=2
+  typeset -g POWERLEVEL9K_KUBECONTEXT_DEV_VISUAL_IDENTIFIER_EXPANSION='○'
 
   # Use POWERLEVEL9K_KUBECONTEXT_CONTENT_EXPANSION to specify the content displayed by kubecontext
   # segment. Parameter expansions are very flexible and fast, too. See reference:

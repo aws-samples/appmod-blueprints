@@ -1,5 +1,5 @@
 SPOKE_CLUSTER_PREFIX=${SPOKE_CLUSTER_NAME_PREFIX:-peeks-spoke}
-SPOKE_STAGING_CLUSTER="${SPOKE_CLUSTER_PREFIX}-staging"
+SPOKE_DEV_CLUSTER="${SPOKE_CLUSTER_PREFIX}-dev"
 SPOKE_PROD_CLUSTER="${SPOKE_CLUSTER_PREFIX}-prod"
 
 function deploy_prod (){
@@ -36,20 +36,20 @@ function deploy_prod (){
   git -C $GITOPS_DIR/apps push
 }
 
-function app_url_staging (){
-  wait-for-lb $(kubectl --context $SPOKE_STAGING_CLUSTER get svc -n ui ui-nlb -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+function app_url_dev (){
+  wait-for-lb $(kubectl --context $SPOKE_DEV_CLUSTER get svc -n ui ui-nlb -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 }
 function app_url_prod (){
   wait-for-lb $(kubectl --context $SPOKE_PROD_CLUSTER get svc -n ui ui-nlb -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 }
 
 function apps_fix_kyverno_insights(){
-  apps_fix_kyverno_insights_staging
+  apps_fix_kyverno_insights_dev
   apps_fix_kyverno_insights_prod
 }
 
-function kyverno_policy_reporter_ui_staging_on(){
-  nohup kubectl --context $SPOKE_STAGING_CLUSTER port-forward -n kyverno svc/policy-reporter-ui 8085:8080 > /dev/null 2>&1 &
+function kyverno_policy_reporter_ui_dev_on(){
+  nohup kubectl --context $SPOKE_DEV_CLUSTER port-forward -n kyverno svc/policy-reporter-ui 8085:8080 > /dev/null 2>&1 &
   echo $IDE_URL/proxy/8085/#/
 }
 
@@ -62,16 +62,16 @@ function kyverno_policy_reporter_ui_off(){
   pkill -f "kubectl.*port-forward.*policy-reporter-ui"
 }
 
-function apps_fix_kyverno_insights_staging (){
+function apps_fix_kyverno_insights_dev (){
   # Fix Kyverno Insights
 
-  #staging
-  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/backend/catalog/staging/kustomization.yaml $GITOPS_DIR/apps/backend/catalog/staging/kustomization.yaml
-  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/backend/catalog/staging/deployment.yaml $GITOPS_DIR/apps/backend/catalog/staging/deployment.yaml
-  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/frontend/assets/staging/kustomization.yaml $GITOPS_DIR/apps/frontend/assets/staging/kustomization.yaml
-  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/frontend/assets/staging/deployment.yaml $GITOPS_DIR/apps/frontend/assets/staging/deployment.yaml
-  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/frontend/ui/staging/kustomization.yaml $GITOPS_DIR/apps/frontend/ui/staging/kustomization.yaml
-  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/frontend/ui/staging/deployment.yaml $GITOPS_DIR/apps/frontend/ui/staging/deployment.yaml
+  #dev
+  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/backend/catalog/dev/kustomization.yaml $GITOPS_DIR/apps/backend/catalog/dev/kustomization.yaml
+  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/backend/catalog/dev/deployment.yaml $GITOPS_DIR/apps/backend/catalog/dev/deployment.yaml
+  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/frontend/assets/dev/kustomization.yaml $GITOPS_DIR/apps/frontend/assets/dev/kustomization.yaml
+  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/frontend/assets/dev/deployment.yaml $GITOPS_DIR/apps/frontend/assets/dev/deployment.yaml
+  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/frontend/ui/dev/kustomization.yaml $GITOPS_DIR/apps/frontend/ui/dev/kustomization.yaml
+  cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/frontend/ui/dev/deployment.yaml $GITOPS_DIR/apps/frontend/ui/dev/deployment.yaml
 
   git -C $GITOPS_DIR/apps status
   git -C $GITOPS_DIR/apps diff | cat
@@ -81,10 +81,10 @@ function apps_fix_kyverno_insights_staging (){
 
 }
 
-function apps_fix_kyverno_prod_staging (){
+function apps_fix_kyverno_prod_dev (){
   # Fix Kyverno Insights
 
-  #staging
+  #dev
   cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/backend/catalog/prod/kustomization.yaml $GITOPS_DIR/apps/backend/catalog/prod/kustomization.yaml
   cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/backend/catalog/prod/deployment.yaml $GITOPS_DIR/apps/backend/catalog/prod/deployment.yaml
   cp $WORKSHOP_DIR/gitops/solutions/module-kyverno/apps/frontend/assets/prod/kustomization.yaml $GITOPS_DIR/apps/frontend/assets/prod/kustomization.yaml
@@ -125,7 +125,7 @@ function custom_domain() {
     if [ -z "$1" ] || [ -z "$2" ]; then
         echo "Error: Both environment and domain parameters are required"
         echo "Usage: custom_domain <environment> <domain-name>"
-        echo "Environment must be either 'staging' or 'prod'"
+        echo "Environment must be either 'dev' or 'prod'"
         return 1
     fi
 
@@ -133,8 +133,8 @@ function custom_domain() {
     local DOMAIN_NAME="$2"
 
     # Validate environment parameter
-    if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "prod" ]]; then
-        echo "Error: Environment must be either 'staging' or 'prod'"
+    if [[ "$ENVIRONMENT" != "dev" && "$ENVIRONMENT" != "prod" ]]; then
+        echo "Error: Environment must be either 'dev' or 'prod'"
         return 1
     fi
 
@@ -196,7 +196,7 @@ function custom_domain() {
     fi
 
     echo "Removing Argocd Proxy configuration"
-    sed -i '/^[[:space:]]*params:/,+1 s/^/#/' $GITOPS_DIR/addons/environments/staging/addons/argocd/values.yaml
+    sed -i '/^[[:space:]]*params:/,+1 s/^/#/' $GITOPS_DIR/addons/environments/dev/addons/argocd/values.yaml
     if [[ -n "$(git -C "$GITOPS_DIR/addons" status --porcelain)" ]]; then
         git -C "$GITOPS_DIR/addons" status
         git -C "$GITOPS_DIR/addons" diff | cat
@@ -219,7 +219,7 @@ function custom_domain_delete() {
     if [ -z "$1" ] || [ -z "$2" ]; then
         echo "Error: Both environment and domain parameters are required"
         echo "Usage: custom_domain <environment> <domain-name>"
-        echo "Environment must be either 'staging' or 'prod'"
+        echo "Environment must be either 'dev' or 'prod'"
         return 1
     fi
 
@@ -227,8 +227,8 @@ function custom_domain_delete() {
     local DOMAIN_NAME="$2"
 
     # Validate environment parameter
-    if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "prod" ]]; then
-        echo "Error: Environment must be either 'staging' or 'prod'"
+    if [[ "$ENVIRONMENT" != "dev" && "$ENVIRONMENT" != "prod" ]]; then
+        echo "Error: Environment must be either 'dev' or 'prod'"
         return 1
     fi
 
@@ -282,7 +282,7 @@ function custom_domain_delete() {
     fi
 
     echo "Removing Argocd Proxy configuration"
-    sed -i '/^[[:space:]]*#[[:space:]]*params:/,+1 s/^[[:space:]]*#//' $GITOPS_DIR/addons/environments/staging/addons/argocd/values.yaml
+    sed -i '/^[[:space:]]*#[[:space:]]*params:/,+1 s/^[[:space:]]*#//' $GITOPS_DIR/addons/environments/dev/addons/argocd/values.yaml
     if [[ -n "$(git -C "$GITOPS_DIR/addons" status --porcelain)" ]]; then
         git -C "$GITOPS_DIR/addons" status
         git -C "$GITOPS_DIR/addons" diff | cat
@@ -303,6 +303,6 @@ function custom_domain_delete() {
 }
 
 function validation_locust_ui(){
-  nohup kubectl --context $SPOKE_STAGING_CLUSTER port-forward -n default service/eks-loadtest-locust 8089:8089 > /dev/null 2>&1 &
+  nohup kubectl --context $SPOKE_DEV_CLUSTER port-forward -n default service/eks-loadtest-locust 8089:8089 > /dev/null 2>&1 &
   echo $IDE_URL/proxy/8089/
 }

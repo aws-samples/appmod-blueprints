@@ -17,8 +17,8 @@ function argocd_credentials (){
 function argocd_hub_credentials (){
 	argocd_credentials ${HUB_CLUSTER_NAME:-peeks-hub-cluster} 8081
 }
-function argocd_staging_credentials (){
-	argocd_credentials ${SPOKE_CLUSTER_NAME_PREFIX:-peeks-spoke}-staging 8082
+function argocd_dev_credentials (){
+	argocd_credentials ${SPOKE_CLUSTER_NAME_PREFIX:-peeks-spoke}-dev 8082
 }
 function argocd_prod_credentials (){
 	argocd_credentials ${SPOKE_CLUSTER_NAME_PREFIX:-peeks-spoke}-prod 8083

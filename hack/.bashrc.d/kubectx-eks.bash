@@ -9,7 +9,7 @@ SPOKE_PROD_CLUSTER="${SPOKE_CLUSTER_PREFIX}-prod"
 
 echo "Using the following cluster names:"
 echo "- Hub cluster: $HUB_CLUSTER_NAME"
-echo "- Spoke Dev cluster: $SPOKE_DEV_CLUSTER"
+echo "- Spoke dev cluster: $SPOKE_DEV_CLUSTER"
 echo "- Spoke prod cluster: $SPOKE_PROD_CLUSTER"
 
 # Function to check if a cluster context exists
