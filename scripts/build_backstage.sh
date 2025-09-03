@@ -13,10 +13,6 @@ if [ -d /home/ec2-user/.bashrc.d ]; then
     done
 fi
 
-# Set defaults if environment variables are not set
-AWS_REGION=${AWS_REGION:-us-east-1}
-ACCOUNT_ID=${ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}
-
 # Use a single variable for app name, repository, service, and cluster
 APP_NAME="peeks-backstage"
 
