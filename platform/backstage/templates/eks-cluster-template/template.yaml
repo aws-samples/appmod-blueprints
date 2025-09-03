@@ -43,12 +43,12 @@ spec:
           title: Account ID
           type: string
           description: AWS Account ID
-          default: "586794472760"
+          default: "<aws_account_id>"
         managementAccountId:
           title: Management Account ID
           type: string
           description: AWS Management Account ID
-          default: "586794472760"
+          default: "<aws_account_id>"
         tenant:
           title: Tenant Name
           type: string
@@ -60,15 +60,15 @@ spec:
           ui:widget: hidden
         repoUsername:
           type: string
-          default: user1
+          default: <git_username>
           ui:widget: hidden
         repoName:
           type: string
-          default: platform-on-eks-workshop
+          default: <working_repo>
           ui:widget: hidden
         ingressDomainName:
           type: string
-          default: d2kd16cmltdwib.cloudfront.net
+          default: <ingress_domain_name>
           ui:widget: hidden
     - title: Git Repository URLs
       properties:
