@@ -6,6 +6,11 @@
 
 set -e
 
+# Source environment variables
+if [ -f /home/ec2-user/.bashrc.d/env.bash ]; then
+    source /home/ec2-user/.bashrc.d/env.bash
+fi
+
 # Source colors for output formatting
 source "$(dirname "$0")/colors.sh"
 
