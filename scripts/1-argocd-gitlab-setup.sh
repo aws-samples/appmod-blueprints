@@ -37,7 +37,7 @@ source "$SCRIPT_DIR/colors.sh"
 source "$SCRIPT_DIR/bootstrap-oidc-secrets.sh"
 
 set -e
-set -x # debug
+#set -x # debug
 
 # Check for required dependencies
 if ! command -v jq &> /dev/null; then
@@ -237,7 +237,8 @@ print_info "Building Backstage image in background..."
 
 # Create a temporary log file for the background build
 BACKSTAGE_LOG="/tmp/backstage_build_$$.log"
-$SCRIPT_DIR/build_backstage.sh $WORKSHOP_DIR/backstage > "$BACKSTAGE_LOG" 2>&1 &
+BACKSTAGE_PATH="$(dirname "$SCRIPT_DIR")/backstage"
+$SCRIPT_DIR/build_backstage.sh "$BACKSTAGE_PATH" > "$BACKSTAGE_LOG" 2>&1 &
 BACKSTAGE_BUILD_PID=$!
 print_info "Backstage build started with PID: $BACKSTAGE_BUILD_PID (logs: $BACKSTAGE_LOG)"
 
