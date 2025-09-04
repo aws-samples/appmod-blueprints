@@ -31,13 +31,17 @@
 #   Run after 0-initial-setup.sh and before 2-bootstrap-accounts.sh
 #
 #############################################################################
+
+# Configuration
+STUCK_SYNC_TIMEOUT=${STUCK_SYNC_TIMEOUT:-300}  # 5 minutes default for stuck sync operations
+
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
 source "$SCRIPT_DIR/bootstrap-oidc-secrets.sh"
 
 set -e
-set -x # debug
+#set -x # debug
 
 # Check for required dependencies
 if ! command -v jq &> /dev/null; then
@@ -76,6 +80,18 @@ print_header "ArgoCD and GitLab Setup"
 
 print_step "Updating kubeconfig to connect to the hub cluster"
 aws eks update-kubeconfig --name peeks-hub-cluster --alias peeks-hub-cluster
+
+print_step "Creating Amazon Elastic Container Repository (Amazon ECR) for Backstage image"
+aws ecr create-repository --repository-name peeks-backstage --region $AWS_REGION || true
+
+print_step "Starting Backstage image build early"
+print_info "Building Backstage image in background..."
+# Create a temporary log file for the background build
+BACKSTAGE_LOG="/tmp/backstage_build_$$.log"
+BACKSTAGE_PATH="$(dirname "$SCRIPT_DIR")/backstage"
+$SCRIPT_DIR/build_backstage.sh "$BACKSTAGE_PATH" > "$BACKSTAGE_LOG" 2>&1 &
+BACKSTAGE_BUILD_PID=$!
+print_info "Backstage build started with PID: $BACKSTAGE_BUILD_PID (logs: $BACKSTAGE_LOG)"
 
 export DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text)
 update_workshop_var "DOMAIN_NAME" "$DOMAIN_NAME"
@@ -176,7 +192,15 @@ else
 fi
 
 print_step "Creating ArgoCD Git repository secret with GitLab token"
-envsubst << EOF | kubectl apply -f -
+
+# Check if secret already exists and get its current token
+EXISTING_TOKEN=""
+if kubectl get secret git-${WORKING_REPO} -n argocd >/dev/null 2>&1; then
+    EXISTING_TOKEN=$(kubectl get secret git-${WORKING_REPO} -n argocd -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+fi
+
+# Apply the secret
+SECRET_OUTPUT=$(envsubst << EOF | kubectl apply -f -
 apiVersion: v1
 kind: Secret
 metadata:
@@ -190,24 +214,65 @@ stringData:
    username: $GIT_USERNAME
    password: $GITLAB_TOKEN
 EOF
+)
 
-print_step "Restarting ArgoCD repo server to pick up new credentials"
-kubectl rollout restart deployment argocd-repo-server -n argocd
-kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-repo-server -n argocd --timeout=60s
+echo "$SECRET_OUTPUT"
+
+# Check if restart is needed
+RESTART_NEEDED=false
+if echo "$SECRET_OUTPUT" | grep -q "created"; then
+    print_info "New secret created, ArgoCD restart required"
+    RESTART_NEEDED=true
+elif echo "$SECRET_OUTPUT" | grep -q "configured"; then
+    if [ "$EXISTING_TOKEN" != "$GITLAB_TOKEN" ]; then
+        print_info "Secret token changed, ArgoCD restart required"
+        RESTART_NEEDED=true
+    else
+        print_info "Secret exists with same token, skipping ArgoCD restart"
+    fi
+fi
+
+if [ "$RESTART_NEEDED" = true ]; then
+    print_step "Restarting ArgoCD repo server to pick up new credentials"
+    kubectl rollout restart deployment argocd-repo-server -n argocd
+
+    # Wait for rollout to complete with better error handling
+    print_info "Waiting for ArgoCD repo server rollout to complete..."
+    if ! kubectl rollout status deployment argocd-repo-server -n argocd --timeout=300s; then
+        print_error "ArgoCD repo server rollout failed, attempting recovery..."
+        
+        # Check deployment status
+        kubectl get deployment argocd-repo-server -n argocd -o wide
+        kubectl get pods -l app.kubernetes.io/name=argocd-repo-server -n argocd
+        
+        # Try to wait for any ready pod with a longer timeout
+        print_info "Waiting for any ArgoCD repo server pod to be ready..."
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-repo-server -n argocd --timeout=180s || {
+            print_error "Failed to wait for ArgoCD repo server pod readiness"
+            
+            # Show pod logs for debugging
+            print_info "Checking pod logs for troubleshooting..."
+            kubectl logs -l app.kubernetes.io/name=argocd-repo-server -n argocd --tail=20 || true
+            
+            # Force delete old pods if they're stuck
+            print_info "Attempting to force cleanup stuck pods..."
+            kubectl delete pods -l app.kubernetes.io/name=argocd-repo-server -n argocd --grace-period=0 --force || true
+            
+            # Wait again after cleanup
+            sleep 30
+            kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-repo-server -n argocd --timeout=120s || {
+                print_error "ArgoCD repo server restart failed completely"
+                return 1
+            }
+        }
+    fi
+
+    print_success "ArgoCD repo server restarted successfully"
+else
+    print_success "ArgoCD repo server restart not needed"
+fi
 
 sleep 5
-
-print_step "Creating Amazon Elastic Container Repository (Amazon ECR) for Backstage image"
-aws ecr create-repository --repository-name peeks-backstage --region $AWS_REGION || true
-
-print_step "Starting Backstage image build in parallel"
-print_info "Building Backstage image in background..."
-
-# Create a temporary log file for the background build
-BACKSTAGE_LOG="/tmp/backstage_build_$$.log"
-$SCRIPT_DIR/build_backstage.sh $WORKSHOP_DIR/backstage > "$BACKSTAGE_LOG" 2>&1 &
-BACKSTAGE_BUILD_PID=$!
-print_info "Backstage build started with PID: $BACKSTAGE_BUILD_PID (logs: $BACKSTAGE_LOG)"
 
 print_step "Pre-creating OIDC client secrets to break dependency cycles"
 bootstrap_oidc_secrets
@@ -233,6 +298,86 @@ fi
 
 print_info "Checking ArgoCD applications status"
 kubectl get applications -n argocd
+
+print_step "Ensuring critical ArgoCD applications are healthy"
+
+# Define critical applications to monitor (can be customized)
+CRITICAL_APPS="${CRITICAL_ARGOCD_APPS:-bootstrap cluster-addons argocd-peeks-hub-cluster ingress-nginx-peeks-hub-cluster}"
+print_info "Monitoring applications: ${CRITICAL_APPS:-all applications}"
+
+# Function to sync and wait for applications
+sync_and_wait_apps() {
+    local apps_to_check="$1"
+    local max_attempts=2  # Reduced from 3 since apps are auto-sync
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        print_info "Health check attempt $attempt/$max_attempts"
+        
+        # Get application status with operation state
+        local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{" "}{.status.operationState.phase}{"\n"}{end}' 2>/dev/null)
+        
+        # Check for stuck sync operations
+        local stuck_apps=$(echo "$app_status" | awk '$4 == "Running" {print $1}')
+        if [ -n "$stuck_apps" ]; then
+            print_info "Checking for stuck sync operations (timeout: ${STUCK_SYNC_TIMEOUT}s)..."
+            echo "$stuck_apps" | while read app; do
+                if [ -n "$app" ]; then
+                    local start_time=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.operationState.startedAt}' 2>/dev/null)
+                    if [ -n "$start_time" ]; then
+                        local current_time=$(date -u +%s)
+                        local start_timestamp=$(date -d "$start_time" +%s 2>/dev/null || echo "0")
+                        local duration=$((current_time - start_timestamp))
+                        
+                        if [ $duration -gt $STUCK_SYNC_TIMEOUT ]; then
+                            print_warning "Terminating stuck sync for $app (running ${duration}s > ${STUCK_SYNC_TIMEOUT}s)"
+                            argocd app terminate-op "$app" 2>/dev/null || true
+                            sleep 5
+                        fi
+                    fi
+                fi
+            done
+        fi
+        
+        # Filter for specific apps if provided, otherwise check all
+        local unhealthy_apps
+        if [ -n "$apps_to_check" ]; then
+            unhealthy_apps=$(echo "$app_status" | grep -E "^($(echo "$apps_to_check" | tr ' ' '|')) " | awk '$2 != "Healthy" || $3 == "OutOfSync" {print $1}')
+        else
+            unhealthy_apps=$(echo "$app_status" | awk '$2 != "Healthy" || $3 == "OutOfSync" {print $1}')
+        fi
+        
+        if [ -z "$unhealthy_apps" ]; then
+            print_success "All monitored applications are healthy"
+            return 0
+        fi
+        
+        print_info "Syncing unhealthy applications:"
+        echo "$unhealthy_apps" | while read app; do
+            if [ -n "$app" ]; then
+                print_info "  Syncing: $app"
+                argocd app sync "$app" --timeout 60 2>/dev/null || {
+                    print_warning "ArgoCD CLI sync failed for $app, using kubectl"
+                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                }
+            fi
+        done
+        
+        print_info "Waiting 60 seconds for sync operations..."
+        sleep 60
+        ((attempt++))
+    done
+    
+    print_warning "Some applications may still be unhealthy after $max_attempts attempts"
+    return 1
+}
+
+# Run health check
+sync_and_wait_apps "$CRITICAL_APPS"
+
+# Show final status
+print_info "Final applications status:"
+kubectl get applications -n argocd -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status" --no-headers
 
 print_step "Waiting for Backstage image build to complete"
 print_info "Checking if Backstage build is still running..."
@@ -265,31 +410,6 @@ fi
 
 # Clean up the temporary log file
 rm -f "$BACKSTAGE_LOG"
-
-print_step "Updating Backstage template with environment-specific values"
-# Run the template update script to replace placeholder values with actual environment values
-if [ -f "$WORKSPACE_PATH/$WORKING_REPO/scripts/update_template_defaults.sh" ]; then
-    cd "$WORKSPACE_PATH/$WORKING_REPO"
-    ./scripts/update_template_defaults.sh
-    
-    # Commit the updated template
-    print_info "Committing updated Backstage template to Git repository"
-    git add platform/backstage/templates/eks-cluster-template/template.yaml
-    git commit -m "Update Backstage template with environment-specific values
-
-- Account ID: $ACCOUNT_ID (actual environment value)
-- GitLab domain: Updated to actual CloudFront domain
-- Ingress domain: Updated to actual ingress domain  
-- Repository URLs: Updated to use actual GitLab domain
-
-This ensures templates work correctly without placeholder URL errors." || print_info "No changes to commit (template already updated)"
-    
-    git push origin $WORKSHOP_GIT_BRANCH:main || print_warning "Failed to push template updates (may already be up to date)"
-    
-    print_success "Backstage template updated with environment values"
-else
-    print_warning "Template update script not found, skipping template update"
-fi
 
 # Export additional environment variables for tools
 print_step "Setting up environment variables for tools"
