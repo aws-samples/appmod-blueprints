@@ -27,6 +27,13 @@ SCRIPT_DIR="$(dirname "$0")"
 ARGOCD_WAIT_TIMEOUT=900  # Increased from 600 to 900 seconds (15 minutes)
 ARGOCD_CHECK_INTERVAL=30 # 30 seconds
 
+# Cluster configuration using environment variables
+CLUSTER_NAMES=(
+    "${HUB_CLUSTER_NAME}"
+    "${SPOKE_CLUSTER_NAME_PREFIX}-dev"
+    "${SPOKE_CLUSTER_NAME_PREFIX}-prod"
+)
+
 # Define scripts to run in order
 SCRIPTS=(
     "1-argocd-gitlab-setup.sh"
@@ -52,6 +59,89 @@ print_status() {
             echo -e "${YELLOW}[WARN]${NC} $message"
             ;;
     esac
+}
+
+# Function to wait for EKS clusters to be ready
+wait_for_clusters_ready() {
+    print_status "INFO" "Checking EKS cluster readiness..."
+    
+    print_status "INFO" "Using the following cluster names:"
+    for cluster in "${CLUSTER_NAMES[@]}"; do
+        print_status "INFO" "- $cluster"
+    done
+    
+    local all_ready=false
+    local max_wait=1800  # 30 minutes total wait time
+    local check_interval=30
+    local start_time=$(date +%s)
+    local end_time=$((start_time + max_wait))
+    
+    while [ $(date +%s) -lt $end_time ] && [ "$all_ready" = false ]; do
+        all_ready=true
+        
+        for cluster in "${CLUSTER_NAMES[@]}"; do
+            if [ -z "$cluster" ]; then
+                print_status "WARN" "Skipping empty cluster name"
+                continue
+            fi
+            
+            print_status "INFO" "Checking cluster: $cluster"
+            
+            # Check if cluster exists and get its status
+            local cluster_status
+            if cluster_status=$(aws eks describe-cluster --name "$cluster" --region "${AWS_DEFAULT_REGION:-us-east-1}" --query 'cluster.status' --output text 2>/dev/null); then
+                case "$cluster_status" in
+                    "ACTIVE")
+                        print_status "SUCCESS" "Cluster $cluster is ACTIVE"
+                        ;;
+                    "CREATING")
+                        print_status "INFO" "Cluster $cluster is still CREATING, waiting..."
+                        all_ready=false
+                        ;;
+                    "UPDATING")
+                        print_status "INFO" "Cluster $cluster is UPDATING, waiting..."
+                        all_ready=false
+                        ;;
+                    *)
+                        print_status "ERROR" "Cluster $cluster has unexpected status: $cluster_status"
+                        return 1
+                        ;;
+                esac
+            else
+                print_status "ERROR" "Failed to get status for cluster: $cluster"
+                return 1
+            fi
+        done
+        
+        if [ "$all_ready" = false ]; then
+            local remaining_time=$((end_time - $(date +%s)))
+            print_status "INFO" "Waiting ${check_interval}s before next check (${remaining_time}s remaining)..."
+            sleep $check_interval
+        fi
+    done
+    
+    if [ "$all_ready" = true ]; then
+        print_status "SUCCESS" "All EKS clusters are ready!"
+        
+        # Update kubeconfig for all clusters
+        print_status "INFO" "Updating kubeconfig for all clusters..."
+        for cluster in "${CLUSTER_NAMES[@]}"; do
+            if [ -n "$cluster" ]; then
+                print_status "INFO" "Updating kubeconfig for $cluster"
+                if aws eks update-kubeconfig --region "${AWS_DEFAULT_REGION:-us-east-1}" --name "$cluster" --alias "$cluster"; then
+                    print_status "SUCCESS" "Kubeconfig updated for $cluster"
+                else
+                    print_status "ERROR" "Failed to update kubeconfig for $cluster"
+                    return 1
+                fi
+            fi
+        done
+        
+        return 0
+    else
+        print_status "ERROR" "Timeout waiting for clusters to be ready"
+        return 1
+    fi
 }
 
 # Function to wait for ArgoCD applications to be healthy
@@ -325,6 +415,12 @@ main() {
     print_status "INFO" "Retry delay: $RETRY_DELAY seconds"
     print_status "INFO" "ArgoCD wait timeout: $ARGOCD_WAIT_TIMEOUT seconds"
     print_status "INFO" "Scripts to execute: ${SCRIPTS[*]}"
+    
+    # Wait for all EKS clusters to be ready before proceeding
+    if ! wait_for_clusters_ready; then
+        print_status "ERROR" "EKS clusters are not ready. Aborting bootstrap process."
+        exit 1
+    fi
     
     for script_name in "${SCRIPTS[@]}"; do
         local script_path="$SCRIPT_DIR/$script_name"
