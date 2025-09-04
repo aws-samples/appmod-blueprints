@@ -31,6 +31,10 @@
 #   Run after 0-initial-setup.sh and before 2-bootstrap-accounts.sh
 #
 #############################################################################
+
+# Configuration
+STUCK_SYNC_TIMEOUT=${STUCK_SYNC_TIMEOUT:-300}  # 5 minutes default for stuck sync operations
+
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
@@ -310,8 +314,30 @@ sync_and_wait_apps() {
     while [ $attempt -le $max_attempts ]; do
         print_info "Health check attempt $attempt/$max_attempts"
         
-        # Get application status
-        local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null)
+        # Get application status with operation state
+        local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{" "}{.status.operationState.phase}{"\n"}{end}' 2>/dev/null)
+        
+        # Check for stuck sync operations
+        local stuck_apps=$(echo "$app_status" | awk '$4 == "Running" {print $1}')
+        if [ -n "$stuck_apps" ]; then
+            print_info "Checking for stuck sync operations (timeout: ${STUCK_SYNC_TIMEOUT}s)..."
+            echo "$stuck_apps" | while read app; do
+                if [ -n "$app" ]; then
+                    local start_time=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.operationState.startedAt}' 2>/dev/null)
+                    if [ -n "$start_time" ]; then
+                        local current_time=$(date -u +%s)
+                        local start_timestamp=$(date -d "$start_time" +%s 2>/dev/null || echo "0")
+                        local duration=$((current_time - start_timestamp))
+                        
+                        if [ $duration -gt $STUCK_SYNC_TIMEOUT ]; then
+                            print_warning "Terminating stuck sync for $app (running ${duration}s > ${STUCK_SYNC_TIMEOUT}s)"
+                            argocd app terminate-op "$app" 2>/dev/null || true
+                            sleep 5
+                        fi
+                    fi
+                fi
+            done
+        fi
         
         # Filter for specific apps if provided, otherwise check all
         local unhealthy_apps
