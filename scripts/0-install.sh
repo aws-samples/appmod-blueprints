@@ -239,8 +239,9 @@ run_script_with_retry() {
                 fi
                 
                 # Try to sync critical applications with error handling
-                print_status "INFO" "Attempting to sync critical ArgoCD applications..."
-                sync_and_wait_app "bootstrap" 180 || print_status "WARN" "Bootstrap app sync had issues, continuing..."
+                print_status "INFO" "Checking critical ArgoCD applications status..."
+                # Skip bootstrap sync since 1-argocd-gitlab-setup.sh already synced it
+                # sync_and_wait_app "bootstrap" 180 || print_status "WARN" "Bootstrap app sync had issues, continuing..."
                 
                 # Brief wait for stabilization
                 sleep 30

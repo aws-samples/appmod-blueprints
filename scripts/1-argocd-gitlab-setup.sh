@@ -304,7 +304,7 @@ print_info "Monitoring applications: ${CRITICAL_APPS:-all applications}"
 # Function to sync and wait for applications
 sync_and_wait_apps() {
     local apps_to_check="$1"
-    local max_attempts=3
+    local max_attempts=2  # Reduced from 3 since apps are auto-sync
     local attempt=1
     
     while [ $attempt -le $max_attempts ]; do
@@ -384,31 +384,6 @@ fi
 
 # Clean up the temporary log file
 rm -f "$BACKSTAGE_LOG"
-
-print_step "Updating Backstage template with environment-specific values"
-# Run the template update script to replace placeholder values with actual environment values
-if [ -f "$WORKSPACE_PATH/$WORKING_REPO/scripts/update_template_defaults.sh" ]; then
-    cd "$WORKSPACE_PATH/$WORKING_REPO"
-    ./scripts/update_template_defaults.sh
-    
-    # Commit the updated template
-    print_info "Committing updated Backstage template to Git repository"
-    git add platform/backstage/templates/eks-cluster-template/template.yaml
-    git commit -m "Update Backstage template with environment-specific values
-
-- Account ID: $ACCOUNT_ID (actual environment value)
-- GitLab domain: Updated to actual CloudFront domain
-- Ingress domain: Updated to actual ingress domain  
-- Repository URLs: Updated to use actual GitLab domain
-
-This ensures templates work correctly without placeholder URL errors." || print_info "No changes to commit (template already updated)"
-    
-    git push origin $WORKSHOP_GIT_BRANCH:main || print_warning "Failed to push template updates (may already be up to date)"
-    
-    print_success "Backstage template updated with environment values"
-else
-    print_warning "Template update script not found, skipping template update"
-fi
 
 # Export additional environment variables for tools
 print_step "Setting up environment variables for tools"
