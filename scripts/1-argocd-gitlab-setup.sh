@@ -77,6 +77,18 @@ print_header "ArgoCD and GitLab Setup"
 print_step "Updating kubeconfig to connect to the hub cluster"
 aws eks update-kubeconfig --name peeks-hub-cluster --alias peeks-hub-cluster
 
+print_step "Creating Amazon Elastic Container Repository (Amazon ECR) for Backstage image"
+aws ecr create-repository --repository-name peeks-backstage --region $AWS_REGION || true
+
+print_step "Starting Backstage image build early"
+print_info "Building Backstage image in background..."
+# Create a temporary log file for the background build
+BACKSTAGE_LOG="/tmp/backstage_build_$$.log"
+BACKSTAGE_PATH="$(dirname "$SCRIPT_DIR")/backstage"
+$SCRIPT_DIR/build_backstage.sh "$BACKSTAGE_PATH" > "$BACKSTAGE_LOG" 2>&1 &
+BACKSTAGE_BUILD_PID=$!
+print_info "Backstage build started with PID: $BACKSTAGE_BUILD_PID (logs: $BACKSTAGE_LOG)"
+
 export DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text)
 update_workshop_var "DOMAIN_NAME" "$DOMAIN_NAME"
 
@@ -229,19 +241,6 @@ print_success "ArgoCD repo server restarted successfully"
 
 sleep 5
 
-print_step "Creating Amazon Elastic Container Repository (Amazon ECR) for Backstage image"
-aws ecr create-repository --repository-name peeks-backstage --region $AWS_REGION || true
-
-print_step "Starting Backstage image build in parallel"
-print_info "Building Backstage image in background..."
-
-# Create a temporary log file for the background build
-BACKSTAGE_LOG="/tmp/backstage_build_$$.log"
-BACKSTAGE_PATH="$(dirname "$SCRIPT_DIR")/backstage"
-$SCRIPT_DIR/build_backstage.sh "$BACKSTAGE_PATH" > "$BACKSTAGE_LOG" 2>&1 &
-BACKSTAGE_BUILD_PID=$!
-print_info "Backstage build started with PID: $BACKSTAGE_BUILD_PID (logs: $BACKSTAGE_LOG)"
-
 print_step "Pre-creating OIDC client secrets to break dependency cycles"
 bootstrap_oidc_secrets
 
@@ -266,6 +265,64 @@ fi
 
 print_info "Checking ArgoCD applications status"
 kubectl get applications -n argocd
+
+print_step "Ensuring critical ArgoCD applications are healthy"
+
+# Define critical applications to monitor (can be customized)
+CRITICAL_APPS="${CRITICAL_ARGOCD_APPS:-bootstrap cluster-addons argocd-peeks-hub-cluster ingress-nginx-peeks-hub-cluster}"
+print_info "Monitoring applications: ${CRITICAL_APPS:-all applications}"
+
+# Function to sync and wait for applications
+sync_and_wait_apps() {
+    local apps_to_check="$1"
+    local max_attempts=3
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        print_info "Health check attempt $attempt/$max_attempts"
+        
+        # Get application status
+        local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null)
+        
+        # Filter for specific apps if provided, otherwise check all
+        local unhealthy_apps
+        if [ -n "$apps_to_check" ]; then
+            unhealthy_apps=$(echo "$app_status" | grep -E "^($(echo "$apps_to_check" | tr ' ' '|')) " | awk '$2 != "Healthy" || $3 == "OutOfSync" {print $1}')
+        else
+            unhealthy_apps=$(echo "$app_status" | awk '$2 != "Healthy" || $3 == "OutOfSync" {print $1}')
+        fi
+        
+        if [ -z "$unhealthy_apps" ]; then
+            print_success "All monitored applications are healthy"
+            return 0
+        fi
+        
+        print_info "Syncing unhealthy applications:"
+        echo "$unhealthy_apps" | while read app; do
+            if [ -n "$app" ]; then
+                print_info "  Syncing: $app"
+                argocd app sync "$app" --timeout 60 2>/dev/null || {
+                    print_warning "ArgoCD CLI sync failed for $app, using kubectl"
+                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                }
+            fi
+        done
+        
+        print_info "Waiting 60 seconds for sync operations..."
+        sleep 60
+        ((attempt++))
+    done
+    
+    print_warning "Some applications may still be unhealthy after $max_attempts attempts"
+    return 1
+}
+
+# Run health check
+sync_and_wait_apps "$CRITICAL_APPS"
+
+# Show final status
+print_info "Final applications status:"
+kubectl get applications -n argocd -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status" --no-headers
 
 print_step "Waiting for Backstage image build to complete"
 print_info "Checking if Backstage build is still running..."
