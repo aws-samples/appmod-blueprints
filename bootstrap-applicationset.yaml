@@ -1,0 +1,67 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  annotations:
+    meta.helm.sh/release-name: applicationsets
+    meta.helm.sh/release-namespace: argocd
+  creationTimestamp: "2025-09-03T19:10:33Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/managed-by: Helm
+  name: bootstrap
+  namespace: argocd
+  resourceVersion: "221702"
+  uid: cfa0f8ec-12c1-454b-989b-d45e178ad891
+spec:
+  generators:
+  - clusters:
+      selector:
+        matchLabels:
+          fleet_member: control-plane
+  goTemplate: true
+  syncPolicy:
+    preserveResourcesOnDeletion: false
+  template:
+    metadata:
+      name: bootstrap
+    spec:
+      destination:
+        name: '{{.name}}'
+        namespace: argocd
+      project: default
+      source:
+        directory:
+          exclude: exclude/*
+          recurse: false
+        path: '{{.metadata.annotations.fleet_repo_basepath}}{{.metadata.annotations.fleet_repo_path}}'
+        repoURL: '{{.metadata.annotations.fleet_repo_url}}'
+        targetRevision: '{{.metadata.annotations.fleet_repo_revision}}'
+      syncPolicy:
+        automated: {}
+status:
+  conditions:
+  - lastTransitionTime: "2025-09-03T19:10:33Z"
+    message: Successfully generated parameters for all Applications
+    reason: ApplicationSetUpToDate
+    status: "False"
+    type: ErrorOccurred
+  - lastTransitionTime: "2025-09-03T19:10:33Z"
+    message: Successfully generated parameters for all Applications
+    reason: ParametersGenerated
+    status: "True"
+    type: ParametersGenerated
+  - lastTransitionTime: "2025-09-03T19:10:33Z"
+    message: ApplicationSet up to date
+    reason: ApplicationSetUpToDate
+    status: "True"
+    type: ResourcesUpToDate
+  resources:
+  - group: argoproj.io
+    health:
+      lastTransitionTime: "2025-09-03T19:10:35Z"
+      status: Healthy
+    kind: Application
+    name: bootstrap
+    namespace: argocd
+    status: Synced
+    version: v1alpha1

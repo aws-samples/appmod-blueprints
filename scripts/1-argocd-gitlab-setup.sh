@@ -37,7 +37,7 @@ source "$SCRIPT_DIR/colors.sh"
 source "$SCRIPT_DIR/bootstrap-oidc-secrets.sh"
 
 set -e
-#set -x # debug
+set -x # debug
 
 # Check for required dependencies
 if ! command -v jq &> /dev/null; then
