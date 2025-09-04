@@ -188,7 +188,15 @@ else
 fi
 
 print_step "Creating ArgoCD Git repository secret with GitLab token"
-envsubst << EOF | kubectl apply -f -
+
+# Check if secret already exists and get its current token
+EXISTING_TOKEN=""
+if kubectl get secret git-${WORKING_REPO} -n argocd >/dev/null 2>&1; then
+    EXISTING_TOKEN=$(kubectl get secret git-${WORKING_REPO} -n argocd -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+fi
+
+# Apply the secret
+SECRET_OUTPUT=$(envsubst << EOF | kubectl apply -f -
 apiVersion: v1
 kind: Secret
 metadata:
@@ -202,42 +210,63 @@ stringData:
    username: $GIT_USERNAME
    password: $GITLAB_TOKEN
 EOF
+)
 
-print_step "Restarting ArgoCD repo server to pick up new credentials"
-kubectl rollout restart deployment argocd-repo-server -n argocd
+echo "$SECRET_OUTPUT"
 
-# Wait for rollout to complete with better error handling
-print_info "Waiting for ArgoCD repo server rollout to complete..."
-if ! kubectl rollout status deployment argocd-repo-server -n argocd --timeout=300s; then
-    print_error "ArgoCD repo server rollout failed, attempting recovery..."
-    
-    # Check deployment status
-    kubectl get deployment argocd-repo-server -n argocd -o wide
-    kubectl get pods -l app.kubernetes.io/name=argocd-repo-server -n argocd
-    
-    # Try to wait for any ready pod with a longer timeout
-    print_info "Waiting for any ArgoCD repo server pod to be ready..."
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-repo-server -n argocd --timeout=180s || {
-        print_error "Failed to wait for ArgoCD repo server pod readiness"
-        
-        # Show pod logs for debugging
-        print_info "Checking pod logs for troubleshooting..."
-        kubectl logs -l app.kubernetes.io/name=argocd-repo-server -n argocd --tail=20 || true
-        
-        # Force delete old pods if they're stuck
-        print_info "Attempting to force cleanup stuck pods..."
-        kubectl delete pods -l app.kubernetes.io/name=argocd-repo-server -n argocd --grace-period=0 --force || true
-        
-        # Wait again after cleanup
-        sleep 30
-        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-repo-server -n argocd --timeout=120s || {
-            print_error "ArgoCD repo server restart failed completely"
-            return 1
-        }
-    }
+# Check if restart is needed
+RESTART_NEEDED=false
+if echo "$SECRET_OUTPUT" | grep -q "created"; then
+    print_info "New secret created, ArgoCD restart required"
+    RESTART_NEEDED=true
+elif echo "$SECRET_OUTPUT" | grep -q "configured"; then
+    if [ "$EXISTING_TOKEN" != "$GITLAB_TOKEN" ]; then
+        print_info "Secret token changed, ArgoCD restart required"
+        RESTART_NEEDED=true
+    else
+        print_info "Secret exists with same token, skipping ArgoCD restart"
+    fi
 fi
 
-print_success "ArgoCD repo server restarted successfully"
+if [ "$RESTART_NEEDED" = true ]; then
+    print_step "Restarting ArgoCD repo server to pick up new credentials"
+    kubectl rollout restart deployment argocd-repo-server -n argocd
+
+    # Wait for rollout to complete with better error handling
+    print_info "Waiting for ArgoCD repo server rollout to complete..."
+    if ! kubectl rollout status deployment argocd-repo-server -n argocd --timeout=300s; then
+        print_error "ArgoCD repo server rollout failed, attempting recovery..."
+        
+        # Check deployment status
+        kubectl get deployment argocd-repo-server -n argocd -o wide
+        kubectl get pods -l app.kubernetes.io/name=argocd-repo-server -n argocd
+        
+        # Try to wait for any ready pod with a longer timeout
+        print_info "Waiting for any ArgoCD repo server pod to be ready..."
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-repo-server -n argocd --timeout=180s || {
+            print_error "Failed to wait for ArgoCD repo server pod readiness"
+            
+            # Show pod logs for debugging
+            print_info "Checking pod logs for troubleshooting..."
+            kubectl logs -l app.kubernetes.io/name=argocd-repo-server -n argocd --tail=20 || true
+            
+            # Force delete old pods if they're stuck
+            print_info "Attempting to force cleanup stuck pods..."
+            kubectl delete pods -l app.kubernetes.io/name=argocd-repo-server -n argocd --grace-period=0 --force || true
+            
+            # Wait again after cleanup
+            sleep 30
+            kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-repo-server -n argocd --timeout=120s || {
+                print_error "ArgoCD repo server restart failed completely"
+                return 1
+            }
+        }
+    fi
+
+    print_success "ArgoCD repo server restarted successfully"
+else
+    print_success "ArgoCD repo server restart not needed"
+fi
 
 sleep 5
 
