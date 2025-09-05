@@ -74,7 +74,7 @@ usage() {
 wait_for_gitlab_distribution() {
   log "Waiting for GitLab CloudFront distribution to be created by hub cluster..."
   local gitlab_domain=""
-  local max_attempts=30
+  local max_attempts=60  # Increased to 30 minutes
   local attempt=0
 
   while [[ $attempt -lt $max_attempts ]]; do
@@ -90,17 +90,15 @@ wait_for_gitlab_distribution() {
       return 0
     fi
     
-    if [[ $attempt -eq $((max_attempts - 1)) ]]; then
-      log "Warning: GitLab CloudFront distribution not found after $max_attempts attempts"
-      log "Continuing with empty value..."
-      echo ""
-      return 0
-    fi
-    
     log "Waiting 30 seconds before next attempt..."
     sleep 30
     attempt=$((attempt + 1))
   done
+  
+  # If we reach here, GitLab distribution was not found after all attempts
+  log_error "GitLab CloudFront distribution not found after $max_attempts attempts (30 minutes)"
+  log_error "This is required for spoke cluster deployment. Please check hub cluster deployment."
+  return 1
 }
 
 # Deploy database
@@ -218,7 +216,10 @@ main() {
   
   # Wait for GitLab distribution
   local gitlab_domain
-  gitlab_domain=$(wait_for_gitlab_distribution)
+  if ! gitlab_domain=$(wait_for_gitlab_distribution); then
+    log_error "Failed to find GitLab CloudFront distribution. Aborting spoke deployment."
+    exit 1
+  fi
   
   # Deploy database if requested
   if [ "$deploy_db" = true ]; then
