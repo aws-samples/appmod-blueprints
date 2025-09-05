@@ -4,7 +4,7 @@
 # Runs: 1-argocd-gitlab-setup.sh, 2-bootstrap-accounts.sh, and 6-tools-urls.sh in sequence
 # Each script must succeed before proceeding to the next
 
-set -e
+# Removed set -e to allow proper error handling in cluster waiting logic
 
 #be sure we source env var
 source /etc/profile.d/workshop.sh
