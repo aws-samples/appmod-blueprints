@@ -209,13 +209,32 @@ wait_for_argocd_health() {
         
         # Show problematic applications (limit output)
         if [ "$unhealthy_count" -gt 0 ]; then
-            echo "$unhealthy_apps" | head -5 | while read app; do
+            local current_time=$(date +%s)
+            local elapsed=$((current_time - start_time))
+            
+            # Process unhealthy apps and collect stuck ones
+            while read app; do
                 if [ -n "$app" ]; then
                     local app_health=$(echo "$app_status" | grep "^$app " | awk '{print $2}')
                     local app_sync=$(echo "$app_status" | grep "^$app " | awk '{print $3}')
                     print_status "INFO" "  ⚠️  $app: $app_health/$app_sync"
+                    
+                    # Check if app has been stuck for too long (Progressing/OutOfSync)
+                    if [ "$app_health" = "Progressing" ] && [ "$app_sync" = "OutOfSync" ]; then
+                        print_status "INFO" "DEBUG: Found stuck app $app, elapsed time: ${elapsed}s"
+                        if [ $elapsed -gt 30 ]; then  # Reduced to 30 seconds for faster response
+                            print_status "INFO" "Force syncing stuck application: $app (stuck for ${elapsed}s)"
+                            argocd app terminate-op "$app" 2>/dev/null || true
+                            sleep 2
+                            argocd app sync "$app" --timeout 60 2>/dev/null || {
+                                print_status "INFO" "ArgoCD CLI failed, using kubectl patch for $app"
+                                kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                            }
+                        fi
+                    fi
                 fi
-            done
+            done <<< "$(echo "$unhealthy_apps" | head -5)"
+            
             if [ "$unhealthy_count" -gt 5 ]; then
                 print_status "INFO" "  ... and $((unhealthy_count - 5)) more"
             fi
