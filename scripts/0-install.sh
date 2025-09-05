@@ -76,7 +76,7 @@ wait_for_clusters_ready() {
     local start_time=$(date +%s)
     local end_time=$((start_time + max_wait))
     
-    while [ $(date +%s) -lt $end_time ] && [ "$all_ready" = false ]; do
+    while [ $(date +%s) -lt $end_time ]; do
         all_ready=true
         
         for cluster in "${CLUSTER_NAMES[@]}"; do
@@ -89,35 +89,39 @@ wait_for_clusters_ready() {
             
             # Check if cluster exists and get its status
             local cluster_status
-            if cluster_status=$(aws eks describe-cluster --name "$cluster" --region "${AWS_DEFAULT_REGION:-us-east-1}" --query 'cluster.status' --output text 2>/dev/null); then
-                case "$cluster_status" in
-                    "ACTIVE")
-                        print_status "SUCCESS" "Cluster $cluster is ACTIVE"
-                        ;;
-                    "CREATING")
-                        print_status "INFO" "Cluster $cluster is still CREATING, waiting..."
-                        all_ready=false
-                        ;;
-                    "UPDATING")
-                        print_status "INFO" "Cluster $cluster is UPDATING, waiting..."
-                        all_ready=false
-                        ;;
-                    *)
-                        print_status "ERROR" "Cluster $cluster has unexpected status: $cluster_status"
-                        return 1
-                        ;;
-                esac
-            else
-                print_status "ERROR" "Failed to get status for cluster: $cluster"
-                return 1
-            fi
+            cluster_status=$(aws eks describe-cluster --name "$cluster" --region "${AWS_DEFAULT_REGION:-us-east-1}" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+            
+            case "$cluster_status" in
+                "ACTIVE")
+                    print_status "SUCCESS" "Cluster $cluster is ACTIVE"
+                    ;;
+                "CREATING")
+                    print_status "INFO" "Cluster $cluster is still CREATING, waiting..."
+                    all_ready=false
+                    ;;
+                "UPDATING")
+                    print_status "INFO" "Cluster $cluster is UPDATING, waiting..."
+                    all_ready=false
+                    ;;
+                "NOT_FOUND")
+                    print_status "ERROR" "Cluster $cluster not found or not accessible"
+                    return 1
+                    ;;
+                *)
+                    print_status "ERROR" "Cluster $cluster has unexpected status: $cluster_status"
+                    return 1
+                    ;;
+            esac
         done
         
-        if [ "$all_ready" = false ]; then
-            local remaining_time=$((end_time - $(date +%s)))
-            print_status "INFO" "Waiting ${check_interval}s before next check (${remaining_time}s remaining)..."
-            sleep $check_interval
+        # Break out if all clusters are ready
+        if [ "$all_ready" = true ]; then
+            break
         fi
+        
+        local remaining_time=$((end_time - $(date +%s)))
+        print_status "INFO" "Waiting ${check_interval}s before next check (${remaining_time}s remaining)..."
+        sleep $check_interval
     done
     
     if [ "$all_ready" = true ]; then
