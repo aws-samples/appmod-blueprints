@@ -4,7 +4,7 @@
 # Runs: 1-argocd-gitlab-setup.sh, 2-bootstrap-accounts.sh, and 6-tools-urls.sh in sequence
 # Each script must succeed before proceeding to the next
 
-set -e
+# Removed set -e to allow proper error handling in cluster waiting logic
 
 #be sure we source env var
 source /etc/profile.d/workshop.sh
@@ -76,7 +76,7 @@ wait_for_clusters_ready() {
     local start_time=$(date +%s)
     local end_time=$((start_time + max_wait))
     
-    while [ $(date +%s) -lt $end_time ] && [ "$all_ready" = false ]; do
+    while [ $(date +%s) -lt $end_time ]; do
         all_ready=true
         
         for cluster in "${CLUSTER_NAMES[@]}"; do
@@ -89,35 +89,39 @@ wait_for_clusters_ready() {
             
             # Check if cluster exists and get its status
             local cluster_status
-            if cluster_status=$(aws eks describe-cluster --name "$cluster" --region "${AWS_DEFAULT_REGION:-us-east-1}" --query 'cluster.status' --output text 2>/dev/null); then
-                case "$cluster_status" in
-                    "ACTIVE")
-                        print_status "SUCCESS" "Cluster $cluster is ACTIVE"
-                        ;;
-                    "CREATING")
-                        print_status "INFO" "Cluster $cluster is still CREATING, waiting..."
-                        all_ready=false
-                        ;;
-                    "UPDATING")
-                        print_status "INFO" "Cluster $cluster is UPDATING, waiting..."
-                        all_ready=false
-                        ;;
-                    *)
-                        print_status "ERROR" "Cluster $cluster has unexpected status: $cluster_status"
-                        return 1
-                        ;;
-                esac
-            else
-                print_status "ERROR" "Failed to get status for cluster: $cluster"
-                return 1
-            fi
+            cluster_status=$(aws eks describe-cluster --name "$cluster" --region "${AWS_DEFAULT_REGION:-us-east-1}" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+            
+            case "$cluster_status" in
+                "ACTIVE")
+                    print_status "SUCCESS" "Cluster $cluster is ACTIVE"
+                    ;;
+                "CREATING")
+                    print_status "INFO" "Cluster $cluster is still CREATING, waiting..."
+                    all_ready=false
+                    ;;
+                "UPDATING")
+                    print_status "INFO" "Cluster $cluster is UPDATING, waiting..."
+                    all_ready=false
+                    ;;
+                "NOT_FOUND")
+                    print_status "ERROR" "Cluster $cluster not found or not accessible"
+                    return 1
+                    ;;
+                *)
+                    print_status "ERROR" "Cluster $cluster has unexpected status: $cluster_status"
+                    return 1
+                    ;;
+            esac
         done
         
-        if [ "$all_ready" = false ]; then
-            local remaining_time=$((end_time - $(date +%s)))
-            print_status "INFO" "Waiting ${check_interval}s before next check (${remaining_time}s remaining)..."
-            sleep $check_interval
+        # Break out if all clusters are ready
+        if [ "$all_ready" = true ]; then
+            break
         fi
+        
+        local remaining_time=$((end_time - $(date +%s)))
+        print_status "INFO" "Waiting ${check_interval}s before next check (${remaining_time}s remaining)..."
+        sleep $check_interval
     done
     
     if [ "$all_ready" = true ]; then
@@ -205,13 +209,32 @@ wait_for_argocd_health() {
         
         # Show problematic applications (limit output)
         if [ "$unhealthy_count" -gt 0 ]; then
-            echo "$unhealthy_apps" | head -5 | while read app; do
+            local current_time=$(date +%s)
+            local elapsed=$((current_time - start_time))
+            
+            # Process unhealthy apps and collect stuck ones
+            while read app; do
                 if [ -n "$app" ]; then
                     local app_health=$(echo "$app_status" | grep "^$app " | awk '{print $2}')
                     local app_sync=$(echo "$app_status" | grep "^$app " | awk '{print $3}')
                     print_status "INFO" "  ⚠️  $app: $app_health/$app_sync"
+                    
+                    # Check if app has been stuck for too long (Progressing/OutOfSync)
+                    if [ "$app_health" = "Progressing" ] && [ "$app_sync" = "OutOfSync" ]; then
+                        print_status "INFO" "DEBUG: Found stuck app $app, elapsed time: ${elapsed}s"
+                        if [ $elapsed -gt 30 ]; then  # Reduced to 30 seconds for faster response
+                            print_status "INFO" "Force syncing stuck application: $app (stuck for ${elapsed}s)"
+                            argocd app terminate-op "$app" 2>/dev/null || true
+                            sleep 2
+                            argocd app sync "$app" --timeout 60 2>/dev/null || {
+                                print_status "INFO" "ArgoCD CLI failed, using kubectl patch for $app"
+                                kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                            }
+                        fi
+                    fi
                 fi
-            done
+            done <<< "$(echo "$unhealthy_apps" | head -5)"
+            
             if [ "$unhealthy_count" -gt 5 ]; then
                 print_status "INFO" "  ... and $((unhealthy_count - 5)) more"
             fi

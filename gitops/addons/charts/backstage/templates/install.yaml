@@ -161,7 +161,6 @@ data:
             clientId: backstage
             clientSecret: ${KEYCLOAK_CLIENT_SECRET}
             prompt: auto
-            timeout: 30000
 
     scaffolder:
       # see https://backstage.io/docs/features/software-templates/configuration for software template options
