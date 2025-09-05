@@ -133,53 +133,77 @@ set +x
 print_step "Creating GitLab access token for ArgoCD"
 ROOT_TOKEN="root-$IDE_PASSWORD"
 
-# Get the user ID for the GIT_USERNAME
-USER_ID=$(curl -sS -X GET "$GITLAB_URL/api/v4/users?username=$GIT_USERNAME" \
-  -H "PRIVATE-TOKEN: $ROOT_TOKEN" | jq -r '.[0].id')
+# Check if GitLab token already exists in Secrets Manager
+EXISTING_SECRET=$(aws secretsmanager get-secret-value --secret-id "peeks-workshop-gitops-gitlab-pat" --region $AWS_REGION 2>/dev/null || echo "")
 
-if [ "$USER_ID" = "null" ] || [ -z "$USER_ID" ]; then
-    print_error "Failed to find user ID for username: $GIT_USERNAME"
-    exit 1
+if [ -n "$EXISTING_SECRET" ]; then
+    GITLAB_TOKEN=$(echo "$EXISTING_SECRET" | jq -r '.SecretString | fromjson | .token')
+    print_info "Using existing GitLab token from Secrets Manager"
+    
+    # Test the existing token
+    print_info "Testing existing GitLab token access..."
+    TOKEN_TEST=$(curl -s -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/projects/$GIT_USERNAME%2F$WORKING_REPO" | jq -r '.path_with_namespace // .message')
+    if [ "$TOKEN_TEST" = "$GIT_USERNAME/$WORKING_REPO" ]; then
+        print_success "Existing GitLab token test successful"
+    else
+        print_info "Existing token invalid, creating new one..."
+        EXISTING_SECRET=""
+    fi
 fi
 
-print_info "Found user ID $USER_ID for username $GIT_USERNAME"
+if [ -z "$EXISTING_SECRET" ]; then
+    # Get the user ID for the GIT_USERNAME
+    USER_ID=$(curl -sS -X GET "$GITLAB_URL/api/v4/users?username=$GIT_USERNAME" \
+      -H "PRIVATE-TOKEN: $ROOT_TOKEN" | jq -r '.[0].id')
 
-# Create GitLab personal access token for ArgoCD repository access
-GITLAB_TOKEN=$(curl -sS -X POST "$GITLAB_URL/api/v4/users/$USER_ID/personal_access_tokens" \
-  -H "PRIVATE-TOKEN: $ROOT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "argocd-repository-access",
-    "scopes": ["api", "read_repository", "write_repository"],
-    "expires_at": "2025-12-31"
-  }' | jq -r '.token')
+    if [ "$USER_ID" = "null" ] || [ -z "$USER_ID" ]; then
+        print_error "Failed to find user ID for username: $GIT_USERNAME"
+        exit 1
+    fi
 
-if [ "$GITLAB_TOKEN" = "null" ] || [ -z "$GITLAB_TOKEN" ]; then
-    print_error "Failed to create GitLab access token"
-    exit 1
+    print_info "Found user ID $USER_ID for username $GIT_USERNAME"
+
+    # Create GitLab personal access token for ArgoCD repository access
+    GITLAB_TOKEN=$(curl -sS -X POST "$GITLAB_URL/api/v4/users/$USER_ID/personal_access_tokens" \
+      -H "PRIVATE-TOKEN: $ROOT_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "argocd-repository-access",
+        "scopes": ["api", "read_repository", "write_repository"],
+        "expires_at": "2025-12-31"
+      }' | jq -r '.token')
+
+    if [ "$GITLAB_TOKEN" = "null" ] || [ -z "$GITLAB_TOKEN" ]; then
+        print_error "Failed to create GitLab access token"
+        exit 1
+    fi
+
+    print_info "GitLab access token created: $GITLAB_TOKEN"
 fi
-
-print_info "GitLab access token created: $GITLAB_TOKEN"
 
 # Store GitLab token in AWS Secrets Manager for use by other services (like Backstage)
-print_step "Storing GitLab token in AWS Secrets Manager"
-aws secretsmanager create-secret \
-    --name "peeks-workshop-gitops-gitlab-pat" \
-    --description "GitLab Personal Access Token for repository operations" \
-    --secret-string "{\"token\":\"$GITLAB_TOKEN\",\"username\":\"$GIT_USERNAME\",\"hostname\":\"$(echo $GITLAB_URL | sed 's|https://||')\",\"working_repo\":\"$WORKING_REPO\"}" \
-    --tags '[
-        {"Key":"Environment","Value":"Platform"},
-        {"Key":"Purpose","Value":"GitLab API Access"},
-        {"Key":"ManagedBy","Value":"ArgoCD Setup Script"},
-        {"Key":"Application","Value":"GitLab"}
-    ]' \
-    --region $AWS_REGION 2>/dev/null || \
-aws secretsmanager update-secret \
-    --secret-id "peeks-workshop-gitops-gitlab-pat" \
-    --secret-string "{\"token\":\"$GITLAB_TOKEN\",\"username\":\"$GIT_USERNAME\",\"hostname\":\"$(echo $GITLAB_URL | sed 's|https://||')\",\"working_repo\":\"$WORKING_REPO\"}" \
-    --region $AWS_REGION
+if [ -z "$EXISTING_SECRET" ]; then
+    print_step "Storing GitLab token in AWS Secrets Manager"
+    aws secretsmanager create-secret \
+        --name "peeks-workshop-gitops-gitlab-pat" \
+        --description "GitLab Personal Access Token for repository operations" \
+        --secret-string "{\"token\":\"$GITLAB_TOKEN\",\"username\":\"$GIT_USERNAME\",\"hostname\":\"$(echo $GITLAB_URL | sed 's|https://||')\",\"working_repo\":\"$WORKING_REPO\"}" \
+        --tags '[
+            {"Key":"Environment","Value":"Platform"},
+            {"Key":"Purpose","Value":"GitLab API Access"},
+            {"Key":"ManagedBy","Value":"ArgoCD Setup Script"},
+            {"Key":"Application","Value":"GitLab"}
+        ]' \
+        --region $AWS_REGION 2>/dev/null || \
+    aws secretsmanager update-secret \
+        --secret-id "peeks-workshop-gitops-gitlab-pat" \
+        --secret-string "{\"token\":\"$GITLAB_TOKEN\",\"username\":\"$GIT_USERNAME\",\"hostname\":\"$(echo $GITLAB_URL | sed 's|https://||')\",\"working_repo\":\"$WORKING_REPO\"}" \
+        --region $AWS_REGION
 
-print_success "GitLab token stored in AWS Secrets Manager: peeks-workshop-gitops-gitlab-pat"
+    print_success "GitLab token stored in AWS Secrets Manager: peeks-workshop-gitops-gitlab-pat"
+else
+    print_info "Using existing GitLab token from Secrets Manager"
+fi
 
 # Test the token
 print_info "Testing GitLab token access..."
