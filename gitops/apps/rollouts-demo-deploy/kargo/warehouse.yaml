@@ -1,0 +1,19 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: rollouts-demo
+  namespace: rollouts-demo-kargo
+spec:
+  interval: 5s
+  subscriptions:
+  - image:
+      repoURL: MANAGEMENT_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/rollouts-demo
+      imageSelectionStrategy: Lexical
+      allowTags: ^i\d{14}$
+  - git:
+      repoURL: GITLAB_URL/GIT_USERNAME/rollouts-demo-deploy.git
+      # insecureSkipTLSVerify: true
+      branch: main
+      includePaths:
+      - base
+      - env

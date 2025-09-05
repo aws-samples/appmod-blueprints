@@ -47,7 +47,7 @@ data:
          - baseUrl: ${GITEA_BASE_URL}
            host: ${GITEA_HOST}
            username: ${GITEA_USERNAME}
-           password: ${GITEA_PASSWORD}
+           password: ${GIT_PASSWORD}
     #  github:
     #    - host: github.com
     #      apps:
