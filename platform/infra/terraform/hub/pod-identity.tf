@@ -105,7 +105,7 @@ data "http" "inline_policy" {
 # Create IAM roles for ACK controllers
 resource "aws_iam_role" "ack_controller" {
   for_each = toset(["iam", "ec2", "eks"])
-  name        = "ack-${each.key}-controller-role-mgmt"
+  name        = "${local.name}-ack-${each.key}-controller-role-mgmt"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -168,7 +168,7 @@ data "aws_iam_policy_document" "ack_controller_cross_account_policy" {
     effect = "Allow"
     actions = ["sts:AssumeRole", "sts:TagSession"]
     resources = [
-      for account in split(" ", var.account_ids) : "arn:aws:iam::${account}:role/peeks-cluster-mgmt-${each.key}"
+      for account in split(" ", var.account_ids) : "arn:aws:iam::${account}:role/${local.name}-cluster-mgmt-${each.key}"
     ]
   }
 }
@@ -194,7 +194,7 @@ resource "aws_eks_pod_identity_association" "ack_controller" {
 ################################################################################
 
 resource "aws_iam_role" "kargo_controller_role" {
-  name = "kargo-controller-role"
+  name = "${local.name}-kargo-controller-role"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -235,7 +235,7 @@ resource "aws_eks_pod_identity_association" "kargo_controller" {
 # Create ACK workload roles that can be assumed by ACK controllers
 resource "aws_iam_role" "ack_workload_role" {
   for_each = toset(["iam", "ec2", "eks"])
-  name     = "peeks-cluster-mgmt-${each.key}"
+  name     = "${local.name}-cluster-mgmt-${each.key}"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
