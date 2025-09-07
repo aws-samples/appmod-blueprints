@@ -9,7 +9,7 @@ data "aws_iam_session_context" "current" {
 }
 locals {
 
- context_prefix = var.project_context_prefix
+ context_prefix = var.resource_prefix
 
   tags = {
     Blueprint  = local.context_prefix

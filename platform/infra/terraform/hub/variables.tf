@@ -3,6 +3,12 @@ variable "vpc_name" {
   type        = string
 }
 
+variable "resource_prefix" {
+  description = "Prefix for project"
+  type        = string
+  default     = "peeks"
+}
+
 variable "kubernetes_version" {
   description = "Kubernetes version"
   type        = string

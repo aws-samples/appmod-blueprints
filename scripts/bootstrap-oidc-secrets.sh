@@ -75,7 +75,7 @@ bootstrap_oidc_secrets() {
     }
     
     # Store OIDC client secrets in AWS Secrets Manager
-    PROJECT_PREFIX="peeks-workshop-gitops"
+    PROJECT_PREFIX="${RESOURCE_PREFIX:-peeks}"
     
     # Backstage OIDC credentials
     create_or_update_aws_secret \

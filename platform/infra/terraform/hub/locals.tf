@@ -132,6 +132,7 @@ locals {
       aws_account_id   = data.aws_caller_identity.current.account_id
       aws_vpc_id       = module.vpc.vpc_id
       use_ack          = local.use_ack
+      resource_prefix  = var.resource_prefix
     },
     {
       argocd_namespace        = local.argocd_namespace,
@@ -190,7 +191,7 @@ locals {
       ide_password_hash = local.password_hash
       ide_password_key = local.password_key
       backstage_image = local.backstage_image
-      backstage_postgres_secret_name = "peeks-workshop-gitops-backstage-postgresql-password"
+      backstage_postgres_secret_name = "${var.resource_prefix}-backstage-postgresql-password"
       backstage_postgres_secret_key = "password"
     },
 

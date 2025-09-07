@@ -2,7 +2,7 @@
 
 # PostgreSQL password for Backstage application
 resource "aws_secretsmanager_secret" "backstage_postgresql_password" {
-  name                    = "${var.project_context_prefix}-backstage-postgresql-password"
+  name                    = "${var.resource_prefix}-backstage-postgresql-password"
   description             = "PostgreSQL password for Backstage application"
   recovery_window_in_days = 0
   
@@ -32,7 +32,7 @@ resource "aws_secretsmanager_secret_version" "backstage_postgresql_password" {
 
 # Keycloak Admin Password
 resource "aws_secretsmanager_secret" "keycloak_admin_password" {
-  name                    = "${var.project_context_prefix}-keycloak-admin-password"
+  name                    = "${var.resource_prefix}-keycloak-admin-password"
   description             = "Keycloak admin password"
   recovery_window_in_days = 0
   
@@ -60,7 +60,7 @@ resource "aws_secretsmanager_secret_version" "keycloak_admin_password" {
 
 # Keycloak Database Password
 resource "aws_secretsmanager_secret" "keycloak_db_password" {
-  name                    = "${var.project_context_prefix}-keycloak-db-password"
+  name                    = "${var.resource_prefix}-keycloak-db-password"
   description             = "Keycloak database password"
   recovery_window_in_days = 0
   
@@ -87,7 +87,7 @@ resource "aws_secretsmanager_secret_version" "keycloak_db_password" {
 
 # Keycloak User Password (for workshop users)
 resource "aws_secretsmanager_secret" "keycloak_user_password" {
-  name                    = "${var.project_context_prefix}-keycloak-user-password"
+  name                    = "${var.resource_prefix}-keycloak-user-password"
   description             = "Keycloak user password for workshop participants"
   recovery_window_in_days = 0
   

@@ -110,7 +110,7 @@ The improved script provides clear status feedback:
 ## ArgoCD IAM Role Configuration Fix
 
 ### Issue
-ArgoCD in the hub cluster was using the wrong IAM role (`argocd-hub-mgmt`) instead of the common role (`peeks-workshop-gitops-argocd-hub...`) that spoke clusters trust for cross-cluster access.
+ArgoCD in the hub cluster was using the wrong IAM role (`argocd-hub-mgmt`) instead of the common role (`{resource_prefix}-argocd-hub...`) that spoke clusters trust for cross-cluster access.
 
 ### Root Cause
 - **Common terraform** creates `aws_iam_role.argocd_central` role for cross-cluster access
@@ -128,7 +128,7 @@ Modified `/home/ec2-user/environment/platform-on-eks-workshop/platform/infra/ter
 ```terraform
 # Added data source for common ArgoCD role
 data "aws_ssm_parameter" "argocd_hub_role" {
-  name = "peeks-workshop-gitops-argocd-central-role"
+  name = "{resource_prefix}-argocd-central-role"
 }
 
 # Replaced module with direct associations
@@ -403,13 +403,23 @@ The platform uses a comprehensive secret management strategy:
 
 ### Secret Naming Convention
 ```
-{project_context_prefix}-{service}-{type}-password
+## Resource Prefix Flow
+
+The `resource_prefix` flows through the system as follows:
+
+1. **Environment Variable**: `RESOURCE_PREFIX` (defaults to "peeks", CodeBuild sets to "peeks-workshop")
+2. **Terraform**: Passed as `-var="resource_prefix=$RESOURCE_PREFIX"` to terraform
+3. **Cluster Secrets**: Added to `addons_metadata` in terraform locals, becomes cluster secret annotation
+4. **GitOps ApplicationSets**: Reference `{{.metadata.annotations.resource_prefix}}` from cluster secrets
+5. **Helm Charts**: Receive via `global.resourcePrefix` value, used as `{{ .Values.global.resourcePrefix | default "peeks" }}`
+
+This ensures consistent resource naming across all components using the same prefix source.
 ```
 
 **Examples**:
-- `peeks-workshop-gitops-keycloak-admin-password`
-- `peeks-workshop-gitops-backstage-postgresql-password`
-- `peeks-workshop-gitops-argocd-admin-password`
+- `{resource_prefix}-keycloak-admin-password`
+- `{resource_prefix}-backstage-postgresql-password`
+- `{resource_prefix}-argocd-admin-password`
 
 ### Secret Flow
 ```
@@ -668,7 +678,7 @@ This architecture provides a production-ready platform engineering solution that
 cd platform/infra/terraform/hub && ./deploy.sh
 
 # Deploy spoke staging
-cd platform/infra/terraform/spokes && TFSTATE_BUCKET_NAME=tcat-peeks-workshop-test--tfstatebackendbucketf0fc-8s2mpevyblwi ./deploy.sh staging
+cd platform/infra/terraform/spokes && TFSTATE_BUCKET_NAME=tcat-{resource_prefix}-test--tfstatebackendbucketf0fc-8s2mpevyblwi ./deploy.sh staging
 
 # Git push to both remotes
 git push origin cdk-fleet:main

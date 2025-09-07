@@ -30,7 +30,7 @@ data "aws_ssm_parameter" "frontend_team_view_role" {
 
 
 locals {
-  context_prefix = var.project_context_prefix
+  context_prefix = var.resource_prefix
   name            = "${var.cluster_name_prefix}-${terraform.workspace}"
   region          = data.aws_region.current.id
   cluster_version = var.kubernetes_version
@@ -128,6 +128,7 @@ locals {
       aws_region       = local.region
       aws_account_id   = data.aws_caller_identity.current.account_id
       aws_vpc_id       = module.vpc.vpc_id
+      resource_prefix  = var.resource_prefix
     },
     {
       external_secrets_namespace = local.external_secrets.namespace

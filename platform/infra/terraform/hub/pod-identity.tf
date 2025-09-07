@@ -13,7 +13,7 @@ module "external_secrets_pod_identity" {
   external_secrets_secrets_manager_arns = [
     "arn:aws:secretsmanager:${local.region}:*:secret:${local.cluster_info.cluster_name}/*",
     # Allow access to common platform secrets (e.g., Backstage PostgreSQL password)
-    "arn:aws:secretsmanager:${local.region}:*:secret:peeks-workshop-gitops-*"
+    "arn:aws:secretsmanager:${local.region}:*:secret:${var.resource_prefix}-*"
   ]
   external_secrets_ssm_parameter_arns   = ["arn:aws:ssm:${local.region}:*:parameter/${local.cluster_info.cluster_name}/*"]
   external_secrets_create_permission    = true
@@ -46,7 +46,7 @@ module "external_secrets_pod_identity" {
 # ArgoCD Hub Management
 ################################################################################
 data "aws_ssm_parameter" "argocd_hub_role" {
-  name = "peeks-workshop-gitops-argocd-central-role"
+  name = "${var.resource_prefix}-argocd-central-role"
 }
 
 resource "aws_eks_pod_identity_association" "argocd_controller" {
