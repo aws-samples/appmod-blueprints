@@ -120,12 +120,12 @@ deploy_database() {
   terraform -chdir=${SCRIPTDIR}/db workspace select -or-create $env
   
   if [ -n "$cluster_name_prefix" ]; then
-    if ! terraform -chdir=${SCRIPTDIR}/db apply -var-file="../workspaces/${env}.tfvars" -var="cluster_name_prefix=$cluster_name_prefix" -auto-approve; then
+    if ! terraform -chdir=${SCRIPTDIR}/db apply -var-file="../workspaces/${env}.tfvars" -var="cluster_name_prefix=$cluster_name_prefix" -parallelism=3 -auto-approve; then
       log_error "Database deployment failed with custom cluster name prefix"
       exit 1
     fi
   else
-    if ! terraform -chdir=${SCRIPTDIR}/db apply -var-file="../workspaces/${env}.tfvars" -auto-approve; then
+    if ! terraform -chdir=${SCRIPTDIR}/db apply -var-file="../workspaces/${env}.tfvars" -parallelism=3 -auto-approve; then
       log_error "Database deployment failed"
       exit 1
     fi
@@ -161,6 +161,7 @@ deploy_eks_cluster() {
       -var="cluster_name_prefix=$cluster_name_prefix" \
       -var="git_hostname=$gitlab_domain" \
       -var="gitlab_domain_name=$gitlab_domain" \
+      -parallelism=3 \
       -auto-approve; then
       log_error "EKS cluster deployment failed with custom cluster name prefix"
       exit 1
@@ -171,6 +172,7 @@ deploy_eks_cluster() {
       -var-file="workspaces/${env}.tfvars" \
       -var="git_hostname=$gitlab_domain" \
       -var="gitlab_domain_name=$gitlab_domain" \
+      -parallelism=3 \
       -auto-approve; then
       log_error "EKS cluster deployment failed"
       exit 1

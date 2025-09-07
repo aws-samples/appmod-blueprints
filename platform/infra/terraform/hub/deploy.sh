@@ -107,7 +107,7 @@ main() {
     fi
   else
     log "Deploying with default cluster name: peeks-hub-cluster"
-    if ! terraform -chdir=$SCRIPTDIR apply -var-file=$TF_VAR_FILE -var="account_ids=$AWS_ACCOUNT_ID" -auto-approve; then
+    if ! terraform -chdir=$SCRIPTDIR apply -var-file=$TF_VAR_FILE -var="account_ids=$AWS_ACCOUNT_ID" -parallelism=5 -auto-approve; then
       log_error "Terraform apply failed for default cluster"
       exit 1
     fi
