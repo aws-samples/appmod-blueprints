@@ -75,7 +75,7 @@ main() {
   
   # Apply Terraform configuration
   log "Applying git resources..."
-  if ! terraform -chdir=$SCRIPTDIR apply -auto-approve; then
+  if ! terraform -chdir=$SCRIPTDIR apply -parallelism=3 -auto-approve; then
     log_error "Terraform apply failed"
     exit 1
   fi
