@@ -266,6 +266,9 @@ cleanup_kubernetes_resources_with_fallback() {
 destroy_terraform_resources() {
   log "Starting Terraform resource destruction..."
   
+  # Set Terraform variables from environment (same as deploy.sh)
+  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
+  
   local TARGETS=("module.gitops_bridge_bootstrap" "module.eks_blueprints_addons" "module.eks")
   
   for target in "${TARGETS[@]}"; do
