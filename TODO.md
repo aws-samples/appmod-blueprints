@@ -57,12 +57,37 @@
 
 
 - [x] Fix tf-backend-bucket bucket stat
-- [ ] change default prefix from peeks-workshop to peeks-
-  - [ ] for gitops, the resource_prefix should be declare in argocd applicationset as cluster secret annotation
+- [x] change default prefix from peeks-workshop to peeks-
+  - [x] for gitops, the resource_prefix should be declare in argocd applicationset as cluster secret annotation
 - [ ] change project_context_prefix to resource_prefix
 - [ ] check database is created with appropriate prefix
 - [ ] ensure RESOURCE_PREFIX is provided to codebuild, and ssm, and store in platform.sh env var
 - [ ] also add (resource_prefix) for kro cluster secret
  
+- [ ] do we still need const DEFAULT_HUB_CLUSTER_NAME and DEFAULT_SPOKE_CLUSTER_NAME_PREFIX ?
+- [ ] same for : export HUB_CLUSTER_NAME='$HUB_CLUSTER_NAME_PARAM' and export SPOKE_CLUSTER_NAME_PREFIX='$SPOKE_CLUSTER_NAME_PREFIX_PARAM'
+
+- [x] PEEKSIDEPEEKSIdePasswordSecret29-hw1gags77MYB -> you need to look at the tags: taskcat-project-name=peeks-workshop-test
+- [x] do we still uses GiteaExternalUrl ? NO!
+- [x] In many places in cdk, we see things like : name: `${resourcePrefix}-setup-ide-${this.stackName}`, putting a name imply that cdk won't generate the name by itself, and I think this is a problem. we should let cdk generate resources name, but ensure, it has the tags using the prefix to list for deletion
+
+- [ ] delete with list buckets, or with tags : ResourcePrefix=peeks-workshop
+- [ ] delete logs groups
+
+- [ ] logs groups created by codebuld don't have tags : /aws/codebuild/PEEKSGITIAMStackDeployProje-OOIUub3Momy3
+
+- [x] look at the task tack-cleanup-deployment, which is the older version of the new task taskcat-deployment-force enhanced version. there are many ressources that are correclty find and deleted in the previous versions, like s3 buckets starting with preffix peeks or tCAT-peeks, cloudwatch logs that contains tCat-peeks in the name, or iam roles that contains tCat-peeks. 
+
+- [x] Exactly! The enhanced version has empty stub scanners that return no results. That's why it's not finding CloudWatch logs, CloudFront distributions, Lambda functions, or ECR repositories. The enhanced version needs these scanners implemented to match the old script's functionality.
+
+- [x] enhanced the IAM scanner in the enhanced cleanup and delete any IAM roles and policies that has tag : Blueprint=peeks-spoke-staging, peeks-spoke-dev, peeks-spoke-prod, peeks-hub-cluster
+  - the list of tags could be : tag : Blueprint=peeks-spoke-staging, peeks-spoke-dev, peeks-spoke-prod, peeks-hub-cluster, with peeks be the prefix global configuration
 
 
+- [ ] if task clean force script hangs, maybe we can add a timeout
+   ● Path: platform-engineering-on-eks/taskcat/scripts/enhanced-cleanup/scanners/iam_scanner.sh
+
+  18, 18:     # Get customer-managed policies only (Scope=Local)
+  19, 19:     local policies
+- 20    :     policies=$(aws_cli iam list-policies --scope Local --query 'Policies[].[PolicyName,Arn,CreateDate,Description,AttachmentCount]' --output text 2>/dev/null || echo "")
++     20:     policies=$(run_with_timeout 120 "aws_cli iam list-policies --scope Local --query 'Policies[].[PolicyName,Arn,CreateDate,Description,AttachmentCount]' --output text" 2>/dev/null || echo "")
