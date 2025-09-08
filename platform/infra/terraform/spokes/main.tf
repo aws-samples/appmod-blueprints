@@ -378,7 +378,7 @@ module "vpc" {
 # Get ACK controller IAM roles created by hub cluster
 data "aws_iam_role" "ack_controller" {
   for_each = toset(["iam", "ec2", "eks"])
-  name     = "${local.context_prefix}-hub-cluster-ack-${each.key}-controller-role-mgmt"
+  name     = "${local.context_prefix}-ack-${each.key}-controller-role-mgmt"
 }
 
 # Create pod identity associations for ACK controllers
