@@ -73,6 +73,9 @@ main() {
     exit 1
   fi
   
+  # Set Terraform variables from environment
+  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
+  
   # Destroy Terraform resources
   log "Destroying AWS git and IAM resources..."
   if ! terraform -chdir=$SCRIPTDIR destroy -auto-approve; then

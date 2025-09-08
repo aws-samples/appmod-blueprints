@@ -106,3 +106,4 @@ IDEPEEKSIdePrefixListResource296503CB
 
 
 - [ ] Explain how the workshop is setup, with cluster secrets, terraform stacks, dependencies, en vvar, gitlab...
+- [ ] check /peeks-hub-cluster/argocd-hub-role
