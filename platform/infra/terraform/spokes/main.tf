@@ -42,7 +42,7 @@ locals {
   ingress_security_groups = "${aws_security_group.ingress_http.id},${aws_security_group.ingress_https.id}"
 
   # GitOps repository URLs
-  git_hostname = var.git_hostname == "" ? "d1vvjck0a1cre3.cloudfront.net" : var.git_hostname
+  git_hostname = var.git_hostname
   gitops_addons_repo_url = "https://${local.git_hostname}/${var.git_org_name}/${var.gitops_addons_repo_name}.git"
   gitops_fleet_repo_url = "https://${local.git_hostname}/${var.git_org_name}/${var.gitops_fleet_repo_name}.git"
   gitops_workload_repo_url = "https://${local.git_hostname}/${var.git_org_name}/${var.gitops_workload_repo_name}.git"

@@ -107,3 +107,17 @@ IDEPEEKSIdePrefixListResource296503CB
 
 - [ ] Explain how the workshop is setup, with cluster secrets, terraform stacks, dependencies, en vvar, gitlab...
 - [ ] check /peeks-hub-cluster/argocd-hub-role
+
+- [ ] I think i'm still relying on export HUB_CLUSTER_NAME=${HUB_CLUSTER_NAME:-peeks-hub-cluster}
+export SPOKE_CLUSTER_NAME_PREFIX=${SPOKE_CLUSTER_NAME_PREFIX:-peeks-spoke} in many places, I think i can only use RESOURCE_PREFIX env var to deduce the cluster names, without the need to pass this data between stacks (cdk, codebuild, terraform). can you list me where this is used and propose a change
+  - remove hubClusterName - ok useful for create access entry
+
+- [ ] move access entry for participantassumerole from cdk to codebuild
+
+
+- [ ] I would like to know exactly what are the pre-requisites for deploy.sh scripts to work. what are secrets, ssm parameters, or other cloudfront ditributions that needs to exists before we can execute the terraform for common, hub and spoke. can you create a detailed Platform-setup-flow.md file, that will have exhausting clarification on all the dependencies with diagrams
+
+- remove Cloud9
+- renomer prefix de peeks-workshop à peeks
+
+- 

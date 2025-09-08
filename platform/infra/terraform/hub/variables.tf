@@ -191,7 +191,7 @@ variable "enable_automode" {
 variable "cluster_name" {
   description = "Name of the cluster"
   type        = string
-  default     = "hub-cluster"
+  default     = "hub-cluster"  # Will be overridden by deploy.sh with ${resource_prefix}-hub-cluster
 }
 
 variable "use_ack" {
