@@ -105,7 +105,7 @@ data "http" "inline_policy" {
 # Create IAM roles for ACK controllers
 resource "aws_iam_role" "ack_controller" {
   for_each = toset(["iam", "ec2", "eks"])
-  name        = "${local.name}-ack-${each.key}-controller-role-mgmt"
+  name        = "${var.resource_prefix}-${local.name}-ack-${each.key}-controller-role-mgmt"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

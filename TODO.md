@@ -91,3 +91,18 @@
   19, 19:     local policies
 - 20    :     policies=$(aws_cli iam list-policies --scope Local --query 'Policies[].[PolicyName,Arn,CreateDate,Description,AttachmentCount]' --output text 2>/dev/null || echo "")
 +     20:     policies=$(run_with_timeout 120 "aws_cli iam list-policies --scope Local --query 'Policies[].[PolicyName,Arn,CreateDate,Description,AttachmentCount]' --output text" 2>/dev/null || echo "")
+
+
+
+- [ERROR] Failed to terminate EC2 instance: peeks-workshop/IDE-PEEKS/IDE-PEEKS
+[ERROR] Failed to delete i-02578cd4811fe2802: Failed to terminate EC2 instance, but the ec2 deletion works, I guess the script didn't handle the ec2 state change ? maybe just needs to wait a little ? or just hack the ec2 state change
+
+
+Fail to delete
+IDEPEEKSIdePasswordExporter0D143AF0
+CustomResourcePhysicalID
+IDEPEEKSIdePrefixListResource296503CB
+
+
+
+- [ ] Explain how the workshop is setup, with cluster secrets, terraform stacks, dependencies, en vvar, gitlab...
