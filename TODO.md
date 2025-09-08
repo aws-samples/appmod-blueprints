@@ -48,76 +48,33 @@
 - [x] Create DynamoDB table for Terraform state locking
 - [x] Update backend configuration to include DynamoDB table
 - [x] Test state locking functionality
-- [ ] Rename secrets created by spoke terraform from peeks-hub-cluster/peeks-spoke-staging to peeks-workshop-peeks-spoke-staging
+- [x] Rename secrets created by spoke terraform from peeks-hub-cluster/peeks-spoke-staging to peeks-workshop-peeks-spoke-staging
 - [ ] include Backstage argo-cd plugin from https://roadie.io/backstage/plugins/argo-cd/
 - [x] validate fleet-secret chart creation, and automation of clusters registration with fleet solution
 - [ ] do we need to use a dedicated repo ? or how do I isolate things to  not commit things back ?
-
-- [ ] check that in platform.sh export HUB_CLUSTER_NAME= and export SPOKE_CLUSTER_NAME_PREFIX= are not emplty
-
-
+- [x] check that in platform.sh export HUB_CLUSTER_NAME= and export SPOKE_CLUSTER_NAME_PREFIX= are not emplty
 - [x] Fix tf-backend-bucket bucket stat
 - [x] change default prefix from peeks-workshop to peeks-
   - [x] for gitops, the resource_prefix should be declare in argocd applicationset as cluster secret annotation
-- [ ] change project_context_prefix to resource_prefix
+- [x] change project_context_prefix to resource_prefix
 - [ ] check database is created with appropriate prefix
-- [ ] ensure RESOURCE_PREFIX is provided to codebuild, and ssm, and store in platform.sh env var
+- [x] ensure RESOURCE_PREFIX is provided to codebuild, and ssm, and store in platform.sh env var
 - [ ] also add (resource_prefix) for kro cluster secret
- 
-- [ ] do we still need const DEFAULT_HUB_CLUSTER_NAME and DEFAULT_SPOKE_CLUSTER_NAME_PREFIX ?
-- [ ] same for : export HUB_CLUSTER_NAME='$HUB_CLUSTER_NAME_PARAM' and export SPOKE_CLUSTER_NAME_PREFIX='$SPOKE_CLUSTER_NAME_PREFIX_PARAM'
-
+- [x] do we still need const DEFAULT_HUB_CLUSTER_NAME and DEFAULT_SPOKE_CLUSTER_NAME_PREFIX ? only in terraform
+- [x] same for : export HUB_CLUSTER_NAME='$HUB_CLUSTER_NAME_PARAM' and export SPOKE_CLUSTER_NAME_PREFIX='$SPOKE_CLUSTER_NAME_PREFIX_PARAM'
 - [x] PEEKSIDEPEEKSIdePasswordSecret29-hw1gags77MYB -> you need to look at the tags: taskcat-project-name=peeks-workshop-test
 - [x] do we still uses GiteaExternalUrl ? NO!
 - [x] In many places in cdk, we see things like : name: `${resourcePrefix}-setup-ide-${this.stackName}`, putting a name imply that cdk won't generate the name by itself, and I think this is a problem. we should let cdk generate resources name, but ensure, it has the tags using the prefix to list for deletion
-
-- [ ] delete with list buckets, or with tags : ResourcePrefix=peeks-workshop
+- [x] delete with list buckets, or with tags : ResourcePrefix=peeks-workshop
 - [ ] delete logs groups
+  - [ ] logs groups created by codebuld don't have tags : /aws/codebuild/PEEKSGITIAMStackDeployProje-OOIUub3Momy3
+- [x] Explain how the workshop is setup, with cluster secrets, terraform stacks, dependencies, en vvar, gitlab... -> platform-engineering-on-eks/Platform-setup-flow.md
+- [x] check /peeks-hub-cluster/argocd-hub-role (delete)
+- [ ] move access entry for participantassumerole from cdk to codebuild ?
+- [x] remove Cloud9
+- [x] renomer prefix de peeks-workshop à peeks
 
-- [ ] logs groups created by codebuld don't have tags : /aws/codebuild/PEEKSGITIAMStackDeployProje-OOIUub3Momy3
-
-- [x] look at the task tack-cleanup-deployment, which is the older version of the new task taskcat-deployment-force enhanced version. there are many ressources that are correclty find and deleted in the previous versions, like s3 buckets starting with preffix peeks or tCAT-peeks, cloudwatch logs that contains tCat-peeks in the name, or iam roles that contains tCat-peeks. 
-
-- [x] Exactly! The enhanced version has empty stub scanners that return no results. That's why it's not finding CloudWatch logs, CloudFront distributions, Lambda functions, or ECR repositories. The enhanced version needs these scanners implemented to match the old script's functionality.
-
-- [x] enhanced the IAM scanner in the enhanced cleanup and delete any IAM roles and policies that has tag : Blueprint=peeks-spoke-staging, peeks-spoke-dev, peeks-spoke-prod, peeks-hub-cluster
-  - the list of tags could be : tag : Blueprint=peeks-spoke-staging, peeks-spoke-dev, peeks-spoke-prod, peeks-hub-cluster, with peeks be the prefix global configuration
-
-
-- [ ] if task clean force script hangs, maybe we can add a timeout
-   ● Path: platform-engineering-on-eks/taskcat/scripts/enhanced-cleanup/scanners/iam_scanner.sh
-
-  18, 18:     # Get customer-managed policies only (Scope=Local)
-  19, 19:     local policies
-- 20    :     policies=$(aws_cli iam list-policies --scope Local --query 'Policies[].[PolicyName,Arn,CreateDate,Description,AttachmentCount]' --output text 2>/dev/null || echo "")
-+     20:     policies=$(run_with_timeout 120 "aws_cli iam list-policies --scope Local --query 'Policies[].[PolicyName,Arn,CreateDate,Description,AttachmentCount]' --output text" 2>/dev/null || echo "")
-
-
-
-- [ERROR] Failed to terminate EC2 instance: peeks-workshop/IDE-PEEKS/IDE-PEEKS
-[ERROR] Failed to delete i-02578cd4811fe2802: Failed to terminate EC2 instance, but the ec2 deletion works, I guess the script didn't handle the ec2 state change ? maybe just needs to wait a little ? or just hack the ec2 state change
-
-
-Fail to delete
-IDEPEEKSIdePasswordExporter0D143AF0
-CustomResourcePhysicalID
-IDEPEEKSIdePrefixListResource296503CB
-
-
-
-- [ ] Explain how the workshop is setup, with cluster secrets, terraform stacks, dependencies, en vvar, gitlab...
-- [ ] check /peeks-hub-cluster/argocd-hub-role
-
-- [ ] I think i'm still relying on export HUB_CLUSTER_NAME=${HUB_CLUSTER_NAME:-peeks-hub-cluster}
-export SPOKE_CLUSTER_NAME_PREFIX=${SPOKE_CLUSTER_NAME_PREFIX:-peeks-spoke} in many places, I think i can only use RESOURCE_PREFIX env var to deduce the cluster names, without the need to pass this data between stacks (cdk, codebuild, terraform). can you list me where this is used and propose a change
-  - remove hubClusterName - ok useful for create access entry
-
-- [ ] move access entry for participantassumerole from cdk to codebuild
-
-
-- [ ] I would like to know exactly what are the pre-requisites for deploy.sh scripts to work. what are secrets, ssm parameters, or other cloudfront ditributions that needs to exists before we can execute the terraform for common, hub and spoke. can you create a detailed Platform-setup-flow.md file, that will have exhausting clarification on all the dependencies with diagrams
-
-- remove Cloud9
-- renomer prefix de peeks-workshop à peeks
-
-- 
+- update kro vars : /Users/sallaman/Documents/2025/platform/appmod-blueprints/gitops/addons/charts/multi-acct/templates/configmap.yaml
+  ec2.{{ $key }}: "arn:aws:iam::{{ $value }}:role/peeks-cluster-mgmt-ec2"
+  eks.{{ $key }}: "arn:aws:iam::{{ $value }}:role/peeks-cluster-mgmt-eks"
+  iam.{{ $key }}: "arn:aws:iam::{{ $value }}:role/peeks-cluster-mgmt-iam"
