@@ -415,7 +415,7 @@ spec:
               export PATH="/usr/local/bin:$PATH"
               
               # Retrieve secrets from AWS Secrets Manager
-              PROJECT_PREFIX="peeks-workshop-gitops"
+              PROJECT_PREFIX="{{ .Values.global.resourcePrefix | default "peeks" }}"
               
               BACKSTAGE_SECRETS=$(aws secretsmanager get-secret-value --region us-east-1 --secret-id "${PROJECT_PREFIX}-backstage-oidc-credentials" --query SecretString --output text)
               ARGO_WORKFLOWS_SECRETS=$(aws secretsmanager get-secret-value --region us-east-1 --secret-id "${PROJECT_PREFIX}-argo-workflows-oidc-credentials" --query SecretString --output text)

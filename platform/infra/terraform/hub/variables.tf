@@ -3,6 +3,12 @@ variable "vpc_name" {
   type        = string
 }
 
+variable "resource_prefix" {
+  description = "Prefix for project"
+  type        = string
+  default     = "peeks"
+}
+
 variable "kubernetes_version" {
   description = "Kubernetes version"
   type        = string
@@ -185,7 +191,7 @@ variable "enable_automode" {
 variable "cluster_name" {
   description = "Name of the cluster"
   type        = string
-  default     = "hub-cluster"
+  default     = "hub-cluster"  # Will be overridden by deploy.sh with ${resource_prefix}-hub-cluster
 }
 
 variable "use_ack" {

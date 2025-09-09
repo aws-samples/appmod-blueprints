@@ -23,4 +23,4 @@ patches:
       metadata:
         name: carts
         annotations:
-          eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/carts-staging-role
+          eks.amazonaws.com/role-arn: arn:aws:iam::AWS_ACCOUNT_ID:role/carts-staging-role

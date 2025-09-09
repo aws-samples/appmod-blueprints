@@ -13,7 +13,7 @@ module "external_secrets_pod_identity" {
   external_secrets_secrets_manager_arns = [
     "arn:aws:secretsmanager:${local.region}:*:secret:${local.cluster_info.cluster_name}/*",
     # Allow access to common platform secrets (e.g., Backstage PostgreSQL password)
-    "arn:aws:secretsmanager:${local.region}:*:secret:peeks-workshop-gitops-*"
+    "arn:aws:secretsmanager:${local.region}:*:secret:${var.resource_prefix}-*"
   ]
   external_secrets_ssm_parameter_arns   = ["arn:aws:ssm:${local.region}:*:parameter/${local.cluster_info.cluster_name}/*"]
   external_secrets_create_permission    = true
@@ -46,7 +46,7 @@ module "external_secrets_pod_identity" {
 # ArgoCD Hub Management
 ################################################################################
 data "aws_ssm_parameter" "argocd_hub_role" {
-  name = "peeks-workshop-gitops-argocd-central-role"
+  name = "${var.resource_prefix}-argocd-central-role"
 }
 
 resource "aws_eks_pod_identity_association" "argocd_controller" {
@@ -105,7 +105,7 @@ data "http" "inline_policy" {
 # Create IAM roles for ACK controllers
 resource "aws_iam_role" "ack_controller" {
   for_each = toset(["iam", "ec2", "eks"])
-  name        = "ack-${each.key}-controller-role-mgmt"
+  name        = "${var.resource_prefix}-ack-${each.key}-controller-role-mgmt"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -168,7 +168,7 @@ data "aws_iam_policy_document" "ack_controller_cross_account_policy" {
     effect = "Allow"
     actions = ["sts:AssumeRole", "sts:TagSession"]
     resources = [
-      for account in split(" ", var.account_ids) : "arn:aws:iam::${account}:role/peeks-cluster-mgmt-${each.key}"
+      for account in split(" ", var.account_ids) : "arn:aws:iam::${account}:role/${local.name}-cluster-mgmt-${each.key}"
     ]
   }
 }
@@ -194,7 +194,7 @@ resource "aws_eks_pod_identity_association" "ack_controller" {
 ################################################################################
 
 resource "aws_iam_role" "kargo_controller_role" {
-  name = "kargo-controller-role"
+  name = "${local.name}-kargo-controller-role"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -235,7 +235,7 @@ resource "aws_eks_pod_identity_association" "kargo_controller" {
 # Create ACK workload roles that can be assumed by ACK controllers
 resource "aws_iam_role" "ack_workload_role" {
   for_each = toset(["iam", "ec2", "eks"])
-  name     = "peeks-cluster-mgmt-${each.key}"
+  name     = "${local.name}-cluster-mgmt-${each.key}"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

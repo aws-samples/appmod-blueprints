@@ -108,6 +108,10 @@ deploy_database() {
   
   log "Deploying database for $env environment..."
   
+  # Set prefixes from RESOURCE_PREFIX environment variable
+  RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
+  CLUSTER_NAME_PREFIX="${cluster_name_prefix:-${RESOURCE_PREFIX:-peeks}-spoke}"
+  
   if ! terraform -chdir=${SCRIPTDIR}/db init -reconfigure \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
     -backend-config="key=spokes/db/${env}/terraform.tfstate" \
@@ -119,16 +123,9 @@ deploy_database() {
   
   terraform -chdir=${SCRIPTDIR}/db workspace select -or-create $env
   
-  if [ -n "$cluster_name_prefix" ]; then
-    if ! terraform -chdir=${SCRIPTDIR}/db apply -var-file="../workspaces/${env}.tfvars" -var="cluster_name_prefix=$cluster_name_prefix" -auto-approve; then
-      log_error "Database deployment failed with custom cluster name prefix"
-      exit 1
-    fi
-  else
-    if ! terraform -chdir=${SCRIPTDIR}/db apply -var-file="../workspaces/${env}.tfvars" -auto-approve; then
-      log_error "Database deployment failed"
-      exit 1
-    fi
+  if ! terraform -chdir=${SCRIPTDIR}/db apply -var-file="../workspaces/${env}.tfvars" -var="cluster_name_prefix=$CLUSTER_NAME_PREFIX" -var="resource_prefix=$RESOURCE_PREFIX" -parallelism=3 -auto-approve; then
+    log_error "Database deployment failed"
+    exit 1
   fi
   
   log_success "Database deployment completed for $env"
@@ -142,6 +139,10 @@ deploy_eks_cluster() {
   
   log "Deploying EKS cluster for $env environment..."
 
+  # Set prefixes from RESOURCE_PREFIX environment variable
+  RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
+  CLUSTER_NAME_PREFIX="${cluster_name_prefix:-${RESOURCE_PREFIX:-peeks}-spoke}"
+
   if ! terraform -chdir=$SCRIPTDIR init --upgrade \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
     -backend-config="key=spokes/${env}/terraform.tfstate" \
@@ -153,28 +154,17 @@ deploy_eks_cluster() {
 
   terraform -chdir=$SCRIPTDIR workspace select -or-create $env
 
-  # Apply with custom cluster name prefix if provided
-  if [ -n "$cluster_name_prefix" ]; then
-    log "Using custom cluster name prefix: $cluster_name_prefix"
-    if ! terraform -chdir=$SCRIPTDIR apply \
-      -var-file="workspaces/${env}.tfvars" \
-      -var="cluster_name_prefix=$cluster_name_prefix" \
-      -var="git_hostname=$gitlab_domain" \
-      -var="gitlab_domain_name=$gitlab_domain" \
-      -auto-approve; then
-      log_error "EKS cluster deployment failed with custom cluster name prefix"
-      exit 1
-    fi
-  else
-    log "Using default cluster name prefix: peeks-spoke"
-    if ! terraform -chdir=$SCRIPTDIR apply \
-      -var-file="workspaces/${env}.tfvars" \
-      -var="git_hostname=$gitlab_domain" \
-      -var="gitlab_domain_name=$gitlab_domain" \
-      -auto-approve; then
-      log_error "EKS cluster deployment failed"
-      exit 1
-    fi
+  log "Using cluster name prefix: $CLUSTER_NAME_PREFIX"
+  if ! terraform -chdir=$SCRIPTDIR apply \
+    -var-file="workspaces/${env}.tfvars" \
+    -var="cluster_name_prefix=$CLUSTER_NAME_PREFIX" \
+    -var="resource_prefix=$RESOURCE_PREFIX" \
+    -var="git_hostname=$gitlab_domain" \
+    -var="gitlab_domain_name=$gitlab_domain" \
+    -parallelism=3 \
+    -auto-approve; then
+    log_error "EKS cluster deployment failed"
+    exit 1
   fi
 }
 

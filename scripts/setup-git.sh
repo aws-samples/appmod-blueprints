@@ -14,17 +14,17 @@ ROOTDIR=$SCRIPTDIR
 GITOPS_DIR=${GITOPS_DIR:-$SCRIPTDIR/environment/gitops-repos}
 echo $GITOPS_DIR
 
-PROJECT_CONTEXT_PREFIX=${PROJECT_CONTEXT_PREFIX:-peeks-workshop-gitops}
+RESOURCE_PREFIX=${RESOURCE_PREFIX:-peeks}
 
 echo "Setting up Git repositories..."
 
 # Clone and initialize the gitops repositories
-gitops_workload_url="$(aws secretsmanager get-secret-value --secret-id ${PROJECT_CONTEXT_PREFIX}-workloads --query SecretString --output text | jq -r .url)"
-GIT_USER="$(aws secretsmanager get-secret-value --secret-id ${PROJECT_CONTEXT_PREFIX}-workloads --query SecretString --output text | jq -r .username)"
-GIT_PASS="$(aws secretsmanager get-secret-value --secret-id ${PROJECT_CONTEXT_PREFIX}-workloads --query SecretString --output text | jq -r .password)"
-gitops_platform_url="$(aws secretsmanager get-secret-value --secret-id ${PROJECT_CONTEXT_PREFIX}-platform --query SecretString --output text | jq -r .url)"
-gitops_addons_url="$(aws secretsmanager   get-secret-value --secret-id ${PROJECT_CONTEXT_PREFIX}-addons --query SecretString --output text | jq -r .url)"
-gitops_fleet_url="$(aws secretsmanager   get-secret-value  --secret-id ${PROJECT_CONTEXT_PREFIX}-fleet --query SecretString --output text | jq -r .url)"
+gitops_workload_url="$(aws secretsmanager get-secret-value --secret-id ${RESOURCE_PREFIX}-workloads --query SecretString --output text | jq -r .url)"
+GIT_USER="$(aws secretsmanager get-secret-value --secret-id ${RESOURCE_PREFIX}-workloads --query SecretString --output text | jq -r .username)"
+GIT_PASS="$(aws secretsmanager get-secret-value --secret-id ${RESOURCE_PREFIX}-workloads --query SecretString --output text | jq -r .password)"
+gitops_platform_url="$(aws secretsmanager get-secret-value --secret-id ${RESOURCE_PREFIX}-platform --query SecretString --output text | jq -r .url)"
+gitops_addons_url="$(aws secretsmanager   get-secret-value --secret-id ${RESOURCE_PREFIX}-addons --query SecretString --output text | jq -r .url)"
+gitops_fleet_url="$(aws secretsmanager   get-secret-value  --secret-id ${RESOURCE_PREFIX}-fleet --query SecretString --output text | jq -r .url)"
 
 # if IDE_URL is set then setup
 if [[ -n "${IDE_URL:-}" ]]; then

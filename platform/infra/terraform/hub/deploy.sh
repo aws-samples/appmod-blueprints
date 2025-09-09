@@ -84,6 +84,10 @@ main() {
   # Validate backend configuration
   validate_backend_config
   
+  # Use RESOURCE_PREFIX directly for both cluster and project context
+  RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
+  log "Using resource prefix: $RESOURCE_PREFIX"
+  
   # Initialize Terraform with S3 backend
   log "Initializing Terraform with S3 backend..."
   if ! terraform -chdir=$SCRIPTDIR init --upgrade \
@@ -101,14 +105,15 @@ main() {
   # Apply with custom cluster name if provided
   if [ -n "$CLUSTER_NAME" ]; then
     log "Deploying with custom cluster name: $CLUSTER_NAME"
-    if ! terraform -chdir=$SCRIPTDIR apply -var-file=$TF_VAR_FILE -var="cluster_name=$CLUSTER_NAME" -var="account_ids=$AWS_ACCOUNT_ID" -auto-approve; then
+    if ! terraform -chdir=$SCRIPTDIR apply -var-file=$TF_VAR_FILE -var="cluster_name=$CLUSTER_NAME" -var="account_ids=$AWS_ACCOUNT_ID" -var="resource_prefix=$RESOURCE_PREFIX" -parallelism=5 -auto-approve; then
       log_error "Terraform apply failed for cluster $CLUSTER_NAME"
       exit 1
     fi
   else
-    log "Deploying with default cluster name: peeks-hub-cluster"
-    if ! terraform -chdir=$SCRIPTDIR apply -var-file=$TF_VAR_FILE -var="account_ids=$AWS_ACCOUNT_ID" -auto-approve; then
-      log_error "Terraform apply failed for default cluster"
+    CLUSTER_NAME="${RESOURCE_PREFIX:-peeks}-hub-cluster"
+    log "Deploying with cluster name: $CLUSTER_NAME"
+    if ! terraform -chdir=$SCRIPTDIR apply -var-file=$TF_VAR_FILE -var="cluster_name=$CLUSTER_NAME" -var="account_ids=$AWS_ACCOUNT_ID" -var="resource_prefix=$RESOURCE_PREFIX" -parallelism=5 -auto-approve; then
+      log_error "Terraform apply failed for cluster $CLUSTER_NAME"
       exit 1
     fi
   fi

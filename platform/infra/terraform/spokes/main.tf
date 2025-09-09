@@ -30,7 +30,7 @@ data "aws_ssm_parameter" "frontend_team_view_role" {
 
 
 locals {
-  context_prefix = var.project_context_prefix
+  context_prefix = var.resource_prefix
   name            = "${var.cluster_name_prefix}-${terraform.workspace}"
   region          = data.aws_region.current.id
   cluster_version = var.kubernetes_version
@@ -42,7 +42,7 @@ locals {
   ingress_security_groups = "${aws_security_group.ingress_http.id},${aws_security_group.ingress_https.id}"
 
   # GitOps repository URLs
-  git_hostname = var.git_hostname == "" ? "d1vvjck0a1cre3.cloudfront.net" : var.git_hostname
+  git_hostname = var.git_hostname
   gitops_addons_repo_url = "https://${local.git_hostname}/${var.git_org_name}/${var.gitops_addons_repo_name}.git"
   gitops_fleet_repo_url = "https://${local.git_hostname}/${var.git_org_name}/${var.gitops_fleet_repo_name}.git"
   gitops_workload_repo_url = "https://${local.git_hostname}/${var.git_org_name}/${var.gitops_workload_repo_name}.git"
@@ -128,6 +128,7 @@ locals {
       aws_region       = local.region
       aws_account_id   = data.aws_caller_identity.current.account_id
       aws_vpc_id       = module.vpc.vpc_id
+      resource_prefix  = var.resource_prefix
     },
     {
       external_secrets_namespace = local.external_secrets.namespace
@@ -377,7 +378,7 @@ module "vpc" {
 # Get ACK controller IAM roles created by hub cluster
 data "aws_iam_role" "ack_controller" {
   for_each = toset(["iam", "ec2", "eks"])
-  name     = "ack-${each.key}-controller-role-mgmt"
+  name     = "${local.context_prefix}-ack-${each.key}-controller-role-mgmt"
 }
 
 # Create pod identity associations for ACK controllers

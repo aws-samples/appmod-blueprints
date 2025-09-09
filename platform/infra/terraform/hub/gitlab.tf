@@ -4,7 +4,7 @@
 
 # Security group for GitLab NLB
 resource "aws_security_group" "gitlab_ssh" {
-  name        = "gitlab-ssh"
+  name        = "${local.name}-gitlab-ssh"
   description = "SSH for GitLab"
   vpc_id      = module.vpc.vpc_id
 
@@ -22,13 +22,13 @@ resource "aws_security_group" "gitlab_ssh" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   tags = {
-    Name = "gitlab-ssh"
+    Name = "${local.name}-gitlab-ssh"
   }
 }
 
 # Security group for HTTP access (port 80) for GitLab
 resource "aws_security_group" "gitlab_http" {
-  name        = "gitlab-http"
+  name        = "${local.name}-gitlab-http"
   description = "HTTP for GitLab"
   vpc_id      = module.vpc.vpc_id
 
@@ -46,7 +46,7 @@ resource "aws_security_group" "gitlab_http" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   tags = {
-    Name = "gitlab-http"
+    Name = "${local.name}-gitlab-http"
   }
 }
 

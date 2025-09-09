@@ -1,13 +1,13 @@
-variable "project_context_prefix" {
+variable "resource_prefix" {
   description = "Prefix for project"
   type        = string
-  default     = "peeks-workshop-gitops"
+  default     = "peeks"
 }
 
 variable "secret_name_ssh_secrets" {
   description = "Secret name for SSH secrets"
   type        = string
-  default     = "git-ssh-secrets-peeks-workshop"
+  default     = "peeks-git-ssh-secrets"
 }
 
 

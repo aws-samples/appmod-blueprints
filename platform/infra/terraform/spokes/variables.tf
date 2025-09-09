@@ -28,10 +28,10 @@ variable "kms_key_admin_roles" {
 
 }
 
-variable "project_context_prefix" {
+variable "resource_prefix" {
   description = "Prefix for project"
   type        = string
-  default     = "peeks-workshop-gitops"
+  default     = "peeks"
 }
 
 variable "ssm_parameter_name_argocd_role_suffix" {

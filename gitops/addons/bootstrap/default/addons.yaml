@@ -44,6 +44,7 @@ argocd:
   valuesObject:
     global:
       domain: '{{.metadata.annotations.ingress_domain_name}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     configs:
       cm:
         url: https://{{.metadata.annotations.ingress_domain_name}}/argocd

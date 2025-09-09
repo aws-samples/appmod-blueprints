@@ -491,7 +491,7 @@ spec:
       remoteRef:
         conversionStrategy: Default
         decodingStrategy: None
-        key: peeks-workshop-gitops-backstage-postgresql-password
+        key: {{ .Values.global.resourcePrefix | default "peeks" }}-backstage-postgresql-password
         metadataPolicy: None
         property: password
 ---

@@ -134,7 +134,7 @@ print_step "Creating GitLab access token for ArgoCD"
 ROOT_TOKEN="root-$IDE_PASSWORD"
 
 # Check if GitLab token already exists in Secrets Manager
-EXISTING_SECRET=$(aws secretsmanager get-secret-value --secret-id "peeks-workshop-gitops-gitlab-pat" --region $AWS_REGION 2>/dev/null || echo "")
+EXISTING_SECRET=$(aws secretsmanager get-secret-value --secret-id "${RESOURCE_PREFIX:-peeks}-gitlab-pat" --region $AWS_REGION 2>/dev/null || echo "")
 
 if [ -n "$EXISTING_SECRET" ]; then
     GITLAB_TOKEN=$(echo "$EXISTING_SECRET" | jq -r '.SecretString | fromjson | .token')
@@ -185,7 +185,7 @@ fi
 if [ -z "$EXISTING_SECRET" ]; then
     print_step "Storing GitLab token in AWS Secrets Manager"
     aws secretsmanager create-secret \
-        --name "peeks-workshop-gitops-gitlab-pat" \
+        --name "${RESOURCE_PREFIX:-peeks}-gitlab-pat" \
         --description "GitLab Personal Access Token for repository operations" \
         --secret-string "{\"token\":\"$GITLAB_TOKEN\",\"username\":\"$GIT_USERNAME\",\"hostname\":\"$(echo $GITLAB_URL | sed 's|https://||')\",\"working_repo\":\"$WORKING_REPO\"}" \
         --tags '[
@@ -196,11 +196,11 @@ if [ -z "$EXISTING_SECRET" ]; then
         ]' \
         --region $AWS_REGION 2>/dev/null || \
     aws secretsmanager update-secret \
-        --secret-id "peeks-workshop-gitops-gitlab-pat" \
+        --secret-id "${RESOURCE_PREFIX:-peeks}-gitlab-pat" \
         --secret-string "{\"token\":\"$GITLAB_TOKEN\",\"username\":\"$GIT_USERNAME\",\"hostname\":\"$(echo $GITLAB_URL | sed 's|https://||')\",\"working_repo\":\"$WORKING_REPO\"}" \
         --region $AWS_REGION
 
-    print_success "GitLab token stored in AWS Secrets Manager: peeks-workshop-gitops-gitlab-pat"
+    print_success "GitLab token stored in AWS Secrets Manager: ${RESOURCE_PREFIX:-peeks}-gitlab-pat"
 else
     print_info "Using existing GitLab token from Secrets Manager"
 fi
