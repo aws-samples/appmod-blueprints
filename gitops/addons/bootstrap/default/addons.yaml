@@ -549,6 +549,8 @@ keycloak:
         operator: In
         values: ['true']
   valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
