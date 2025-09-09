@@ -78,3 +78,17 @@
   ec2.{{ $key }}: "arn:aws:iam::{{ $value }}:role/peeks-cluster-mgmt-ec2"
   eks.{{ $key }}: "arn:aws:iam::{{ $value }}:role/peeks-cluster-mgmt-eks"
   iam.{{ $key }}: "arn:aws:iam::{{ $value }}:role/peeks-cluster-mgmt-iam"
+
+
+- the CFN do not upload lmbda assets to the s3 bucket, so it is not found..
+
+
+task taskcat-clean-deployment
+
+
+- [x] clean elastic ip - like peeks-spoke-dev-us-east-1a
+- [x] clean ebs volumes - peeks-hub-cluster-dynamic-pvc-5c3ffb10-f081-43d2-ad13-2ef6de2022b3
+- [x] clean parameter store : like peeks-workshop-tf-backend-bucket
+- [x] cloudwatch logs groups - like /aws/codebuild/PEEKSGITIAMStackDeployProje-30HWWmiBcgx0 or /aws/lambda/tCaT-peeks-workshop-test--IDEPEEKSIdePasswordExpor-OOmtoIML4oGw or tCaT-peeks-workshop-test-fleet-workshop-test-92b4118d493d47dcb827190d4e5ac6b9-IDEPEEKSIdeLogGroup3808F7B1-xMtRAbEgY8Ho
+
+

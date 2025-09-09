@@ -38,8 +38,8 @@ fi
 REPO_FULL_URL=https://$GITLAB_DOMAIN/$GIT_USERNAME/$WORKING_REPO.git
 
 # Check if required environment variables are set
-if [ -z "$ACCOUNT_ID" ]; then
-  print_error "ACCOUNT_ID environment variable is not set"
+if [ -z "$AWS_ACCOUNT_ID" ]; then
+  print_error "AWS_ACCOUNT_ID environment variable is not set"
   exit 1
 fi
 
@@ -49,7 +49,7 @@ if [ -z "$AWS_REGION" ]; then
 fi
 
 print_info "Using the following values for template updates:"
-echo "  Account ID: $ACCOUNT_ID"
+echo "  Account ID: $AWS_ACCOUNT_ID"
 echo "  AWS Region: $AWS_REGION"
 echo "  GitLab Domain: $GITLAB_DOMAIN"
 echo "  Git Username: $GIT_USERNAME"
@@ -69,8 +69,8 @@ update_eks_cluster_template() {
     print_step "Updating EKS cluster template"
     
     # Update the template.yaml file using yq
-    yq -i '.spec.parameters[0].properties.accountId.default = "'$ACCOUNT_ID'"' "$template_path"
-    yq -i '.spec.parameters[0].properties.managementAccountId.default = "'$ACCOUNT_ID'"' "$template_path"
+    yq -i '.spec.parameters[0].properties.accountId.default = "'$AWS_ACCOUNT_ID'"' "$template_path"
+    yq -i '.spec.parameters[0].properties.managementAccountId.default = "'$AWS_ACCOUNT_ID'"' "$template_path"
     yq -i '.spec.parameters[0].properties.region.default = "'$AWS_REGION'"' "$template_path"
     yq -i '.spec.parameters[0].properties.repoHostUrl.default = "'$GITLAB_DOMAIN'"' "$template_path"
     yq -i '.spec.parameters[0].properties.repoUsername.default = "'$GIT_USERNAME'"' "$template_path"
@@ -175,7 +175,7 @@ update_aws_resource_templates() {
         
         # Update account ID if it exists in the template
         if yq -e '.spec.parameters[].properties.accountId' "$template_path" > /dev/null 2>&1; then
-            yq -i '.spec.parameters[].properties.accountId.default = "'$ACCOUNT_ID'"' "$template_path"
+            yq -i '.spec.parameters[].properties.accountId.default = "'$AWS_ACCOUNT_ID'"' "$template_path"
             print_info "Updated Account ID in $template_name template"
         fi
         
@@ -202,7 +202,7 @@ update_aws_resource_templates
 print_success "All Backstage templates have been updated with environment-specific values!"
 
 print_info "Updated templates with:"
-echo "  ✓ Account ID: $ACCOUNT_ID"
+echo "  ✓ Account ID: $AWS_ACCOUNT_ID"
 echo "  ✓ AWS Region: $AWS_REGION"
 echo "  ✓ GitLab Domain: $GITLAB_DOMAIN"
 echo "  ✓ Repository URLs: Updated to use actual GitLab domain"
