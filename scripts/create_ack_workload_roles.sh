@@ -21,7 +21,7 @@ create_ack_workload_roles() {
         {
             "Effect": "Allow",
             "Principal": {
-                "AWS": "arn:aws:iam::${MGMT_ACCOUNT_ID}:role/ack-${service}-controller-role-mgmt"
+                "AWS": "arn:aws:iam::${MGMT_ACCOUNT_ID}:role/${RESOURCE_PREFIX}-ack-${service}-controller-role-mgmt"
             },
             "Action": [
               "sts:AssumeRole",
