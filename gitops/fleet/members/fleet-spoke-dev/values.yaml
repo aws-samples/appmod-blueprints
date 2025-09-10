@@ -4,6 +4,7 @@ externalSecret:
   secretStoreRefKind: ClusterSecretStore
   secretStoreRefName: aws-secrets-manager
   secretManagerSecretName: peeks-workshop-hub-cluster/peeks-workshop-spoke-dev
+
   server: remote
   
   annotations:

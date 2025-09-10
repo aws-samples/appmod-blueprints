@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Bootstrap script to run deployment scripts in order with retry logic
-# Runs: 1-argocd-gitlab-setup.sh, 2-bootstrap-accounts.sh, and 6-tools-urls.sh in sequence
+# Runs: 1-argocd-gitlab-setup.sh, 2-bootstrap-accounts.sh, 3-register-terraform-spoke-clusters.sh (dev/prod), and 6-tools-urls.sh in sequence
 # Each script must succeed before proceeding to the next
 
 # Removed set -e to allow proper error handling in cluster waiting logic
@@ -38,6 +38,8 @@ CLUSTER_NAMES=(
 SCRIPTS=(
     "1-argocd-gitlab-setup.sh"
     "2-bootstrap-accounts.sh"
+    "3-register-terraform-spoke-clusters.sh dev"
+    "3-register-terraform-spoke-clusters.sh prod"
     "6-tools-urls.sh"
 )
 
