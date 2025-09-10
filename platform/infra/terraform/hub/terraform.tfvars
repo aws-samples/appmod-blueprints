@@ -30,4 +30,4 @@ gitops_workload_repo_revision   = "main"
 
 
 # AWS Accounts used for demo purposes (cluster1 cluster2)
-account_ids = "<aws_account_id>" # update this with your spoke aws accounts ids
+account_ids = "586794472760" # update this with your spoke aws accounts ids
