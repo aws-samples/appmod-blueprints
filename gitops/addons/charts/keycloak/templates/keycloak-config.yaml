@@ -318,7 +318,7 @@ spec:
               curl -sS -LO "https://s3.us-west-2.amazonaws.com/amazon-eks/1.32.0/2024-12-20/bin/linux/amd64/kubectl"
               chmod +x kubectl
 
-              DOMAIN_NAME=$(./kubectl get secret peeks-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}')
+              DOMAIN_NAME=$(./kubectl get secret {{ .Values.global.resourcePrefix | default "peeks" }}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}')
 
               KEYCLOAK_URL=http://keycloak.keycloak.svc.cluster.local:8080/keycloak
 

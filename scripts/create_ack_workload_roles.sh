@@ -37,7 +37,7 @@ EOF
     #for SERVICE in iam ec2 eks secretsmanager; do
     for SERVICE in iam ec2 eks; do
         echo ">>>>>>>>>SERVICE:$SERVICE"
-        local ROLE_NAME="peeks-cluster-mgmt-${SERVICE}"
+        local ROLE_NAME="${RESOURCE_PREFIX}-cluster-mgmt-${SERVICE}"
 
         # # First, detach any managed policies
         # for policy in $(aws iam list-attached-role-policies --role-name "${ROLE_NAME}" --query 'AttachedPolicies[*].PolicyArn' --output text 2>/dev/null); do

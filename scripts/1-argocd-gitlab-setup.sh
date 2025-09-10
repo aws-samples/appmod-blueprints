@@ -31,7 +31,7 @@
 #   Run after 0-initial-setup.sh and before 2-bootstrap-accounts.sh
 #
 #############################################################################
-
+set -x
 # Configuration
 STUCK_SYNC_TIMEOUT=${STUCK_SYNC_TIMEOUT:-300}  # 5 minutes default for stuck sync operations
 
@@ -79,10 +79,10 @@ check_backstage_build_status() {
 print_header "ArgoCD and GitLab Setup"
 
 print_step "Updating kubeconfig to connect to the hub cluster"
-aws eks update-kubeconfig --name peeks-hub-cluster --alias peeks-hub-cluster
+aws eks update-kubeconfig --name ${RESOURCE_PREFIX}-hub-cluster --alias ${RESOURCE_PREFIX}-hub-cluster
 
 print_step "Creating Amazon Elastic Container Repository (Amazon ECR) for Backstage image"
-aws ecr create-repository --repository-name peeks-backstage --region $AWS_REGION || true
+aws ecr create-repository --repository-name ${RESOURCE_PREFIX}-backstage --region $AWS_REGION || true
 
 print_step "Starting Backstage image build early"
 print_info "Building Backstage image in background..."
@@ -326,7 +326,7 @@ kubectl get applications -n argocd
 print_step "Ensuring critical ArgoCD applications are healthy"
 
 # Define critical applications to monitor (can be customized)
-CRITICAL_APPS="${CRITICAL_ARGOCD_APPS:-bootstrap cluster-addons argocd-peeks-hub-cluster ingress-nginx-peeks-hub-cluster}"
+CRITICAL_APPS="${CRITICAL_ARGOCD_APPS:-bootstrap cluster-addons argocd-${RESOURCE_PREFIX}-hub-cluster ingress-nginx-${RESOURCE_PREFIX}-hub-cluster}"
 print_info "Monitoring applications: ${CRITICAL_APPS:-all applications}"
 
 # Function to sync and wait for applications

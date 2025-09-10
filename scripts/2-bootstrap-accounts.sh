@@ -69,7 +69,7 @@ done
 
 # Wait for KRO applications to be fully deployed
 print_step "Ensuring KRO applications are fully synced..."
-for app in kro-peeks-hub-cluster kro-eks-rgs-peeks-hub-cluster; do
+for app in kro-${RESOURCE_PREFIX}-hub-cluster kro-eks-rgs-${RESOURCE_PREFIX}-hub-cluster; do
   while [ "$(kubectl get application $app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)" != "Synced" ]; do
     print_info "Waiting for $app to sync..."
     sleep 10
