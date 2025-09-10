@@ -33,7 +33,7 @@ spec:
           title: AWS Region
           type: string
           description: AWS Region for the EKS cluster
-          default: "us-west-2"
+          default: "us-east-1"
         k8sVersion:
           title: Kubernetes Version
           type: string

@@ -41,7 +41,7 @@ spec:
           title: Enter namespace within the EKS cluster to deploy this
           type: string
         aws_region:
-          default: us-west-2
+          default: us-east-1
           title: Region
           type: string
         repoHostUrl:
