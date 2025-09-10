@@ -550,6 +550,8 @@ keycloak:
         values: ['true']
   valuesObject:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
   ignoreDifferences:
