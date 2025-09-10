@@ -1,19 +1,20 @@
 externalSecret:
   enabled: true
-  clusterName: peeks-spoke-prod
+  # Values will be overridden by ApplicationSet
+  clusterName: "{{ .Values.externalSecret.clusterName | default \"peeks-spoke-prod\" }}"
   secretStoreRefKind: ClusterSecretStore
   secretStoreRefName: aws-secrets-manager
-  secretManagerSecretName: peeks-hub-cluster/peeks-spoke-prod
+  secretManagerSecretName: "{{ .Values.externalSecret.secretManagerSecretName | default \"peeks-hub-cluster/peeks-spoke-prod\" }}"
   server: remote
   
   annotations:
     environment: prod
-    tenant: tenant1
+    tenant: "{{ .Values.externalSecret.annotations.tenant | default \"tenant1\" }}"
     
   labels:
     environment: prod
-    tenant: tenant1
-    fleet_member: prod
+    tenant: "{{ .Values.externalSecret.labels.tenant | default \"tenant1\" }}"
+    fleet_member: "{{ .Values.externalSecret.labels.fleet_member | default \"prod\" }}"
     enable_cert_manager: "true"
     enable_external_secrets: "true"
     enable_ingress_nginx: "true"
