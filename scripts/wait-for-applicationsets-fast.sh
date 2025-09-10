@@ -204,7 +204,7 @@ if [ -x "$SCRIPT_DIR/detect-git-revision-mismatch.sh" ]; then
 fi
 
 # Show access info
-DOMAIN_NAME=$(kubectl get secret peeks-hub-cluster -n argocd -o json 2>/dev/null | jq -r '.metadata.annotations.ingress_domain_name // ""')
+DOMAIN_NAME=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o json 2>/dev/null | jq -r '.metadata.annotations.ingress_domain_name // ""')
 if [ -n "$DOMAIN_NAME" ]; then
     echo ""
     print_header "Access Information"

@@ -361,7 +361,7 @@ print_success "ApplicationSets deployment completed successfully!"
 print_info "Total time: $((total_elapsed / 60))m $((total_elapsed % 60))s"
 
 print_header "Access Information"
-DOMAIN_NAME=$(kubectl get secret peeks-hub-cluster -n argocd -o json | jq -r '.metadata.annotations.ingress_domain_name // ""')
+DOMAIN_NAME=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o json | jq -r '.metadata.annotations.ingress_domain_name // ""')
 if [ -n "$DOMAIN_NAME" ]; then
     echo -e "${CYAN}ArgoCD URL:${BOLD} https://$DOMAIN_NAME/argocd${NC}"
     echo -e "${CYAN}   Login:${BOLD} admin${NC}"

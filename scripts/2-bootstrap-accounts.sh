@@ -27,9 +27,53 @@
 
 set -e
 
+# Configuration
+STUCK_SYNC_TIMEOUT=${STUCK_SYNC_TIMEOUT:-180}  # 3 minutes default for stuck sync operations
+
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
+
+# Function to check and recover stuck applications
+check_and_recover_stuck_apps() {
+    local apps_to_check="$1"
+    print_info "Checking for stuck applications..."
+    
+    # Get application status with operation state and start time
+    local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{" "}{.status.operationState.phase}{" "}{.status.operationState.startedAt}{"\n"}{end}' 2>/dev/null)
+    
+    local recovered=false
+    
+    # Check for stuck sync operations
+    echo "$app_status" | while IFS=' ' read -r app health sync phase start_time; do
+        if [ -n "$app" ] && [ "$phase" = "Running" ] && [ -n "$start_time" ]; then
+            # Filter for specific apps if provided
+            if [ -n "$apps_to_check" ] && ! echo "$apps_to_check" | grep -q "$app"; then
+                continue
+            fi
+            
+            local current_time=$(date -u +%s)
+            local start_timestamp=$(date -d "$start_time" +%s 2>/dev/null || echo "0")
+            local duration=$((current_time - start_timestamp))
+            
+            if [ $duration -gt $STUCK_SYNC_TIMEOUT ]; then
+                print_warning "Found stuck sync for $app (running ${duration}s > ${STUCK_SYNC_TIMEOUT}s)"
+                print_info "Terminating stuck operation for $app"
+                argocd app terminate-op "$app" 2>/dev/null || true
+                sleep 2
+                
+                print_info "Force syncing $app after termination"
+                kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"syncStrategy":{"hook":{}}}}}' 2>/dev/null || true
+                recovered=true
+            fi
+        fi
+    done
+    
+    if [ "$recovered" = true ]; then
+        print_info "Waiting 30 seconds for recovery operations to complete..."
+        sleep 30
+    fi
+}
 
 print_header "Bootstrapping Management and Spoke Accounts"
 
@@ -69,10 +113,16 @@ done
 
 # Wait for KRO applications to be fully deployed
 print_step "Ensuring KRO applications are fully synced..."
-for app in kro-peeks-hub-cluster kro-eks-rgs-peeks-hub-cluster; do
+
+# Check for stuck applications first
+check_and_recover_stuck_apps "kro-${RESOURCE_PREFIX}-hub-cluster kro-eks-rgs-${RESOURCE_PREFIX}-hub-cluster"
+
+for app in kro-${RESOURCE_PREFIX}-hub-cluster kro-eks-rgs-${RESOURCE_PREFIX}-hub-cluster; do
   while [ "$(kubectl get application $app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)" != "Synced" ]; do
     print_info "Waiting for $app to sync..."
     sleep 10
+    # Check for stuck operations periodically
+    check_and_recover_stuck_apps "$app"
   done
   print_success "$app is synced"
 done
@@ -85,6 +135,7 @@ print_info "Waiting for ResourceGraphDefinitions to be created and become Active
 
 max_attempts=10
 attempt=0
+
 
 while [ $attempt -lt $max_attempts ]; do
   attempt=$((attempt + 1))

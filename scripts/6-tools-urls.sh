@@ -13,12 +13,12 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
 
 # Switch to hub cluster context
-print_step "Switching to peeks-hub-cluster context..."
-kubectl config use-context peeks-hub-cluster 2>/dev/null || kubectx peeks-hub-cluster 2>/dev/null || echo "Warning: Could not switch context, using current context"
+print_step "Switching to ${RESOURCE_PREFIX}-hub-cluster context..."
+kubectl config use-context ${RESOURCE_PREFIX}-hub-cluster 2>/dev/null || kubectx ${RESOURCE_PREFIX}-hub-cluster 2>/dev/null || echo "Warning: Could not switch context, using current context"
 
 # Get CloudFront domain name
 print_info "Retrieving CloudFront domain..."
-DOMAIN_NAME=$(kubectl get secret peeks-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
+DOMAIN_NAME=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
 if [ -z "$DOMAIN_NAME" ]; then
     DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text)
 fi

@@ -108,18 +108,18 @@ fi
 
 print_step "Syncing the multi-acct application"
 # Hard refresh first to detect new commits
-kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"info":[{"name":"Reason","value":"Hard refresh"}]}}'
+kubectl patch application multi-acct-${RESOURCE_PREFIX}-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"info":[{"name":"Reason","value":"Hard refresh"}]}}'
 sleep 5
 
 # Force sync to HEAD
-kubectl patch application multi-acct-peeks-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
+kubectl patch application multi-acct-${RESOURCE_PREFIX}-hub-cluster -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
 sleep 5
 
 print_step "Waiting for the multi-acct application to be synced and healthy"
 # Wait for sync with timeout, but check status manually
 for i in {1..12}; do
-    SYNC_STATUS=$(kubectl get application multi-acct-peeks-hub-cluster -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-    HEALTH_STATUS=$(kubectl get application multi-acct-peeks-hub-cluster -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    SYNC_STATUS=$(kubectl get application multi-acct-${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    HEALTH_STATUS=$(kubectl get application multi-acct-${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
     
     if [ "$SYNC_STATUS" = "Synced" ] && [ "$HEALTH_STATUS" = "Healthy" ]; then
         print_success "Multi-acct application is synced and healthy"
@@ -131,7 +131,7 @@ for i in {1..12}; do
 done
 
 # Check final status
-FINAL_SYNC=$(kubectl get application multi-acct-peeks-hub-cluster -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+FINAL_SYNC=$(kubectl get application multi-acct-${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
 if [ "$FINAL_SYNC" != "Synced" ]; then
     print_warning "Application not fully synced ($FINAL_SYNC), but continuing..."
 fi

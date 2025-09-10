@@ -14,7 +14,7 @@ if [ -d /home/ec2-user/.bashrc.d ]; then
 fi
 
 # Use a single variable for app name, repository, service, and cluster
-APP_NAME="peeks-backstage"
+APP_NAME="${RESOURCE_PREFIX}-backstage"
 
 # Check if APP_PATH was provided as the first parameter
 APP_PATH="$1"
