@@ -25,7 +25,7 @@
 #
 #############################################################################
 
-set -ex
+set -e
 
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"

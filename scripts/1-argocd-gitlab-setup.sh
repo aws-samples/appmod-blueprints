@@ -31,7 +31,7 @@
 #   Run after 0-initial-setup.sh and before 2-bootstrap-accounts.sh
 #
 #############################################################################
-set -x
+
 # Configuration
 STUCK_SYNC_TIMEOUT=${STUCK_SYNC_TIMEOUT:-300}  # 5 minutes default for stuck sync operations
 
@@ -124,11 +124,9 @@ print_step "Updating Backstage templates"
 $SCRIPT_DIR/update_template_defaults.sh
 git add . && git commit -m "Update Backstage Templates" || true
 
-set -x
-pwd
 # Push the local branch (WORKSHOP_GIT_BRANCH) to the remote main branch
 git push --set-upstream origin $WORKSHOP_GIT_BRANCH:main
-set +x
+
 
 print_step "Creating GitLab access token for ArgoCD"
 ROOT_TOKEN="root-$IDE_PASSWORD"
