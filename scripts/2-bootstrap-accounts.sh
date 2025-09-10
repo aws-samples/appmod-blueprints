@@ -25,7 +25,7 @@
 #
 #############################################################################
 
-set -e
+set -ex
 
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -85,6 +85,7 @@ print_info "Waiting for ResourceGraphDefinitions to be created and become Active
 
 max_attempts=10
 attempt=0
+
 
 while [ $attempt -lt $max_attempts ]; do
   attempt=$((attempt + 1))

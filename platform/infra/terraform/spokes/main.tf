@@ -199,7 +199,7 @@ data "aws_ssm_parameter" "amp_endpoint" {
 }
 
 resource "aws_secretsmanager_secret" "spoke_cluster_secret" {
-  name                    = "peeks-hub-cluster/${var.cluster_name_prefix}-${terraform.workspace}"
+  name                    = "${var.resource_prefix}-hub-cluster/${var.cluster_name_prefix}-${terraform.workspace}"
   recovery_window_in_days = 0
 }
 

@@ -7,7 +7,7 @@ locals{
 
 #Managed Prometheus workspace
 resource "aws_prometheus_workspace" "amp" {
-  alias = "peeks-hub"
+  alias = "${var.resource_prefix}-hub"
   tags  = local.tags
 }
 
