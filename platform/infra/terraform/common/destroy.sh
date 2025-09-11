@@ -78,7 +78,11 @@ main() {
   
   # Destroy Terraform resources
   log "Destroying AWS git and IAM resources..."
-  if ! terraform -chdir=$SCRIPTDIR destroy -auto-approve; then
+  if ! terraform -chdir=$SCRIPTDIR destroy \
+    -var="ide_password=${IDE_PASSWORD}" \
+    -var="git_username=${GIT_USERNAME}" \
+    -var="working_repo=${WORKING_REPO}" \
+    -auto-approve; then
     log_error "Common stack destroy failed"
     exit 1
   fi

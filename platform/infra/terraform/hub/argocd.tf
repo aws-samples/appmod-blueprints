@@ -24,7 +24,7 @@ locals {
   existing_data = fileexists(local.password_file) ? jsondecode(file(local.password_file)) : { hash = "", key = "" }
 
   # Use existing values if available, otherwise generate new ones
-  password_hash = local.existing_data.hash != "" ? local.existing_data.hash : bcrypt(data.external.env_vars.result.IDE_PASSWORD)
+  password_hash = local.existing_data.hash != "" ? local.existing_data.hash : bcrypt(var.ide_password)
   password_key = local.existing_data.key != "" ? local.existing_data.key : data.external.password_key.result.result
 }
 
@@ -89,7 +89,7 @@ resource "kubernetes_secret" "ide_password" {
   }
 
   data = {
-    password = data.external.env_vars.result.IDE_PASSWORD
+    password = var.ide_password
   }
 }
 
@@ -105,8 +105,8 @@ resource "kubernetes_secret" "git_credentials" {
   data = {
     GIT_HOSTNAME = "${local.git_hostname}"
     GIT_USERNAME = "${var.git_org_name}"
-    GIT_PASSWORD = data.external.env_vars.result.IDE_PASSWORD
-    WORKING_REPO = data.external.env_vars.result.WORKING_REPO
+    GIT_PASSWORD = jsondecode(data.aws_secretsmanager_secret_version.keycloak_user_password.secret_string)["password"]
+    WORKING_REPO = var.working_repo
   }
 }
 
@@ -180,5 +180,6 @@ resource "kubernetes_ingress_v1" "argocd_nlb" {
 # Output the ArgoCD URL and login credentials
 output "argocd_access" {
   description = "ArgoCD access information"
-  value       = "ArgoCD URL: https://${local.ingress_domain_name}/argocd\nLogin: admin\nPassword: ${data.external.env_vars.result.IDE_PASSWORD}"
+  value       = "ArgoCD URL: https://${local.ingress_domain_name}/argocd\nLogin: admin\nPassword: ${var.ide_password}"
+  sensitive   = true
 }

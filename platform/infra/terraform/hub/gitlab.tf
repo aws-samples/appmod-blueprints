@@ -196,10 +196,10 @@ locals {
   # Create the values content using templatefile
   gitlab_values = templatefile("${path.module}/gitlab-initial-values.yaml", {
     DOMAIN_NAME = local.gitlab_domain_name
-    INITIAL_ROOT_PASSWORD = data.external.env_vars.result["IDE_PASSWORD"]
+    INITIAL_ROOT_PASSWORD = var.ide_password
     SECURITY_GROUPS_GITLAB = local.gitlab_security_groups
-    GIT_USERNAME = data.external.env_vars.result["GIT_USERNAME"]
-    WORKING_REPO = data.external.env_vars.result["WORKING_REPO"]
+    GIT_USERNAME = var.git_username
+    WORKING_REPO = var.working_repo
   })
 }
 

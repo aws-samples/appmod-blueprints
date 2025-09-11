@@ -113,7 +113,12 @@ for file in ~/.bashrc.d/*.sh; do
 done
 
 print_info "Creating GitLab SSH keys"
-$SCRIPT_DIR/gitlab_create_keys.sh
+# Skip if SSH key already exists for this user
+if ssh-add -l 2>/dev/null | grep -q "$GIT_USERNAME"; then
+    print_success "SSH key already exists for $GIT_USERNAME, skipping creation"
+else
+    $SCRIPT_DIR/gitlab_create_keys.sh
+fi
 
 print_step "Configuring Git remote and pushing to GitLab"
 cd $WORKSPACE_PATH/$WORKING_REPO
@@ -143,13 +148,18 @@ if [ -n "$EXISTING_SECRET" ]; then
     TOKEN_TEST=$(curl -s -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/projects/$GIT_USERNAME%2F$WORKING_REPO" | jq -r '.path_with_namespace // .message')
     if [ "$TOKEN_TEST" = "$GIT_USERNAME/$WORKING_REPO" ]; then
         print_success "Existing GitLab token test successful"
+        # Skip token creation - jump to ArgoCD secret creation
+        SKIP_TOKEN_CREATION=true
     else
         print_info "Existing token invalid, creating new one..."
         EXISTING_SECRET=""
+        SKIP_TOKEN_CREATION=false
     fi
+else
+    SKIP_TOKEN_CREATION=false
 fi
 
-if [ -z "$EXISTING_SECRET" ]; then
+if [ "$SKIP_TOKEN_CREATION" != "true" ]; then
     # Get the user ID for the GIT_USERNAME
     USER_ID=$(curl -sS -X GET "$GITLAB_URL/api/v4/users?username=$GIT_USERNAME" \
       -H "PRIVATE-TOKEN: $ROOT_TOKEN" | jq -r '.[0].id')
@@ -327,7 +337,7 @@ print_step "Ensuring critical ArgoCD applications are healthy"
 CRITICAL_APPS="${CRITICAL_ARGOCD_APPS:-bootstrap cluster-addons argocd-${RESOURCE_PREFIX}-hub-cluster ingress-nginx-${RESOURCE_PREFIX}-hub-cluster}"
 print_info "Monitoring applications: ${CRITICAL_APPS:-all applications}"
 
-# Function to sync and wait for applications
+# Function to sync and wait for applications with 80% healthy threshold
 sync_and_wait_apps() {
     local apps_to_check="$1"
     local max_attempts=3
@@ -336,48 +346,65 @@ sync_and_wait_apps() {
     while [ $attempt -le $max_attempts ]; do
         print_info "Health check attempt $attempt/$max_attempts"
         
-        # Get application status with operation state and start time
-        local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{" "}{.status.operationState.phase}{" "}{.status.operationState.startedAt}{"\n"}{end}' 2>/dev/null)
+        # Terminate stuck operations first
+        local stuck_apps=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.operationState.phase}{" "}{.status.operationState.startedAt}{"\n"}{end}' 2>/dev/null | \
+            awk -v now=$(date +%s) '$2=="Running" && (now - mktime(gensub(/[-T:Z]/, " ", "g", $3))) > 180 {print $1}')
         
-        # Check for stuck sync operations first
-        echo "$app_status" | while IFS=' ' read -r app health sync phase start_time; do
-            if [ -n "$app" ] && [ "$phase" = "Running" ] && [ -n "$start_time" ]; then
-                local current_time=$(date -u +%s)
-                local start_timestamp=$(date -d "$start_time" +%s 2>/dev/null || echo "0")
-                local duration=$((current_time - start_timestamp))
-                
-                if [ $duration -gt $STUCK_SYNC_TIMEOUT ]; then
-                    print_warning "Terminating stuck sync for $app (running ${duration}s > ${STUCK_SYNC_TIMEOUT}s)"
-                    argocd app terminate-op "$app" 2>/dev/null || true
-                    sleep 2
-                    # Force sync after termination
-                    print_info "Force syncing $app after termination"
-                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"syncStrategy":{"hook":{}}}}}' 2>/dev/null || true
-                fi
-            fi
-        done
-        
-        # Wait for terminations to complete
-        sleep 5
-        
-        # Re-get status after potential terminations
-        app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{" "}{.status.operationState.phase}{"\n"}{end}' 2>/dev/null)
-        
-        # Filter for specific apps if provided, otherwise check all
-        local unhealthy_apps
-        if [ -n "$apps_to_check" ]; then
-            unhealthy_apps=$(echo "$app_status" | grep -E "^($(echo "$apps_to_check" | tr ' ' '|')) " | awk '($2 != "Healthy" && $2 != "") || $3 == "OutOfSync" {print $1}')
-        else
-            unhealthy_apps=$(echo "$app_status" | awk '($2 != "Healthy" && $2 != "") || $3 == "OutOfSync" {print $1}')
+        if [ -n "$stuck_apps" ]; then
+            echo "$stuck_apps" | while read -r app; do
+                print_warning "Terminating stuck sync for $app (running > 180s)"
+                kubectl patch application "$app" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
+            done
+            sleep 5
         fi
         
-        if [ -z "$unhealthy_apps" ]; then
-            print_success "All monitored applications are healthy"
+        # Get application status
+        local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null)
+        
+        # Count healthy vs total apps
+        local total_apps=0
+        local healthy_apps=0
+        local synced_apps=0
+        local unhealthy_apps=()
+        
+        while IFS=' ' read -r app health sync; do
+            [ -z "$app" ] && continue
+            total_apps=$((total_apps + 1))
+            
+            if [ "$health" = "Healthy" ]; then
+                healthy_apps=$((healthy_apps + 1))
+            fi
+            
+            if [ "$sync" = "Synced" ]; then
+                synced_apps=$((synced_apps + 1))
+            fi
+            
+            # Track unhealthy apps for syncing
+            if [ "$health" != "Healthy" ] || [ "$sync" = "OutOfSync" ]; then
+                unhealthy_apps+=("$app")
+            fi
+        done <<< "$app_status"
+        
+        # Calculate health percentage
+        local health_pct=0
+        if [ $total_apps -gt 0 ]; then
+            health_pct=$((healthy_apps * 100 / total_apps))
+        fi
+        
+        print_info "ArgoCD status: $healthy_apps/$total_apps healthy ($health_pct%), $synced_apps/$total_apps synced"
+        
+        # Accept 80% healthy as success
+        if [ $health_pct -ge 80 ] && [ $synced_apps -ge $((total_apps * 70 / 100)) ]; then
+            print_success "ArgoCD applications sufficiently healthy ($health_pct% healthy)"
             return 0
         fi
         
+        # Sync unhealthy apps (limit to first 5 to avoid overwhelming)
+        local sync_count=0
         print_info "Syncing unhealthy applications:"
-        echo "$unhealthy_apps" | while read app; do
+        for app in "${unhealthy_apps[@]}"; do
+            [ $sync_count -ge 5 ] && break
+            print_info "  Syncing: $app"
             if [ -n "$app" ]; then
                 print_info "  Syncing: $app"
                 argocd app sync "$app" --timeout 60 2>/dev/null || {

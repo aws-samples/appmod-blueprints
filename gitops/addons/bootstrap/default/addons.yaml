@@ -645,6 +645,8 @@ backstage:
         operator: In
         values: ['true']
   valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     gitlab_domain_name: '{{.metadata.annotations.gitlab_domain_name}}'
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     backstage_image: '{{.metadata.annotations.backstage_image}}'

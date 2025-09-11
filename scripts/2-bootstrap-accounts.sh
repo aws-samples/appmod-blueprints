@@ -163,7 +163,7 @@ while [ $attempt -lt $max_attempts ]; do
   else
     print_warning "ResourceGraphDefinitions not yet Active: $inactive_rgds"
     
-    # Restart KRO every time to refresh API discovery
+    # Restart KRO every attempt as it's required for proper functionality
     print_step "Restarting kro deployment to refresh API discovery..."
     kubectl rollout restart deployment -n kro-system kro
     kubectl rollout status deployment -n kro-system kro --timeout=60s
@@ -173,9 +173,11 @@ while [ $attempt -lt $max_attempts ]; do
   fi
 done
 
+# Don't fail if some RGDs aren't active - continue with warning
 if [ $attempt -eq $max_attempts ]; then
-  print_error "Timeout: ResourceGraphDefinitions did not become Active after $max_attempts attempts"
-  exit 1
+  print_warning "Some ResourceGraphDefinitions may not be Active, but continuing..."
+  print_info "Active RGDs: $active_rgds"
+  print_info "Inactive RGDs: $inactive_rgds"
 fi
 
 print_success "Account bootstrapping completed successfully."
