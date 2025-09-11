@@ -185,9 +185,9 @@ locals {
       ingress_name = var.ingress_name
       gitlab_security_groups = local.gitlab_security_groups
       gitlab_domain_name = local.gitlab_domain_name
-      git_username = data.external.env_vars.result.GIT_USERNAME
-      working_repo = data.external.env_vars.result.WORKING_REPO
-      ide_password = data.external.env_vars.result.IDE_PASSWORD
+      git_username = var.git_username
+      working_repo = var.working_repo
+      ide_password = var.ide_password
       ide_password_hash = local.password_hash
       ide_password_key = local.password_key
       backstage_image = local.backstage_image

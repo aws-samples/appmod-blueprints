@@ -46,6 +46,24 @@ variable "git_password" {
   default = ""
 }
 
+variable "ide_password" {
+  description = "IDE password for workshop admin accounts"
+  type        = string
+  sensitive   = true
+}
+
+variable "git_username" {
+  description = "Git username for workshop"
+  type        = string
+  default     = "user1"
+}
+
+variable "working_repo" {
+  description = "Working repository name"
+  type        = string
+  default     = "platform-on-eks-workshop"
+}
+
 # Removed unused gitea_external_url and gitea_repo_prefix variables
 
 variable "create_github_repos" {

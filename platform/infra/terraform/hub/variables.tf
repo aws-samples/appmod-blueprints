@@ -3,6 +3,24 @@ variable "vpc_name" {
   type        = string
 }
 
+variable "ide_password" {
+  description = "IDE password for workshop admin accounts"
+  type        = string
+  sensitive   = true
+}
+
+variable "git_username" {
+  description = "Git username for workshop"
+  type        = string
+  default     = "user1"
+}
+
+variable "working_repo" {
+  description = "Working repository name"
+  type        = string
+  default     = "platform-on-eks-workshop"
+}
+
 variable "resource_prefix" {
   description = "Prefix for project"
   type        = string

@@ -274,7 +274,11 @@ destroy_terraform_resources() {
   for target in "${TARGETS[@]}"; do
     log "Destroying $target..."
     
-    if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"$target\" -auto-approve"; then
+    if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"$target\" \
+      -var=\"ide_password=${IDE_PASSWORD}\" \
+      -var=\"git_username=${GIT_USERNAME}\" \
+      -var=\"working_repo=${WORKING_REPO}\" \
+      -auto-approve"; then
       log_success "Successfully destroyed $target"
     else
       log_error "Failed to destroy $target after all attempts"
@@ -290,7 +294,11 @@ destroy_terraform_resources() {
   
   # Destroy VPC
   log "Destroying VPC..."
-  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"module.vpc\" -auto-approve"; then
+  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"module.vpc\" \
+    -var=\"ide_password=${IDE_PASSWORD}\" \
+    -var=\"git_username=${GIT_USERNAME}\" \
+    -var=\"working_repo=${WORKING_REPO}\" \
+    -auto-approve"; then
     log_success "Successfully destroyed VPC"
   else
     log_error "Failed to destroy VPC after all attempts"
@@ -299,7 +307,11 @@ destroy_terraform_resources() {
   
   # Final destroy
   log "Running final terraform destroy..."
-  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -auto-approve"; then
+  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy \
+    -var=\"ide_password=${IDE_PASSWORD}\" \
+    -var=\"git_username=${GIT_USERNAME}\" \
+    -var=\"working_repo=${WORKING_REPO}\" \
+    -auto-approve"; then
     log_success "Successfully completed final destroy"
   else
     log_error "Failed final destroy after all attempts. Manual cleanup may be required."

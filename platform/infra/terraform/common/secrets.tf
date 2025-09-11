@@ -44,17 +44,12 @@ resource "aws_secretsmanager_secret" "keycloak_admin_password" {
   }
 }
 
-# Generate a random password for Keycloak admin
-resource "random_password" "keycloak_admin_password" {
-  length  = 32
-  special = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
-}
+# Keycloak admin password uses the consistent workshop password (ide_password)
 
 resource "aws_secretsmanager_secret_version" "keycloak_admin_password" {
   secret_id     = aws_secretsmanager_secret.keycloak_admin_password.id
   secret_string = jsonencode({
-    password = random_password.keycloak_admin_password.result
+    password = var.ide_password
   })
 }
 

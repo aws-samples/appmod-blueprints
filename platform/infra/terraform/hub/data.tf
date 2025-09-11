@@ -17,7 +17,7 @@ data "aws_iam_session_context" "current" {
   arn = data.aws_caller_identity.current.arn
 }
 
-# External data source to read environment variables
-data "external" "env_vars" {
-  program = ["bash", "-c", "echo '{\"IDE_PASSWORD\":\"'\"$IDE_PASSWORD\"'\", \"GIT_USERNAME\":\"'\"$GIT_USERNAME\"'\", \"WORKING_REPO\":\"'\"$WORKING_REPO\"'\"}'"]
+# Get Keycloak user password from Secrets Manager
+data "aws_secretsmanager_secret_version" "keycloak_user_password" {
+  secret_id = "${var.resource_prefix}-keycloak-user-password"
 }

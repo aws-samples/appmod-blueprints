@@ -1,5 +1,3 @@
-data "aws_region" "current" {}
-data "aws_caller_identity" "current" {}
 data "aws_iam_session_context" "current" {
   # This data source provides information on the IAM source role of an STS assumed role
   # For non-role ARNs, this data source simply passes the ARN through issuer ARN
