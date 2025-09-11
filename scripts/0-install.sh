@@ -67,54 +67,64 @@ print_status() {
 wait_for_clusters_ready() {
     print_status "INFO" "Checking EKS cluster readiness..."
     
-    print_status "INFO" "Using the following cluster names:"
-    for cluster in "${CLUSTER_NAMES[@]}"; do
-        print_status "INFO" "- $cluster"
-    done
+    print_status "INFO" "Using cluster names: ${CLUSTER_NAMES[*]}"
     
     local all_ready=false
     local max_wait=1800  # 30 minutes total wait time
     local check_interval=30
     local start_time=$(date +%s)
-    local end_time=$((start_time + max_wait))
     
-    while [ $(date +%s) -lt $end_time ]; do
-        all_ready=true
+    while [ $(date +%s) -lt $((start_time + max_wait)) ]; do
+        # Check all clusters in parallel
+        local temp_dir=$(mktemp -d)
+        local pids=()
         
-        for cluster in "${CLUSTER_NAMES[@]}"; do
-            if [ -z "$cluster" ]; then
-                print_status "WARN" "Skipping empty cluster name"
-                continue
-            fi
+        for i in "${!CLUSTER_NAMES[@]}"; do
+            local cluster="${CLUSTER_NAMES[$i]}"
+            [ -z "$cluster" ] && continue
             
-            print_status "INFO" "Checking cluster: $cluster"
+            (
+                local status=$(aws eks describe-cluster --name "$cluster" --region "${AWS_DEFAULT_REGION:-us-east-1}" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+                echo "$cluster:$status" > "$temp_dir/cluster_$i.status"
+            ) &
+            pids+=($!)
+        done
+        
+        # Wait for all checks
+        for pid in "${pids[@]}"; do
+            wait "$pid"
+        done
+        
+        # Process results
+        all_ready=true
+        local ready_count=0
+        local total_count=0
+        
+        for i in "${!CLUSTER_NAMES[@]}"; do
+            local cluster="${CLUSTER_NAMES[$i]}"
+            [ -z "$cluster" ] && continue
             
-            # Check if cluster exists and get its status
-            local cluster_status
-            cluster_status=$(aws eks describe-cluster --name "$cluster" --region "${AWS_DEFAULT_REGION:-us-east-1}" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+            total_count=$((total_count + 1))
+            local result=$(cat "$temp_dir/cluster_$i.status" 2>/dev/null || echo "ERROR")
+            local status=$(echo "$result" | cut -d: -f2)
             
-            case "$cluster_status" in
+            case "$status" in
                 "ACTIVE")
                     print_status "SUCCESS" "Cluster $cluster is ACTIVE"
+                    ready_count=$((ready_count + 1))
                     ;;
-                "CREATING")
-                    print_status "INFO" "Cluster $cluster is still CREATING, waiting..."
+                "CREATING"|"UPDATING")
+                    print_status "INFO" "Cluster $cluster is $status, waiting..."
                     all_ready=false
-                    ;;
-                "UPDATING")
-                    print_status "INFO" "Cluster $cluster is UPDATING, waiting..."
-                    all_ready=false
-                    ;;
-                "NOT_FOUND")
-                    print_status "ERROR" "Cluster $cluster not found or not accessible"
-                    return 1
                     ;;
                 *)
-                    print_status "ERROR" "Cluster $cluster has unexpected status: $cluster_status"
-                    return 1
+                    print_status "ERROR" "Cluster $cluster status: $status"
+                    all_ready=false
                     ;;
             esac
         done
+        
+        rm -rf "$temp_dir"
         
         # Break out if all clusters are ready
         if [ "$all_ready" = true ]; then
@@ -384,6 +394,18 @@ run_script_with_retry() {
                 if kubectl get namespace argocd >/dev/null 2>&1; then
                     print_status "INFO" "Checking ArgoCD deployment status..."
                     kubectl get deployments -n argocd || true
+                    
+                    # Terminate stuck ArgoCD operations (running > 3 minutes)
+                    print_status "INFO" "Checking for stuck ArgoCD operations..."
+                    local stuck_apps=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.operationState.phase}{" "}{.status.operationState.startedAt}{"\n"}{end}' 2>/dev/null | \
+                        awk -v now=$(date +%s) '$2=="Running" && (now - mktime(gensub(/[-T:Z]/, " ", "g", $3))) > 180 {print $1}')
+                    
+                    if [ -n "$stuck_apps" ]; then
+                        echo "$stuck_apps" | while read -r app; do
+                            print_status "WARN" "Terminating stuck operation for $app"
+                            kubectl patch application "$app" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
+                        done
+                    fi
                     
                     # Force restart ArgoCD components if they exist
                     kubectl rollout restart deployment argocd-server -n argocd 2>/dev/null || true
