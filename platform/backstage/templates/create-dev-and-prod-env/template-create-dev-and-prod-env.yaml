@@ -46,7 +46,7 @@ spec:
           type: string
         repoHostUrl:
           type: string
-          default: d18vlgn99tsxn9.cloudfront.net
+          default: <gitlab_domain_name>
           ui:widget: hidden
         repoUsername:
           type: string
