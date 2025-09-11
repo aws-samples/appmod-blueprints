@@ -326,15 +326,24 @@ sync_and_wait_app() {
 # Function to run script with retry logic
 run_script_with_retry() {
     local script_path=$1
+    shift  # Remove script_path from arguments
+    local script_args="$*"  # Remaining arguments
     local script_name=$(basename "$script_path")
     local attempt=1
     
-    print_status "INFO" "Starting execution of $script_name"
+    print_status "INFO" "Starting execution of $script_name $script_args"
     
     while [ $attempt -le $MAX_RETRIES ]; do
         print_status "INFO" "Attempt $attempt/$MAX_RETRIES for $script_name"
         
-        if bash "$script_path"; then
+        if [ -n "$script_args" ]; then
+            bash "$script_path" $script_args
+        else
+            bash "$script_path"
+        fi
+        local exit_code=$?
+        
+        if [ $exit_code -eq 0 ]; then
             print_status "SUCCESS" "$script_name completed successfully"
             
             # Special handling for ArgoCD setup script
@@ -469,10 +478,19 @@ main() {
         exit 1
     fi
     
-    for script_name in "${SCRIPTS[@]}"; do
+    for script_entry in "${SCRIPTS[@]}"; do
+        # Parse script name and arguments
+        local script_name=$(echo "$script_entry" | cut -d' ' -f1)
+        local script_args=$(echo "$script_entry" | cut -d' ' -f2-)
+        
+        # If no args, script_args will equal script_name
+        if [ "$script_args" = "$script_name" ]; then
+            script_args=""
+        fi
+        
         local script_path="$SCRIPT_DIR/$script_name"
         
-        print_status "INFO" "Preparing to run: $script_name"
+        print_status "INFO" "Preparing to run: $script_name $script_args"
         
         if [ ! -f "$script_path" ]; then
             print_status "ERROR" "Script not found: $script_path"
@@ -485,7 +503,7 @@ main() {
         fi
         
         # Run script with retry logic
-        if ! run_script_with_retry "$script_path"; then
+        if ! run_script_with_retry "$script_path" $script_args; then
             print_status "ERROR" "Bootstrap process failed at script: $script_name"
             show_final_status
             exit 1
