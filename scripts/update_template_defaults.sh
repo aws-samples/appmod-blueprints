@@ -190,6 +190,13 @@ update_aws_resource_templates() {
     done
 }
 
+# Function to stage template files
+stage_template_files() {
+    print_step "Staging template files"
+    git add "$TEMPLATES_BASE_PATH/"
+    print_success "Staged all files in $TEMPLATES_BASE_PATH/"
+}
+
 # Main execution
 print_info "Starting template updates..."
 
@@ -198,6 +205,9 @@ update_eks_cluster_template
 update_dev_prod_env_template
 update_app_deploy_templates
 update_aws_resource_templates
+
+# Stage the modified template files
+stage_template_files
 
 print_success "All Backstage templates have been updated with environment-specific values!"
 
