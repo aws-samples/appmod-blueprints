@@ -1,7 +1,5 @@
 # AWS provider is configured at the root level
 
-data "aws_region" "current" {}
-
 module "managed_service_prometheus" {
   source          = "terraform-aws-modules/managed-service-prometheus/aws"
   version         = "~> 2.2.2"
@@ -22,7 +20,7 @@ resource "aws_secretsmanager_secret" "argorollouts_secret" {
 resource "aws_secretsmanager_secret_version" "argorollouts_secret_version" {
   secret_id = aws_secretsmanager_secret.argorollouts_secret.id
   secret_string = jsonencode({
-    amp-region    = data.aws_region.current
+    amp-region    = data.aws_region.current.name
     amp-workspace = module.managed_service_prometheus.workspace_prometheus_endpoint
   })
 }

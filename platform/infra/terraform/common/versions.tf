@@ -19,6 +19,6 @@ terraform {
   # Backend configuration provided via CLI parameters
   backend "s3" {
     # bucket and dynamodb_table provided via -backend-config
-    key    = "common/terraform.tfstate"
+    key = "common/terraform.tfstate"
   }
 }

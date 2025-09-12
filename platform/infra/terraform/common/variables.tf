@@ -36,14 +36,14 @@ variable "frontend_team_view_role_suffix" {
 
 variable "gitea_user" {
   description = "User to login on the Gitea instance"
-  type = string
-  default = "user1"
+  type        = string
+  default     = "user1"
 }
 variable "git_password" {
   description = "Password to login on the Gitea instance"
-  type = string
-  sensitive = true
-  default = ""
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "ide_password" {
@@ -68,12 +68,12 @@ variable "working_repo" {
 
 variable "create_github_repos" {
   description = "Create Github repos"
-  type = bool
-  default = false
+  type        = bool
+  default     = false
 }
 
 variable "grafana_keycloak_idp_url" {
   description = "Dummy URL of the Grafana SAML overridden during runtime"
   type        = string
-  default = "http://modern-engg-xxxxxx.elb.us-west-2.amazonaws.com/keycloak/realms/grafana/protocol/saml/descriptor"
+  default     = "http://modern-engg-xxxxxx.elb.us-west-2.amazonaws.com/keycloak/realms/grafana/protocol/saml/descriptor"
 }
