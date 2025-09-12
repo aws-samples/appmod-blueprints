@@ -3,19 +3,14 @@ provider "aws" {
 }
 
 module "managed_service_prometheus" {
-  source  = "terraform-aws-modules/managed-service-prometheus/aws"
-  version = "~> 2.2.2"
+  source          = "terraform-aws-modules/managed-service-prometheus/aws"
+  version         = "~> 2.2.2"
   workspace_alias = "aws-observability-accelerator-multicluster"
 }
 
 locals {
   name        = "aws-observability-accelerator"
   description = "Amazon Managed Grafana workspace for ${local.name}"
-
-  tags = {
-    GithubRepo = "terraform-aws-observability-accelerator"
-    GithubOrg  = "aws-observability"
-  }
 }
 
 # Create the secret
@@ -27,13 +22,13 @@ resource "aws_secretsmanager_secret" "argorollouts_secret" {
 resource "aws_secretsmanager_secret_version" "argorollouts_secret_version" {
   secret_id = aws_secretsmanager_secret.argorollouts_secret.id
   secret_string = jsonencode({
-    amp-region = data.aws_region.current
+    amp-region    = data.aws_region.current
     amp-workspace = module.managed_service_prometheus.workspace_prometheus_endpoint
   })
 }
 
 module "managed_grafana" {
-  source  = "terraform-aws-modules/managed-service-grafana/aws"
+  source = "terraform-aws-modules/managed-service-grafana/aws"
 
   name                      = local.name
   associate_license         = false
@@ -76,17 +71,17 @@ module "managed_grafana" {
   }
 
   # Workspace SAML configuration
-  saml_admin_role_values  = ["grafana-admin"]
-  saml_editor_role_values = ["grafana-editor","grafana-viewer"]
-  saml_email_assertion    = "mail"
-  saml_groups_assertion   = "groups"
-  saml_login_assertion    = "mail"
-  saml_name_assertion     = "displayName"
-  saml_org_assertion      = "org"
-  saml_role_assertion     = "role"
+  saml_admin_role_values       = ["grafana-admin"]
+  saml_editor_role_values      = ["grafana-editor", "grafana-viewer"]
+  saml_email_assertion         = "mail"
+  saml_groups_assertion        = "groups"
+  saml_login_assertion         = "mail"
+  saml_name_assertion          = "displayName"
+  saml_org_assertion           = "org"
+  saml_role_assertion          = "role"
   saml_login_validity_duration = 120
   # Dummy values for SAML configuration to setup will be updated after keycloak integration
-  saml_idp_metadata_url   = var.grafana_keycloak_idp_url
+  saml_idp_metadata_url = var.grafana_keycloak_idp_url
 
   tags = local.tags
 }
