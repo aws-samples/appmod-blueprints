@@ -12,6 +12,7 @@ locals {
   tags = {
     Blueprint  = local.context_prefix
     GithubRepo = "github.com/gitops-bridge-dev/gitops-bridge"
+    GithubOrg  = "aws-observability"
   }
 
 }
