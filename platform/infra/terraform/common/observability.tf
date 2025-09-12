@@ -1,6 +1,6 @@
-provider "aws" {
-  region = data.aws_region.current
-}
+# AWS provider is configured at the root level
+
+data "aws_region" "current" {}
 
 module "managed_service_prometheus" {
   source          = "terraform-aws-modules/managed-service-prometheus/aws"
