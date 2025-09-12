@@ -9,7 +9,7 @@ resource "aws_iam_role" "argocd_central" {
       {
         Sid    = "AllowEksAuthToAssumeRoleForPodIdentity"
         Effect = "Allow"
-        Action = ["sts:AssumeRole","sts:TagSession"]
+        Action = ["sts:AssumeRole", "sts:TagSession"]
         Principal = {
           Service = "pods.eks.amazonaws.com"
         }

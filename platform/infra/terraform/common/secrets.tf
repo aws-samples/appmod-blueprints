@@ -5,7 +5,7 @@ resource "aws_secretsmanager_secret" "backstage_postgresql_password" {
   name                    = "${var.resource_prefix}-backstage-postgresql-password"
   description             = "PostgreSQL password for Backstage application"
   recovery_window_in_days = 0
-  
+
   tags = {
     Application = "Backstage"
     Environment = "Platform"
@@ -24,7 +24,7 @@ resource "random_password" "backstage_postgresql_password" {
 
 # Store the password in AWS Secrets Manager
 resource "aws_secretsmanager_secret_version" "backstage_postgresql_password" {
-  secret_id     = aws_secretsmanager_secret.backstage_postgresql_password.id
+  secret_id = aws_secretsmanager_secret.backstage_postgresql_password.id
   secret_string = jsonencode({
     password = random_password.backstage_postgresql_password.result
   })
@@ -35,7 +35,7 @@ resource "aws_secretsmanager_secret" "keycloak_admin_password" {
   name                    = "${var.resource_prefix}-keycloak-admin-password"
   description             = "Keycloak admin password"
   recovery_window_in_days = 0
-  
+
   tags = {
     Application = "Keycloak"
     Environment = "Platform"
@@ -47,7 +47,7 @@ resource "aws_secretsmanager_secret" "keycloak_admin_password" {
 # Keycloak admin password uses the consistent workshop password (ide_password)
 
 resource "aws_secretsmanager_secret_version" "keycloak_admin_password" {
-  secret_id     = aws_secretsmanager_secret.keycloak_admin_password.id
+  secret_id = aws_secretsmanager_secret.keycloak_admin_password.id
   secret_string = jsonencode({
     password = var.ide_password
   })
@@ -58,7 +58,7 @@ resource "aws_secretsmanager_secret" "keycloak_db_password" {
   name                    = "${var.resource_prefix}-keycloak-db-password"
   description             = "Keycloak database password"
   recovery_window_in_days = 0
-  
+
   tags = {
     Application = "Keycloak"
     Environment = "Platform"
@@ -68,13 +68,13 @@ resource "aws_secretsmanager_secret" "keycloak_db_password" {
 }
 
 resource "random_password" "keycloak_db_password" {
-  length  = 32
-  special = true
+  length           = 32
+  special          = true
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
 resource "aws_secretsmanager_secret_version" "keycloak_db_password" {
-  secret_id     = aws_secretsmanager_secret.keycloak_db_password.id
+  secret_id = aws_secretsmanager_secret.keycloak_db_password.id
   secret_string = jsonencode({
     password = random_password.keycloak_db_password.result
   })
@@ -85,7 +85,7 @@ resource "aws_secretsmanager_secret" "keycloak_user_password" {
   name                    = "${var.resource_prefix}-keycloak-user-password"
   description             = "Keycloak user password for workshop participants"
   recovery_window_in_days = 0
-  
+
   tags = {
     Application = "Keycloak"
     Environment = "Platform"
@@ -96,11 +96,11 @@ resource "aws_secretsmanager_secret" "keycloak_user_password" {
 
 resource "random_password" "keycloak_user_password" {
   length  = 16
-  special = false  # User-friendly password for workshop participants
+  special = false # User-friendly password for workshop participants
 }
 
 resource "aws_secretsmanager_secret_version" "keycloak_user_password" {
-  secret_id     = aws_secretsmanager_secret.keycloak_user_password.id
+  secret_id = aws_secretsmanager_secret.keycloak_user_password.id
   secret_string = jsonencode({
     password = random_password.keycloak_user_password.result
   })
