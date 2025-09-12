@@ -16,21 +16,23 @@ resource "aws_iam_role" "argocd_central" {
       },
     ]
   })
-  inline_policy {
-    name = "argocd"
-
-    policy = jsonencode({
-      Version = "2012-10-17"
-      Statement = [
-        {
-          Action   = ["sts:AssumeRole", "sts:TagSession"]
-          Effect   = "Allow"
-          Resource = "*"
-        },
-      ]
-    })
-  }
   tags = local.tags
+}
+
+resource "aws_iam_role_policy" "argocd_central_policy" {
+  name = "argocd"
+  role = aws_iam_role.argocd_central.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action   = ["sts:AssumeRole", "sts:TagSession"]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+    ]
+  })
 }
 # Creating parameter for all clusters to read
 resource "aws_ssm_parameter" "argocd_hub_role" {
