@@ -83,3 +83,18 @@ module "managed_grafana" {
 
   tags = local.tags
 }
+
+# Create SSM parameters for Prometheus workspace information
+resource "aws_ssm_parameter" "amp_endpoint" {
+  name  = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
+  type  = "String"
+  value = module.managed_service_prometheus.workspace_prometheus_endpoint
+  tags  = local.tags
+}
+
+resource "aws_ssm_parameter" "amp_arn" {
+  name  = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
+  type  = "String"
+  value = module.managed_service_prometheus.workspace_arn
+  tags  = local.tags
+}

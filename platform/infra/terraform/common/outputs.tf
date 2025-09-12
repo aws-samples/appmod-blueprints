@@ -76,3 +76,13 @@ output "grafana_workspace_iam_role_arn" {
   description = "Amazon Managed Grafana Workspace's IAM Role ARN"
   value       = module.managed_grafana.workspace_iam_role_arn
 }
+
+output "amp_endpoint_ssm_parameter" {
+  description = "SSM parameter name for Amazon Managed Prometheus endpoint"
+  value       = aws_ssm_parameter.amp_endpoint.name
+}
+
+output "amp_arn_ssm_parameter" {
+  description = "SSM parameter name for Amazon Managed Prometheus ARN"
+  value       = aws_ssm_parameter.amp_arn.name
+}
