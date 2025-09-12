@@ -271,6 +271,8 @@ destroy_terraform_resources() {
   # Use same variable approach as deploy.sh
   RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
   CLUSTER_NAME="${RESOURCE_PREFIX}-hub-cluster"
+  AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  ACCOUNT_IDS="${ACCOUNT_IDS:-$AWS_ACCOUNT_ID}"
   
   # Get AWS Account ID if not already set
   if [[ -z "${AWS_ACCOUNT_ID:-}" ]]; then
@@ -287,7 +289,7 @@ destroy_terraform_resources() {
     
     if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"$target\" -var-file=$TF_VAR_FILE \
       -var=\"cluster_name=$CLUSTER_NAME\" \
-      -var=\"account_ids=$AWS_ACCOUNT_ID\" \
+      -var=\"account_ids=$ACCOUNT_IDS\" \
       -var=\"resource_prefix=$RESOURCE_PREFIX\" \
       -var=\"ide_password=${IDE_PASSWORD}\" \
       -var=\"git_username=${GIT_USERNAME}\" \
@@ -310,7 +312,7 @@ destroy_terraform_resources() {
   log "Destroying VPC..."
   if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"module.vpc\" -var-file=$TF_VAR_FILE \
     -var=\"cluster_name=$CLUSTER_NAME\" \
-    -var=\"account_ids=$AWS_ACCOUNT_ID\" \
+    -var=\"account_ids=$ACCOUNT_IDS\" \
     -var=\"resource_prefix=$RESOURCE_PREFIX\" \
     -var=\"ide_password=${IDE_PASSWORD}\" \
     -var=\"git_username=${GIT_USERNAME}\" \
@@ -326,7 +328,7 @@ destroy_terraform_resources() {
   log "Running final terraform destroy..."
   if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -var-file=$TF_VAR_FILE \
     -var=\"cluster_name=$CLUSTER_NAME\" \
-    -var=\"account_ids=$AWS_ACCOUNT_ID\" \
+    -var=\"account_ids=$ACCOUNT_IDS\" \
     -var=\"resource_prefix=$RESOURCE_PREFIX\" \
     -var=\"ide_password=${IDE_PASSWORD}\" \
     -var=\"git_username=${GIT_USERNAME}\" \

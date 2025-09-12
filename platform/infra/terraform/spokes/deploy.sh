@@ -158,7 +158,6 @@ deploy_eks_cluster() {
     -var="cluster_name_prefix=$CLUSTER_NAME_PREFIX" \
     -var="resource_prefix=$RESOURCE_PREFIX" \
     -var="git_hostname=$gitlab_domain" \
-    -var="gitlab_domain_name=$gitlab_domain" \
     -parallelism=3 \
     -auto-approve; then
     log_error "EKS cluster deployment failed"
