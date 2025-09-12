@@ -7,7 +7,7 @@
 resource "aws_prometheus_rule_group_namespace" "recording_rules" {
   #count        = var.enable_recording_rules ? 1 : 0
   name         = "${local.context_prefix}-rules"
-  workspace_id = aws_prometheus_workspace.amp.id
+  workspace_id = module.managed_service_prometheus.workspace_id
   data         = <<EOF
 groups:
   - name: infra-rules-01
