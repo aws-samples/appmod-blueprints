@@ -23,7 +23,7 @@ scale_down_karpenter_nodes() {
 
 # Function to check and configure EKS access entries
 configure_eks_access() {
-  local cluster_name="${CLUSTER_NAME:-fleet-hub-cluster}"
+  local cluster_name="${CLUSTER_NAME:-${RESOURCE_PREFIX:-peeks}-hub-cluster}"
   local region="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-east-1}}"
   
   echo "Checking EKS cluster access configuration for cluster: $cluster_name"

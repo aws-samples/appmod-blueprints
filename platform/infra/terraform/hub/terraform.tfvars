@@ -1,6 +1,6 @@
-vpc_name                        = "peeks-hub-cluster"
+vpc_name                        = "peeks-hub-cluster"  # Will be overridden by deploy.sh
 kubernetes_version              = "1.32"
-cluster_name                    = "peeks-hub-cluster"
+cluster_name                    = "peeks-hub-cluster"  # Will be overridden by deploy.sh
 ingress_name                    = "peeks-hub-ingress"
 tenant                          = "tenant1"
 
