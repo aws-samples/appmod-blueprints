@@ -92,3 +92,4 @@ task taskcat-clean-deployment
 - [x] cloudwatch logs groups - like /aws/codebuild/PEEKSGITIAMStackDeployProje-30HWWmiBcgx0 or /aws/lambda/tCaT-peeks-workshop-test--IDEPEEKSIdePasswordExpor-OOmtoIML4oGw or tCaT-peeks-workshop-test-fleet-workshop-test-92b4118d493d47dcb827190d4e5ac6b9-IDEPEEKSIdeLogGroup3808F7B1-xMtRAbEgY8Ho
 
 
+- Does WORKSHOP_ID=28c283c1-1d60-43fa-a604-4e983e0e8038 is the goor one ?
