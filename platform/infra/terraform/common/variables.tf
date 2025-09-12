@@ -71,3 +71,9 @@ variable "create_github_repos" {
   type = bool
   default = false
 }
+
+variable "grafana_keycloak_idp_url" {
+  description = "Dummy URL of the Grafana SAML overridden during runtime"
+  type        = string
+  default = "http://modern-engg-xxxxxx.elb.us-west-2.amazonaws.com/keycloak/realms/grafana/protocol/saml/descriptor"
+}
