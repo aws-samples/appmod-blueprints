@@ -58,15 +58,15 @@ validate_backend_config() {
 
 # Usage function
 usage() {
-  echo "Usage: deploy.sh <environment> [--cluster-name-prefix <prefix>] [--deploy-db]"
+  echo "Usage: deploy.sh <environment> [--deploy-db]"
   echo "Example: deploy.sh dev"
   echo "Example with database: deploy.sh dev --deploy-db"
-  echo "Example with custom cluster name prefix: deploy.sh dev --cluster-name-prefix peeks-spoke-test --deploy-db"
   echo ""
   echo "Required environment variables:"
   echo "  TFSTATE_BUCKET_NAME - S3 bucket for Terraform state"
   echo "  TFSTATE_LOCK_TABLE - DynamoDB table for Terraform state locking"
   echo "  AWS_REGION - AWS region for resources (optional, defaults to us-east-1)"
+  echo "  RESOURCE_PREFIX - Prefix for resource names (optional, defaults to peeks)"
   exit 1
 }
 
@@ -104,13 +104,12 @@ wait_for_gitlab_distribution() {
 # Deploy database
 deploy_database() {
   local env=$1
-  local cluster_name_prefix=$2
   
   log "Deploying database for $env environment..."
   
   # Set prefixes from RESOURCE_PREFIX environment variable
   RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
-  CLUSTER_NAME_PREFIX="${cluster_name_prefix:-${RESOURCE_PREFIX:-peeks}-spoke}"
+  CLUSTER_NAME_PREFIX="${RESOURCE_PREFIX:-peeks}-spoke"
   
   if ! terraform -chdir=${SCRIPTDIR}/db init -reconfigure \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
@@ -134,14 +133,13 @@ deploy_database() {
 # Deploy EKS cluster
 deploy_eks_cluster() {
   local env=$1
-  local cluster_name_prefix=$2
-  local gitlab_domain=$3
+  local gitlab_domain=$2
   
   log "Deploying EKS cluster for $env environment..."
 
   # Set prefixes from RESOURCE_PREFIX environment variable
   RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
-  CLUSTER_NAME_PREFIX="${cluster_name_prefix:-${RESOURCE_PREFIX:-peeks}-spoke}"
+  CLUSTER_NAME_PREFIX="${RESOURCE_PREFIX:-peeks}-spoke"
 
   if ! terraform -chdir=$SCRIPTDIR init --upgrade \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
@@ -178,17 +176,11 @@ main() {
   shift
 
   # Parse additional command line arguments
-  local cluster_name_prefix=""
   local deploy_db=false
 
   while [[ $# -gt 0 ]]; do
     key="$1"
     case $key in
-      --cluster-name-prefix)
-        cluster_name_prefix="$2"
-        shift
-        shift
-        ;;
       --deploy-db)
         deploy_db=true
         shift
@@ -213,11 +205,11 @@ main() {
   
   # Deploy database if requested
   if [ "$deploy_db" = true ]; then
-    deploy_database "$env" "$cluster_name_prefix"
+    deploy_database "$env"
   fi
   
   # Deploy EKS cluster
-  deploy_eks_cluster "$env" "$cluster_name_prefix" "$gitlab_domain"
+  deploy_eks_cluster "$env" "$gitlab_domain"
   
   log_success "Spoke cluster deployment completed successfully for $env"
 }
