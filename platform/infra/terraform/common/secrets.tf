@@ -1,107 +1,118 @@
 # AWS Secrets Manager resources for the platform
 
-# PostgreSQL password for Backstage application
-resource "aws_secretsmanager_secret" "backstage_postgresql_password" {
-  name                    = "${var.resource_prefix}-backstage-postgresql-password"
-  description             = "PostgreSQL password for Backstage application"
+# Platform Configuration
+resource "aws_secretsmanager_secret" "cluster_config" {
+  name                    = "${var.resource_prefix}-${local.cluster_name}/config"
+  description             = "Platform Configuration"
   recovery_window_in_days = 0
 
   tags = {
-    Application = "Backstage"
-    Environment = "Platform"
-    ManagedBy   = "Terraform"
-    Purpose     = "Database Authentication"
+    Purpose     = "Platform Configuration"
   }
-}
-
-# Generate a random password for PostgreSQL
-resource "random_password" "backstage_postgresql_password" {
-  length  = 32
-  special = true
-  # Exclude characters that might cause issues in connection strings
-  override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
 # Store the password in AWS Secrets Manager
-resource "aws_secretsmanager_secret_version" "backstage_postgresql_password" {
-  secret_id = aws_secretsmanager_secret.backstage_postgresql_password.id
+resource "aws_secretsmanager_secret_version" "cluster_config" {
+  secret_id     = aws_secretsmanager_secret.cluster_config.id
   secret_string = jsonencode({
-    password = random_password.backstage_postgresql_password.result
+    repo = var.repo
+    labels = local.addons
+    annotations = local.addons_metadata
   })
 }
 
-# Keycloak Admin Password
-resource "aws_secretsmanager_secret" "keycloak_admin_password" {
-  name                    = "${var.resource_prefix}-keycloak-admin-password"
-  description             = "Keycloak admin password"
+# Platform Configuration
+resource "aws_secretsmanager_secret" "git_secret" {
+  name                    = "${var.resource_prefix}-${local.cluster_name}/git-secrets"
+  description             = "Platform Secrets"
   recovery_window_in_days = 0
 
   tags = {
-    Application = "Keycloak"
-    Environment = "Platform"
-    ManagedBy   = "Terraform"
-    Purpose     = "Admin Authentication"
+    Purpose     = "Platform Secrets"
   }
 }
 
-# Keycloak admin password uses the consistent workshop password (ide_password)
-
-resource "aws_secretsmanager_secret_version" "keycloak_admin_password" {
-  secret_id = aws_secretsmanager_secret.keycloak_admin_password.id
+# Store the password in AWS Secrets Manager
+resource "aws_secretsmanager_secret_version" "git_secret" {
+  secret_id     = aws_secretsmanager_secret.git_secret.id
   secret_string = jsonencode({
-    password = var.ide_password
+    ide_password = var.ide_password
+    git_token = local.gitlab_token
   })
 }
 
-# Keycloak Database Password
-resource "aws_secretsmanager_secret" "keycloak_db_password" {
-  name                    = "${var.resource_prefix}-keycloak-db-password"
-  description             = "Keycloak database password"
-  recovery_window_in_days = 0
+# # Keycloak Admin Password
+# resource "aws_secretsmanager_secret" "keycloak_admin_password" {
+#   name                    = "${var.resource_prefix}-keycloak-admin-password"
+#   description             = "Keycloak admin password"
+#   recovery_window_in_days = 0
+  
+#   tags = {
+#     Application = "Keycloak"
+#     Environment = "Platform"
+#     ManagedBy   = "Terraform"
+#     Purpose     = "Admin Authentication"
+#   }
+# }
 
-  tags = {
-    Application = "Keycloak"
-    Environment = "Platform"
-    ManagedBy   = "Terraform"
-    Purpose     = "Database Authentication"
-  }
-}
+# # Keycloak admin password uses the consistent workshop password (ide_password)
 
-resource "random_password" "keycloak_db_password" {
-  length           = 32
-  special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
-}
+# resource "aws_secretsmanager_secret_version" "keycloak_admin_password" {
+#   secret_id     = aws_secretsmanager_secret.keycloak_admin_password.id
+#   secret_string = jsonencode({
+#     password = var.ide_password
+#   })
+# }
 
-resource "aws_secretsmanager_secret_version" "keycloak_db_password" {
-  secret_id = aws_secretsmanager_secret.keycloak_db_password.id
-  secret_string = jsonencode({
-    password = random_password.keycloak_db_password.result
-  })
-}
+# # Keycloak Database Password
+# resource "aws_secretsmanager_secret" "keycloak_db_password" {
+#   name                    = "${var.resource_prefix}-keycloak-db-password"
+#   description             = "Keycloak database password"
+#   recovery_window_in_days = 0
+  
+#   tags = {
+#     Application = "Keycloak"
+#     Environment = "Platform"
+#     ManagedBy   = "Terraform"
+#     Purpose     = "Database Authentication"
+#   }
+# }
 
-# Keycloak User Password (for workshop users)
-resource "aws_secretsmanager_secret" "keycloak_user_password" {
-  name                    = "${var.resource_prefix}-keycloak-user-password"
-  description             = "Keycloak user password for workshop participants"
-  recovery_window_in_days = 0
+# resource "random_password" "keycloak_db_password" {
+#   length  = 32
+#   special = true
+#   override_special = "!#$%&*()-_=+[]{}<>:?"
+# }
 
-  tags = {
-    Application = "Keycloak"
-    Environment = "Platform"
-    ManagedBy   = "Terraform"
-    Purpose     = "User Authentication"
-  }
-}
+# resource "aws_secretsmanager_secret_version" "keycloak_db_password" {
+#   secret_id     = aws_secretsmanager_secret.keycloak_db_password.id
+#   secret_string = jsonencode({
+#     password = random_password.keycloak_db_password.result
+#   })
+# }
 
-resource "random_password" "keycloak_user_password" {
-  length  = 16
-  special = false # User-friendly password for workshop participants
-}
+# # Keycloak User Password (for workshop users)
+# resource "aws_secretsmanager_secret" "keycloak_user_password" {
+#   name                    = "${var.resource_prefix}-keycloak-user-password"
+#   description             = "Keycloak user password for workshop participants"
+#   recovery_window_in_days = 0
+  
+#   tags = {
+#     Application = "Keycloak"
+#     Environment = "Platform"
+#     ManagedBy   = "Terraform"
+#     Purpose     = "User Authentication"
+#   }
+# }
 
-resource "aws_secretsmanager_secret_version" "keycloak_user_password" {
-  secret_id = aws_secretsmanager_secret.keycloak_user_password.id
-  secret_string = jsonencode({
-    password = random_password.keycloak_user_password.result
-  })
-}
+# resource "random_password" "keycloak_user_password" {
+#   length  = 16
+#   special = false  # User-friendly password for workshop participants
+# }
+
+# resource "aws_secretsmanager_secret_version" "keycloak_user_password" {
+#   secret_id     = aws_secretsmanager_secret.keycloak_user_password.id
+#   secret_string = jsonencode({
+#     password = random_password.keycloak_user_password.result
+#   })
+# }

@@ -14,6 +14,6 @@
 #   auto_init  = false
 # }
 
-provider "github" {
-  token = var.create_github_repos ? var.git_password : null
-}
+# provider "github" {
+#   token = var.create_github_repos ? var.git_password : null
+# }

@@ -9,6 +9,11 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
+export GIT_USERNAME=${GIT_USERNAME:-workshop-user}
+export IDE_PASSWORD=${IDE_PASSWORD:-"punkwalker!0912"}
+
+export GENEARATED_TFVAR=$(mktemp)
+
 # Logging functions
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -61,26 +66,25 @@ main() {
   log "Starting common stack deployment..."
   
   # Validate backend configuration
-  validate_backend_config
+  # validate_backend_config
   
   # Initialize Terraform with S3 backend
   log "Initializing Terraform with S3 backend..."
-  if ! terraform -chdir=$SCRIPTDIR init --upgrade \
-    -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
-    -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}" \
-    -backend-config="region=${AWS_REGION:-us-east-1}"; then
+  if ! terraform -chdir=$SCRIPTDIR init --upgrade ; then
     log_error "Terraform initialization failed"
     exit 1
   fi
   
+  # Set Terraform variables from environment
+  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
+  yq eval -o=json '.' ../mgmt-config.yaml > $GENEARATED_TFVAR.tfvars.json
   # Apply Terraform configuration
   log "Applying git resources..."
   if ! terraform -chdir=$SCRIPTDIR apply \
-    -var="resource_prefix=${RESOURCE_PREFIX:-peeks}" \
+    -var-file="$GENEARATED_TFVAR.tfvars.json" \
     -var="ide_password=${IDE_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
-    -var="working_repo=${WORKING_REPO}" \
-    -var="git_password=${GIT_PASSWORD:-$IDE_PASSWORD}" \
+    -var="git_password=${IDE_PASSWORD}" \
     -parallelism=3 -auto-approve; then
     log_error "Terraform apply failed"
     exit 1
