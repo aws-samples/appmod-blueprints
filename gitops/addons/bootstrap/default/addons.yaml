@@ -58,7 +58,7 @@ argocd:
           requestedScopes: ["openid", "profile", "email", "groups"]
 
 ack-iam:
-  enabled: false
+  enabled: true
   enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
