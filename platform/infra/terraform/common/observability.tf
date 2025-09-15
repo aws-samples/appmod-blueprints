@@ -3,17 +3,17 @@
 module "managed_service_prometheus" {
   source          = "terraform-aws-modules/managed-service-prometheus/aws"
   version         = "~> 2.2.2"
-  workspace_alias = "aws-observability-accelerator-multicluster"
+  workspace_alias = "${var.resource_prefix}-multicluster"
 }
 
 locals {
-  name        = "aws-observability-accelerator"
+  name        = "${var.resource_prefix}-observability-accelerator"
   description = "Amazon Managed Grafana workspace for ${local.name}"
 }
 
 # Create the secret
 resource "aws_secretsmanager_secret" "argorollouts_secret" {
-  name = "/platform/amp"
+  name = "${var.resource_prefix}-argo-rollouts"
 }
 
 # Create the secret version with key-value pairs
