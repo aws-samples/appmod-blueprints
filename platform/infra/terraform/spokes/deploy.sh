@@ -182,18 +182,7 @@ deploy_eks_cluster() {
   RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
   CLUSTER_NAME_PREFIX="${RESOURCE_PREFIX:-peeks}-spoke"
 
-  # Initialize without backend first
-  terraform -chdir=$SCRIPTDIR init -backend=false >/dev/null 2>&1 || true
-
-  # Create workspace if it doesn't exist, otherwise select it
-  if ! terraform -chdir=$SCRIPTDIR workspace select $env 2>/dev/null; then
-    log "Creating new workspace: $env"
-    terraform -chdir=$SCRIPTDIR workspace new $env
-  else
-    log "Selected existing workspace: $env"
-  fi
-
-  # Now init with proper backend config
+  # Initialize with proper backend config first
   if ! terraform -chdir=$SCRIPTDIR init -reconfigure -upgrade \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
     -backend-config="key=spokes/${env}/terraform.tfstate" \
@@ -201,6 +190,14 @@ deploy_eks_cluster() {
     -backend-config="region=${AWS_REGION:-us-east-1}"; then
     log_error "Terraform init failed"
     exit 1
+  fi
+
+  # Create workspace if it doesn't exist, otherwise select it
+  if ! terraform -chdir=$SCRIPTDIR workspace select $env 2>/dev/null; then
+    log "Creating new workspace: $env"
+    terraform -chdir=$SCRIPTDIR workspace new $env
+  else
+    log "Selected existing workspace: $env"
   fi
 
   log "Using cluster name prefix: $CLUSTER_NAME_PREFIX"
