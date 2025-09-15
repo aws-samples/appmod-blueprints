@@ -113,7 +113,7 @@ update_workshop_var "KEYCLOAK_USER_VIEWER_PASSWORD"=$(openssl rand -base64 8)
 
 # Get Grafana workspace endpoint from AWS CLI
 print_info "Retrieving Grafana workspace endpoint..."
-GRAFANA_WORKSPACE_ID=$(aws grafana list-workspaces --region $AWS_REGION --query "workspaces[?name=='aws-observability-accelerator'].id" --output text 2>/dev/null || echo "")
+GRAFANA_WORKSPACE_ID=$(aws grafana list-workspaces --region $AWS_REGION --query "workspaces[?name=='${RESOURCE_PREFIX}-observability'].id" --output text 2>/dev/null || echo "")
 if [ -n "$GRAFANA_WORKSPACE_ID" ] && [ "$GRAFANA_WORKSPACE_ID" != "None" ]; then
     export GRAFANAURL=$(aws grafana describe-workspace --workspace-id "$GRAFANA_WORKSPACE_ID" --region $AWS_REGION --query "workspace.endpoint" --output text 2>/dev/null || echo "")
     if [ -n "$GRAFANAURL" ]; then
@@ -122,7 +122,7 @@ if [ -n "$GRAFANA_WORKSPACE_ID" ] && [ "$GRAFANA_WORKSPACE_ID" != "None" ]; then
         print_warning "Could not retrieve Grafana workspace endpoint"
     fi
 else
-    print_warning "Grafana workspace 'aws-observability-accelerator' not found"
+    print_warning "Grafana workspace '${RESOURCE_PREFIX}-observability' not found"
 fi
 
 # Save Grafana URL if available

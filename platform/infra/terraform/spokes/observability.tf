@@ -23,7 +23,7 @@ resource "aws_prometheus_scraper" "peeks-scraper" {
        workspace_arn = data.aws_ssm_parameter.amp_arn.value
     }
   }
-  alias = "peeks-hub"
+  alias = "${local.context_prefix}-multicluster"
   scrape_configuration = replace(
     replace(
       replace(
