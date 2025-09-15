@@ -1,34 +1,36 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Creates NVDIA GPU EFA Infrastructure on EKS
-  name: eks-nvdia-gpu-efa
-  title: EKS - NVDIA GPU EFA Infrastructure
+  description: Set up an S3 bucket that triggers a Lambda function to log object creation events
+  name: s3-lambda-terraform
+  title: S3 to Lambda
 spec:
   owner: guest
   type: service
   parameters:
     - properties:
         tfVars:
+          title: Terraform variables
           properties:
+            name:
+              title: Name for the build
+              type: string
             aws_region:
               description: AWS Region
               type: string
-          title: Terraform variables
+          required:
+            - name
+            - aws_region
           type: object
         adminRoleName:
-          default: Admin
-          description: Name of the role to give the administrative rights on the EKS cluster.
-          title: Admin Role Name
-          type: string
-        name:
-          title: name of this entry
+          description: Name of the role to give the administrative rights
+          title: Admin role name
           type: string
         namespace:
           default: flux-system
-          title: namespace within the kubernetes cluster to deploy this
+          title: Existing namespace to create this resource
           type: string
-      title: Configuration Options
+      title: Configuration options
   steps:
     - id: fetchSystem
       name: Fetch System
@@ -38,30 +40,31 @@ spec:
     - action: fetch:template
       id: fetch-base
       input:
-        url: ./templates-nvdia-gpu-efa/
+        url: ./template-s3-lambda-terraform/
         values:
           adminRoleName: ${{parameters.adminRoleName}}
-          clusterName: ${{ parameters.clusterName }}
-          name: ${{ parameters.name }}
-          namespace: ${{ parameters.namespace }}
-          tfVars: ${{ parameters.tfVars }}
+          name: ${{parameters.tfVars.name}}
+          namespace: ${{parameters.namespace}}
+          tfVars: ${{parameters.tfVars}}
       name: Fetch Base
     - id: publish
-      name: Publishing to GitLab repository
-      action: publish:gitlab
+      name: Publishing to a gitea git repository
+      action: publish:gitea
       input:
-        description: Example EKS NVDIA GPU EFA Infrastructure Demo
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
+        description: Example of S3 to Lambda
+        # Hard coded value for this demo purposes only.
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.tfVars.name}}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
       action: cnoe:create-argocd-app
       input:
-        appName: ${{parameters.name}}
+        appName: ${{parameters.tfVars.name}}
         appNamespace: ${{parameters.namespace}}
         argoInstance: in-cluster
         projectName: default
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.name}}
+        # necessary until we generate our own cert
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.tfVars.name}}
         path: "manifests"
     - id: register
       name: Register

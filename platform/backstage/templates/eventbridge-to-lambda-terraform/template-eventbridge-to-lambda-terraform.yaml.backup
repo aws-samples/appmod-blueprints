@@ -48,8 +48,8 @@ spec:
           tfVars: ${{parameters.tfVars}}
       name: Fetch Base
     - id: publish
-      name: Publishing to GitLab repository
-      action: publish:gitlab
+      name: Publishing to a gitea git repository
+      action: publish:gitea
       input:
         description: Example of eventbridge to lambda terraform # change this
         # Hard coded value for this demo purposes only.

@@ -1,32 +1,24 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Creates NVDIA GPU EFA Infrastructure on EKS
-  name: eks-nvdia-gpu-efa
-  title: EKS - NVDIA GPU EFA Infrastructure
+  description: Creates an RDS Aurora Postgres DB
+  name: create-env-aurora-postgres
+  title: Create RDS Aurora Postgres Database
 spec:
   owner: guest
   type: service
   parameters:
     - properties:
-        tfVars:
-          properties:
-            aws_region:
-              description: AWS Region
-              type: string
-          title: Terraform variables
-          type: object
-        adminRoleName:
-          default: Admin
-          description: Name of the role to give the administrative rights on the EKS cluster.
-          title: Admin Role Name
-          type: string
         name:
-          title: name of this entry
+          title: Unique Name of the Database
           type: string
         namespace:
           default: flux-system
-          title: namespace within the kubernetes cluster to deploy this
+          title: Enter namespace within the EKS cluster to deploy this
+          type: string
+        aws_region:
+          default: us-west-2
+          title: Region
           type: string
       title: Configuration Options
   steps:
@@ -38,19 +30,19 @@ spec:
     - action: fetch:template
       id: fetch-base
       input:
-        url: ./templates-nvdia-gpu-efa/
+        url: ./templates-env-aurora-postgres/
         values:
-          adminRoleName: ${{parameters.adminRoleName}}
-          clusterName: ${{ parameters.clusterName }}
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
-          tfVars: ${{ parameters.tfVars }}
+          aws_region: ${{ parameters.aws_region }}
+          repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea
       name: Fetch Base
     - id: publish
-      name: Publishing to GitLab repository
-      action: publish:gitlab
+      name: Publishing to a gitea git repository
+      action: publish:gitea
       input:
-        description: Example EKS NVDIA GPU EFA Infrastructure Demo
+        description: CodeBuild create DB clusters template
+        # Hard coded value for this demo purposes only.
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
         defaultBranch: main
     - id: create-argocd-app
@@ -61,6 +53,7 @@ spec:
         appNamespace: ${{parameters.namespace}}
         argoInstance: in-cluster
         projectName: default
+        # necessary until we generate our own cert
         repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.name}}
         path: "manifests"
     - id: register
@@ -74,3 +67,4 @@ spec:
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
+
