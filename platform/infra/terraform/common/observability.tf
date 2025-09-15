@@ -3,7 +3,7 @@
 module "managed_service_prometheus" {
   source          = "terraform-aws-modules/managed-service-prometheus/aws"
   version         = "~> 2.2.2"
-  workspace_alias = "${var.resource_prefix}-multicluster"
+  workspace_alias = "${var.resource_prefix}-observability-amp"
 }
 
 locals {
