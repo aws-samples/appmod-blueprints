@@ -7,7 +7,7 @@ module "managed_service_prometheus" {
 }
 
 locals {
-  name        = "${var.resource_prefix}-observability-accelerator"
+  name        = "${var.resource_prefix}-observability"
   description = "Amazon Managed Grafana workspace for ${local.name}"
 }
 
