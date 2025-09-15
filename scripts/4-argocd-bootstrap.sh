@@ -25,13 +25,13 @@ function configure_keycloak() {
   echo "Configuring keycloak..."
   CLIENT_JSON=$(cat <<EOF
 {
-  "clientId": "https://${WORKSPACE_ENDPOINT}/saml/metadata",
+  "clientId": "https://${GRAFANAURL}/saml/metadata",
   "name": "amazon-managed-grafana",
   "enabled": true,
   "protocol": "saml",
-  "adminUrl": "https://${WORKSPACE_ENDPOINT}/login/saml",
+  "adminUrl": "https://${GRAFANAURL}/login/saml",
   "redirectUris": [
-    "https://${WORKSPACE_ENDPOINT}/saml/acs"
+    "https://${GRAFANAURL}/saml/acs"
   ],
   "attributes": {
     "saml.authnstatement": "true",
@@ -169,10 +169,7 @@ done;"
 }
 
 function update_workspace_saml_auth() {
-  ELB_HOSTNAME=$(kubectl get ingress \
-              -n $KEYCLOAK_NAMESPACE \
-              -o json 2> /dev/null| jq -r '.items[] | .spec.rules[] | .host as $host  | ( $host + .path)' | sort | grep -v ^/)
-  SAML_URL=http://$ELB_HOSTNAME/keycloak/realms/$KEYCLOAK_REALM/protocol/saml/descriptor
+  SAML_URL=http://$DOMAIN_NAME/keycloak/realms/$KEYCLOAK_REALM/protocol/saml/descriptor
   EXPECTED_SAML_CONFIG=$(cat <<EOF | jq --sort-keys -r '.'
 {
   "assertionAttributes": {
