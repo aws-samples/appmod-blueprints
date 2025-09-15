@@ -13,7 +13,7 @@ locals {
 
 # Create the secret
 resource "aws_secretsmanager_secret" "argorollouts_secret" {
-  name                    = "/peeks/amp"
+  name                    = "${local.context_prefix}-amp"
   recovery_window_in_days = 0
 
   lifecycle {
