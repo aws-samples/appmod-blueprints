@@ -105,6 +105,30 @@ update_workshop_var "NLB_DNS" "$NLB_DNS"
 update_workshop_var "GIT_USERNAME" "user1"
 update_workshop_var "WORKSPACE_PATH" "$HOME/environment" 
 update_workshop_var "WORKING_REPO" "platform-on-eks-workshop"
+update_workshop_var "KEYCLOAK_NAMESPACE"="keycloak"
+update_workshop_var "KEYCLOAK_REALM"="peeks"
+update_workshop_var "KEYCLOAK_USER_ADMIN_PASSWORD"=$(openssl rand -base64 8)
+update_workshop_var "KEYCLOAK_USER_EDITOR_PASSWORD"=$(openssl rand -base64 8)
+update_workshop_var "KEYCLOAK_USER_VIEWER_PASSWORD"=$(openssl rand -base64 8)
+
+# Get Grafana workspace endpoint from AWS CLI
+print_info "Retrieving Grafana workspace endpoint..."
+GRAFANA_WORKSPACE_ID=$(aws grafana list-workspaces --region $AWS_REGION --query "workspaces[?name=='aws-observability-accelerator'].id" --output text 2>/dev/null || echo "")
+if [ -n "$GRAFANA_WORKSPACE_ID" ] && [ "$GRAFANA_WORKSPACE_ID" != "None" ]; then
+    export GRAFANAURL=$(aws grafana describe-workspace --workspace-id "$GRAFANA_WORKSPACE_ID" --region $AWS_REGION --query "workspace.endpoint" --output text 2>/dev/null || echo "")
+    if [ -n "$GRAFANAURL" ]; then
+        print_info "Grafana workspace endpoint: $GRAFANAURL"
+    else
+        print_warning "Could not retrieve Grafana workspace endpoint"
+    fi
+else
+    print_warning "Grafana workspace 'aws-observability-accelerator' not found"
+fi
+
+# Save Grafana URL if available
+if [ -n "$GRAFANAURL" ]; then
+    update_workshop_var "GRAFANAURL" "$GRAFANAURL"
+fi
 
 source /etc/profile.d/workshop.sh
 # Source all bashrc.d files
@@ -471,6 +495,7 @@ export ARGOCDPW="$IDE_PASSWORD"
 export ARGOCDURL="https://$DOMAIN_NAME/argocd"
 export ARGOWFURL="https://$DOMAIN_NAME/argo-workflows"
 
+
 update_workshop_var "KEYCLOAKIDPPASSWORD" "$KEYCLOAKIDPPASSWORD"
 update_workshop_var "BACKSTAGEURL" "$BACKSTAGEURL"
 update_workshop_var "GITLABPW" "$GITLABPW"
@@ -485,5 +510,9 @@ print_info "You can connect to Argo CD UI and check everything is ok"
 echo -e "${CYAN}ArgoCD URL:${BOLD} https://$DOMAIN_NAME/argocd${NC}"
 echo -e "${CYAN}   Login:${BOLD} admin${NC}"
 echo -e "${CYAN}   Password:${BOLD} $IDE_PASSWORD${NC}"
+
+if [ -n "$GRAFANAURL" ]; then
+    echo -e "${CYAN}Grafana URL:${BOLD} $GRAFANAURL${NC}"
+fi
 
 print_info "Next step: Run 2-bootstrap-accounts.sh to bootstrap management and spoke accounts."
