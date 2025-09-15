@@ -99,6 +99,9 @@ main() {
   fi
   
   # Get AWS Account ID and set account_ids
+  # IMPORTANT: ACCOUNT_IDS (with 's') supports multiple accounts for multi-account deployments
+  # Format: "123456789012,987654321098" or single account "123456789012"
+  # Do NOT change to AWS_ACCOUNT_ID (singular) as it breaks multi-account support
   AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
   ACCOUNT_IDS="${ACCOUNT_IDS:-$AWS_ACCOUNT_ID}"
   log "Using AWS Account ID: $AWS_ACCOUNT_ID"
