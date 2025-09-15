@@ -13,7 +13,14 @@ locals {
 
 # Create the secret
 resource "aws_secretsmanager_secret" "argorollouts_secret" {
-  name = "/platform/amp"
+  name                    = "/peeks/amp"
+  recovery_window_in_days = 0
+
+  lifecycle {
+    ignore_changes = [name]
+  }
+
+  tags = local.tags
 }
 
 # Create the secret version with key-value pairs
@@ -86,15 +93,17 @@ module "managed_grafana" {
 
 # Create SSM parameters for Prometheus workspace information
 resource "aws_ssm_parameter" "amp_endpoint" {
-  name  = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
-  type  = "String"
-  value = module.managed_service_prometheus.workspace_prometheus_endpoint
-  tags  = local.tags
+  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
+  type      = "String"
+  value     = module.managed_service_prometheus.workspace_prometheus_endpoint
+  overwrite = true
+  tags      = local.tags
 }
 
 resource "aws_ssm_parameter" "amp_arn" {
-  name  = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
-  type  = "String"
-  value = module.managed_service_prometheus.workspace_arn
-  tags  = local.tags
+  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
+  type      = "String"
+  value     = module.managed_service_prometheus.workspace_arn
+  overwrite = true
+  tags      = local.tags
 }
