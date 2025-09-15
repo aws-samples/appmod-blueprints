@@ -315,6 +315,74 @@ argocd login --username admin --password $IDE_PASSWORD --grpc-web-root-path /arg
 print_info "Listing ArgoCD applications"
 argocd app list
 
+print_step "Creating ArgoCD token for Backstage integration"
+# Check if ArgoCD token already exists in Secrets Manager
+EXISTING_ARGOCD_SECRET=$(aws secretsmanager get-secret-value --secret-id "${RESOURCE_PREFIX:-peeks}-argocd-token" --region $AWS_REGION 2>/dev/null || echo "")
+
+if [ -n "$EXISTING_ARGOCD_SECRET" ]; then
+    ARGOCD_TOKEN=$(echo "$EXISTING_ARGOCD_SECRET" | jq -r '.SecretString | fromjson | .token')
+    print_info "Using existing ArgoCD token from Secrets Manager"
+else
+    # Create a service account for Backstage
+    print_info "Creating ArgoCD service account for Backstage"
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backstage
+  namespace: argocd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-argocd
+rules:
+- apiGroups: ["argoproj.io"]
+  resources: ["applications", "appprojects"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: backstage-argocd
+subjects:
+- kind: ServiceAccount
+  name: backstage
+  namespace: argocd
+EOF
+
+    # Wait for service account to be ready
+    sleep 5
+
+    # Get the service account token
+    ARGOCD_TOKEN=$(kubectl create token backstage -n argocd --duration=8760h) # 1 year token
+    
+    if [ -z "$ARGOCD_TOKEN" ]; then
+        print_error "Failed to create ArgoCD token"
+        exit 1
+    fi
+
+    # Store ArgoCD token in AWS Secrets Manager
+    print_info "Storing ArgoCD token in AWS Secrets Manager"
+    aws secretsmanager create-secret \
+        --name "${RESOURCE_PREFIX:-peeks}-argocd-token" \
+        --description "ArgoCD Service Account Token for Backstage integration" \
+        --secret-string "{\"token\":\"$ARGOCD_TOKEN\",\"url\":\"$ARGOCD_URL\",\"service_account\":\"backstage\"}" \
+        --tags '[
+            {"Key":"Environment","Value":"Platform"},
+            {"Key":"Purpose","Value":"ArgoCD API Access"},
+            {"Key":"ManagedBy","Value":"ArgoCD Setup Script"},
+            {"Key":"Application","Value":"Backstage"}
+        ]' \
+        --region $AWS_REGION
+
+    print_success "ArgoCD token created and stored in Secrets Manager: ${RESOURCE_PREFIX:-peeks}-argocd-token"
+fi
+
 # Check build status
 if check_backstage_build_status; then
     print_info "Backstage build is still running in parallel..."
@@ -471,12 +539,21 @@ export ARGOCDPW="$IDE_PASSWORD"
 export ARGOCDURL="https://$DOMAIN_NAME/argocd"
 export ARGOWFURL="https://$DOMAIN_NAME/argo-workflows"
 
+# ArgoCD environment variables for Backstage integration
+export ARGOCD_URL="https://$DOMAIN_NAME/argocd"
+export GIT_HOSTNAME=$(echo $GITLAB_URL | sed 's|https://||')
+export GIT_PASSWORD="$GITLAB_TOKEN"
+
 update_workshop_var "KEYCLOAKIDPPASSWORD" "$KEYCLOAKIDPPASSWORD"
 update_workshop_var "BACKSTAGEURL" "$BACKSTAGEURL"
 update_workshop_var "GITLABPW" "$GITLABPW"
 update_workshop_var "ARGOCDPW" "$ARGOCDPW"
 update_workshop_var "ARGOCDURL" "$ARGOCDURL"
 update_workshop_var "ARGOWFURL" "$ARGOWFURL"
+update_workshop_var "ARGOCD_URL" "$ARGOCD_URL"
+update_workshop_var "ARGOCD_TOKEN" "$ARGOCD_TOKEN"
+update_workshop_var "GIT_HOSTNAME" "$GIT_HOSTNAME"
+update_workshop_var "GIT_PASSWORD" "$GIT_PASSWORD"
 
 print_success "ArgoCD and GitLab setup completed successfully."
 
