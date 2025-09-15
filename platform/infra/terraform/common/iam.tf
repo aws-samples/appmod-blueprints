@@ -36,9 +36,11 @@ resource "aws_iam_role_policy" "argocd_central_policy" {
 }
 # Creating parameter for all clusters to read
 resource "aws_ssm_parameter" "argocd_hub_role" {
-  name  = "${local.context_prefix}-${var.ssm_parameter_name_argocd_role_suffix}"
-  type  = "String"
-  value = aws_iam_role.argocd_central.arn
+  name      = "${local.context_prefix}-${var.ssm_parameter_name_argocd_role_suffix}"
+  type      = "String"
+  value     = aws_iam_role.argocd_central.arn
+  overwrite = true
+  tags      = local.tags
 }
 ################################################################################
 # Team Roles Backend
@@ -61,9 +63,11 @@ resource "aws_iam_role" "backend_team_view" {
 }
 # Creating parameter for all clusters to read
 resource "aws_ssm_parameter" "backend_team_view_role" {
-  name  = "${local.context_prefix}-${var.backend_team_view_role_suffix}"
-  type  = "String"
-  value = aws_iam_role.backend_team_view.arn
+  name      = "${local.context_prefix}-${var.backend_team_view_role_suffix}"
+  type      = "String"
+  value     = aws_iam_role.backend_team_view.arn
+  overwrite = true
+  tags      = local.tags
 }
 ################################################################################
 # Team Roles Frontend
@@ -86,7 +90,9 @@ resource "aws_iam_role" "frontend_team_view" {
 }
 # Creating parameter for all clusters to read
 resource "aws_ssm_parameter" "frontend_team_view_role" {
-  name  = "${local.context_prefix}-${var.frontend_team_view_role_suffix}"
-  type  = "String"
-  value = aws_iam_role.frontend_team_view.arn
+  name      = "${local.context_prefix}-${var.frontend_team_view_role_suffix}"
+  type      = "String"
+  value     = aws_iam_role.frontend_team_view.arn
+  overwrite = true
+  tags      = local.tags
 }
