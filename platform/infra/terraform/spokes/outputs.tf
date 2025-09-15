@@ -31,3 +31,24 @@ output "access_argocd" {
     echo "ArgoCD URL: https://$(kubectl get svc -n argocd argocd-server -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
     EOT
 }
+
+# Outputs needed for database deployment
+output "vpc_id" {
+  description = "VPC ID"
+  value       = module.vpc.vpc_id
+}
+
+output "vpc_private_subnets" {
+  description = "VPC private subnets"
+  value       = module.vpc.private_subnets
+}
+
+output "vpc_cidr" {
+  description = "VPC CIDR block"
+  value       = module.vpc.vpc_cidr_block
+}
+
+output "availability_zones" {
+  description = "Availability zones"
+  value       = local.azs
+}
