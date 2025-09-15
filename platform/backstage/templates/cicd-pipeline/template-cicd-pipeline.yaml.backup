@@ -46,8 +46,8 @@ spec:
           deployment_path: ${{parameters.deployment_path}}
 
     - id: publish
-      name: Publishing to GitLab repository
-      action: publish:gitlab
+      name: Publishing to a gitea git repository
+      action: publish:gitea
       input:
         description: CodeBuild create clusters template
         # Hard coded value for this demo purposes only.

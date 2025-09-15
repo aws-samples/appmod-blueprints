@@ -1,9 +1,9 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Creates a EKS cluster with JupyterHub
-  name: jupyterhub-on-eks
-  title: Create Data on EKS - JupyterHub
+  description: Creates EKS cluster with Spark Operator
+  name: create-data-on-eks-spark
+  title: Create Data on EKS - Spark Operator
 spec:
   owner: guest
   type: service
@@ -11,30 +11,42 @@ spec:
     - properties:
         tfVars:
           properties:
-            acm_certificate_domain:
-              default: ""
-              description: Enter domain name with wildcard and ensure ACM certificate is created for this domain name, e.g. *.example.com
-              type: string
-            cognito_custom_domain:
-              default: eks
-              description: Cognito domain prefix for Hosted UI authentication endpoints
-              type: string
             eks_cluster_version:
               default: "1.30"
               description: EKS Cluster version
               type: string
-            jupyter_hub_auth_mechanism:
-              default: dummy
-              description: 'Allowed values: cognito, dummy'
-              type: string
-            jupyterhub_domain:
-              default: ""
-              description: Enter sub-domain name for jupyterhub to be hosted,  e.g. eks.example.com. Only needed if auth mechanism is set to cognito
-              type: string
+            enable_amazon_prometheus:
+              default: true
+              description: Enable AWS Managed Prometheus service
+              type: boolean
+            enable_vpc_endpoints:
+              default: false
+              description: Enable VPC Endpoints
+              type: boolean
+            enable_yunikorn:
+              default: true
+              description: Enable Apache YuniKorn Scheduler
+              type: boolean
             name:
-              default: jupyterhub-on-eks
+              default: spark-operator-doeks
               description: Name of the VPC and EKS Cluster
               type: string
+            private_subnets:
+              default:
+                - 10.1.1.0/24
+                - 10.1.2.0/24
+              description: Private Subnets CIDRs. 254 IPs per Subnet/AZ for Private NAT + NLB + Airflow + EC2 Jumphost etc.
+              items:
+                type: string
+              type: array
+            public_subnets:
+              default:
+                - 10.1.0.0/26
+                - 10.1.0.64/26
+              description: Public Subnets CIDRs. 62 IPs per Subnet/AZ
+              items:
+                type: string
+              type: array
             region:
               default: us-west-2
               description: Region
@@ -47,22 +59,30 @@ spec:
                 type: string
               type: array
             vpc_cidr:
-              default: 10.1.0.0/21
+              default: 10.1.0.0/16
               description: VPC CIDR. This should be a valid private (RFC 1918) CIDR range
               type: string
+            eks_data_plane_subnet_secondary_cidr:
+              default:
+                - 100.64.0.0/17
+                - 100.64.128.0/17
+              description: Secondary CIDR blocks. 32766 IPs per Subnet per Subnet/AZ for EKS Node and Pods
+              items:
+                type: string
+              type: array
           title: Terraform variables
           type: object
-        adminRoleName:
-          default: Admin
-          description: Name of the role to give the administrative rights on the EKS cluster.
-          title: Admin Role Name
-          type: string
         name:
           title: name of this entry
           type: string
         namespace:
-          default: flux-system
           title: namespace within the kubernetes cluster to deploy this
+          type: string
+          default: flux-system
+        adminRoleName:
+          title: Admin Role Name
+          description: Name of the role to give the administrative rights on the EKS cluster.
+          default: Admin
           type: string
       title: Configuration Options
   steps:
@@ -75,7 +95,7 @@ spec:
       name: Fetch Base
       action: fetch:template
       input:
-        url: ./templates-jupyterhub/
+        url: ./templates-spark/
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
@@ -83,10 +103,10 @@ spec:
           adminRoleName: ${{parameters.adminRoleName}}
           clusterName: ${{ parameters.clusterName }}
     - id: publish
-      name: Publishing to GitLab repository
-      action: publish:gitlab
+      name: Publishing to a gitea git repository
+      action: publish:gitea
       input:
-        description: Example JupyterHub demo
+        description: Example Data on EKS demo
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
         defaultBranch: main
     - id: create-argocd-app

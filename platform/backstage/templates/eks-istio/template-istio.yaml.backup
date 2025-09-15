@@ -1,9 +1,9 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Creates a Infra Monitoring Setup with Prometheus and Grafana
-  name: eks-observability-oss-infra-mon
-  title: EKS Observability - OSS Infra Monitoring
+  description: Creates EKS Cluster with Istio
+  name: eks-istio
+  title: EKS Cluster with Istio
 spec:
   owner: guest
   type: service
@@ -14,28 +14,6 @@ spec:
             aws_region:
               description: AWS Region
               type: string
-            eks_cluster_id:
-              default: eks-cluster-with-vpc
-              description: Name of the EKS cluster
-              type: string
-            enable_dashboards:
-              default: true
-              description: Enables or disables curated dashboards. Dashboards are managed by the Grafana Operator
-              type: boolean
-            grafana_api_key:
-              description: API key for authorizing the Grafana provider to make changes to Amazon Managed Grafana
-              type: string
-            managed_grafana_workspace_id:
-              description: Amazon Managed Grafana Workspace ID
-              type: string
-            managed_prometheus_workspace_id:
-              default: ""
-              description: Amazon Managed Service for Prometheus Workspace ID
-              type: string
-          required:
-            - grafana_api_key
-            - aws_region
-            - managed_grafana_workspace_id
           title: Terraform variables
           type: object
         adminRoleName:
@@ -60,7 +38,7 @@ spec:
     - action: fetch:template
       id: fetch-base
       input:
-        url: ./templates-infra-monitoring/
+        url: ./templates-istio/
         values:
           adminRoleName: ${{parameters.adminRoleName}}
           clusterName: ${{ parameters.clusterName }}
@@ -69,10 +47,10 @@ spec:
           tfVars: ${{ parameters.tfVars }}
       name: Fetch Base
     - id: publish
-      name: Publishing to GitLab repository
-      action: publish:gitlab
+      name: Publishing to a gitea git repository
+      action: publish:gitea
       input:
-        description: Example EKS Observability Accelerator demo
+        description: Example EKS Cluster with Stateful Workload Demo
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
         defaultBranch: main
     - id: create-argocd-app
