@@ -3,17 +3,24 @@
 module "managed_service_prometheus" {
   source          = "terraform-aws-modules/managed-service-prometheus/aws"
   version         = "~> 2.2.2"
-  workspace_alias = "aws-observability-accelerator-multicluster"
+  workspace_alias = "${var.resource_prefix}-multicluster"
 }
 
 locals {
-  name        = "aws-observability-accelerator"
+  name        = "${var.resource_prefix}-observability-accelerator"
   description = "Amazon Managed Grafana workspace for ${local.name}"
 }
 
 # Create the secret
 resource "aws_secretsmanager_secret" "argorollouts_secret" {
-  name = "/platform/amp"
+  name = "${var.resource_prefix}-argo-rollouts"
+  recovery_window_in_days = 0
+
+  lifecycle {
+    ignore_changes = [name]
+  }
+
+  tags = local.tags
 }
 
 # Create the secret version with key-value pairs
@@ -86,15 +93,17 @@ module "managed_grafana" {
 
 # Create SSM parameters for Prometheus workspace information
 resource "aws_ssm_parameter" "amp_endpoint" {
-  name  = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
-  type  = "String"
-  value = module.managed_service_prometheus.workspace_prometheus_endpoint
-  tags  = local.tags
+  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
+  type      = "String"
+  value     = module.managed_service_prometheus.workspace_prometheus_endpoint
+  overwrite = true
+  tags      = local.tags
 }
 
 resource "aws_ssm_parameter" "amp_arn" {
-  name  = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
-  type  = "String"
-  value = module.managed_service_prometheus.workspace_arn
-  tags  = local.tags
+  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
+  type      = "String"
+  value     = module.managed_service_prometheus.workspace_arn
+  overwrite = true
+  tags      = local.tags
 }

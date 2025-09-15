@@ -110,6 +110,32 @@ deploy_database() {
   # Set prefixes from RESOURCE_PREFIX environment variable
   RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
   CLUSTER_NAME_PREFIX="${RESOURCE_PREFIX:-peeks}-spoke"
+  KEY_PAIR_NAME="${RESOURCE_PREFIX}-workshop-keypair"
+  
+  # Ensure required key pair exists
+  log "Checking for required key pair: $KEY_PAIR_NAME..."
+  if ! aws ec2 describe-key-pairs --key-names "$KEY_PAIR_NAME" >/dev/null 2>&1; then
+    log "Creating $KEY_PAIR_NAME..."
+    aws ec2 create-key-pair --key-name "$KEY_PAIR_NAME" --query 'KeyMaterial' --output text > ~/.ssh/${KEY_PAIR_NAME}.pem
+    chmod 400 ~/.ssh/${KEY_PAIR_NAME}.pem
+    log_success "Key pair $KEY_PAIR_NAME created"
+  else
+    log "Key pair $KEY_PAIR_NAME already exists"
+  fi
+  
+  # Get VPC outputs from the main EKS deployment
+  log "Retrieving VPC information from EKS cluster deployment..."
+  local vpc_id=$(terraform -chdir=$SCRIPTDIR output -raw vpc_id 2>/dev/null || echo "")
+  local vpc_private_subnets=$(terraform -chdir=$SCRIPTDIR output -json vpc_private_subnets 2>/dev/null || echo "[]")
+  local vpc_cidr=$(terraform -chdir=$SCRIPTDIR output -raw vpc_cidr 2>/dev/null || echo "")
+  local availability_zones=$(terraform -chdir=$SCRIPTDIR output -json availability_zones 2>/dev/null || echo "[]")
+  
+  if [[ -z "$vpc_id" || "$vpc_id" == "null" ]]; then
+    log_error "Could not retrieve VPC ID from EKS cluster. Make sure EKS cluster is deployed first."
+    exit 1
+  fi
+  
+  log "Using VPC ID: $vpc_id"
   
   if ! terraform -chdir=${SCRIPTDIR}/db init -reconfigure \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
@@ -120,9 +146,24 @@ deploy_database() {
     exit 1
   fi
   
-  terraform -chdir=${SCRIPTDIR}/db workspace select -or-create $env
+  # Create workspace if it doesn't exist, otherwise select it
+  if ! terraform -chdir=${SCRIPTDIR}/db workspace select $env 2>/dev/null; then
+    log "Creating new database workspace: $env"
+    terraform -chdir=${SCRIPTDIR}/db workspace new $env
+  else
+    log "Selected existing database workspace: $env"
+  fi
   
-  if ! terraform -chdir=${SCRIPTDIR}/db apply -var-file="../workspaces/${env}.tfvars" -var="cluster_name_prefix=$CLUSTER_NAME_PREFIX" -var="resource_prefix=$RESOURCE_PREFIX" -parallelism=3 -auto-approve; then
+  if ! terraform -chdir=${SCRIPTDIR}/db apply \
+    -var="cluster_name_prefix=$CLUSTER_NAME_PREFIX" \
+    -var="vpc_id=$vpc_id" \
+    -var="vpc_private_subnets=$vpc_private_subnets" \
+    -var="vpc_cidr=$vpc_cidr" \
+    -var="availability_zones=$availability_zones" \
+    -var="aws_region=${AWS_REGION:-us-east-1}" \
+    -var="key_name=$KEY_PAIR_NAME" \
+    -parallelism=3 \
+    -auto-approve; then
     log_error "Database deployment failed"
     exit 1
   fi
@@ -141,7 +182,19 @@ deploy_eks_cluster() {
   RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
   CLUSTER_NAME_PREFIX="${RESOURCE_PREFIX:-peeks}-spoke"
 
-  if ! terraform -chdir=$SCRIPTDIR init --upgrade \
+  # Initialize without backend first
+  terraform -chdir=$SCRIPTDIR init -backend=false >/dev/null 2>&1 || true
+
+  # Create workspace if it doesn't exist, otherwise select it
+  if ! terraform -chdir=$SCRIPTDIR workspace select $env 2>/dev/null; then
+    log "Creating new workspace: $env"
+    terraform -chdir=$SCRIPTDIR workspace new $env
+  else
+    log "Selected existing workspace: $env"
+  fi
+
+  # Now init with proper backend config
+  if ! terraform -chdir=$SCRIPTDIR init -reconfigure -upgrade \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
     -backend-config="key=spokes/${env}/terraform.tfstate" \
     -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}" \
@@ -150,15 +203,12 @@ deploy_eks_cluster() {
     exit 1
   fi
 
-  terraform -chdir=$SCRIPTDIR workspace select -or-create $env
-
   log "Using cluster name prefix: $CLUSTER_NAME_PREFIX"
   if ! terraform -chdir=$SCRIPTDIR apply \
     -var-file="workspaces/${env}.tfvars" \
     -var="cluster_name_prefix=$CLUSTER_NAME_PREFIX" \
     -var="resource_prefix=$RESOURCE_PREFIX" \
     -var="git_hostname=$gitlab_domain" \
-    -var="gitlab_domain_name=$gitlab_domain" \
     -parallelism=3 \
     -auto-approve; then
     log_error "EKS cluster deployment failed"
@@ -203,13 +253,13 @@ main() {
     exit 1
   fi
   
-  # Deploy database if requested
+  # Deploy EKS cluster first (required for database deployment)
+  deploy_eks_cluster "$env" "$gitlab_domain"
+  
+  # Deploy database if requested (after EKS cluster is ready)
   if [ "$deploy_db" = true ]; then
     deploy_database "$env"
   fi
-  
-  # Deploy EKS cluster
-  deploy_eks_cluster "$env" "$gitlab_domain"
   
   log_success "Spoke cluster deployment completed successfully for $env"
 }

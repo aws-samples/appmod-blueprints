@@ -4,7 +4,7 @@
 
 # Custom origin request policy for Keycloak to forward all required headers
 resource "aws_cloudfront_origin_request_policy" "keycloak_policy" {
-  name    = "KeycloakOriginRequestPolicy"
+  name    = "${var.resource_prefix}-KeycloakOriginRequestPolicy"
   comment = "Origin request policy for Keycloak with all required headers"
   
   cookies_config {

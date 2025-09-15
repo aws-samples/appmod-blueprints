@@ -46,7 +46,7 @@ spec:
           type: string
         repoHostUrl:
           type: string
-          default: <gitlab_domain_name>
+          default: <git_hostname>
           ui:widget: hidden
         repoUsername:
           type: string

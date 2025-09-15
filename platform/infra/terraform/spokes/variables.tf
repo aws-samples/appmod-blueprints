@@ -184,8 +184,4 @@ variable "gitops_platform_repo_revision" {
   default     = "main"
 }
 
-variable "gitlab_domain_name" {
-  description = "GitLab domain name"
-  type        = string
-  default     = ""
-}
+# Removed gitlab_domain_name variable - use git_hostname instead

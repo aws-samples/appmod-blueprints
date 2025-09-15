@@ -74,7 +74,7 @@ resource "kubernetes_service" "gitlab_nlb" {
     name      = "gitlab"
     namespace = "gitlab"
     annotations = {
-      "service.beta.kubernetes.io/aws-load-balancer-name" = "gitlab"
+      "service.beta.kubernetes.io/aws-load-balancer-name" = "${var.resource_prefix}-gitlab"
       "service.beta.kubernetes.io/aws-load-balancer-type" = "external"
       "service.beta.kubernetes.io/aws-load-balancer-scheme" = "internet-facing"
       "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
@@ -117,7 +117,7 @@ data "aws_lb" "gitlab_nlb" {
   depends_on = [kubernetes_service.gitlab_nlb]
 
   # Use the name directly as specified in the kubernetes_service annotations
-  name = "gitlab"
+  name = "${var.resource_prefix}-gitlab"
 }
 
 ################################################################################
@@ -129,7 +129,7 @@ resource "aws_cloudfront_distribution" "gitlab" {
 
   enabled             = true
   is_ipv6_enabled     = true
-  comment             = "CloudFront distribution for GitLab"
+  comment             = "CloudFront distribution for ${var.resource_prefix} GitLab"
   price_class         = "PriceClass_All"
   http_version        = "http2"
   wait_for_deployment = false
@@ -183,7 +183,7 @@ resource "aws_cloudfront_distribution" "gitlab" {
   }
 
   tags = {
-    Name        = "gitlab-cloudfront"
+    Name        = "${var.resource_prefix}-gitlab-cloudfront"
     Environment = local.environment
   }
 }

@@ -272,6 +272,20 @@ destroy_terraform_resources() {
   RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
   CLUSTER_NAME="${RESOURCE_PREFIX}-hub-cluster"
   
+  # IMPORTANT: ACCOUNT_IDS (with 's') supports multiple accounts for multi-account deployments
+  # Format: "123456789012,987654321098" or single account "123456789012"
+  # Do NOT change to AWS_ACCOUNT_ID (singular) as it breaks multi-account support
+  AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  ACCOUNT_IDS="${ACCOUNT_IDS:-$AWS_ACCOUNT_ID}"
+  
+  # Get AWS Account ID if not already set
+  if [[ -z "${AWS_ACCOUNT_ID:-}" ]]; then
+    AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    log "Retrieved AWS Account ID: $AWS_ACCOUNT_ID"
+  else
+    log "Using existing AWS Account ID: $AWS_ACCOUNT_ID"
+  fi
+  
   local TARGETS=("module.gitops_bridge_bootstrap" "module.eks_blueprints_addons" "module.eks")
   
   for target in "${TARGETS[@]}"; do
@@ -279,7 +293,7 @@ destroy_terraform_resources() {
     
     if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"$target\" -var-file=$TF_VAR_FILE \
       -var=\"cluster_name=$CLUSTER_NAME\" \
-      -var=\"account_ids=$AWS_ACCOUNT_ID\" \
+      -var=\"account_ids=$ACCOUNT_IDS\" \
       -var=\"resource_prefix=$RESOURCE_PREFIX\" \
       -var=\"ide_password=${IDE_PASSWORD}\" \
       -var=\"git_username=${GIT_USERNAME}\" \
@@ -302,7 +316,7 @@ destroy_terraform_resources() {
   log "Destroying VPC..."
   if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"module.vpc\" -var-file=$TF_VAR_FILE \
     -var=\"cluster_name=$CLUSTER_NAME\" \
-    -var=\"account_ids=$AWS_ACCOUNT_ID\" \
+    -var=\"account_ids=$ACCOUNT_IDS\" \
     -var=\"resource_prefix=$RESOURCE_PREFIX\" \
     -var=\"ide_password=${IDE_PASSWORD}\" \
     -var=\"git_username=${GIT_USERNAME}\" \
@@ -318,7 +332,7 @@ destroy_terraform_resources() {
   log "Running final terraform destroy..."
   if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -var-file=$TF_VAR_FILE \
     -var=\"cluster_name=$CLUSTER_NAME\" \
-    -var=\"account_ids=$AWS_ACCOUNT_ID\" \
+    -var=\"account_ids=$ACCOUNT_IDS\" \
     -var=\"resource_prefix=$RESOURCE_PREFIX\" \
     -var=\"ide_password=${IDE_PASSWORD}\" \
     -var=\"git_username=${GIT_USERNAME}\" \

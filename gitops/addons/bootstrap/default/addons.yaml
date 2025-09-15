@@ -549,9 +549,9 @@ keycloak:
         operator: In
         values: ['true']
   valuesObject:
-    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
   ignoreDifferences:
