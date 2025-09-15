@@ -14,31 +14,35 @@ The blueprints include:
 
 ## Why Use These Blueprints?
 
-### For Developers
+### 👩‍💻 For Developers
+
 - **Faster Time-to-Production**: Pre-configured templates and automated workflows
 - **Consistent Patterns**: Standardized approaches across all applications
 - **Self-Service Capabilities**: Deploy and manage applications independently
 - **Built-in Best Practices**: Security, monitoring, and scalability included by default
 
-### For Platform Teams
+### 🏢 For Platform Teams
+
 - **Reference Implementation**: Production-ready platform engineering patterns
 - **Extensible Architecture**: Customize and extend for organizational needs
 - **Operational Excellence**: Integrated monitoring, logging, and alerting
 - **Developer Productivity**: Reduce cognitive load and improve developer experience
 
-### For Organizations
+### ⚙️ For Organizations
+
 - **Accelerated Modernization**: Proven patterns for application transformation
 - **Reduced Risk**: Battle-tested configurations and security practices
 - **Improved Governance**: Consistent policies and compliance across applications
 - **Cost Optimization**: Efficient resource utilization and automated scaling
 
-## 40-Minute Platform Evaluation
+## Platform Evaluation Quick Start
 
-This quick start helps you evaluate the platform capabilities and understand the developer experience in under 40 minutes.
+This quick start helps you evaluate the platform capabilities and understand the developer experience. Total time depends on your starting point - 30 minutes if infrastructure is already deployed, or 45+ minutes if deploying from scratch.
 
 ### Prerequisites (5 minutes)
 
 #### If Using Existing Infrastructure
+
 If you have the platform infrastructure already deployed (via CloudFormation template, manually deployed, or at an AWS event):
 
 - Access to the deployed VSCode IDE environment
@@ -46,21 +50,25 @@ If you have the platform infrastructure already deployed (via CloudFormation tem
 - Basic familiarity with Kubernetes and GitOps concepts
 
 #### If Starting Fresh
+
 You'll need to deploy the infrastructure first using one of these options:
 
 **Option A: CloudFormation Template (Recommended for Public Users)**
+
 - **What**: Pre-generated CloudFormation template for complete workshop setup
 - **When**: First-time evaluation or workshop participation
 - **Requirements**: AWS CLI, basic AWS knowledge
 - **Time**: ~45 minutes for complete deployment
 
 **Option B: IDE-Only CloudFormation Template**
+
 - **What**: Lightweight template that deploys only VSCode IDE environment
 - **When**: You have existing platform services or want to explore platform concepts
-- **Requirements**: AWS CLI, basic AWS knowledge  
-- **Time**: ~15 minutes for IDE deployment
+- **Requirements**: AWS CLI, basic AWS knowledge
+- **Time**: ~10 minutes for IDE deployment
 
 **Option C: Manual Platform Setup**
+
 - **What**: Step-by-step manual deployment using provided guides
 - **When**: Custom requirements or production-like deployment
 - **Requirements**: Advanced AWS/Kubernetes knowledge
@@ -74,6 +82,7 @@ You'll need to deploy the infrastructure first using one of these options:
    - Available from: [GitHub Releases](https://github.com/aws-samples/appmod-blueprints/releases) or AWS Workshop Studio
 
 2. **Deploy via AWS Console**:
+
    ```bash
    # Option 1: AWS Console
    # 1. Open CloudFormation in AWS Console
@@ -100,6 +109,7 @@ You'll need to deploy the infrastructure first using one of these options:
    - **IDE Password**: Auto-generated access credentials
 
 5. **Access Platform Services**: Once in the IDE environment:
+
    ```bash
    # Get all platform service URLs and credentials
    ./scripts/6-tools-urls.sh
@@ -213,24 +223,28 @@ Choose the approach that best fits your evaluation or adoption needs:
 | **⚙️ Custom Implementation**   | 1-2 weeks | High       | Production deployment         | Advanced platform engineering    |
 
 ### CloudFormation Workshop (Recommended for First-Time Users)
+
 - **What**: Deploy complete platform using pre-generated CloudFormation template
 - **When**: First-time evaluation, workshops, or comprehensive platform assessment
 - **Includes**: Full platform stack, VSCode IDE, sample applications, GitOps workflows
 - **Next Steps**: Explore platform capabilities, plan organizational adoption
 
 ### Platform Adoption
+
 - **What**: Implement the platform for organizational use
 - **When**: Ready to adopt platform engineering practices
 - **Includes**: Full platform deployment, team training, application migration
 - **Next Steps**: Customize platform components, onboard development teams
 
 ### Developer Onboarding
+
 - **What**: Learn platform workflows and self-service capabilities
 - **When**: Onboarding developers to existing platform
 - **Includes**: Application templates, GitOps workflows, monitoring practices
 - **Next Steps**: Deploy production applications, contribute to platform evolution
 
 ### Custom Implementation
+
 - **What**: Adapt platform for specific organizational requirements
 - **When**: Production deployment with custom needs
 - **Includes**: Platform customization, security integration, operational procedures
@@ -241,31 +255,37 @@ Choose the approach that best fits your evaluation or adoption needs:
 ### Supported Technologies
 
 #### .NET Applications
+
 - **Northwind Sample**: Clean architecture demonstration with Entity Framework
 - **Microservices**: Service-to-service communication patterns
 - **API Gateway**: Centralized API management and routing
 
-#### Java Applications  
+#### Java Applications
+
 - **Spring Boot**: Microservices with Spring Cloud patterns
 - **Observability**: Integrated tracing, metrics, and logging
 - **Data Access**: JPA patterns with PostgreSQL integration
 
 #### Node.js Applications
+
 - **Express APIs**: RESTful service patterns with modern tooling
 - **Event-Driven**: Message queue integration with SQS/SNS
 - **Frontend Integration**: React/Vue.js deployment patterns
 
 #### Python Applications
+
 - **FastAPI Services**: High-performance async API patterns
 - **Data Processing**: ETL pipelines with AWS services
 - **Machine Learning**: MLOps patterns for model deployment
 
 #### Rust Applications
+
 - **High-Performance Services**: Memory-safe system programming
 - **WebAssembly**: Browser and edge deployment patterns
 - **Async Patterns**: Tokio-based concurrent applications
 
 #### Go Applications
+
 - **Cloud-Native Services**: Kubernetes-native application patterns
 - **gRPC Services**: High-performance service communication
 - **CLI Tools**: Platform tooling and automation utilities
@@ -273,18 +293,21 @@ Choose the approach that best fits your evaluation or adoption needs:
 ### Architecture Patterns
 
 #### Microservices Architecture
+
 - Service mesh integration with Istio
 - Inter-service communication patterns
 - Distributed tracing and observability
 - Circuit breaker and retry patterns
 
 #### Event-Driven Architecture
+
 - Message queue integration (SQS, SNS, EventBridge)
 - Event sourcing and CQRS patterns
 - Saga pattern for distributed transactions
 - Dead letter queue handling
 
 #### Serverless Integration
+
 - Lambda function deployment patterns
 - API Gateway integration
 - Event-driven serverless workflows
@@ -295,18 +318,21 @@ Choose the approach that best fits your evaluation or adoption needs:
 After completing the evaluation, choose your path forward:
 
 ### 🎯 Platform Adopters
+
 1. **Architecture Review**: Study [ARCHITECTURE.md](ARCHITECTURE.md) for platform design details
 2. **Deployment Planning**: Review [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) for production setup
 3. **Team Preparation**: Plan developer onboarding and training programs
 4. **Customization**: Identify platform modifications for your organization
 
 ### 👩‍💻 Developers
+
 1. **Template Exploration**: Try different application blueprints
 2. **Workflow Mastery**: Practice GitOps deployment patterns
 3. **Platform Services**: Learn to use Backstage, monitoring, and security tools
 4. **Contribution**: Add new templates or improve existing patterns
 
 ### ⚙️ Platform Engineers
+
 1. **Component Deep Dive**: Understand Crossplane compositions and platform APIs
 2. **Customization**: Extend platform capabilities for organizational needs
 3. **Operations**: Set up monitoring, alerting, and maintenance procedures
@@ -316,7 +342,8 @@ After completing the evaluation, choose your path forward:
 
 ### IDE Configuration Issues
 
-**Platform Services Not Available or Environment Variables Missing**
+#### Platform Services Not Available or Environment Variables Missing
+
 ```bash
 # Re-run the configuration entrypoint script
 ./scripts/0-install.sh
@@ -328,7 +355,8 @@ After completing the evaluation, choose your path forward:
 # - Verify platform service connectivity
 ```
 
-**IDE Environment Corrupted or Incomplete Setup**
+#### IDE Environment Corrupted or Incomplete Setup
+
 ```bash
 # From within the VSCode IDE terminal, re-run setup
 cd /workspace/appmod-blueprints
@@ -342,7 +370,8 @@ echo $BACKSTAGE_URL
 
 ### Platform Access Problems
 
-**Cannot Access Backstage/ArgoCD**
+#### Cannot Access Backstage/ArgoCD
+
 ```bash
 # Check service status
 kubectl get services -n backstage
@@ -356,7 +385,8 @@ kubectl get pods -n backstage
 kubectl get pods -n argocd
 ```
 
-**GitLab Authentication Issues**
+#### GitLab Authentication Issues
+
 ```bash
 # Verify GitLab service
 kubectl get services -n gitlab
@@ -370,7 +400,8 @@ curl -k $GITLAB_URL/api/v4/version
 
 ### Application Deployment Issues
 
-**ArgoCD Sync Failures**
+#### ArgoCD Sync Failures
+
 ```bash
 # Check ArgoCD application status
 kubectl get applications -n argocd
@@ -382,7 +413,8 @@ kubectl describe application <app-name> -n argocd
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server
 ```
 
-**Application Pod Failures**
+#### Application Pod Failures
+
 ```bash
 # Check pod status
 kubectl get pods -n <namespace>

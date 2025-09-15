@@ -1,21 +1,34 @@
+---
+title: "Platform Engineering on EKS - Platform Architecture Guide"
+persona: ["workshop-participant", "platform-adopter", "infrastructure-engineer", "developer"]
+deployment-scenario: ["full-workshop", "platform-only", "ide-only", "manual"]
+difficulty: "intermediate"
+estimated-time: "45 minutes"
+prerequisites: ["EKS cluster", "Basic GitOps knowledge", "Kubernetes experience"]
+related-pages: ["GETTING-STARTED.md", "DEPLOYMENT-GUIDE.md", "platform-engineering-on-eks/ARCHITECTURE.md"]
+repository: "appmod-blueprints"
+last-updated: "2025-01-09"
+---
+
 # Platform Engineering on EKS - Platform Architecture Guide
 
-This document provides a comprehensive overview of the platform components and GitOps architecture implemented in the appmod-blueprints repository, focusing on the platform services and application deployment patterns.
+This document provides a comprehensive overview of the platform components and GitOps architecture implemented in the appmod-blueprints repository, focusing on the platform services, application deployment patterns, and operational workflows that run on AWS EKS infrastructure.
 
 ## 📚 For Workshop Participants
-This guide will help you understand how the platform components work together to support your application development and deployment exercises.
+This guide will help you understand how the platform components work together to support your application development and deployment exercises. Learn about the self-service capabilities, GitOps workflows, and how to use Backstage templates for application creation.
 
 ## 🏢 For Platform Adopters  
-Use this guide to understand the platform architecture patterns and GitOps workflows that can be implemented in your organization for production use.
+Use this guide to understand the platform architecture patterns, GitOps workflows, and operational practices that can be implemented in your organization for production use. Focus on the platform services, multi-cluster patterns, and governance capabilities that enable developer productivity at scale.
 
 ## ⚙️ For Infrastructure Engineers
-This document provides detailed technical specifications for platform components, GitOps configurations, and customization points for extending the platform.
+This document provides detailed technical specifications for platform components, GitOps configurations, Kubernetes operators, and customization points for extending the platform. Understand the CloudFormation-based infrastructure patterns and how platform services integrate with AWS services.
 
 ## 👩‍💻 For Developers
-Learn how platform services support your development workflows, from code commit to production deployment through self-service capabilities.
+Learn how platform services support your development workflows, from code commit to production deployment through self-service capabilities. Understand how to use Backstage for application scaffolding, GitOps for deployment, and platform services for infrastructure provisioning.
 
 ## Table of Contents
 - [Overview](#overview)
+- [Key Concepts and Terminology](#key-concepts-and-terminology)
 - [Platform Architecture](#platform-architecture)
 - [GitOps Architecture](#gitops-architecture)
 - [Platform Components](#platform-components)
@@ -23,10 +36,67 @@ Learn how platform services support your development workflows, from code commit
 - [Data Flow and Workflows](#data-flow-and-workflows)
 - [Security and Compliance](#security-and-compliance)
 - [Deployment Scenarios](#deployment-scenarios)
+- [Integration Points](#integration-points)
 
 ## Overview
 
-The appmod-blueprints repository contains the platform implementation for a complete GitOps-based platform engineering solution. This repository provides the platform services, application templates, and operational patterns that run on the infrastructure established by the platform-engineering-on-eks repository.
+The appmod-blueprints repository contains the platform implementation for a complete GitOps-based platform engineering solution. This repository provides the platform services, application templates, and operational patterns that run on AWS EKS infrastructure provisioned through CloudFormation templates and Terraform modules.
+
+### Platform Foundation
+
+The platform is built on AWS EKS clusters with the following foundational services:
+- **EKS Clusters**: Container orchestration platform running Kubernetes
+- **AWS Load Balancer Controller**: Ingress and service load balancing
+- **AWS VPC CNI**: Native AWS networking for pods
+- **EBS CSI Driver**: Persistent storage for stateful applications
+- **AWS Secrets Manager**: Centralized secret management
+- **AWS Systems Manager**: Configuration parameter storage
+
+### Repository Relationship
+
+This platform implementation works with the bootstrap infrastructure:
+
+1. **appmod-blueprints** (this repository): Platform services, GitOps workflows, and application templates
+2. **platform-engineering-on-eks**: Bootstrap infrastructure that provisions the foundational AWS services
+
+### Key Platform Capabilities
+
+- **GitOps-Based Deployment**: ArgoCD manages all platform and application deployments
+- **Self-Service Infrastructure**: Crossplane enables developers to provision AWS resources
+- **Developer Portal**: Backstage provides application templates and service catalog
+- **Multi-Cluster Management**: Hub-and-spoke architecture for environment isolation
+- **Automated Secret Management**: External Secrets Operator syncs from AWS Secrets Manager
+- **Application Blueprints**: Pre-configured templates for multiple technology stacks
+
+## Key Concepts and Terminology
+
+### Platform Architecture Terms
+- **Platform Services**: Core Kubernetes operators and controllers that provide platform capabilities
+- **GitOps Workflow**: Declarative deployment pattern using Git as the source of truth
+- **Hub-and-Spoke Architecture**: Multi-cluster pattern with centralized control plane and distributed workload clusters
+- **Application Blueprints**: Standardized templates for different technology stacks and deployment patterns
+- **Self-Service Infrastructure**: Developer-accessible APIs for provisioning cloud resources
+
+### GitOps Terms
+- **ArgoCD**: GitOps controller that manages continuous deployment from Git repositories
+- **ApplicationSets**: ArgoCD resources that enable templated, multi-cluster application deployment
+- **GitOps Bridge**: Data pipeline connecting infrastructure metadata to GitOps applications
+- **Cluster Registration**: Process where clusters automatically register metadata for GitOps discovery
+- **Sync Waves**: Ordered deployment phases ensuring proper dependency management
+
+### Platform Components
+- **Backstage**: Developer portal providing self-service application creation and service catalog
+- **Crossplane**: Kubernetes-native infrastructure as code for cloud resource provisioning
+- **External Secrets Operator**: Kubernetes operator for syncing secrets from external systems
+- **Ingress Controller**: Traffic routing and load balancing for applications
+- **Service Mesh**: Communication layer providing security, observability, and traffic management
+
+### Infrastructure Integration Terms
+- **CloudFormation Integration**: AWS native infrastructure as code service integration patterns
+- **Pod Identity**: AWS EKS feature for secure, credential-free access to AWS services
+- **Resource Prefix**: Consistent naming convention for all platform resources
+- **Environment Isolation**: Separation of development, staging, and production environments
+- **Multi-Tenant Architecture**: Platform design supporting multiple teams and applications securely
 
 ## Platform Architecture
 
@@ -34,45 +104,86 @@ The appmod-blueprints repository contains the platform implementation for a comp
 
 ```mermaid
 graph TB
-    subgraph "Developer Interface"
-        BACKSTAGE[Backstage Portal]
-        IDE[Development Environment]
-        GIT[Git Repositories]
+    subgraph "Developer Interface Layer"
+        BACKSTAGE[Backstage Portal<br/>Self-Service Templates]
+        IDE[Development Environment<br/>VSCode + GitLab]
+        GIT[Git Repositories<br/>Source Code & GitOps]
     end
     
-    subgraph "Platform Control Plane"
-        ARGOCD[ArgoCD]
-        CROSSPLANE[Crossplane]
-        EXTERNAL_SECRETS[External Secrets Operator]
-        CERT_MANAGER[Cert Manager]
+    subgraph "Platform Control Plane (Hub Cluster)"
+        ARGOCD[ArgoCD<br/>GitOps Controller]
+        CROSSPLANE[Crossplane<br/>Infrastructure as Code]
+        ESO[External Secrets Operator<br/>Secret Management]
+        CERT_MGR[Cert Manager<br/>TLS Automation]
+        GITLAB[GitLab<br/>Git Repository Hosting]
     end
     
-    subgraph "Application Runtime"
-        INGRESS[Ingress Controller]
-        MONITORING[Monitoring Stack]
-        LOGGING[Logging Stack]
-        SERVICE_MESH[Service Mesh]
+    subgraph "Application Runtime (Spoke Clusters)"
+        INGRESS[AWS Load Balancer Controller<br/>Traffic Routing]
+        MONITORING[Monitoring Stack<br/>Prometheus + Grafana]
+        LOGGING[Logging Stack<br/>Fluent Bit + CloudWatch]
+        WORKLOADS[Application Workloads<br/>Multi-Language Support]
     end
     
-    subgraph "Infrastructure Services"
-        EKS[EKS Clusters]
-        RDS[RDS Databases]
-        S3[S3 Storage]
-        SECRETS[AWS Secrets Manager]
+    subgraph "AWS Infrastructure Services"
+        EKS[EKS Clusters<br/>Hub + Spoke Architecture]
+        VPC[VPC & Networking<br/>Multi-AZ Configuration]
+        SECRETS[AWS Secrets Manager<br/>Centralized Secrets]
+        RDS[RDS Databases<br/>Managed Databases]
+        S3[S3 Storage<br/>Object Storage]
+        IAM[IAM Roles<br/>Pod Identity]
     end
     
-    BACKSTAGE --> ARGOCD
+    BACKSTAGE --> GIT
     IDE --> GIT
     GIT --> ARGOCD
     ARGOCD --> CROSSPLANE
-    ARGOCD --> EXTERNAL_SECRETS
-    ARGOCD --> CERT_MANAGER
+    ARGOCD --> ESO
+    ARGOCD --> CERT_MGR
     ARGOCD --> INGRESS
     ARGOCD --> MONITORING
+    ARGOCD --> LOGGING
+    ARGOCD --> WORKLOADS
+    
     CROSSPLANE --> RDS
     CROSSPLANE --> S3
-    EXTERNAL_SECRETS --> SECRETS
+    ESO --> SECRETS
+    ESO --> IAM
+    
     INGRESS --> EKS
+    MONITORING --> EKS
+    WORKLOADS --> VPC
+    
+    style ARGOCD fill:#e1f5fe
+    style BACKSTAGE fill:#f3e5f5
+    style EKS fill:#e8f5e8
+    style SECRETS fill:#fff3e0
+```
+
+### Platform Service Dependencies
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant Backstage as Backstage Portal
+    participant Git as Git Repository
+    participant ArgoCD as ArgoCD
+    participant ESO as External Secrets
+    participant AWS as AWS Services
+    participant K8s as Kubernetes
+    
+    Note over Dev,K8s: Application Creation & Deployment
+    Dev->>Backstage: Create application from template
+    Backstage->>Git: Generate code & GitOps config
+    Dev->>Git: Push application changes
+    
+    Note over Git,K8s: GitOps Deployment Flow
+    Git->>ArgoCD: Webhook notification
+    ArgoCD->>ESO: Trigger secret sync
+    ESO->>AWS: Fetch secrets from Secrets Manager
+    ESO->>K8s: Create Kubernetes secrets
+    ArgoCD->>K8s: Deploy application manifests
+    K8s->>Dev: Application ready notification
 ```
 
 ## GitOps Architecture
@@ -139,12 +250,12 @@ sequenceDiagram
 
 ### GitOps Bridge Architecture
 
-The GitOps Bridge is a critical component that connects infrastructure provisioning with ArgoCD-based GitOps deployments. It acts as a data pipeline that passes infrastructure metadata from the bootstrap infrastructure to Kubernetes secrets, which are then consumed by ArgoCD ApplicationSets.
+The GitOps Bridge is a critical component that connects infrastructure provisioning with ArgoCD-based GitOps deployments. It acts as a data pipeline that passes infrastructure metadata from CloudFormation stacks and Terraform modules to Kubernetes secrets, which are then consumed by ArgoCD ApplicationSets.
 
 ```mermaid
 graph TB
     subgraph "Infrastructure Layer"
-        BOOTSTRAP[Bootstrap Infrastructure<br/>CDK/Terraform]
+        BOOTSTRAP[Bootstrap Infrastructure<br/>CloudFormation/Terraform]
         ADDONS_META[Infrastructure Metadata<br/>Cluster info, secrets, URLs]
     end
     
@@ -181,7 +292,7 @@ graph TB
 
 The GitOps Bridge enables infrastructure data to flow seamlessly into GitOps applications:
 
-1. **Infrastructure Metadata Collection**: The bootstrap infrastructure (from platform-engineering-on-eks) collects key information like cluster names, AWS regions, VPC IDs, and service URLs
+1. **Infrastructure Metadata Collection**: CloudFormation stacks and Terraform modules collect key information like cluster names, AWS regions, VPC IDs, and service URLs
 
 2. **Bridge Module Processing**: The GitOps Bridge module transforms this metadata into Kubernetes secrets that can be consumed by ArgoCD applications
 
@@ -316,7 +427,50 @@ spec:
         - CreateNamespace=true
 ```
 
-#### Multi-Tool Support
+#### Infrastructure Integration Patterns
+
+The platform supports cluster creation and infrastructure provisioning through multiple tools and patterns:
+
+#### CloudFormation Integration
+The platform integrates with AWS CloudFormation for infrastructure provisioning:
+
+```yaml
+# CloudFormation template for EKS cluster with registration
+Resources:
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Sub "${ResourcePrefix}-${Environment}-cluster"
+      Version: "1.28"
+      RoleArn: !GetAtt EKSServiceRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: 
+          - !Ref EKSSecurityGroup
+  
+  ClusterRegistrationSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "cluster-registration-${EKSCluster}"
+      SecretString: !Sub |
+        {
+          "cluster_name": "${EKSCluster}",
+          "cluster_endpoint": "${EKSCluster.Endpoint}",
+          "resource_prefix": "${ResourcePrefix}",
+          "environment": "${Environment}",
+          "labels": {
+            "environment": "${Environment}",
+            "cluster-type": "spoke",
+            "resource-prefix": "${ResourcePrefix}"
+          },
+          "annotations": {
+            "addons_repo_basepath": "gitops/addons/",
+            "resource_prefix": "${ResourcePrefix}"
+          }
+        }
+```
+
+### Multi-Tool Support
 
 The platform supports cluster creation through multiple infrastructure tools:
 
@@ -728,5 +882,62 @@ graph TB
 - **Getting Started**: See [GETTING-STARTED.md](GETTING-STARTED.md) for deployment instructions
 - **Deployment Guide**: See [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) for detailed deployment scenarios
 - **Troubleshooting**: See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues and solutions
+
+## Integration Points
+
+### Bootstrap Infrastructure Integration
+
+This platform implementation integrates with the bootstrap infrastructure through several key integration points:
+
+#### Infrastructure Dependency Flow
+```mermaid
+sequenceDiagram
+    participant Bootstrap as Bootstrap Infrastructure
+    participant AWS as AWS Services
+    participant ESO as External Secrets Operator
+    participant ArgoCD as ArgoCD
+    participant Platform as Platform Services
+    
+    Bootstrap->>AWS: Create EKS clusters & secrets
+    Bootstrap->>AWS: Configure VPC & networking
+    ESO->>AWS: Sync secrets to Kubernetes
+    ArgoCD->>AWS: Discover cluster registration secrets
+    ArgoCD->>Platform: Deploy platform services
+    Platform->>AWS: Consume infrastructure resources
+```
+
+#### Key Integration Mechanisms
+
+1. **Cluster Discovery**: ArgoCD ApplicationSets automatically discover EKS clusters through registration secrets created by the bootstrap infrastructure
+
+2. **Secret Synchronization**: External Secrets Operator syncs AWS Secrets Manager secrets created by the bootstrap infrastructure
+
+3. **Network Integration**: Platform services use VPC, subnets, and security groups provisioned by the bootstrap infrastructure
+
+4. **IAM Integration**: Platform components use Pod Identity roles and policies created by the bootstrap infrastructure
+
+#### Infrastructure Prerequisites
+
+The platform requires the following infrastructure components to be provisioned first:
+
+- **EKS Clusters**: Hub and spoke clusters with proper networking and security configurations
+- **AWS Secrets Manager**: Secrets for platform services (Keycloak, Backstage, etc.)
+- **VPC Configuration**: Proper networking setup with subnets and security groups
+- **IAM Roles**: Pod Identity associations for secure AWS service access
+- **GitOps Repositories**: Git repositories configured for ArgoCD access
+
+#### Cross-Repository Dependencies
+
+- **Bootstrap → Platform**: Bootstrap infrastructure must be deployed before platform services
+- **Shared Configuration**: Both repositories use consistent resource naming patterns and metadata
+- **Secret Management**: Platform consumes secrets created by bootstrap infrastructure
+- **Network Policies**: Platform services rely on network configurations from bootstrap
+
+### Related Documentation
+
+For complete infrastructure understanding, refer to:
+- **Bootstrap Infrastructure**: [platform-engineering-on-eks ARCHITECTURE.md](https://gitlab.aws.dev/aws-tfc-containers/containers-hands-on-content/platform-engineering-on-eks/-/blob/main/ARCHITECTURE.md) for infrastructure provisioning details
+- **Deployment Guide**: [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) for detailed platform deployment scenarios
+- **Getting Started**: [GETTING-STARTED.md](GETTING-STARTED.md) for platform evaluation and adoption paths
 
 This architecture provides a comprehensive foundation for platform engineering that balances developer productivity, operational efficiency, and security requirements.

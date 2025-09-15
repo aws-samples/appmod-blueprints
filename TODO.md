@@ -93,3 +93,10 @@ task taskcat-clean-deployment
 
 
 - Does WORKSHOP_ID=28c283c1-1d60-43fa-a604-4e983e0e8038 is the goor one ?
+- update region in backstage templates
+
+
+
+- #### Production Security Hardening - the hardening should be done, in a gitops manner, not using kubectl
+- same for installing network policy, load balancer controller, all should be done with gitops, and maybe gitops-bridge if we need dependency with resources deployed in terraform
+- add also the cleanup after destroy with tsk taskcat-clean-deployment-force, that can help remove any remaining aws resources deploy by the platform
