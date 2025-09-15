@@ -5,7 +5,7 @@ metadata:
   title: S3 Bucket Template ACK
   description: Create S3 bucket using OAM and ACK
 spec:
-  owner: guest
+  owner: user:guest
   type: service
   parameters:
     - title: Provide S3 Bucket Information
