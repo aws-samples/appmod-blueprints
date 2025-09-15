@@ -13,6 +13,7 @@ backend.add(import('@backstage/plugin-techdocs-backend'));
 // roadiehq plugins
 backend.add(import('@roadiehq/scaffolder-backend-module-utils'));
 backend.add(import('@roadiehq/scaffolder-backend-module-http-request'));
+backend.add(import('@roadiehq/scaffolder-backend-argocd'));
 
 // auth plugin
 backend.add(import('@backstage/plugin-auth-backend'));
