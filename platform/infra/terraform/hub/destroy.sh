@@ -272,6 +272,14 @@ destroy_terraform_resources() {
   RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
   CLUSTER_NAME="${RESOURCE_PREFIX}-hub-cluster"
   
+  # Get AWS Account ID if not already set
+  if [[ -z "${AWS_ACCOUNT_ID:-}" ]]; then
+    AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    log "Retrieved AWS Account ID: $AWS_ACCOUNT_ID"
+  else
+    log "Using existing AWS Account ID: $AWS_ACCOUNT_ID"
+  fi
+  
   local TARGETS=("module.gitops_bridge_bootstrap" "module.eks_blueprints_addons" "module.eks")
   
   for target in "${TARGETS[@]}"; do
