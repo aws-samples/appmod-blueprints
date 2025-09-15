@@ -47,8 +47,8 @@ spec:
           tfVars: ${{ parameters.tfVars }}
       name: Fetch Base
     - id: publish
-      name: Publishing to a gitea git repository
-      action: publish:gitea
+      name: Publishing to GitLab repository
+      action: publish:gitlab
       input:
         description: Example EKS NVDIA GPU EFA Infrastructure Demo
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}

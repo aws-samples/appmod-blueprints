@@ -216,6 +216,7 @@ spec:
       input:
         repoUrl: ${{ parameters.repoHostUrl }}?repo=${{ parameters.repoName }}&owner=${{ parameters.repoUsername }}
         title: Add new EKS cluster
+        description: Add new EKS cluster to the platform
         sourcePath: ./repo
         targetPath: .
         branchName: new-cluster

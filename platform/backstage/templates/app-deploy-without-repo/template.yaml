@@ -43,13 +43,13 @@ spec:
   steps:
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: cnoe:create-argocd-app
+      action: argocd:create-app
       input:
         appName: ${{parameters.appName}}
         appNamespace: ${{parameters.appNamespace}}
         argoInstance: ${{parameters.environment}}
         projectName: default
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.repoName}}
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/user1Admin/${{parameters.repoName}}
         path: ${{parameters.repoPath}}
     - id: template-output
       name: Template Output

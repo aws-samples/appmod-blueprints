@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script to update Backstage templates from publish:gitea to publish:gitlab
+# Script to fix all Backstage templates for GitLab and ArgoCD compatibility
 set -e
 
 # Colors for output
@@ -30,55 +30,95 @@ print_header() {
     echo -e "\n${BLUE}=== $1 ===${NC}\n"
 }
 
-print_header "Updating Backstage Templates from Gitea to GitLab"
+print_header "Fixing All Backstage Templates for GitLab and ArgoCD"
 
-# Find all template files that use publish:gitea
-TEMPLATE_FILES=$(find ../platform/backstage/templates -name "*.yaml" -exec grep -l "publish:gitea" {} \;)
+# Find all template files
+TEMPLATE_FILES=$(find platform/backstage/templates -name "*.yaml" -type f)
 
 if [ -z "$TEMPLATE_FILES" ]; then
-    print_warning "No template files found with publish:gitea action"
+    print_warning "No template files found"
     exit 0
 fi
 
-print_info "Found templates to update:"
+print_info "Found template files to process:"
 echo "$TEMPLATE_FILES" | while read -r file; do
     echo "  - $file"
 done
 
-# Update each template file
+# Process each template file
 echo "$TEMPLATE_FILES" | while read -r template_file; do
-    print_info "Updating $template_file"
+    print_info "Processing $template_file"
     
     # Create backup
     cp "$template_file" "$template_file.backup"
     
-    # Update the action from publish:gitea to publish:gitlab
-    sed -i 's/action: publish:gitea/action: publish:gitlab/g' "$template_file"
+    CHANGES_MADE=false
     
-    # Update the step name to reflect GitLab
-    sed -i 's/name: Publishing to a gitea git repository/name: Publishing to GitLab repository/g' "$template_file"
+    # Fix publish:gitlab action - remove description parameter
+    if grep -q "publish:gitlab" "$template_file" && grep -q "description:" "$template_file"; then
+        print_info "  Fixing GitLab publish action in $template_file"
+        
+        # Remove the description line from publish:gitlab input sections
+        sed -i '/action: publish:gitlab/,/^    - id:/{
+            /description:/d
+        }' "$template_file"
+        
+        CHANGES_MADE=true
+    fi
     
-    # Verify the change was made
-    if grep -q "publish:gitlab" "$template_file"; then
-        print_success "Updated $template_file"
+    # Update cnoe:create-argocd-app to argocd:create-app
+    if grep -q "cnoe:create-argocd-app" "$template_file"; then
+        print_info "  Updating ArgoCD action in $template_file"
+        sed -i 's/action: cnoe:create-argocd-app/action: argocd:create-app/g' "$template_file"
+        CHANGES_MADE=true
+    fi
+    
+    # Fix repoUrl format for GitLab (remove gitea references and fix URL structure)
+    if grep -q "repoUrl.*gitea" "$template_file"; then
+        print_info "  Fixing GitLab repoUrl format in $template_file"
+        
+        # Fix the repoUrl format to be compatible with GitLab
+        sed -i 's|repoUrl: \${{ steps\['\''fetchSystem'\''\]\.output\.entity\.spec\.hostname }}/d31l55m8hkb7r3\.cloudfront\.net/user1?repo=\${{parameters\.[^}]*}}|repoUrl: \${{ steps['\''fetchSystem'\''].output.entity.spec.hostname }}/user1?repo=\${{parameters.bucket_name}}\&owner=user1|g' "$template_file"
+        
+        # More generic gitea URL fixes
+        sed -i 's|/gitea|/user1|g' "$template_file"
+        sed -i 's|giteaAdmin|user1|g' "$template_file"
+        
+        CHANGES_MADE=true
+    fi
+    
+    # Update ArgoCD repoUrl to use the published repository
+    if grep -q "argocd:create-app" "$template_file" && grep -q "repoUrl: http://my-gitea" "$template_file"; then
+        print_info "  Updating ArgoCD repoUrl to use published repository"
+        sed -i 's|repoUrl: http://my-gitea-http\.gitea\.svc\.cluster\.local:3000/giteaAdmin/\${{parameters\.[^}]*}}|repoUrl: \${{ steps['\''publish'\''].output.remoteUrl }}|g' "$template_file"
+        CHANGES_MADE=true
+    fi
+    
+    if [ "$CHANGES_MADE" = true ]; then
+        print_success "  Updated $template_file"
     else
-        print_error "Failed to update $template_file"
-        # Restore backup
-        mv "$template_file.backup" "$template_file"
+        print_info "  No changes needed for $template_file"
+        # Remove backup if no changes were made
+        rm "$template_file.backup"
     fi
 done
 
 print_header "Update Summary"
 
-# Show what was changed
-UPDATED_COUNT=$(find appmod-blueprints/platform/backstage/templates -name "*.yaml" -exec grep -l "publish:gitlab" {} \; | wc -l)
-print_success "Updated $UPDATED_COUNT template files to use publish:gitlab"
+# Count updated files
+GITLAB_COUNT=$(find appmod-blueprints/platform/backstage/templates -name "*.yaml" -exec grep -l "publish:gitlab" {} \; | wc -l)
+ARGOCD_COUNT=$(find appmod-blueprints/platform/backstage/templates -name "*.yaml" -exec grep -l "argocd:create-app" {} \; | wc -l)
+
+print_success "Templates using publish:gitlab: $GITLAB_COUNT"
+print_success "Templates using argocd:create-app: $ARGOCD_COUNT"
 
 print_info "Changes made:"
-echo "  ✓ Changed 'action: publish:gitea' to 'action: publish:gitlab'"
-echo "  ✓ Updated step names from 'gitea git repository' to 'GitLab repository'"
+echo "  ✓ Removed 'description' parameter from publish:gitlab actions"
+echo "  ✓ Updated 'cnoe:create-argocd-app' to 'argocd:create-app'"
+echo "  ✓ Fixed GitLab repoUrl formats"
+echo "  ✓ Updated ArgoCD repoUrl to use published repository URLs"
 
-print_info "Backup files created with .backup extension"
+print_info "Backup files created for modified templates with .backup extension"
 print_info "You can remove backups with: find appmod-blueprints/platform/backstage/templates -name '*.backup' -delete"
 
-print_success "All templates updated successfully!"
+print_success "All templates processed successfully!"

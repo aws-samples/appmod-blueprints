@@ -73,6 +73,7 @@ spec:
       input:
         repoUrl: ${{ parameters.repoHostUrl }}?repo=${{parameters.name}}&owner=${{ parameters.repoUsername }}
         title: Add new dev and prod environment - ${{parameters.name}}
+        description: Create dev and prod clusters template
         sourcePath: .
         targetPath: .
         branchName: add-${{parameters.name}}-env

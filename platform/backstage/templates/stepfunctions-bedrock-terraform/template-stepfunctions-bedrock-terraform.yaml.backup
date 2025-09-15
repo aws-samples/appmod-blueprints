@@ -48,8 +48,8 @@ spec:
           tfVars: ${{parameters.tfVars}}
       name: Fetch Base
     - id: publish
-      name: Publishing to a gitea git repository
-      action: publish:gitea
+      name: Publishing to GitLab repository
+      action: publish:gitlab
       input:
         description: Example of bedrock stepfunction orchestration
         # Hard coded value for this demo purposes only.
