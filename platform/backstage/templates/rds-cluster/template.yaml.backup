@@ -50,8 +50,8 @@ spec:
           subnetIds: ${{parameters.subnetIds}}
       name: Fetch Base
     - id: publish
-      name: Publishing to a gitea git repository
-      action: publish:gitea
+      name: Publishing to GitLab repository
+      action: publish:gitlab
       input:
         description: RDS Cluster manifests
         # Hard coded value for this demo purposes only.

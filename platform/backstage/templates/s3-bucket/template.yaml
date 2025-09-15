@@ -60,23 +60,22 @@ spec:
           namespace: ${{ parameters.namespace }}
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
-          repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea
+          repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/user1
     - id: publish
       name: Publishing to GitLab repository
       action: publish:gitlab
       input:
-        description: This is an example app
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/d31l55m8hkb7r3.cloudfront.net/user1?repo=${{parameters.bucket_name}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/user1?repo=${{parameters.bucket_name}}&owner=user1
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: cnoe:create-argocd-app
+      action: argocd:create-app
       input:
         appName: ${{parameters.bucket_name}}
         appNamespace: default
         argoInstance: in-cluster
         projectName: default
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.bucket_name}}
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/user1Admin/${{parameters.bucket_name}}
         path: "manifests"
     - id: register
       name: Register

@@ -56,8 +56,8 @@ spec:
           region: ${{ parameters.region }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea
     - id: publish
-      name: Publishing to a gitea git repository
-      action: publish:gitea
+      name: Publishing to GitLab repository
+      action: publish:gitlab
       input:
         description: This is an example app
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/d31l55m8hkb7r3.cloudfront.net/user1?repo=${{parameters.bucket_name}}
