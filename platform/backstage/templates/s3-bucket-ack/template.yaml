@@ -55,6 +55,13 @@ spec:
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
+    - id: create-repo
+      name: Create GitLab repository
+      action: gitlab:repo:create
+      input:
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.bucket_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
+        description: "S3 bucket configuration for ${{parameters.bucket_name}}"
+        visibility: private
     - id: publish
       name: Publishing to GitLab repository via Merge Request
       action: publish:gitlab:merge-request
@@ -73,13 +80,13 @@ spec:
         appNamespace: default
         argoInstance: in-cluster
         projectName: default
-        repoUrl: ${{ steps['publish'].output.remoteUrl }}
+        repoUrl: ${{ steps['create-repo'].output.remoteUrl }}
         path: "manifests"
     - id: register
       name: Register
       action: catalog:register
       input:
-        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        repoContentsUrl: ${{ steps['create-repo'].output.repoContentsUrl }}
         catalogInfoPath: 'catalog-info.yaml'
     - id: template-output
       name: Template Output
@@ -89,7 +96,7 @@ spec:
   output:
     links:
       - title: Repository
-        url: ${{ steps.publish.output.remoteUrl }}
+        url: ${{ steps.create-repo.output.remoteUrl }}
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps.register.output.entityRef }}
