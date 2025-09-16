@@ -417,9 +417,9 @@ spec:
               # Retrieve secrets from AWS Secrets Manager
               PROJECT_PREFIX="{{ .Values.global.resourcePrefix | default "peeks" }}"
               
-              BACKSTAGE_SECRETS=$(aws secretsmanager get-secret-value --region us-east-1 --secret-id "${PROJECT_PREFIX}-backstage-oidc-credentials" --query SecretString --output text)
-              ARGO_WORKFLOWS_SECRETS=$(aws secretsmanager get-secret-value --region us-east-1 --secret-id "${PROJECT_PREFIX}-argo-workflows-oidc-credentials" --query SecretString --output text)
-              ARGOCD_SECRETS=$(aws secretsmanager get-secret-value --region us-east-1 --secret-id "${PROJECT_PREFIX}-argocd-oidc-credentials" --query SecretString --output text)
+              BACKSTAGE_SECRETS=$(aws secretsmanager get-secret-value --region ${AWS_REGION} --secret-id "${PROJECT_PREFIX}-backstage-oidc-credentials" --query SecretString --output text)
+              ARGO_WORKFLOWS_SECRETS=$(aws secretsmanager get-secret-value --region ${AWS_REGION} --secret-id "${PROJECT_PREFIX}-argo-workflows-oidc-credentials" --query SecretString --output text)
+              ARGOCD_SECRETS=$(aws secretsmanager get-secret-value --region ${AWS_REGION} --secret-id "${PROJECT_PREFIX}-argocd-oidc-credentials" --query SecretString --output text)
               
               # Parse JSON secrets
               BACKSTAGE_CLIENT_SECRET=$(echo "$BACKSTAGE_SECRETS" | jq -r '.BACKSTAGE_CLIENT_SECRET')
@@ -610,7 +610,7 @@ spec:
                 echo "Updating AWS secret: $secret_name"
                 
                 if aws secretsmanager put-secret-value \
-                  --region us-east-1 \
+                  --region ${AWS_REGION} \
                   --secret-id "$secret_name" \
                   --secret-string "$secret_value" >/dev/null 2>&1; then
                   echo "✓ Updated AWS secret: $secret_name"
