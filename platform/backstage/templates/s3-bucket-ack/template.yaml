@@ -55,23 +55,12 @@ spec:
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
-    - id: create-repo
-      name: Create GitLab repository
-      action: gitlab:repo:create
-      input:
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.bucket_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
-        description: "S3 bucket configuration for ${{parameters.bucket_name}}"
-        visibility: private
     - id: publish
-      name: Publishing to GitLab repository via Merge Request
-      action: publish:gitlab:merge-request
+      name: Publishing to GitLab repository
+      action: publish:gitlab
       input:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.bucket_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
-        title: "Initial commit for ${{parameters.bucket_name}}"
-        branchName: "backstage-initial-commit"
-        description: "Initial commit from Backstage template for S3 bucket ${{parameters.bucket_name}}"
-        removeSourceBranch: true
-        commitAction: auto
+        defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
       action: argocd:create-app
@@ -80,13 +69,13 @@ spec:
         appNamespace: default
         argoInstance: in-cluster
         projectName: default
-        repoUrl: ${{ steps['create-repo'].output.remoteUrl }}
+        repoUrl: ${{ steps['publish'].output.remoteUrl }}
         path: "manifests"
     - id: register
       name: Register
       action: catalog:register
       input:
-        repoContentsUrl: ${{ steps['create-repo'].output.repoContentsUrl }}
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
         catalogInfoPath: 'catalog-info.yaml'
     - id: template-output
       name: Template Output
@@ -96,7 +85,7 @@ spec:
   output:
     links:
       - title: Repository
-        url: ${{ steps.create-repo.output.remoteUrl }}
+        url: ${{ steps.publish.output.remoteUrl }}
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps.register.output.entityRef }}

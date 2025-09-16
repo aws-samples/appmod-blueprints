@@ -38,6 +38,8 @@ integrations:
       apiBaseUrl: https://${GIT_HOSTNAME}/api/v4
       baseUrl: https://${GIT_HOSTNAME}
       host: ${GIT_HOSTNAME}
+      timeout: 300000
+      requestTimeout: 300000
   github:
     - host: github.com
       # This is a Personal Access Token or PAT from GitHub. You can find out how to generate this token, and more information
