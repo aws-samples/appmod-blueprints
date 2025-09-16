@@ -60,10 +60,8 @@ spec:
       action: gitlab:repo:push
       input:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}
-        defaultBranch: main
-        gitCommitMessage: "Initial commit from Backstage template"
-        gitAuthorName: "Backstage"
-        gitAuthorEmail: "backstage@example.com"
+        branchName: main
+        commitMessage: "Initial commit from Backstage template"
         sourcePath: ./
     - id: create-argocd-app
       name: Create ArgoCD App
