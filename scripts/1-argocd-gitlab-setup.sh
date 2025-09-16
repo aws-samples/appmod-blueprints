@@ -99,21 +99,21 @@ update_workshop_var "DOMAIN_NAME" "$DOMAIN_NAME"
 print_header "Setting up GitLab repository and ArgoCD access"
 
 export GITLAB_URL=https://$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'gitlab')].DomainName | [0]" --output text)
-export NLB_DNS=$(aws elbv2 describe-load-balancers --region $AWS_REGION --names gitlab --query 'LoadBalancers[0].DNSName' --output text)
+export NLB_DNS=$(aws elbv2 describe-load-balancers --region $AWS_REGION --names ${RESOURCE_PREFIX:-peeks}-gitlab --query 'LoadBalancers[0].DNSName' --output text)
 update_workshop_var "GITLAB_URL" "$GITLAB_URL"
 update_workshop_var "NLB_DNS" "$NLB_DNS"
 update_workshop_var "GIT_USERNAME" "user1"
 update_workshop_var "WORKSPACE_PATH" "$HOME/environment" 
 update_workshop_var "WORKING_REPO" "platform-on-eks-workshop"
-update_workshop_var "KEYCLOAK_NAMESPACE"="keycloak"
-update_workshop_var "KEYCLOAK_REALM"="peeks"
-update_workshop_var "KEYCLOAK_USER_ADMIN_PASSWORD"=$(openssl rand -base64 8)
-update_workshop_var "KEYCLOAK_USER_EDITOR_PASSWORD"=$(openssl rand -base64 8)
-update_workshop_var "KEYCLOAK_USER_VIEWER_PASSWORD"=$(openssl rand -base64 8)
+update_workshop_var "KEYCLOAK_NAMESPACE" "keycloak"
+update_workshop_var "KEYCLOAK_REALM" "platform"
+update_workshop_var "KEYCLOAK_USER_ADMIN_PASSWORD" $(openssl rand -base64 8)
+update_workshop_var "KEYCLOAK_USER_EDITOR_PASSWORD" $(openssl rand -base64 8)
+update_workshop_var "KEYCLOAK_USER_VIEWER_PASSWORD" $(openssl rand -base64 8)
 
 # Get Grafana workspace endpoint from AWS CLI
 print_info "Retrieving Grafana workspace endpoint..."
-GRAFANA_WORKSPACE_ID=$(aws grafana list-workspaces --region $AWS_REGION --query "workspaces[?name=='${RESOURCE_PREFIX}-observability'].id" --output text 2>/dev/null || echo "")
+GRAFANA_WORKSPACE_ID=$(aws grafana list-workspaces --region $AWS_REGION --query "workspaces[?name=='${RESOURCE_PREFIX:-peeks}-observability'].id" --output text 2>/dev/null || echo "")
 if [ -n "$GRAFANA_WORKSPACE_ID" ] && [ "$GRAFANA_WORKSPACE_ID" != "None" ]; then
     export GRAFANAURL=$(aws grafana describe-workspace --workspace-id "$GRAFANA_WORKSPACE_ID" --region $AWS_REGION --query "workspace.endpoint" --output text 2>/dev/null || echo "")
     if [ -n "$GRAFANAURL" ]; then
@@ -122,7 +122,7 @@ if [ -n "$GRAFANA_WORKSPACE_ID" ] && [ "$GRAFANA_WORKSPACE_ID" != "None" ]; then
         print_warning "Could not retrieve Grafana workspace endpoint"
     fi
 else
-    print_warning "Grafana workspace '${RESOURCE_PREFIX}-observability' not found"
+    print_warning "Grafana workspace '${RESOURCE_PREFIX:-peeks}-observability' not found"
 fi
 
 # Save Grafana URL if available

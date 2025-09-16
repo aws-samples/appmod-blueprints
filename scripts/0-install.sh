@@ -40,7 +40,7 @@ SCRIPTS=(
     "2-bootstrap-accounts.sh"
     "3-register-terraform-spoke-clusters.sh dev"
     "3-register-terraform-spoke-clusters.sh prod"
-    "4-argocd-bootstrap.sh"
+    "4-setup-keycloak.sh"
     "6-tools-urls.sh"
 )
 
