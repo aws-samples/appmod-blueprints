@@ -79,6 +79,10 @@ scaffolder:
   # see https://backstage.io/docs/features/software-templates/configuration for software template options
   defaultTimeout: 300000 # 5 minutes in milliseconds
   defaultCommitMessage: "Initial commit from Backstage template"
+  # Git configuration for better timeout handling
+  git:
+    timeout: 300000 # 5 minutes for git operations
+    httpTimeout: 300000 # 5 minutes for HTTP operations
 
 catalog:
   # import:
