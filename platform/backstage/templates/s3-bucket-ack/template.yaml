@@ -62,8 +62,8 @@ spec:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.bucket_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         title: "Initial commit for ${{parameters.bucket_name}}"
         branchName: "backstage-initial-commit"
-        description: "Initial commit from Backstage template for S3 bucket ${{parameters.bucket_name}}"
-        targetBranch: main
+        removeSourceBranch: true
+        commitAction: auto
     - id: create-argocd-app
       name: Create ArgoCD App
       action: argocd:create-app
