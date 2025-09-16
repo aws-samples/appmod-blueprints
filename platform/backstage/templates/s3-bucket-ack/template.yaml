@@ -60,20 +60,18 @@ spec:
       action: http:backstage:request
       input:
         method: GET
-        path: /api/v4/users?username=${{ steps['fetchSystem'].output.entity.spec.gituser }}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/api/v4/users?username=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         headers:
           Private-Token: ${{ env.GIT_PASSWORD }}
-        baseUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}
     - id: create-repo
       name: Create GitLab repository
       action: http:backstage:request
       input:
         method: POST
-        path: /api/v4/projects
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/api/v4/projects
         headers:
           Private-Token: ${{ env.GIT_PASSWORD }}
           Content-Type: application/json
-        baseUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}
         body:
           name: ${{parameters.bucket_name}}
           namespace_id: ${{ steps['get-user-id'].output.body[0].id }}
