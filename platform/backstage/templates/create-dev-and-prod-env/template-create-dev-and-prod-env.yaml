@@ -46,7 +46,7 @@ spec:
           type: string
         repoHostUrl:
           type: string
-          default: d2jl8inhwf8wdv.cloudfront.net
+          default: <git_hostname>
           ui:widget: hidden
         repoUsername:
           type: string
