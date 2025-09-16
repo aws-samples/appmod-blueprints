@@ -76,7 +76,7 @@ main() {
   
   # Set Terraform variables from environment
   export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
-  yq eval -o=json '.' ../mgmt-config.yaml > $GENEARATED_TFVAR.tfvars.json
+  yq eval -o=json '.' ../hub-config.yaml > $GENEARATED_TFVAR.tfvars.json
   # Destroy Terraform resources
   log "Destroying AWS git and IAM resources..."
   if ! terraform -chdir=$SCRIPTDIR destroy \
