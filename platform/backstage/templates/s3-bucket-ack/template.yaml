@@ -61,7 +61,7 @@ spec:
       input:
         method: GET
         baseUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}
-        path: /api/v4/users
+        path: /v4/users
         params:
           username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
         headers:
@@ -72,7 +72,7 @@ spec:
       input:
         method: POST
         baseUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}
-        path: /api/v4/projects
+        path: /v4/projects
         headers:
           Private-Token: ${{ env.GIT_PASSWORD }}
           Content-Type: application/json
