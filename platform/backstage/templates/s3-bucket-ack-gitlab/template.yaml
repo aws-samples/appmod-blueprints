@@ -1,0 +1,92 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: s3-bucket-template-ack
+  title: S3 Bucket Template ACK
+  description: Create S3 bucket using OAM and ACK
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - title: Provide S3 Bucket Information
+      required:
+        - bucket_name
+        - environment
+        - region
+      properties:
+        bucket_name:
+          title: Bucket Name
+          type: string
+          description: Name of the S3 bucket
+        environment:
+          title: Environment
+          type: string
+          description: The environment (e.g., dev, prod)
+          enum: ['dev', 'prod']
+        region:
+          title: Region
+          type: string
+          description: AWS region for the S3 bucket
+          default: us-west-2
+        namespace:
+          default: default
+          title: Existing namespace to create this resource
+          type: string
+        configuration:
+          default: standard
+          title: Configuration of your S3 Bucket
+          type: string
+          enum: ['standard', 'intelligent-tiering']
+  steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
+    - id: template
+      name: Fetch Skeleton + Template
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          bucket_name: ${{ parameters.bucket_name }}
+          configuration: ${{ parameters.configuration }}
+          namespace: ${{ parameters.namespace }}
+          environment: ${{ parameters.environment }}
+          region: ${{ parameters.region }}
+          repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea
+    - id: publish
+      name: Publishing to a gitea git repository
+      action: publish:gitea
+      input:
+        description: This is an example app
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/d31l55m8hkb7r3.cloudfront.net/user1?repo=${{parameters.bucket_name}}
+        defaultBranch: main
+    - id: create-argocd-app
+      name: Create ArgoCD App
+      action: cnoe:create-argocd-app
+      input:
+        appName: ${{parameters.bucket_name}}
+        appNamespace: default
+        argoInstance: in-cluster
+        projectName: default
+        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.bucket_name}}
+        path: "manifests"
+    - id: register
+      name: Register
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: 'catalog-info.yaml'
+    - id: template-output
+      name: Template Output
+      action: debug:log
+      input:
+        listWorkspace: true
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps.publish.output.remoteUrl }}
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps.register.output.entityRef }}
