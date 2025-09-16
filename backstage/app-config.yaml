@@ -1,6 +1,6 @@
 app:
   title: Internal Developer Platform
-  baseUrl: http://localhost:3000/backstage
+  baseUrl: https://d7uikzlbvbvih.cloudfront.net/backstage
 
 organization:
   name: Internal Developer Platform
@@ -12,7 +12,7 @@ backend:
   # auth:
   #   keys:
   #     - secret: ${BACKEND_SECRET}
-  baseUrl: http://localhost:7007/backstage
+  baseUrl: https://d7uikzlbvbvih.cloudfront.net/backstage
   listen:
     port: 7007
     # Uncomment the following host directive to bind to specific interfaces
@@ -69,6 +69,7 @@ techdocs:
 
 auth:
   environment: local
+  debug: true
   # see https://backstage.io/docs/auth/ to learn about auth providers
   providers:
     # See https://backstage.io/docs/auth/guest/provider
