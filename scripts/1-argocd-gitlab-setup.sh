@@ -84,11 +84,19 @@ aws eks update-kubeconfig --name ${RESOURCE_PREFIX}-hub-cluster --alias ${RESOUR
 print_step "Creating Amazon Elastic Container Repository (Amazon ECR) for Backstage image"
 aws ecr create-repository --repository-name ${RESOURCE_PREFIX}-backstage --region $AWS_REGION || true
 
+print_step "Preparing Backstage for build"
+BACKSTAGE_PATH="$(dirname "$SCRIPT_DIR")/backstage"
+
+# Update yarn lockfile if needed (for new dependencies)
+print_info "Updating Backstage dependencies and lockfile..."
+cd "$BACKSTAGE_PATH"
+yarn install
+cd - > /dev/null
+
 print_step "Starting Backstage image build early"
 print_info "Building Backstage image in background..."
 # Create a temporary log file for the background build
 BACKSTAGE_LOG="/tmp/backstage_build_$$.log"
-BACKSTAGE_PATH="$(dirname "$SCRIPT_DIR")/backstage"
 $SCRIPT_DIR/build_backstage.sh "$BACKSTAGE_PATH" > "$BACKSTAGE_LOG" 2>&1 &
 BACKSTAGE_BUILD_PID=$!
 print_info "Backstage build started with PID: $BACKSTAGE_BUILD_PID (logs: $BACKSTAGE_LOG)"
