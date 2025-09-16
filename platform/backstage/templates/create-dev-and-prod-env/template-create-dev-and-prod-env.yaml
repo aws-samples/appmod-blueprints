@@ -46,7 +46,7 @@ spec:
           type: string
         repoHostUrl:
           type: string
-          default: gitlab.gitlab.svc.cluster.local
+          default: d2jl8inhwf8wdv.cloudfront.net
           ui:widget: hidden
         repoUsername:
           type: string

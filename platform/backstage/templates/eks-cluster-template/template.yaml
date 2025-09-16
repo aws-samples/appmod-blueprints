@@ -56,7 +56,7 @@ spec:
           default: "tenant1"
         repoHostUrl:
           type: string
-          default: gitlab.gitlab.svc.cluster.local
+          default: d2jl8inhwf8wdv.cloudfront.net
           ui:widget: hidden
         repoUsername:
           type: string
@@ -76,22 +76,22 @@ spec:
           title: Addons Repository URL
           type: string
           description: Git repository URL for addons
-          default: "http://gitlab.gitlab.svc.cluster.local/user1/platform-on-eks-workshop.git"
+          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
         fleetRepoUrl:
           title: Fleet Repository URL
           type: string
           description: Git repository URL for fleet
-          default: "http://gitlab.gitlab.svc.cluster.local/user1/platform-on-eks-workshop.git"
+          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
         platformRepoUrl:
           title: Platform Repository URL
           type: string
           description: Git repository URL for platform
-          default: "http://gitlab.gitlab.svc.cluster.local/user1/platform-on-eks-workshop.git"
+          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
         workloadRepoUrl:
           title: Workload Repository URL
           type: string
           description: Git repository URL for workload
-          default: "http://gitlab.gitlab.svc.cluster.local/user1/platform-on-eks-workshop.git"
+          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
     - title: Cluster Addons Configuration
       properties:
         enableIngressClassAlb:
