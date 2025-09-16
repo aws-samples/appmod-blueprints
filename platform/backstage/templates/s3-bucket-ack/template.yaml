@@ -55,30 +55,31 @@ spec:
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
-    - id: create-readme
-      name: Create README file
-      action: fs:write
-      input:
-        path: ./README.md
-        content: |
-          # ${{parameters.bucket_name}}
-          
-          S3 bucket configuration created by Backstage template.
-    - id: create-repo
-      name: Create GitLab repository with README
+    - id: publish
+      name: Create GitLab repository
       action: publish:gitlab
       input:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.bucket_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
-        sourcePath: ./README.md
-    - id: push-files
-      name: Push template files to repository
-      action: gitlab:repo:push
+    - id: manual-instructions
+      name: Manual Push Instructions
+      action: debug:log
       input:
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.bucket_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
-        branchName: main
-        commitMessage: "Add S3 bucket configuration files"
-        sourcePath: ./
+        message: |
+          Repository created successfully! Due to network timeout limitations, please complete the setup manually:
+          
+          1. Clone the repository:
+             git clone https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git
+          
+          2. Copy the generated files from this template to your local repository
+          
+          3. Push the files:
+             cd ${{parameters.bucket_name}}
+             git add .
+             git commit -m "Add S3 bucket configuration"
+             git push origin main
+          
+          The repository URL is: ${{ steps.publish.output.remoteUrl }}
     - id: create-argocd-app
       name: Create ArgoCD App
       action: argocd:create-app
