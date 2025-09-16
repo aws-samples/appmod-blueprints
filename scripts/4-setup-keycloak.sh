@@ -245,3 +245,16 @@ EOF
   echo "AMG workspace SAML authentication status: $WORKSPACE_AUTH_SAML_STATUS"
   echo ""
 }
+
+# Define handle_error function if not already defined
+handle_error() {
+    echo "ERROR: $1"
+    exit 1
+}
+
+# Main execution - call configure_keycloak when script is run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "Setting up Keycloak configuration..."
+    configure_keycloak
+    echo "Keycloak configuration completed successfully!"
+fi
