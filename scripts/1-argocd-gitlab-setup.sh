@@ -31,7 +31,7 @@
 #   Run after 0-initial-setup.sh and before 2-bootstrap-accounts.sh
 #
 #############################################################################
-
+set -x
 # Configuration
 STUCK_SYNC_TIMEOUT=${STUCK_SYNC_TIMEOUT:-180}  # 3 minutes default for stuck sync operations
 
