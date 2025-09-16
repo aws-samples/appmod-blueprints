@@ -150,11 +150,16 @@ spec:
           description: Enable AWS EFS CSI Driver addon
           default: false
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - id: checkout
       name: Checkout repository
       action: fetch:plain
       input:
-        url: https://${{ parameters.repoHostUrl }}/${{ parameters.repoUsername }}/${{ parameters.repoName }}/-/blob/main/
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ parameters.repoUsername }}/${{ parameters.repoName }}/-/blob/main/
         targetPath: ./repo
     - id: addCluster
       name: Add new Clusters
@@ -183,7 +188,7 @@ spec:
               - url: https://${{ parameters.ingressDomainName }}/argocd/applications/argocd/clusters
                 title: ArgoCD App URL
                 icon: externalLink
-              - url: https://${{ parameters.repoHostUrl }}/${{ parameters.repoUsername }}/${{ parameters.repoName }}/-/blob/main/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
+              - url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ parameters.repoUsername }}/${{ parameters.repoName }}/-/blob/main/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
                 title: Git Repo URL
                 icon: github
           spec:
@@ -214,7 +219,7 @@ spec:
       name: Create a Merge Request
       action: publish:gitlab:merge-request
       input:
-        repoUrl: ${{ parameters.repoHostUrl }}?repo=${{ parameters.repoName }}&owner=${{ parameters.repoUsername }}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{ parameters.repoName }}&owner=${{ parameters.repoUsername }}
         title: Add new EKS cluster
         sourcePath: ./repo
         targetPath: .
@@ -225,7 +230,7 @@ spec:
       name: Register
       action: catalog:register
       input:
-        catalogInfoUrl: https://${{ parameters.repoHostUrl }}/${{ parameters.repoUsername }}/${{ parameters.repoName }}/-/blob/main/platform/backstage/components/${{ parameters.clusterName }}.yaml
+        catalogInfoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ parameters.repoUsername }}/${{ parameters.repoName }}/-/blob/main/platform/backstage/components/${{ parameters.clusterName }}.yaml
         optional: true
   output:
     links:

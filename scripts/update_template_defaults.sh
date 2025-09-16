@@ -122,35 +122,42 @@ update_dev_prod_env_template() {
     print_success "Create Dev and Prod Environment template updated"
 }
 
-# Function to update App Deploy templates
-update_app_deploy_templates() {
-    local templates=("app-deploy" "app-deploy-without-repo")
+# Function to update all templates (now just validates they exist)
+update_all_templates() {
+    print_step "Validating all template files"
     
-    for template_name in "${templates[@]}"; do
-        local template_path="$TEMPLATES_BASE_PATH/$template_name/template.yaml"
-        
-        if [ ! -f "$template_path" ]; then
-            print_warning "$template_name template not found at $template_path"
-            continue
-        fi
-        
-        print_step "Updating $template_name template"
-        
-        # Check if the template has fetchSystem step that references system-info
-        if yq -e '.spec.steps[] | select(.id == "fetchSystem")' "$template_path" > /dev/null 2>&1; then
-            # Update any references to gitea hostname to use our GitLab domain
-            # This is a more complex update that might need template-specific logic
-            print_info "Found fetchSystem step in $template_name, updating GitLab references"
+    # Find all template directories and process them
+    for template_dir in "$TEMPLATES_BASE_PATH"/*/; do
+        if [ -d "$template_dir" ]; then
+            local template_name=$(basename "$template_dir")
+            local template_path="$template_dir/template.yaml"
             
-            # Update any hardcoded gitea references to use our GitLab setup
-            if yq -e '.spec.steps[] | select(.action == "publish:gitea")' "$template_path" > /dev/null 2>&1; then
-                print_info "Updating publish:gitea action to use GitLab domain"
-                # Note: This might need more specific updates based on the actual template structure
+            # Handle different template file naming patterns
+            if [ ! -f "$template_path" ]; then
+                # Try common alternative naming patterns
+                for alt_name in "template-$template_name.yaml" "template-*.yaml"; do
+                    local alt_path="$template_dir/$alt_name"
+                    if [ -f "$alt_path" ] || ls $alt_path 1> /dev/null 2>&1; then
+                        template_path=$(ls "$template_dir"/template-*.yaml 2>/dev/null | head -1)
+                        break
+                    fi
+                done
+            fi
+            
+            if [ -f "$template_path" ]; then
+                print_info "✓ Found template: $template_name"
+                
+                # Check if the template has fetchSystem step
+                if yq -e '.spec.steps[] | select(.id == "fetchSystem")' "$template_path" > /dev/null 2>&1; then
+                    print_info "  - Has fetchSystem step"
+                fi
+            else
+                print_warning "✗ No template file found in $template_name directory"
             fi
         fi
-        
-        print_success "$template_name template checked"
     done
+    
+    print_success "Template validation completed"
 }
 
 # Function to update S3 and RDS templates
@@ -179,16 +186,30 @@ update_aws_resource_templates() {
             print_info "Updated Account ID in $template_name template"
         fi
         
-        # Update any GitLab repository references
-        if yq -e '.spec.steps[] | select(.action == "publish:gitea")' "$template_path" > /dev/null 2>&1; then
-            print_info "Found GitLab publish action in $template_name, updating domain references"
-            # Update the repoUrl to use our GitLab domain
-            yq -i '(.spec.steps[] | select(.action == "publish:gitea") | .input.repoUrl) |= sub("gitea"; "'$GITLAB_DOMAIN'/'$GIT_USERNAME'")' "$template_path"
-        fi
+
         
         print_success "$template_name template updated"
     done
 }
+
+# Function to update system-info entity
+update_system_info() {
+    local catalog_info_path="$TEMPLATES_BASE_PATH/catalog-info.yaml"
+    
+    if [ ! -f "$catalog_info_path" ]; then
+        print_warning "catalog-info.yaml not found at $catalog_info_path"
+        return
+    fi
+    
+    print_step "Updating system-info entity hostname"
+    
+    # Update the hostname in the system-info entity
+    yq -i '(.spec.hostname) = "'$GITLAB_DOMAIN'"' "$catalog_info_path"
+    
+    print_success "Updated system-info hostname to $GITLAB_DOMAIN"
+}
+
+
 
 # Function to stage template files
 stage_template_files() {
@@ -203,8 +224,9 @@ print_info "Starting template updates..."
 # Update all template types
 update_eks_cluster_template
 update_dev_prod_env_template
-update_app_deploy_templates
+update_all_templates
 update_aws_resource_templates
+update_system_info
 
 # Stage the modified template files
 stage_template_files
