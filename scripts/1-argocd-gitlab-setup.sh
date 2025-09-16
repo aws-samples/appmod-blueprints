@@ -185,7 +185,7 @@ if [ "$SKIP_TOKEN_CREATION" != "true" ]; then
       -H "Content-Type: application/json" \
       -d '{
         "name": "argocd-repository-access",
-        "scopes": ["api", "read_repository", "write_repository"],
+        "scopes": ["api", "read_repository", "write_repository", "read_user"],
         "expires_at": "2025-12-31"
       }' | jq -r '.token')
 
