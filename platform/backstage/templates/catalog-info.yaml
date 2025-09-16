@@ -36,5 +36,5 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  hostname: HOSTNAME
-  
+  hostname: d2f5v4dq85juvv.cloudfront.net
+  gituser: user1
