@@ -55,49 +55,37 @@ spec:
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
+    - id: get-user-id
+      name: Get GitLab user ID
+      action: http:backstage:request
+      input:
+        method: GET
+        path: /api/v4/users?username=${{ steps['fetchSystem'].output.entity.spec.gituser }}
+        headers:
+          Private-Token: ${{ env.GIT_PASSWORD }}
+        baseUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}
     - id: create-repo
-      name: Create GitLab repository via API
+      name: Create GitLab repository
       action: http:backstage:request
       input:
         method: POST
-        path: /proxy/gitlab-api/projects
+        path: /api/v4/projects
         headers:
           Private-Token: ${{ env.GIT_PASSWORD }}
           Content-Type: application/json
+        baseUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}
         body:
           name: ${{parameters.bucket_name}}
-          namespace_id: 2
+          namespace_id: ${{ steps['get-user-id'].output.body[0].id }}
           description: "S3 bucket configuration for ${{parameters.bucket_name}}"
           visibility: private
           initialize_with_readme: true
-    - id: git-init
-      name: Initialize Git repository
-      action: debug:log
+    - id: register
+      name: Register in catalog
+      action: catalog:register
       input:
-        message: "Initializing Git repository for ${{parameters.bucket_name}}"
-    - id: git-add
-      name: Add files to Git
-      action: debug:log  
-      input:
-        message: "Adding generated files to Git repository"
-    - id: git-commit
-      name: Commit files
-      action: debug:log
-      input:
-        message: "Committing S3 bucket configuration files"
-    - id: git-push
-      name: Push to GitLab
-      action: debug:log
-      input:
-        message: |
-          Repository created! Complete setup with these Git commands:
-          
-          git clone https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git
-          cd ${{parameters.bucket_name}}
-          # Copy your generated files here
-          git add .
-          git commit -m "Add S3 bucket configuration"
-          git push origin main
+        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}/-/blob/main
+        catalogInfoPath: "/catalog-info.yaml"
     - id: create-argocd-app
       name: Create ArgoCD App
       action: argocd:create-app
