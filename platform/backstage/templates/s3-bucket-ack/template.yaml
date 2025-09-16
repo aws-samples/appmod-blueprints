@@ -56,11 +56,14 @@ spec:
           region: ${{ parameters.region }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
     - id: publish
-      name: Publishing to GitLab repository
-      action: publish:gitlab
+      name: Publishing to GitLab repository via Merge Request
+      action: publish:gitlab:merge-request
       input:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.bucket_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
-        defaultBranch: main
+        title: "Initial commit for ${{parameters.bucket_name}}"
+        branchName: "backstage-initial-commit"
+        description: "Initial commit from Backstage template for S3 bucket ${{parameters.bucket_name}}"
+        targetBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
       action: argocd:create-app
