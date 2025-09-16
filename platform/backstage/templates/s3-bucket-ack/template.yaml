@@ -62,7 +62,7 @@ spec:
         method: POST
         path: /proxy/gitlab-api/projects
         headers:
-          Authorization: Bearer ${{ secrets.GIT_PASSWORD }}
+          Private-Token: ${{ env.GIT_PASSWORD }}
           Content-Type: application/json
         body:
           name: ${{parameters.bucket_name}}
