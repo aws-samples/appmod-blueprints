@@ -3,10 +3,10 @@ kind: Template
 metadata:
   name: app-deploy-with-git-repo
   title: App Deploy with Git Repo
-  description: Creates a new Gitea Repo and ArgocCD for deploying an App
+  description: Creates a new GitLab Repo and ArgoCD for deploying an App
   tags:
     - app-deploy
-    - gitea
+    - gitlab
     - argocd
 spec:
   owner: guest
@@ -28,7 +28,7 @@ spec:
           description: The environment (e.g., dev, prod)
           enum: ['dev-cluster', 'prod-cluster', 'in-cluster']
         repoName:
-          title: Repo Name of your Gitea Repo
+          title: Repo Name of your GitLab Repo
           type: string
           pattern: ^[a-zA-Z0-9-_.]+$
         appNamespace:
@@ -36,7 +36,7 @@ spec:
           type: string
           description: The namespace where the app should be deployed
           default: default
-    - title: Provide Gitea Instance Information
+    - title: Provide GitLab Instance Information
   steps:
     - id: fetchSystem
       name: Fetch System
@@ -55,7 +55,7 @@ spec:
       name: Publishing to GitLab repository
       action: publish:gitlab
       input:
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/user1?repo=${{parameters.repoName}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.repoName}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
@@ -65,7 +65,7 @@ spec:
         appNamespace: ${{parameters.appNamespace}}
         argoInstance: ${{parameters.environment}}
         projectName: default
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/user1Admin/${{parameters.repoName}}
+        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}
         path: "manifests"
     - id: register
       name: Register

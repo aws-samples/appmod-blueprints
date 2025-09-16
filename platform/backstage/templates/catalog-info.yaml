@@ -36,3 +36,4 @@ metadata:
 spec:
   owner: guest
   hostname: HOSTNAME
+  gituser: user1

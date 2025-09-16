@@ -57,6 +57,11 @@ spec:
           default: platform-on-eks-workshop
           ui:widget: hidden
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - action: fetch:template
       id: fetch-base
       input:
@@ -65,7 +70,7 @@ spec:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
           aws_region: ${{ parameters.aws_region }}
-          repoUrl: https://${{ parameters.repoHostUrl }}/${{ parameters.repoUsername }}
+          repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ parameters.repoUsername }}
       name: Fetch Base
     - id: publish
       name: Publishing to GitLab repository
