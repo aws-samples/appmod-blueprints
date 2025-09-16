@@ -43,12 +43,12 @@ spec:
           title: Account ID
           type: string
           description: AWS Account ID
-          default: "<aws_account_id>"
+          default: "586794472760"
         managementAccountId:
           title: Management Account ID
           type: string
           description: AWS Management Account ID
-          default: "<aws_account_id>"
+          default: "586794472760"
         tenant:
           title: Tenant Name
           type: string
@@ -56,19 +56,19 @@ spec:
           default: "tenant1"
         repoHostUrl:
           type: string
-          default: <git_hostname>
+          default: d2jl8inhwf8wdv.cloudfront.net
           ui:widget: hidden
         repoUsername:
           type: string
-          default: <git_username>
+          default: user1
           ui:widget: hidden
         repoName:
           type: string
-          default: <working_repo>
+          default: platform-on-eks-workshop
           ui:widget: hidden
         ingressDomainName:
           type: string
-          default: <ingress_domain_name>
+          default: d7uikzlbvbvih.cloudfront.net
           ui:widget: hidden
     - title: Git Repository URLs
       properties:
@@ -76,22 +76,22 @@ spec:
           title: Addons Repository URL
           type: string
           description: Git repository URL for addons
-          default: "https://<git_hostname>/<git_username>/<working_repo>.git"
+          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
         fleetRepoUrl:
           title: Fleet Repository URL
           type: string
           description: Git repository URL for fleet
-          default: "https://<git_hostname>/<git_username>/<working_repo>.git"
+          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
         platformRepoUrl:
           title: Platform Repository URL
           type: string
           description: Git repository URL for platform
-          default: "https://<git_hostname>/<git_username>/<working_repo>.git"
+          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
         workloadRepoUrl:
           title: Workload Repository URL
           type: string
           description: Git repository URL for workload
-          default: "https://<git_hostname>/<git_username>/<working_repo>.git"
+          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
     - title: Cluster Addons Configuration
       properties:
         enableIngressClassAlb:
