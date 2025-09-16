@@ -55,30 +55,17 @@ spec:
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
-    - id: get-user-id
-      name: Get GitLab user ID
-      action: http:backstage:request
-      input:
-        method: GET
-        baseUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}
-        path: /v4/users
-        params:
-          username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
-        headers:
-          Private-Token: ${{ env.GIT_PASSWORD }}
     - id: create-repo
-      name: Create GitLab repository
+      name: Create GitLab repository via proxy
       action: http:backstage:request
       input:
         method: POST
-        baseUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}
-        path: /v4/projects
+        path: /gitlab-api/v4/projects
         headers:
-          Private-Token: ${{ env.GIT_PASSWORD }}
           Content-Type: application/json
         body:
           name: ${{parameters.bucket_name}}
-          namespace_id: ${{ steps['get-user-id'].output.body[0].id }}
+          namespace_id: 2
           description: "S3 bucket configuration for ${{parameters.bucket_name}}"
           visibility: private
           initialize_with_readme: true
