@@ -120,13 +120,22 @@ async function initRepoAndPushWithTimeout(input: {
     await runGitCommand(['config', 'http.lowSpeedLimit', '1000']);
     await runGitCommand(['config', 'http.lowSpeedTime', String(timeout)]);
 
+    // Configure credential handling
+    await runGitCommand(['config', 'credential.helper', 'store']);
+
     // Add remote with authentication
     const authUrl = 'token' in auth
       ? remoteUrl.replace('https://', `https://oauth2:${auth.token}@`)
       : remoteUrl.replace('https://', `https://${auth.username}:${auth.password}@`);
 
     logger.info(`Adding remote with URL: ${remoteUrl} (auth: ${'token' in auth ? 'token' : 'username/password'})`);
+    logger.info(`Constructed auth URL: ${authUrl.replace(/(oauth2:|\/\/[^:]+:)[^@]+@/, '$1***@')}`); // Log URL with masked credentials
+
     await runGitCommand(['remote', 'add', 'origin', authUrl]);
+
+    // Verify remote was added correctly
+    const remoteOutput = await runGitCommand(['remote', '-v']);
+    logger.info(`Git remotes: ${remoteOutput}`);
 
     // Add all files
     logger.info('Adding files to git');
@@ -136,6 +145,15 @@ async function initRepoAndPushWithTimeout(input: {
     logger.info('Committing files');
     const commitOutput = await runGitCommand(['commit', '-m', commitMessage]);
     const commitHash = commitOutput.match(/\[.+?\s([a-f0-9]+)\]/)?.[1] || 'unknown';
+
+    // Test connection first
+    logger.info('Testing git connection to remote');
+    try {
+      await runGitCommand(['ls-remote', '--heads', 'origin']);
+      logger.info('Git connection test successful');
+    } catch (error: any) {
+      logger.warn(`Git connection test failed: ${error.message}`);
+    }
 
     // Push with extended timeout
     logger.info('Pushing to remote repository');
