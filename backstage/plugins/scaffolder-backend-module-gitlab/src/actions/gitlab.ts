@@ -29,8 +29,8 @@ import { LoggerService } from '@backstage/backend-plugin-api';
 import { examples } from './gitlab.examples';
 
 /**
- * Wrapper for initRepoAndPush with enhanced timeout support
- * Patches HTTP client timeouts and sets environment variables
+ * Wrapper for initRepoAndPush with retry mechanism for timeout issues
+ * Since HTTP client timeouts can't be easily overridden, we use retry with exponential backoff
  */
 async function initRepoAndPushWithTimeout(input: {
   dir: string;
@@ -45,80 +45,50 @@ async function initRepoAndPushWithTimeout(input: {
 }): Promise<{ commitHash: string }> {
   const { timeout = 60, ...restInput } = input;
 
-  // Set environment variables to configure HTTP timeouts for git operations
-  const originalEnv = {
-    GIT_HTTP_TIMEOUT: process.env.GIT_HTTP_TIMEOUT,
-    GIT_TIMEOUT: process.env.GIT_TIMEOUT,
-    HTTP_TIMEOUT: process.env.HTTP_TIMEOUT,
-    REQUEST_TIMEOUT: process.env.REQUEST_TIMEOUT,
-  };
+  const maxRetries = Math.max(1, Math.floor(timeout / 10)); // Retry every ~10 seconds
+  const startTime = Date.now();
 
-  // Monkey patch the http module to increase default timeout
-  const http = require('http');
-  const https = require('https');
-  const originalHttpRequest = http.request;
-  const originalHttpsRequest = https.request;
+  restInput.logger.info(`Starting git operation with ${timeout}s timeout and ${maxRetries} max retries`);
 
-  try {
-    // Configure timeouts for this operation
-    process.env.GIT_HTTP_TIMEOUT = String(timeout);
-    process.env.GIT_TIMEOUT = String(timeout * 1000);
-    process.env.HTTP_TIMEOUT = String(timeout * 1000);
-    process.env.REQUEST_TIMEOUT = String(timeout * 1000);
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const elapsedTime = (Date.now() - startTime) / 1000;
 
-    // Patch HTTP requests to use longer timeout
-    http.request = function (options: any, callback?: any) {
-      if (typeof options === 'string') {
-        options = { timeout: timeout * 1000 };
-      } else {
-        options = { ...options, timeout: timeout * 1000 };
+    if (elapsedTime >= timeout) {
+      throw new Error(`Git push operation timed out after ${timeout} seconds (${attempt - 1} attempts)`);
+    }
+
+    try {
+      restInput.logger.info(`Git operation attempt ${attempt}/${maxRetries}`);
+
+      const result = await initRepoAndPush(restInput);
+      restInput.logger.info(`Git operation completed successfully on attempt ${attempt}`);
+      return result;
+
+    } catch (error: any) {
+      const isTimeoutError = error.message?.includes('Request timed out') ||
+        error.message?.includes('timeout') ||
+        error.code === 'ETIMEDOUT';
+
+      if (!isTimeoutError) {
+        // If it's not a timeout error, don't retry
+        restInput.logger.error(`Git operation failed with non-timeout error: ${error.message}`);
+        throw error;
       }
-      return originalHttpRequest.call(this, options, callback);
-    };
 
-    https.request = function (options: any, callback?: any) {
-      if (typeof options === 'string') {
-        options = { timeout: timeout * 1000 };
-      } else {
-        options = { ...options, timeout: timeout * 1000 };
+      if (attempt === maxRetries) {
+        restInput.logger.error(`Git operation failed after ${maxRetries} attempts: ${error.message}`);
+        throw new Error(`Git push operation failed after ${maxRetries} attempts. Last error: ${error.message}`);
       }
-      return originalHttpsRequest.call(this, options, callback);
-    };
 
-    restInput.logger.info(`Starting git operation with ${timeout}s timeout`);
+      // Calculate delay with exponential backoff (2, 4, 8 seconds, etc.)
+      const delay = Math.min(2 ** (attempt - 1), 10) * 1000;
+      restInput.logger.warn(`Git operation attempt ${attempt} failed (${error.message}), retrying in ${delay / 1000}s...`);
 
-    // Wrap the original initRepoAndPush with a timeout
-    return await new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error(`Git push operation timed out after ${timeout} seconds`));
-      }, timeout * 1000);
-
-      initRepoAndPush(restInput)
-        .then((result) => {
-          clearTimeout(timeoutId);
-          restInput.logger.info('Git operation completed successfully');
-          resolve(result);
-        })
-        .catch((error: any) => {
-          clearTimeout(timeoutId);
-          restInput.logger.error(`Git operation failed: ${error.message}`);
-          reject(error);
-        });
-    });
-  } finally {
-    // Restore original HTTP methods
-    http.request = originalHttpRequest;
-    https.request = originalHttpsRequest;
-
-    // Restore original environment variables
-    Object.entries(originalEnv).forEach(([key, value]) => {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    });
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
+
+  throw new Error(`Git push operation failed after ${maxRetries} attempts`);
 }
 
 /**
