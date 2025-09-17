@@ -21,6 +21,7 @@ import {
   getRepoSourceDirectory,
   initRepoAndPush,
   parseRepoUrl,
+  Git,
 } from '@backstage/plugin-scaffolder-node';
 
 import { Gitlab, VariableType } from '@gitbeaker/rest';
@@ -29,7 +30,8 @@ import { LoggerService } from '@backstage/backend-plugin-api';
 import { examples } from './gitlab.examples';
 
 /**
- * Wrapper for initRepoAndPush with timeout support
+ * Custom Git implementation with proper timeout support
+ * This bypasses the problematic HTTP client in initRepoAndPush
  */
 async function initRepoAndPushWithTimeout(input: {
   dir: string;
@@ -42,24 +44,73 @@ async function initRepoAndPushWithTimeout(input: {
   signingKey?: string;
   timeout?: number;
 }): Promise<{ commitHash: string }> {
-  const { timeout = 60, ...restInput } = input;
+  const {
+    dir,
+    remoteUrl,
+    auth,
+    logger,
+    defaultBranch = 'master',
+    commitMessage = 'Initial commit',
+    gitAuthorInfo,
+    signingKey,
+    timeout = 60,
+  } = input;
 
-  // Wrap the original initRepoAndPush with a timeout
-  return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      reject(new Error(`Git push operation timed out after ${timeout} seconds`));
-    }, timeout * 1000);
+  // Set HTTP timeout environment variables for this process
+  process.env.GIT_HTTP_TIMEOUT = String(timeout);
+  process.env.GIT_TIMEOUT = String(timeout * 1000);
 
-    initRepoAndPush(restInput)
-      .then((result) => {
+  const git = Git.fromAuth({
+    ...auth,
+    logger,
+  });
+
+  try {
+    await git.init({
+      dir,
+      defaultBranch,
+    });
+
+    await git.add({ dir, filepath: '.' });
+
+    // Use provided info if possible, otherwise use fallbacks
+    const authorInfo = {
+      name: gitAuthorInfo?.name ?? 'Scaffolder',
+      email: gitAuthorInfo?.email ?? 'scaffolder@backstage.io',
+    };
+
+    const commitHash = await git.commit({
+      dir,
+      message: commitMessage,
+      author: authorInfo,
+      committer: authorInfo,
+      signingKey,
+    });
+
+    // Push with timeout wrapper
+    await new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Git push operation timed out after ${timeout} seconds`));
+      }, timeout * 1000);
+
+      git.push({
+        dir,
+        remote: 'origin',
+        url: remoteUrl,
+      }).then(() => {
         clearTimeout(timeoutId);
-        resolve(result);
-      })
-      .catch((error: any) => {
+        resolve();
+      }).catch((error: any) => {
         clearTimeout(timeoutId);
         reject(error);
       });
-  });
+    });
+
+    return { commitHash };
+  } catch (error) {
+    logger.error(`Git operation failed: ${error}`);
+    throw error;
+  }
 }
 
 /**
