@@ -318,6 +318,12 @@ spec:
               value: "300000"
             - name: GITLAB_REQUEST_TIMEOUT
               value: "300000"
+            - name: GIT_HTTP_TIMEOUT
+              value: "300"
+            - name: GIT_TIMEOUT
+              value: "300000"
+            - name: NODE_HTTP_TIMEOUT
+              value: "300000"
           envFrom:
             - secretRef:
                 name: backstage-env-vars
