@@ -81,7 +81,7 @@ wait_for_gitlab_distribution() {
     log "Attempt $((attempt + 1))/$max_attempts: Checking for GitLab CloudFront distribution..."
     
     # Capture domain separately from logging to avoid mixing output
-    gitlab_domain=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'gitlab')].DomainName | [0]" --output text 2>/dev/null || echo "None")
+    gitlab_domain=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName | [0]" --output text 2>/dev/null || echo "None")
     
     if [[ "$gitlab_domain" != "None" && -n "$gitlab_domain" ]]; then
       log_success "Found GitLab CloudFront distribution: ${gitlab_domain}"

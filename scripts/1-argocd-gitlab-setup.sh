@@ -98,7 +98,7 @@ update_workshop_var "DOMAIN_NAME" "$DOMAIN_NAME"
 
 print_header "Setting up GitLab repository and ArgoCD access"
 
-export GITLAB_URL=https://$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'gitlab')].DomainName | [0]" --output text)
+export GITLAB_URL=https://$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName | [0]" --output text)
 export NLB_DNS=$(aws elbv2 describe-load-balancers --region $AWS_REGION --names ${RESOURCE_PREFIX:-peeks}-gitlab --query 'LoadBalancers[0].DNSName' --output text)
 update_workshop_var "GITLAB_URL" "$GITLAB_URL"
 update_workshop_var "NLB_DNS" "$NLB_DNS"

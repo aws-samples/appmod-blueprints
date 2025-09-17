@@ -22,7 +22,7 @@ print_header "Updating Backstage Template Defaults"
 TEMPLATES_BASE_PATH="/home/ec2-user/environment/platform-on-eks-workshop/platform/backstage/templates"
 
 # Get environment-specific values
-GITLAB_DOMAIN=$(aws cloudfront list-distributions --query "DistributionList.Items[?Origins.Items[?contains(DomainName, 'gitlab')]].DomainName" --output text)
+GITLAB_DOMAIN=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName | [0]" --output text)
 INGRESS_DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?Origins.Items[?contains(DomainName, 'hub-ingress')]].DomainName" --output text)
 
 # Try to get GIT_USERNAME from environment or secret
