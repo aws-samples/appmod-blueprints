@@ -21,7 +21,6 @@ import {
   getRepoSourceDirectory,
   initRepoAndPush,
   parseRepoUrl,
-  Git,
 } from '@backstage/plugin-scaffolder-node';
 
 import { Gitlab, VariableType } from '@gitbeaker/rest';
@@ -30,8 +29,8 @@ import { LoggerService } from '@backstage/backend-plugin-api';
 import { examples } from './gitlab.examples';
 
 /**
- * Custom Git implementation with proper timeout support
- * This bypasses the problematic HTTP client in initRepoAndPush
+ * Wrapper for initRepoAndPush with enhanced timeout support
+ * Sets environment variables to configure HTTP timeouts before calling initRepoAndPush
  */
 async function initRepoAndPushWithTimeout(input: {
   dir: string;
@@ -44,72 +43,52 @@ async function initRepoAndPushWithTimeout(input: {
   signingKey?: string;
   timeout?: number;
 }): Promise<{ commitHash: string }> {
-  const {
-    dir,
-    remoteUrl,
-    auth,
-    logger,
-    defaultBranch = 'master',
-    commitMessage = 'Initial commit',
-    gitAuthorInfo,
-    signingKey,
-    timeout = 60,
-  } = input;
+  const { timeout = 60, ...restInput } = input;
 
-  // Set HTTP timeout environment variables for this process
-  process.env.GIT_HTTP_TIMEOUT = String(timeout);
-  process.env.GIT_TIMEOUT = String(timeout * 1000);
-
-  const git = Git.fromAuth({
-    ...auth,
-    logger,
-  });
+  // Set environment variables to configure HTTP timeouts for git operations
+  const originalEnv = {
+    GIT_HTTP_TIMEOUT: process.env.GIT_HTTP_TIMEOUT,
+    GIT_TIMEOUT: process.env.GIT_TIMEOUT,
+    HTTP_TIMEOUT: process.env.HTTP_TIMEOUT,
+    REQUEST_TIMEOUT: process.env.REQUEST_TIMEOUT,
+  };
 
   try {
-    await git.init({
-      dir,
-      defaultBranch,
-    });
+    // Configure timeouts for this operation
+    process.env.GIT_HTTP_TIMEOUT = String(timeout);
+    process.env.GIT_TIMEOUT = String(timeout * 1000);
+    process.env.HTTP_TIMEOUT = String(timeout * 1000);
+    process.env.REQUEST_TIMEOUT = String(timeout * 1000);
 
-    await git.add({ dir, filepath: '.' });
+    restInput.logger.info(`Starting git operation with ${timeout}s timeout`);
 
-    // Use provided info if possible, otherwise use fallbacks
-    const authorInfo = {
-      name: gitAuthorInfo?.name ?? 'Scaffolder',
-      email: gitAuthorInfo?.email ?? 'scaffolder@backstage.io',
-    };
-
-    const commitHash = await git.commit({
-      dir,
-      message: commitMessage,
-      author: authorInfo,
-      committer: authorInfo,
-      signingKey,
-    });
-
-    // Push with timeout wrapper
-    await new Promise<void>((resolve, reject) => {
+    // Wrap the original initRepoAndPush with a timeout
+    return await new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         reject(new Error(`Git push operation timed out after ${timeout} seconds`));
       }, timeout * 1000);
 
-      git.push({
-        dir,
-        remote: 'origin',
-        url: remoteUrl,
-      }).then(() => {
-        clearTimeout(timeoutId);
-        resolve();
-      }).catch((error: any) => {
-        clearTimeout(timeoutId);
-        reject(error);
-      });
+      initRepoAndPush(restInput)
+        .then((result) => {
+          clearTimeout(timeoutId);
+          restInput.logger.info('Git operation completed successfully');
+          resolve(result);
+        })
+        .catch((error: any) => {
+          clearTimeout(timeoutId);
+          restInput.logger.error(`Git operation failed: ${error.message}`);
+          reject(error);
+        });
     });
-
-    return { commitHash };
-  } catch (error) {
-    logger.error(`Git operation failed: ${error}`);
-    throw error;
+  } finally {
+    // Restore original environment variables
+    Object.entries(originalEnv).forEach(([key, value]) => {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    });
   }
 }
 
