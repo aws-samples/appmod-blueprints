@@ -30,7 +30,7 @@ valuesFilePrefix: 'tenants/{{.metadata.labels.tenant}}/'
 ########################################
 
 argocd:
-  enabled: false
+  enabled: true
   chartName: argo-cd
   namespace: argocd
   releaseName: argocd
@@ -96,7 +96,7 @@ ack-iam:
       name: '{{default "ack-iam-controller" (index .metadata.annotations "ack_iam_service_account")}}'
 
 ack-eks:
-  enabled: false
+  enabled: true
   enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
@@ -197,7 +197,7 @@ ack-dynamodb:
         - kube-controller-manager
 
 ack-ec2:
-  enabled: false
+  enabled: true
   enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
@@ -263,7 +263,7 @@ ack-ecr:
         - kube-controller-manager
 
 external-secrets:
-  enabled: false
+  enabled: true
   enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
@@ -281,7 +281,7 @@ external-secrets:
       name: 'external-secrets-sa'
 
 metrics-server:
-  enabled: false
+  enabled: true
   namespace: kube-system
   chartName: metrics-server
   defaultVersion: '3.12.1'
@@ -295,7 +295,7 @@ metrics-server:
         values: ['true']
 
 kro:
-  enabled: false
+  enabled: true
   namespace: kro-system
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-3' # Needs to be before resources that needs PodIdentity
@@ -458,7 +458,7 @@ opentelemetry-operator:
         values: ['true']
 
 kyverno:
-  enabled: false
+  enabled: true
   releaseName: kyverno
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after KRO RGD
@@ -619,7 +619,7 @@ kro-manifests:
 
 
 multi-acct:
-  enabled: false
+  enabled: true
   namespace: kro
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-5' # Needs to be before KRO RGD
@@ -635,7 +635,7 @@ multi-acct:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
 
 ingress-class-alb:
-  enabled: false
+  enabled: true
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '0'
   defaultVersion: '0.1.0'
@@ -647,7 +647,7 @@ ingress-class-alb:
         values: ['true']
 
 argo-rollouts:
-  enabled: false
+  enabled: true
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3'
   namespace: argo-rollouts
@@ -695,7 +695,7 @@ ingress-nginx:
           service.beta.kubernetes.io/aws-load-balancer-security-groups: '{{.metadata.annotations.ingress_security_groups}}'
 
 gitlab:
-  enabled: false
+  enabled: true
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '2' # Needs to be after External and Ingress Nginx
   namespace: gitlab
@@ -714,7 +714,7 @@ gitlab:
     working_repo: '{{.metadata.annotations.working_repo}}'
 
 keycloak:
-  enabled: false
+  enabled: true
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after External Secrets, Ingress Nginx and Gitlab
   namespace: keycloak
@@ -752,7 +752,7 @@ keycloak:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .volumeClaimTemplates?'
 
 argo-workflows:
-  enabled: false
+  enabled: true
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '6' # Needs to be after Keycloak
   namespace: argo
@@ -781,7 +781,7 @@ argo-workflows:
         - /metadata/managedFields
 
 kargo:
-  enabled: false
+  enabled: true
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '6' # Needs to be after Keycloak
   namespace: kargo
@@ -1064,7 +1064,7 @@ flux:
         - /metadata/managedFields
 
 backstage:
-  enabled: false
+  enabled: true
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '10' # Needs to be after Keycloak, External Secrets, and Kro
   namespace: backstage
