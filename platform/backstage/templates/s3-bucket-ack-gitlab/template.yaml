@@ -76,7 +76,7 @@ spec:
         namespace: default
         argoInstance: in-cluster
         projectName: ${{parameters.bucket_name}}-project
-        repoUrl: ${{ steps['publish'].output.remoteUrl }}
+        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git
         path: "manifests"
     - id: register
       name: Register
