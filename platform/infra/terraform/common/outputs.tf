@@ -14,6 +14,12 @@ output "argocd_access" {
   sensitive   = true
 }
 
+output "gitlab_access" {
+  description = "Gitlab access information"
+  value       = "Gitlab URL: https://${local.gitlab_domain_name}/\nLogin: ${var.git_username}\nPassword: ${var.ide_password}"
+  sensitive   = true
+}
+
 # output "gitops_user_name" {
 #   value       = var.gitea_user
 #   description = "Name of the IAM user created for GitOps access"

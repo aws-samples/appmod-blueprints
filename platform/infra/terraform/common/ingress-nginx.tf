@@ -22,17 +22,15 @@ data "aws_ec2_managed_prefix_list" "cloudfront" {
 
 # Security group for HTTP access (port 80) from CloudFront
 resource "aws_security_group" "ingress_http" {
-  name        = "${local.ingress_name}-http"
-  # description = "HTTP only from CloudFront"
+  for_each = var.clusters
+  name        = "${each.value.name}-ingress-http"
   description = "HTTP from anywhere"
-  vpc_id      = local.vpc_id
+  vpc_id      = local.cluster_vpc_ids[each.value.name]
 
   ingress {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    # prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
-    # description     = "HTTP only from CloudFront"
     cidr_blocks = ["0.0.0.0/0"]
     description     = "HTTP from anywhere"
   }
@@ -44,17 +42,18 @@ resource "aws_security_group" "ingress_http" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${local.ingress_name}-http"
-  }
+  tags = merge(local.tags, {
+    Name = "${each.value.name}-ingress-http"
+  })
 }
 
 # Security group for HTTPS access (port 443) from CloudFront
 resource "aws_security_group" "ingress_https" {
-  name        = "${local.ingress_name}-https"
+  for_each = var.clusters
+  name        = "${each.value.name}-ingress-https"
   # description = "HTTPS only from CloudFront"
   description = "HTTPS from anywhere"
-  vpc_id      = local.vpc_id
+  vpc_id      = local.cluster_vpc_ids[each.value.name]
 
   ingress {
     from_port   = 443
@@ -73,21 +72,21 @@ resource "aws_security_group" "ingress_https" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${local.ingress_name}-https"
-  }
+  tags = merge(local.tags, {
+    Name = "${each.value.name}-ingress-https"
+  })
 }
 
 locals {
   # Create the values content using templatefile
   ingress_nginx_values = templatefile("${path.module}/manifests/ingress-nginx-initial-values.yaml", {
-    SECURITY_GROUPS = local.ingress_security_groups
-    INGRESS_NAME    = local.ingress_name
+    SECURITY_GROUPS = local.ingress_security_groups[local.hub_cluster.name]
+    INGRESS_NAME    = local.ingress_name[local.hub_cluster.name]
   })
 }
 
 ################################################################################
-# Deploy ingress-nginx using Helm
+# Deploy ingress-nginx using Helm in the hub cluster
 ################################################################################
 
 resource "helm_release" "ingress_nginx" {
@@ -109,5 +108,5 @@ resource "helm_release" "ingress_nginx" {
 # Get the NLB DNS name for the ingress-nginx service
 data "aws_lb" "ingress_nginx" {
   depends_on = [helm_release.ingress_nginx]
-  name       = local.ingress_name
+  name       = local.ingress_name[local.hub_cluster.name]
 }

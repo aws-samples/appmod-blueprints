@@ -117,10 +117,10 @@ module "gitops_bridge_bootstrap" {
   source  = "gitops-bridge-dev/gitops-bridge/helm"
   version = "0.1.0"
   cluster = {
-    cluster_name = data.aws_eks_cluster.mgmt.name
-    # environment  = var.clusrters.mgmt.environment
-    metadata     = local.addons_metadata
-    addons       = local.addons
+    cluster_name = local.hub_cluster.name
+    environment  = local.hub_cluster.environment
+    metadata     = local.addons_metadata[local.hub_cluster_key]
+    addons       = local.addons[local.hub_cluster_key]
   }
 
   apps = local.argocd_apps

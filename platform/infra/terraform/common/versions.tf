@@ -18,8 +18,11 @@ terraform {
       source  = "alekc/kubectl"
       version = ">= 2.0"
     }
+    gitlab = {
+      source = "gitlabhq/gitlab"
+      version = "18.3.0"
+    }
   }
-
   # Backend configuration provided via CLI parameters
   # backend "s3" {
   #   # bucket and dynamodb_table provided via -backend-config

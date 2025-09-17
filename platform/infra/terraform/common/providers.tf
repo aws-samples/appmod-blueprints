@@ -1,7 +1,7 @@
 provider "helm" {
   kubernetes {
-    host                   = data.aws_eks_cluster.mgmt.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.mgmt.certificate_authority[0].data)
+    host                   = data.aws_eks_cluster.clusters[local.hub_cluster_key].endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.clusters[local.hub_cluster_key].certificate_authority[0].data)
 
     exec {
       api_version = "client.authentication.k8s.io/v1beta1"
@@ -10,16 +10,16 @@ provider "helm" {
       args = [
         "eks",
         "get-token",
-        "--cluster-name", data.aws_eks_cluster.mgmt.name,
-        "--region", local.region
+        "--cluster-name", data.aws_eks_cluster.clusters[local.hub_cluster_key].name,
+        "--region", local.hub_cluster.region
       ]
     }
   }
 }
 
 provider "kubernetes" {
-    host                   = data.aws_eks_cluster.mgmt.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.mgmt.certificate_authority[0].data)
+    host                   = data.aws_eks_cluster.clusters[local.hub_cluster_key].endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.clusters[local.hub_cluster_key].certificate_authority[0].data)
   # insecure = true
   exec {
     api_version = "client.authentication.k8s.io/v1beta1"
@@ -28,8 +28,8 @@ provider "kubernetes" {
     args = [
       "eks",
       "get-token",
-      "--cluster-name", data.aws_eks_cluster.mgmt.name,
-      "--region", local.region
+      "--cluster-name", data.aws_eks_cluster.clusters[local.hub_cluster_key].name,
+      "--region", local.hub_cluster.region
     ]
   }
 }
@@ -45,4 +45,9 @@ provider "aws" {
       ManagedBy = "Terraform"
     }
   }
+}
+
+provider "gitlab" {
+  base_url = "https://${local.gitlab_domain_name}/api/v4"
+  token = "root-${var.ide_password}"
 }

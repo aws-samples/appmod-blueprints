@@ -2,39 +2,43 @@
 
 # Platform Configuration
 resource "aws_secretsmanager_secret" "cluster_config" {
-  name                    = "${var.resource_prefix}-${local.cluster_name}/config"
-  description             = "Platform Configuration"
+  for_each = var.clusters
+  name                    = "${local.context_prefix}-${each.value.name}/config"
+  description             = "Platform Configuration for cluster ${each.value.name}"
   recovery_window_in_days = 0
 
   tags = {
-    Purpose     = "Platform Configuration"
+    Purpose     = "Platform Configuration for cluster ${each.value.name}"
   }
 }
 
 # Store the password in AWS Secrets Manager
 resource "aws_secretsmanager_secret_version" "cluster_config" {
-  secret_id     = aws_secretsmanager_secret.cluster_config.id
+  for_each = var.clusters
+  secret_id     = aws_secretsmanager_secret.cluster_config[each.key].id
   secret_string = jsonencode({
     repo = var.repo
-    labels = local.addons
-    annotations = local.addons_metadata
+    labels = local.addons[each.key]
+    annotations = local.addons_metadata[each.key]
   })
 }
 
 # Platform Configuration
 resource "aws_secretsmanager_secret" "git_secret" {
-  name                    = "${var.resource_prefix}-${local.cluster_name}/git-secrets"
-  description             = "Platform Secrets"
+  for_each = var.clusters
+  name                    = "${local.context_prefix}-${each.value.name}/git-secrets"
+  description             = "Platform Secrets for cluster ${each.value.name}"
   recovery_window_in_days = 0
 
   tags = {
-    Purpose     = "Platform Secrets"
+    Purpose     = "Platform Secrets for cluster ${each.value.name}"
   }
 }
 
 # Store the password in AWS Secrets Manager
 resource "aws_secretsmanager_secret_version" "git_secret" {
-  secret_id     = aws_secretsmanager_secret.git_secret.id
+  for_each = var.clusters
+  secret_id     = aws_secretsmanager_secret.git_secret[each.key].id
   secret_string = jsonencode({
     ide_password = var.ide_password
     git_token = local.gitlab_token

@@ -1,19 +1,44 @@
 ################################################################################
+# ArgoCD Hub Management
+################################################################################
+
+resource "aws_eks_pod_identity_association" "argocd_controller" {
+  cluster_name    = local.hub_cluster.name
+  namespace       = "argocd"
+  service_account = "argocd-application-controller"
+  role_arn        = aws_iam_role.argocd_central.arn
+}
+
+resource "aws_eks_pod_identity_association" "argocd_server" {
+  cluster_name    = local.hub_cluster.name
+  namespace       = "argocd"
+  service_account = "argocd-server"
+  role_arn        = aws_iam_role.argocd_central.arn
+}
+
+resource "aws_eks_pod_identity_association" "argocd_repo_server" {
+  cluster_name    = local.hub_cluster.name
+  namespace       = "argocd"
+  service_account = "argocd-repo-server"
+  role_arn        = aws_iam_role.argocd_central.arn
+}
+
+################################################################################
 # External Secrets EKS Access
 ################################################################################
 module "external_secrets_pod_identity" {
-  count   = local.aws_addons.enable_external_secrets ? 1 : 0
+  for_each = { for k, v in var.clusters : k => v if try(v.addons.enable_external_secrets, false) }
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 1.4.0"
 
   name = "external-secrets"
 
   attach_external_secrets_policy        = true
-  external_secrets_kms_key_arns         = ["arn:aws:kms:${local.region}:*:key/${local.cluster_name}/*"]
-  external_secrets_secrets_manager_arns = ["arn:aws:secretsmanager:${local.region}:*:secret:${var.resource_prefix}-*"]
-  external_secrets_ssm_parameter_arns   = ["arn:aws:ssm:${local.region}:*:parameter/${local.cluster_name}/*"]
-  external_secrets_create_permission    = true
-  attach_custom_policy                  = true
+  external_secrets_kms_key_arns         = ["arn:aws:kms:${each.value.region}:*:key/${each.value.name}/*"]
+  external_secrets_secrets_manager_arns = ["arn:aws:secretsmanager:${each.value.region}:*:secret:${local.context_prefix}-*"]
+  external_secrets_ssm_parameter_arns   = ["arn:aws:ssm:${each.value.region}:*:parameter/${each.value.name}/*"]
+  external_secrets_create_permission    = each.value.environment == "control-plane" ? true : false #only for hub
+  attach_custom_policy                  = each.value.environment == "control-plane" ? true : false #only for hub
   policy_statements = [
     {
       sid       = "ecr"
@@ -22,16 +47,50 @@ module "external_secrets_pod_identity" {
     }
   ]
   # Pod Identity Associations
-  associations = {
-    addon = {
-      cluster_name    = local.cluster_name
-      namespace       = local.external_secrets.namespace
+  associations = merge(
+    {
+      addon = {
+        cluster_name    = each.value.name
+        namespace       = local.external_secrets.namespace
+        service_account = local.external_secrets.service_account
+      }
+    },
+    each.value.environment == "control-plane" ? { # only for hub cluster
+      keycloak-config = {
+        cluster_name    = each.value.name
+        namespace       = local.keycloak.namespace
+        service_account = local.keycloak.service_account
+      }
+    } : {
+      fleet = {
+      cluster_name    = each.value.name
+      namespace       = local.external_secrets.namespace_fleet
       service_account = local.external_secrets.service_account
     }
-    keycloak-config = {
-      cluster_name    = local.cluster_name
-      namespace       = "keycloak"
-      service_account = "keycloak-config"
+    }
+  )
+
+  tags = local.tags
+}
+
+################################################################################
+# CloudWatch Observability EKS Access
+################################################################################
+module "aws_cloudwatch_observability_pod_identity" {
+  for_each = local.spoke_clusters
+  source = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.11.0"
+
+  name = "aws-cloudwatch-observability"
+
+  attach_aws_cloudwatch_observability_policy = true
+
+  # Pod Identity Associations
+  associations = {
+    addon = {
+      cluster_name    = each.value.name
+      namespace       = local.cloudwatch.namespace
+      service_account = local.cloudwatch.service_account
     }
   }
 
@@ -39,28 +98,150 @@ module "external_secrets_pod_identity" {
 }
 
 ################################################################################
-# ArgoCD Hub Management
+# Kyverno Policy Reporter SecurityHub Access
+################################################################################
+module "kyverno_policy_reporter_pod_identity" {
+  for_each = local.spoke_clusters
+  source = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.11.0"
+
+  name = "kyverno-policy-reporter"
+
+  additional_policy_arns = {
+    AWSSecurityHub = "arn:aws:iam::aws:policy/AWSSecurityHubFullAccess"
+  }
+
+  # Pod Identity Associations
+  associations = {
+    addon = {
+      cluster_name    = each.value.name
+      namespace       = local.kyverno.namespace
+      service_account = local.kyverno.service_account
+    }
+  }
+
+  tags = local.tags
+}
+
+################################################################################
+# EBS CSI EKS Access
+################################################################################
+module "aws_ebs_csi_pod_identity" {
+  for_each = local.spoke_clusters
+  source = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.11.0"
+
+  name = "aws-ebs-csi"
+
+  attach_aws_ebs_csi_policy = true
+  aws_ebs_csi_kms_arns      = ["arn:aws:kms:*:*:key/*"]
+
+  # Pod Identity Associations
+  associations = {
+    addon = {
+      cluster_name    = each.value.name
+      namespace       = local.ebs_csi_controller.namespace
+      service_account = local.ebs_csi_controller.service_account
+    }
+  }
+  
+  tags = local.tags
+}
+
+################################################################################
+# AWS ALB Ingress Controller EKS Access
+################################################################################
+module "aws_lb_controller_pod_identity" {
+  for_each = local.spoke_clusters
+  source = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.11.0"
+
+  name = "aws-lbc"
+
+  attach_aws_lb_controller_policy = true
+
+
+  # Pod Identity Associations
+  associations = {
+    addon = {
+      cluster_name    = each.value.name
+      namespace       = local.aws_load_balancer_controller.namespace
+      service_account = local.aws_load_balancer_controller.service_account
+    }
+  }
+
+  tags = local.tags
+}
+
+################################################################################
+# VPC CNI Helper
+################################################################################
+resource "aws_iam_policy" "cni_metrics_helper_pod_identity_policy" {
+  name_prefix = "cni_metrics_helper_pod_identity"
+  path        = "/"
+  description = "Policy to allow cni metrics helper put metcics to cloudwatch"
+
+  # Terraform's "jsonencode" function converts a
+  # Terraform expression result to valid JSON syntax.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "cloudwatch:PutMetricData",
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+module "cni_metrics_helper_pod_identity" {
+  for_each = local.spoke_clusters
+  source = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.11.0"
+  name = "cni-metrics-helper-${each.value.name}"
+
+  additional_policy_arns = {
+    "cni-metrics-help" : aws_iam_policy.cni_metrics_helper_pod_identity_policy.arn
+  }
+
+  # Pod Identity Associations
+  associations = {
+    addon = {
+      cluster_name    = each.value.name
+      namespace       = local.cni_metric_helper.namespace
+      service_account = local.cni_metric_helper.service_account
+    }
+  }
+  tags = local.tags
+}
+
+################################################################################
+# ADOT EKS Access
 ################################################################################
 
-resource "aws_eks_pod_identity_association" "argocd_controller" {
-  cluster_name    = local.cluster_name
-  namespace       = "argocd"
-  service_account = "argocd-application-controller"
-  role_arn        = aws_iam_role.argocd_central.arn
-}
+module "adot_collector_pod_identity" {
+  for_each = local.spoke_clusters # only for spoke clusters
+  source = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.11.0"
 
-resource "aws_eks_pod_identity_association" "argocd_server" {
-  cluster_name    = local.cluster_name
-  namespace       = "argocd"
-  service_account = "argocd-server"
-  role_arn        = aws_iam_role.argocd_central.arn
-}
+  name = "adot-collector"
 
-resource "aws_eks_pod_identity_association" "argocd_repo_server" {
-  cluster_name    = local.cluster_name
-  namespace       = "argocd"
-  service_account = "argocd-repo-server"
-  role_arn        = aws_iam_role.argocd_central.arn
+  additional_policy_arns = {
+      "PrometheusReadWrite": "arn:aws:iam::aws:policy/AmazonPrometheusRemoteWriteAccess"
+  }
+
+  # Pod Identity Associations
+  associations = {
+    addon = {
+      cluster_name    = each.value.name
+      namespace       = local.adot_collector.namespace
+      service_account = local.adot_collector.service_account
+    }
+  }
+  tags = local.tags
 }
 
 
@@ -95,10 +276,26 @@ data "http" "inline_policy" {
   url      = each.value
 }
 
+# Create locals for ACK cluster-service combinations
+locals {
+  ack_combinations = {
+    for combination in flatten([
+      for cluster_key, cluster_value in var.clusters : [
+        for service in ["iam", "ec2", "eks"] : {
+          key = "${cluster_key}-${service}"
+          cluster_key = cluster_key
+          cluster_value = cluster_value
+          service = service
+        }
+      ]
+    ]) : combination.key => combination
+  }
+}
+
 # Create IAM roles for ACK controllers
 resource "aws_iam_role" "ack_controller" {
-  for_each = toset(["iam", "ec2", "eks"])
-  name        = "${var.resource_prefix}-ack-${each.key}-controller-role-mgmt"
+  for_each = local.ack_combinations
+  name        = "${var.resource_prefix}-ack-${each.value.service}-controller-role-${each.value.cluster_key}"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -113,7 +310,7 @@ resource "aws_iam_role" "ack_controller" {
       }
     ]
   })
-  description = "IRSA role for ACK ${each.key} controller deployment on EKS cluster using Helm charts"
+  description = "IRSA role for ACK ${each.value.service} controller deployment on EKS cluster ${each.value.cluster_key} using Helm charts"
   tags        = local.tags
 }
 
@@ -127,25 +324,25 @@ locals {
 # Then modify your policy attachment to only create when there's a valid ARN
 resource "aws_iam_role_policy_attachment" "ack_controller_policy_attachment" {
   for_each = {
-    for k, v in local.valid_policies : k => v
-    if v != null && can(regex("^arn:aws", v))
+    for k, v in local.ack_combinations : k => v
+    if local.valid_policies[v.service] != null && can(regex("^arn:aws", local.valid_policies[v.service]))
   }
 
   role       = aws_iam_role.ack_controller[each.key].name
-  policy_arn = each.value
+  policy_arn = local.valid_policies[each.value.service]
 }
 
 resource "aws_iam_role_policy" "ack_controller_inline_policy" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = local.ack_combinations
 
   role   = aws_iam_role.ack_controller[each.key].name
-  policy = can(jsondecode(data.http.inline_policy[each.key].body)) ? data.http.inline_policy[each.key].body : jsonencode({
+  policy = can(jsondecode(data.http.inline_policy[each.value.service].body)) ? data.http.inline_policy[each.value.service].body : jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
         Effect = "Allow"
         Action = [
-          "${each.key}:*"
+          "${each.value.service}:*"
         ]
         Resource = "*"
       }
@@ -154,7 +351,7 @@ resource "aws_iam_role_policy" "ack_controller_inline_policy" {
 }
 
 data "aws_iam_policy_document" "ack_controller_cross_account_policy" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = local.ack_combinations
 
   statement {
     sid    = "AllowCrossAccountAccess"
@@ -167,18 +364,18 @@ data "aws_iam_policy_document" "ack_controller_cross_account_policy" {
 }
 
 resource "aws_iam_role_policy" "ack_controller_cross_account_policy" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = local.ack_combinations
 
   role   = aws_iam_role.ack_controller[each.key].name
   policy = data.aws_iam_policy_document.ack_controller_cross_account_policy[each.key].json
 }
 
 resource "aws_eks_pod_identity_association" "ack_controller" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = local.ack_combinations
 
-  cluster_name    = local.cluster_name
+  cluster_name    = each.value.cluster_value.name
   namespace       = "ack-system"
-  service_account = "ack-${each.key}-controller"
+  service_account = "ack-${each.value.service}-controller"
   role_arn        = aws_iam_role.ack_controller[each.key].arn
 }
 
@@ -187,7 +384,7 @@ resource "aws_eks_pod_identity_association" "ack_controller" {
 ################################################################################
 
 resource "aws_iam_role" "kargo_controller_role" {
-  name = "${local.name}-kargo-controller-role"
+  name = "${local.hub_cluster.name}-kargo-controller-role"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -215,9 +412,9 @@ resource "aws_iam_role_policy_attachment" "kargo_ecr_policy" {
 }
 
 resource "aws_eks_pod_identity_association" "kargo_controller" {
-  cluster_name    = local.cluster_name
-  namespace       = "kargo"
-  service_account = "kargo-controller"
+  cluster_name    = local.hub_cluster.name
+  namespace       = local.kargo.namespace
+  service_account = local.kargo.service_account
   role_arn        = aws_iam_role.kargo_controller_role.arn
 }
 
@@ -236,7 +433,7 @@ resource "aws_iam_role" "ack_workload_role" {
       {
         Effect = "Allow"
         Principal = {
-          AWS = aws_iam_role.ack_controller[each.key].arn
+          AWS = [for k, v in local.ack_combinations : aws_iam_role.ack_controller[k].arn if v.service == each.key]
         }
         Action = ["sts:AssumeRole", "sts:TagSession"]
       }

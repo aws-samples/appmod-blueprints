@@ -4,9 +4,9 @@
 
 # Security group for GitLab NLB
 resource "aws_security_group" "gitlab_ssh" {
-  name        = "${local.name}-gitlab-ssh"
+  name        = "${local.hub_cluster.name}-gitlab-ssh"
   description = "SSH for GitLab"
-  vpc_id      = local.vpc_id
+  vpc_id      = local.cluster_vpc_ids[local.hub_cluster.name]
 
   ingress {
     description = "SSH for GitLab"
@@ -22,15 +22,15 @@ resource "aws_security_group" "gitlab_ssh" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   tags = {
-    Name = "${local.name}-gitlab-ssh"
+    Name = "${local.hub_cluster.name}-gitlab-ssh"
   }
 }
 
 # Security group for HTTP access (port 80) for GitLab
 resource "aws_security_group" "gitlab_http" {
-  name        = "${local.name}-gitlab-http"
+  name        = "${local.hub_cluster.name}-gitlab-http"
   description = "HTTP for GitLab"
-  vpc_id      = local.vpc_id
+  vpc_id      = local.cluster_vpc_ids[local.hub_cluster.name]
 
   ingress {
     from_port   = 80
@@ -46,7 +46,7 @@ resource "aws_security_group" "gitlab_http" {
     cidr_blocks = ["0.0.0.0/0"]
   }
   tags = {
-    Name = "${local.name}-gitlab-http"
+    Name = "${local.hub_cluster.name}-gitlab-http"
   }
 }
 
@@ -209,7 +209,7 @@ locals {
     INITIAL_ROOT_PASSWORD = var.ide_password
     SECURITY_GROUPS_GITLAB = local.gitlab_security_groups
     GIT_USERNAME = var.git_username
-    WORKING_REPO = "./"
+    WORKING_REPO = var.working_repo
   })
 }
 
@@ -227,64 +227,28 @@ resource "helm_release" "gitlab" {
 }
 
 ################################################################################
-# GitLab Token and Project Creation via HTTP
+# GitLab Token and Project Creation
 ################################################################################
 # Get user ID for the username
-data "http" "get_gitlab_user_id" {
-  depends_on = [helm_release.gitlab]
-  
-  url = "https://${local.gitlab_domain_name}/api/v4/users?username=${var.git_username}"
-  
-  request_headers = {
-    "PRIVATE-TOKEN" = "root-${var.ide_password}"
-  }
+data "gitlab_user" "workshop" {
+  username = var.git_username
+}
+resource "gitlab_personal_access_token" "workshop" {
+  user_id    = data.gitlab_user.workshop.id
+  name       = "Workshop Personal access token for ${var.git_username}"
+  expires_at = "2025-12-31"
+
+  scopes = ["api", "read_repository", "write_repository"]
 }
 
 locals {
-  user_data = jsondecode(data.http.get_gitlab_user_id.response_body)
-  user_id   = local.user_data[0].id
+  gitlab_token   = gitlab_personal_access_token.workshop.token
 }
 
-# Create personal access token via API
-data "http" "create_gitlab_token" {
-  depends_on = [data.http.get_gitlab_user_id]
-  
-  url    = "https://${local.gitlab_domain_name}/api/v4/users/${local.user_id}/personal_access_tokens"
-  method = "POST"
-  
-  request_headers = {
-    "PRIVATE-TOKEN" = "root-${var.ide_password}"
-    "Content-Type"  = "application/json"
-  }
-  
-  request_body = jsonencode({
-    name       = "workshop-token"
-    scopes     = ["api", "read_repository", "write_repository"]
-    expires_at = "2025-12-31"
-  })
+resource "gitlab_project" "workshop" {
+  name        = "platform-on-eks-workshop"
+  description = "Platform on EKS Workshop Project"
+  visibility_level = "public"
+  permanently_delete_on_destroy = true
+  namespace_id = data.gitlab_user.workshop.namespace_id
 }
-
-locals {
-  token_response = jsondecode(data.http.create_gitlab_token.response_body)
-  gitlab_token   = local.token_response.token
-}
-
-# Create GitLab project via API
-data "http" "create_gitlab_project" {
-  depends_on = [data.http.create_gitlab_token]
-  
-  url    = "https://${local.gitlab_domain_name}/api/v4/projects"
-  method = "POST"
-  
-  request_headers = {
-    "PRIVATE-TOKEN" = local.gitlab_token
-    "Content-Type"  = "application/json"
-  }
-  
-  request_body = jsonencode({
-    name        = "platform-on-eks-workshop"
-    description = "Platform on EKS Workshop Project"
-    visibility  = "public"
-  })
-}
-

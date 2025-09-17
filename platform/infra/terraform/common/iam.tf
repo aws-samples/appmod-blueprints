@@ -19,12 +19,6 @@ resource "aws_iam_role" "argocd_central" {
   tags = local.tags
 }
 
-resource "aws_iam_role_policy" "argocd_central_policy" {
-  name = "argocd"
-  role = aws_iam_role.argocd_central.id
-  tags = local.tags
-}
-
 resource "aws_iam_role_policy" "argocd_central" {
   name = "argocd"
   role = aws_iam_role.argocd_central.id
@@ -41,6 +35,40 @@ resource "aws_iam_role_policy" "argocd_central" {
   })
 }
 
+resource "aws_iam_role" "spoke" {
+  for_each = local.spoke_clusters
+  name_prefix =  "${each.value.name}-argocd-spoke"
+  assume_role_policy = data.aws_iam_policy_document.assume_role_policy[each.key].json
+}
+
+data "aws_iam_policy_document" "assume_role_policy" {
+  for_each = local.spoke_clusters
+  statement {
+    actions = ["sts:AssumeRole", "sts:TagSession"]
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.argocd_central.arn]
+    }
+  }
+}
+
+resource "aws_eks_access_entry" "spoke" {
+  for_each = local.spoke_clusters
+  cluster_name      = each.value.name
+  principal_arn     = aws_iam_role.spoke[each.key].arn
+  type              = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "spoke" {
+  for_each = local.spoke_clusters
+  cluster_name  = each.value.name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = aws_iam_role.spoke[each.key].arn
+
+  access_scope {
+    type       = "cluster"
+  }
+}
 # # Creating parameter for all clusters to read
 # resource "aws_ssm_parameter" "argocd_hub_role" {
 #   name  = "${local.context_prefix}-${var.ssm_parameter_name_argocd_role_suffix}"
@@ -51,47 +79,66 @@ resource "aws_iam_role_policy" "argocd_central" {
 # ################################################################################
 # # Team Roles Backend
 # ################################################################################
-# resource "aws_iam_role" "backend_team_view" {
-#   name_prefix = "backend-team-view-"
-#   assume_role_policy = jsonencode({
-#     Version = "2012-10-17"
-#     "Statement" : [
-#       {
-#         "Effect" : "Allow",
-#         "Principal" : {
-#           "AWS" : data.aws_iam_session_context.current.issuer_arn
-#         },
-#         "Action" : "sts:AssumeRole"
-#       }
-#     ]
-#   })
-#   tags = local.tags
-# }
+resource "aws_iam_role" "backend_team" {
+  for_each = local.spoke_clusters
+  name_prefix =  "${each.value.name}-backend-team-view-"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    "Statement" : [
+      {
+        "Effect" : "Allow",
+        "Principal" : {
+          "AWS" : data.aws_iam_session_context.current.issuer_arn
+        },
+        "Action" : "sts:AssumeRole"
+      }
+    ]
+  })
+  tags = local.tags
+}
+
+resource "aws_eks_access_entry" "backend_team" {
+  for_each = local.spoke_clusters
+  cluster_name      = each.value.name
+  principal_arn     = aws_iam_role.backend_team[each.key].arn
+  kubernetes_groups = ["backend-team-view"]
+  type              = "STANDARD"
+}
 # # Creating parameter for all clusters to read
 # resource "aws_ssm_parameter" "backend_team_view_role" {
 #   name  = "${local.context_prefix}-${var.backend_team_view_role_suffix}"
 #   type  = "String"
 #   value = aws_iam_role.backend_team_view.arn
 # }
-# ################################################################################
-# # Team Roles Frontend
-# ################################################################################
-# resource "aws_iam_role" "frontend_team_view" {
-#   name_prefix = "frontend-team-view-"
-#   assume_role_policy = jsonencode({
-#     Version = "2012-10-17"
-#     "Statement" : [
-#       {
-#         "Effect" : "Allow",
-#         "Principal" : {
-#           "AWS" : data.aws_iam_session_context.current.issuer_arn
-#         },
-#         "Action" : "sts:AssumeRole"
-#       }
-#     ]
-#   })
-#   tags = local.tags
-# }
+################################################################################
+# Team Roles Frontend
+################################################################################
+resource "aws_iam_role" "frontend_team" {
+  for_each = local.spoke_clusters
+  name_prefix =  "${each.value.name}-frontend-team-view-"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    "Statement" : [
+      {
+        "Effect" : "Allow",
+        "Principal" : {
+          "AWS" : data.aws_iam_session_context.current.issuer_arn
+        },
+        "Action" : "sts:AssumeRole"
+      }
+    ]
+  })
+  tags = local.tags
+}
+
+resource "aws_eks_access_entry" "frontend_team" {
+  for_each = local.spoke_clusters
+  cluster_name      = each.value.name
+  principal_arn     = aws_iam_role.frontend_team[each.key].arn
+  kubernetes_groups = ["frontend-team-view"]
+  type              = "STANDARD"
+}
+
 # # Creating parameter for all clusters to read
 # resource "aws_ssm_parameter" "frontend_team_view_role" {
 #   name  = "${local.context_prefix}-${var.frontend_team_view_role_suffix}"

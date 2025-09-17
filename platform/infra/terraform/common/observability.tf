@@ -12,25 +12,25 @@ locals {
 }
 
 # Create the secret
-resource "aws_secretsmanager_secret" "argorollouts_secret" {
-  name = "${var.resource_prefix}-argo-rollouts"
-  recovery_window_in_days = 0
+# resource "aws_secretsmanager_secret" "argorollouts_secret" {
+#   name = "${var.resource_prefix}-argo-rollouts"
+#   recovery_window_in_days = 0
 
-  lifecycle {
-    ignore_changes = [name]
-  }
+#   lifecycle {
+#     ignore_changes = [name]
+#   }
 
-  tags = local.tags
-}
+#   tags = local.tags
+# }
 
-# Create the secret version with key-value pairs
-resource "aws_secretsmanager_secret_version" "argorollouts_secret_version" {
-  secret_id = aws_secretsmanager_secret.argorollouts_secret.id
-  secret_string = jsonencode({
-    amp-region    = data.aws_region.current.name
-    amp-workspace = module.managed_service_prometheus.workspace_prometheus_endpoint
-  })
-}
+# # Create the secret version with key-value pairs
+# resource "aws_secretsmanager_secret_version" "argorollouts_secret_version" {
+#   secret_id = aws_secretsmanager_secret.argorollouts_secret.id
+#   secret_string = jsonencode({
+#     amp-region    = data.aws_region.current.name
+#     amp-workspace = module.managed_service_prometheus.workspace_prometheus_endpoint
+#   })
+# }
 
 module "managed_grafana" {
   source = "terraform-aws-modules/managed-service-grafana/aws"
@@ -86,24 +86,66 @@ module "managed_grafana" {
   saml_role_assertion          = "role"
   saml_login_validity_duration = 120
   # Dummy values for SAML configuration to setup will be updated after keycloak integration
-  saml_idp_metadata_url = var.grafana_keycloak_idp_url
+  saml_idp_metadata_url = local.keycloak_saml_url
 
   tags = local.tags
 }
 
-# Create SSM parameters for Prometheus workspace information
-resource "aws_ssm_parameter" "amp_endpoint" {
-  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
-  type      = "String"
-  value     = module.managed_service_prometheus.workspace_prometheus_endpoint
-  overwrite = true
-  tags      = local.tags
+locals{
+    scrape_interval = "30s"
+    scrape_timeout  = "10s"
 }
 
-resource "aws_ssm_parameter" "amp_arn" {
-  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
-  type      = "String"
-  value     = module.managed_service_prometheus.workspace_arn
-  overwrite = true
-  tags      = local.tags
+resource "aws_prometheus_scraper" "peeks-scraper" {
+  for_each = { for k, v in local.spoke_clusters : k => v if try(v.addons.enable_prometheus_scraper, false) }
+  source {
+    eks {
+      cluster_arn = each.value.name
+      subnet_ids  = data.aws_eks_cluster.clusters[each.key].vpc_config[0].subnet_ids
+      security_group_ids = [data.aws_eks_cluster.clusters[each.key].vpc_config[0].cluster_security_group_id, data.aws_eks_cluster.clusters[each.key].vpc_config[0].security_group_ids]
+    }
+  }
+  destination {
+    amp {
+       workspace_arn = module.managed_service_prometheus.workspace_arn
+    }
+  }
+  alias = "peeks-hub"
+  scrape_configuration = replace(
+    replace(
+      replace(
+        replace(
+          replace(
+            file("${path.module}/manifests/scraper-config.yaml"),
+            "{scrape_interval}",
+            local.scrape_interval
+          ),
+          "{scrape_timeout}",
+          local.scrape_timeout
+        ),
+        "{cluster}",
+        each.value.name
+      ),
+      "{region}",
+      each.value.region
+    ),
+    "{account_id}",
+    data.aws_caller_identity.current.account_id
+  )
 }
+# # Create SSM parameters for Prometheus workspace information
+# resource "aws_ssm_parameter" "amp_endpoint" {
+#   name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
+#   type      = "String"
+#   value     = module.managed_service_prometheus.workspace_prometheus_endpoint
+#   overwrite = true
+#   tags      = local.tags
+# }
+
+# resource "aws_ssm_parameter" "amp_arn" {
+#   name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
+#   type      = "String"
+#   value     = module.managed_service_prometheus.workspace_arn
+#   overwrite = true
+#   tags      = local.tags
+# }

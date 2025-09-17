@@ -34,7 +34,7 @@ resource "aws_cloudfront_distribution" "ingress" {
 
   enabled             = true
   is_ipv6_enabled     = true
-  comment             = "CloudFront distribution for ${local.ingress_name} NLB"
+  comment             = "CloudFront distribution for ${local.ingress_name[local.hub_cluster.name]} NLB"
   price_class         = "PriceClass_All"
   http_version        = "http2"
   wait_for_deployment = false
@@ -108,7 +108,7 @@ resource "aws_cloudfront_distribution" "ingress" {
   }
 
   tags = {
-    Name        = "${local.ingress_name}-cloudfront"
+    Name        = "${local.ingress_name[local.hub_cluster.name]}-cloudfront"
     # Environment = local.environment
   }
 }

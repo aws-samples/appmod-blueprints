@@ -85,7 +85,7 @@ main() {
     -var="ide_password=${IDE_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
     -var="git_password=${IDE_PASSWORD}" \
-    -parallelism=3 -auto-approve; then
+    -parallelism=3; then
     log_error "Terraform apply failed"
     exit 1
   fi

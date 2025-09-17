@@ -16,6 +16,7 @@ data "aws_availability_zones" "available" {
   }
 }
 
-data "aws_eks_cluster" "mgmt" {
-  name = var.clusters.mgmt.name
+data "aws_eks_cluster" "clusters" {
+  for_each = var.clusters
+  name     = each.value.name
 }
