@@ -30,7 +30,7 @@ import { examples } from './gitlab.examples';
 
 /**
  * Wrapper for initRepoAndPush with enhanced timeout support
- * Sets environment variables to configure HTTP timeouts before calling initRepoAndPush
+ * Patches HTTP client timeouts and sets environment variables
  */
 async function initRepoAndPushWithTimeout(input: {
   dir: string;
@@ -53,12 +53,37 @@ async function initRepoAndPushWithTimeout(input: {
     REQUEST_TIMEOUT: process.env.REQUEST_TIMEOUT,
   };
 
+  // Monkey patch the http module to increase default timeout
+  const http = require('http');
+  const https = require('https');
+  const originalHttpRequest = http.request;
+  const originalHttpsRequest = https.request;
+
   try {
     // Configure timeouts for this operation
     process.env.GIT_HTTP_TIMEOUT = String(timeout);
     process.env.GIT_TIMEOUT = String(timeout * 1000);
     process.env.HTTP_TIMEOUT = String(timeout * 1000);
     process.env.REQUEST_TIMEOUT = String(timeout * 1000);
+
+    // Patch HTTP requests to use longer timeout
+    http.request = function (options: any, callback?: any) {
+      if (typeof options === 'string') {
+        options = { timeout: timeout * 1000 };
+      } else {
+        options = { ...options, timeout: timeout * 1000 };
+      }
+      return originalHttpRequest.call(this, options, callback);
+    };
+
+    https.request = function (options: any, callback?: any) {
+      if (typeof options === 'string') {
+        options = { timeout: timeout * 1000 };
+      } else {
+        options = { ...options, timeout: timeout * 1000 };
+      }
+      return originalHttpsRequest.call(this, options, callback);
+    };
 
     restInput.logger.info(`Starting git operation with ${timeout}s timeout`);
 
@@ -81,6 +106,10 @@ async function initRepoAndPushWithTimeout(input: {
         });
     });
   } finally {
+    // Restore original HTTP methods
+    http.request = originalHttpRequest;
+    https.request = originalHttpsRequest;
+
     // Restore original environment variables
     Object.entries(originalEnv).forEach(([key, value]) => {
       if (value === undefined) {
