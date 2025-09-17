@@ -68,19 +68,23 @@ spec:
       input:
         repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}/-/blob/main
         catalogInfoPath: "/catalog-info.yaml"
-    - id: create-argocd-repo
-      name: Add Repository to ArgoCD
-      action: http:backstage:request
+    - id: create-argocd-repo-secret
+      name: Create ArgoCD Repository Secret
+      action: kubernetes:apply
       input:
-        method: POST
-        path: /api/proxy/argocd/api/v1/repositories
-        headers:
-          'Content-Type': 'application/json'
-        body:
-          repo: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git
-          username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
-          password: glpat-SIQhHhoNuFQk3lTni8VndW86MQp1OjIH.01.0w1y33w8j
-          type: git
+        manifest: |
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: argocd-repo-${{parameters.bucket_name}}
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: repository
+          stringData:
+            type: git
+            url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git
+            username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
+            password: glpat-SIQhHhoNuFQk3lTni8VndW86MQp1OjIH.01.0w1y33w8j
     - id: create-argocd-app
       name: Create ArgoCD App
       action: argocd:create-resources
