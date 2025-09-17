@@ -104,7 +104,11 @@ async function initRepoAndPushWithTimeout(input: {
   };
 
   try {
-    // Configure git user
+    // Initialize repository first
+    logger.info('Initializing git repository');
+    await runGitCommand(['init', '-b', defaultBranch]);
+
+    // Configure git user (after init)
     const authorName = gitAuthorInfo?.name || 'Scaffolder';
     const authorEmail = gitAuthorInfo?.email || 'scaffolder@backstage.io';
 
@@ -115,10 +119,6 @@ async function initRepoAndPushWithTimeout(input: {
     await runGitCommand(['config', 'http.timeout', String(timeout)]);
     await runGitCommand(['config', 'http.lowSpeedLimit', '1000']);
     await runGitCommand(['config', 'http.lowSpeedTime', String(timeout)]);
-
-    // Initialize repository
-    logger.info('Initializing git repository');
-    await runGitCommand(['init', '-b', defaultBranch]);
 
     // Add remote with authentication
     const authUrl = 'token' in auth
