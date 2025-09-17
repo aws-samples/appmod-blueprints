@@ -100,6 +100,18 @@ print_header "Setting up GitLab repository and ArgoCD access"
 
 export GITLAB_URL=https://$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName | [0]" --output text)
 update_workshop_var "GITLAB_URL" "$GITLAB_URL"
+
+# Get Grafana workspace ID and set as environment variable
+print_info "Retrieving Grafana workspace ID..."
+export WORKSPACE_ID=$(aws grafana list-workspaces --region $AWS_REGION --query "workspaces[?contains(name, '${RESOURCE_PREFIX:-peeks}')].id | [0]" --output text 2>/dev/null || echo "")
+if [ -n "$WORKSPACE_ID" ] && [ "$WORKSPACE_ID" != "None" ] && [ "$WORKSPACE_ID" != "null" ]; then
+    print_info "Found Grafana workspace ID: $WORKSPACE_ID"
+    update_workshop_var "WORKSPACE_ID" "$WORKSPACE_ID"
+else
+    print_warning "Grafana workspace not found or not yet created"
+    export WORKSPACE_ID=""
+    update_workshop_var "WORKSPACE_ID" ""
+fi
 update_workshop_var "GIT_USERNAME" "user1"
 update_workshop_var "WORKSPACE_PATH" "$HOME/environment" 
 update_workshop_var "WORKING_REPO" "platform-on-eks-workshop"
@@ -137,6 +149,42 @@ done
 print_info "Using HTTPS for GitLab operations (SSH keys not required)"
 # HTTPS authentication will use GitLab tokens instead of SSH keys
 
+print_step "Configuring Git credentials for HTTPS access"
+# Configure Git credentials for HTTPS authentication
+git config --global credential.helper store
+git config --global user.name "$GIT_USERNAME"
+git config --global user.email "$GIT_USERNAME@workshop.local"
+
+# Create credentials file for HTTPS access using root token initially
+GITLAB_DOMAIN=$(echo "$GITLAB_URL" | sed 's|https://||')
+echo "https://root:$IDE_PASSWORD@$GITLAB_DOMAIN" > ~/.git-credentials
+
+print_step "Ensuring GitLab repository exists"
+# Check if repository exists, create if it doesn't
+REPO_CHECK=$(curl -s -H "PRIVATE-TOKEN: root-$IDE_PASSWORD" "$GITLAB_URL/api/v4/projects/$GIT_USERNAME%2F$WORKING_REPO" | jq -r '.path_with_namespace // .message')
+if [ "$REPO_CHECK" != "$GIT_USERNAME/$WORKING_REPO" ]; then
+    print_info "Repository doesn't exist, creating it..."
+    CREATE_REPO=$(curl -s -X POST "$GITLAB_URL/api/v4/projects" \
+        -H "PRIVATE-TOKEN: root-$IDE_PASSWORD" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"name\": \"$WORKING_REPO\",
+            \"path\": \"$WORKING_REPO\",
+            \"namespace_id\": 2,
+            \"visibility\": \"internal\",
+            \"initialize_with_readme\": false
+        }" | jq -r '.path_with_namespace // .message')
+    
+    if [ "$CREATE_REPO" = "$GIT_USERNAME/$WORKING_REPO" ]; then
+        print_success "Repository created successfully"
+    else
+        print_error "Failed to create repository: $CREATE_REPO"
+        exit 1
+    fi
+else
+    print_info "Repository already exists"
+fi
+
 print_step "Configuring Git remote and pushing to GitLab"
 cd $WORKSPACE_PATH/$WORKING_REPO
 git remote rename origin github || true
@@ -147,6 +195,7 @@ $SCRIPT_DIR/update_template_defaults.sh
 git add . && git commit -m "Update Backstage Templates" || true
 
 # Push the local branch (WORKSHOP_GIT_BRANCH) to the remote main branch
+print_info "Pushing to GitLab using HTTPS authentication..."
 git push --set-upstream origin $WORKSHOP_GIT_BRANCH:main
 
 
@@ -235,6 +284,12 @@ print_info "Testing GitLab token access..."
 TOKEN_TEST=$(curl -s -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/projects/$GIT_USERNAME%2F$WORKING_REPO" | jq -r '.path_with_namespace // .message')
 if [ "$TOKEN_TEST" = "$GIT_USERNAME/$WORKING_REPO" ]; then
     print_success "GitLab token test successful"
+    
+    # Update Git credentials to use the user token instead of root token
+    print_info "Updating Git credentials to use user token..."
+    GITLAB_DOMAIN=$(echo "$GITLAB_URL" | sed 's|https://||')
+    echo "https://$GIT_USERNAME:$GITLAB_TOKEN@$GITLAB_DOMAIN" > ~/.git-credentials
+    print_success "Git credentials updated for user token authentication"
 else
     print_error "GitLab token test failed: $TOKEN_TEST"
     exit 1
