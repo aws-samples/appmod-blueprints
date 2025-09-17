@@ -22,14 +22,14 @@ import {
   initRepoAndPush,
   parseRepoUrl,
 } from '@backstage/plugin-scaffolder-node';
-import { Git } from '@backstage/plugin-scaffolder-node';
+
 import { Gitlab, VariableType } from '@gitbeaker/rest';
 import { Config } from '@backstage/config';
 import { LoggerService } from '@backstage/backend-plugin-api';
 import { examples } from './gitlab.examples';
 
 /**
- * Custom initRepoAndPush with timeout support
+ * Wrapper for initRepoAndPush with timeout support
  */
 async function initRepoAndPushWithTimeout(input: {
   dir: string;
@@ -42,66 +42,24 @@ async function initRepoAndPushWithTimeout(input: {
   signingKey?: string;
   timeout?: number;
 }): Promise<{ commitHash: string }> {
-  const {
-    dir,
-    remoteUrl,
-    auth,
-    logger,
-    defaultBranch = 'master',
-    commitMessage = 'Initial commit',
-    gitAuthorInfo,
-    signingKey,
-    timeout = 60,
-  } = input;
+  const { timeout = 60, ...restInput } = input;
 
-  const git = Git.fromAuth({
-    ...auth,
-    logger,
-  });
-
-  await git.init({
-    dir,
-    defaultBranch,
-  });
-
-  await git.add({ dir, filepath: '.' });
-
-  // use provided info if possible, otherwise use fallbacks
-  const authorInfo = {
-    name: gitAuthorInfo?.name ?? 'Scaffolder',
-    email: gitAuthorInfo?.email ?? 'scaffolder@backstage.io',
-  };
-
-  const commitHash = await git.commit({
-    dir,
-    message: commitMessage,
-    author: authorInfo,
-    committer: authorInfo,
-    signingKey,
-  });
-
-  // Wrap the push operation with a timeout
-  const pushWithTimeout = new Promise<void>((resolve, reject) => {
+  // Wrap the original initRepoAndPush with a timeout
+  return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
       reject(new Error(`Git push operation timed out after ${timeout} seconds`));
     }, timeout * 1000);
 
-    git.push({
-      dir,
-      remote: 'origin',
-      url: remoteUrl,
-    }).then(() => {
-      clearTimeout(timeoutId);
-      resolve();
-    }).catch((error) => {
-      clearTimeout(timeoutId);
-      reject(error);
-    });
+    initRepoAndPush(restInput)
+      .then((result) => {
+        clearTimeout(timeoutId);
+        resolve(result);
+      })
+      .catch((error: any) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      });
   });
-
-  await pushWithTimeout;
-
-  return { commitHash };
 }
 
 /**
@@ -374,7 +332,7 @@ export function createPublishGitlabAction(options: {
 
         targetNamespaceId = namespaceResponse.id;
         targetNamespaceKind = namespaceResponse.kind;
-      } catch (e) {
+      } catch (e: any) {
         if (e.cause?.response?.status === 404) {
           throw new InputError(
             `The namespace ${owner} is not found or the user doesn't have permissions to access it`,
@@ -485,7 +443,7 @@ export function createPublishGitlabAction(options: {
               if (create) {
                 try {
                   await client.Branches.create(projectId, name, ref);
-                } catch (e) {
+                } catch (e: any) {
                   throw new InputError(
                     `Branch creation failed for ${name}. ${printGitlabError(
                       e,
@@ -500,7 +458,7 @@ export function createPublishGitlabAction(options: {
               if (protect) {
                 try {
                   await client.ProtectedBranches.protect(projectId, name);
-                } catch (e) {
+                } catch (e: any) {
                   throw new InputError(
                     `Branch protection failed for ${name}. ${printGitlabError(
                       e,
@@ -539,7 +497,7 @@ export function createPublishGitlabAction(options: {
                   raw: variableWithDefaults.raw,
                 },
               );
-            } catch (e) {
+            } catch (e: any) {
               throw new InputError(
                 `Environment variable creation failed for ${variableWithDefaults.key
                 }. ${printGitlabError(e)}`,
