@@ -138,7 +138,7 @@ $SCRIPT_DIR/update_template_defaults.sh
 git add . && git commit -m "Update Backstage Templates" || true
 
 # Push the local branch (WORKSHOP_GIT_BRANCH) to the remote main branch
-git push --set-upstream origin $WORKSHOP_GIT_BRANCH:main
+git push --set-upstream origin HEAD:main
 
 
 print_step "Creating GitLab access token for ArgoCD"
