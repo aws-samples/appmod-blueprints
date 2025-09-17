@@ -64,11 +64,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends python3 g++ build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-# Install sqlite3 dependencies and git for scaffolder operations
+# Install sqlite3 dependencies, git, and CA certificates for scaffolder operations
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
-    apt-get install -y --no-install-recommends libsqlite3-dev git && \
+    apt-get install -y --no-install-recommends libsqlite3-dev git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # From here on we use the least-privileged `node` user to run the backend.

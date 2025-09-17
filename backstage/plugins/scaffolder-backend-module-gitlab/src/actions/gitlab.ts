@@ -120,6 +120,9 @@ async function initRepoAndPushWithTimeout(input: {
     await runGitCommand(['config', 'http.lowSpeedLimit', '1000']);
     await runGitCommand(['config', 'http.lowSpeedTime', String(timeout)]);
 
+    // Configure SSL verification (disable for self-signed certificates)
+    await runGitCommand(['config', 'http.sslVerify', 'false']);
+
     // Add remote with authentication
     const authUrl = 'token' in auth
       ? remoteUrl.replace('https://', `https://oauth2:${auth.token}@`)
