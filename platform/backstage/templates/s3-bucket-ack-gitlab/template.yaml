@@ -70,7 +70,7 @@ spec:
         catalogInfoPath: "/catalog-info.yaml"
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: argocd:create-app
+      action: argocd:create-resources
       input:
         appName: ${{parameters.bucket_name}}
         appNamespace: default
