@@ -25,7 +25,7 @@ fi
 
 # Get GitLab URL
 print_info "Retrieving GitLab URL..."
-GITLAB_URL=https://$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'gitlab')].DomainName | [0]" --output text)
+GITLAB_URL=https://$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName | [0]" --output text)
 
 # Get credentials
 print_info "Retrieving credentials..."
