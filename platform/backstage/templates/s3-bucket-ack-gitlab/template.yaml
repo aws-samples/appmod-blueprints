@@ -73,7 +73,7 @@ spec:
       action: argocd:create-resources
       input:
         appName: ${{parameters.bucket_name}}
-        appNamespace: default
+        namespace: default
         argoInstance: in-cluster
         projectName: default
         repoUrl: ${{ steps['publish'].output.remoteUrl }}
