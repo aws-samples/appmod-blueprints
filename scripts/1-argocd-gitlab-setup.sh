@@ -9,7 +9,7 @@
 #   environment. It:
 #   1. Updates the kubeconfig to connect to the hub cluster
 #   2. Retrieves and displays the ArgoCD URL and credentials
-#   3. Sets up GitLab repository and SSH keys
+#   3. Sets up GitLab repository for HTTPS access
 #   4. Configures Git remote for the working repository
 #   5. Creates a secret in ArgoCD for Git repository access
 #   6. Logs in to ArgoCD CLI and lists applications
@@ -99,9 +99,7 @@ update_workshop_var "DOMAIN_NAME" "$DOMAIN_NAME"
 print_header "Setting up GitLab repository and ArgoCD access"
 
 export GITLAB_URL=https://$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName | [0]" --output text)
-export NLB_DNS=$(aws elbv2 describe-load-balancers --region $AWS_REGION --names ${RESOURCE_PREFIX:-peeks}-gitlab --query 'LoadBalancers[0].DNSName' --output text)
 update_workshop_var "GITLAB_URL" "$GITLAB_URL"
-update_workshop_var "NLB_DNS" "$NLB_DNS"
 update_workshop_var "GIT_USERNAME" "user1"
 update_workshop_var "WORKSPACE_PATH" "$HOME/environment" 
 update_workshop_var "WORKING_REPO" "platform-on-eks-workshop"
@@ -136,18 +134,13 @@ for file in ~/.bashrc.d/*.sh; do
   [ -f "$file" ] && source "$file" || true
 done
 
-print_info "Creating GitLab SSH keys"
-# Skip if SSH key already exists for this user
-if ssh-add -l 2>/dev/null | grep -q "$GIT_USERNAME"; then
-    print_success "SSH key already exists for $GIT_USERNAME, skipping creation"
-else
-    $SCRIPT_DIR/gitlab_create_keys.sh
-fi
+print_info "Using HTTPS for GitLab operations (SSH keys not required)"
+# HTTPS authentication will use GitLab tokens instead of SSH keys
 
 print_step "Configuring Git remote and pushing to GitLab"
 cd $WORKSPACE_PATH/$WORKING_REPO
 git remote rename origin github || true
-git remote add origin ssh://git@$NLB_DNS/$GIT_USERNAME/$WORKING_REPO.git || true
+git remote add origin $GITLAB_URL/$GIT_USERNAME/$WORKING_REPO.git || true
 
 print_step "Updating Backstage templates"
 $SCRIPT_DIR/update_template_defaults.sh
