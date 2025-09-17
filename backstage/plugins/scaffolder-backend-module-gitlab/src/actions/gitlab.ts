@@ -65,6 +65,7 @@ async function initRepoAndPushWithTimeout(input: {
       const gitProcess = spawn('git', args, {
         cwd: dir,
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
         ...options,
       });
 
@@ -123,10 +124,10 @@ async function initRepoAndPushWithTimeout(input: {
     // Configure credential handling
     await runGitCommand(['config', 'credential.helper', 'store']);
 
-    // Add remote with authentication
+    // Add remote with authentication (using same format as working test script)
     const authUrl = 'token' in auth
-      ? remoteUrl.replace('https://', `https://oauth2:${auth.token}@`)
-      : remoteUrl.replace('https://', `https://${auth.username}:${auth.password}@`);
+      ? remoteUrl.replace(/^https?:\/\//, `https://user1:${auth.token}@`)
+      : remoteUrl.replace(/^https?:\/\//, `https://${auth.username}:${auth.password}@`);
 
     logger.info(`Adding remote with URL: ${remoteUrl} (auth: ${'token' in auth ? 'token' : 'username/password'})`);
     logger.info(`Constructed auth URL: ${authUrl.replace(/(oauth2:|\/\/[^:]+:)[^@]+@/, '$1***@')}`); // Log URL with masked credentials
