@@ -40,7 +40,7 @@ WORKDIR /app
 COPY --from=packages --chown=node:node /app .
 
 RUN --mount=type=cache,target=/home/node/.cache/yarn,sharing=locked,uid=1000,gid=1000 \
-    yarn install --immutable
+    yarn install
 
 COPY --chown=node:node . .
 
