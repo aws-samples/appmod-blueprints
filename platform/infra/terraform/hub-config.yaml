@@ -7,18 +7,18 @@ repo:
   path: bootstrap
   basepath: gitops/fleet/
 
-cluster:
+clusters:
   hub:
     name: cnoe-ref-impl
     region: us-west-2
     environment: control-plane
     auto_mode: true
     addons:
-      enable_argocd: false
+      enable_argocd: true
       enable_ack_iam: true
       enable_ack_eks: false
       enable_ack_ec2: false
-      enable_external_secrets: false
+      enable_external_secrets: true
       enable_metrics_server: false
       enable_kro: false
       enable_ack_efs: false
@@ -41,14 +41,14 @@ cluster:
       enable_argo_rollouts: false
       enable_ingress_nginx: false
       enable_gitlab: true
-      enable_keycloak: false
+      enable_keycloak: true
       enable_argo_workflows: false
       enable_kargo: false
       enable_backstage: false
   spoke1:
     name: hub-dev
     region: us-west-2
-    environment: control-plane
+    environment: dev
     auto_mode: true
     addons:
       enable_argocd: false
@@ -77,7 +77,7 @@ cluster:
       enable_ingress_class_alb: false
       enable_argo_rollouts: false
       enable_ingress_nginx: false
-      enable_gitlab: true
+      enable_gitlab: false
       enable_keycloak: false
       enable_argo_workflows: false
       enable_kargo: false
@@ -85,7 +85,7 @@ cluster:
   spoke2:
     name: hub-prod
     region: us-west-2
-    environment: control-plane
+    environment: prod
     auto_mode: true
     addons:
       enable_argocd: false
@@ -114,7 +114,7 @@ cluster:
       enable_ingress_class_alb: false
       enable_argo_rollouts: false
       enable_ingress_nginx: false
-      enable_gitlab: true
+      enable_gitlab: false
       enable_keycloak: false
       enable_argo_workflows: false
       enable_kargo: false
