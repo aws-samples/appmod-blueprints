@@ -19,7 +19,6 @@ import { ScmIntegrationRegistry } from '@backstage/integration';
 import {
   createTemplateAction,
   getRepoSourceDirectory,
-  initRepoAndPush,
   parseRepoUrl,
 } from '@backstage/plugin-scaffolder-node';
 
@@ -29,8 +28,8 @@ import { LoggerService } from '@backstage/backend-plugin-api';
 import { examples } from './gitlab.examples';
 
 /**
- * Wrapper for initRepoAndPush with retry mechanism for timeout issues
- * Since HTTP client timeouts can't be easily overridden, we use retry with exponential backoff
+ * Custom Git implementation using child_process to bypass HTTP client timeout issues
+ * This completely avoids the problematic simple-get library by using native git commands
  */
 async function initRepoAndPushWithTimeout(input: {
   dir: string;
@@ -43,52 +42,111 @@ async function initRepoAndPushWithTimeout(input: {
   signingKey?: string;
   timeout?: number;
 }): Promise<{ commitHash: string }> {
-  const { timeout = 60, ...restInput } = input;
+  const {
+    dir,
+    remoteUrl,
+    auth,
+    logger,
+    defaultBranch = 'master',
+    commitMessage = 'Initial commit',
+    gitAuthorInfo,
+    timeout = 60,
+  } = input;
 
-  const maxRetries = Math.max(1, Math.floor(timeout / 10)); // Retry every ~10 seconds
-  const startTime = Date.now();
+  const { spawn } = require('child_process');
 
-  restInput.logger.info(`Starting git operation with ${timeout}s timeout and ${maxRetries} max retries`);
+  logger.info(`Starting custom git operation with ${timeout}s timeout`);
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const elapsedTime = (Date.now() - startTime) / 1000;
+  // Helper function to run git commands with timeout
+  const runGitCommand = (args: string[], options: any = {}): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      logger.info(`Running git command: git ${args.join(' ')}`);
 
-    if (elapsedTime >= timeout) {
-      throw new Error(`Git push operation timed out after ${timeout} seconds (${attempt - 1} attempts)`);
-    }
+      const gitProcess = spawn('git', args, {
+        cwd: dir,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        ...options,
+      });
 
-    try {
-      restInput.logger.info(`Git operation attempt ${attempt}/${maxRetries}`);
+      let stdout = '';
+      let stderr = '';
 
-      const result = await initRepoAndPush(restInput);
-      restInput.logger.info(`Git operation completed successfully on attempt ${attempt}`);
-      return result;
+      gitProcess.stdout?.on('data', (data: any) => {
+        stdout += data.toString();
+      });
 
-    } catch (error: any) {
-      const isTimeoutError = error.message?.includes('Request timed out') ||
-        error.message?.includes('timeout') ||
-        error.code === 'ETIMEDOUT';
+      gitProcess.stderr?.on('data', (data: any) => {
+        stderr += data.toString();
+      });
 
-      if (!isTimeoutError) {
-        // If it's not a timeout error, don't retry
-        restInput.logger.error(`Git operation failed with non-timeout error: ${error.message}`);
-        throw error;
-      }
+      gitProcess.on('close', (code: number | null) => {
+        if (code === 0) {
+          resolve(stdout.trim());
+        } else {
+          reject(new Error(`Git command failed (exit code ${code}): ${stderr || stdout}`));
+        }
+      });
 
-      if (attempt === maxRetries) {
-        restInput.logger.error(`Git operation failed after ${maxRetries} attempts: ${error.message}`);
-        throw new Error(`Git push operation failed after ${maxRetries} attempts. Last error: ${error.message}`);
-      }
+      gitProcess.on('error', (error: any) => {
+        reject(new Error(`Git command error: ${error.message}`));
+      });
 
-      // Calculate delay with exponential backoff (2, 4, 8 seconds, etc.)
-      const delay = Math.min(2 ** (attempt - 1), 10) * 1000;
-      restInput.logger.warn(`Git operation attempt ${attempt} failed (${error.message}), retrying in ${delay / 1000}s...`);
+      // Set up timeout
+      const timeoutId = setTimeout(() => {
+        gitProcess.kill('SIGKILL');
+        reject(new Error(`Git command timed out after ${timeout} seconds`));
+      }, timeout * 1000);
 
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
+      gitProcess.on('close', () => {
+        clearTimeout(timeoutId);
+      });
+    });
+  };
+
+  try {
+    // Configure git user
+    const authorName = gitAuthorInfo?.name || 'Scaffolder';
+    const authorEmail = gitAuthorInfo?.email || 'scaffolder@backstage.io';
+
+    await runGitCommand(['config', 'user.name', authorName]);
+    await runGitCommand(['config', 'user.email', authorEmail]);
+
+    // Configure HTTP timeout for git (in seconds)
+    await runGitCommand(['config', 'http.timeout', String(timeout)]);
+    await runGitCommand(['config', 'http.lowSpeedLimit', '1000']);
+    await runGitCommand(['config', 'http.lowSpeedTime', String(timeout)]);
+
+    // Initialize repository
+    logger.info('Initializing git repository');
+    await runGitCommand(['init', '-b', defaultBranch]);
+
+    // Add remote with authentication
+    const authUrl = 'token' in auth
+      ? remoteUrl.replace('https://', `https://oauth2:${auth.token}@`)
+      : remoteUrl.replace('https://', `https://${auth.username}:${auth.password}@`);
+
+    await runGitCommand(['remote', 'add', 'origin', authUrl]);
+
+    // Add all files
+    logger.info('Adding files to git');
+    await runGitCommand(['add', '.']);
+
+    // Commit
+    logger.info('Committing files');
+    const commitOutput = await runGitCommand(['commit', '-m', commitMessage]);
+    const commitHash = commitOutput.match(/\[.+?\s([a-f0-9]+)\]/)?.[1] || 'unknown';
+
+    // Push with extended timeout
+    logger.info('Pushing to remote repository');
+    await runGitCommand(['push', '-u', 'origin', defaultBranch]);
+
+    logger.info('Git operation completed successfully');
+    return { commitHash };
+
+  } catch (error: any) {
+    logger.error(`Git operation failed: ${error.message}`);
+    throw error;
   }
-
-  throw new Error(`Git push operation failed after ${maxRetries} attempts`);
 }
 
 /**
