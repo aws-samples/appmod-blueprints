@@ -23,7 +23,7 @@
 
 function configure_keycloak() {
   echo "Configuring keycloak..."
-  CLIENT_JSON=$(cat <<EOF
+  export CLIENT_JSON=$(cat <<EOF
 {
   "clientId": "https://${GRAFANAURL}/saml/metadata",
   "name": "amazon-managed-grafana",
@@ -79,7 +79,7 @@ function configure_keycloak() {
 }
 EOF
 )
-ADMIN_JSON=$(cat <<EOF
+export ADMIN_JSON=$(cat <<EOF
 {
   "username": "monitor-admin",
   "email": "admin@keycloak",
@@ -91,7 +91,7 @@ ADMIN_JSON=$(cat <<EOF
 }
 EOF
 )
-EDITOR_JSON=$(cat <<EOF
+export EDITOR_JSON=$(cat <<EOF
 {
   "username": "monitor-editor",
   "email": "editor@keycloak",
@@ -103,7 +103,7 @@ EDITOR_JSON=$(cat <<EOF
 }
 EOF
 )
-VIEWER_JSON=$(cat <<EOF
+export VIEWER_JSON=$(cat <<EOF
 {
   "username": "monitor-viewer",
   "email": "viewer@keycloak",
@@ -115,7 +115,7 @@ VIEWER_JSON=$(cat <<EOF
 }
 EOF
 )
-  CMD="unset HISTFILE\n
+export CMD="unset HISTFILE\n
 cat >/tmp/client.json <<EOF\n$(echo -e "$CLIENT_JSON")\nEOF\n
 cat >/tmp/admin.json <<EOF\n$(echo -e "$ADMIN_JSON")\nEOF\n
 cat >/tmp/editor.json <<EOF\n$(echo -e "$EDITOR_JSON")\nEOF\n
@@ -144,8 +144,8 @@ while true; do\n
   sleep 10\n
 done;"
   echo "Checking keycloak pod status..."
-  POD_NAME=$(kubectl get pod -n keycloak -o jsonpath={.items[0].metadata.name} | grep -i keycloak)
-  POD_PHASE=$(kubectl get pod $POD_NAME -n keycloak -o jsonpath={.status.phase})
+  export POD_NAME=$(kubectl get pods -n keycloak --no-headers -o custom-columns=":metadata.name" | grep -i keycloak)
+  export POD_PHASE=$(kubectl get pod $POD_NAME -n keycloak -o jsonpath='{.status.phase}')
   CMD_RESULT=$?
   if [ $CMD_RESULT -ne 0 ]; then
     handle_error "ERROR: Failed to check keycloak pod status."
@@ -154,13 +154,13 @@ done;"
   do
     echo "Keycloak pod status is '$POD_PHASE'. Waiting for 10 seconds."
     sleep 10
-    POD_PHASE=$(kubectl get pod $POD_NAME -n keycloak -o jsonpath={.status.phase})
+    export POD_PHASE=$(kubectl get pod $POD_NAME -n keycloak -o jsonpath='{.status.phase}')
     CMD_RESULT=$?
     if [ $CMD_RESULT -ne 0 ]; then
       handle_error "ERROR: Failed to check keycloak pod status."
     fi
   done
-  KEYCLOAK_ADMIN_PASSWORD=$(kubectl exec -it $POD_NAME -n keycloak -- env | grep -i KEYCLOAK_ADMIN_PASSWORD )
+  export KEYCLOAK_ADMIN_PASSWORD=$(kubectl get secret keycloak-config -n keycloak -o jsonpath='{.data.KC_BOOTSTRAP_ADMIN_PASSWORD}' 2>/dev/null | base64 -d)
   kubectl exec -it $POD_NAME -n keycloak -- /bin/bash -c "$(echo -e $CMD)"
   CMD_RESULT=$?
   if [ $CMD_RESULT -ne 0 ]; then
@@ -169,8 +169,22 @@ done;"
 }
 
 function update_workspace_saml_auth() {
-  SAML_URL=http://$DOMAIN_NAME/keycloak/realms/$KEYCLOAK_REALM/protocol/saml/descriptor
-  EXPECTED_SAML_CONFIG=$(cat <<EOF | jq --sort-keys -r '.'
+  # Ensure required variables are set
+  if [ -z "$DOMAIN_NAME" ]; then
+    handle_error "ERROR: DOMAIN_NAME is not set. Cannot configure SAML."
+  fi
+  if [ -z "$WORKSPACE_ID" ]; then
+    handle_error "ERROR: WORKSPACE_ID is not set. Cannot configure SAML."
+  fi
+  if [ -z "$KEYCLOAK_REALM" ]; then
+    handle_error "ERROR: KEYCLOAK_REALM is not set. Cannot configure SAML."
+  fi
+  
+  export SAML_URL=http://$DOMAIN_NAME/keycloak/realms/$KEYCLOAK_REALM/protocol/saml/descriptor
+  echo "Using SAML URL: $SAML_URL"
+  echo "Workspace ID: $WORKSPACE_ID"
+  echo "Keycloak Realm: $KEYCLOAK_REALM"
+  export EXPECTED_SAML_CONFIG=$(cat <<EOF | jq --sort-keys -r '.'
 {
   "assertionAttributes": {
     "email": "mail",
@@ -195,37 +209,44 @@ function update_workspace_saml_auth() {
 EOF
 )
   echo "Retrieving AMG workspace authentication configuration..."
-  WORKSPACE_AUTH_CONFIG=$(aws grafana describe-workspace-authentication --workspace-id $WORKSPACE_ID --region $AWS_REGION)
+  export WORKSPACE_AUTH_CONFIG=$(aws grafana describe-workspace-authentication --workspace-id $WORKSPACE_ID --region $AWS_REGION)
   CMD_RESULT=$?
   if [ $CMD_RESULT -ne 0 ]; then
     handle_error "ERROR: Failed to retrieve AMG workspace SAML authentication configuration."
   fi
   echo "Checking if SAML authentication is configured..."
-  AUTH_PROVIDERS=$(echo $WORKSPACE_AUTH_CONFIG | jq --compact-output -r '.authentication.providers')
-  SAML_INDEX=$(echo $WORKSPACE_AUTH_CONFIG | jq -r '.authentication.providers | index("SAML")')
+  export AUTH_PROVIDERS=$(echo $WORKSPACE_AUTH_CONFIG | jq --compact-output -r '.authentication.providers')
+  export SAML_INDEX=$(echo $WORKSPACE_AUTH_CONFIG | jq -r '.authentication.providers | index("SAML")')
   if [ "$SAML_INDEX" != "null" ]; then
     echo "Parsing actual SAML authentication configuration..."
-    ACTUAL_SAML_CONFIG=$(echo $WORKSPACE_AUTH_CONFIG | jq --sort-keys -r '.authentication.saml.configuration | {assertionAttributes: .assertionAttributes, idpMetadata: .idpMetadata, loginValidityDuration: .loginValidityDuration, roleValues: .roleValues}')
+    export ACTUAL_SAML_CONFIG=$(echo $WORKSPACE_AUTH_CONFIG | jq --sort-keys -r '.authentication.saml.configuration | {assertionAttributes: .assertionAttributes, idpMetadata: .idpMetadata, loginValidityDuration: .loginValidityDuration, roleValues: .roleValues}')
     CMD_RESULT=$?
     if [ $CMD_RESULT -ne 0 ]; then
       handle_error "ERROR: Failed to JSON parse AMG workspace SAML authentication configuration."
     fi
     echo "Comparing actual SAML authentication configuration with expected configuration..."
-    DIFF=$(diff <(echo "$EXPECTED_SAML_CONFIG") <(echo "$ACTUAL_SAML_CONFIG"))
+    export DIFF=$(diff <(echo "$EXPECTED_SAML_CONFIG") <(echo "$ACTUAL_SAML_CONFIG"))
     CMD_RESULT=$?
     if [ $CMD_RESULT -eq 0 ]; then
       echo "AMG workspace SAML authentication configuration matches expected configuration."
-      return 0
+      echo "However, forcing update to ensure configuration is properly applied..."
+    else
+      echo "AMG workspace SAML authentication configuration does not match expected configuration."
+      echo "Expected config:"
+      echo "$EXPECTED_SAML_CONFIG"
+      echo "Actual config:"
+      echo "$ACTUAL_SAML_CONFIG"
+      echo "Differences:"
+      echo "$DIFF"
     fi
-    echo "AMG workspace SAML authentication configuration does not match expected configuration."
     echo "Configuration will be updated."
   else
     echo "AMG workspace is not configured for SAML authentication."
   fi
   
   echo "Generating AMG workspace SAML authentication input configuration..."
-  MERGED_AUTH_PROVIDERS=$(jq --compact-output --argjson arr1 "$AUTH_PROVIDERS" --argjson arr2 '["SAML"]' -n '$arr1 + $arr2 | unique_by(.)')
-  WORKSPACE_AUTH_SAML_INPUT_CONFIG=$(cat <<EOF | jq --compact-output -r '.'
+  export MERGED_AUTH_PROVIDERS=$(jq --compact-output --argjson arr1 "$AUTH_PROVIDERS" --argjson arr2 '["SAML"]' -n '$arr1 + $arr2 | unique_by(.)')
+  export WORKSPACE_AUTH_SAML_INPUT_CONFIG=$(cat <<EOF | jq --compact-output -r '.'
 {
     "authenticationProviders": $MERGED_AUTH_PROVIDERS,
     "samlConfiguration":
@@ -236,13 +257,30 @@ EOF
 )
 
   echo "Updating AMG workspace SAML authentication..."
-  WORKSPACE_AUTH_SAML_STATUS=$(aws grafana update-workspace-authentication \
+  echo "Input configuration:"
+  echo "$WORKSPACE_AUTH_SAML_INPUT_CONFIG" | jq '.'
+  
+  export WORKSPACE_AUTH_SAML_STATUS=$(aws grafana update-workspace-authentication \
     --cli-input-json "$WORKSPACE_AUTH_SAML_INPUT_CONFIG" --query "authentication.saml.status" --output text --region "$AWS_REGION")
   CMD_RESULT=$?
   if [ $CMD_RESULT -ne 0 ]; then
     handle_error "ERROR: Failed to update AMG workspace SAML authentication."
   fi
   echo "AMG workspace SAML authentication status: $WORKSPACE_AUTH_SAML_STATUS"
+  
+  # Verify the update was successful
+  echo "Verifying SAML configuration update..."
+  sleep 5  # Wait for the update to propagate
+  export UPDATED_WORKSPACE_AUTH_CONFIG=$(aws grafana describe-workspace-authentication --workspace-id $WORKSPACE_ID --region $AWS_REGION)
+  export UPDATED_SAML_CONFIG=$(echo $UPDATED_WORKSPACE_AUTH_CONFIG | jq --sort-keys -r '.authentication.saml.configuration | {assertionAttributes: .assertionAttributes, idpMetadata: .idpMetadata, loginValidityDuration: .loginValidityDuration, roleValues: .roleValues}')
+  
+  export FINAL_DIFF=$(diff <(echo "$EXPECTED_SAML_CONFIG") <(echo "$UPDATED_SAML_CONFIG"))
+  if [ $? -eq 0 ]; then
+    echo "✅ SAML configuration successfully updated and verified!"
+  else
+    echo "⚠️  SAML configuration update may not have been fully applied:"
+    echo "$FINAL_DIFF"
+  fi
   echo ""
 }
 
@@ -257,4 +295,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "Setting up Keycloak configuration..."
     configure_keycloak
     echo "Keycloak configuration completed successfully!"
+    echo "Update SAML Configuration in Grafana"
+    update_workspace_saml_auth
+    echo "SAML Configuration Updated in Grafana"
 fi
