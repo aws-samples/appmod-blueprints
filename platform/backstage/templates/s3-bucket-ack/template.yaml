@@ -75,7 +75,7 @@ spec:
         appName: ${{parameters.bucket_name}}
         namespace: default
         argoInstance: in-cluster
-        projectName: default
+        projectName: ${{parameters.bucket_name}}-project
         repoUrl: ${{ steps['publish'].output.remoteUrl }}
         path: "manifests"
     - id: register
