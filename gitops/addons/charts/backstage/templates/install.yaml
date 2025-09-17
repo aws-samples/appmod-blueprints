@@ -111,6 +111,8 @@ data:
           apiBaseUrl: https://${GIT_HOSTNAME}/api/v4
           baseUrl: https://${GIT_HOSTNAME}
           host: ${GIT_HOSTNAME}
+          timeout: 300000
+          requestTimeout: 300000
     #  gitea:
     #   - baseUrl: https://cnoe.localtest.me:8443/gitea
     #     host: cnoe.localtest.me:8443
@@ -168,6 +170,11 @@ data:
           name: backstage-scaffolder
           email: noreply
         defaultCommitMessage: "backstage scaffolder"
+        defaultTimeout: 300000 # 5 minutes in milliseconds
+        # Git configuration for better timeout handling
+        git:
+          timeout: 300000 # 5 minutes for git operations
+          httpTimeout: 300000 # 5 minutes for HTTP operations
     catalog:
       import:
         entityFilename: catalog-info.yaml
@@ -324,6 +331,12 @@ spec:
               value: "300000"
             - name: NODE_HTTP_TIMEOUT
               value: "300000"
+            - name: GIT_HTTP_LOW_SPEED_LIMIT
+              value: "1000"
+            - name: GIT_HTTP_LOW_SPEED_TIME
+              value: "300"
+            - name: GIT_CURL_VERBOSE
+              value: "1"
           envFrom:
             - secretRef:
                 name: backstage-env-vars
