@@ -123,7 +123,7 @@ data "aws_lb" "gitlab_nlb" {
 ################################################################################
 resource "aws_cloudfront_vpc_origin" "gitlab" {
   vpc_origin_endpoint_config {
-    name                   = "peeks-gitlab-vpc-origin"
+    name                   = "${var.resource_prefix}-gitlab-vpc-origin"
     arn                    = data.aws_lb.gitlab_nlb.arn
     http_port              = 80
     https_port             = 443
