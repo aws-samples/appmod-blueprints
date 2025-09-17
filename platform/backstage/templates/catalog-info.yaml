@@ -8,6 +8,7 @@ spec:
     - ./eks-cluster-template/template.yaml
     - ./rds-cluster/template.yaml
     - ./s3-bucket-ack/template.yaml
+    - ./s3-bucket-ack-gitlab/template.yaml
     - ./app-deploy/template.yaml
     - ./app-deploy-without-repo/template.yaml
     - ./jupyterhub-on-eks/template-jupyterhub-on-eks.yaml
