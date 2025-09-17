@@ -318,7 +318,7 @@ spec:
             - name: NODE_ENV
               value: development
             - name: NODE_OPTIONS
-              value: --no-node-snapshot --http-timeout=300000
+              value: --no-node-snapshot
             - name: HTTP_TIMEOUT
               value: "300000"
             - name: REQUEST_TIMEOUT  
