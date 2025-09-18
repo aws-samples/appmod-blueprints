@@ -31,3 +31,30 @@ gitops_workload_repo_revision   = "main"
 
 # AWS Accounts used for demo purposes (cluster1 cluster2)
 account_ids = "<aws_account_id>" # update this with your spoke aws accounts ids
+
+# Enabled addons for hub cluster
+addons = {
+  enable_ingress_class_alb            = true
+  enable_argo_rollouts                = true
+  enable_kyverno_policies             = true
+  enable_metrics_server               = true
+  enable_kyverno                      = true
+  enable_kyverno_policy_reporter      = true
+  enable_ingress_nginx                = true
+  enable_argocd                       = true
+  enable_argo_workflows               = true
+  enable_backstage                    = true
+  enable_kargo                        = true
+  enable_keycloak                     = true
+  enable_gitlab                       = true
+  enable_cert_manager                 = true
+  enable_external_secrets             = true
+  enable_ack_iam                      = true
+  enable_ack_eks                      = true
+  enable_ack_ec2                      = true
+  enable_ack_efs                      = true
+  enable_kro                          = true
+  enable_kro_eks_rgs                  = true
+  enable_mutli_acct                   = true
+  enable_kubevela                     = true
+}
