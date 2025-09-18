@@ -7,15 +7,13 @@ resource "random_string" "password_key" {
     expiresAt = local.password_expiry
   }
 }
+
+# Keycloak Postgres password does not change
 resource "random_password" "keycloak_postgres" {
   length            = 32
   override_special  = "/-+"
   min_special       = 5
   min_numeric       = 5
-
-  keepers = {
-    expiresAt = local.password_expiry
-  }
 }
 
 resource "random_password" "keycloak_admin" {
