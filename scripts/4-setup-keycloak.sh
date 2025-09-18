@@ -315,14 +315,28 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "Keycloak configuration completed successfully!"
     echo "Update SAML Configuration in Grafana"
     
-    # Set DOMAIN_NAME for SAML configuration - use Keycloak CloudFront domain
-    export DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'keycloak') || contains(Comment, 'keycloak')].DomainName | [0]" --output text)
+    # Set DOMAIN_NAME for SAML configuration - use ingress CloudFront domain (Keycloak is accessed through ingress)
+    export DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Comment, 'ingress')].DomainName | [0]" --output text)
     if [ -z "$DOMAIN_NAME" ] || [ "$DOMAIN_NAME" = "None" ] || [ "$DOMAIN_NAME" = "null" ]; then
-        echo "Warning: Could not find Keycloak CloudFront domain, trying ingress domain"
-        # Fallback to ingress domain if Keycloak domain not found
-        export DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?Origins.Items[?contains(DomainName, 'ingress')]].DomainName | [0]" --output text)
+        echo "Warning: Could not find ingress CloudFront domain, trying alternative"
+        # Fallback to any distribution with ingress in origin domain name
+        export DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'ingress')].DomainName | [0]" --output text)
     fi
     echo "Using DOMAIN_NAME for SAML: $DOMAIN_NAME"
+    
+    # Get Grafana workspace ID if not already set
+    if [ -z "$WORKSPACE_ID" ]; then
+        echo "WORKSPACE_ID not set, retrieving from AWS..."
+        export WORKSPACE_ID=$(aws grafana list-workspaces --region $AWS_REGION --query "workspaces[?contains(name, '${RESOURCE_PREFIX:-peeks}')].id | [0]" --output text 2>/dev/null || echo "")
+        if [ -n "$WORKSPACE_ID" ] && [ "$WORKSPACE_ID" != "None" ] && [ "$WORKSPACE_ID" != "null" ]; then
+            echo "Found Grafana workspace ID: $WORKSPACE_ID"
+        else
+            echo "ERROR: Could not find Grafana workspace. Make sure AMG workspace exists."
+            exit 1
+        fi
+    else
+        echo "Using existing WORKSPACE_ID: $WORKSPACE_ID"
+    fi
     
     update_workspace_saml_auth
     echo "SAML Configuration Updated in Grafana"
