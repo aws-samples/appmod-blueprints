@@ -10,3 +10,6 @@ spec:
       properties:
         name: ${{values.bucket_name}}
         region: ${{values.region}}
+  policies:
+    - name: keep-legacy-resource
+      type: keep-legacy-resource
