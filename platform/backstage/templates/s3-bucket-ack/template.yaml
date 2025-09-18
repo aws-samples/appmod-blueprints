@@ -98,10 +98,13 @@ spec:
         path: "manifests"
     - id: register
       name: Register
-      action: catalog:register
+      action: http:backstage:request
       input:
-        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
-        catalogInfoPath: 'catalog-info.yaml'
+        method: POST
+        path: '/api/catalog/locations'
+        body:
+          type: 'url'
+          target: '${{ steps["publish"].output.remoteUrl }}/-/blob/main/catalog-info.yaml'
     - id: template-output
       name: Template Output
       action: debug:log
