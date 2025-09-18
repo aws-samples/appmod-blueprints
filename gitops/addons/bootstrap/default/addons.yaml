@@ -107,6 +107,7 @@ ack-s3:
   defaultVersion: "1.0.14"
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
+  releaseName: s3-chart
   selector:
     matchExpressions:
       - key: enable_ack_s3
