@@ -10,8 +10,3 @@ spec:
       properties:
         name: ${{values.bucket_name}}
         region: ${{values.region}}
-  policies:
-    - name: garbage-collect
-      type: garbage-collect
-      properties:
-        keepLegacyResource: true
