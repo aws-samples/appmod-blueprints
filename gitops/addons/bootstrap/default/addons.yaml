@@ -648,32 +648,29 @@ kubevela:
   valuesObject:
     systemDefinitionNamespace: vela-system
   ignoreDifferences:
-    - group: apiextensions.k8s.io
-      kind: CustomResourceDefinition
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
+    - group: "*"
+      kind: "*"
+      managedFieldsManagers:
+        - vela-core
+        - cert-manager
+        - webhook-cert-manager
     - group: admissionregistration.k8s.io
-      kind: MutatingWebhookConfiguration
-      name: vela-core-admission
-      jsonPointers:
-        - /webhooks
-        - /metadata/generation
-        - /metadata/managedFields
-    - group: admissionregistration.k8s.io
-      kind: ValidatingWebhookConfiguration
-      name: vela-core-admission
+      kind: "*"
       jsonPointers:
         - /webhooks
         - /metadata/generation
         - /metadata/managedFields
     - group: apiregistration.k8s.io
       kind: APIService
-      name: v1alpha1.cluster.core.oam.dev
       jsonPointers:
         - /status
-        - /spec/caBundle
+        - /spec
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /status
         - /metadata/generation
         - /metadata/managedFields
     - group: core.oam.dev
