@@ -88,6 +88,7 @@ locals {
     enable_cni_metrics_helper                    = try(var.addons.enable_cni_metrics_helper, false)
     enable_ack_ec2                               = try(var.addons.enable_ack_ec2, false)
     enable_ack_efs                               = try(var.addons.enable_ack_efs, false)
+    enable_ack_s3                                = try(var.addons.enable_ack_s3, false)
     enable_kro                                   = try(var.addons.enable_kro, false)
     enable_kro_eks_rgs                           = try(var.addons.enable_kro_eks_rgs, false)
     enable_mutli_acct                            = try(var.addons.enable_mutli_acct, false)

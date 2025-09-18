@@ -57,4 +57,5 @@ addons = {
   enable_kro_eks_rgs                  = true
   enable_mutli_acct                   = true
   enable_kubevela                     = true
+  enable_ack_s3                       = true
 }
