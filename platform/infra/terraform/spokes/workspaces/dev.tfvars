@@ -8,4 +8,5 @@ addons = {
   enable_metrics_server               = true
   enable_external_secrets             = true
   enable_aws_cloudwatch_metrics       = true
+  enable_ack_s3                       = true
 }
