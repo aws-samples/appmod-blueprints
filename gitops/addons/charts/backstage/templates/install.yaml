@@ -595,7 +595,7 @@ spec:
         requests:
           storage: "500Mi"
 ---
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: backstage-oidc
@@ -634,7 +634,7 @@ spec:
         metadataPolicy: None
         property: BACKSTAGE_CLIENT_SECRET
 ---
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: backstage-postgres
