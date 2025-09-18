@@ -38,7 +38,7 @@ bootstrap_oidc_secrets() {
         
         # Try to update existing secret first
         if aws secretsmanager put-secret-value \
-            --region us-east-1 \
+            --region ${AWS_REGION:-us-west-2} \
             --secret-id "$secret_name" \
             --secret-string "$secret_value" >/dev/null 2>&1; then
             print_success "Updated existing AWS secret: $secret_name"
@@ -46,7 +46,7 @@ bootstrap_oidc_secrets() {
             # Create new secret if update failed
             print_info "Creating new AWS secret: $secret_name"
             if aws secretsmanager create-secret \
-                --region us-east-1 \
+                --region ${AWS_REGION:-us-west-2} \
                 --name "$secret_name" \
                 --description "$description" \
                 --secret-string "$secret_value" \
@@ -66,7 +66,7 @@ bootstrap_oidc_secrets() {
         fi
         
         # Verify secret was created/updated
-        if aws secretsmanager describe-secret --region us-east-1 --secret-id "$secret_name" >/dev/null 2>&1; then
+        if aws secretsmanager describe-secret --region ${AWS_REGION:-us-west-2} --secret-id "$secret_name" >/dev/null 2>&1; then
             print_success "Verified AWS secret: $secret_name"
         else
             print_error "Failed to verify AWS secret: $secret_name"

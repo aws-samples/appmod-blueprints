@@ -3,7 +3,7 @@ externalSecret:
   clusterName: peeks-workshop-spoke-prod
   secretStoreRefKind: ClusterSecretStore
   secretStoreRefName: aws-secrets-manager
-  secretManagerSecretName: peeks-workshop-hub-cluster/peeks-workshop-spoke-prod
+  secretManagerSecretName: peeks-hub-cluster/peeks-spoke-prod
   server: remote
   
   annotations:

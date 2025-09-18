@@ -81,7 +81,7 @@ wait_for_gitlab_distribution() {
     log "Attempt $((attempt + 1))/$max_attempts: Checking for GitLab CloudFront distribution..."
     
     # Capture domain separately from logging to avoid mixing output
-    gitlab_domain=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'gitlab')].DomainName | [0]" --output text 2>/dev/null || echo "None")
+    gitlab_domain=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName | [0]" --output text 2>/dev/null || echo "None")
     
     if [[ "$gitlab_domain" != "None" && -n "$gitlab_domain" ]]; then
       log_success "Found GitLab CloudFront distribution: ${gitlab_domain}"
@@ -182,18 +182,7 @@ deploy_eks_cluster() {
   RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
   CLUSTER_NAME_PREFIX="${RESOURCE_PREFIX:-peeks}-spoke"
 
-  # Initialize without backend first
-  terraform -chdir=$SCRIPTDIR init -backend=false >/dev/null 2>&1 || true
-
-  # Create workspace if it doesn't exist, otherwise select it
-  if ! terraform -chdir=$SCRIPTDIR workspace select $env 2>/dev/null; then
-    log "Creating new workspace: $env"
-    terraform -chdir=$SCRIPTDIR workspace new $env
-  else
-    log "Selected existing workspace: $env"
-  fi
-
-  # Now init with proper backend config
+  # Initialize with proper backend config first
   if ! terraform -chdir=$SCRIPTDIR init -reconfigure -upgrade \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
     -backend-config="key=spokes/${env}/terraform.tfstate" \
@@ -201,6 +190,14 @@ deploy_eks_cluster() {
     -backend-config="region=${AWS_REGION:-us-east-1}"; then
     log_error "Terraform init failed"
     exit 1
+  fi
+
+  # Create workspace if it doesn't exist, otherwise select it
+  if ! terraform -chdir=$SCRIPTDIR workspace select $env 2>/dev/null; then
+    log "Creating new workspace: $env"
+    terraform -chdir=$SCRIPTDIR workspace new $env
+  else
+    log "Selected existing workspace: $env"
   fi
 
   log "Using cluster name prefix: $CLUSTER_NAME_PREFIX"

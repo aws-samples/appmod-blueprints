@@ -60,7 +60,7 @@ resource "kubernetes_namespace" "gitlab" {
       "app.kubernetes.io/managed-by" = "Helm"
     }
     annotations = {
-      "meta.helm.sh/release-name" = "gitlab"
+      "meta.helm.sh/release-name"      = "gitlab"
       "meta.helm.sh/release-namespace" = "gitlab"
     }
   }
@@ -74,14 +74,12 @@ resource "kubernetes_service" "gitlab_nlb" {
     name      = "gitlab"
     namespace = "gitlab"
     annotations = {
-      "service.beta.kubernetes.io/aws-load-balancer-name" = "${var.resource_prefix}-gitlab"
-      "service.beta.kubernetes.io/aws-load-balancer-type" = "external"
-      "service.beta.kubernetes.io/aws-load-balancer-scheme" = "internet-facing"
-      "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
-      "service.beta.kubernetes.io/aws-load-balancer-security-groups" = local.gitlab_security_groups
+      "service.beta.kubernetes.io/aws-load-balancer-name"                                = "${var.resource_prefix}-gitlab"
+      "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type"                     = "ip"
+      "service.beta.kubernetes.io/aws-load-balancer-security-groups"                     = local.gitlab_security_groups
       "service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules" = "true"
-      "meta.helm.sh/release-name" = "gitlab"
-      "meta.helm.sh/release-namespace" = "gitlab"
+      "meta.helm.sh/release-name"                                                        = "gitlab"
+      "meta.helm.sh/release-namespace"                                                   = "gitlab"
     }
     labels = {
       "app.kubernetes.io/managed-by" = "Helm"
@@ -107,7 +105,7 @@ resource "kubernetes_service" "gitlab_nlb" {
       protocol    = "TCP"
     }
 
-    type             = "LoadBalancer"
+    type                = "LoadBalancer"
     load_balancer_class = "eks.amazonaws.com/nlb"
   }
 }
@@ -125,6 +123,20 @@ data "aws_lb" "gitlab_nlb" {
 ################################################################################
 # CloudFront Distribution for GitLab NLB
 ################################################################################
+resource "aws_cloudfront_vpc_origin" "gitlab" {
+  vpc_origin_endpoint_config {
+    name                   = "${var.resource_prefix}-gitlab-vpc-origin"
+    arn                    = data.aws_lb.gitlab_nlb.arn
+    http_port              = 80
+    https_port             = 443
+    origin_protocol_policy = "http-only"
+
+    origin_ssl_protocols {
+      items    = ["TLSv1.2"]
+      quantity = 1
+    }
+  }
+}
 
 resource "aws_cloudfront_distribution" "gitlab" {
   depends_on = [data.aws_lb.gitlab_nlb]
@@ -138,14 +150,11 @@ resource "aws_cloudfront_distribution" "gitlab" {
 
   origin {
     domain_name = data.aws_lb.gitlab_nlb.dns_name
-    origin_id   = "gitlab-origin"
+    origin_id   = aws_cloudfront_vpc_origin.gitlab.id
 
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "http-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
-      origin_read_timeout    = 60
+    vpc_origin_config {
+      vpc_origin_id            = aws_cloudfront_vpc_origin.gitlab.id
+      origin_read_timeout      = 60
       origin_keepalive_timeout = 30
     }
 
@@ -163,7 +172,7 @@ resource "aws_cloudfront_distribution" "gitlab" {
   default_cache_behavior {
     allowed_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "gitlab-origin"
+    target_origin_id = aws_cloudfront_vpc_origin.gitlab.id
 
     viewer_protocol_policy = "redirect-to-https"
     compress               = false
@@ -197,11 +206,11 @@ resource "aws_cloudfront_distribution" "gitlab" {
 locals {
   # Create the values content using templatefile
   gitlab_values = templatefile("${path.module}/gitlab-initial-values.yaml", {
-    DOMAIN_NAME = local.gitlab_domain_name
-    INITIAL_ROOT_PASSWORD = var.ide_password
+    DOMAIN_NAME            = local.gitlab_domain_name
+    INITIAL_ROOT_PASSWORD  = var.ide_password
     SECURITY_GROUPS_GITLAB = local.gitlab_security_groups
-    GIT_USERNAME = var.git_username
-    WORKING_REPO = var.working_repo
+    GIT_USERNAME           = var.git_username
+    WORKING_REPO           = var.working_repo
   })
 }
 
@@ -210,10 +219,11 @@ resource "helm_release" "gitlab" {
     aws_cloudfront_distribution.gitlab
   ]
 
-  name       = "gitlab"
-  chart      = "${path.module}/../../../../gitops/addons/charts/gitlab"
-  timeout    = 600
-  values     = [local.gitlab_values]
+  name             = "gitlab"
+  chart            = "${path.module}/../../../../gitops/addons/charts/gitlab"
+  timeout          = 600
+  values           = [local.gitlab_values]
   create_namespace = false
-  namespace  = kubernetes_namespace.gitlab.metadata[0].name
+  namespace        = kubernetes_namespace.gitlab.metadata[0].name
 }
+
