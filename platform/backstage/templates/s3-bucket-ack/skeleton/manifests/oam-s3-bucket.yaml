@@ -11,5 +11,9 @@ spec:
         name: ${{values.bucket_name}}
         region: ${{values.region}}
   policies:
-    - name: keep-legacy-resource
-      type: keep-legacy-resource
+    - name: take-over
+      type: take-over
+      properties:
+        rules:
+        - selector:
+            resourceTypes: ["Bucket"]
