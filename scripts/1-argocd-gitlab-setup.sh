@@ -405,6 +405,68 @@ kubectl get applications -n argocd
 
 print_step "Ensuring critical ArgoCD applications are healthy"
 
+# Function to fix git revision conflicts
+fix_git_revision_conflicts() {
+    print_info "Checking for git revision conflicts..."
+    
+    # Get all applications with comparison errors
+    local apps_with_errors=$(kubectl get applications -n argocd -o json | \
+        jq -r '.items[] | select(.status.conditions[]? | select(.type == "ComparisonError" and (.message | contains("cannot reference a different revision")))) | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$apps_with_errors" ]; then
+        print_warning "Found applications with git revision conflicts: $apps_with_errors"
+        echo "$apps_with_errors" | while read -r app; do
+            print_info "Fixing revision conflict for $app"
+            # Hard refresh to latest revision
+            kubectl patch application "$app" -n argocd --type merge -p '{"spec":{"sources":[{"targetRevision":"HEAD"},{"targetRevision":"HEAD"}]}}' 2>/dev/null || true
+            kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}' 2>/dev/null || true
+            sleep 3
+        done
+        sleep 10
+    fi
+}
+
+# Function to ensure ApplicationSets exist
+ensure_applicationsets() {
+    print_info "Ensuring ApplicationSets are properly created..."
+    
+    # Check if bootstrap is healthy first
+    local bootstrap_status=$(kubectl get application bootstrap -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    
+    if [ "$bootstrap_status" != "Healthy" ]; then
+        print_warning "Bootstrap application is not healthy ($bootstrap_status), syncing..."
+        kubectl patch application bootstrap -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}' 2>/dev/null || true
+        
+        # Wait for bootstrap to become healthy
+        local wait_count=0
+        while [ $wait_count -lt 30 ]; do
+            bootstrap_status=$(kubectl get application bootstrap -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+            if [ "$bootstrap_status" = "Healthy" ]; then
+                print_success "Bootstrap application is now healthy"
+                break
+            fi
+            print_info "Waiting for bootstrap to become healthy... ($bootstrap_status)"
+            sleep 10
+            wait_count=$((wait_count + 1))
+        done
+    fi
+    
+    # Check for required ApplicationSets
+    local required_appsets="cluster-addons"
+    for appset in $required_appsets; do
+        if ! kubectl get applicationset "$appset" -n argocd >/dev/null 2>&1; then
+            print_warning "ApplicationSet $appset not found, forcing bootstrap refresh..."
+            kubectl patch application bootstrap -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}' 2>/dev/null || true
+            sleep 15
+            break
+        fi
+    done
+}
+
+# Run the fixes before monitoring
+fix_git_revision_conflicts
+ensure_applicationsets
+
 # Define critical applications to monitor (can be customized)
 CRITICAL_APPS="${CRITICAL_ARGOCD_APPS:-bootstrap cluster-addons argocd-${RESOURCE_PREFIX}-hub-cluster ingress-nginx-${RESOURCE_PREFIX}-hub-cluster}"
 print_info "Monitoring applications: ${CRITICAL_APPS:-all applications}"
@@ -418,7 +480,10 @@ sync_and_wait_apps() {
     while [ $attempt -le $max_attempts ]; do
         print_info "Health check attempt $attempt/$max_attempts"
         
-        # Terminate stuck operations first
+        # Enhanced stuck operation handling
+        print_info "Checking for stuck operations and revision conflicts..."
+        
+        # Terminate stuck operations (running > 3 minutes)
         local stuck_apps=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.operationState.phase}{" "}{.status.operationState.startedAt}{"\n"}{end}' 2>/dev/null | \
             awk -v now=$(date +%s) '$2=="Running" && (now - mktime(gensub(/[-T:Z]/, " ", "g", $3))) > 180 {print $1}')
         
@@ -428,6 +493,28 @@ sync_and_wait_apps() {
                 kubectl patch application "$app" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
             done
             sleep 5
+        fi
+        
+        # Handle revision conflicts and comparison errors
+        local error_apps=$(kubectl get applications -n argocd -o json | jq -r '.items[] | select(.status.conditions[]? | select(.type == "ComparisonError")) | .metadata.name' 2>/dev/null || echo "")
+        
+        if [ -n "$error_apps" ]; then
+            echo "$error_apps" | while read -r app; do
+                print_warning "Fixing revision conflict for $app"
+                # Force refresh to resolve revision conflicts
+                kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                sleep 2
+            done
+        fi
+        
+        # Check for missing ApplicationSets and recreate them
+        local missing_appsets=$(kubectl get applications -n argocd -o json | jq -r '.items[] | select(.status.conditions[]? | select(.message | contains("ApplicationSet") and contains("not found"))) | .metadata.name' 2>/dev/null || echo "")
+        
+        if [ -n "$missing_appsets" ]; then
+            print_warning "Found applications with missing ApplicationSets, forcing bootstrap refresh..."
+            # Refresh bootstrap application to recreate ApplicationSets
+            kubectl patch application bootstrap -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+            sleep 10
         fi
         
         # Get application status
@@ -479,9 +566,20 @@ sync_and_wait_apps() {
             print_info "  Syncing: $app"
             if [ -n "$app" ]; then
                 print_info "  Syncing: $app"
-                argocd app sync "$app" --timeout 60 2>/dev/null || {
-                    print_warning "ArgoCD CLI sync failed for $app, using kubectl patch"
-                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"syncStrategy":{"hook":{}}}}}' 2>/dev/null || true
+                
+                # Check if app has comparison errors first
+                local app_error=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.conditions[?(@.type=="ComparisonError")].message}' 2>/dev/null || echo "")
+                
+                if [[ "$app_error" == *"cannot reference a different revision"* ]]; then
+                    print_info "    Fixing revision conflict for $app before sync"
+                    kubectl patch application "$app" -n argocd --type merge -p '{"spec":{"sources":[{"targetRevision":"HEAD"},{"targetRevision":"HEAD"}]}}' 2>/dev/null || true
+                    sleep 5
+                fi
+                
+                # Try ArgoCD CLI sync with longer timeout
+                argocd app sync "$app" --timeout 120 --retry-limit 3 2>/dev/null || {
+                    print_warning "    ArgoCD CLI sync failed for $app, using kubectl patch with force sync"
+                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true,"syncOptions":["CreateNamespace=true","PrunePropagationPolicy=foreground"]}}}' 2>/dev/null || true
                 }
             fi
         done
