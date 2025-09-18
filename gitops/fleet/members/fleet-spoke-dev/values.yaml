@@ -22,3 +22,4 @@ externalSecret:
     enable_ack_ec2: "true"
     enable_ack_eks: "true"
     enable_ack_iam: "true"
+    enable_kubevela: "true"
