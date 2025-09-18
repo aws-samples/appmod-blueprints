@@ -97,6 +97,27 @@ ack-eks:
     serviceAccount:
       name: '{{default "ack-eks-controller" (index .metadata.annotations "ack_eks_service_account")}}'
 
+ack-s3:
+  enabled: false
+  enableACK: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
+  namespace: ack-system
+  chartName: s3-chart
+  defaultVersion: "1.0.14"
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  selector:
+    matchExpressions:
+      - key: enable_ack_s3
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-s3-controller" (index .metadata.annotations "ack_s3_service_account")}}'
+
 ack-ec2:
   enabled: false
   enableACK: false
