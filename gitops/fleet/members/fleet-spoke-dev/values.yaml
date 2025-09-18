@@ -3,7 +3,7 @@ externalSecret:
   clusterName: peeks-workshop-spoke-dev
   secretStoreRefKind: ClusterSecretStore
   secretStoreRefName: aws-secrets-manager
-  secretManagerSecretName: peeks-hub-cluster/peeks-spoke-dev
+  secretManagerSecretName: peeks-workshop-hub-cluster/peeks-workshop-spoke-dev
   server: remote
   
   annotations:
@@ -14,6 +14,7 @@ externalSecret:
     environment: dev
     tenant: tenant1
     fleet_member: dev
+    #TODO I think this is not used here, but already stored in the secret
     enable_cert_manager: "true"
     enable_external_secrets: "true"
     enable_ingress_nginx: "true"
@@ -22,4 +23,6 @@ externalSecret:
     enable_ack_ec2: "true"
     enable_ack_eks: "true"
     enable_ack_iam: "true"
+    enable_ack_s3: "true"
     enable_kubevela: "true"
+    sebtest: "true"
