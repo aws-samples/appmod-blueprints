@@ -632,6 +632,22 @@ kargo:
         passwordHash: '{{.metadata.annotations.ide_password_hash}}'
         tokenSigningKey: '{{.metadata.annotations.ide_password_key}}'
 
+kubevela:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "3" # Needs to be after KRO RGD
+  namespace: vela-system
+  chartName: vela-core
+  chartRepository: https://charts.kubevela.net/core
+  defaultVersion: "1.9.11"
+  selector:
+    matchExpressions:
+      - key: enable_kubevela
+        operator: In
+        values: ['true']
+  valuesObject:
+    systemDefinitionNamespace: vela-system
+
 backstage:
   enabled: false
   annotationsAppSet:
