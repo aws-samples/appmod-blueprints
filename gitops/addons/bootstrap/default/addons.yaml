@@ -638,7 +638,7 @@ kubevela:
     argocd.argoproj.io/sync-wave: "3" # Needs to be after KRO RGD
   namespace: vela-system
   chartName: vela-core
-  chartRepository: https://charts.kubevela.net/core
+  chartRepository: https://kubevela.github.io/charts
   defaultVersion: "1.9.11"
   selector:
     matchExpressions:
