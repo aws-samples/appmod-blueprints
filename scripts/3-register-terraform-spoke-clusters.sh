@@ -116,6 +116,7 @@ externalSecret:
     environment: ${ENVIRONMENT}
     tenant: tenant1
     fleet_member: ${ENVIRONMENT}
+    #TODO I think this is not used here, but already stored in the secret
     enable_cert_manager: "true"
     enable_external_secrets: "true"
     enable_ingress_nginx: "true"
@@ -124,6 +125,9 @@ externalSecret:
     enable_ack_ec2: "true"
     enable_ack_eks: "true"
     enable_ack_iam: "true"
+    enable_ack_s3: "true"
+    enable_kubevela: "true"
+    sebtest: "true"
 EOF
 
 print_status "SUCCESS" "Fleet member configuration created successfully!"
