@@ -263,7 +263,7 @@ ack-ecr:
         - kube-controller-manager
 
 external-secrets:
-  enabled: false
+  enabled: true
   enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
