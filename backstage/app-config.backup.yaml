@@ -1,6 +1,6 @@
 app:
   title: Internal Developer Platform
-  baseUrl: http://localhost:3000/backstage
+  baseUrl: https://d7uikzlbvbvih.cloudfront.net/backstage
 
 organization:
   name: Internal Developer Platform
@@ -12,13 +12,13 @@ backend:
   # auth:
   #   keys:
   #     - secret: ${BACKEND_SECRET}
-  baseUrl: http://localhost:7007/backstage
+  baseUrl: https://d7uikzlbvbvih.cloudfront.net/backstage
   listen:
     port: 7007
     # Uncomment the following host directive to bind to specific interfaces
     # host: 127.0.0.1
   csp:
-    connect-src: ["'self'", 'http:', 'https:']
+    connect-src: ["'self'", "http:", "https:"]
     # Content-Security-Policy directives follow the Helmet format: https://helmetjs.github.io/#reference
     # Default Helmet Content-Security-Policy values can be removed by setting the key to false
   cors:
@@ -29,7 +29,7 @@ backend:
   # The production database configuration is stored in app-config.production.yaml
   database:
     client: better-sqlite3
-    connection: ':memory:'
+    connection: ":memory:"
   # workingDirectory: /tmp # Use this to configure a working directory for the scaffolder, defaults to the OS temp-dir
 
 integrations:
@@ -38,6 +38,8 @@ integrations:
       apiBaseUrl: https://${GIT_HOSTNAME}/api/v4
       baseUrl: https://${GIT_HOSTNAME}
       host: ${GIT_HOSTNAME}
+      timeout: 300000
+      requestTimeout: 300000
   github:
     - host: github.com
       # This is a Personal Access Token or PAT from GitHub. You can find out how to generate this token, and more information
@@ -49,26 +51,27 @@ integrations:
     #   token: ${GHE_TOKEN}
 
 proxy:
-  ### Example for how to add a proxy endpoint for the frontend.
-  ### A typical reason to do this is to handle HTTPS and CORS for internal services.
-  # endpoints:
-  #   '/test':
-  #     target: 'https://example.com'
-  #     changeOrigin: true
+  endpoints:
+    "/gitlab-api":
+      target: "https://${GIT_HOSTNAME}/api"
+      changeOrigin: true
+      headers:
+        Private-Token: "${GIT_PASSWORD}"
 
 # Reference documentation http://backstage.io/docs/features/techdocs/configuration
 # Note: After experimenting with basic setup, use CI/CD to generate docs
 # and an external cloud storage when deploying TechDocs for production use-case.
 # https://backstage.io/docs/features/techdocs/how-to-guides#how-to-migrate-from-techdocs-basic-to-recommended-deployment-approach
 techdocs:
-  builder: 'local' # Alternatives - 'external'
+  builder: "local" # Alternatives - 'external'
   generator:
-    runIn: 'docker' # Alternatives - 'local'
+    runIn: "docker" # Alternatives - 'local'
   publisher:
-    type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
+    type: "local" # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
 
 auth:
   environment: local
+  debug: true
   # see https://backstage.io/docs/auth/ to learn about auth providers
   providers:
     # See https://backstage.io/docs/auth/guest/provider
@@ -76,8 +79,12 @@ auth:
 
 scaffolder:
   # see https://backstage.io/docs/features/software-templates/configuration for software template options
-  defaultTimeout: 300000  # 5 minutes in milliseconds
-  defaultCommitMessage: 'Initial commit from Backstage template'
+  defaultTimeout: 300000 # 5 minutes in milliseconds
+  defaultCommitMessage: "Initial commit from Backstage template"
+  # Git configuration for better timeout handling
+  git:
+    timeout: 300000 # 5 minutes for git operations
+    httpTimeout: 300000 # 5 minutes for HTTP operations
 
 catalog:
   # import:
@@ -97,6 +104,13 @@ catalog:
   rules:
     - allow: [Component, System, API, Resource, Location]
   locations:
+    # Templates from Gitlab
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/platform/backstage/templates/catalog-info.yaml
+      rules:
+        - allow:
+            [Component, System, API, Resource, Location, Template, User, Group]
+
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
       target: ../../examples/entities.yaml
@@ -128,6 +142,14 @@ catalog:
 
 kubernetes:
   # see https://backstage.io/docs/features/kubernetes/configuration for kubernetes configuration options
+
+argocd:
+  instances:
+    - name: in-cluster
+      url: ${ARGOCD_URL}
+      token: ${ARGOCD_TOKEN}
+      # For self-signed certificates, you might need:
+      # skipTLSVerify: true
 
 # see https://backstage.io/docs/permissions/getting-started for more on the permission framework
 permission:
