@@ -54,7 +54,7 @@ argocd:
           name: Keycloak
           issuer: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
           clientID: argocd
-          clientSecret: $oidc.keycloak.clientSecret
+          enablePKCEAuthentication: true
           requestedScopes: ["openid", "profile", "email", "groups"]
 
 ack-iam:
@@ -727,7 +727,7 @@ keycloak:
         values: ['true']
   valuesObject:
     global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}-{{.metadata.annotations.aws_cluster_name}}'
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'

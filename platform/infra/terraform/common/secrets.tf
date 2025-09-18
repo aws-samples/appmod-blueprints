@@ -26,7 +26,7 @@ resource "aws_secretsmanager_secret_version" "cluster_config" {
 # Platform Configuration
 resource "aws_secretsmanager_secret" "git_secret" {
   for_each = var.clusters
-  name                    = "${local.context_prefix}-${each.value.name}/git-secrets"
+  name                    = "${local.context_prefix}-${each.value.name}/secrets"
   description             = "Platform Secrets for cluster ${each.value.name}"
   recovery_window_in_days = 0
 
@@ -40,7 +40,7 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
   for_each = var.clusters
   secret_id     = aws_secretsmanager_secret.git_secret[each.key].id
   secret_string = jsonencode({
-    ide_password = var.ide_password
+    user_password = var.ide_password
     git_token = local.gitlab_token
   })
 }
