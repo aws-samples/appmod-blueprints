@@ -10,7 +10,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: {{ .Values.ingress_domain_name }}
+    - host: {{ .Values.global.ingress_domain_name }}
       http:
         paths:
           - path: /keycloak

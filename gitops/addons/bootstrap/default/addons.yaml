@@ -727,9 +727,10 @@ keycloak:
         values: ['true']
   valuesObject:
     global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}-{{.metadata.annotations.aws_cluster_name}}'
-    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     aws:
+      cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       region: '{{.metadata.annotations.aws_region}}'
   ignoreDifferences:
     - group: external-secrets.io

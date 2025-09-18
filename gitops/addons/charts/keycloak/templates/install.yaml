@@ -93,8 +93,8 @@ data:
     db-url=jdbc:postgresql://postgresql.keycloak.svc.cluster.local:5432/postgres
 
     # hostname settings
-    hostname=https://{{ .Values.ingress_domain_name }}/keycloak
-    hostname-admin=https://{{ .Values.ingress_domain_name }}/keycloak
+    hostname=https://{{ .Values.golbal.ingress_domain_name }}/keycloak
+    hostname-admin=https://{{ .Values.global.ingress_domain_name }}/keycloak
     hostname-strict=true
     http-relative-path=keycloak
     http-enabled=true
