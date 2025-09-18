@@ -663,13 +663,10 @@ spec:
     secret:
       name: keycloak-clients # Source Kubernetes secret to be pushed
   template:
-    metadata:
-      annotations: { }
-      labels: { }
     data:
       # If the key source secret key has dashes, then it cannot be accessed directly,
       # and the "index" function should be used.
-      ARGOCD_SESSION_TOKEN: "{{ ARGOCD_SESSION_TOKEN }}"
+      ARGOCD_SESSION_TOKEN: "{{ `{{.ARGOCD_SESSION_TOKEN}}` }}"
     # Also, it's possible to use an existing template from configmap where Secret is fetched, 
     # merged and templated within the referenced configMap data.
   data:
