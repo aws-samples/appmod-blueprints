@@ -44,6 +44,7 @@ locals {
   external_secrets = {
     namespace       = "external-secrets"
     service_account = "external-secrets-sa"
+    namespace_fleet = "argocd"
   }
 
   keycloak = {

@@ -358,7 +358,7 @@ data "aws_iam_policy_document" "ack_controller_cross_account_policy" {
     effect = "Allow"
     actions = ["sts:AssumeRole", "sts:TagSession"]
     resources = [
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-cluster-mgmt"
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-cluster-mgmt-${each.key}"
     ]
   }
 }
@@ -380,69 +380,8 @@ resource "aws_eks_pod_identity_association" "ack_controller" {
 }
 
 ################################################################################
-# Kargo ECR Access
-################################################################################
-
-resource "aws_iam_role" "kargo_controller_role" {
-  name = "${local.hub_cluster.name}-kargo-controller-role"
-  
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          Service = "pods.eks.amazonaws.com"
-        }
-        Action = [
-          "sts:AssumeRole",
-          "sts:TagSession"
-        ]
-      }
-    ]
-  })
-  
-  description = "IAM role for Kargo to access Amazon ECR"
-  tags        = local.tags
-}
-
-resource "aws_iam_role_policy_attachment" "kargo_ecr_policy" {
-  role       = aws_iam_role.kargo_controller_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
-}
-
-resource "aws_eks_pod_identity_association" "kargo_controller" {
-  cluster_name    = local.hub_cluster.name
-  namespace       = local.kargo.namespace
-  service_account = local.kargo.service_account
-  role_arn        = aws_iam_role.kargo_controller_role.arn
-}
-
-################################################################################
 # ACK Workload Roles (Cross-Account Access)
 ################################################################################
-
-# Create ACK workload roles that can be assumed by ACK controllers
-resource "aws_iam_role" "ack_workload_role" {
-  for_each = toset(["iam", "ec2", "eks"])
-  name     = "${local.name}-cluster-mgmt-${each.key}"
-  
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          AWS = [for k, v in local.ack_combinations : aws_iam_role.ack_controller[k].arn if v.service == each.key]
-        }
-        Action = ["sts:AssumeRole", "sts:TagSession"]
-      }
-    ]
-  })
-  
-  description = "Workload role for ACK ${each.key} controller"
-  tags        = local.tags
-}
 
 # Define service-specific managed policies
 locals {
@@ -459,24 +398,67 @@ locals {
       "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
     ]
   }
+
+  # Combined structure for roles and policy attachments
+  ack_workload_resources = {
+    for k, v in local.ack_combinations : k => {
+      combination = v
+      policies = lookup(local.ack_managed_policies, v.service, [])
+      inline_policy = lookup(local.ack_inline_policies, v.service, null)
+    }
+  }
+}
+
+# Create ACK workload roles that can be assumed by ACK controllers
+resource "aws_iam_role" "ack_workload_role" {
+  for_each = local.ack_workload_resources
+  name     = "${local.context_prefix}-cluster-mgmt-${each.key}"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.ack_controller[each.key].arn
+        }
+        Action = ["sts:AssumeRole", "sts:TagSession"]
+      }
+    ]
+  })
+  
+  description = "Workload role for ACK ${each.key} controller"
+  tags        = local.tags
 }
 
 # Attach managed policies to ACK workload roles
 resource "aws_iam_role_policy_attachment" "ack_workload_managed_policies" {
   for_each = {
     for combo in flatten([
-      for service, policies in local.ack_managed_policies : [
-        for policy in policies : {
-          service = service
+      for k, v in local.ack_workload_resources : [
+        for policy in v.policies : {
+          combination_key = k
           policy  = policy
-          key     = "${service}-${replace(policy, "/[^a-zA-Z0-9]/", "-")}"
+          key     = "${k}-${replace(policy, "/[^a-zA-Z0-9]/", "-")}"
         }
       ]
     ]) : combo.key => combo
   }
 
-  role       = aws_iam_role.ack_workload_role[each.value.service].name
+  role       = aws_iam_role.ack_workload_role[each.value.combination_key].name
   policy_arn = each.value.policy
+}
+
+# Attach inline policies to ACK workload roles
+resource "aws_iam_role_policy" "ack_workload_inline_policies" {
+  for_each = {
+    for k, v in local.ack_workload_resources : k => v
+    if v.inline_policy != null
+  }
+
+  name   = "ack-${each.value.combination.service}-workload-policy"
+  role   = aws_iam_role.ack_workload_role[each.key].name
+  policy = jsonencode(each.value.inline_policy)
 }
 
 # Define service-specific inline policies
@@ -582,11 +564,41 @@ locals {
   }
 }
 
-# Attach inline policies to ACK workload roles
-resource "aws_iam_role_policy" "ack_workload_inline_policies" {
-  for_each = toset(["iam", "ec2", "eks"])
+################################################################################
+# Kargo ECR Access
+################################################################################
 
-  name   = "ack-${each.key}-workload-policy"
-  role   = aws_iam_role.ack_workload_role[each.key].name
-  policy = jsonencode(local.ack_inline_policies[each.key])
+resource "aws_iam_role" "kargo_controller_role" {
+  name = "${local.hub_cluster.name}-kargo-controller-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "pods.eks.amazonaws.com"
+        }
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+      }
+    ]
+  })
+  
+  description = "IAM role for Kargo to access Amazon ECR"
+  tags        = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "kargo_ecr_policy" {
+  role       = aws_iam_role.kargo_controller_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+}
+
+resource "aws_eks_pod_identity_association" "kargo_controller" {
+  cluster_name    = local.hub_cluster.name
+  namespace       = local.kargo.namespace
+  service_account = local.kargo.service_account
+  role_arn        = aws_iam_role.kargo_controller_role.arn
 }

@@ -6,44 +6,18 @@ module "managed_service_prometheus" {
   workspace_alias = "${var.resource_prefix}-observability-amp"
 }
 
-locals {
-  name        = "${var.resource_prefix}-observability"
-  description = "Amazon Managed Grafana workspace for ${local.name}"
-}
-
-# Create the secret
-# resource "aws_secretsmanager_secret" "argorollouts_secret" {
-#   name = "${var.resource_prefix}-argo-rollouts"
-#   recovery_window_in_days = 0
-
-#   lifecycle {
-#     ignore_changes = [name]
-#   }
-
-#   tags = local.tags
-# }
-
-# # Create the secret version with key-value pairs
-# resource "aws_secretsmanager_secret_version" "argorollouts_secret_version" {
-#   secret_id = aws_secretsmanager_secret.argorollouts_secret.id
-#   secret_string = jsonencode({
-#     amp-region    = data.aws_region.current.name
-#     amp-workspace = module.managed_service_prometheus.workspace_prometheus_endpoint
-#   })
-# }
-
 module "managed_grafana" {
   source = "terraform-aws-modules/managed-service-grafana/aws"
 
-  name                      = local.name
+  name                      = "${var.resource_prefix}-observability"
   associate_license         = false
-  description               = local.description
+  description               = "Amazon Managed Grafana workspace for ${var.resource_prefix}-observability"
   account_access_type       = "CURRENT_ACCOUNT"
   authentication_providers  = ["SAML"]
   permission_type           = "SERVICE_MANAGED"
   data_sources              = ["CLOUDWATCH", "PROMETHEUS", "XRAY"]
   notification_destinations = ["SNS"]
-  stack_set_name            = local.name
+  stack_set_name            = "${var.resource_prefix}-observability"
 
   configuration = jsonencode({
     unifiedAlerting = {
