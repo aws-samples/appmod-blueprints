@@ -11,37 +11,6 @@
 #   }
 # }
 
-# Generate password key using external data source
-data "external" "password_key" {
-  program = ["bash", "-c", "echo '{\"result\":\"'$(openssl rand -base64 48 | tr -d \"=+/\" | head -c 32 | base64)'\"}'"]
-}
-
-# Store both hash and key in a single file to avoid regenerating on each run
-locals {
-  password_file = "${path.module}/argocd-password-hash.txt"
-
-  # Check if file exists and parse its content
-  existing_data = fileexists(local.password_file) ? jsondecode(file(local.password_file)) : { hash = "", key = "" }
-
-  # Use existing values if available, otherwise generate new ones
-  password_hash = local.existing_data.hash != "" ? local.existing_data.hash : bcrypt(var.ide_password)
-  password_key = local.existing_data.key != "" ? local.existing_data.key : data.external.password_key.result.result
-}
-
-# Create the file with both hash and key
-resource "local_file" "argocd_password_data" {
-  content  = jsonencode({
-    hash = local.password_hash
-    key = local.password_key
-  })
-  filename = local.password_file
-
-  # Only update the file if it doesn't exist or is empty
-  lifecycle {
-    ignore_changes = [content]
-  }
-}
-
 # resource "kubernetes_secret" "git_secrets" {
 #   depends_on = [kubernetes_namespace.argocd]
 #   for_each = {
@@ -131,7 +100,7 @@ module "gitops_bridge_bootstrap" {
     values           = [
       templatefile("${path.module}/manifests/argocd-initial-values.yaml", {
         DOMAIN_NAME = local.ingress_domain_name
-        ADMIN_PASSWORD = local.password_hash
+        ADMIN_PASSWORD = local.user_password_hash
       })
     ]
     timeout          = 600

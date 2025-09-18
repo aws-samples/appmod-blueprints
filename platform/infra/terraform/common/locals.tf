@@ -243,7 +243,7 @@ locals {
         git_username = var.git_username
         working_repo = var.working_repo
         ide_password = var.ide_password
-        ide_password_hash = local.password_hash
+        ide_password_hash = local.user_password_hash
         ide_password_key = local.password_key
         # backstage_image = local.backstage_image
         # backstage_postgres_secret_name = "${var.resource_prefix}-backstage-postgresql-password"
