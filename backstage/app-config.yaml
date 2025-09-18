@@ -52,11 +52,11 @@ integrations:
 
 proxy:
   endpoints:
-    '/gitlab-api':
-      target: 'https://${GIT_HOSTNAME}/api'
+    "/gitlab-api":
+      target: "https://${GIT_HOSTNAME}/api"
       changeOrigin: true
       headers:
-        Private-Token: '${GIT_PASSWORD}'
+        Private-Token: "${GIT_PASSWORD}"
 
 # Reference documentation http://backstage.io/docs/features/techdocs/configuration
 # Note: After experimenting with basic setup, use CI/CD to generate docs
@@ -108,8 +108,9 @@ catalog:
     - type: url
       target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/platform/backstage/templates/catalog-info.yaml
       rules:
-        - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
-    
+        - allow:
+            [Component, System, API, Resource, Location, Template, User, Group]
+
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
       target: ../../examples/entities.yaml
