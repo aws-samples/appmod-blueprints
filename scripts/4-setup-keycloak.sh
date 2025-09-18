@@ -115,34 +115,7 @@ export VIEWER_JSON=$(cat <<EOF
 }
 EOF
 )
-export CMD="unset HISTFILE\n
-cat >/tmp/client.json <<EOF\n$(echo -e "$CLIENT_JSON")\nEOF\n
-cat >/tmp/admin.json <<EOF\n$(echo -e "$ADMIN_JSON")\nEOF\n
-cat >/tmp/editor.json <<EOF\n$(echo -e "$EDITOR_JSON")\nEOF\n
-cat >/tmp/viewer.json <<EOF\n$(echo -e "$VIEWER_JSON")\nEOF\n
-while true; do\n
-    cd /opt/keycloak/bin/\n
-    ./kcadm.sh config credentials --server http://localhost:8080/keycloak --realm master --user admin --password $KEYCLOAK_ADMIN_PASSWORD --config /tmp/kcadm.config\n
-    ./kcadm.sh update realms/master -s sslRequired=NONE --config /tmp/kcadm.config\n
-    ./kcadm.sh update realms/$KEYCLOAK_REALM -s ssoSessionIdleTimeout=7200 --config /tmp/kcadm.config\n
-    ./kcadm.sh create roles -r $KEYCLOAK_REALM -s name=grafana-admin --config /tmp/kcadm.config\n
-    ./kcadm.sh create roles -r $KEYCLOAK_REALM -s name=grafana-editor --config /tmp/kcadm.config\n
-    ./kcadm.sh create roles -r $KEYCLOAK_REALM -s name=grafana-viewer --config /tmp/kcadm.config\n
-    ./kcadm.sh create users -r $KEYCLOAK_REALM -f /tmp/admin.json --config /tmp/kcadm.config\n
-    ./kcadm.sh create users -r $KEYCLOAK_REALM -f /tmp/editor.json --config /tmp/kcadm.config\n
-    ./kcadm.sh create users -r $KEYCLOAK_REALM -f /tmp/viewer.json --config /tmp/kcadm.config\n
-    ./kcadm.sh add-roles --uusername user1 --rolename "grafana-admin" -r $KEYCLOAK_REALM --config /tmp/kcadm.config\n
-    ADMIN_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=monitor-admin --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'\"' -f2 | tr -d '\\\n')\n
-    ./kcadm.sh update users/\$ADMIN_USER_ID -r $KEYCLOAK_REALM -s 'credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_ADMIN_PASSWORD\"}]' --config /tmp/kcadm.config\n
-    EDIT_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=monitor-editor --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'\"' -f2 | tr -d '\\\n')\n
-    ./kcadm.sh update users/\$EDIT_USER_ID -r $KEYCLOAK_REALM -s 'credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_EDITOR_PASSWORD\"}]' --config /tmp/kcadm.config\n
-    VIEW_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=monitor-viewer --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'\"' -f2 | tr -d '\\\n')\n
-    ./kcadm.sh update users/\$VIEW_USER_ID -r $KEYCLOAK_REALM -s 'credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_VIEWER_PASSWORD\"}]' --config /tmp/kcadm.config\n
-    ./kcadm.sh create clients -r $KEYCLOAK_REALM -f /tmp/client.json --config /tmp/kcadm.config\n
-    break\n
-  echo \"Keycloak admin server not available. Waiting for 10 seconds...\"\n
-  sleep 10\n
-done;"
+# CMD construction moved to after password retrieval
   echo "Checking keycloak pod status..."
   export POD_NAME=$(kubectl get pods -n keycloak --no-headers -o custom-columns=":metadata.name" | grep -i keycloak)
   export POD_PHASE=$(kubectl get pod $POD_NAME -n keycloak -o jsonpath='{.status.phase}')
@@ -161,7 +134,52 @@ done;"
     fi
   done
   export KEYCLOAK_ADMIN_PASSWORD=$(kubectl get secret keycloak-config -n keycloak -o jsonpath='{.data.KC_BOOTSTRAP_ADMIN_PASSWORD}' 2>/dev/null | base64 -d)
-  kubectl exec -it $POD_NAME -n keycloak -- /bin/bash -c "$(echo -e $CMD)"
+  
+  # Build the command with the actual password value
+  KEYCLOAK_CMD=$(cat <<EOF
+unset HISTFILE
+cat >/tmp/client.json <<'CLIENTEOF'
+$(echo -e "$CLIENT_JSON")
+CLIENTEOF
+cat >/tmp/admin.json <<'ADMINEOF'
+$(echo -e "$ADMIN_JSON")
+ADMINEOF
+cat >/tmp/editor.json <<'EDITOREOF'
+$(echo -e "$EDITOR_JSON")
+EDITOREOF
+cat >/tmp/viewer.json <<'VIEWEREOF'
+$(echo -e "$VIEWER_JSON")
+VIEWEREOF
+while true; do
+    cd /opt/keycloak/bin/
+    ./kcadm.sh config credentials --server http://localhost:8080/keycloak --realm master --user admin --password "$KEYCLOAK_ADMIN_PASSWORD" --config /tmp/kcadm.config
+    ./kcadm.sh update realms/master -s sslRequired=NONE --config /tmp/kcadm.config
+    ./kcadm.sh update realms/$KEYCLOAK_REALM -s ssoSessionIdleTimeout=7200 --config /tmp/kcadm.config
+    ./kcadm.sh create roles -r $KEYCLOAK_REALM -s name=grafana-admin --config /tmp/kcadm.config
+    ./kcadm.sh create roles -r $KEYCLOAK_REALM -s name=grafana-editor --config /tmp/kcadm.config
+    ./kcadm.sh create roles -r $KEYCLOAK_REALM -s name=grafana-viewer --config /tmp/kcadm.config
+    ./kcadm.sh create users -r $KEYCLOAK_REALM -f /tmp/admin.json --config /tmp/kcadm.config
+    ./kcadm.sh create users -r $KEYCLOAK_REALM -f /tmp/editor.json --config /tmp/kcadm.config
+    ./kcadm.sh create users -r $KEYCLOAK_REALM -f /tmp/viewer.json --config /tmp/kcadm.config
+    ./kcadm.sh add-roles --uusername user1 --rolename "grafana-admin" -r $KEYCLOAK_REALM --config /tmp/kcadm.config
+    # Set password for user1 to match GitLab/ArgoCD password
+    USER1_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=user1 --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'"' -f2 | tr -d '\n')
+    ./kcadm.sh update users/\$USER1_USER_ID -r $KEYCLOAK_REALM -s "credentials=[{\"type\":\"password\",\"value\":\"$IDE_PASSWORD\"}]" --config /tmp/kcadm.config
+    ADMIN_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=monitor-admin --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'"' -f2 | tr -d '\n')
+    ./kcadm.sh update users/\$ADMIN_USER_ID -r $KEYCLOAK_REALM -s "credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_ADMIN_PASSWORD\"}]" --config /tmp/kcadm.config
+    EDIT_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=monitor-editor --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'"' -f2 | tr -d '\n')
+    ./kcadm.sh update users/\$EDIT_USER_ID -r $KEYCLOAK_REALM -s "credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_EDITOR_PASSWORD\"}]" --config /tmp/kcadm.config
+    VIEW_USER_ID=\$(./kcadm.sh get users -r $KEYCLOAK_REALM -q username=monitor-viewer --fields id --config /tmp/kcadm.config 2>/dev/null | cut -d' ' -f5 | cut -d'"' -f2 | tr -d '\n')
+    ./kcadm.sh update users/\$VIEW_USER_ID -r $KEYCLOAK_REALM -s "credentials=[{\"type\":\"password\",\"value\":\"$KEYCLOAK_USER_VIEWER_PASSWORD\"}]" --config /tmp/kcadm.config
+    ./kcadm.sh create clients -r $KEYCLOAK_REALM -f /tmp/client.json --config /tmp/kcadm.config
+    break
+  echo "Keycloak admin server not available. Waiting for 10 seconds..."
+  sleep 10
+done
+EOF
+)
+  
+  kubectl exec -it $POD_NAME -n keycloak -- /bin/bash -c "$KEYCLOAK_CMD"
   CMD_RESULT=$?
   if [ $CMD_RESULT -ne 0 ]; then
     handle_error "ERROR: Failed to configure keycloak."
@@ -180,7 +198,7 @@ function update_workspace_saml_auth() {
     handle_error "ERROR: KEYCLOAK_REALM is not set. Cannot configure SAML."
   fi
   
-  export SAML_URL=http://$DOMAIN_NAME/keycloak/realms/$KEYCLOAK_REALM/protocol/saml/descriptor
+  export SAML_URL=https://$DOMAIN_NAME/keycloak/realms/$KEYCLOAK_REALM/protocol/saml/descriptor
   echo "Using SAML URL: $SAML_URL"
   echo "Workspace ID: $WORKSPACE_ID"
   echo "Keycloak Realm: $KEYCLOAK_REALM"
@@ -296,6 +314,16 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     configure_keycloak
     echo "Keycloak configuration completed successfully!"
     echo "Update SAML Configuration in Grafana"
+    
+    # Set DOMAIN_NAME for SAML configuration - use Keycloak CloudFront domain
+    export DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'keycloak') || contains(Comment, 'keycloak')].DomainName | [0]" --output text)
+    if [ -z "$DOMAIN_NAME" ] || [ "$DOMAIN_NAME" = "None" ] || [ "$DOMAIN_NAME" = "null" ]; then
+        echo "Warning: Could not find Keycloak CloudFront domain, trying ingress domain"
+        # Fallback to ingress domain if Keycloak domain not found
+        export DOMAIN_NAME=$(aws cloudfront list-distributions --query "DistributionList.Items[?Origins.Items[?contains(DomainName, 'ingress')]].DomainName | [0]" --output text)
+    fi
+    echo "Using DOMAIN_NAME for SAML: $DOMAIN_NAME"
+    
     update_workspace_saml_auth
     echo "SAML Configuration Updated in Grafana"
 fi
