@@ -69,9 +69,10 @@ spec:
         repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}/-/blob/main
         catalogInfoPath: "/catalog-info.yaml"
     - id: create-argocd-repo-secret
-      name: Create ArgoCD Repository Secret 2
-      action: kubernetes:apply
+      name: Create ArgoCD Repository Secret
+      action: kube:apply
       input:
+        namespaced: true
         manifest: |
           apiVersion: v1
           kind: Secret
