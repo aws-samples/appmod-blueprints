@@ -644,3 +644,39 @@ spec:
               echo "✓ Keycloak configuration completed successfully!"
               echo "✓ OIDC secrets available in both AWS Secrets Manager and Kubernetes"
               echo "✓ Applications can now use External Secrets to consume from AWS Secrets Manager"
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: keycloak-clients
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  updatePolicy: Replace
+  deletionPolicy: Delete
+  refreshInterval: 30s
+  secretStoreRefs:
+    - name: aws-secrets-manager
+      kind: ClusterSecretStore
+  selector:
+    secret:
+      name: keycloak-clients # Source Kubernetes secret to be pushed
+  template:
+    metadata:
+      annotations: { }
+      labels: { }
+    data:
+      # If the key source secret key has dashes, then it cannot be accessed directly,
+      # and the "index" function should be used.
+      ARGOCD_SESSION_TOKEN: "{{ .ARGOCD_SESSION_TOKEN }}"
+    # Also, it's possible to use an existing template from configmap where Secret is fetched, 
+    # merged and templated within the referenced configMap data.
+  data:
+    - conversionStrategy: None # Also supports the ReverseUnicode strategy
+      match:
+        # The secretKey is used within PushSecret (it should match key under spec.template.data)
+        secretKey: ARGOCD_SESSION_TOKEN
+        remoteRef:
+          remoteKey: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.aws.cluster_name}}/keycloak-clients # The destination secret object name (where the secret is going to be pushed)
+          property: ARGOCD_SESSION_TOKEN # The key within the destination secret object.
