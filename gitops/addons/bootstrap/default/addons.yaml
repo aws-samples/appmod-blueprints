@@ -648,6 +648,53 @@ kubevela:
   valuesObject:
     systemDefinitionNamespace: vela-system
   ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+        - /webhooks/1/clientConfig/caBundle
+        - /webhooks/2/clientConfig/caBundle
+        - /webhooks/3/clientConfig/caBundle
+        - /webhooks/4/clientConfig/caBundle
+        - /webhooks/0/failurePolicy
+        - /webhooks/1/failurePolicy
+        - /webhooks/2/failurePolicy
+        - /webhooks/3/failurePolicy
+        - /webhooks/4/failurePolicy
+        - /webhooks/0/timeoutSeconds
+        - /webhooks/1/timeoutSeconds
+        - /webhooks/2/timeoutSeconds
+        - /webhooks/3/timeoutSeconds
+        - /webhooks/4/timeoutSeconds
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+        - /webhooks/1/clientConfig/caBundle
+        - /webhooks/2/clientConfig/caBundle
+        - /webhooks/3/clientConfig/caBundle
+        - /webhooks/4/clientConfig/caBundle
+        - /webhooks/0/failurePolicy
+        - /webhooks/1/failurePolicy
+        - /webhooks/2/failurePolicy
+        - /webhooks/3/failurePolicy
+        - /webhooks/4/failurePolicy
+        - /webhooks/0/timeoutSeconds
+        - /webhooks/1/timeoutSeconds
+        - /webhooks/2/timeoutSeconds
+        - /webhooks/3/timeoutSeconds
+        - /webhooks/4/timeoutSeconds
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: apiregistration.k8s.io
+      kind: APIService
+      jsonPointers:
+        - /spec/caBundle
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
     - group: "*"
       kind: "*"
       managedFieldsManagers:
@@ -656,19 +703,6 @@ kubevela:
         - webhook-cert-manager
         - kube-controller-manager
         - apiserver
-    - group: "*"
-      kind: "*"
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-        - /metadata/resourceVersion
-        - /metadata/uid
-        - /metadata/creationTimestamp
-    - group: admissionregistration.k8s.io
-      kind: "*"
-    - group: apiregistration.k8s.io
-      kind: "*"
 
 backstage:
   enabled: false
