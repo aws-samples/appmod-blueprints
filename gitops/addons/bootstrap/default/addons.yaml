@@ -269,8 +269,8 @@ external-secrets:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
   namespace: external-secrets
   chartName: external-secrets
-  defaultVersion: '0.10.3'
-  chartRepository: 'https://charts.external-secrets.io'
+  defaultVersion: "0.19.2"
+  chartRepository: "https://charts.external-secrets.io"
   selector:
     matchExpressions:
       - key: enable_external_secrets
