@@ -490,11 +490,12 @@ export function createPublishGitlabAction(options: {
             const responseBody = e.cause?.response?.body;
 
             // Check for duplicate repository patterns
+            const responseBodyStr = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody || '');
             if (errorMessage.includes('has already been taken') ||
               errorMessage.includes('already exists') ||
-              (responseBody && (
-                responseBody.includes('has already been taken') ||
-                responseBody.includes('already exists')
+              (responseBodyStr && (
+                responseBodyStr.includes('has already been taken') ||
+                responseBodyStr.includes('already exists')
               ))) {
               throw new InputError(
                 `Repository '${repo}' already exists in namespace '${owner}'. Please choose a different repository name or enable the 'skipExisting' option.`
@@ -547,7 +548,7 @@ export function createPublishGitlabAction(options: {
         }
 
         const remoteUrl = (http_url_to_repo as string).replace(/\.git$/, '');
-        const repoContentsUrl = `${remoteUrl}/-/blob/${defaultBranch}`;
+        const repoContentsUrl = `${remoteUrl}/-/raw/${defaultBranch}`;
 
         const gitAuthorInfo = {
           name: gitAuthorName
@@ -679,7 +680,7 @@ export function createPublishGitlabAction(options: {
         } = existingProject;
         const remoteUrl = (http_url_to_repo as string).replace(/\.git$/, '');
         ctx.output('remoteUrl', remoteUrl);
-        ctx.output('repoContentsUrl', `${remoteUrl}/-/blob/${default_branch}`);
+        ctx.output('repoContentsUrl', `${remoteUrl}/-/raw/${default_branch}`);
         ctx.output('projectId', projectId);
         ctx.output('created', false);
       }
