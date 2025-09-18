@@ -654,6 +654,25 @@ kubevela:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/*/clientConfig/caBundle
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/*/clientConfig/caBundle
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: apiregistration.k8s.io
+      kind: APIService
+      jsonPointers:
+        - /status
+        - /spec/caBundle
+        - /metadata/generation
+        - /metadata/managedFields
     - group: core.oam.dev
       kind: "*"
       jsonPointers:
