@@ -114,10 +114,8 @@ resource "kubernetes_service" "gitlab_nlb" {
 data "aws_lb" "gitlab_nlb" {
   depends_on = [kubernetes_service.gitlab_nlb]
 
-  # TODO: Update to use resource_prefix after recreating GitLab ELB with new naming convention
-  # TEMPORARY FIX: Use existing ELB name (created before resource_prefix was added)
-  # To revert: change back to "${var.resource_prefix}-gitlab" after ELB recreation
-  name = "gitlab"
+  # Use the name directly as specified in the kubernetes_service annotations
+  name = "${var.resource_prefix}-gitlab"
 }
 
 ################################################################################
