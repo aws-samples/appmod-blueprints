@@ -654,37 +654,21 @@ kubevela:
         - vela-core
         - cert-manager
         - webhook-cert-manager
+        - kube-controller-manager
+        - apiserver
+    - group: "*"
+      kind: "*"
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+        - /metadata/resourceVersion
+        - /metadata/uid
+        - /metadata/creationTimestamp
     - group: admissionregistration.k8s.io
       kind: "*"
-      jsonPointers:
-        - /webhooks
-        - /metadata/generation
-        - /metadata/managedFields
     - group: apiregistration.k8s.io
-      kind: APIService
-      jsonPointers:
-        - /status
-        - /spec
-        - /metadata/generation
-        - /metadata/managedFields
-    - group: apiextensions.k8s.io
-      kind: CustomResourceDefinition
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-    - group: core.oam.dev
       kind: "*"
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-    - group: standard.oam.dev
-      kind: "*"
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
 
 backstage:
   enabled: false
