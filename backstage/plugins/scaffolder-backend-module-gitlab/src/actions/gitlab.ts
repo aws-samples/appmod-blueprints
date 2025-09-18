@@ -548,7 +548,7 @@ export function createPublishGitlabAction(options: {
         }
 
         const remoteUrl = (http_url_to_repo as string).replace(/\.git$/, '');
-        const repoContentsUrl = `${remoteUrl}/-/raw/${defaultBranch}`;
+        const repoContentsUrl = `${remoteUrl}/-/blob/${defaultBranch}`;
 
         const gitAuthorInfo = {
           name: gitAuthorName
@@ -680,7 +680,7 @@ export function createPublishGitlabAction(options: {
         } = existingProject;
         const remoteUrl = (http_url_to_repo as string).replace(/\.git$/, '');
         ctx.output('remoteUrl', remoteUrl);
-        ctx.output('repoContentsUrl', `${remoteUrl}/-/raw/${default_branch}`);
+        ctx.output('repoContentsUrl', `${remoteUrl}/-/blob/${default_branch}`);
         ctx.output('projectId', projectId);
         ctx.output('created', false);
       }
