@@ -97,14 +97,11 @@ spec:
         repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git
         path: "manifests"
     - id: register
-      name: Register
-      action: http:backstage:request
+      name: Register in catalog
+      action: catalog:register
       input:
-        method: POST
-        path: '/api/catalog/locations'
-        body:
-          type: 'url'
-          target: '${{ steps["publish"].output.remoteUrl }}/-/blob/main/catalog-info.yaml'
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: "/catalog-info.yaml"
     - id: template-output
       name: Template Output
       action: debug:log
@@ -114,6 +111,13 @@ spec:
     links:
       - title: Repository
         url: ${{ steps.publish.output.remoteUrl }}
-      - title: Open in catalog
-        icon: catalog
-        entityRef: ${{ steps.register.output.entityRef }}
+      - title: View catalog-info.yaml
+        url: ${{ steps.publish.output.remoteUrl }}/-/blob/main/catalog-info.yaml
+    text:
+      - title: Manual Catalog Registration
+        content: |
+          To register this component in Backstage catalog, go to:
+          /catalog-import
+          
+          And add this URL:
+          ${{ steps.publish.output.remoteUrl }}/-/blob/main/catalog-info.yaml
