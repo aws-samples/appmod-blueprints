@@ -11,9 +11,12 @@ spec:
         name: ${{values.bucket_name}}
         region: ${{values.region}}
   policies:
-    - name: take-over
-      type: take-over
+    - name: apply-once
+      type: apply-once
       properties:
+        enable: true
         rules:
         - selector:
             resourceTypes: ["Bucket"]
+          strategy:
+            affect: onUpdate
