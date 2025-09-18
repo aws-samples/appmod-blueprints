@@ -647,6 +647,25 @@ kubevela:
         values: ['true']
   valuesObject:
     systemDefinitionNamespace: vela-system
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: core.oam.dev
+      kind: "*"
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: standard.oam.dev
+      kind: "*"
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
 
 backstage:
   enabled: false
