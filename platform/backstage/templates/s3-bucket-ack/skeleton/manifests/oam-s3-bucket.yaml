@@ -11,12 +11,7 @@ spec:
         name: ${{values.bucket_name}}
         region: ${{values.region}}
   policies:
-    - name: apply-once
-      type: apply-once
+    - name: garbage-collect
+      type: garbage-collect
       properties:
-        enable: true
-        rules:
-        - selector:
-            resourceTypes: ["Bucket"]
-          strategy:
-            affect: onUpdate
+        keepLegacyResource: true
