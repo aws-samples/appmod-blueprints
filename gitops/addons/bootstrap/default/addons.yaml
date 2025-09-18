@@ -656,18 +656,21 @@ kubevela:
         - /metadata/managedFields
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
+      name: vela-core-admission
       jsonPointers:
-        - /webhooks/*/clientConfig/caBundle
+        - /webhooks
         - /metadata/generation
         - /metadata/managedFields
     - group: admissionregistration.k8s.io
       kind: ValidatingWebhookConfiguration
+      name: vela-core-admission
       jsonPointers:
-        - /webhooks/*/clientConfig/caBundle
+        - /webhooks
         - /metadata/generation
         - /metadata/managedFields
     - group: apiregistration.k8s.io
       kind: APIService
+      name: v1alpha1.cluster.core.oam.dev
       jsonPointers:
         - /status
         - /spec/caBundle
