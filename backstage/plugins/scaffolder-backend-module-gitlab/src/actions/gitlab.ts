@@ -468,14 +468,68 @@ export function createPublishGitlabAction(options: {
 
       if (!skipExisting || (skipExisting && !existingProject)) {
         ctx.logger.info(`Creating repo ${repo} in namespace ${owner}.`);
-        const { id: projectId, http_url_to_repo } =
-          await client.Projects.create({
+        let projectId: number;
+        let http_url_to_repo: string;
+
+        try {
+          const result = await client.Projects.create({
             namespaceId: targetNamespaceId,
             name: repo,
             visibility: repoVisibility,
             ...(topics.length ? { topics } : {}),
             ...(Object.keys(settings).length ? { ...settings } : {}),
           });
+          projectId = result.id;
+          http_url_to_repo = result.http_url_to_repo;
+        } catch (e: any) {
+          ctx.logger.error(`GitLab repository creation failed: ${e.message}`, { error: e });
+
+          // Check if this is a duplicate repository error
+          if (e.cause?.response?.status === 400) {
+            const errorMessage = e.description || e.message || '';
+            const responseBody = e.cause?.response?.body;
+
+            // Check for duplicate repository patterns
+            if (errorMessage.includes('has already been taken') ||
+              errorMessage.includes('already exists') ||
+              (responseBody && (
+                responseBody.includes('has already been taken') ||
+                responseBody.includes('already exists')
+              ))) {
+              throw new InputError(
+                `Repository '${repo}' already exists in namespace '${owner}'. Please choose a different repository name or enable the 'skipExisting' option.`
+              );
+            }
+
+            // Check for invalid repository name
+            if (errorMessage.includes('can contain only') ||
+              errorMessage.includes('invalid') ||
+              errorMessage.includes('not allowed')) {
+              throw new InputError(
+                `Invalid repository name '${repo}'. Repository names must contain only letters, digits, '_', '-' and '.'. They cannot start with '-', end in '.git' or end in '.atom'.`
+              );
+            }
+          }
+
+          // Check for permission errors
+          if (e.cause?.response?.status === 403) {
+            throw new InputError(
+              `Insufficient permissions to create repository '${repo}' in namespace '${owner}'. Please check your GitLab token permissions.`
+            );
+          }
+
+          // Check for namespace not found
+          if (e.cause?.response?.status === 404) {
+            throw new InputError(
+              `Namespace '${owner}' not found or not accessible. Please verify the namespace exists and you have access to it.`
+            );
+          }
+
+          // For other errors, provide a more helpful message
+          throw new InputError(
+            `Failed to create GitLab repository '${repo}' in namespace '${owner}': ${e.description || e.message}. ${printGitlabError(e)}`
+          );
+        }
 
         // When setUserAsOwner is true the input token is expected to come from an unprivileged user GitLab
         // OAuth flow. In this case GitLab works in a way that allows the unprivileged user to
@@ -634,5 +688,30 @@ export function createPublishGitlabAction(options: {
 }
 
 function printGitlabError(error: any): string {
-  return JSON.stringify({ code: error.code, message: error.description });
+  // Extract more detailed error information
+  const errorInfo: any = {
+    code: error.code,
+    message: error.description || error.message,
+  };
+
+  // Add HTTP status if available
+  if (error.cause?.response?.status) {
+    errorInfo.status = error.cause.response.status;
+  }
+
+  // Add response body if available for more context
+  if (error.cause?.response?.body) {
+    try {
+      const body = typeof error.cause.response.body === 'string'
+        ? JSON.parse(error.cause.response.body)
+        : error.cause.response.body;
+      if (body.message) {
+        errorInfo.details = body.message;
+      }
+    } catch {
+      // Ignore JSON parsing errors
+    }
+  }
+
+  return JSON.stringify(errorInfo);
 }

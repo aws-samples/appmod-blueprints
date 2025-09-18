@@ -8,6 +8,7 @@ backend.add(import('@backstage/plugin-proxy-backend'));
 backend.add(import('@backstage/plugin-scaffolder-backend'));
 backend.add(import('@backstage/plugin-scaffolder-backend-module-github'));
 backend.add(import('@internal/plugin-scaffolder-backend-module-gitlab'));
+backend.add(import('@devangelista/backstage-scaffolder-kubernetes'));
 backend.add(import('@backstage/plugin-techdocs-backend'));
 
 // roadiehq plugins
