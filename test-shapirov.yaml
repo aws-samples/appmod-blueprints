@@ -1,0 +1,9 @@
+apiVersion: s3.services.k8s.aws/v1alpha1
+kind: Bucket
+metadata:
+  name: test-m-manual-bucket
+  namespace: default
+  annotations:
+    services.k8s.aws/region: us-we:st-2
+spec:
+  name: test-shapirov123-manual-bucket
