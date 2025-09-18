@@ -262,7 +262,7 @@ data:
         "https://${DOMAIN_NAME}/argocd/auth/callback",
         "https://${DOMAIN_NAME}/argocd/pkce/verify"
       ],
-      adminUrl: "https://${DOMAIN_NAME}/argocd"
+      "adminUrl": "https://${DOMAIN_NAME}/argocd",
       "webOrigins": [
         "https://${DOMAIN_NAME}/argocd"
       ]
