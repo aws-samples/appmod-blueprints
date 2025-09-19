@@ -14,7 +14,10 @@ spec:
         	kind:       "Bucket"
         	metadata: {
             name: "\(parameter.name)"
-            annotations: "services.k8s.aws/region": "\(parameter.region)"
+            annotations: {
+              "services.k8s.aws/region": "\(parameter.region)"
+              "argocd.argoproj.io/sync-options": "Ignore=true"
+            }
           }
         	spec: name: "\(parameter.name)"
         }
