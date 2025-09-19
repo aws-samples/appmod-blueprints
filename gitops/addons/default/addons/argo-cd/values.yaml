@@ -62,14 +62,27 @@ configs:
     controller.resource.health.persist: "false"
     ui.bannerpermanent: "false"
     controller.auto-sync: "true"
+
+
+    application.orphanedResourceMonitoring: "true"
+    application.resourceTrackingMethod: "annotation"
+
+    #TODO: maybe we need this ?
+    #accounts.backstage: apiKey
+    #accounts.backstage.enabled: "true"
+
     # Global resource exclusions for KubeVela-generated S3 buckets
     resource.exclusions: |
-      - apiGroups:
-        - s3.services.k8s.aws
-        kinds:
-        - Bucket
-        clusters:
-        - "*"
+      - kinds:
+          - ProviderConfigUsage
+        apiGroups:
+          - "*"    
+    #   - apiGroups:
+    #     - s3.services.k8s.aws
+    #     kinds:
+    #     - Bucket
+    #     clusters:
+    #     - "*"
     resource.customizations: |
       services.k8s.aws/AdoptedResource:
         health.lua: |
@@ -128,6 +141,120 @@ configs:
           hs.status = "Progressing"
           hs.message = "Waiting for Status conditions"
           return hs
+
+      "awsblueprints.io/*":
+          health.lua: |
+            health_status = {
+              status = "Progressing",
+              message = "Provisioning ..."
+            }
+
+            if obj.status == nil or obj.status.conditions == nil then
+              return health_status
+            end
+
+            for i, condition in ipairs(obj.status.conditions) do
+              if condition.type == "Ready" then
+                if condition.status == "True" then
+                  health_status.status = "Healthy"
+                  health_status.message = "Resource is up-to-date."
+                  return health_status
+                end
+              end
+
+              if condition.type == "LastAsyncOperation" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+
+              if condition.type == "Synced" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+            end
+            return health_status
+      "*.aws.upbound.io/*":
+          health.lua: |
+            health_status = {
+              status = "Progressing",
+              message = "Provisioning ..."
+            }
+
+            if obj.status == nil or obj.status.conditions == nil then
+              return health_status
+            end
+
+            for i, condition in ipairs(obj.status.conditions) do
+              if condition.type == "Ready" then
+                if condition.status == "True" then
+                  health_status.status = "Healthy"
+                  health_status.message = "Resource is up-to-date."
+                  return health_status
+                end
+              end
+
+              if condition.type == "LastAsyncOperation" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+
+              if condition.type == "Synced" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+            end
+
+            return health_status
+      "*.aws.crossplane.io/*":
+          health.lua: |
+            health_status = {
+              status = "Progressing",
+              message = "Provisioning ..."
+            }
+
+            if obj.status == nil or obj.status.conditions == nil then
+              return health_status
+            end
+
+            for i, condition in ipairs(obj.status.conditions) do
+              if condition.type == "Ready" then
+                if condition.status == "True" then
+                  health_status.status = "Healthy"
+                  health_status.message = "Resource is up-to-date."
+                  return health_status
+                end
+              end
+
+              if condition.type == "LastAsyncOperation" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+
+              if condition.type == "Synced" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+            end
+            return health_status
+
 
   repositories:
     # Required when using helm repository with oci formal like karpenter and aws-gateway-api-controller
