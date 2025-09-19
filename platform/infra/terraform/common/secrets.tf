@@ -86,6 +86,8 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
       postgres_password = local.keycloak_postgres_password
     }
     user_password = var.ide_password
+    user_password_hash = local.user_password_hash
+    user_password_key = local.password_key
     git_token = local.gitlab_token
   })
 }
