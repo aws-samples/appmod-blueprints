@@ -187,6 +187,7 @@ locals {
         aws_region       = v.region
         aws_account_id   = data.aws_caller_identity.current.account_id
         aws_vpc_id       = local.cluster_vpc_ids[v.name]
+        aws_grafana_url  = module.managed_grafana.workspace_endpoint
         resource_prefix  = var.resource_prefix
       },
       {

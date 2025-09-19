@@ -732,6 +732,7 @@ keycloak:
     aws:
       cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       region: '{{.metadata.annotations.aws_region}}'
+      grafana_url: '{{.metadata.annotations.aws_grafana_url}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
