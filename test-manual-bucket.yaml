@@ -1,9 +1,0 @@
-apiVersion: s3.services.k8s.aws/v1alpha1
-kind: Bucket
-metadata:
-  name: test-seb-manual-bucket
-  namespace: default
-  annotations:
-    services.k8s.aws/region: us-west-2
-spec:
-  name: test-seb-manual-bucket
