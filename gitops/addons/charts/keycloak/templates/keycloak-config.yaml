@@ -584,7 +584,8 @@ spec:
               create_client "Backstage" "/var/config/backstage-client-payload.json"
               create_client "Kargo" "/var/config/kargo-client-payload.json"
               create_client "Argo CD" "/var/config/argocd-client-payload.json"
-              create_client "Account Console" "/var/config/account-console-client-payload.json
+              create_client "Account Console" "/var/config/account-console-client-payload.json"
+              create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
 
               echo "adding client scopes to clients"
               add_client_scope "argo-workflows" "Argo Workflows"
