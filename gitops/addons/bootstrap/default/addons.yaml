@@ -799,9 +799,6 @@ kargo:
         values: ['true']
   valuesObject:
     api:
-      global:
-        resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
-        aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       host: '{{.metadata.annotations.ingress_domain_name}}'
       argocd:
         urls:
@@ -840,14 +837,14 @@ kargo:
         data:
           - secretKey: KARGO_ADMIN_PASSWORD_HASH
             remoteRef:
-              key: "{{ `{{ .Values.global.resourcePrefix | default 'peeks' }}-{{ .Values.global.aws_cluster_name}}/secrets` }}"
+              key: '{{.metadata.annotations.resource_prefix}}-{{.metadata.annotations.aws_cluster_name}}/secrets'
               property: user_password_hash
               conversionStrategy: Default
               decodingStrategy: None
               metadataPolicy: None
           - secretKey: KARGO_ADMIN_PASSWORD_KEY
             remoteRef:
-              key: "{{ `{{ .Values.global.resourcePrefix | default 'peeks' }}-{{ .Values.global.aws_cluster_name}}/secrets` }}"
+              key: '{{.metadata.annotations.resource_prefix}}-{{.metadata.annotations.aws_cluster_name}}/secrets'
               property: user_password_key
               conversionStrategy: Default
               decodingStrategy: None
