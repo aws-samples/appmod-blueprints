@@ -43,7 +43,7 @@ clusters:
       enable_gitlab: true
       enable_keycloak: true
       enable_argo_workflows: true
-      enable_kargo: false
+      enable_kargo: true
       enable_backstage: false
   spoke1:
     name: hub-dev

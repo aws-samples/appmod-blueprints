@@ -805,10 +805,50 @@ kargo:
           - https://{{.metadata.annotations.ingress_domain_name}}/argocd
       oidc:
         issuerURL: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
-      adminAccount:
-        # $IDE_PASSWORD
-        passwordHash: '{{.metadata.annotations.ide_password_hash}}'
-        tokenSigningKey: '{{.metadata.annotations.ide_password_key}}'
+      secret:
+        name: kargo-admin-credentials
+      # adminAccount:
+      #   # $IDE_PASSWORD
+      #   passwordHash: '{{.metadata.annotations.ide_password_hash}}'
+      #   tokenSigningKey: '{{.metadata.annotations.ide_password_key}}'
+      extraObjects:
+      - apiVersion: external-secrets.io/v1
+        kind: ExternalSecret # For Kargo Admin Credentials
+        metadata:
+          name: kargo-admin-credentials
+          namespace: kargo
+          annotations:
+            argocd.argoproj.io/sync-wave: "-1"
+        spec:
+          refreshInterval: "30s"
+          secretStoreRef:
+            name: aws-secrets-manager
+            kind: ClusterSecretStore
+          target:
+            name: kargo-admin-credentials
+            creationPolicy: Owner
+            deletionPolicy: Retain   
+            template:
+              engineVersion: v2
+              mergePolicy: Replace
+              data:
+                ADMIN_ACCOUNT_PASSWORD_HASH: "{{ `{{` `{{.KARGO_ADMIN_PASSWORD_HASH}}` `}}` }}"
+                ADMIN_ACCOUNT_TOKEN_SIGNING_KEY: "{{ `{{` `{{.KARGO_ADMIN_PASSWORD_HASH}}` `}}` }}"
+          data:
+            - secretKey: KARGO_ADMIN_PASSWORD_HASH
+              remoteRef:
+                key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.aws.cluster_name}}/secrets
+                property: user_password_hash
+                conversionStrategy: Default
+                decodingStrategy: None
+                metadataPolicy: None
+            - secretKey: KARGO_ADMIN_PASSWORD_HASH
+              remoteRef:
+                key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.aws.cluster_name}}/secrets
+                property: user_password_key
+                conversionStrategy: Default
+                decodingStrategy: None
+                metadataPolicy: None
 
 kubevela:
   enabled: false
