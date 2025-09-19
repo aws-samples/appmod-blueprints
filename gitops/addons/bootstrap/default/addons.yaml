@@ -791,7 +791,7 @@ kargo:
   namespace: kargo
   chartName: kargo
   chartRepository: ghcr.io/akuity/kargo-charts
-  defaultVersion: '1.5.3'
+  defaultVersion: "1.7.5"
   selector:
     matchExpressions:
       - key: enable_kargo
