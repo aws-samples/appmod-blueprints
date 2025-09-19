@@ -485,10 +485,9 @@ spec:
               # Create role function
               create_role() {
                 local role_name=$1
-                local payload=$2
                 
                 echo "creating role ${role_name}"
-                echo $2 | jq -r  > role-${role_name}-payload.json
+                echo "{\"name\":\"${role_name}\"}" > role-${role_name}-payload.json
                 keycloak_post "/admin/realms/${REALM_NAME}/roles" "role-${role_name}-payload.json" "Role ${role_name}"
               }
 
@@ -569,9 +568,9 @@ spec:
                 "/var/config/group-mapper-payload.json" "Protocol mapper"
 
               echo "creating roles for grafana"
-              create_role "grafana-admin" "{'name':'grafana-admin'}"
-              create_role "grafana-editor" "{'name':'grafana-editor'}"
-              create_role "grafana-viewer" "{'name':'grafana-viewer'}"
+              create_role "grafana-admin"
+              create_role "grafana-editor"
+              create_role "grafana-viewer"
 
               echo "creating users"
               create_user "1" "${USER1_PASSWORD}" "/var/config/user-user1.json"
@@ -639,7 +638,7 @@ metadata:
   name: keycloak-clients
   namespace: keycloak
   annotations:
-    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-wave: "11" # Sync after config job
 spec:
   updatePolicy: Replace
   deletionPolicy: Delete
