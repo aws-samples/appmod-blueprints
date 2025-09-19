@@ -33,7 +33,7 @@ spec:
           title: AWS Region
           type: string
           description: AWS Region for the EKS cluster
-          default: "us-east-1"
+          default: "us-west-2"
         k8sVersion:
           title: Kubernetes Version
           type: string
@@ -43,12 +43,12 @@ spec:
           title: Account ID
           type: string
           description: AWS Account ID
-          default: "586794472760"
+          default: "665742499430"
         managementAccountId:
           title: Management Account ID
           type: string
           description: AWS Management Account ID
-          default: "586794472760"
+          default: "665742499430"
         tenant:
           title: Tenant Name
           type: string
@@ -56,7 +56,7 @@ spec:
           default: "tenant1"
         repoHostUrl:
           type: string
-          default: d2jl8inhwf8wdv.cloudfront.net
+          default: d15rvat21gcp87.cloudfront.net
           ui:widget: hidden
         repoUsername:
           type: string
@@ -68,7 +68,7 @@ spec:
           ui:widget: hidden
         ingressDomainName:
           type: string
-          default: d7uikzlbvbvih.cloudfront.net
+          default: dcu3gsco485x8.cloudfront.net
           ui:widget: hidden
     - title: Git Repository URLs
       properties:
@@ -76,22 +76,22 @@ spec:
           title: Addons Repository URL
           type: string
           description: Git repository URL for addons
-          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
+          default: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
         fleetRepoUrl:
           title: Fleet Repository URL
           type: string
           description: Git repository URL for fleet
-          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
+          default: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
         platformRepoUrl:
           title: Platform Repository URL
           type: string
           description: Git repository URL for platform
-          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
+          default: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
         workloadRepoUrl:
           title: Workload Repository URL
           type: string
           description: Git repository URL for workload
-          default: "https://d2jl8inhwf8wdv.cloudfront.net/user1/platform-on-eks-workshop.git"
+          default: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
     - title: Cluster Addons Configuration
       properties:
         enableIngressClassAlb:

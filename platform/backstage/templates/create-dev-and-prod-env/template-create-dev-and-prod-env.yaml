@@ -41,12 +41,12 @@ spec:
           title: Enter namespace within the EKS cluster to deploy this
           type: string
         aws_region:
-          default: us-east-1
+          default: us-west-2
           title: Region
           type: string
         repoHostUrl:
           type: string
-          default: d2jl8inhwf8wdv.cloudfront.net
+          default: d15rvat21gcp87.cloudfront.net
           ui:widget: hidden
         repoUsername:
           type: string
