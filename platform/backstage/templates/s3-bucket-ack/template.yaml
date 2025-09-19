@@ -148,9 +148,14 @@ spec:
               syncOptions:
               - CreateNamespace=false
               - FailOnSharedResource=true
-            ignoreDifferences:
-            - group: s3.services.k8s.aws
-              kind: Bucket
+            resource:
+              exclusions:
+              - apiVersion: s3.services.k8s.aws/v1alpha1
+                kind: Bucket
+            orphanedResources:
+              ignore:
+              - apiVersion: s3.services.k8s.aws/v1alpha1
+                kind: Bucket
     - id: register
       name: Register in catalog
       action: catalog:register
