@@ -1,9 +1,9 @@
 externalSecret:
   enabled: true
-  clusterName: peeks-workshop-spoke-dev
+  clusterName: peeks-spoke-dev
   secretStoreRefKind: ClusterSecretStore
   secretStoreRefName: aws-secrets-manager
-  secretManagerSecretName: peeks-workshop-hub-cluster/peeks-workshop-spoke-dev
+  secretManagerSecretName: peeks-hub-cluster/peeks-spoke-dev
   server: remote
   
   annotations:
