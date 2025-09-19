@@ -837,14 +837,14 @@ kargo:
           data:
             - secretKey: KARGO_ADMIN_PASSWORD_HASH
               remoteRef:
-                key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.aws.cluster_name}}/secrets
+                key: "{{ `{{ .Values.global.resourcePrefix | default 'peeks' }}-{{ .Values.aws.cluster_name}}/secrets` }}"
                 property: user_password_hash
                 conversionStrategy: Default
                 decodingStrategy: None
                 metadataPolicy: None
             - secretKey: KARGO_ADMIN_PASSWORD_HASH
               remoteRef:
-                key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.aws.cluster_name}}/secrets
+                key: "{{ `{{ .Values.global.resourcePrefix | default 'peeks' }}-{{ .Values.aws.cluster_name}}/secrets` }}"
                 property: user_password_key
                 conversionStrategy: Default
                 decodingStrategy: None
