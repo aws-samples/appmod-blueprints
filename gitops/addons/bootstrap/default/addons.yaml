@@ -36,6 +36,8 @@ argocd:
   releaseName: argocd
   defaultVersion: "7.9.1"
   chartRepository: "https://argoproj.github.io/argo-helm"
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "0" # Default sync-wave for ArgoCD
   selector:
     matchExpressions:
       - key: enable_argocd
@@ -164,6 +166,8 @@ metrics-server:
   chartName: metrics-server
   defaultVersion: "3.12.1"
   chartRepository: "https://kubernetes-sigs.github.io/metrics-server"
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "0" # Default sync-wave for metrics-server
   selector:
     matchExpressions:
       - key: enable_metrics_server
