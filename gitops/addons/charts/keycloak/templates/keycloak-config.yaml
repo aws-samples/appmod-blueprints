@@ -653,6 +653,7 @@ spec:
   template:
     data:
       ARGO_WORKFLOWS_CLIENT_SECRET: "{{ `{{.ARGO_WORKFLOWS_CLIENT_SECRET}}` }}"
+      ARGO_WORKFLOWS_CLIENT_ID: "{{ `{{.ARGO_WORKFLOWS_CLIENT_ID}}` }}"
       BACKSTAGE_CLIENT_SECRET: "{{ `{{.BACKSTAGE_CLIENT_SECRET}}` }}"
       ARGOCD_SESSION_TOKEN: "{{ `{{.ARGOCD_SESSION_TOKEN}}` }}"
   data:
@@ -662,6 +663,12 @@ spec:
         remoteRef:
           remoteKey: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.aws.cluster_name}}/keycloak-clients
           property: ARGO_WORKFLOWS_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: ARGO_WORKFLOWS_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.aws.cluster_name}}/keycloak-clients
+          property: ARGO_WORKFLOWS_CLIENT_ID
     - conversionStrategy: None
       match:
         secretKey: BACKSTAGE_CLIENT_SECRET

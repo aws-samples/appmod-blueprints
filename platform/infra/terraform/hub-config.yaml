@@ -42,7 +42,7 @@ clusters:
       enable_ingress_nginx: false
       enable_gitlab: true
       enable_keycloak: true
-      enable_argo_workflows: false
+      enable_argo_workflows: true
       enable_kargo: false
       enable_backstage: false
   spoke1:

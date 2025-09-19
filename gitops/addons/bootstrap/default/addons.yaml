@@ -767,6 +767,8 @@ argo-workflows:
         values: ['true']
   valuesObject:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
+    resource_prefix: '{{.metadata.annotations.resource_prefix}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
