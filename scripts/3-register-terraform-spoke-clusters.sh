@@ -127,7 +127,6 @@ externalSecret:
     enable_ack_iam: "true"
     enable_ack_s3: "true"
     enable_kubevela: "true"
-    sebtest: "true"
 EOF
 
 print_status "SUCCESS" "Fleet member configuration created successfully!"
