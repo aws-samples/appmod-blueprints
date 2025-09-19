@@ -832,8 +832,8 @@ kargo:
               engineVersion: v2
               mergePolicy: Replace
               data:
-                ADMIN_ACCOUNT_PASSWORD_HASH: "{{`{{ "{{" }} .KARGO_ADMIN_PASSWORD_HASH {{ "}}" }}`}}"
-                ADMIN_ACCOUNT_TOKEN_SIGNING_KEY: "{{`{{ "{{" }} .KARGO_ADMIN_PASSWORD_KEY {{ "}}" }}`}}"
+                ADMIN_ACCOUNT_PASSWORD_HASH: '{{`{{ .KARGO_ADMIN_PASSWORD_HASH }}`}}'
+                ADMIN_ACCOUNT_TOKEN_SIGNING_KEY: '{{`{{ .KARGO_ADMIN_PASSWORD_KEY }}`}}'
           data:
             - secretKey: KARGO_ADMIN_PASSWORD_HASH
               remoteRef:
