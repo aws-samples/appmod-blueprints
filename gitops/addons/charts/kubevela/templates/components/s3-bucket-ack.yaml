@@ -16,7 +16,7 @@ spec:
             name: "\(parameter.name)"
             annotations: {
               "services.k8s.aws/region": "\(parameter.region)"
-              "argocd.argoproj.io/sync-options": "Ignore=true"
+              "argocd.argoproj.io/sync-options": "Ignore=true,SkipDryRunOnMissingResource=true"
             }
           }
         	spec: name: "\(parameter.name)"
