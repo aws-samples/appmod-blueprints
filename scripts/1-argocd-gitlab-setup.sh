@@ -543,9 +543,135 @@ ensure_applicationsets() {
 fix_git_revision_conflicts
 ensure_applicationsets
 
-# Define critical applications to monitor (can be customized)
-CRITICAL_APPS="${CRITICAL_ARGOCD_APPS:-bootstrap cluster-addons argocd-${RESOURCE_PREFIX}-hub-cluster ingress-nginx-${RESOURCE_PREFIX}-hub-cluster}"
+# Define critical applications to monitor in sync-wave order
+CRITICAL_APPS="${CRITICAL_ARGOCD_APPS:-bootstrap cluster-addons}"
 print_info "Monitoring applications: ${CRITICAL_APPS:-all applications}"
+
+# Define sync-wave ordered applications for proper sequencing
+SYNC_WAVE_APPS=(
+    # Wave -5
+    "multi-acct"
+    # Wave -3  
+    "kro"
+    # Wave -2
+    "kro-eks-rgs"
+    # Wave -1
+    "ack-ec2" "ack-eks" "ack-iam" "external-secrets"
+    # Wave 0
+    "argocd" "ack-efs" "ingress-class-alb" "metrics-server"
+    # Wave 2
+    "cert-manager"
+    # Wave 3
+    "argo-rollouts" "external-dns" "ingress-nginx" "kubevela" "kyverno"
+    # Wave 4
+    "aws-efs-csi-driver" "gitlab" "kyverno-policies" "kyverno-policy-reporter"
+    # Wave 5 - KEYCLOAK (Critical sync point)
+    "keycloak"
+    # Wave 6
+    "argo-workflows" "kargo"
+    # Wave 7
+    "backstage"
+)
+
+# Function to ensure Keycloak syncs properly (critical for OIDC)
+ensure_keycloak_sync() {
+    print_info "Ensuring Keycloak application syncs properly..."
+    
+    # Find Keycloak application (it may have cluster suffix)
+    local keycloak_app=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E '^keycloak' | head -1)
+    
+    if [ -z "$keycloak_app" ]; then
+        print_warning "Keycloak application not found, checking if it should be enabled..."
+        return 0
+    fi
+    
+    print_info "Found Keycloak application: $keycloak_app"
+    
+    # Check current status
+    local keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    local keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    
+    print_info "Keycloak status: Health=$keycloak_health, Sync=$keycloak_sync"
+    
+    # If not healthy or synced, force sync
+    if [ "$keycloak_health" != "Healthy" ] || [ "$keycloak_sync" != "Synced" ]; then
+        print_info "Keycloak needs syncing, forcing sync operation..."
+        
+        # Clear any stuck operations first
+        kubectl patch application "$keycloak_app" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
+        sleep 5
+        
+        # Force sync with ArgoCD CLI
+        print_info "Syncing Keycloak with ArgoCD CLI..."
+        argocd app sync "$keycloak_app" --timeout 300 --retry-limit 3 2>/dev/null || {
+            print_warning "ArgoCD CLI sync failed, using kubectl patch"
+            kubectl patch application "$keycloak_app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true,"syncOptions":["CreateNamespace=true"]}}}' 2>/dev/null || true
+        }
+        
+        # Wait for Keycloak to become healthy (up to 5 minutes)
+        local wait_count=0
+        while [ $wait_count -lt 30 ]; do
+            keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+            keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+            
+            if [ "$keycloak_health" = "Healthy" ] && [ "$keycloak_sync" = "Synced" ]; then
+                print_success "Keycloak is now healthy and synced"
+                return 0
+            fi
+            
+            print_info "Waiting for Keycloak... Health=$keycloak_health, Sync=$keycloak_sync (attempt $((wait_count + 1))/30)"
+            sleep 10
+            wait_count=$((wait_count + 1))
+        done
+        
+        print_warning "Keycloak did not become healthy within timeout, but continuing..."
+    else
+        print_success "Keycloak is already healthy and synced"
+    fi
+}
+
+# Function to sync applications in sync-wave order
+sync_apps_by_wave() {
+    print_info "Syncing applications in sync-wave order..."
+    
+    # Sync applications in wave order, waiting for each wave to be mostly healthy
+    local current_wave=""
+    local wave_apps=()
+    
+    for app_pattern in "${SYNC_WAVE_APPS[@]}"; do
+        # Find actual application names matching the pattern
+        local matching_apps=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^${app_pattern}(-.*)?$" || echo "")
+        
+        if [ -n "$matching_apps" ]; then
+            echo "$matching_apps" | while read -r app; do
+                [ -z "$app" ] && continue
+                
+                print_info "Checking application: $app"
+                local app_health=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+                local app_sync=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+                
+                if [ "$app_health" != "Healthy" ] || [ "$app_sync" != "Synced" ]; then
+                    print_info "  Syncing $app (Health: $app_health, Sync: $app_sync)"
+                    
+                    # Clear stuck operations
+                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
+                    sleep 2
+                    
+                    # Sync with ArgoCD CLI first
+                    argocd app sync "$app" --timeout 120 --retry-limit 2 2>/dev/null || {
+                        print_info "    CLI sync failed, using kubectl patch"
+                        kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}' 2>/dev/null || true
+                    }
+                else
+                    print_info "  $app is already healthy"
+                fi
+            done
+        fi
+    done
+    
+    # Special handling for Keycloak
+    ensure_keycloak_sync
+}
 
 # Function to sync and wait for applications with 80% healthy threshold
 sync_and_wait_apps() {
@@ -669,12 +795,85 @@ sync_and_wait_apps() {
     return 1
 }
 
-# Run health check
+# Run sync-wave based syncing first
+sync_apps_by_wave
+
+# Run health check for critical apps
 sync_and_wait_apps "$CRITICAL_APPS"
 
-# Show final status
-print_info "Final applications status:"
-kubectl get applications -n argocd -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status" --no-headers
+# Show final status with sync-wave order verification
+print_info "Final applications status (in sync-wave order):"
+echo "SYNC-WAVE | APPLICATION | SYNC | HEALTH"
+echo "----------|-------------|------|--------"
+
+# Show applications in sync-wave order
+declare -A wave_labels=(
+    [-5]="Wave -5"
+    [-3]="Wave -3" 
+    [-2]="Wave -2"
+    [-1]="Wave -1"
+    [0]="Wave 0"
+    [2]="Wave 2"
+    [3]="Wave 3"
+    [4]="Wave 4"
+    [5]="Wave 5 (Keycloak)"
+    [6]="Wave 6"
+    [7]="Wave 7"
+)
+
+for wave in -5 -3 -2 -1 0 2 3 4 5 6 7; do
+    case $wave in
+        -5) apps="multi-acct" ;;
+        -3) apps="kro" ;;
+        -2) apps="kro-eks-rgs" ;;
+        -1) apps="ack-ec2 ack-eks ack-iam external-secrets" ;;
+        0) apps="argocd ack-efs ingress-class-alb metrics-server" ;;
+        2) apps="cert-manager" ;;
+        3) apps="argo-rollouts external-dns ingress-nginx kubevela kyverno" ;;
+        4) apps="aws-efs-csi-driver gitlab kyverno-policies kyverno-policy-reporter" ;;
+        5) apps="keycloak" ;;
+        6) apps="argo-workflows kargo" ;;
+        7) apps="backstage" ;;
+    esac
+    
+    local wave_shown=false
+    for app_pattern in $apps; do
+        local matching_apps=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^${app_pattern}(-.*)?$" 2>/dev/null || echo "")
+        
+        if [ -n "$matching_apps" ]; then
+            echo "$matching_apps" | while read -r app; do
+                [ -z "$app" ] && continue
+                
+                local app_sync=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+                local app_health=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+                
+                if [ "$wave_shown" = false ]; then
+                    printf "%-9s | %-11s | %-4s | %s\n" "${wave_labels[$wave]}" "$app" "$app_sync" "$app_health"
+                    wave_shown=true
+                else
+                    printf "%-9s | %-11s | %-4s | %s\n" "" "$app" "$app_sync" "$app_health"
+                fi
+            done
+        fi
+    done
+done
+
+# Verify Keycloak specifically
+print_step "Verifying Keycloak deployment status"
+local keycloak_app=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E '^keycloak' | head -1)
+if [ -n "$keycloak_app" ]; then
+    local keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    local keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    
+    if [ "$keycloak_health" = "Healthy" ] && [ "$keycloak_sync" = "Synced" ]; then
+        print_success "✅ Keycloak is healthy and synced - OIDC authentication ready"
+    else
+        print_warning "⚠️  Keycloak status: Health=$keycloak_health, Sync=$keycloak_sync"
+        print_info "Applications depending on Keycloak (argo-workflows, backstage) may not function properly until Keycloak is healthy"
+    fi
+else
+    print_info "Keycloak application not found (may not be enabled for this cluster)"
+fi
 
 print_step "Waiting for Backstage image build to complete"
 print_info "Checking if Backstage build is still running..."
