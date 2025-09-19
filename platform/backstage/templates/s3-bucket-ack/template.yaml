@@ -148,6 +148,9 @@ spec:
               syncOptions:
               - CreateNamespace=false
               - FailOnSharedResource=true
+            ignoreDifferences:
+            - group: s3.services.k8s.aws
+              kind: Bucket
     - id: register
       name: Register in catalog
       action: catalog:register
