@@ -46,6 +46,8 @@ kro:
   enabled: true
 kro-eks-rgs:
   enabled: true
+kubevela:
+  enabled: true
 multi-acct:
   enabled: true
 

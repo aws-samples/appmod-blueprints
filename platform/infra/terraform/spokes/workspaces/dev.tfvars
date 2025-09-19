@@ -3,9 +3,11 @@ kubernetes_version = "1.31"
 ingress_name       = "peeks-spoke-dev-ingress"
 
 # Enable basic addons for testing auto mode functionality
-addons = {
-  enable_aws_load_balancer_controller = true
-  enable_metrics_server               = true
-  enable_external_secrets             = true
-  enable_aws_cloudwatch_metrics       = true
-}
+# Addons are not used in spoke, but activated via gitops: in /home/ec2-user/environment/platform-on-eks-workshop/gitops/fleet/members
+# addons = {
+#   enable_aws_load_balancer_controller = true
+#   enable_metrics_server               = true
+#   enable_external_secrets             = true
+#   enable_aws_cloudwatch_metrics       = true
+#   enable_ack_s3                       = true
+# }

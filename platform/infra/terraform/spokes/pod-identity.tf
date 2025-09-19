@@ -169,3 +169,52 @@ module "cni_metrics_helper_pod_identity" {
   }
   tags = local.tags
 }
+
+################################################################################
+# ACK S3 Controller EKS Access
+################################################################################
+module "ack_s3_pod_identity" {
+  count   = local.aws_addons.enable_ack_s3 ? 1 : 0
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.11.0"
+
+  name = "ack-s3-controller"
+
+  additional_policy_arns = {
+    AmazonS3FullAccess = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+  }
+
+  policy_statements = [
+    {
+      sid    = "S3AllPermission"
+      effect = "Allow"
+      actions = [
+        "s3:*",
+        "s3-object-lambda:*"
+      ]
+      resources = ["*"]
+    },
+    {
+      sid    = "S3ReplicationPassRole"
+      effect = "Allow"
+      actions = ["iam:PassRole"]
+      resources = ["*"]
+      condition = {
+        StringEquals = {
+          "iam:PassedToService" = "s3.amazonaws.com"
+        }
+      }
+    }
+  ]
+
+  # Pod Identity Associations
+  associations = {
+    addon = {
+      cluster_name    = module.eks.cluster_name
+      namespace       = "ack-system"
+      service_account = "ack-s3-controller"
+    }
+  }
+
+  tags = local.tags
+}

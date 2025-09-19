@@ -11,7 +11,7 @@ backend:
   baseUrl: http://localhost:7007/backstage
   # The listener can also be expressed as a single <host>:<port> string. In this case we bind to
   # all interfaces, the most permissive setting. The right value depends on your specific deployment.
-  listen: ':7007'
+  listen: ":7007"
 
   # config options: https://node-postgres.com/apis/client
   database:
@@ -31,6 +31,19 @@ backend:
 auth:
   providers:
     guest: {}
+
+argocd:
+  instances:
+    - name: in-cluster
+      url: ${ARGOCD_URL}
+      token: ${ARGOCD_TOKEN}
+
+integrations:
+  gitlab:
+    - token: ${GIT_PASSWORD}
+      apiBaseUrl: https://${GIT_HOSTNAME}/api/v4
+      baseUrl: https://${GIT_HOSTNAME}
+      host: ${GIT_HOSTNAME}
 
 catalog:
   # Overrides the default list locations from app-config.yaml as these contain example data.
