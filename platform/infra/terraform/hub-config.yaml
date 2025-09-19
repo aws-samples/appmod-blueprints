@@ -38,6 +38,14 @@ clusters:
       enable_mutli_acct: false
       enable_kubevela: false
       enable_ack_s3: false
+      enable_aws_efs_csi_driver: false
+      enable_aws_for_fluentbit: false
+      enable_cni_metrics_helper: false
+      enable_cw_prometheus: false
+      enable_external_dns: false
+      enable_kube_state_metrics: false
+      enable_opentelemetry_operator: false
+      enable_prometheus_node_exporter: false
   spoke1:
     name: hub-dev
     region: us-west-2
