@@ -110,11 +110,6 @@ spec:
             namespaceResourceWhitelist:
             - group: '*'
               kind: '*'
-            orphanedResources:
-              ignore:
-              - group: s3.services.k8s.aws
-                kind: Bucket
-                name: "*"
     - id: create-argocd-app
       name: Create ArgoCD App with Pruning Disabled
       action: kube:apply
@@ -153,6 +148,9 @@ spec:
               syncOptions:
               - CreateNamespace=false
               - FailOnSharedResource=true
+            ignoreDifferences:
+            - group: s3.services.k8s.aws
+              kind: Bucket
     - id: register
       name: Register in catalog
       action: catalog:register
