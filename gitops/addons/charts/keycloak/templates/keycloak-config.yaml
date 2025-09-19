@@ -522,13 +522,13 @@ spec:
               }
               
               # Get Keycloak token for initial Admin user
-              DOMAIN_NAME={{ .Values.global.ingress_domain_name }}
-              GRAFANAURL={{ .Values.aws.grafana_url }}
-              KEYCLOAK_URL=http://keycloak.keycloak.svc.cluster.local:8080/keycloak
-              REALM_NAME=platform
-              ADMIN_PASSWORD=$(cat /var/secrets/KC_BOOTSTRAP_ADMIN_PASSWORD)
-              USER1_PASSWORD=$(cat /var/secrets/USER_PASSWORD)
-              ARGOCD_PASSWORD=$USER1_PASSWORD
+              export DOMAIN_NAME={{ .Values.global.ingress_domain_name }}
+              export GRAFANAURL={{ .Values.aws.grafana_url }}
+              export KEYCLOAK_URL=http://keycloak.keycloak.svc.cluster.local:8080/keycloak
+              export REALM_NAME=platform
+              export ADMIN_PASSWORD=$(cat /var/secrets/KC_BOOTSTRAP_ADMIN_PASSWORD)
+              export USER1_PASSWORD=$(cat /var/secrets/USER_PASSWORD)
+              export ARGOCD_PASSWORD=$USER1_PASSWORD
               HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -X POST -H "Content-Type: application/x-www-form-urlencoded" \
                 --data-urlencode "username=admin" \
                 --data-urlencode "password=${ADMIN_PASSWORD}" \
@@ -540,7 +540,7 @@ spec:
                 cat /tmp/response.txt
                 exit 1
               fi
-              KEYCLOAK_TOKEN=$(cat /tmp/response.txt | jq -e -r '.access_token')
+              export KEYCLOAK_TOKEN=$(cat /tmp/response.txt | jq -e -r '.access_token')
               
               HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -H "Authorization: bearer ${KEYCLOAK_TOKEN}" "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}")
               if [ "$HTTP_STATUS" -ne 200 ]; then
@@ -569,9 +569,9 @@ spec:
                 "/var/config/group-mapper-payload.json" "Protocol mapper"
 
               echo "creating roles for grafana"
-              create_role "grafana-admin" "'{"name":"grafana-admin"}'"
-              create_role "grafana-editor" "'{"name":"grafana-editor"}'"
-              create_role "grafana-viewer" "'{"name":"grafana-viewer"}'"
+              create_role "grafana-admin" "{'name':'grafana-admin'}"
+              create_role "grafana-editor" "{'name':'grafana-editor'}"
+              create_role "grafana-viewer" "{'name':'grafana-viewer'}"
 
               echo "creating users"
               create_user "1" "${USER1_PASSWORD}" "/var/config/user-user1.json"
