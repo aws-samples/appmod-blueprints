@@ -62,6 +62,7 @@ spec:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.bucket_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
         gitTimeout: 120
+        useCustomGit: true
     - id: register
       name: Register in catalog
       action: catalog:register
