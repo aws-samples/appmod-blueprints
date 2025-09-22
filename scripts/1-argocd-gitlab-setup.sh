@@ -18,6 +18,9 @@
 #   ./1-argocd-gitlab-setup.sh
 #
 # PREREQUISITES:
+
+# Source shared utilities
+source "$(dirname "$0")/argocd-utils.sh"
 #   - The management cluster must be created (run 0-initial-setup.sh first)
 #   - Environment variables must be set:
 #     - AWS_REGION: AWS region where resources are deployed
@@ -330,6 +333,28 @@ EOF
 
 echo "$SECRET_OUTPUT"
 
+print_step "Creating shared repository credential template for all GitLab repositories"
+
+# Create a repository credential template that applies to all repositories under the GitLab domain
+SHARED_CREDS_OUTPUT=$(envsubst << EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+   name: git-repo-creds-template
+   namespace: argocd
+   labels:
+      argocd.argoproj.io/secret-type: repo-creds
+stringData:
+   type: git
+   url: ${GITLAB_URL}
+   username: $GIT_USERNAME
+   password: $GITLAB_TOKEN
+EOF
+)
+
+echo "$SHARED_CREDS_OUTPUT"
+print_success "Shared repository credentials template created for all GitLab repositories"
+
 # Check if restart is needed
 RESTART_NEEDED=false
 if echo "$SECRET_OUTPUT" | grep -q "created"; then
@@ -492,10 +517,13 @@ fix_git_revision_conflicts() {
     if [ -n "$apps_with_errors" ]; then
         print_warning "Found applications with git revision conflicts: $apps_with_errors"
         echo "$apps_with_errors" | while read -r app; do
-            print_info "Fixing revision conflict for $app"
-            # Hard refresh to latest revision
-            kubectl patch application "$app" -n argocd --type merge -p '{"spec":{"sources":[{"targetRevision":"HEAD"},{"targetRevision":"HEAD"}]}}' 2>/dev/null || true
-            kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}' 2>/dev/null || true
+            print_info "Fixing revision conflict for $app using ArgoCD CLI"
+            # Terminate operations and hard refresh
+            argocd app terminate-op "$app" --grpc-web 2>/dev/null || argocd app terminate-op "$app" 2>/dev/null || true
+            sleep 2
+            argocd app refresh "$app" --grpc-web --hard 2>/dev/null || argocd app refresh "$app" --hard 2>/dev/null || true
+            sleep 2
+            argocd app sync "$app" --grpc-web --timeout 60 2>/dev/null || argocd app sync "$app" --timeout 60 2>/dev/null || true
             sleep 3
         done
         sleep 10
@@ -682,31 +710,16 @@ sync_and_wait_apps() {
     while [ $attempt -le $max_attempts ]; do
         print_info "Health check attempt $attempt/$max_attempts"
         
-        # Enhanced stuck operation handling
+        # Enhanced stuck operation handling using shared utilities
         print_info "Checking for stuck operations and revision conflicts..."
         
-        # Terminate stuck operations (running > 3 minutes)
-        local stuck_apps=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.operationState.phase}{" "}{.status.operationState.startedAt}{"\n"}{end}' 2>/dev/null | \
-            awk -v now=$(date +%s) '$2=="Running" && (now - mktime(gensub(/[-T:Z]/, " ", "g", $3))) > 180 {print $1}')
-        
-        if [ -n "$stuck_apps" ]; then
-            echo "$stuck_apps" | while read -r app; do
-                print_warning "Terminating stuck sync for $app (running > 180s)"
-                kubectl patch application "$app" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
-            done
-            sleep 5
+        # Handle stuck operations and revision conflicts using shared functions
+        if handle_stuck_operations 600; then  # 10 minutes for cluster-addons with many sync waves
+            print_info "Handled stuck operations"
         fi
         
-        # Handle revision conflicts and comparison errors
-        local error_apps=$(kubectl get applications -n argocd -o json | jq -r '.items[] | select(.status.conditions[]? | select(.type == "ComparisonError")) | .metadata.name' 2>/dev/null || echo "")
-        
-        if [ -n "$error_apps" ]; then
-            echo "$error_apps" | while read -r app; do
-                print_warning "Fixing revision conflict for $app"
-                # Force refresh to resolve revision conflicts
-                kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
-                sleep 2
-            done
+        if handle_revision_conflicts; then
+            print_info "Handled revision conflicts"
         fi
         
         # Check for missing ApplicationSets and recreate them
@@ -773,9 +786,11 @@ sync_and_wait_apps() {
                 local app_error=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.conditions[?(@.type=="ComparisonError")].message}' 2>/dev/null || echo "")
                 
                 if [[ "$app_error" == *"cannot reference a different revision"* ]]; then
-                    print_info "    Fixing revision conflict for $app before sync"
-                    kubectl patch application "$app" -n argocd --type merge -p '{"spec":{"sources":[{"targetRevision":"HEAD"},{"targetRevision":"HEAD"}]}}' 2>/dev/null || true
-                    sleep 5
+                    print_info "    Fixing revision conflict for $app before sync using ArgoCD CLI"
+                    argocd app terminate-op "$app" --grpc-web 2>/dev/null || argocd app terminate-op "$app" 2>/dev/null || true
+                    sleep 2
+                    argocd app refresh "$app" --grpc-web --hard 2>/dev/null || argocd app refresh "$app" --hard 2>/dev/null || true
+                    sleep 3
                 fi
                 
                 # Try ArgoCD CLI sync with longer timeout

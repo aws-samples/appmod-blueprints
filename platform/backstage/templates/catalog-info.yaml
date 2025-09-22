@@ -27,7 +27,6 @@ spec:
     - ./stepfunctions-bedrock-terraform/template-stepfunctions-bedrock-terraform.yaml
     - ./apigw-sqs-terraform/template-apigw-sqs-terraform.yaml
     - ./eventbridge-to-lambda-terraform/template-eventbridge-to-lambda-terraform.yaml
-  hostname: d2jl8inhwf8wdv.cloudfront.net
 ---
 apiVersion: backstage.io/v1alpha1
 kind: System
@@ -36,5 +35,7 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  hostname: d2jl8inhwf8wdv.cloudfront.net
-  gituser: user1
+  hostname: '{{ values.gitlabDomain }}'
+  gituser: '{{ values.gitUsername }}'
+  aws_region: '{{ values.awsRegion }}'
+  aws_account_id: "{{ values.awsAccountId }}"

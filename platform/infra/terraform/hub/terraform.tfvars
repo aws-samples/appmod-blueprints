@@ -58,4 +58,5 @@ addons = {
   enable_mutli_acct                   = true
   enable_kubevela                     = true
   enable_ack_s3                       = true
+  enable_ack_dynamodb                 = true
 }

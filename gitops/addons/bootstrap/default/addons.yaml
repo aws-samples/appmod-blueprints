@@ -100,7 +100,7 @@ ack-eks:
       name: '{{default "ack-eks-controller" (index .metadata.annotations "ack_eks_service_account")}}'
 
 ack-s3:
-  enabled: false
+  enabled: true
   enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
@@ -120,6 +120,28 @@ ack-s3:
       region: '{{.metadata.annotations.aws_region}}'
     serviceAccount:
       name: '{{default "ack-s3-controller" (index .metadata.annotations "ack_s3_service_account")}}'
+
+ack-dynamodb:
+  enabled: true
+  enableACK: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
+  namespace: ack-system
+  chartName: dynamodb-chart
+  defaultVersion: "1.2.19"
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  releaseName: dynamodb-chart
+  selector:
+    matchExpressions:
+      - key: enable_ack_dynamodb
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-dynamodb-controller" (index .metadata.annotations "ack_dynamodb_service_account")}}'
 
 ack-ec2:
   enabled: false

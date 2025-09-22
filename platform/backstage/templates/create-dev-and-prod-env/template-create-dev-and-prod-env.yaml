@@ -41,22 +41,27 @@ spec:
           title: Enter namespace within the EKS cluster to deploy this
           type: string
         aws_region:
-          default: us-east-1
+          default: "${{ steps['fetchSystem'].output.entity.spec.aws_region }}"
           title: Region
           type: string
         repoHostUrl:
           type: string
-          default: d2jl8inhwf8wdv.cloudfront.net
+          default: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
           ui:widget: hidden
         repoUsername:
           type: string
-          default: user1
+          default: "${{ steps['fetchSystem'].output.entity.spec.gituser }}"
           ui:widget: hidden
         repoName:
           type: string
           default: platform-on-eks-workshop
           ui:widget: hidden
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - action: fetch:template
       id: fetch-base
       input:
