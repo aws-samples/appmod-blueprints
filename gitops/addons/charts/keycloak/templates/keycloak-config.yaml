@@ -392,6 +392,7 @@ metadata:
     # argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   completions: 1
+  backoffLimit: 5
   ttlSecondsAfterFinished: 600
   template:
     metadata:
@@ -573,6 +574,9 @@ spec:
               create_role "grafana-admin"
               create_role "grafana-editor"
               create_role "grafana-viewer"
+
+              echo "sleeping for 30s before creating users"
+              sleep 30
 
               echo "creating users"
               create_user "1" "${USER1_PASSWORD}" "/var/config/user-user1.json"
