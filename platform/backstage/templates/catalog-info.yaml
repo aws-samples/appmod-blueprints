@@ -38,3 +38,5 @@ spec:
   owner: guest
   hostname: d15rvat21gcp87.cloudfront.net
   gituser: user1
+  aws_region: us-west-2
+  aws_account_id: "665742499430"
