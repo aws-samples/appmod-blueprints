@@ -3,69 +3,50 @@
 # Exit on error
 set -e
 
+# Source all environment files in .bashrc.d
+if [ -d /home/ec2-user/.bashrc.d ]; then
+    for file in /home/ec2-user/.bashrc.d/*.sh; do
+        if [ -f "$file" ]; then
+            source "$file"
+        fi
+    done
+fi
+
 # Source colors for output formatting
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
 
-print_header "Restoring Backstage Template Defaults"
+print_header "Restoring Backstage Template Configuration"
 
-# Default commit/branch to restore from
-DEFAULT_RESTORE_REF="github/riv25"
-RESTORE_REF="${1:-$DEFAULT_RESTORE_REF}"
+# Define catalog-info.yaml path
+CATALOG_INFO_PATH="/home/ec2-user/environment/platform-on-eks-workshop/platform/backstage/templates/catalog-info.yaml"
 
-7e61f6be6f097c6d863e8b0ad8cfb2893459b6f7
-
-# Define the template files that get modified by update_template_defaults.sh
-TEMPLATE_FILES=(
-    "platform/backstage/templates/catalog-info.yaml"
-    "platform/backstage/templates/eks-cluster-template/template.yaml"
-    "platform/backstage/templates/create-dev-and-prod-env/template-create-dev-and-prod-env.yaml"
-    "platform/backstage/templates/app-deploy/template.yaml"
-    "platform/backstage/templates/app-deploy-without-repo/template.yaml"
-    "platform/backstage/templates/s3-bucket/template.yaml"
-    "platform/backstage/templates/s3-bucket-ack/template.yaml"
-    "platform/backstage/templates/rds-cluster/template.yaml"
-)
-
-print_info "Restoring template files from: $RESTORE_REF"
-
-# Check if the reference exists
-if ! git rev-parse --verify "$RESTORE_REF" >/dev/null 2>&1; then
-    print_error "Reference '$RESTORE_REF' not found. Please ensure the remote/branch exists."
-    print_info "Usage: $0 [git-ref]"
-    print_info "Example: $0 github/riv25"
-    print_info "Example: $0 origin/main"
+if [ ! -f "$CATALOG_INFO_PATH" ]; then
+    print_error "catalog-info.yaml not found at $CATALOG_INFO_PATH"
     exit 1
 fi
 
-# Restore each template file
-restored_count=0
-for file in "${TEMPLATE_FILES[@]}"; do
-    if [ -f "$file" ]; then
-        print_step "Restoring $file"
-        if git checkout "$RESTORE_REF" -- "$file" 2>/dev/null; then
-            print_success "✓ Restored $file"
-            ((restored_count++))
-        else
-            print_warning "⚠ Could not restore $file (may not exist in $RESTORE_REF)"
-        fi
-    else
-        print_warning "⚠ File not found: $file"
-    fi
-done
+print_step "Restoring template placeholders in catalog-info.yaml"
 
-if [ $restored_count -gt 0 ]; then
-    print_success "Successfully restored $restored_count template files from $RESTORE_REF"
-    
-    # Show git status
-    print_info "Git status after restoration:"
-    git status --porcelain | grep -E "^\s*M\s+" | while read -r line; do
-        echo "  Modified: ${line#*M }"
-    done
-    
-    print_info "To commit these changes, run:"
-    echo "  git add ."
-    echo "  git commit -m \"Restore template files to original state from $RESTORE_REF\""
-else
-    print_warning "No files were restored"
-fi
+# Restore template placeholders in the system-info entity
+yq -i '
+  (select(.metadata.name == "system-info").spec.hostname) = "{{ values.gitlabDomain }}" |
+  (select(.metadata.name == "system-info").spec.gituser) = "{{ values.gitUsername }}" |
+  (select(.metadata.name == "system-info").spec.aws_region) = "{{ values.awsRegion }}" |
+  (select(.metadata.name == "system-info").spec.aws_account_id) = "{{ values.awsAccountId }}"
+' "$CATALOG_INFO_PATH"
+
+print_success "Restored template placeholders in catalog-info.yaml"
+
+# Stage the modified file
+print_step "Staging catalog-info.yaml"
+git add "$CATALOG_INFO_PATH"
+print_success "Staged catalog-info.yaml"
+
+print_success "Backstage template configuration restored to template defaults!"
+
+print_info "Templates now use template placeholders:"
+echo "  ✓ Hostname: {{ values.gitlabDomain }}"
+echo "  ✓ Git User: {{ values.gitUsername }}"
+echo "  ✓ AWS Region: {{ values.awsRegion }}"
+echo "  ✓ AWS Account ID: {{ values.awsAccountId }}"
