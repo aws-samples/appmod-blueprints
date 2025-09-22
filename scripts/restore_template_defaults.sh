@@ -13,8 +13,11 @@ print_header "Restoring Backstage Template Defaults"
 DEFAULT_RESTORE_REF="github/riv25"
 RESTORE_REF="${1:-$DEFAULT_RESTORE_REF}"
 
+7e61f6be6f097c6d863e8b0ad8cfb2893459b6f7
+
 # Define the template files that get modified by update_template_defaults.sh
 TEMPLATE_FILES=(
+    "platform/backstage/templates/catalog-info.yaml"
     "platform/backstage/templates/eks-cluster-template/template.yaml"
     "platform/backstage/templates/create-dev-and-prod-env/template-create-dev-and-prod-env.yaml"
     "platform/backstage/templates/app-deploy/template.yaml"
