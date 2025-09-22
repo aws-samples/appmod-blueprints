@@ -1,3 +1,15 @@
+---
+title: "Platform Engineering on EKS - Application Modernization Blueprints"
+persona: ["platform-adopter", "infrastructure-engineer", "developer"]
+deployment-scenario: ["platform-only", "full-workshop"]
+difficulty: "intermediate"
+estimated-time: "30 minutes"
+prerequisites: ["AWS Account", "kubectl", "Basic Kubernetes knowledge"]
+related-pages: ["GETTING-STARTED.md", "ARCHITECTURE.md", "DEPLOYMENT-GUIDE.md"]
+repository: "appmod-blueprints"
+last-updated: "2025-01-19"
+---
+
 # Platform Engineering on EKS - Application Modernization Blueprints
 
 ## What is this?

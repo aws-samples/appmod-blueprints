@@ -1,3 +1,15 @@
+---
+title: "Getting Started with Application Modernization Blueprints"
+persona: ["platform-adopter", "developer", "infrastructure-engineer"]
+deployment-scenario: ["platform-only", "full-workshop"]
+difficulty: "beginner"
+estimated-time: "30 minutes"
+prerequisites: ["EKS Cluster", "kubectl access", "Basic GitOps knowledge"]
+related-pages: ["README.md", "DEPLOYMENT-GUIDE.md", "ARCHITECTURE.md"]
+repository: "appmod-blueprints"
+last-updated: "2025-01-19"
+---
+
 # Getting Started with Application Modernization Blueprints
 
 ## What are Application Modernization Blueprints?

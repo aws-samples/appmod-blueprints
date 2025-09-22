@@ -1,3 +1,15 @@
+---
+title: "Deployment Guide - Application Modernization Blueprints"
+persona: ["platform-adopter", "infrastructure-engineer"]
+deployment-scenario: ["platform-only", "full-workshop", "manual"]
+difficulty: "intermediate"
+estimated-time: "60 minutes"
+prerequisites: ["EKS Cluster", "kubectl", "ArgoCD CLI", "Git access"]
+related-pages: ["GETTING-STARTED.md", "ARCHITECTURE.md", "TROUBLESHOOTING.md"]
+repository: "appmod-blueprints"
+last-updated: "2025-01-19"
+---
+
 # Deployment Guide - Application Modernization Blueprints
 
 ## Overview

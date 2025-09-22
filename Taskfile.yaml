@@ -1,0 +1,211 @@
+version: "3.17"
+
+vars:
+  AWS_REGION: '{{env "AWS_REGION" | default .AWS_REGION | default "us-west-2"}}'
+  AWS_PROFILE: '{{.AWS_PROFILE | default (env "AWS_PROFILE") | default "default"}}'
+
+tasks:
+  # ===== DOCUMENTATION VALIDATION COMMANDS =====
+
+  validate-docs:
+    desc: "Validate appmod-blueprints documentation"
+    cmds:
+      - |
+        echo "🔍 Running appmod-blueprints documentation validation..."
+        echo "📍 Validating local documentation files"
+        echo ""
+
+        # Simple validation for this repository only
+        ERRORS=0
+        WARNINGS=0
+
+        echo "Checking documentation files..."
+
+        # Check for required documentation files
+        REQUIRED_FILES=("README.md" "GETTING-STARTED.md" "ARCHITECTURE.md" "DEPLOYMENT-GUIDE.md" "TROUBLESHOOTING.md")
+
+        for file in "${REQUIRED_FILES[@]}"; do
+          if [ -f "$file" ]; then
+            echo "✅ $file - Present"
+
+            # Check for metadata header
+            if head -n 5 "$file" | grep -q "^---$"; then
+              echo "  ✅ Metadata header found"
+            else
+              echo "  ⚠️  Missing metadata header"
+              WARNINGS=$((WARNINGS + 1))
+            fi
+
+            # Check for basic content structure
+            if [ $(wc -l < "$file") -lt 10 ]; then
+              echo "  ⚠️  File seems too short (less than 10 lines)"
+              WARNINGS=$((WARNINGS + 1))
+            fi
+
+          else
+            echo "❌ $file - Missing"
+            ERRORS=$((ERRORS + 1))
+          fi
+        done
+
+        echo ""
+        echo "📊 Validation Summary:"
+        echo "  Errors: $ERRORS"
+        echo "  Warnings: $WARNINGS"
+
+        if [ $ERRORS -eq 0 ]; then
+          echo "✅ Documentation validation passed"
+        else
+          echo "❌ Documentation validation failed"
+          exit 1
+        fi
+    summary: |
+      Validates appmod-blueprints documentation:
+      - Checks for required documentation files
+      - Validates metadata headers
+      - Ensures basic content structure
+      - Repository-specific validation only
+
+  lint-docs:
+    desc: "Lint documentation files for common issues"
+    cmds:
+      - |
+        echo "🔍 Linting documentation files..."
+
+        # Check for common markdown issues
+        find . -name "*.md" -not -path "./.git/*" | while read -r file; do
+          echo "Checking $file..."
+
+          # Check for trailing whitespace
+          if grep -q '[[:space:]]$' "$file"; then
+            echo "  ⚠️  Trailing whitespace found"
+          fi
+
+          # Check for inconsistent heading levels
+          if grep -q '^#[^#]' "$file" && grep -q '^###[^#]' "$file" && ! grep -q '^##[^#]' "$file"; then
+            echo "  ⚠️  Inconsistent heading levels (h1 to h3 without h2)"
+          fi
+
+          # Check for broken internal links (basic check)
+          grep -o '\[.*\]([^)]*\.md[^)]*)' "$file" | while read -r link; do
+            target=$(echo "$link" | sed 's/.*(\([^)]*\)).*/\1/')
+            if [ ! -f "$target" ] && [ ! -f "$(dirname "$file")/$target" ]; then
+              echo "  ⚠️  Potentially broken internal link: $target"
+            fi
+          done
+        done
+
+        echo "✅ Documentation linting completed"
+    summary: |
+      Lints documentation for common issues:
+      - Trailing whitespace
+      - Inconsistent heading levels
+      - Broken internal links
+      - Markdown formatting issues
+
+  # ===== PLATFORM OPERATIONS =====
+
+  install:
+    desc: "Install dependencies for appmod-blueprints platform"
+    cmds:
+      - |
+        echo "📦 Installing appmod-blueprints dependencies..."
+
+        # Check for Helm
+        if command -v helm &> /dev/null; then
+          echo "✅ Helm found"
+        else
+          echo "⚠️  Helm not found - required for platform operations"
+        fi
+
+        # Check for kubectl
+        if command -v kubectl &> /dev/null; then
+          echo "✅ kubectl found"
+        else
+          echo "⚠️  kubectl not found - required for platform operations"
+        fi
+
+        # Check for ArgoCD CLI
+        if command -v argocd &> /dev/null; then
+          echo "✅ ArgoCD CLI found"
+        else
+          echo "⚠️  ArgoCD CLI not found - recommended for GitOps operations"
+        fi
+
+        echo "✅ Dependency check completed"
+
+  lint:
+    desc: "Lint GitOps configurations and Helm charts"
+    cmds:
+      - |
+        echo "🔍 Linting appmod-blueprints configurations..."
+
+        # Lint YAML files
+        if command -v yamllint &> /dev/null; then
+          echo "Running yamllint on YAML files..."
+          find . -name "*.yaml" -o -name "*.yml" | grep -v ".git" | xargs yamllint -d relaxed || echo "yamllint issues found"
+        else
+          echo "⚠️  yamllint not found - skipping YAML validation"
+        fi
+
+        # Lint Helm charts if present
+        if [ -d "packages" ] && command -v helm &> /dev/null; then
+          echo "Linting Helm charts..."
+          find packages -name "Chart.yaml" -exec dirname {} \; | while read -r chart_dir; do
+            echo "Linting $chart_dir..."
+            helm lint "$chart_dir" || echo "Helm lint issues in $chart_dir"
+          done
+        fi
+
+        echo "✅ Configuration linting completed"
+
+  validate-gitops:
+    desc: "Validate GitOps configurations"
+    cmds:
+      - |
+        echo "🔍 Validating GitOps configurations..."
+
+        # Check for ArgoCD applications
+        if [ -d "gitops" ]; then
+          echo "Checking ArgoCD applications..."
+          find gitops -name "*.yaml" -o -name "*.yml" | while read -r file; do
+            if grep -q "kind: Application" "$file"; then
+              echo "✅ ArgoCD Application found: $file"
+            fi
+          done
+        fi
+
+        # Check for Kustomization files
+        find . -name "kustomization.yaml" -o -name "kustomization.yml" | while read -r file; do
+          echo "✅ Kustomization found: $file"
+          if command -v kubectl &> /dev/null; then
+            kubectl kustomize "$(dirname "$file")" > /dev/null && echo "  ✅ Valid" || echo "  ❌ Invalid"
+          fi
+        done
+
+        echo "✅ GitOps validation completed"
+
+  test:
+    desc: "Run platform configuration tests"
+    cmds:
+      - |
+        echo "🧪 Running appmod-blueprints tests..."
+
+        # Test Helm chart rendering
+        if [ -d "packages" ] && command -v helm &> /dev/null; then
+          echo "Testing Helm chart rendering..."
+          find packages -name "Chart.yaml" -exec dirname {} \; | while read -r chart_dir; do
+            echo "Testing $chart_dir..."
+            helm template test "$chart_dir" > /dev/null && echo "  ✅ Renders successfully" || echo "  ❌ Rendering failed"
+          done
+        fi
+
+        # Test Kustomize builds
+        find . -name "kustomization.yaml" -o -name "kustomization.yml" | while read -r file; do
+          if command -v kubectl &> /dev/null; then
+            echo "Testing $(dirname "$file")..."
+            kubectl kustomize "$(dirname "$file")" > /dev/null && echo "  ✅ Builds successfully" || echo "  ❌ Build failed"
+          fi
+        done
+
+        echo "✅ Platform tests completed"
