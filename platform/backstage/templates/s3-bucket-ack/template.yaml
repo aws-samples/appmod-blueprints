@@ -68,24 +68,6 @@ spec:
       input:
         repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}/-/blob/main
         catalogInfoPath: "/catalog-info.yaml"
-    - id: create-argocd-repo-secret
-      name: Create ArgoCD Repository Secret
-      action: kube:apply
-      input:
-        namespaced: true
-        manifest: |
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: argocd-repo-${{parameters.bucket_name}}
-            namespace: argocd
-            labels:
-              argocd.argoproj.io/secret-type: repository
-          stringData:
-            type: git
-            url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git
-            username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
-            password: glpat-SIQhHhoNuFQk3lTni8VndW86MQp1OjIH.01.0w1y33w8j
     - id: create-argocd-project
       name: Create ArgoCD Project
       action: kube:apply

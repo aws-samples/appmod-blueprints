@@ -330,6 +330,28 @@ EOF
 
 echo "$SECRET_OUTPUT"
 
+print_step "Creating shared repository credential template for all GitLab repositories"
+
+# Create a repository credential template that applies to all repositories under the GitLab domain
+SHARED_CREDS_OUTPUT=$(envsubst << EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+   name: git-repo-creds-template
+   namespace: argocd
+   labels:
+      argocd.argoproj.io/secret-type: repo-creds
+stringData:
+   type: git
+   url: ${GITLAB_URL}
+   username: $GIT_USERNAME
+   password: $GITLAB_TOKEN
+EOF
+)
+
+echo "$SHARED_CREDS_OUTPUT"
+print_success "Shared repository credentials template created for all GitLab repositories"
+
 # Check if restart is needed
 RESTART_NEEDED=false
 if echo "$SECRET_OUTPUT" | grep -q "created"; then
