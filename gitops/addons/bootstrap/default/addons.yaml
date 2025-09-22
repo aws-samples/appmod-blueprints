@@ -127,10 +127,20 @@ ack-dynamodb:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
   namespace: ack-system
+  chartName: dynamodb-chart
+  defaultVersion: "1.2.19"
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  releaseName: dynamodb-chart
   chart:
     name: ack-dynamodb-controller
     repository: oci://public.ecr.aws/aws-controllers-k8s
     version: 1.2.19
+  selector:
+    matchExpressions:
+      - key: enable_ack_dynamodb
+        operator: In
+        values: ['true']
   generators:
     - clusters:
         selector:
