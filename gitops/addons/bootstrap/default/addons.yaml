@@ -121,6 +121,67 @@ ack-s3:
     serviceAccount:
       name: '{{default "ack-s3-controller" (index .metadata.annotations "ack_s3_service_account")}}'
 
+ack-dynamodb:
+  enabled: true
+  enableACK: true
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
+  namespace: ack-system
+  chart:
+    name: ack-dynamodb-controller
+    repository: oci://public.ecr.aws/aws-controllers-k8s
+    version: 1.2.19
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            environment: control-plane
+        values:
+          enableACK: 'true'
+        template:
+          metadata:
+            name: '{{name}}'
+          spec:
+            project: default
+            source:
+              repoURL: '{{metadata.annotations.addons_repo_url}}'
+              targetRevision: '{{metadata.annotations.addons_repo_revision}}'
+              path: 'gitops/addons/{{metadata.annotations.addons_repo_basepath}}{{metadata.annotations.addons_repo_path}}/ack-dynamodb'
+              helm:
+                releaseName: ack-dynamodb-controller
+                values: |
+                  {{- toYaml .Values | nindent 18}}
+            destination:
+              server: '{{server}}'
+              namespace: ack-system
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+                - ServerSideApply=true
+              retry:
+                backoff:
+                  duration: 5s
+                  factor: 2
+                  maxDuration: 5m
+                limit: 10
+    - clusters:
+        selector:
+          matchExpressions:
+          - key: akuity.io/argo-cd-cluster-name
+            operator: NotIn
+            values: ['in-cluster']
+          - key: enable_ack_dynamodb
+            operator: In
+            values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-dynamodb-controller" (index .metadata.annotations "ack_dynamodb_service_account")}}'
+
 ack-ec2:
   enabled: false
   enableACK: false

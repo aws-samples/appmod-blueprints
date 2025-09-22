@@ -1,0 +1,6 @@
+ack-dynamodb-controller:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: '{{.metadata.annotations.ack_dynamodb_iam_role_arn}}'
+  aws:
+    region: '{{.metadata.annotations.aws_region}}'
