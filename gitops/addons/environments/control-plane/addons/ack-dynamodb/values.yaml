@@ -1,0 +1,4 @@
+# ACK DynamoDB Controller configuration for control-plane environment
+ack-dynamodb-controller:
+  aws:
+    region: '{{.metadata.annotations.aws_region}}'
