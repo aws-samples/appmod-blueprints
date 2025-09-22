@@ -1,0 +1,4 @@
+# ACK S3 Controller configuration for control-plane environment
+ack-s3-controller:
+  aws:
+    region: '{{.metadata.annotations.aws_region}}'

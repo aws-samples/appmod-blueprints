@@ -132,60 +132,11 @@ ack-dynamodb:
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
   releaseName: dynamodb-chart
-  chart:
-    name: ack-dynamodb-controller
-    repository: oci://public.ecr.aws/aws-controllers-k8s
-    version: 1.2.19
   selector:
     matchExpressions:
       - key: enable_ack_dynamodb
         operator: In
         values: ['true']
-  generators:
-    - clusters:
-        selector:
-          matchLabels:
-            environment: control-plane
-        values:
-          enableACK: 'true'
-        template:
-          metadata:
-            name: '{{name}}'
-          spec:
-            project: default
-            source:
-              repoURL: '{{metadata.annotations.addons_repo_url}}'
-              targetRevision: '{{metadata.annotations.addons_repo_revision}}'
-              path: 'gitops/addons/{{metadata.annotations.addons_repo_basepath}}{{metadata.annotations.addons_repo_path}}/ack-dynamodb'
-              helm:
-                releaseName: ack-dynamodb-controller
-                values: |
-                  {{- toYaml .Values | nindent 18}}
-            destination:
-              server: '{{server}}'
-              namespace: ack-system
-            syncPolicy:
-              automated:
-                prune: true
-                selfHeal: true
-              syncOptions:
-                - CreateNamespace=true
-                - ServerSideApply=true
-              retry:
-                backoff:
-                  duration: 5s
-                  factor: 2
-                  maxDuration: 5m
-                limit: 10
-    - clusters:
-        selector:
-          matchExpressions:
-          - key: akuity.io/argo-cd-cluster-name
-            operator: NotIn
-            values: ['in-cluster']
-          - key: enable_ack_dynamodb
-            operator: In
-            values: ['true']
   valuesObject:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
