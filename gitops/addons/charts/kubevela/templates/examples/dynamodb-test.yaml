@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: dynamodb-test
+spec:
+  components:
+  - name: peeks-table
+    type: ddb-table
+    properties:
+      name: peeks
+      region: us-west-2
+      attributeName: id
+      attributeType: S
