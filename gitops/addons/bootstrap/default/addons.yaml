@@ -98,8 +98,8 @@ ack-eks:
       name: '{{default "ack-eks-controller" (index .metadata.annotations "ack_eks_service_account")}}'
 
 ack-s3:
-  enabled: false
-  enableACK: false
+  enabled: true
+  enableACK: true
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
   namespace: ack-system
