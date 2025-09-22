@@ -46,9 +46,3 @@ provider "aws" {
     }
   }
 }
-
-provider "gitlab" {
-  base_url = "https://${var.gitlab_domain_name}/api/v4"
-  token = "root-${var.ide_password}"
-  early_auth_check = false # Required to avoid failures before gitlab is setup
-}

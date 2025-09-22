@@ -66,7 +66,8 @@ main() {
   
   # Validate backend configuration
   # validate_backend_config
-  
+  GITLAB_DOMAIN=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
+  GITLAB_SG_ID=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
   # Initialize Terraform with S3 backend
   log "Initializing Terraform with S3 backend..."
   if ! terraform -chdir=$SCRIPTDIR init --upgrade ; then
@@ -81,13 +82,33 @@ main() {
   log "Destroying AWS git and IAM resources..."
   if ! terraform -chdir=$SCRIPTDIR destroy \
     -var-file="$GENEARATED_TFVAR.tfvars.json" \
+    -var="gitlab_domain_name=${GITLAB_DOMAIN}" \
+    -var="gitlab_security_groups=${GITLAB_SG_ID}" \
     -var="ide_password=${IDE_PASSWORD}" \
+    -var="git_username=${GIT_USERNAME}" \
+    -var="git_password=${IDE_PASSWORD}" \
+    -auto-approve -refresh=false; then
+    log_error "Common stack destroy failed"
+    exit 1
+  fi
+
+  log "Initializing Terraform with S3 backend..."
+  if ! terraform -chdir=$SCRIPTDIR/gitlab_infra init --upgrade ; then
+    log_error "Terraform initialization failed"
+    exit 1
+  fi
+  # Destroy Terraform resources
+  log "Destroying AWS git and IAM resources..."
+  if ! terraform -chdir=$SCRIPTDIR/gitlab_infra destroy \
+    -var-file="$GENEARATED_TFVAR.tfvars.json" \
     -var="git_username=${GIT_USERNAME}" \
     -var="git_password=${IDE_PASSWORD}" \
     -auto-approve; then
     log_error "Common stack destroy failed"
     exit 1
   fi
+
+
   
   log_success "Common stack destroy completed successfully"
 }

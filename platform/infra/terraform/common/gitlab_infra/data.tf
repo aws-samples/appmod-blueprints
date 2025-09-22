@@ -8,13 +8,6 @@ data "aws_iam_session_context" "current" {
   # Ref https://github.com/hashicorp/terraform-provider-aws/issues/28381
   arn = data.aws_caller_identity.current.arn
 }
-data "aws_availability_zones" "available" {
-  # Do not include local zones
-  filter {
-    name   = "opt-in-status"
-    values = ["opt-in-not-required"]
-  }
-}
 
 data "aws_eks_cluster" "clusters" {
   for_each = var.clusters

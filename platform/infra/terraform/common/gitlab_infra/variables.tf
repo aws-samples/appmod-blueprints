@@ -4,44 +4,11 @@ variable "resource_prefix" {
   default     = "peeks"
 }
 
-variable "secret_name_ssh_secrets" {
-  description = "Secret name for SSH secrets"
-  type        = string
-  default     = "peeks-git-ssh-secrets"
-}
-
-variable "ssm_parameter_name_argocd_role_suffix" {
-  description = "SSM parameter name for ArgoCD role"
-  type        = string
-  default     = "argocd-central-role"
-}
-variable "amazon_managed_prometheus_suffix" {
-  description = "SSM parameter name for Amazon Manged Prometheus"
-  type        = string
-  default     = "amp-hub"
-}
-variable "backend_team_view_role_suffix" {
-  description = "SSM parameter name for peeks Workshop Team Backend IAM Role"
-  type        = string
-  default     = "backend-team-view-role"
-}
-variable "frontend_team_view_role_suffix" {
-  description = "SSM parameter name for peeks Workshop Team Backend IAM Role"
-  type        = string
-  default     = "frontend-team-view-role"
-}
-
 variable "git_password" {
-  description = "Password to login on the Git instance"
+  description = "Password to login on the Gitea instance"
   type        = string
   sensitive   = true
   default     = ""
-}
-
-variable "ide_password" {
-  description = "IDE password for workshop admin accounts"
-  type        = string
-  sensitive   = true
 }
 
 variable "git_username" {
@@ -50,27 +17,32 @@ variable "git_username" {
   default     = "user1"
 }
 
-variable "gitlab_domain_name" {
-  description = "Domain name"
+variable "working_repo" {
+  description = "Working repository name"
   type        = string
-  default     = "gitlab.cnoe.io"
+  default     = "platform-on-eks-workshop"
 }
 
-variable "gitlab_security_groups" {
-  description = "Domain name"
-  type        = string
-  default     = ""
-}
 variable "domain_name" {
   description = "Domain name"
   type        = string
   default     = "cnoe.io"
 }
 
-variable "create_github_repos" {
-  description = "Create Github repos"
-  type        = bool
-  default     = false
+variable "repo" {
+  description = "Repository configuration"
+  type = object({
+    url      = string
+    revision = string
+    path= string
+    basepath = string
+  })
+  default = {
+    url      = "https://github.com/aws-samples/appmod-blueprints"
+    revision = "main"
+    path = "bootstrap"
+    basepath = "gitops/fleet/"
+  }
 }
 
 variable "clusters" {
@@ -312,157 +284,3 @@ variable "clusters" {
     }
   }
 }
-
-variable "tenant" {
-  description = "Name of the tenant for the Hub Cluster"
-  type        = string
-  default     = "control-plane"
-}
-variable "gitops_addons_repo_name" {
-  description = "The name of git repo"
-  default     = "platform-on-eks-workshop"
-}
-
-variable "gitops_addons_repo_path" {
-  description = "The path of addons bootstraps in the repo"
-  default     = "bootstrap"
-}
-
-variable "gitops_addons_repo_base_path" {
-  description = "The base path of addons in the repon"
-  default     = "gitops/addons/"
-}
-
-variable "gitops_addons_repo_revision" {
-  description = "The name of branch or tag"
-  default     = "main"
-}
-# Fleet
-variable "gitops_fleet_repo_name" {
-  description = "The name of Git repo"
-  default     = "platform-on-eks-workshop"
-}
-
-variable "gitops_fleet_repo_path" {
-  description = "The path of fleet bootstraps in the repo"
-  default     = "bootstrap"
-}
-
-variable "gitops_fleet_repo_base_path" {
-  description = "The base path of fleet in the repon"
-  default     = "gitops/fleet/"
-}
-
-variable "gitops_fleet_repo_revision" {
-  description = "The name of branch or tag"
-  default     = "main"
-}
-
-# workload
-variable "gitops_workload_repo_name" {
-  description = "The name of Git repo"
-  default     = "platform-on-eks-workshop"
-}
-
-variable "gitops_workload_repo_path" {
-  description = "The path of workload bootstraps in the repo"
-  default     = ""
-}
-
-variable "gitops_workload_repo_base_path" {
-  description = "The base path of workloads in the repo"
-  default     = "gitops/apps/"
-}
-
-variable "gitops_workload_repo_revision" {
-  description = "The name of branch or tag"
-  default     = "main"
-}
-
-# Platform
-variable "gitops_platform_repo_name" {
-  description = "The name of Git repo"
-  default     = "platform-on-eks-workshop"
-}
-
-variable "gitops_platform_repo_path" {
-  description = "The path of platform bootstraps in the repo"
-  default     = "bootstrap"
-}
-
-variable "gitops_platform_repo_base_path" {
-  description = "The base path of platform in the repo"
-  default     = "gitops/platform/"
-}
-
-variable "gitops_platform_repo_revision" {
-  description = "The name of branch or tag"
-  default     = "main"
-}
-# variable "secret_name_ssh_secrets" {
-#   description = "Secret name for SSH secrets"
-#   type        = string
-#   default     = "peeks-git-ssh-secrets"
-# }
-
-
-# # Removed unused gitops repository variables and gitea_external_url
-
-# variable "ssm_parameter_name_argocd_role_suffix" {
-#   description = "SSM parameter name for ArgoCD role"
-#   type        = string
-#   default     = "argocd-central-role"
-# }
-# variable "amazon_managed_prometheus_suffix" {
-#   description = "SSM parameter name for Amazon Manged Prometheus"
-#   type        = string
-#   default     = "amp-hub"
-# }
-# variable "backend_team_view_role_suffix" {
-#   description = "SSM parameter name for peeks Workshop Team Backend IAM Role"
-#   type        = string
-#   default     = "backend-team-view-role"
-# }
-# variable "frontend_team_view_role_suffix" {
-#   description = "SSM parameter name for peeks Workshop Team Backend IAM Role"
-#   type        = string
-#   default     = "frontend-team-view-role"
-# }
-
-# variable "gitea_user" {
-#   description = "User to login on the Gitea instance"
-#   type = string
-#   default = "user1"
-# }
-# variable "git_password" {
-#   description = "Password to login on the Gitea instance"
-#   type = string
-#   sensitive = true
-#   default = ""
-# }
-
-# variable "ide_password" {
-#   description = "IDE password for workshop admin accounts"
-#   type        = string
-#   sensitive   = true
-# }
-
-# variable "git_username" {
-#   description = "Git username for workshop"
-#   type        = string
-#   default     = "user1"
-# }
-
-variable "working_repo" {
-  description = "Working repository name"
-  type        = string
-  default     = "platform-on-eks-workshop"
-}
-
-# # Removed unused gitea_external_url and gitea_repo_prefix variables
-
-# variable "create_github_repos" {
-#   description = "Create Github repos"
-#   type = bool
-#   default = false
-# }

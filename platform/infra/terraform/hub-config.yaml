@@ -47,7 +47,7 @@ clusters:
       enable_opentelemetry_operator: false
       enable_prometheus_node_exporter: false
   spoke1:
-    name: hub-dev
+    name: spoke-dev
     region: us-west-2
     environment: dev
     auto_mode: true
@@ -84,7 +84,7 @@ clusters:
       enable_kargo: false
       enable_backstage: false
   spoke2:
-    name: hub-prod
+    name: spoke-prod
     region: us-west-2
     environment: prod
     auto_mode: true

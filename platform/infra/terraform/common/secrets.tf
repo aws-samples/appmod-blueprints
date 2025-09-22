@@ -53,14 +53,28 @@ resource "aws_secretsmanager_secret" "cluster_config" {
   }
 }
 
-# Store the password in AWS Secrets Manager
+# Store cluster config in AWS Secrets Manager
 resource "aws_secretsmanager_secret_version" "cluster_config" {
   for_each = var.clusters
   secret_id     = aws_secretsmanager_secret.cluster_config[each.key].id
   secret_string = jsonencode({
-    repo = var.repo
-    labels = local.addons[each.key]
-    annotations = local.addons_metadata[each.key]
+    metadata     = local.addons_metadata[each.key]
+    addons       = local.addons[each.key]
+    server       = each.value.environment != "control-plane" ? data.aws_eks_cluster.clusters[each.key].endpoint : ""
+    config = each.value.environment != "control-plane" ? {
+      tlsClientConfig = {
+        insecure = false,
+        caData   = data.aws_eks_cluster.clusters[each.key].certificate_authority[0].data
+      },
+      awsAuthConfig = {
+        clusterName = data.aws_eks_cluster.clusters[each.key].name,
+        roleARN     = aws_iam_role.spoke[each.key].arn
+      }
+    } : {
+      tlsClientConfig = {
+        insecure = false # for in-cluster secret
+      }
+    }
   })
 }
 

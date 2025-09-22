@@ -27,11 +27,12 @@ locals {
   ingress_name              = { for k, v in var.clusters : v.name => "${v.name}-ingress" }
   # ingress_security_groups   = "${aws_security_group.ingress_http[local.hub_cluster.name].id},${aws_security_group.ingress_https.id}"
   ingress_security_groups   = { for k, v in var.clusters : v.name => "${aws_security_group.ingress_http[k].id},${aws_security_group.ingress_https[k].id}" }
-  gitlab_security_groups    = "${aws_security_group.gitlab_ssh.id},${aws_security_group.gitlab_http.id}"
+  gitlab_security_groups    = var.gitlab_security_groups
   ingress_nlb_domain_name   = "${data.aws_lb.ingress_nginx.dns_name}"
   ingress_domain_name       = aws_cloudfront_distribution.ingress.domain_name
-  gitlab_nlb_domain_name    = "${data.aws_lb.gitlab_nlb.dns_name}"
-  gitlab_domain_name        = aws_cloudfront_distribution.gitlab.domain_name
+  # gitlab_nlb_domain_name    = "${data.aws_lb.gitlab_nlb.dns_name}"
+  gitlab_domain_name        = var.gitlab_domain_name
+  git_username              = var.git_username
   keycloak_realm            = "platform"
   keycloak_saml_url         = "http://${local.ingress_domain_name}/keycloak/realms/${local.keycloak_realm}/protocol/saml/descriptor"
   # git_hostname              = var.repo == "" ? "${local.gitlab_domain_name}" : var.git_hostname

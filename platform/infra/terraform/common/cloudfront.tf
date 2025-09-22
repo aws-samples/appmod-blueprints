@@ -20,15 +20,6 @@ resource "aws_cloudfront_origin_request_policy" "keycloak_policy" {
   }
 }
 
-# Reference the managed policies by name instead of ID
-data "aws_cloudfront_cache_policy" "use_origin_cache_control_headers_query_strings" {
-  name = "UseOriginCacheControlHeaders-QueryStrings"
-}
-
-data "aws_cloudfront_origin_request_policy" "all_viewer" {
-  name = "Managed-AllViewer"
-}
-
 resource "aws_cloudfront_distribution" "ingress" {
   depends_on = [helm_release.ingress_nginx]
 

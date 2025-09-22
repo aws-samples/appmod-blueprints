@@ -9,7 +9,7 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
-export GIT_USERNAME=${GIT_USERNAME:-workshop-user}
+export GIT_USERNAME=${GIT_USERNAME:-user1}
 export IDE_PASSWORD=${IDE_PASSWORD:-"punkwalker!0912"}
 
 export GENEARATED_TFVAR=$(mktemp)
@@ -67,9 +67,32 @@ main() {
   
   # Validate backend configuration
   # validate_backend_config
-  
   # Initialize Terraform with S3 backend
-  log "Initializing Terraform with S3 backend..."
+  # Create Gitlab first
+  log "Initializing Terraform with S3 backend for gitlab infra..."
+  if ! terraform -chdir=$SCRIPTDIR/gitlab_infra init --upgrade ; then
+    log_error "Terraform initialization failed"
+    exit 1
+  fi
+  
+  # Set Terraform variables from environment
+  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
+  yq eval -o=json '.' ../hub-config.yaml > $GENEARATED_TFVAR.tfvars.json
+  # Apply Terraform configuration
+  log "Applying gitlab infra resources..."
+  if ! terraform -chdir=$SCRIPTDIR/gitlab_infra apply \
+    -var-file="$GENEARATED_TFVAR.tfvars.json" \
+    -var="git_username=${GIT_USERNAME}" \
+    -var="git_password=${IDE_PASSWORD}" \
+    -parallelism=3; then
+    log_error "Terraform apply failed"
+    exit 1
+  fi
+
+  GITLAB_DOMAIN=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
+  GITLAB_SG_ID=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
+  # Initialize Terraform with S3 backend
+  log "Initializing Terraform for bootstrap with S3 backend..."
   if ! terraform -chdir=$SCRIPTDIR init --upgrade ; then
     log_error "Terraform initialization failed"
     exit 1
@@ -79,9 +102,11 @@ main() {
   export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
   yq eval -o=json '.' ../hub-config.yaml > $GENEARATED_TFVAR.tfvars.json
   # Apply Terraform configuration
-  log "Applying git resources..."
+  log "Applying bootstrap resources..."
   if ! terraform -chdir=$SCRIPTDIR apply \
     -var-file="$GENEARATED_TFVAR.tfvars.json" \
+    -var="gitlab_domain_name=${GITLAB_DOMAIN}" \
+    -var="gitlab_security_groups=${GITLAB_SG_ID}" \
     -var="ide_password=${IDE_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
     -var="git_password=${IDE_PASSWORD}" \
@@ -92,8 +117,6 @@ main() {
   
   # Wait for SSH access
   log "Waiting for SSH access to be configured..."
-  sleep 10
-  
   log_success "Common stack deployment completed successfully"
 }
 
