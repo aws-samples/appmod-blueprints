@@ -397,8 +397,8 @@ metadata:
   namespace: keycloak
   annotations:
     argocd.argoproj.io/sync-wave: "10"
-    # argocd.argoproj.io/hook: PostSync
-    # argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   completions: 1
   backoffLimit: 5
@@ -672,6 +672,7 @@ metadata:
   namespace: keycloak
   annotations:
     argocd.argoproj.io/sync-wave: "11" # Sync after config job
+    argocd.argoproj.io/hook: HookFailed
 spec:
   updatePolicy: Replace
   deletionPolicy: Delete
