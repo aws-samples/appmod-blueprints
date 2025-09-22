@@ -8,7 +8,7 @@ Template to generate pod-identity configuration
 {{- $values := .values -}}
 - repoURL: '{{ $values.repoURLGit }}'
   targetRevision: '{{ $values.repoURLGitRevision }}'
-  path: 'charts/pod-identity'
+  path: 'gitops/addons/charts/pod-identity'
   helm:
     releaseName: '{{`{{ .name }}`}}-{{ $chartConfig.chartName | default $chartName }}'
     valuesObject:
