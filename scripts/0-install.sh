@@ -17,8 +17,9 @@ if [ -d /home/ec2-user/.bashrc.d ]; then
     done
 fi
 
-# Source colors for output formatting
+# Source colors and ArgoCD utilities
 source "$(dirname "$0")/colors.sh"
+source "$(dirname "$0")/argocd-utils.sh"
 
 # Configuration
 MAX_RETRIES=3
@@ -161,156 +162,10 @@ wait_for_clusters_ready() {
     fi
 }
 
-# Function to wait for ArgoCD applications to be healthy
+# Function to wait for ArgoCD applications to be healthy (using shared utility)
 wait_for_argocd_health() {
     local timeout=$1
-    local start_time=$(date +%s)
-    local end_time=$((start_time + timeout))
-    local consecutive_failures=0
-    local max_consecutive_failures=3
-    
-    print_status "INFO" "Waiting for ArgoCD applications to be healthy (timeout: ${timeout}s)"
-    
-    while [ $(date +%s) -lt $end_time ]; do
-        # Check if kubectl is available and cluster is accessible
-        if ! kubectl get applications -n argocd >/dev/null 2>&1; then
-            ((consecutive_failures++))
-            if [ $consecutive_failures -ge $max_consecutive_failures ]; then
-                print_status "ERROR" "ArgoCD not accessible after multiple attempts"
-                return 1
-            fi
-            print_status "WARN" "ArgoCD not yet accessible, waiting... (failure $consecutive_failures/$max_consecutive_failures)"
-            sleep $ARGOCD_CHECK_INTERVAL
-            continue
-        fi
-        
-        # Reset failure counter on successful connection
-        consecutive_failures=0
-        
-        # Get application status with error handling
-        local app_status
-        if ! app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null); then
-            print_status "WARN" "Failed to get application status, retrying..."
-            sleep 10
-            continue
-        fi
-        
-        # Count applications
-        local total_apps=$(echo "$app_status" | grep -v '^$' | wc -l)
-        if [ "$total_apps" -eq 0 ]; then
-            print_status "INFO" "No ArgoCD applications found yet, waiting..."
-            sleep $ARGOCD_CHECK_INTERVAL
-            continue
-        fi
-        
-        # Count healthy and synced applications
-        local healthy_synced_apps=$(echo "$app_status" | awk '$2 == "Healthy" && $3 == "Synced" {count++} END {print count+0}')
-        local unhealthy_apps=$(echo "$app_status" | awk '$2 != "Healthy" || $3 == "OutOfSync" {print $1}')
-        local unhealthy_count=$(echo "$unhealthy_apps" | grep -v '^$' | wc -l)
-        
-        # Check if we have acceptable health (allow some apps to be OutOfSync but Healthy)
-        local healthy_apps=$(echo "$app_status" | awk '$2 == "Healthy" {count++} END {print count+0}')
-        local critical_unhealthy=$(echo "$app_status" | awk '$2 != "Healthy" && $2 != "" {print $1}' | grep -v '^$' | wc -l)
-        
-        if [ "$critical_unhealthy" -eq 0 ] && [ "$total_apps" -gt 0 ]; then
-            print_status "SUCCESS" "All $total_apps ArgoCD applications are healthy ($healthy_synced_apps fully synced)"
-            return 0
-        fi
-        
-        # Show current status
-        print_status "INFO" "ArgoCD status: $healthy_apps/$total_apps healthy, $healthy_synced_apps/$total_apps synced"
-        
-        # Check for ComparisonError and handle it
-        local comparison_error_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.conditions[]? | select(.type == "ComparisonError" and (.message | contains("cannot reference a different revision")))) | .metadata.name' 2>/dev/null || echo "")
-        
-        if [ -n "$comparison_error_apps" ]; then
-            echo "$comparison_error_apps" | while read -r app; do
-                if [ -n "$app" ]; then
-                    print_status "WARN" "Detected ComparisonError in $app - using ArgoCD CLI to fix"
-                    
-                    # Use ArgoCD CLI for more reliable operation termination
-                    argocd app terminate-op "$app" --grpc-web 2>/dev/null || argocd app terminate-op "$app" 2>/dev/null || true
-                    
-                    sleep 3
-                    
-                    # Hard refresh to get latest revision
-                    argocd app refresh "$app" --grpc-web --hard 2>/dev/null || argocd app refresh "$app" --hard 2>/dev/null || true
-                    
-                    sleep 2
-                    
-                    # Sync with latest revision
-                    argocd app sync "$app" --grpc-web --timeout 60 2>/dev/null || argocd app sync "$app" --timeout 60 2>/dev/null || true
-                    
-                    print_status "INFO" "Completed ArgoCD CLI recovery for $app"
-                fi
-            done
-        fi
-        
-        # Check for stuck operations (running > 3 minutes) and terminate them more aggressively
-        local stuck_operations=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.items[] | select(.status.operationState?.phase == "Running" and (.status.operationState.startedAt | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 180)) | .metadata.name' 2>/dev/null || echo "")
-        
-        if [ -n "$stuck_operations" ]; then
-            echo "$stuck_operations" | while read -r app; do
-                if [ -n "$app" ]; then
-                    print_status "WARN" "Force terminating stuck operation for $app using ArgoCD CLI"
-                    
-                    # Use ArgoCD CLI directly - this is more effective than kubectl patches
-                    argocd app terminate-op "$app" --grpc-web 2>/dev/null || argocd app terminate-op "$app" 2>/dev/null || {
-                        print_status "WARN" "ArgoCD CLI failed, trying direct kubectl delete of operation"
-                        # Last resort: try to delete the operation resource directly
-                        kubectl delete operation -n argocd -l app.kubernetes.io/instance="$app" 2>/dev/null || true
-                    }
-                    
-                    sleep 3
-                    
-                    # Force refresh and sync
-                    argocd app refresh "$app" --grpc-web 2>/dev/null || argocd app refresh "$app" 2>/dev/null || true
-                    sleep 2
-                    argocd app sync "$app" --grpc-web --timeout 60 2>/dev/null || argocd app sync "$app" --timeout 60 2>/dev/null || true
-                fi
-            done
-        fi
-        
-        # Show problematic applications (limit output)
-        if [ "$unhealthy_count" -gt 0 ]; then
-            local current_time=$(date +%s)
-            local elapsed=$((current_time - start_time))
-            
-            # Process unhealthy apps and collect stuck ones
-            while read app; do
-                if [ -n "$app" ]; then
-                    local app_health=$(echo "$app_status" | grep "^$app " | awk '{print $2}')
-                    local app_sync=$(echo "$app_status" | grep "^$app " | awk '{print $3}')
-                    print_status "INFO" "  ⚠️  $app: $app_health/$app_sync"
-                    
-                    # Check if app has been stuck for too long (Progressing/OutOfSync)
-                    if [ "$app_health" = "Progressing" ] && [ "$app_sync" = "OutOfSync" ]; then
-                        print_status "INFO" "DEBUG: Found stuck app $app, elapsed time: ${elapsed}s"
-                        if [ $elapsed -gt 30 ]; then  # Reduced to 30 seconds for faster response
-                            print_status "INFO" "Force syncing stuck application: $app (stuck for ${elapsed}s)"
-                            
-                            # Use ArgoCD CLI for reliable operation termination
-                            argocd app terminate-op "$app" --grpc-web 2>/dev/null || argocd app terminate-op "$app" 2>/dev/null || true
-                            
-                            sleep 2
-                            
-                            # Force new sync with ArgoCD CLI
-                            argocd app sync "$app" --grpc-web --timeout 60 2>/dev/null || argocd app sync "$app" --timeout 60 2>/dev/null || true
-                        fi
-                    fi
-                fi
-            done <<< "$(echo "$unhealthy_apps" | head -5)"
-            
-            if [ "$unhealthy_count" -gt 5 ]; then
-                print_status "INFO" "  ... and $((unhealthy_count - 5)) more"
-            fi
-        fi
-        
-        sleep $ARGOCD_CHECK_INTERVAL
-    done
-    
-    print_status "WARN" "Timeout waiting for ArgoCD applications to be fully healthy"
-    return 1
+    wait_for_argocd_health "$timeout" "$ARGOCD_CHECK_INTERVAL" "[INFO] "
 }
 
 # Function to sync and wait for specific ArgoCD application
