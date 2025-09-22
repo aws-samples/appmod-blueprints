@@ -73,15 +73,14 @@ main() {
     exit 1
   fi
   
-  # Set Terraform variables from environment
-  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
-  
   # Apply Terraform configuration
   log "Applying git resources..."
   if ! terraform -chdir=$SCRIPTDIR apply \
+    -var="resource_prefix=${RESOURCE_PREFIX:-peeks}" \
     -var="ide_password=${IDE_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
     -var="working_repo=${WORKING_REPO}" \
+    -var="git_password=${GIT_PASSWORD:-$IDE_PASSWORD}" \
     -parallelism=3 -auto-approve; then
     log_error "Terraform apply failed"
     exit 1

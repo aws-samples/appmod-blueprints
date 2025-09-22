@@ -103,21 +103,20 @@ spec:
           adminRoleName: ${{parameters.adminRoleName}}
           clusterName: ${{ parameters.clusterName }}
     - id: publish
-      name: Publishing to a gitea git repository
-      action: publish:gitea
+      name: Publishing to GitLab repository
+      action: publish:gitlab
       input:
-        description: Example Data on EKS demo
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: cnoe:create-argocd-app
+      action: argocd:create-app
       input:
         appName: ${{parameters.name}}
         appNamespace: ${{parameters.namespace}}
         argoInstance: in-cluster
         projectName: default
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.name}}
+        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}
         path: "manifests"
     - id: register
       name: Register

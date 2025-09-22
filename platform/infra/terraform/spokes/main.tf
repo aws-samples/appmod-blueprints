@@ -172,7 +172,7 @@ locals {
     },
     {
       # Domain configuration
-      gitlab_domain_name = var.gitlab_domain_name == "" ? local.git_hostname : var.gitlab_domain_name
+      gitlab_domain_name = local.git_hostname
     },
     {
       # Git configuration

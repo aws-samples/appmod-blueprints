@@ -1,3 +1,8 @@
+variable "cluster_name_prefix" {
+  description = "Prefix for cluster names"
+  type        = string
+}
+
 variable "vpc_id" {
   type        = string
   description = "VPC ID of the EKS Cluster"

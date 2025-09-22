@@ -73,15 +73,14 @@ main() {
     exit 1
   fi
   
-  # Set Terraform variables from environment
-  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
-  
   # Destroy Terraform resources
   log "Destroying AWS git and IAM resources..."
   if ! terraform -chdir=$SCRIPTDIR destroy \
+    -var="resource_prefix=${RESOURCE_PREFIX:-peeks}" \
     -var="ide_password=${IDE_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
     -var="working_repo=${WORKING_REPO}" \
+    -var="git_password=${GIT_PASSWORD}" \
     -auto-approve; then
     log_error "Common stack destroy failed"
     exit 1

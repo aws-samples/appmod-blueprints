@@ -11,6 +11,8 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 
 source "${ROOTDIR}/terraform/common.sh"
 
+TF_VAR_FILE=${TF_VAR_FILE:-"terraform.tfvars"}
+
 # Logging functions
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -69,7 +71,7 @@ validate_backend_config() {
     exit 1
   fi
   
-  local region="${AWS_REGION:-us-east-1}"
+  local region="${AWS_REGION:-us-west-2}"
   
   # Check if S3 bucket exists and is accessible
   if ! aws s3api head-bucket --bucket "${TFSTATE_BUCKET_NAME}" 2>/dev/null; then
@@ -96,7 +98,7 @@ initialize_terraform() {
   if ! terraform -chdir=$SCRIPTDIR init --upgrade \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
     -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}" \
-    -backend-config="region=${AWS_REGION:-us-east-1}"; then
+    -backend-config="region=${AWS_REGION:-us-west-2}"; then
     log_error "Terraform initialization failed"
     exit 1
   fi
@@ -266,15 +268,33 @@ cleanup_kubernetes_resources_with_fallback() {
 destroy_terraform_resources() {
   log "Starting Terraform resource destruction..."
   
-  # Set Terraform variables from environment (same as deploy.sh)
-  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
+  # Use same variable approach as deploy.sh
+  RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
+  CLUSTER_NAME="${RESOURCE_PREFIX}-hub-cluster"
+  
+  # IMPORTANT: ACCOUNT_IDS (with 's') supports multiple accounts for multi-account deployments
+  # Format: "123456789012,987654321098" or single account "123456789012"
+  # Do NOT change to AWS_ACCOUNT_ID (singular) as it breaks multi-account support
+  AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  ACCOUNT_IDS="${ACCOUNT_IDS:-$AWS_ACCOUNT_ID}"
+  
+  # Get AWS Account ID if not already set
+  if [[ -z "${AWS_ACCOUNT_ID:-}" ]]; then
+    AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    log "Retrieved AWS Account ID: $AWS_ACCOUNT_ID"
+  else
+    log "Using existing AWS Account ID: $AWS_ACCOUNT_ID"
+  fi
   
   local TARGETS=("module.gitops_bridge_bootstrap" "module.eks_blueprints_addons" "module.eks")
   
   for target in "${TARGETS[@]}"; do
     log "Destroying $target..."
     
-    if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"$target\" \
+    if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"$target\" -var-file=$TF_VAR_FILE \
+      -var=\"cluster_name=$CLUSTER_NAME\" \
+      -var=\"account_ids=$ACCOUNT_IDS\" \
+      -var=\"resource_prefix=$RESOURCE_PREFIX\" \
       -var=\"ide_password=${IDE_PASSWORD}\" \
       -var=\"git_username=${GIT_USERNAME}\" \
       -var=\"working_repo=${WORKING_REPO}\" \
@@ -289,12 +309,15 @@ destroy_terraform_resources() {
   # Force delete VPC if requested
   if [[ "${FORCE_DELETE_VPC:-false}" == "true" ]]; then
     log "Force deleting VPC..."
-    force_delete_vpc "peeks-hub-cluster"
+    force_delete_vpc "$CLUSTER_NAME"
   fi
   
   # Destroy VPC
   log "Destroying VPC..."
-  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"module.vpc\" \
+  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -target=\"module.vpc\" -var-file=$TF_VAR_FILE \
+    -var=\"cluster_name=$CLUSTER_NAME\" \
+    -var=\"account_ids=$ACCOUNT_IDS\" \
+    -var=\"resource_prefix=$RESOURCE_PREFIX\" \
     -var=\"ide_password=${IDE_PASSWORD}\" \
     -var=\"git_username=${GIT_USERNAME}\" \
     -var=\"working_repo=${WORKING_REPO}\" \
@@ -307,7 +330,10 @@ destroy_terraform_resources() {
   
   # Final destroy
   log "Running final terraform destroy..."
-  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy \
+  if retry_with_backoff 3 30 "terraform -chdir=$SCRIPTDIR destroy -var-file=$TF_VAR_FILE \
+    -var=\"cluster_name=$CLUSTER_NAME\" \
+    -var=\"account_ids=$ACCOUNT_IDS\" \
+    -var=\"resource_prefix=$RESOURCE_PREFIX\" \
     -var=\"ide_password=${IDE_PASSWORD}\" \
     -var=\"git_username=${GIT_USERNAME}\" \
     -var=\"working_repo=${WORKING_REPO}\" \

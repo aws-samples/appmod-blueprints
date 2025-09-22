@@ -7,7 +7,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
 
 # Get environment variables
-export GITLAB_URL=${GITLAB_URL:-$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'gitlab')].DomainName | [0]" --output text | sed 's/^/https:\/\//')}
+export GITLAB_URL=${GITLAB_URL:-$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName | [0]" --output text | sed 's/^/https:\/\//')}
 export GITLAB_PASSWORD=${GITLABPW:-$IDE_PASSWORD}
 export GIT_USERNAME=${GIT_USERNAME:-"user1"}
 

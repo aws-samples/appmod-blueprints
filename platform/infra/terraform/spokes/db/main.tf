@@ -9,6 +9,7 @@ locals {
 
 module "aurora" {
   source             = "../../database/aurora"
+  cluster_name_prefix = var.cluster_name_prefix
   vpc_id             = var.vpc_id
   vpc_private_subnets = var.vpc_private_subnets
   vpc_cidr           = var.vpc_cidr
@@ -19,6 +20,7 @@ module "aurora" {
 
 module "ec2" {
   source              = "../../database/ec2"
+  cluster_name_prefix = var.cluster_name_prefix
   vpc_id              = var.vpc_id
   vpc_private_subnets = var.vpc_private_subnets
   vpc_cidr            = var.vpc_cidr

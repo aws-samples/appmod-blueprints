@@ -40,7 +40,7 @@ validate_backend_config() {
     exit 1
   fi
   
-  local region="${AWS_REGION:-us-east-1}"
+  local region="${AWS_REGION:-us-west-2}"
   
   # Check if S3 bucket exists and is accessible
   if ! aws s3api head-bucket --bucket "${TFSTATE_BUCKET_NAME}" 2>/dev/null; then
@@ -93,43 +93,34 @@ main() {
   if ! terraform -chdir=$SCRIPTDIR init --upgrade \
     -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
     -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}" \
-    -backend-config="region=${AWS_REGION:-us-east-1}"; then
+    -backend-config="region=${AWS_REGION:-us-west-2}"; then
     log_error "Terraform initialization failed"
     exit 1
   fi
   
-  # Get AWS Account ID
+  # Get AWS Account ID and set account_ids
+  # IMPORTANT: ACCOUNT_IDS (with 's') supports multiple accounts for multi-account deployments
+  # Format: "123456789012,987654321098" or single account "123456789012"
+  # Do NOT change to AWS_ACCOUNT_ID (singular) as it breaks multi-account support
   AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  ACCOUNT_IDS="${ACCOUNT_IDS:-$AWS_ACCOUNT_ID}"
   log "Using AWS Account ID: $AWS_ACCOUNT_ID"
+  log "Using account_ids: $ACCOUNT_IDS"
   
-  # Apply with custom cluster name if provided
-  if [ -n "$CLUSTER_NAME" ]; then
-    log "Deploying with custom cluster name: $CLUSTER_NAME"
-    if ! terraform -chdir=$SCRIPTDIR apply -var-file=$TF_VAR_FILE \
-      -var="cluster_name=$CLUSTER_NAME" \
-      -var="account_ids=$AWS_ACCOUNT_ID" \
-      -var="resource_prefix=$RESOURCE_PREFIX" \
-      -var="ide_password=${IDE_PASSWORD}" \
-      -var="git_username=${GIT_USERNAME}" \
-      -var="working_repo=${WORKING_REPO}" \
-      -parallelism=5 -auto-approve; then
-      log_error "Terraform apply failed for cluster $CLUSTER_NAME"
-      exit 1
-    fi
-  else
-    CLUSTER_NAME="${RESOURCE_PREFIX:-peeks}-hub-cluster"
-    log "Deploying with cluster name: $CLUSTER_NAME"
-    if ! terraform -chdir=$SCRIPTDIR apply -var-file=$TF_VAR_FILE \
-      -var="cluster_name=$CLUSTER_NAME" \
-      -var="account_ids=$AWS_ACCOUNT_ID" \
-      -var="resource_prefix=$RESOURCE_PREFIX" \
-      -var="ide_password=${IDE_PASSWORD}" \
-      -var="git_username=${GIT_USERNAME}" \
-      -var="working_repo=${WORKING_REPO}" \
-      -parallelism=5 -auto-approve; then
-      log_error "Terraform apply failed for cluster $CLUSTER_NAME"
-      exit 1
-    fi
+  # Set cluster name if not provided
+  CLUSTER_NAME="${CLUSTER_NAME:-${RESOURCE_PREFIX}-hub-cluster}"
+  log "Deploying with cluster name: $CLUSTER_NAME"
+  
+  if ! terraform -chdir=$SCRIPTDIR apply -var-file=$TF_VAR_FILE \
+    -var="cluster_name=$CLUSTER_NAME" \
+    -var="account_ids=$ACCOUNT_IDS" \
+    -var="resource_prefix=$RESOURCE_PREFIX" \
+    -var="ide_password=${IDE_PASSWORD}" \
+    -var="git_username=${GIT_USERNAME}" \
+    -var="working_repo=${WORKING_REPO}" \
+    -parallelism=5 -auto-approve; then
+    log_error "Terraform apply failed for cluster $CLUSTER_NAME"
+    exit 1
   fi
   
   log_success "Hub cluster deployment completed successfully"

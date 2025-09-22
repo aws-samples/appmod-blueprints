@@ -5,7 +5,7 @@
 resource "aws_prometheus_rule_group_namespace" "alerting_rules" {
 
   name         = "${local.context_prefix}-alerting"
-  workspace_id = aws_prometheus_workspace.amp.id
+  workspace_id = module.managed_service_prometheus.workspace_id
   data         = <<EOF
 groups:
   - name: infra-alerts-01

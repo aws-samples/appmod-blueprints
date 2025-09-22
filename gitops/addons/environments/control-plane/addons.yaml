@@ -42,9 +42,15 @@ ack-ec2:
   enabled: true
 ack-efs:
   enabled: true
+ack-s3:
+  enabled: true
+ack-dynamodb:
+  enabled: true
 kro:
   enabled: true
 kro-eks-rgs:
+  enabled: true
+kubevela:
   enabled: true
 multi-acct:
   enabled: true

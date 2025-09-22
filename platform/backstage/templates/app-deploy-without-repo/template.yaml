@@ -6,7 +6,7 @@ metadata:
   description: Creates a ArgocCD for deploying an App for an existing Git Repo
   tags:
     - app-deploy
-    - gitea
+    - gitlab
     - argocd
 spec:
   owner: guest
@@ -29,7 +29,7 @@ spec:
           description: The environment (e.g., dev, prod)
           enum: ['dev-cluster', 'prod-cluster', 'in-cluster']
         repoName:
-          title: Repo Name of your Gitea Repo integrated with Backstage
+          title: Repo Name of your GitLab Repo integrated with Backstage
           type: string
           pattern: ^[a-zA-Z0-9-_.]+$
         repoPath:
@@ -41,15 +41,20 @@ spec:
           description: The namespace where the app should be deployed
           default: default
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: cnoe:create-argocd-app
+      action: argocd:create-app
       input:
         appName: ${{parameters.appName}}
         appNamespace: ${{parameters.appNamespace}}
         argoInstance: ${{parameters.environment}}
         projectName: default
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.repoName}}
+        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}
         path: ${{parameters.repoPath}}
     - id: template-output
       name: Template Output

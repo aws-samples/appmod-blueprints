@@ -88,6 +88,7 @@ locals {
     enable_cni_metrics_helper                    = try(var.addons.enable_cni_metrics_helper, false)
     enable_ack_ec2                               = try(var.addons.enable_ack_ec2, false)
     enable_ack_efs                               = try(var.addons.enable_ack_efs, false)
+    enable_ack_s3                                = try(var.addons.enable_ack_s3, false)
     enable_kro                                   = try(var.addons.enable_kro, false)
     enable_kro_eks_rgs                           = try(var.addons.enable_kro_eks_rgs, false)
     enable_mutli_acct                            = try(var.addons.enable_mutli_acct, false)
@@ -114,6 +115,7 @@ locals {
     enable_prometheus_adapter              = try(var.addons.enable_prometheus_adapter, false)
     enable_secrets_store_csi_driver        = try(var.addons.enable_secrets_store_csi_driver, false)
     enable_vpa                             = try(var.addons.enable_vpa, false)
+    enable_kubevela                        = try(var.addons.enable_kubevela, false)
   }
 
   addons = merge(

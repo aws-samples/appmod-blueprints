@@ -75,18 +75,22 @@ resource "aws_eks_pod_identity_association" "argocd_repo_server" {
 variable "policy_arn_urls" {
   type    = map(string)
   default = {
-    iam = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-policy-arn"
-    ec2 = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-policy-arn"
-    eks = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-policy-arn"
+    iam      = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-policy-arn"
+    ec2      = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-policy-arn"
+    eks      = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-policy-arn"
+    s3       = "https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/main/config/iam/recommended-policy-arn"
+    dynamodb = "https://raw.githubusercontent.com/aws-controllers-k8s/dynamodb-controller/main/config/iam/recommended-policy-arn"
   }
 }
 
 variable "inline_policy_urls" {
   type    = map(string)
   default = {
-    iam = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-inline-policy"
-    ec2 = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-inline-policy"
-    eks = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-inline-policy"
+    iam      = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-inline-policy"
+    ec2      = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-inline-policy"
+    eks      = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-inline-policy"
+    s3       = "https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/main/config/iam/recommended-inline-policy"
+    dynamodb = "https://raw.githubusercontent.com/aws-controllers-k8s/dynamodb-controller/main/config/iam/recommended-inline-policy"
   }
 }
 
@@ -104,7 +108,7 @@ data "http" "inline_policy" {
 
 # Create IAM roles for ACK controllers
 resource "aws_iam_role" "ack_controller" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = toset(["iam", "ec2", "eks", "s3", "dynamodb"])
   name        = "${var.resource_prefix}-ack-${each.key}-controller-role-mgmt"
   
   assume_role_policy = jsonencode({
@@ -143,7 +147,7 @@ resource "aws_iam_role_policy_attachment" "ack_controller_policy_attachment" {
 }
 
 resource "aws_iam_role_policy" "ack_controller_inline_policy" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = toset(["iam", "ec2", "eks", "s3", "dynamodb"])
 
   role   = aws_iam_role.ack_controller[each.key].name
   policy = can(jsondecode(data.http.inline_policy[each.key].body)) ? data.http.inline_policy[each.key].body : jsonencode({
@@ -161,7 +165,7 @@ resource "aws_iam_role_policy" "ack_controller_inline_policy" {
 }
 
 data "aws_iam_policy_document" "ack_controller_cross_account_policy" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = toset(["iam", "ec2", "eks", "s3", "dynamodb"])
 
   statement {
     sid    = "AllowCrossAccountAccess"
@@ -174,14 +178,14 @@ data "aws_iam_policy_document" "ack_controller_cross_account_policy" {
 }
 
 resource "aws_iam_role_policy" "ack_controller_cross_account_policy" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = toset(["iam", "ec2", "eks", "s3", "dynamodb"])
 
   role   = aws_iam_role.ack_controller[each.key].name
   policy = data.aws_iam_policy_document.ack_controller_cross_account_policy[each.key].json
 }
 
 resource "aws_eks_pod_identity_association" "ack_controller" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = toset(["iam", "ec2", "eks", "s3", "dynamodb"])
 
   cluster_name    = local.cluster_info.cluster_name
   namespace       = "ack-system"
@@ -234,7 +238,7 @@ resource "aws_eks_pod_identity_association" "kargo_controller" {
 
 # Create ACK workload roles that can be assumed by ACK controllers
 resource "aws_iam_role" "ack_workload_role" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = toset(["iam", "ec2", "eks", "s3", "dynamodb"])
   name     = "${local.name}-cluster-mgmt-${each.key}"
   
   assume_role_policy = jsonencode({
@@ -267,6 +271,12 @@ locals {
       "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
       "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
       "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+    ]
+    s3 = [
+      "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    ]
+    dynamodb = [
+      "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
     ]
   }
 }
@@ -389,12 +399,73 @@ locals {
         }
       ]
     }
+    s3 = {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Effect = "Allow"
+          Action = [
+            "s3:CreateBucket",
+            "s3:DeleteBucket",
+            "s3:GetBucketLocation",
+            "s3:GetBucketVersioning",
+            "s3:ListBucket",
+            "s3:ListAllMyBuckets",
+            "s3:PutBucketVersioning",
+            "s3:PutBucketTagging",
+            "s3:GetBucketTagging",
+            "s3:DeleteBucketTagging",
+            "s3:PutBucketPolicy",
+            "s3:GetBucketPolicy",
+            "s3:DeleteBucketPolicy",
+            "s3:PutBucketAcl",
+            "s3:GetBucketAcl",
+            "s3:PutBucketCors",
+            "s3:GetBucketCors",
+            "s3:DeleteBucketCors",
+            "s3:PutBucketNotification",
+            "s3:GetBucketNotification"
+          ]
+          Resource = "*"
+        }
+      ]
+    }
+    dynamodb = {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Effect = "Allow"
+          Action = [
+            "dynamodb:CreateTable",
+            "dynamodb:DeleteTable",
+            "dynamodb:DescribeTable",
+            "dynamodb:ListTables",
+            "dynamodb:UpdateTable",
+            "dynamodb:TagResource",
+            "dynamodb:UntagResource",
+            "dynamodb:ListTagsOfResource",
+            "dynamodb:CreateBackup",
+            "dynamodb:DeleteBackup",
+            "dynamodb:DescribeBackup",
+            "dynamodb:ListBackups",
+            "dynamodb:RestoreTableFromBackup",
+            "dynamodb:PutItem",
+            "dynamodb:GetItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:Query",
+            "dynamodb:Scan"
+          ]
+          Resource = "*"
+        }
+      ]
+    }
   }
 }
 
 # Attach inline policies to ACK workload roles
 resource "aws_iam_role_policy" "ack_workload_inline_policies" {
-  for_each = toset(["iam", "ec2", "eks"])
+  for_each = toset(["iam", "ec2", "eks", "s3", "dynamodb"])
 
   name   = "ack-${each.key}-workload-policy"
   role   = aws_iam_role.ack_workload_role[each.key].name

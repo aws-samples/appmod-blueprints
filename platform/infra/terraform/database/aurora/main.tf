@@ -62,7 +62,7 @@ resource "random_integer" "suffix" {
 }
 
 resource "aws_secretsmanager_secret" "db_credentials" {
-  name = "modern-engg-aurora"
+  name = "${var.cluster_name_prefix}-${terraform.workspace}-aurora"
 }
 
 resource "random_password" "db_password" {

@@ -56,3 +56,33 @@ output "keycloak_user_password_secret_arn" {
   description = "ARN of the AWS Secrets Manager secret containing the Keycloak user password"
   value       = aws_secretsmanager_secret.keycloak_user_password.arn
 }
+
+output "amp_workspace_id" {
+  description = "Amazon Managed prometheus Workspace ID"
+  value       = module.managed_service_prometheus.workspace_id
+}
+
+output "amg_workspace_id" {
+  description = "Amazon Managed Grafana Workspace ID"
+  value       = module.managed_grafana.workspace_id
+}
+
+output "grafana_workspace_endpoint" {
+  description = "Amazon Managed Grafana Workspace endpoint"
+  value       = module.managed_grafana.workspace_endpoint
+}
+
+output "grafana_workspace_iam_role_arn" {
+  description = "Amazon Managed Grafana Workspace's IAM Role ARN"
+  value       = module.managed_grafana.workspace_iam_role_arn
+}
+
+output "amp_endpoint_ssm_parameter" {
+  description = "SSM parameter name for Amazon Managed Prometheus endpoint"
+  value       = aws_ssm_parameter.amp_endpoint.name
+}
+
+output "amp_arn_ssm_parameter" {
+  description = "SSM parameter name for Amazon Managed Prometheus ARN"
+  value       = aws_ssm_parameter.amp_arn.name
+}

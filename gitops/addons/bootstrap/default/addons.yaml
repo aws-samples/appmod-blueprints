@@ -36,6 +36,8 @@ argocd:
   releaseName: argocd
   defaultVersion: "7.9.1"
   chartRepository: "https://argoproj.github.io/argo-helm"
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "0" # Default sync-wave for ArgoCD
   selector:
     matchExpressions:
       - key: enable_argocd
@@ -97,6 +99,50 @@ ack-eks:
     serviceAccount:
       name: '{{default "ack-eks-controller" (index .metadata.annotations "ack_eks_service_account")}}'
 
+ack-s3:
+  enabled: true
+  enableACK: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
+  namespace: ack-system
+  chartName: s3-chart
+  defaultVersion: "1.0.14"
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  releaseName: s3-chart
+  selector:
+    matchExpressions:
+      - key: enable_ack_s3
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-s3-controller" (index .metadata.annotations "ack_s3_service_account")}}'
+
+ack-dynamodb:
+  enabled: true
+  enableACK: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
+  namespace: ack-system
+  chartName: dynamodb-chart
+  defaultVersion: "1.2.19"
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  releaseName: dynamodb-chart
+  selector:
+    matchExpressions:
+      - key: enable_ack_dynamodb
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-dynamodb-controller" (index .metadata.annotations "ack_dynamodb_service_account")}}'
+
 ack-ec2:
   enabled: false
   enableACK: false
@@ -142,6 +188,8 @@ metrics-server:
   chartName: metrics-server
   defaultVersion: "3.12.1"
   chartRepository: "https://kubernetes-sigs.github.io/metrics-server"
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "0" # Default sync-wave for metrics-server
   selector:
     matchExpressions:
       - key: enable_metrics_server
@@ -549,9 +597,9 @@ keycloak:
         operator: In
         values: ['true']
   valuesObject:
-    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
   ignoreDifferences:
@@ -631,6 +679,78 @@ kargo:
         # $IDE_PASSWORD
         passwordHash: '{{.metadata.annotations.ide_password_hash}}'
         tokenSigningKey: '{{.metadata.annotations.ide_password_key}}'
+
+kubevela:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "3" # Needs to be after KRO RGD
+  namespace: vela-system
+  chartName: vela-core
+  defaultVersion: "0.1.0"
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kubevela'
+  selector:
+    matchExpressions:
+      - key: enable_kubevela
+        operator: In
+        values: ['true']
+  valuesObject:
+    systemDefinitionNamespace: vela-system
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+        - /webhooks/1/clientConfig/caBundle
+        - /webhooks/2/clientConfig/caBundle
+        - /webhooks/3/clientConfig/caBundle
+        - /webhooks/4/clientConfig/caBundle
+        - /webhooks/0/failurePolicy
+        - /webhooks/1/failurePolicy
+        - /webhooks/2/failurePolicy
+        - /webhooks/3/failurePolicy
+        - /webhooks/4/failurePolicy
+        - /webhooks/0/timeoutSeconds
+        - /webhooks/1/timeoutSeconds
+        - /webhooks/2/timeoutSeconds
+        - /webhooks/3/timeoutSeconds
+        - /webhooks/4/timeoutSeconds
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+        - /webhooks/1/clientConfig/caBundle
+        - /webhooks/2/clientConfig/caBundle
+        - /webhooks/3/clientConfig/caBundle
+        - /webhooks/4/clientConfig/caBundle
+        - /webhooks/0/failurePolicy
+        - /webhooks/1/failurePolicy
+        - /webhooks/2/failurePolicy
+        - /webhooks/3/failurePolicy
+        - /webhooks/4/failurePolicy
+        - /webhooks/0/timeoutSeconds
+        - /webhooks/1/timeoutSeconds
+        - /webhooks/2/timeoutSeconds
+        - /webhooks/3/timeoutSeconds
+        - /webhooks/4/timeoutSeconds
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: apiregistration.k8s.io
+      kind: APIService
+      jsonPointers:
+        - /spec/caBundle
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: "*"
+      kind: "*"
+      managedFieldsManagers:
+        - vela-core
+        - cert-manager
+        - webhook-cert-manager
+        - kube-controller-manager
+        - apiserver
 
 backstage:
   enabled: false

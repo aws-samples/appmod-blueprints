@@ -1,133 +1,109 @@
+# AWS provider is configured at the root level
 
-locals{
-    scrape_interval = "30s"
-    scrape_timeout  = "10s"
+module "managed_service_prometheus" {
+  source          = "terraform-aws-modules/managed-service-prometheus/aws"
+  version         = "~> 2.2.2"
+  workspace_alias = "${var.resource_prefix}-observability-amp"
 }
 
-
-#Managed Prometheus workspace
-resource "aws_prometheus_workspace" "amp" {
-  alias = "${var.resource_prefix}-hub"
-  tags  = local.tags
+locals {
+  name        = "${var.resource_prefix}-observability"
+  description = "Amazon Managed Grafana workspace for ${local.name}"
 }
 
-#aws_prometheus_workspace.amp.prometheus_endpoint
+# Create the secret
+resource "aws_secretsmanager_secret" "argorollouts_secret" {
+  name = "${var.resource_prefix}-argo-rollouts"
+  recovery_window_in_days = 0
 
-# Creating parameter for all clusters to read
+  lifecycle {
+    ignore_changes = [name]
+  }
+
+  tags = local.tags
+}
+
+# Create the secret version with key-value pairs
+resource "aws_secretsmanager_secret_version" "argorollouts_secret_version" {
+  secret_id = aws_secretsmanager_secret.argorollouts_secret.id
+  secret_string = jsonencode({
+    amp-region    = data.aws_region.current.name
+    amp-workspace = module.managed_service_prometheus.workspace_prometheus_endpoint
+  })
+}
+
+module "managed_grafana" {
+  source = "terraform-aws-modules/managed-service-grafana/aws"
+
+  name                      = local.name
+  associate_license         = false
+  description               = local.description
+  account_access_type       = "CURRENT_ACCOUNT"
+  authentication_providers  = ["SAML"]
+  permission_type           = "SERVICE_MANAGED"
+  data_sources              = ["CLOUDWATCH", "PROMETHEUS", "XRAY"]
+  notification_destinations = ["SNS"]
+  stack_set_name            = local.name
+
+  configuration = jsonencode({
+    unifiedAlerting = {
+      enabled = true
+    },
+    plugins = {
+      pluginAdminEnabled = false
+    }
+  })
+
+  grafana_version = "10.4"
+
+  # Workspace API keys
+  workspace_api_keys = {
+    viewer = {
+      key_name        = "grafana-viewer"
+      key_role        = "VIEWER"
+      seconds_to_live = 3600
+    }
+    editor = {
+      key_name        = "grafana-editor"
+      key_role        = "EDITOR"
+      seconds_to_live = 3600
+    }
+    admin = {
+      key_name        = "grafana-admin"
+      key_role        = "ADMIN"
+      seconds_to_live = 3600
+    }
+  }
+
+  # Workspace SAML configuration
+  saml_admin_role_values       = ["grafana-admin"]
+  saml_editor_role_values      = ["grafana-editor", "grafana-viewer"]
+  saml_email_assertion         = "mail"
+  saml_groups_assertion        = "groups"
+  saml_login_assertion         = "mail"
+  saml_name_assertion          = "displayName"
+  saml_org_assertion           = "org"
+  saml_role_assertion          = "role"
+  saml_login_validity_duration = 120
+  # Dummy values for SAML configuration to setup will be updated after keycloak integration
+  saml_idp_metadata_url = var.grafana_keycloak_idp_url
+
+  tags = local.tags
+}
+
+# Create SSM parameters for Prometheus workspace information
+resource "aws_ssm_parameter" "amp_endpoint" {
+  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
+  type      = "String"
+  value     = module.managed_service_prometheus.workspace_prometheus_endpoint
+  overwrite = true
+  tags      = local.tags
+}
+
 resource "aws_ssm_parameter" "amp_arn" {
-  name  = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
-  type  = "String"
-  value = aws_prometheus_workspace.amp.arn
+  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
+  type      = "String"
+  value     = module.managed_service_prometheus.workspace_arn
+  overwrite = true
+  tags      = local.tags
 }
-
-resource "aws_ssm_parameter" "amp_prometheus_endpoint" {
-  name  = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
-  type  = "String"
-  value = aws_prometheus_workspace.amp.prometheus_endpoint
-}
-
-# resource "aws_prometheus_scraper" "peeks-scraper" {
-#   source {
-#     eks {
-#       cluster_arn = module.eks.cluster_arn
-#       subnet_ids  = module.vpc.private_subnets
-#       security_group_ids = [module.eks.node_security_group_id]
-#     }
-#   }
-#   destination {
-#     amp {
-#       workspace_arn = aws_prometheus_workspace.amp.arn
-#     }
-#   }
-  
-#   alias = "peeks-hub"
-#   scrape_configuration = replace(
-#     replace(
-#       replace(
-#         replace(
-#           replace(
-#             file("${path.module}/../common/scraper-config.yaml"),
-#             "{scrape_interval}",
-#             local.scrape_interval
-#           ),
-#           "{scrape_timeout}",
-#           local.scrape_timeout
-#         ),
-#         "{cluster}",
-#         local.name
-#       ),
-#       "{region}",
-#       local.region
-#     ),
-#     "{account_id}",
-#     data.aws_caller_identity.current.account_id
-#   )
- 
-# }
-
-
-
-# module "grafana_pod_identity" {
-#   source = "terraform-aws-modules/eks-pod-identity/aws"
-#   version = "~> 1.4.0"
-
-#   name = "grafana-sa"
-
-#   #amazon_managed_service_prometheus_workspace_arns = [aws_prometheus_workspace.amp.arn]
-#   additional_policy_arns = {
-#     "PrometheusQueryAccess ": "arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess"
-#   }
-
-
-#   # Pod Identity Associations
-#   association_defaults = {
-#     namespace       = "grafana-operator"
-#   }
-#   associations = {
-#     server = {
-#       cluster_name = module.eks.cluster_name
-#       service_account = "grafana-sa"
-#     }
-#   }
-
-#   tags = local.tags
-# }
-
-
-
-# data "aws_iam_policy_document" "grafana_irsa_trust_policy" {
-#   statement {
-#     actions = ["sts:AssumeRoleWithWebIdentity"]
-#     effect  = "Allow"
-
-#     condition {
-#       test     = "StringEquals"
-#       variable = "${module.eks.oidc_provider}:sub"
-#       values   = ["system:serviceaccount:grafana-operator:grafana-sa"]
-#     }
-#     condition {
-#       test     = "StringEquals"
-#       variable = "${module.eks.oidc_provider}:aud"
-#       values   = ["sts.amazonaws.com"]
-#     }    
-
-#     principals {
-#       identifiers = [module.eks.oidc_provider_arn]
-#       type        = "Federated"
-#     }
-#   }
-# }
-
-# resource "aws_iam_role" "grafana_irsa_role" {
-#   name                 = "grafana-irsa-role"
-#   assume_role_policy   = data.aws_iam_policy_document.grafana_irsa_trust_policy.json
-#   force_detach_policies = true
-# }
-# resource "aws_iam_role_policy_attachment" "prometheus_query_access" {
-#   role       = aws_iam_role.grafana_irsa_role.name
-#   policy_arn = "arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess"
-# }
-# output "grafana_irsa_role_arn" {
-#   value       = aws_iam_role.grafana_irsa_role.arn
-#   description = "ARN of the Grafana IRSA role"
-# }

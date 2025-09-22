@@ -17,8 +17,9 @@ if [ -d /home/ec2-user/.bashrc.d ]; then
     done
 fi
 
-# Source colors for output formatting
+# Source colors and ArgoCD utilities
 source "$(dirname "$0")/colors.sh"
+source "$(dirname "$0")/argocd-utils.sh"
 
 # Configuration
 MAX_RETRIES=3
@@ -40,6 +41,7 @@ SCRIPTS=(
     "2-bootstrap-accounts.sh"
     "3-register-terraform-spoke-clusters.sh dev"
     "3-register-terraform-spoke-clusters.sh prod"
+    "4-setup-keycloak.sh"
     "6-tools-urls.sh"
 )
 
@@ -160,103 +162,11 @@ wait_for_clusters_ready() {
     fi
 }
 
-# Function to wait for ArgoCD applications to be healthy
-wait_for_argocd_health() {
+# Function to wait for ArgoCD applications to be healthy (wrapper for shared utility)
+wait_for_argocd_apps_health() {
     local timeout=$1
-    local start_time=$(date +%s)
-    local end_time=$((start_time + timeout))
-    local consecutive_failures=0
-    local max_consecutive_failures=3
-    
-    print_status "INFO" "Waiting for ArgoCD applications to be healthy (timeout: ${timeout}s)"
-    
-    while [ $(date +%s) -lt $end_time ]; do
-        # Check if kubectl is available and cluster is accessible
-        if ! kubectl get applications -n argocd >/dev/null 2>&1; then
-            ((consecutive_failures++))
-            if [ $consecutive_failures -ge $max_consecutive_failures ]; then
-                print_status "ERROR" "ArgoCD not accessible after multiple attempts"
-                return 1
-            fi
-            print_status "WARN" "ArgoCD not yet accessible, waiting... (failure $consecutive_failures/$max_consecutive_failures)"
-            sleep $ARGOCD_CHECK_INTERVAL
-            continue
-        fi
-        
-        # Reset failure counter on successful connection
-        consecutive_failures=0
-        
-        # Get application status with error handling
-        local app_status
-        if ! app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null); then
-            print_status "WARN" "Failed to get application status, retrying..."
-            sleep 10
-            continue
-        fi
-        
-        # Count applications
-        local total_apps=$(echo "$app_status" | grep -v '^$' | wc -l)
-        if [ "$total_apps" -eq 0 ]; then
-            print_status "INFO" "No ArgoCD applications found yet, waiting..."
-            sleep $ARGOCD_CHECK_INTERVAL
-            continue
-        fi
-        
-        # Count healthy and synced applications
-        local healthy_synced_apps=$(echo "$app_status" | awk '$2 == "Healthy" && $3 == "Synced" {count++} END {print count+0}')
-        local unhealthy_apps=$(echo "$app_status" | awk '$2 != "Healthy" || $3 == "OutOfSync" {print $1}')
-        local unhealthy_count=$(echo "$unhealthy_apps" | grep -v '^$' | wc -l)
-        
-        # Check if we have acceptable health (allow some apps to be OutOfSync but Healthy)
-        local healthy_apps=$(echo "$app_status" | awk '$2 == "Healthy" {count++} END {print count+0}')
-        local critical_unhealthy=$(echo "$app_status" | awk '$2 != "Healthy" && $2 != "" {print $1}' | grep -v '^$' | wc -l)
-        
-        if [ "$critical_unhealthy" -eq 0 ] && [ "$total_apps" -gt 0 ]; then
-            print_status "SUCCESS" "All $total_apps ArgoCD applications are healthy ($healthy_synced_apps fully synced)"
-            return 0
-        fi
-        
-        # Show current status
-        print_status "INFO" "ArgoCD status: $healthy_apps/$total_apps healthy, $healthy_synced_apps/$total_apps synced"
-        
-        # Show problematic applications (limit output)
-        if [ "$unhealthy_count" -gt 0 ]; then
-            local current_time=$(date +%s)
-            local elapsed=$((current_time - start_time))
-            
-            # Process unhealthy apps and collect stuck ones
-            while read app; do
-                if [ -n "$app" ]; then
-                    local app_health=$(echo "$app_status" | grep "^$app " | awk '{print $2}')
-                    local app_sync=$(echo "$app_status" | grep "^$app " | awk '{print $3}')
-                    print_status "INFO" "  ⚠️  $app: $app_health/$app_sync"
-                    
-                    # Check if app has been stuck for too long (Progressing/OutOfSync)
-                    if [ "$app_health" = "Progressing" ] && [ "$app_sync" = "OutOfSync" ]; then
-                        print_status "INFO" "DEBUG: Found stuck app $app, elapsed time: ${elapsed}s"
-                        if [ $elapsed -gt 30 ]; then  # Reduced to 30 seconds for faster response
-                            print_status "INFO" "Force syncing stuck application: $app (stuck for ${elapsed}s)"
-                            argocd app terminate-op "$app" 2>/dev/null || true
-                            sleep 2
-                            argocd app sync "$app" --timeout 60 2>/dev/null || {
-                                print_status "INFO" "ArgoCD CLI failed, using kubectl patch for $app"
-                                kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
-                            }
-                        fi
-                    fi
-                fi
-            done <<< "$(echo "$unhealthy_apps" | head -5)"
-            
-            if [ "$unhealthy_count" -gt 5 ]; then
-                print_status "INFO" "  ... and $((unhealthy_count - 5)) more"
-            fi
-        fi
-        
-        sleep $ARGOCD_CHECK_INTERVAL
-    done
-    
-    print_status "WARN" "Timeout waiting for ArgoCD applications to be fully healthy"
-    return 1
+    # Call the shared utility function from argocd-utils.sh
+    wait_for_argocd_health "$timeout" "$ARGOCD_CHECK_INTERVAL" "[INFO] "
 }
 
 # Function to sync and wait for specific ArgoCD application
@@ -381,7 +291,7 @@ run_script_with_retry() {
                 sleep 30
                 
                 # Check overall ArgoCD health with shorter timeout
-                if wait_for_argocd_health 300; then
+                if wait_for_argocd_apps_health 300; then
                     print_status "SUCCESS" "ArgoCD platform is operational"
                 else
                     print_status "WARN" "Some ArgoCD applications may still be syncing"
