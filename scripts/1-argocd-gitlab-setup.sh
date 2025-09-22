@@ -875,10 +875,10 @@ done
 
 # Verify Keycloak specifically
 print_step "Verifying Keycloak deployment status"
-local keycloak_app=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E '^keycloak' | head -1)
+keycloak_app=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E '^keycloak' | head -1)
 if [ -n "$keycloak_app" ]; then
-    local keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-    local keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
     
     if [ "$keycloak_health" = "Healthy" ] && [ "$keycloak_sync" = "Synced" ]; then
         print_success "✅ Keycloak is healthy and synced - OIDC authentication ready"
