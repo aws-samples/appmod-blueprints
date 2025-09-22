@@ -141,4 +141,19 @@ echo "----------------------------------------"
 cat "$VALUES_FILE"
 echo "----------------------------------------"
 
+# Commit the fleet member configuration to git
+print_status "INFO" "Committing fleet member configuration to git..."
+cd "$SCRIPT_DIR/.." || exit 1
+git add "gitops/fleet/members/fleet-spoke-$ENVIRONMENT/"
+if git commit -m "Add fleet member configuration for spoke $ENVIRONMENT cluster"; then
+    print_status "SUCCESS" "Fleet member configuration committed successfully"
+    if git push origin HEAD:main; then
+        print_status "SUCCESS" "Fleet member configuration pushed to remote repository"
+    else
+        print_status "WARN" "Failed to push to remote repository, but local commit succeeded"
+    fi
+else
+    print_status "WARN" "No changes to commit (configuration may already exist)"
+fi
+
 print_status "SUCCESS" "Spoke cluster $ENVIRONMENT registered successfully!"
