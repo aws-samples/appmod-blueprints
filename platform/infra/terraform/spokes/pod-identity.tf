@@ -218,3 +218,40 @@ module "ack_s3_pod_identity" {
 
   tags = local.tags
 }
+
+################################################################################
+# ACK DynamoDB Controller EKS Access
+################################################################################
+module "ack_dynamodb_pod_identity" {
+  count   = local.aws_addons.enable_ack_dynamodb ? 1 : 0
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.11.0"
+
+  name = "ack-dynamodb-controller"
+
+  additional_policy_arns = {
+    AmazonDynamoDBFullAccess = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+  }
+
+  policy_statements = [
+    {
+      sid    = "DynamoDBAllPermission"
+      effect = "Allow"
+      actions = [
+        "dynamodb:*"
+      ]
+      resources = ["*"]
+    }
+  ]
+
+  # Pod Identity Associations
+  associations = {
+    addon = {
+      cluster_name    = module.eks.cluster_name
+      namespace       = "ack-system"
+      service_account = "ack-dynamodb-controller"
+    }
+  }
+
+  tags = local.tags
+}
