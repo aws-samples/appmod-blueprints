@@ -97,6 +97,9 @@ data:
         "email": "user1@example.com",
         "firstName": "user",
         "lastName": "one",
+        "realmRoles": [
+            "grafana-admin"
+        ],
         "requiredActions": [],
         "emailVerified": true,
         "groups": [
@@ -137,6 +140,8 @@ data:
         "email": "admin@keycloak",
         "enabled": true,
         "firstName": "Admin",
+        "lastName": "Grafana",
+        "requiredActions": [],
         "realmRoles": [
             "grafana-admin"
         ],
@@ -154,6 +159,8 @@ data:
         "email": "editor@keycloak",
         "enabled": true,
         "firstName": "Editor",
+        "lastName": "Grafana",
+        "requiredActions": [],
         "realmRoles": [
           "grafana-editor"
         ],
@@ -171,6 +178,8 @@ data:
         "email": "viewer@keycloak",
         "enabled": true,
         "firstName": "Viewer",
+        "lastName": "Grafana",
+        "requiredActions": [],
         "realmRoles": [
           "grafana-viewer"
         ],
@@ -513,6 +522,20 @@ spec:
                 keycloak_put "/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}" "${client_name} client scope"
               }
 
+              # Add realm role to user function
+              add_realm_role_to_user() {
+                local username=$1
+                local role_name=$2
+                
+                echo "adding role ${role_name} to user ${username}"
+                USER_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/users" ".[] | select(.username == \"${username}\") | .id")
+                ROLE_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/roles" ".[] | select(.name == \"${role_name}\") | .id")
+                ROLE_NAME=$(keycloak_get "/admin/realms/${REALM_NAME}/roles" ".[] | select(.name == \"${role_name}\") | .name")
+                
+                echo "[{\"id\":\"${ROLE_ID}\",\"name\":\"${ROLE_NAME}\"}]" > /tmp/role-assignment.json
+                keycloak_post "/admin/realms/${REALM_NAME}/users/${USER_ID}/role-mappings/realm" "/tmp/role-assignment.json" "Role assignment"
+              }
+
               # Get client secret function
               get_client_secret() {
                 local client_id_name=$1
@@ -575,15 +598,17 @@ spec:
               create_role "grafana-editor"
               create_role "grafana-viewer"
 
-              echo "sleeping for 30s before creating users"
-              sleep 30
-
               echo "creating users"
               create_user "1" "${USER1_PASSWORD}" "/var/config/user-user1.json"
               create_user "2" "${USER1_PASSWORD}" "/var/config/user-user2.json"
               create_user "grafana-admin" "${USER1_PASSWORD}" "/var/config/user-grafana-admin.json"
               create_user "grafana-editor" "${USER1_PASSWORD}" "/var/config/user-grafana-editor.json"
               create_user "grafana-viewer" "${USER1_PASSWORD}" "/var/config/user-grafana-viewer.json"
+
+              echo "adding realm-roles to users"
+              add_realm_role_to_user "monitor-admin" "grafana-admin"
+              add_realm_role_to_user "monitor-editor" "grafana-editor"
+              add_realm_role_to_user "monitor-viewer" "grafana-viewer"
 
               echo "creating clients"
               create_client "Argo Workflows" "/var/config/argo-workflows-client-payload.json"
