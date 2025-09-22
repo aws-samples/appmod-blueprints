@@ -101,7 +101,7 @@ ack-eks:
 
 ack-s3:
   enabled: true
-  enableACK: true
+  enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
   namespace: ack-system
@@ -123,7 +123,7 @@ ack-s3:
 
 ack-dynamodb:
   enabled: true
-  enableACK: true
+  enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: "-1" # Needs to be after KRO RGD
   namespace: ack-system
