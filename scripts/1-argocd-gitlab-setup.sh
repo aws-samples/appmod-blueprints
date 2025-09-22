@@ -588,7 +588,7 @@ sync_and_wait_apps() {
         print_info "Checking for stuck operations and revision conflicts..."
         
         # Handle stuck operations and revision conflicts using shared functions
-        if handle_stuck_operations 180; then
+        if handle_stuck_operations 600; then  # 10 minutes for cluster-addons with many sync waves
             print_info "Handled stuck operations"
         fi
         

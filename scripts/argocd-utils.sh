@@ -50,7 +50,7 @@ sync_argocd_app() {
 
 # Function to handle stuck ArgoCD operations
 handle_stuck_operations() {
-    local timeout_seconds=${1:-180}
+    local timeout_seconds=${1:-600}  # Increased from 180 to 600 seconds (10 minutes)
     local message_prefix=${2:-""}
     
     local stuck_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
