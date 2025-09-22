@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ack-s3-{{.metadata.name}}
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: ack-s3
+    app.kubernetes.io/instance: ack-s3
+    app.kubernetes.io/part-of: ack-s3
+    app.kubernetes.io/managed-by: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: '{{.metadata.annotations.addons_repo_url}}'
+    path: gitops/addons/default/addons/ack-s3
+    targetRevision: '{{.metadata.annotations.addons_repo_revision}}'
+  destination:
+    server: '{{.metadata.annotations.aws_cluster_endpoint}}'
+    namespace: ack-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 5m
+      limit: 10
