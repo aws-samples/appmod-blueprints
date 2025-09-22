@@ -606,6 +606,7 @@ spec:
               create_user "grafana-viewer" "${USER1_PASSWORD}" "/var/config/user-grafana-viewer.json"
 
               echo "adding realm-roles to users"
+              add_realm_role_to_user "user1" "grafana-admin"
               add_realm_role_to_user "monitor-admin" "grafana-admin"
               add_realm_role_to_user "monitor-editor" "grafana-editor"
               add_realm_role_to_user "monitor-viewer" "grafana-viewer"
