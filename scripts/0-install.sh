@@ -226,23 +226,22 @@ wait_for_argocd_health() {
         if [ -n "$comparison_error_apps" ]; then
             echo "$comparison_error_apps" | while read -r app; do
                 if [ -n "$app" ]; then
-                    print_status "WARN" "Detected ComparisonError in $app - terminating operations and refreshing"
+                    print_status "WARN" "Detected ComparisonError in $app - using ArgoCD CLI to fix"
                     
-                    # Force terminate by removing the operation field entirely
-                    kubectl patch application "$app" -n argocd --type json -p='[{"op": "remove", "path": "/status/operation"}]' 2>/dev/null || true
-                    kubectl patch application "$app" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+                    # Use ArgoCD CLI for more reliable operation termination
+                    argocd app terminate-op "$app" --grpc-web 2>/dev/null || argocd app terminate-op "$app" 2>/dev/null || true
                     
                     sleep 3
                     
-                    # Hard refresh by updating refresh annotation
-                    kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh="$(date +%s)" --overwrite 2>/dev/null || true
+                    # Hard refresh to get latest revision
+                    argocd app refresh "$app" --grpc-web --hard 2>/dev/null || argocd app refresh "$app" --hard 2>/dev/null || true
                     
                     sleep 2
                     
-                    # Force sync with hard refresh
-                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD","syncOptions":["CreateNamespace=true"],"prune":true}}}' 2>/dev/null || true
+                    # Sync with latest revision
+                    argocd app sync "$app" --grpc-web --timeout 60 2>/dev/null || argocd app sync "$app" --timeout 60 2>/dev/null || true
                     
-                    print_status "INFO" "Completed recovery for $app"
+                    print_status "INFO" "Completed ArgoCD CLI recovery for $app"
                 fi
             done
         fi
@@ -253,17 +252,21 @@ wait_for_argocd_health() {
         if [ -n "$stuck_operations" ]; then
             echo "$stuck_operations" | while read -r app; do
                 if [ -n "$app" ]; then
-                    print_status "WARN" "Force terminating stuck operation for $app"
+                    print_status "WARN" "Force terminating stuck operation for $app using ArgoCD CLI"
                     
-                    # Multiple termination approaches
-                    kubectl patch application "$app" -n argocd --type json -p='[{"op": "remove", "path": "/status/operation"}]' 2>/dev/null || true
-                    kubectl patch application "$app" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
-                    kubectl patch application "$app" -n argocd --type merge -p '{"status":{"operationState":null}}' 2>/dev/null || true
+                    # Use ArgoCD CLI directly - this is more effective than kubectl patches
+                    argocd app terminate-op "$app" --grpc-web 2>/dev/null || argocd app terminate-op "$app" 2>/dev/null || {
+                        print_status "WARN" "ArgoCD CLI failed, trying direct kubectl delete of operation"
+                        # Last resort: try to delete the operation resource directly
+                        kubectl delete operation -n argocd -l app.kubernetes.io/instance="$app" 2>/dev/null || true
+                    }
                     
+                    sleep 3
+                    
+                    # Force refresh and sync
+                    argocd app refresh "$app" --grpc-web 2>/dev/null || argocd app refresh "$app" 2>/dev/null || true
                     sleep 2
-                    
-                    # Restart the sync
-                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                    argocd app sync "$app" --grpc-web --timeout 60 2>/dev/null || argocd app sync "$app" --timeout 60 2>/dev/null || true
                 fi
             done
         fi
@@ -286,14 +289,13 @@ wait_for_argocd_health() {
                         if [ $elapsed -gt 30 ]; then  # Reduced to 30 seconds for faster response
                             print_status "INFO" "Force syncing stuck application: $app (stuck for ${elapsed}s)"
                             
-                            # More aggressive termination
-                            kubectl patch application "$app" -n argocd --type json -p='[{"op": "remove", "path": "/status/operation"}]' 2>/dev/null || true
-                            kubectl patch application "$app" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+                            # Use ArgoCD CLI for reliable operation termination
+                            argocd app terminate-op "$app" --grpc-web 2>/dev/null || argocd app terminate-op "$app" 2>/dev/null || true
                             
                             sleep 2
                             
-                            # Force new sync
-                            kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                            # Force new sync with ArgoCD CLI
+                            argocd app sync "$app" --grpc-web --timeout 60 2>/dev/null || argocd app sync "$app" --timeout 60 2>/dev/null || true
                         fi
                     fi
                 fi
