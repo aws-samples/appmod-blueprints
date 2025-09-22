@@ -162,9 +162,10 @@ wait_for_clusters_ready() {
     fi
 }
 
-# Function to wait for ArgoCD applications to be healthy (using shared utility)
-wait_for_argocd_health() {
+# Function to wait for ArgoCD applications to be healthy (wrapper for shared utility)
+wait_for_argocd_apps_health() {
     local timeout=$1
+    # Call the shared utility function from argocd-utils.sh
     wait_for_argocd_health "$timeout" "$ARGOCD_CHECK_INTERVAL" "[INFO] "
 }
 
@@ -290,7 +291,7 @@ run_script_with_retry() {
                 sleep 30
                 
                 # Check overall ArgoCD health with shorter timeout
-                if wait_for_argocd_health 300; then
+                if wait_for_argocd_apps_health 300; then
                     print_status "SUCCESS" "ArgoCD platform is operational"
                 else
                     print_status "WARN" "Some ArgoCD applications may still be syncing"
