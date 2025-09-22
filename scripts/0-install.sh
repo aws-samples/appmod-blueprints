@@ -220,6 +220,44 @@ wait_for_argocd_health() {
         # Show current status
         print_status "INFO" "ArgoCD status: $healthy_apps/$total_apps healthy, $healthy_synced_apps/$total_apps synced"
         
+        # Check for ComparisonError and handle it
+        local comparison_error_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.conditions[]? | select(.type == "ComparisonError" and (.message | contains("cannot reference a different revision")))) | .metadata.name' 2>/dev/null || echo "")
+        
+        if [ -n "$comparison_error_apps" ]; then
+            echo "$comparison_error_apps" | while read -r app; do
+                if [ -n "$app" ]; then
+                    print_status "WARN" "Detected ComparisonError in $app - terminating operations and refreshing"
+                    
+                    # Terminate any running operations
+                    if command -v argocd >/dev/null 2>&1; then
+                        argocd app terminate-op "$app" 2>/dev/null || true
+                    else
+                        kubectl patch application "$app" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
+                    fi
+                    
+                    sleep 2
+                    
+                    # Refresh the app to get latest revision
+                    if command -v argocd >/dev/null 2>&1; then
+                        argocd app refresh "$app" 2>/dev/null || true
+                    else
+                        kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"info":[{"name":"Reason","value":"Refresh due to ComparisonError"}]}}' 2>/dev/null || true
+                    fi
+                    
+                    sleep 2
+                    
+                    # Sync the app
+                    if command -v argocd >/dev/null 2>&1; then
+                        argocd app sync "$app" --timeout 60 2>/dev/null || true
+                    else
+                        kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                    fi
+                    
+                    print_status "INFO" "Completed recovery for $app"
+                fi
+            done
+        fi
+        
         # Show problematic applications (limit output)
         if [ "$unhealthy_count" -gt 0 ]; then
             local current_time=$(date +%s)
@@ -237,12 +275,17 @@ wait_for_argocd_health() {
                         print_status "INFO" "DEBUG: Found stuck app $app, elapsed time: ${elapsed}s"
                         if [ $elapsed -gt 30 ]; then  # Reduced to 30 seconds for faster response
                             print_status "INFO" "Force syncing stuck application: $app (stuck for ${elapsed}s)"
-                            argocd app terminate-op "$app" 2>/dev/null || true
+                            if command -v argocd >/dev/null 2>&1; then
+                                argocd app terminate-op "$app" 2>/dev/null || true
+                            else
+                                kubectl patch application "$app" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
+                            fi
                             sleep 2
-                            argocd app sync "$app" --timeout 60 2>/dev/null || {
-                                print_status "INFO" "ArgoCD CLI failed, using kubectl patch for $app"
+                            if command -v argocd >/dev/null 2>&1; then
+                                argocd app sync "$app" --timeout 60 2>/dev/null || true
+                            else
                                 kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
-                            }
+                            fi
                         fi
                     fi
                 fi
