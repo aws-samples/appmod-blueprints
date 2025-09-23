@@ -9,6 +9,7 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
+export SKIP_GITLAB=${SKIP_GITLAB:-false}
 export GIT_USERNAME=${GIT_USERNAME:-user1}
 export IDE_PASSWORD=${IDE_PASSWORD:-"punkwalker!0912"}
 
@@ -68,25 +69,27 @@ main() {
   # Validate backend configuration
   # validate_backend_config
   # Initialize Terraform with S3 backend
+  if ! $SKIP_GITLAB ; then
   # Create Gitlab first
-  log "Initializing Terraform with S3 backend for gitlab infra..."
-  if ! terraform -chdir=$SCRIPTDIR/gitlab_infra init --upgrade ; then
-    log_error "Terraform initialization failed"
-    exit 1
-  fi
-  
-  # Set Terraform variables from environment
-  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
-  yq eval -o=json '.' ../hub-config.yaml > $GENEARATED_TFVAR.tfvars.json
-  # Apply Terraform configuration
-  log "Applying gitlab infra resources..."
-  if ! terraform -chdir=$SCRIPTDIR/gitlab_infra apply \
-    -var-file="$GENEARATED_TFVAR.tfvars.json" \
-    -var="git_username=${GIT_USERNAME}" \
-    -var="git_password=${IDE_PASSWORD}" \
-    -parallelism=3; then
-    log_error "Terraform apply failed"
-    exit 1
+    log "Initializing Terraform with S3 backend for gitlab infra..."
+    if ! terraform -chdir=$SCRIPTDIR/gitlab_infra init --upgrade ; then
+      log_error "Terraform initialization failed"
+      exit 1
+    fi
+    
+    # Set Terraform variables from environment
+    export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
+    yq eval -o=json '.' ../hub-config.yaml > $GENEARATED_TFVAR.tfvars.json
+    # Apply Terraform configuration
+    log "Applying gitlab infra resources..."
+    if ! terraform -chdir=$SCRIPTDIR/gitlab_infra apply \
+      -var-file="$GENEARATED_TFVAR.tfvars.json" \
+      -var="git_username=${GIT_USERNAME}" \
+      -var="git_password=${IDE_PASSWORD}" \
+      -parallelism=3; then
+      log_error "Terraform apply failed"
+      exit 1
+    fi
   fi
 
   GITLAB_DOMAIN=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)

@@ -167,13 +167,13 @@ variable "clusters" {
   })
   default = {
     hub = {
-      name = "cnoe-ref-impl"
+      name = "hub"
       region = "us-west-2"
       auto_mode = true
       environment = "control-plane"
       addons = {
         enable_argocd                    = false
-        enable_ack_iam                   = true
+        enable_ack_iam                   = false
         enable_ack_eks                   = false
         enable_ack_ec2                   = false
         enable_external_secrets          = false
@@ -197,7 +197,7 @@ variable "clusters" {
         enable_ingress_class_alb         = false
         enable_argo_rollouts             = false
         enable_ingress_nginx             = false
-        enable_gitlab                    = true
+        enable_gitlab                    = false
         enable_keycloak                  = false
         enable_argo_workflows            = false
         enable_kargo                     = false
@@ -205,7 +205,7 @@ variable "clusters" {
       }
     }
     spoke1 = {
-      name = "spoke1"
+      name = "spoke-dev"
       region = "us-west-2"
       auto_mode = true
       environment = "control-plane"
@@ -244,7 +244,7 @@ variable "clusters" {
       }
     }
     spoke2 = {
-      name = "spoke2"
+      name = "spoke-prod"
       region = "us-west-2"
       auto_mode = true
       environment = "control-plane"
