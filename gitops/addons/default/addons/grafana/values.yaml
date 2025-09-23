@@ -1,0 +1,142 @@
+# Grafana configuration values
+# These values are used to configure the Grafana deployment
+# Migrated from packages/grafana structure
+
+# Grafana deployment configuration
+grafana:
+  # Image configuration (matches template)
+  image:
+    repository: grafana/grafana
+    tag: "11.4.0" # Matches the template version
+    pullPolicy: IfNotPresent
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 3000
+    targetPort: 3000
+
+  # Resource limits and requests (matches template)
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m # Matches template
+      memory: 256Mi
+
+  # Security context (matches template)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 472
+    runAsGroup: 472
+    fsGroup: 472
+
+  # Persistence configuration (matches template)
+  persistence:
+    enabled: true
+    size: 1Gi # Matches template
+    storageClass: gp3 # Matches template
+
+  # Admin configuration
+  admin:
+    # Admin user (matches template)
+    user: admin
+    # Password will be sourced from external secret
+
+# Dashboard configuration
+dashboards:
+  # Enable default platform dashboards
+  enabled: true
+
+  # Custom dashboards from packages (preserving package configuration)
+  custom:
+    # Rust application dashboard (migrated from packages/grafana/dashboards/rust.json)
+    rust:
+      enabled: true
+      folder: "Observability Accelerator Dashboards"
+      # Preserving the original URL from packages/grafana/manifests/rust.yaml
+      url: "https://raw.githubusercontent.com/aws-samples/appmod-blueprints/refs/heads/main/packages/grafana/dashboards/rust.json"
+      # Original package used grafana-operator namespace
+      originalNamespace: "grafana-operator"
+      # Original package used instanceSelector with dashboards: "external-grafana"
+      instanceSelector:
+        matchLabels:
+          dashboards: "external-grafana"
+
+# Data source configuration
+datasources:
+  # Prometheus data source
+  prometheus:
+    enabled: true
+    name: prometheus
+    type: prometheus
+    url: http://prometheus-server.prometheus.svc.cluster.local
+    access: proxy
+    isDefault: true
+
+  # CloudWatch data source
+  cloudwatch:
+    enabled: false
+    name: cloudwatch
+    type: cloudwatch
+    region: us-west-2
+
+# External secrets configuration
+externalSecrets:
+  # Enable external secrets for admin credentials
+  enabled: true
+
+  # Admin credentials secret (matches template expectation)
+  adminCredentials:
+    secretName: grafana-admin-secret # Matches template
+    secretKey: admin-password # Matches template
+    remoteRef:
+      key: grafana/admin
+      property: password
+
+# Ingress configuration
+ingress:
+  # Enable ingress for web access
+  enabled: true
+
+  # Domain name (will be templated from cluster annotations)
+  domain_name: "" # Matches template variable ingress_domain_name
+
+  # Path configuration (matches template - serves from sub path)
+  path: /grafana/
+  pathType: Prefix
+
+# Namespace configuration
+namespace: grafana
+
+# GitOps bridge integration
+gitopsBridge:
+  # Enable GitOps bridge annotations
+  enabled: true
+
+  # Cluster secret annotations
+  annotations:
+    # Certificate ARN for ALB
+    "gitops.aws.com/certificate-arn": "aws-alb-certificate-arn"
+    # Domain name for ingress (matches template variable)
+    "gitops.aws.com/ingress-domain-name": "aws-ingress-domain-name"
+
+# Server configuration (matches template grafana.ini)
+server:
+  # Root URL configuration (matches template)
+  root_url_template: "https://{{ .Values.ingress_domain_name }}/grafana/"
+  serve_from_sub_path: true
+
+# Authentication configuration (matches template)
+auth:
+  disable_login_form: false
+
+# Users configuration (matches template)
+users:
+  allow_sign_up: false
+
+# Database configuration (matches template)
+database:
+  type: sqlite3
+  path: grafana.db
