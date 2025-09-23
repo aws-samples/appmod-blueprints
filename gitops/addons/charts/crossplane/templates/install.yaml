@@ -87,6 +87,7 @@ spec:
         args:
         - core
         - init
+        - --webhook-tls-secret-name=webhook-tls-secret
         imagePullPolicy: IfNotPresent
         name: crossplane-init
         resources:
@@ -117,6 +118,7 @@ spec:
         args:
         - core
         - start
+        - --webhook-tls-secret-name=webhook-tls-secret
         {{- if .Values.args }}
         {{- range .Values.args }}
         - {{ . }}
