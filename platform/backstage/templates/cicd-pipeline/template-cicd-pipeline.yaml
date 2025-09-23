@@ -98,7 +98,7 @@ spec:
 
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: argocd:create-app
+      action: argocd:create-application
       input:
         appName: ${{parameters.appname}}
         appNamespace: team-${{ parameters.appname }}
