@@ -76,4 +76,4 @@ crossplane:
 flux:
   enabled: true
 grafana:
-  enabled: true
+  enabled: false

@@ -1,0 +1,93 @@
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+  name: provider-family-aws
+  namespace: crossplane-system
+spec:
+  package: xpkg.upbound.io/upbound/provider-family-aws:v1.14.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-s3
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-s3:v1.14.0
+  runtimeConfigRef:
+    name: aws-irsa-drc
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-dynamodb
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-dynamodb:v1.13.1
+  runtimeConfigRef:
+    name: aws-irsa-drc
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-apigatewayv2
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-apigatewayv2:v1.13.1
+  runtimeConfigRef:
+    name: aws-irsa-drc
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-eks
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-eks:v1.13.1
+  runtimeConfigRef:
+    name: aws-irsa-drc
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-iam:v1.13.1
+  runtimeConfigRef:
+    name: aws-irsa-drc
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-lambda
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-lambda:v1.13.0
+  runtimeConfigRef:
+    name: aws-irsa-drc
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-rds
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-rds:v1.13.1
+  runtimeConfigRef:
+    name: aws-irsa-drc
