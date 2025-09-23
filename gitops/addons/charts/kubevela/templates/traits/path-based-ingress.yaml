@@ -11,6 +11,10 @@ spec:
   schematic:
     cue:
       template: |
+        context: {
+        	name: string
+        	outputs: {...}
+        }
         parameter: {
         	domain: string
         	http: [string]: int
