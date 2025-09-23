@@ -77,6 +77,11 @@ ack-iam:
       region: '{{.metadata.annotations.aws_region}}'
     serviceAccount:
       name: '{{default "ack-iam-controller" (index .metadata.annotations "ack_iam_service_account")}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
 ack-eks:
   enabled: false
@@ -98,6 +103,11 @@ ack-eks:
       region: '{{.metadata.annotations.aws_region}}'
     serviceAccount:
       name: '{{default "ack-eks-controller" (index .metadata.annotations "ack_eks_service_account")}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
 ack-s3:
   enabled: true
@@ -120,6 +130,11 @@ ack-s3:
       region: '{{.metadata.annotations.aws_region}}'
     serviceAccount:
       name: '{{default "ack-s3-controller" (index .metadata.annotations "ack_s3_service_account")}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
 ack-dynamodb:
   enabled: true
@@ -142,6 +157,11 @@ ack-dynamodb:
       region: '{{.metadata.annotations.aws_region}}'
     serviceAccount:
       name: '{{default "ack-dynamodb-controller" (index .metadata.annotations "ack_dynamodb_service_account")}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
 ack-ec2:
   enabled: false
@@ -163,6 +183,11 @@ ack-ec2:
       region: '{{.metadata.annotations.aws_region}}'
     serviceAccount:
       name: '{{default "ack-ec2-controller" (index .metadata.annotations "ack_ec2_service_account")}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
 external-secrets:
   enabled: false
