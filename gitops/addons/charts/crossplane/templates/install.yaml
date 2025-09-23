@@ -110,6 +110,8 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.serviceAccountName
+        - name: WEBHOOK_TLS_SECRET_NAME
+          value: "webhook-tls-secret"
       containers:
       - image: crossplane/crossplane:v1.17.1
         args:
