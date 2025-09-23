@@ -71,3 +71,9 @@ backstage:
   enabled: true
 kargo:
   enabled: true
+crossplane:
+  enabled: true
+flux:
+  enabled: true
+grafana:
+  enabled: true

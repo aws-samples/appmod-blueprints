@@ -52,6 +52,7 @@ spec:
         # Hard coded value for this demo purposes only.
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.appname}}-cicd&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
+        useCustomGit: true
 
     - action: fetch:template
       name: Fetch Provisioner
@@ -66,12 +67,12 @@ spec:
           dockerfile_path: ${{parameters.dockerfile_path}}
           deployment_path: ${{parameters.deployment_path}}
 
-    - action: cnoe:kubernetes:apply
+    - action: kube:apply
       name: Apply Provisioner IAM
       id: apply-prov-iam
       input:
         namespaced: true
-        manifestPath: podidentity.yaml
+        manifest: podidentity.yaml
         clusterName: local
 
     - action: debug:wait
@@ -79,25 +80,25 @@ spec:
       input:
         seconds: 15
 
-    - action: cnoe:kubernetes:apply
+    - action: kube:apply
       name: Apply Workflow Templates
       id: apply-temp
       input:
         namespaced: true
-        manifestPath: wf-templates.yaml
+        manifest: wf-templates.yaml
         clusterName: local
 
-    - action: cnoe:kubernetes:apply
+    - action: kube:apply
       name: Run Workflow 
       id: run-wf
       input:
         namespaced: true
-        manifestPath: wf-run.yaml
+        manifest: wf-run.yaml
         clusterName: local
 
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: argocd:create-app
+      action: argocd:create-application
       input:
         appName: ${{parameters.appname}}
         appNamespace: team-${{ parameters.appname }}

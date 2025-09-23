@@ -1,0 +1,143 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: platform-gitops-repo
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  interval: 1m
+  ref:
+    branch: main
+  url: "{{ `{{ .Values.gitRepository.url | default "https://github.com/aws-samples/appmod-blueprints.git" }}` }}"
+  {{ `{{- if .Values.gitRepository.secretRef }}` }}
+  secretRef:
+    name: "{{ `{{ .Values.gitRepository.secretRef.name | default "flux-git-credentials" }}` }}"
+  {{ `{{- end }}` }}
+  timeout: 60s
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: workloads-gitops-repo
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  interval: 5m
+  ref:
+    branch: "{{ `{{ .Values.workloadsRepository.branch | default "main" }}` }}"
+  url: "{{ `{{ .Values.workloadsRepository.url | default "https://github.com/aws-samples/appmod-blueprints.git" }}` }}"
+  {{ `{{- if .Values.workloadsRepository.secretRef }}` }}
+  secretRef:
+    name: "{{ `{{ .Values.workloadsRepository.secretRef.name | default "flux-git-credentials" }}` }}"
+  {{ `{{- end }}` }}
+  timeout: 60s
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: platform-addons
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+spec:
+  interval: 10m
+  path: "{{ `{{ .Values.platformAddons.path | default "./gitops/addons" }}` }}"
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: platform-gitops-repo
+  timeout: 5m
+  {{ `{{- if .Values.platformAddons.targetNamespace }}` }}
+  targetNamespace: "{{ `{{ .Values.platformAddons.targetNamespace }}` }}"
+  {{ `{{- end }}` }}
+  {{ `{{- if .Values.platformAddons.postBuild }}` }}
+  postBuild:
+    {{ `{{- if .Values.platformAddons.postBuild.substitute }}` }}
+    substitute:
+      {{ `{{- range $key, $value := .Values.platformAddons.postBuild.substitute }}` }}
+      {{ `{{ $key }}` }}: "{{ `{{ $value }}` }}"
+      {{ `{{- end }}` }}
+    {{ `{{- end }}` }}
+    {{ `{{- if .Values.platformAddons.postBuild.substituteFrom }}` }}
+    substituteFrom:
+      {{ `{{- range .Values.platformAddons.postBuild.substituteFrom }}` }}
+      - kind: "{{ `{{ .kind }}` }}"
+        name: "{{ `{{ .name }}` }}"
+        {{ `{{- if .optional }}` }}
+        optional: {{ `{{ .optional }}` }}
+        {{ `{{- end }}` }}
+      {{ `{{- end }}` }}
+    {{ `{{- end }}` }}
+  {{ `{{- end }}` }}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: workloads
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  interval: 10m
+  path: "{{ `{{ .Values.workloads.path | default "./gitops/workloads" }}` }}"
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: workloads-gitops-repo
+  timeout: 5m
+  {{ `{{- if .Values.workloads.targetNamespace }}` }}
+  targetNamespace: "{{ `{{ .Values.workloads.targetNamespace }}` }}"
+  {{ `{{- end }}` }}
+  {{ `{{- if .Values.workloads.dependsOn }}` }}
+  dependsOn:
+    {{ `{{- range .Values.workloads.dependsOn }}` }}
+    - name: "{{ `{{ .name }}` }}"
+      {{ `{{- if .namespace }}` }}
+      namespace: "{{ `{{ .namespace }}` }}"
+      {{ `{{- end }}` }}
+    {{ `{{- end }}` }}
+  {{ `{{- end }}` }}
+  {{ `{{- if .Values.workloads.postBuild }}` }}
+  postBuild:
+    {{ `{{- if .Values.workloads.postBuild.substitute }}` }}
+    substitute:
+      {{ `{{- range $key, $value := .Values.workloads.postBuild.substitute }}` }}
+      {{ `{{ $key }}` }}: "{{ `{{ $value }}` }}"
+      {{ `{{- end }}` }}
+    {{ `{{- end }}` }}
+    {{ `{{- if .Values.workloads.postBuild.substituteFrom }}` }}
+    substituteFrom:
+      {{ `{{- range .Values.workloads.postBuild.substituteFrom }}` }}
+      - kind: "{{ `{{ .kind }}` }}"
+        name: "{{ `{{ .name }}` }}"
+        {{ `{{- if .optional }}` }}
+        optional: {{ `{{ .optional }}` }}
+        {{ `{{- end }}` }}
+      {{ `{{- end }}` }}
+    {{ `{{- end }}` }}
+  {{ `{{- end }}` }}
+---
+# SSH-based Git Repository (alternative configuration)
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: platform-gitops-repo-ssh
+  namespace: flux-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  interval: 1m
+  ref:
+    branch: "{{ `{{ .Values.sshRepository.branch | default "main" }}` }}"
+  url: "{{ `{{ .Values.sshRepository.url | default "ssh://git@github.com/aws-samples/appmod-blueprints.git" }}` }}"
+  {{ `{{- if .Values.sshRepository.secretRef }}` }}
+  secretRef:
+    name: "{{ `{{ .Values.sshRepository.secretRef.name | default "flux-ssh-credentials" }}` }}"
+  {{ `{{- end }}` }}
+  timeout: 60s
+  {{ `{{- if not .Values.sshRepository.enabled }}` }}
+  suspend: true
+  {{ `{{- end }}` }}
