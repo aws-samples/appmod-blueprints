@@ -38,4 +38,4 @@ spec:
   hostname: '{{ values.gitlabDomain }}'
   gituser: '{{ values.gitUsername }}'
   aws_region: '{{ values.awsRegion }}'
-  aws_account_id: "{{ values.awsAccountId }}"
+  aws_account_id: '{{ values.awsAccountId }}'
