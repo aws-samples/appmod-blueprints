@@ -116,6 +116,9 @@ locals {
     enable_secrets_store_csi_driver        = try(var.addons.enable_secrets_store_csi_driver, false)
     enable_vpa                             = try(var.addons.enable_vpa, false)
     enable_kubevela                        = try(var.addons.enable_kubevela, false)
+    enable_crossplane                      = try(var.addons.enable_crossplane, false)
+    enable_flux                            = try(var.addons.enable_flux, false)
+    enable_grafana                         = try(var.addons.enable_grafana, false)
   }
 
   addons = merge(
