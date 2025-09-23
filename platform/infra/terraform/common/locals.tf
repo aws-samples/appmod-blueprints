@@ -108,67 +108,10 @@ locals {
   }
 
   aws_addons = {
-    for k, v in var.clusters : k => {
-      enable_cert_manager                          = try(v.addons.enable_cert_manager, false)
-      enable_aws_efs_csi_driver                    = try(v.addons.enable_aws_efs_csi_driver, false)
-      enable_aws_fsx_csi_driver                    = try(v.addons.enable_aws_fsx_csi_driver, false)
-      enable_aws_cloudwatch_metrics                = try(v.addons.enable_aws_cloudwatch_metrics, false)
-      enable_aws_cloudwatch_observability          = try(v.addons.enable_aws_cloudwatch_observability, false)
-      enable_aws_privateca_issuer                  = try(v.addons.enable_aws_privateca_issuer, false)
-      enable_cluster_autoscaler                    = try(v.addons.enable_cluster_autoscaler, false)
-      enable_external_dns                          = try(v.addons.enable_external_dns, false)
-      enable_external_secrets                      = try(v.addons.enable_external_secrets, false)
-      enable_aws_load_balancer_controller          = try(v.addons.enable_aws_load_balancer_controller, false)
-      enable_fargate_fluentbit                     = try(v.addons.enable_fargate_fluentbit, false)
-      enable_aws_for_fluentbit                     = try(v.addons.enable_aws_for_fluentbit, false)
-      enable_aws_node_termination_handler          = try(v.addons.enable_aws_node_termination_handler, false)
-      enable_karpenter                             = try(v.addons.enable_karpenter, false)
-      enable_velero                                = try(v.addons.enable_velero, false)
-      enable_aws_gateway_api_controller            = try(v.addons.enable_aws_gateway_api_controller, false)
-      enable_aws_ebs_csi_resources                 = try(v.addons.enable_aws_ebs_csi_resources, false)
-      enable_aws_secrets_store_csi_driver_provider = try(v.addons.enable_aws_secrets_store_csi_driver_provider, false)
-      enable_ack_apigatewayv2                      = try(v.addons.enable_ack_apigatewayv2, false)
-      enable_ack_dynamodb                          = try(v.addons.enable_ack_dynamodb, false)
-      enable_ack_s3                                = try(v.addons.enable_ack_s3, false)
-      enable_ack_rds                               = try(v.addons.enable_ack_rds, false)
-      enable_ack_prometheusservice                 = try(v.addons.enable_ack_prometheusservice, false)
-      enable_ack_emrcontainers                     = try(v.addons.enable_ack_emrcontainers, false)
-      enable_ack_sfn                               = try(v.addons.enable_ack_sfn, false)
-      enable_ack_eventbridge                       = try(v.addons.enable_ack_eventbridge, false)
-      enable_aws_argocd                            = try(v.addons.enable_argocd, false)
-      enable_ack_iam                               = try(v.addons.enable_ack_iam, false)
-      enable_ack_eks                               = try(v.addons.enable_ack_eks, false)
-      enable_cni_metrics_helper                    = try(v.addons.enable_cni_metrics_helper, false)
-      enable_ack_ec2                               = try(v.addons.enable_ack_ec2, false)
-      enable_ack_efs                               = try(v.addons.enable_ack_efs, false)
-      enable_kro                                   = try(v.addons.enable_kro, false)
-      enable_kro_eks_rgs                           = try(v.addons.enable_kro_eks_rgs, false)
-      enable_mutli_acct                            = try(v.addons.enable_mutli_acct, false)
-      enable_ingress_class_alb                     = try(v.addons.enable_ingress_class_alb, false)
-    }
+    for k, v in var.clusters : k => v.addons
   }
   oss_addons = {
-    for k, v in var.clusters : k => {
-      enable_ingress_nginx                   = try(v.addons.enable_ingress_nginx, false)
-      enable_argocd                          = try(v.addons.enable_argocd, false)
-      enable_backstage                       = try(v.addons.enable_backstage, false)
-      enable_kargo                           = try(v.addons.enable_kargo, false)
-      enable_keycloak                        = try(v.addons.enable_keycloak, false)
-      enable_gitlab                          = try(v.addons.enable_gitlab, false)
-      enable_argo_rollouts                   = try(v.addons.enable_argo_rollouts, false)
-      enable_argo_events                     = try(v.addons.enable_argo_events, false)
-      enable_argo_workflows                  = try(v.addons.enable_argo_workflows, false)
-      enable_cluster_proportional_autoscaler = try(v.addons.enable_cluster_proportional_autoscaler, false)
-      enable_gatekeeper                      = try(v.addons.enable_gatekeeper, false)
-      enable_gpu_operator                    = try(v.addons.enable_gpu_operator, false)
-      enable_keda                            = try(v.addons.enable_keda, false)
-      enable_kyverno                         = try(v.addons.enable_kyverno, false)
-      enable_kube_prometheus_stack           = try(v.addons.enable_kube_prometheus_stack, false)
-      enable_metrics_server                  = try(v.addons.enable_metrics_server, false)
-      enable_prometheus_adapter              = try(v.addons.enable_prometheus_adapter, false)
-      enable_secrets_store_csi_driver        = try(v.addons.enable_secrets_store_csi_driver, false)
-      enable_vpa                             = try(v.addons.enable_vpa, false)
-    }
+    for k, v in var.clusters : k => v.addons
   }
   
   addons = {
@@ -178,6 +121,7 @@ locals {
       { aws_cluster_name = v.name },
       { fleet_member = v.environment },
       { tenant = v.environment },
+      { environment = v.environment },
     )
   }
 
