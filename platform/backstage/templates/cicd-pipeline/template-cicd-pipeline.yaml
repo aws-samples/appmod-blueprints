@@ -72,7 +72,7 @@ spec:
       id: apply-prov-iam
       input:
         namespaced: true
-        manifestPath: podidentity.yaml
+        manifest: podidentity.yaml
         clusterName: local
 
     - action: debug:wait
@@ -85,7 +85,7 @@ spec:
       id: apply-temp
       input:
         namespaced: true
-        manifestPath: wf-templates.yaml
+        manifest: wf-templates.yaml
         clusterName: local
 
     - action: kube:apply
@@ -93,7 +93,7 @@ spec:
       id: run-wf
       input:
         namespaced: true
-        manifestPath: wf-run.yaml
+        manifest: wf-run.yaml
         clusterName: local
 
     - id: create-argocd-app
