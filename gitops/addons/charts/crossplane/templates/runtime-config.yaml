@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crossplane-aws-provider
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    gitops.aws.com/cluster-secret: "aws-crossplane-config"
+    {{- if .Values.aws }}
+    {{- if .Values.aws.irsaRoleArn }}
+    eks.amazonaws.com/role-arn: {{ .Values.aws.irsaRoleArn }}
+    {{- else }}
+    eks.amazonaws.com/role-arn: '{{`{{.metadata.annotations.crossplane_irsa_role_arn}}`}}'
+    {{- end }}
+    {{- else }}
+    eks.amazonaws.com/role-arn: '{{`{{.metadata.annotations.crossplane_irsa_role_arn}}`}}'
+    {{- end }}
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: aws-irsa-drc
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          serviceAccountName: crossplane-aws-provider
+---
+apiVersion: aws.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: provider-aws-config
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  credentials:
+    source: IRSA
