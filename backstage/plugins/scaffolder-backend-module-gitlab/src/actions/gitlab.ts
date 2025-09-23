@@ -19,6 +19,7 @@ import { ScmIntegrationRegistry } from '@backstage/integration';
 import {
   createTemplateAction,
   getRepoSourceDirectory,
+  initRepoAndPush,
   parseRepoUrl,
 } from '@backstage/plugin-scaffolder-node';
 
@@ -29,9 +30,8 @@ import { examples } from './gitlab.examples';
 
 /**
  * Custom Git implementation using child_process to bypass HTTP client timeout issues
- * This completely avoids the problematic simple-get library by using native git commands
  */
-async function initRepoAndPushWithTimeout(input: {
+async function customGitPush(input: {
   dir: string;
   remoteUrl: string;
   auth: { username: string; password: string } | { token: string };
@@ -39,7 +39,6 @@ async function initRepoAndPushWithTimeout(input: {
   defaultBranch?: string;
   commitMessage?: string;
   gitAuthorInfo?: { name?: string; email?: string };
-  signingKey?: string;
   timeout?: number;
 }): Promise<{ commitHash: string }> {
   const {
@@ -55,9 +54,8 @@ async function initRepoAndPushWithTimeout(input: {
 
   const { spawn } = require('child_process');
 
-  logger.info(`Starting custom git operation with ${timeout}s timeout`);
+  logger.info(`Starting git operation with ${timeout}s timeout`);
 
-  // Helper function to run git commands with timeout
   const runGitCommand = (args: string[], options: any = {}): Promise<string> => {
     return new Promise((resolve, reject) => {
       logger.info(`Running git command: git ${args.join(' ')}`);
@@ -92,7 +90,6 @@ async function initRepoAndPushWithTimeout(input: {
         reject(new Error(`Git command error: ${error.message}`));
       });
 
-      // Set up timeout
       const timeoutId = setTimeout(() => {
         gitProcess.kill('SIGKILL');
         reject(new Error(`Git command timed out after ${timeout} seconds`));
@@ -105,59 +102,27 @@ async function initRepoAndPushWithTimeout(input: {
   };
 
   try {
-    // Initialize repository first
-    logger.info('Initializing git repository');
     await runGitCommand(['init', '-b', defaultBranch]);
 
-    // Configure git user (after init)
     const authorName = gitAuthorInfo?.name || 'Scaffolder';
     const authorEmail = gitAuthorInfo?.email || 'scaffolder@backstage.io';
 
     await runGitCommand(['config', 'user.name', authorName]);
     await runGitCommand(['config', 'user.email', authorEmail]);
-
-    // Configure HTTP timeout for git (in seconds)
     await runGitCommand(['config', 'http.timeout', String(timeout)]);
     await runGitCommand(['config', 'http.lowSpeedLimit', '1000']);
     await runGitCommand(['config', 'http.lowSpeedTime', String(timeout)]);
 
-    // Configure credential handling
-    await runGitCommand(['config', 'credential.helper', 'store']);
-
-    // Add remote with authentication (using same format as working test script)
     const authUrl = 'token' in auth
-      ? remoteUrl.replace(/^https?:\/\//, `https://user1:${auth.token}@`)
+      ? remoteUrl.replace(/^https?:\/\//, `https://oauth2:${auth.token}@`)
       : remoteUrl.replace(/^https?:\/\//, `https://${auth.username}:${auth.password}@`);
 
-    logger.info(`Adding remote with URL: ${remoteUrl} (auth: ${'token' in auth ? 'token' : 'username/password'})`);
-    logger.info(`Constructed auth URL: ${authUrl.replace(/(oauth2:|\/\/[^:]+:)[^@]+@/, '$1***@')}`); // Log URL with masked credentials
-
     await runGitCommand(['remote', 'add', 'origin', authUrl]);
-
-    // Verify remote was added correctly
-    const remoteOutput = await runGitCommand(['remote', '-v']);
-    logger.info(`Git remotes: ${remoteOutput}`);
-
-    // Add all files
-    logger.info('Adding files to git');
     await runGitCommand(['add', '.']);
-
-    // Commit
-    logger.info('Committing files');
+    
     const commitOutput = await runGitCommand(['commit', '-m', commitMessage]);
     const commitHash = commitOutput.match(/\[.+?\s([a-f0-9]+)\]/)?.[1] || 'unknown';
 
-    // Test connection first
-    logger.info('Testing git connection to remote');
-    try {
-      await runGitCommand(['ls-remote', '--heads', 'origin']);
-      logger.info('Git connection test successful');
-    } catch (error: any) {
-      logger.warn(`Git connection test failed: ${error.message}`);
-    }
-
-    // Push with extended timeout
-    logger.info('Pushing to remote repository');
     await runGitCommand(['push', '-u', 'origin', defaultBranch]);
 
     logger.info('Git operation completed successfully');
@@ -167,6 +132,45 @@ async function initRepoAndPushWithTimeout(input: {
     logger.error(`Git operation failed: ${error.message}`);
     throw error;
   }
+}
+
+/**
+ * Wrapper that chooses between original and custom git implementation
+ */
+async function initRepoAndPushWithTimeout(input: {
+  dir: string;
+  remoteUrl: string;
+  auth: { username: string; password: string } | { token: string };
+  logger: LoggerService;
+  defaultBranch?: string;
+  commitMessage?: string;
+  gitAuthorInfo?: { name?: string; email?: string };
+  signingKey?: string;
+  timeout?: number;
+  useCustomGit?: boolean;
+}): Promise<{ commitHash: string }> {
+  const { timeout = 60, useCustomGit = false, ...restInput } = input;
+
+  if (useCustomGit) {
+    return customGitPush({ ...restInput, timeout });
+  }
+
+  // Original implementation with timeout wrapper
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`Git push operation timed out after ${timeout} seconds`));
+    }, timeout * 1000);
+
+    initRepoAndPush(restInput)
+      .then((result) => {
+        clearTimeout(timeoutId);
+        resolve(result);
+      })
+      .catch((error: any) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      });
+  });
 }
 
 /**
@@ -360,6 +364,12 @@ export function createPublishGitlabAction(options: {
               }),
             )
             .optional(),
+        useCustomGit: z =>
+          z
+            .boolean({
+              description: 'Use custom git implementation to avoid HTTP client timeout issues. Defaults to false for backward compatibility.',
+            })
+            .optional(),
       },
       output: {
         remoteUrl: z =>
@@ -400,6 +410,7 @@ export function createPublishGitlabAction(options: {
         skipExisting = false,
         signCommit,
         gitTimeout = 60,
+        useCustomGit = false,
       } = ctx.input;
       const { owner, repo, host } = parseRepoUrl(repoUrl, integrations);
 
@@ -591,6 +602,7 @@ export function createPublishGitlabAction(options: {
             gitAuthorInfo,
             signingKey: signCommit ? signingKey : undefined,
             timeout: gitTimeout,
+            useCustomGit,
           });
 
           if (branches) {
