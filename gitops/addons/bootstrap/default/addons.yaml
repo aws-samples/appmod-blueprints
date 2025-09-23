@@ -259,6 +259,11 @@ ack-efs:
       region: '{{.metadata.annotations.aws_region}}'
     serviceAccount:
       name: 'ack-efs-controller'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
 aws_efs_csi_driver:
   enabled: false
