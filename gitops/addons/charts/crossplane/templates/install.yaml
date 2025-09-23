@@ -148,6 +148,8 @@ spec:
               fieldPath: spec.serviceAccountName
         - name: LEADER_ELECTION
           value: "true"
+        - name: WEBHOOK_TLS_SECRET_NAME
+          value: "webhook-tls-secret"
         volumeMounts:
         - mountPath: /cache
           name: package-cache
