@@ -72,6 +72,14 @@ ack-iam:
       - key: enable_ack_iam
         operator: In
         values: ['true']
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
   valuesObject:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
@@ -82,6 +90,10 @@ ack-iam:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
         - /spec/versions/*/schema/openAPIV3Schema/description
         - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
@@ -114,6 +126,10 @@ ack-eks:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
         - /spec/versions/*/schema/openAPIV3Schema/description
         - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
@@ -147,6 +163,10 @@ ack-s3:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
         - /spec/versions/*/schema/openAPIV3Schema/description
         - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
@@ -180,6 +200,10 @@ ack-dynamodb:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
         - /spec/versions/*/schema/openAPIV3Schema/description
         - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
@@ -212,6 +236,10 @@ ack-ec2:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
         - /spec/versions/*/schema/openAPIV3Schema/description
         - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
@@ -294,6 +322,10 @@ ack-efs:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
