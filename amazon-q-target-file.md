@@ -684,3 +684,42 @@ cd platform/infra/terraform/spokes && TFSTATE_BUCKET_NAME=tcat-{resource_prefix}
 git push origin cdk-fleet:main
 git push github cdk-fleet
 ```
+## Helm Chart Dependencies in GitOps
+
+### When to run `helm dependency build`
+
+`helm dependency build` only needs to be run when:
+
+1. **Chart dependencies are added/changed** - when you modify the `dependencies:` section in Chart.yaml
+2. **Dependency versions are updated** - when you bump version numbers of dependencies  
+3. **New charts with dependencies are added** - like flux/crossplane/kubevela charts
+
+### What it's NOT needed for:
+- Regular application deployments
+- Configuration changes in values.yaml
+- Template modifications
+- Normal GitOps operations
+
+### Best practices for GitOps:
+- Run it once when setting up charts with dependencies
+- Run it when dependency versions change
+- Always commit the generated `Chart.lock` and `charts/` directory
+- Consider adding a CI/CD check to ensure dependencies are built before merging
+
+### Example fix:
+```bash
+# Add required helm repos
+helm repo add crossplane-stable https://charts.crossplane.io/stable
+helm repo add kubevela https://kubevela.github.io/charts
+
+# Build dependencies for charts that need them
+cd ./gitops/addons/charts/flux && helm dependency build
+cd ./gitops/addons/charts/crossplane && helm dependency build  
+cd ./gitops/addons/charts/kubevela && helm dependency build
+
+# Commit the generated files
+git add ./gitops/addons/charts/
+git commit -m "Fix chart dependencies"
+```
+
+This ensures ArgoCD can properly render charts with their dependencies without needing to fetch them at runtime.
