@@ -597,7 +597,7 @@ spec:
       serviceAccountName: source-controller
       containers:
       - name: manager
-        image: fluxcd/source-controller:v1.0.1
+        image: fluxcd/source-controller:v0.36.1
         args:
         - --events-addr=http://notification-controller.flux-system.svc.cluster.local./
         - --watch-all-namespaces=true
