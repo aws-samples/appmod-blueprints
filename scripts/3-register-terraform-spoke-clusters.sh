@@ -26,6 +26,14 @@ set -e
 # Source colors for output formatting
 SCRIPT_DIR="$(dirname "$0")"
 source "$SCRIPT_DIR/colors.sh"
+# Source environment variables first
+if [ -d /home/ec2-user/.bashrc.d ]; then
+    for file in /home/ec2-user/.bashrc.d/*.sh; do
+        if [ -f "$file" ]; then
+            source "$file"
+        fi
+    done
+fi
 
 # Function to print colored output
 print_status() {

@@ -39,6 +39,14 @@ set -e  # Exit on any error
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
+# Source environment variables first
+if [ -d /home/ec2-user/.bashrc.d ]; then
+    for file in /home/ec2-user/.bashrc.d/*.sh; do
+        if [ -f "$file" ]; then
+            source "$file"
+        fi
+    done
+fi
 
 # Validation function
 validate_prerequisites() {
