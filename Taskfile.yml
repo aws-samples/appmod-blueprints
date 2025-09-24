@@ -1,0 +1,44 @@
+version: '3'
+
+tasks:
+  build-helm-dependencies:
+    desc: Build Helm chart dependencies for all addon charts that require them
+    cmds:
+      - echo "Adding required Helm repositories..."
+      - helm repo add crossplane-stable https://charts.crossplane.io/stable || true
+      - helm repo add kubevela https://kubevela.github.io/charts || true
+      - helm repo add fluxcd-community https://fluxcd-community.github.io/helm-charts || true
+      - helm repo update
+      - echo "Building dependencies for flux chart..."
+      - cd ./gitops/addons/charts/flux && helm dependency build
+      - echo "Building dependencies for crossplane chart..."
+      - cd ./gitops/addons/charts/crossplane && helm dependency build
+      - echo "Building dependencies for kubevela chart..."
+      - cd ./gitops/addons/charts/kubevela && helm dependency build
+      - echo "All Helm chart dependencies built successfully!"
+      - echo "Don't forget to commit the generated Chart.lock files and charts/ directories"
+
+  check-helm-dependencies:
+    desc: Check which charts have dependencies defined
+    cmds:
+      - echo "Charts with dependencies:"
+      - find ./gitops/addons/charts -name "Chart.yaml" -exec grep -l "dependencies:" {} \;
+      - echo ""
+      - echo "Checking for missing Chart.lock files:"
+      - |
+        for chart in $(find ./gitops/addons/charts -name "Chart.yaml" -exec grep -l "dependencies:" {} \;); do
+          chart_dir=$(dirname "$chart")
+          if [ ! -f "$chart_dir/Chart.lock" ]; then
+            echo "Missing Chart.lock: $chart_dir"
+          else
+            echo "Found Chart.lock: $chart_dir"
+          fi
+        done
+
+  clean-helm-dependencies:
+    desc: Clean all generated Helm dependency files
+    cmds:
+      - echo "Cleaning Chart.lock files and charts/ directories..."
+      - find ./gitops/addons/charts -name "Chart.lock" -delete
+      - find ./gitops/addons/charts -name "charts" -type d -exec rm -rf {} + 2>/dev/null || true
+      - echo "Cleaned all Helm dependency files"
