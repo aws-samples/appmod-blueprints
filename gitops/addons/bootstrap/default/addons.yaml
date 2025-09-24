@@ -82,7 +82,8 @@ ack-iam:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -113,7 +114,8 @@ ack-eks:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -145,7 +147,8 @@ ack-s3:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -177,7 +180,8 @@ ack-dynamodb:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -208,7 +212,8 @@ ack-ec2:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -678,11 +683,16 @@ keycloak:
         - /metadata/managedFields
         - /status
         # Ignore default values added by Kubernetes to volumeClaimTemplates
-        - /spec/volumeClaimTemplates/*/apiVersion
-        - /spec/volumeClaimTemplates/*/kind
-        - /spec/volumeClaimTemplates/*/metadata/creationTimestamp
-        - /spec/volumeClaimTemplates/*/spec/volumeMode
-        - /spec/volumeClaimTemplates/*/status
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/apiVersion
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/kind
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/metadata/creationTimestamp
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/spec/volumeMode
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/status
 
 argo-workflows:
   enabled: false
@@ -798,7 +808,8 @@ kubevela:
     - group: apiregistration.k8s.io
       kind: APIService
       jsonPointers:
-        - /spec/caBundle
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/caBundle
         - /status
         - /metadata/generation
         - /metadata/managedFields
@@ -878,9 +889,12 @@ grafana:
         - /metadata/generation
         - /metadata/managedFields
         # Ignore default values added by ESO to remoteRef
-        - /spec/data/*/remoteRef/conversionStrategy
-        - /spec/data/*/remoteRef/decodingStrategy
-        - /spec/data/*/remoteRef/metadataPolicy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/conversionStrategy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/decodingStrategy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/metadataPolicy
     - group: ''
       kind: Secret
       jsonPointers:
@@ -990,9 +1004,12 @@ backstage:
         - /metadata/generation
         - /metadata/managedFields
         # Ignore default values added by ESO to remoteRef
-        - /spec/data/*/remoteRef/conversionStrategy
-        - /spec/data/*/remoteRef/decodingStrategy
-        - /spec/data/*/remoteRef/metadataPolicy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/conversionStrategy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/decodingStrategy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/metadataPolicy
     - group: ''
       kind: Secret
       jsonPointers:
