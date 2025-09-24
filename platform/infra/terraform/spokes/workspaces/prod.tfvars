@@ -3,6 +3,7 @@ kubernetes_version = "1.31"
 ingress_name       = "peeks-spoke-prod-ingress"
 
 addons = {
-  enable_ack_s3 = true
+  enable_ack_s3       = true
+  enable_ack_dynamodb = true
 }
 
