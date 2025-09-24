@@ -36,7 +36,7 @@ spec:
       name: Fetch Base
       id: fetch-base
       input:
-        url: https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop/-/archive/main/platform-on-eks-workshop-main.tar.gz?path=platform/backstage/templates/cicd-pipeline/skeleton
+        url: ./skeleton/
         values:
           appname: ${{ parameters.appname }}
           namespace: team-${{ parameters.appname }}
