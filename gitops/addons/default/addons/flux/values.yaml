@@ -1,16 +1,18 @@
 gitRepository:
-  url: "{{.metadata.annotations.addons_repo_url}}"
-  branch: "{{.metadata.annotations.addons_repo_revision}}"
+  url: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
+  branch: "main"
+
+clusterName: "peeks-hub-cluster"
 
 workloadsRepository:
-  url: "{{.metadata.annotations.addons_repo_url}}"
-  branch: "{{.metadata.annotations.addons_repo_revision}}"
+  url: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
+  branch: "main"
 
 platformAddons:
-  path: "{{.metadata.annotations.addons_repo_basepath}}addons"
+  path: "gitops/addons"
 
 workloads:
-  path: "{{.metadata.annotations.addons_repo_basepath}}apps"
+  path: "gitops/workloads"
 
 sshRepository:
   enabled: false
