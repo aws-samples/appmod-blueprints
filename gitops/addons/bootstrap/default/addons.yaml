@@ -1049,9 +1049,12 @@ flux:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-        - /spec/data/*/remoteRef/conversionStrategy
-        - /spec/data/*/remoteRef/decodingStrategy
-        - /spec/data/*/remoteRef/metadataPolicy
+        - /spec/data/0/remoteRef/conversionStrategy
+        - /spec/data/0/remoteRef/decodingStrategy
+        - /spec/data/0/remoteRef/metadataPolicy
+        - /spec/data/1/remoteRef/conversionStrategy
+        - /spec/data/1/remoteRef/decodingStrategy
+        - /spec/data/1/remoteRef/metadataPolicy
         - /spec/target/template/engineVersion
         - /spec/target/template/mergePolicy
     - group: source.toolkit.fluxcd.io
