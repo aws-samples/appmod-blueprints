@@ -612,7 +612,7 @@ argo-rollouts:
 ingress-nginx:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '3'
+    argocd.argoproj.io/sync-wave: '1'
   namespace: ingress-nginx
   chartName: ingress-nginx
   chartRepository: https://kubernetes.github.io/ingress-nginx
@@ -632,7 +632,7 @@ ingress-nginx:
 gitlab:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '4' # Needs to be after External and Ingress Nginx
+    argocd.argoproj.io/sync-wave: '2' # Needs to be after External and Ingress Nginx
   namespace: gitlab
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/gitlab'
@@ -651,7 +651,7 @@ gitlab:
 keycloak:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '5' # Needs to be after External Secrets, Ingress Nginx and Gitlab
+    argocd.argoproj.io/sync-wave: '3' # Needs to be after External Secrets, Ingress Nginx and Gitlab
   namespace: keycloak
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/keycloak'
@@ -825,7 +825,7 @@ kubevela:
 crossplane:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '2' # Needs to be after external-secrets and before infrastructure provisioning
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after external-secrets and before infrastructure provisioning
   namespace: crossplane-system
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/crossplane'
@@ -920,7 +920,7 @@ grafana:
 flux:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '1' # Needs to be early for alternative GitOps solution
+    argocd.argoproj.io/sync-wave: '4' # Needs to be early for alternative GitOps solution
   namespace: flux-system
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/flux'
