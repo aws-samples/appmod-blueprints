@@ -1010,6 +1010,20 @@ flux:
       - key: enable_flux
         operator: In
         values: ['true']
+  ignoreDifferences:
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+      jsonPointers:
+        - /rules
+        - /metadata/labels
+        - /metadata/annotations
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+      jsonPointers:
+        - /subjects
+        - /roleRef
+        - /metadata/labels
+        - /metadata/annotations
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
