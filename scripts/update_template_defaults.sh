@@ -53,6 +53,11 @@ echo "  Git Username: $GIT_USERNAME"
 
 print_step "Updating catalog-info.yaml with environment-specific values"
 
+# Create backup before modifying
+BACKUP_PATH="${CATALOG_INFO_PATH}.backup.$(date +%Y%m%d_%H%M%S)"
+cp "$CATALOG_INFO_PATH" "$BACKUP_PATH"
+print_info "Created backup: $BACKUP_PATH"
+
 # Update the system-info entity in catalog-info.yaml
 yq -i '
   (select(.metadata.name == "system-info").spec.hostname) = "'$GITLAB_DOMAIN'" |

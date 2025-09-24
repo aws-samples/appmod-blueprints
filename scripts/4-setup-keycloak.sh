@@ -1,4 +1,5 @@
 #!/bin/bash
+
 #
 # Copyright 2024 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 #
@@ -20,6 +21,15 @@
 #description     This script sets up keycloak related resources for Amazon Managed Grafana SAML authentication.
 #version         1.0
 #==============================================================================
+
+# Source environment variables first
+if [ -d /home/ec2-user/.bashrc.d ]; then
+    for file in /home/ec2-user/.bashrc.d/*.sh; do
+        if [ -f "$file" ]; then
+            source "$file"
+        fi
+    done
+fi
 
 function configure_keycloak() {
   echo "Configuring keycloak..."
