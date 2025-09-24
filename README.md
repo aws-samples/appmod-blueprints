@@ -35,6 +35,28 @@ To get started with Modern Engineering on AWS:
 3. Navigate to the specific tech or pattern you're interested in, e.g platform/backstage, platform/crossplane, platform/components (or traits).
 4. Follow the README instructions in each subdirectory for detailed setup and usage guidelines
 
+## Helm Chart Dependencies
+
+This repository uses Taskfile to automate Helm chart dependency management. Available tasks:
+
+```bash
+# Check which charts have dependencies and their status
+task check-helm-dependencies
+
+# Build all Helm chart dependencies automatically
+task build-helm-dependencies
+
+# Clean all generated dependency files
+task clean-helm-dependencies
+```
+
+**Note:** Run `task build-helm-dependencies` when:
+- Setting up the repository for the first time
+- Adding new charts with dependencies
+- Updating dependency versions in Chart.yaml files
+
+The task automatically handles adding required Helm repositories and building dependencies for flux, crossplane, and kubevela charts.
+
 ## Contributing
 
 We welcome contributions to the Modern Engineering on AWS initiative. Please read our [CONTRIBUTING](CONTRIBUTING.md) guide for details on our code of conduct and the process for submitting pull requests.
