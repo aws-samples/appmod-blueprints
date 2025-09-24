@@ -21,6 +21,14 @@
 
 # Source shared utilities
 source "$(dirname "$0")/argocd-utils.sh"
+# Source environment variables first
+if [ -d /home/ec2-user/.bashrc.d ]; then
+    for file in /home/ec2-user/.bashrc.d/*.sh; do
+        if [ -f "$file" ]; then
+            source "$file"
+        fi
+    done
+fi
 #   - The management cluster must be created (run 0-initial-setup.sh first)
 #   - Environment variables must be set:
 #     - AWS_REGION: AWS region where resources are deployed

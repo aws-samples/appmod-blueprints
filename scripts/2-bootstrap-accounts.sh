@@ -1,5 +1,4 @@
 #!/bin/bash
-
 #############################################################################
 # Bootstrap Management and Spoke Accounts
 #############################################################################
@@ -33,6 +32,14 @@ STUCK_SYNC_TIMEOUT=${STUCK_SYNC_TIMEOUT:-180}  # 3 minutes default for stuck syn
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
+# Source environment variables first
+if [ -d /home/ec2-user/.bashrc.d ]; then
+    for file in /home/ec2-user/.bashrc.d/*.sh; do
+        if [ -f "$file" ]; then
+            source "$file"
+        fi
+    done
+fi
 
 # Function to check and recover stuck applications
 check_and_recover_stuck_apps() {
