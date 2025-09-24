@@ -31,35 +31,36 @@ spec:
     name: flux-git-credentials
   timeout: 60s
   url: {{ .Values.gitRepository.url }}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: platform-addons
-  namespace: flux-system
-  annotations:
-    argocd.argoproj.io/sync-wave: "7"
-spec:
-  interval: 10m
-  path: ./gitops/addons/clusters/{{ .Values.clusterName }}
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: platform-gitops-repo
-  timeout: 5m
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: workloads
-  namespace: flux-system
-  annotations:
-    argocd.argoproj.io/sync-wave: "7"
-spec:
-  interval: 10m
-  path: ./gitops/workloads/clusters/{{ .Values.clusterName }}
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: workloads-gitops-repo
-  timeout: 5m
+# TODO: Enable when gitops/addons/clusters and gitops/workloads/clusters paths exist
+# ---
+# apiVersion: kustomize.toolkit.fluxcd.io/v1
+# kind: Kustomization
+# metadata:
+#   name: platform-addons
+#   namespace: flux-system
+#   annotations:
+#     argocd.argoproj.io/sync-wave: "7"
+# spec:
+#   interval: 10m
+#   path: ./gitops/addons/clusters/{{ .Values.clusterName }}
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: platform-gitops-repo
+#   timeout: 5m
+# ---
+# apiVersion: kustomize.toolkit.fluxcd.io/v1
+# kind: Kustomization
+# metadata:
+#   name: workloads
+#   namespace: flux-system
+#   annotations:
+#     argocd.argoproj.io/sync-wave: "7"
+# spec:
+#   interval: 10m
+#   path: ./gitops/workloads/clusters/{{ .Values.clusterName }}
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: workloads-gitops-repo
+#   timeout: 5m
