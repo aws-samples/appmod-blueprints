@@ -1012,6 +1012,13 @@ flux:
         values: ['true']
   valuesObject:
     clusterName: '{{.metadata.annotations.cluster_name}}'
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    git:
+      repository: '{{.metadata.annotations.working_repo}}'
+      branch: '{{.metadata.annotations.addons_repo_revision}}'
     gitRepository:
       url: '{{.metadata.annotations.addons_repo_url}}'
       branch: '{{.metadata.annotations.addons_repo_revision}}'
