@@ -76,6 +76,11 @@ spec:
     - type: ToCompositeFieldPath
       fromFieldPath: status.atProvider.arn
       toFieldPath: status.bucketArn
+    readinessChecks:
+      - type: MatchCondition
+        matchCondition:
+          type: Ready
+          status: "True"
   - name: s3-bucket-versioning
     base:
       apiVersion: s3.aws.upbound.io/v1beta1
@@ -98,6 +103,11 @@ spec:
         map:
           true: "Enabled"
           false: "Disabled"
+    readinessChecks:
+      - type: MatchCondition
+        matchCondition:
+          type: Ready
+          status: "True"
 ---
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
@@ -185,4 +195,9 @@ spec:
     - type: ToCompositeFieldPath
       fromFieldPath: status.atProvider.arn
       toFieldPath: status.tableArn
+    readinessChecks:
+      - type: MatchCondition
+        matchCondition:
+          type: Ready
+          status: "True"
 {{- end }}
