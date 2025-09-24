@@ -139,11 +139,11 @@ spec:
             gitlab_rails['initial_root_password'] = '{{ .Values.initial_root_password }}'
         resources:
           requests:
-            memory: "4Gi"
-            cpu: "2"
+            memory: "8Gi"
+            cpu: "4"
           limits:
-            memory: "4Gi"
-            cpu: "2"
+            memory: "8Gi"
+            cpu: "4"
         securityContext:
           privileged: false
           runAsUser: 0
