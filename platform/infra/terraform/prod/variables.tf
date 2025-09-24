@@ -60,7 +60,7 @@ variable "managed_node_min_size" {
 variable "eks_version" {
   type        = string
   description = "EKS Cluster version"
-  default     = "1.30"
+  default     = "1.32"
 }
 
 variable "vpc_id" {

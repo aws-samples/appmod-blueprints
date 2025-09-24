@@ -36,7 +36,7 @@ This installation pattern where some Kubernetes manifests are handled in Terrafo
 
 ## Requirements
 
-- An existing EKS cluster version (1.30+)
+- An existing EKS cluster version (1.32+)
 - AWS CLI (2.17+)
 - Kubectl CLI (1.30+)
 - jq
