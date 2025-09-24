@@ -17,6 +17,15 @@ if [ -d /home/ec2-user/.bashrc.d ]; then
     done
 fi
 
+# Debug: Show platform.sh contents at script start
+echo "=== DEBUG: Contents of /home/ec2-user/.bashrc.d/platform.sh at script start ==="
+if [ -f "/home/ec2-user/.bashrc.d/platform.sh" ]; then
+    cat /home/ec2-user/.bashrc.d/platform.sh
+else
+    echo "ERROR: /home/ec2-user/.bashrc.d/platform.sh does not exist!"
+fi
+echo "=== END DEBUG ==="
+
 # Source colors and ArgoCD utilities
 source "$(dirname "$0")/colors.sh"
 source "$(dirname "$0")/argocd-utils.sh"
