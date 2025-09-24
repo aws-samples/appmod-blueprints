@@ -30,6 +30,14 @@ spec:
   secretRef:
     name: flux-git-credentials
   timeout: 60s
+  url: {{ .Values.workloadsRepository.url }}
+spec:
+  interval: 1m
+  ref:
+    branch: main
+  secretRef:
+    name: flux-git-credentials
+  timeout: 60s
   url: {{ .Values.gitRepository.url }}
 # TODO: Enable when gitops/addons/clusters and gitops/workloads/clusters paths exist
 # ---
