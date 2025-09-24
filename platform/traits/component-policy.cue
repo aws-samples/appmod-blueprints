@@ -48,7 +48,7 @@ template: {
         spec: {
           name: "\(context.appName)-\(context.name)-iam-policy"
           forProvider: {
-            policy: "\(policy)"
+            policy: "\(parameter.policy)"
           }
         }
       }

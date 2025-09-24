@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0.0"
+      version = "~> 5.0"
     }
   }
 }
@@ -98,6 +98,29 @@ module "managed_grafana" {
   saml_login_validity_duration = 120
   # Dummy values for SAML configuration to setup will be updated after keycloak integration
   saml_idp_metadata_url   = var.grafana_keycloak_idp_url
+
+  create_security_group = true
+  security_group_rules = {
+    egress_mysql = {
+      description = "Allow egress to MySQL"
+      from_port = 3306
+      to_port = 3306
+      protocol = "tcp"
+      cidr_blocks = [var.vpc_cidr]
+    }
+
+    egress_http = {
+      description = "Allow egress to http"
+      from_port = 80
+      to_port = 80
+      protocol = "tcp"
+      cidr_blocks= ["0.0.0.0/0"]
+    }
+  }
+
+  vpc_configuration = {
+    subnet_ids = var.eks_cluster_private_subnets
+  }
 
   tags = local.tags
 }

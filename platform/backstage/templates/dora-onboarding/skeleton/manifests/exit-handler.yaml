@@ -1,0 +1,178 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: ${{values.appname}}-cicd-deployments-dora-processing-template
+  namespace: ${{values.namespace}}
+spec:
+  entrypoint: handle-rollout-check-and-process-deploy
+  volumes:
+    - name: argocd-cluster-secret
+      secret:
+        secretName: dev-cluster-argo-secret
+        namespace: argocd
+  arguments:
+    parameters:
+      - name: body
+      - name: headers
+      - name: appname
+        value: ${{values.appname}}
+  templates:
+    - name: handle-rollout-check-and-process-deploy
+      steps:
+        - - name: check-rollout
+            template: check-rollout-status
+            arguments:
+              parameters:
+                - name: namespace
+                  value: team-"{{workflow.parameters.appname}}"
+                - name: body
+                  value: "{{workflow.parameters.body}}"
+
+        - - name: process-and-send-deployment
+            template: process-deployment
+            arguments:
+              parameters:
+                - name: status
+                  value: "{{steps.check-rollout.outputs.result}}"
+                - name: body
+                  value: "{{workflow.parameters.body}}"
+                - name: url
+                  value: devlake-ui.devlake.svc.cluster.local:4000
+                - name: headers
+                  value: "{{workflow.parameters.headers}}"
+
+
+    - name: process-deployment
+      inputs:
+        parameters:
+          - name: body
+          - name: headers
+          - name: url
+          - name: status
+      script:
+        image: alpine
+        command: [sh]
+        envFrom:
+          - secretRef:
+              name: devlake-webhook-secret
+          - configMapRef:
+              name: devlake-webhook-id
+        source: |
+          apk add --no-cache jq curl
+          RESULT="{{inputs.parameters.status}}"
+          webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/${DEVLAKE_HOOK_ID}/deployments          
+          PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
+          . as $root |
+          {
+            id: ("deployment-" + (.after | .[0:7])),
+            createdDate: (.commits | first | .timestamp),
+            startedDate: (.commits | first | .timestamp),
+            finishedDate: (.commits | last | .timestamp),
+            environment: "PRODUCTION",
+            result: $result,
+            name: ("deployment-" + (.after | .[0:7])),
+            deploymentCommits: [
+              .commits[] | {
+                repoUrl: $root.repository.clone_url,
+                refName: $root.ref,
+                startedDate: .timestamp,
+                finishedDate: .timestamp,
+                commitSha: .id,
+                commitMsg: .message,
+                result: $result,
+              }
+            ]
+          }')
+          echo "====Transformed Payload===="
+          echo "$PAYLOAD" | jq '.'
+
+          curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
+
+    - name: check-rollout-status
+      inputs:
+        parameters:
+          - name: namespace
+          - name: body
+      container:
+        image: bitnami/kubectl:latest
+        command: [/bin/bash, -c]
+        volumeMounts:
+          - name: argocd-cluster-secret
+            mountPath: /tmp/argocd-cluster
+            readOnly: true
+        args: 
+        - |
+          mkdir -p ~/.kube
+      
+          # Read the secret components
+          SERVER=$(cat /tmp/argocd-cluster/server)
+          NAME=$(cat /tmp/argocd-cluster/name)
+          TOKEN=$(cat /tmp/argocd-cluster/config | jq -r .bearerToken)
+          CA_DATA=$(cat /tmp/argocd-cluster/config | jq -r .tlsClientConfig.caData)
+          
+          # Create kubeconfig
+          cat > ~/.kube/config <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - name: ${NAME}
+            cluster:
+              certificate-authority-data: ${CA_DATA}
+              server: ${SERVER}
+          users:
+          - name: ${NAME}-user
+            user:
+              token: ${TOKEN}
+          contexts:
+          - name: ${NAME}-context
+            context:
+              cluster: ${NAME} 
+              user: ${NAME}-user
+          current-context: ${NAME}-context
+          EOF
+
+          SA="system:serviceaccount:kube-system:dev-argocd-manager"
+    
+          SEARCH_WORD="{{workflow.parameters.appname}}"
+          ROLLOUT_NAME=$(kubectl --as=$SA get rollout -n "{{inputs.parameters.namespace}}" -o json | \
+            jq -r --arg WORD "$SEARCH_WORD" '.items[] | select(.metadata.name | contains($WORD)) | .metadata.name')
+
+          if [ -z "$ROLLOUT_NAME" ]; then
+            echo "No rollout found containing word: $SEARCH_WORD"
+            exit 1
+          fi
+
+          # Make sure rollout is updated
+
+          COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after | .[0:7]')
+
+          # Check rollout status using kubectl
+          timeout=600  # 10 minutes timeout
+          interval=10  # Check every 10 seconds
+          elapsed=0
+
+          # NEED TO CHECK ROLLOUT IMAGE TAG FOR COMMIT HASH - make sure checking right rollout
+          while [ $elapsed -lt $timeout ]; do
+            CURRENT_IMAGE=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
+            CURRENT_TAG=$(echo $CURRENT_IMAGE | awk -F ":" '{print $2}')
+
+            # Check if the current image tag contains commit hash
+            if [[ "$CURRENT_TAG" == *"$COMMIT_HASH"* ]]; then
+              # Now check the rollout status
+              phase=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
+
+              if [ "$phase" = "Healthy" ]; then
+                echo "SUCCESS"
+                exit 0
+              elif [ "$phase" = "Degraded" ]; then
+                echo "FAILURE"
+                exit 0
+              fi
+            fi
+            
+            sleep $interval
+            elapsed=$((elapsed + interval))
+          done
+
+          echo "FAILURE"
+          exit 0

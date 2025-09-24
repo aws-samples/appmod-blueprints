@@ -1,0 +1,462 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: dora-provisioner-template
+  namespace: ${{values.namespace}}
+spec:
+  arguments:
+    parameters:
+    - name: appname
+      value: ${{values.appname}}
+    - name: namespace
+      value: ${{values.namespace}}
+    - name: url
+      value: http://devlake-lake.devlake.svc.cluster.local:8080
+  templates:
+  - name: dora-provisioner
+    dag:
+      tasks:
+        - name: devlake-init
+          template: devlake-init
+          arguments:
+            parameters:
+              - name: appname
+                value: "{{workflow.parameters.appname}}"
+              - name: url
+                value: http://devlake-lake.devlake.svc.cluster.local:8080
+
+        - name: create-devlake-webhook-secret-and-cm
+          template: create-devlake-webhook-secret-and-cm
+          arguments:
+            parameters:
+            - name: token-and-id
+              value: "{{tasks.devlake-init.outputs.result}}"
+          depends: "devlake-init"
+
+        - name: create-gitea-webhook
+          template: create-gitea-webhook
+          depends: "create-devlake-webhook-secret-and-cm"
+
+        - name: update-cicd-exit-hook
+          template: update-cicd-exit-hook
+          arguments:
+            parameters:
+              - name: apprepo
+                value: "{{workflow.parameters.apprepo}}-cicd"
+
+  - name: devlake-init
+    inputs:
+      parameters:
+      - name: appname
+      - name: url
+    container: 
+      image: alpine:3.20
+      command: ["/bin/sh", "-c"]
+      args:
+      - |
+        apk add curl jq >/dev/null 2>&1
+        BASE_URL="{{inputs.parameters.url}}"
+        resp=$(curl -X GET ${BASE_URL}/proceed-db-migration)
+        
+        projectName="{{inputs.parameters.appname}}"
+        
+        projectCreateRequest=$(
+          cat <<EOF
+        {
+          "name": "$projectName",
+          "description": "",
+          "metrics": [
+            {
+              "pluginName": "dora",
+              "pluginOption": {},
+              "enable": true
+            },
+            {
+              "pluginName": "issue_trace",
+              "pluginOption": {},
+              "enable": true
+            }
+          ]
+        }
+        EOF
+        )
+        projectCreateResponse=$(curl -X POST -H "Content-Type: application/json" ${BASE_URL}/projects -d "$projectCreateRequest")
+        blueprintID=$(echo $projectCreateResponse | jq -r '.blueprint.id')
+        blueprintName=$(echo $projectCreateResponse | jq -r '.blueprint.name')
+        
+        webhookCreateRequest=$(
+          cat <<EOF
+        {
+          "name": "${projectName}_webhook"
+        }
+        EOF
+        )
+        webhookCreateResponse=$(curl -X POST -H "Content-Type: application/json" ${BASE_URL}/plugins/webhook/connections -d "$webhookCreateRequest")
+        webhookID=$(echo $webhookCreateResponse | jq -r '.id')
+        webhookApiKey=$(echo $webhookCreateResponse | jq -r '.apiKey.apiKey')
+        
+        blueprintPatchRequest=$(
+          cat <<EOF
+        {
+          "name": "$blueprintName",
+          "projectName": "$projectName",
+          "mode": "NORMAL",
+          "plan": null,
+          "enable": true,
+          "cronConfig": "0 0 * * 1",
+          "isManual": false,
+          "beforePlan": null,
+          "afterPlan": null,
+          "labels": [],
+          "connections": [
+            {
+              "pluginName": "webhook",
+              "connectionId": $webhookID
+            }
+          ],
+          "skipOnFail": false,
+          "timeAfter": "2024-09-21T00:00:00Z",
+          "skipCollectors": false,
+          "fullSync": false,
+          "id": $blueprintID
+        }
+        EOF
+        )
+        
+        resp=$(curl -X PATCH -H "Content-Type: application/json" ${BASE_URL}/blueprints/$blueprintID -d "$blueprintPatchRequest")
+        
+        
+        echo "$webhookApiKey|$webhookID|$blueprintID"
+
+
+  - name: create-devlake-webhook-secret-and-cm
+    inputs:
+      parameters:
+      - name: token-and-id
+    container: 
+      image: bitnami/kubectl:latest
+      command: ["/bin/bash", "-c"]
+      args:
+      - |
+        TOKEN=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f1)
+        HOOK_ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f2)
+        BP_ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f3)
+        kubectl delete secret devlake-webhook-secret --ignore-not-found -n "{{workflow.parameters.namespace}}" 
+        kubectl create secret generic devlake-webhook-secret -n "{{workflow.parameters.namespace}}" \
+          --from-literal=DEVLAKE_TOKEN="$TOKEN"
+        kubectl delete configmap devlake-webhook-id --ignore-not-found -n "{{workflow.parameters.namespace}}" 
+        kubectl create configmap devlake-webhook-id -n "{{workflow.parameters.namespace}}" \
+          --from-literal=DEVLAKE_HOOK_ID="$HOOK_ID" --from-literal=DEVLAKE_BP_ID="$BP_ID"
+
+        kubectl get secret dev-cluster-argo-secret -n argocd -o yaml | \
+        sed 's/namespace: argocd/namespace: "{{workflow.parameters.namespace}}"/' | \
+        kubectl create -f -
+
+
+  - name: create-gitea-webhook
+    container:
+      image: alpine:3.20
+      command: ["/bin/sh", "-c"]
+      envFrom:
+      - secretRef:
+          name: gitea-credentials
+      args:
+      - |
+        apk add curl jq
+        hooks_api_url="{{workflow.parameters.hostname}}"/gitea/api/v1/repos/giteaAdmin/"{{workflow.parameters.appname}}"/hooks
+        webhook_url="http://{{workflow.parameters.hostname}}"/argo-events/"{{workflow.parameters.appname}}-dora/incidents"
+        webhook_exists=$(curl -k -X 'GET' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" | jq --arg url "$webhook_url" 'map(select(.config.url == $url)) | length > 0')
+        if ! $webhook_exists; then
+          echo "Webhook is not found, creating webhook with $webhook_url"
+          curl -k -X 'POST' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" -d '{"branch_filter": "*","type": "gitea", "events":["issues"], "config": {"url": "'${webhook_url}'", "content_type": "json"}, "active": true}'
+        else
+          echo "Webhook with url $webhook_url already exists"
+        fi
+
+        webhook_url="http://{{workflow.parameters.hostname}}"/argo-events/"{{workflow.parameters.appname}}-dora/pull-requests"
+        webhook_exists=$(curl -k -X 'GET' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" | jq --arg url "$webhook_url" 'map(select(.config.url == $url)) | length > 0')
+        if ! $webhook_exists; then
+          echo "Webhook is not found, creating webhook with $webhook_url"
+          curl -k -X 'POST' "${hooks_api_url}" -H "accept: application/json" -H "Authorization: token ${GITEA_TOKEN}" -H "Content-Type: application/json" -d '{"branch_filter": "main","type": "gitea", "events":["pull_request"], "config": {"url": "'${webhook_url}'", "content_type": "json"}, "active": true}'
+        else
+          echo "Webhook with url $webhook_url already exists"
+        fi
+
+  - name: update-cicd-exit-hook
+    inputs:
+      parameters:
+        - name: apprepo
+    container:
+      envFrom:
+      - secretRef:
+          name: gitea-credentials
+      volumeMounts:
+        - mountPath: /workdir
+          name: workdir
+      image: alpine/git:v2.45.2
+      workingDir: /workdir
+      command: ['/bin/sh']
+      args:
+        - -c
+        - |
+          apk add --no-cache yq
+          set -ex
+          rm -rf src
+          mkdir src
+          git clone https://"{{inputs.parameters.apprepo}}".git -c http.sslVerify=false ./src
+          cd ./src
+          git config --global user.email "noreply@aws.com" 
+          git config --global user.name ARGO
+          git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
+          git pull --rebase
+          if [ -f manifests/cicd-pipeline.yaml ]; then
+            yq -i 'select(.kind =="Sensor").spec.triggers[0].template.argoWorkflow.source.resource.spec.templates[0].steps += [[{
+              "name": "send-deployment-status",
+              "templateRef": {
+                "name": "{{workflow.parameters.appname}}-cicd-deployments-dora-processing-template",
+                "template": "handle-rollout-check-and-process-deploy"
+              },
+              "arguments": {
+                "parameters": [
+                  {
+                    "name": "body",
+                    "value": "\"_OPAREN__OPAREN_workflow.parameters.body_CPAREN__CPAREN_\""
+                  },
+                  {
+                    "name": "headers",
+                    "value": "\"_OPAREN__OPAREN_workflow.parameters.body_CPAREN__CPAREN_\""
+                  }
+                ]
+              }
+            }]]' manifests/cicd-pipeline.yaml
+            yq -i 'select(.kind =="Sensor").spec.triggers[0].template.argoWorkflow.source.resource.spec.volumes += [{
+              "name": "argocd-cluster-secret",
+              "secret": {
+                "secretName": "dev-cluster-argo-secret"
+              }
+            }]' manifests/cicd-pipeline.yaml
+
+            sed -i 's/"_OPAREN__OPAREN_/{{/g; s/_CPAREN__CPAREN_"/}}/g' manifests/cicd-pipeline.yaml
+
+          fi
+          m_count=$(git status -s | wc -l)
+          if [ $m_count -ge 1 ]; then
+            git add .
+            git commit -m "Add Deployment Handler for DORA Metrics"
+            git push --set-upstream origin main
+          else
+            echo "No updates, skipping git push"
+          fi
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: dora-data-gen-template
+  namespace: ${{values.namespace}}
+spec:
+  templates:
+  - name: dora-data-gen
+    dag:
+      tasks:
+        - name: data-gen 
+          template: devlake-generate-data
+
+  - name: devlake-generate-data
+    container:
+      image: debian:12
+      command: [/bin/bash, -c]
+      envFrom:
+        - secretRef:
+            name: devlake-webhook-secret
+        - configMapRef:
+            name: devlake-webhook-id
+      args:
+      - |
+        apt update
+        apt install -y curl openssl coreutils
+        BASE_URL="http://devlake-ui.devlake.svc.cluster.local:4000"
+        TRIGGER_URL="http://devlake-lake.devlake.svc.cluster.local:8080"
+        API_KEY="$DEVLAKE_TOKEN"
+        CONNECTION_ID="$DEVLAKE_HOOK_ID"
+        BLUEPRINT_ID="$DEVLAKE_BP_ID"
+        
+        
+        rand() {
+            od -N 4 -t uL -An /dev/urandom | tr -d " "
+        }
+        
+        # Portable date functions
+        get_start_ts() {
+            date -d "180 days ago" +%s
+        }
+        
+        date_format() {
+            date -d "@$1" "+%Y-%m-%dT%H:%M:%S%z"
+        }
+        
+        create_pr() {
+            local pr_id=$1
+            local created_date=$2
+            local merged_date=$3
+            local merge_commit_sha=$4
+            
+            response=$(curl -s "${BASE_URL}/api/rest/plugins/webhook/connections/${CONNECTION_ID}/pull_requests" -X 'POST' \
+                 -H "Authorization: Bearer ${API_KEY}" \
+                 -H 'Content-Type: application/json' \
+                 -d '{
+              "id": "PR-'"$pr_id"'",
+              "headRepoId": "repo-'"$(($(rand) % 1000))"'",
+              "status": "MERGED",
+              "originalStatus": "OPEN",
+              "displayTitle": "Feature: Add new functionality '"$pr_id"'",
+              "description": "This PR adds new features",
+              "url": "https://github.com/org/repo/pull/'"$pr_id"'",
+              "pullRequestKey": '"$pr_id"',
+              "createdDate": "'"$created_date"'",
+              "mergedDate": "'"$merged_date"'",
+              "closedDate": null,
+              "mergeCommitSha": "'"$merge_commit_sha"'",
+              "headRef": "feature-branch-'"$pr_id"'",
+              "baseRef": "main",
+              "baseCommitSha": "'"$(openssl rand -hex 20)"'",
+              "headCommitSha": "'"$(openssl rand -hex 20)"'",
+              "isDraft": false
+            }') 
+        }
+        
+        create_deployment() {
+            local deploy_id=$1
+            local start_date=$2
+            local commit_sha=$3
+            local finish_date=$4
+            
+            response=$(curl -s "${BASE_URL}/api/rest/plugins/webhook/connections/${CONNECTION_ID}/deployments" -X 'POST' \
+                 -H "Authorization: Bearer ${API_KEY}" \
+                 -d "{
+              \"id\": \"DEPLOY-$deploy_id\",
+              \"startedDate\": \"$start_date\",
+              \"finishedDate\": \"$finish_date\",
+              \"result\": \"SUCCESS\",
+              \"url\": \"https://deploy.example.com/$deploy_id\",
+              \"deploymentCommits\":[
+                {
+                  \"repoUrl\": \"https://github.com/org/repo\",
+                  \"refName\": \"main\",
+                  \"startedDate\": \"$start_date\",
+                  \"finishedDate\": \"$finish_date\",
+                  \"commitSha\": \"$commit_sha\",
+                  \"commitMsg\": \"Deployment $deploy_id\"
+                }
+              ]
+            }")
+            
+            echo "$finish_date"
+        }
+        
+        create_incident() {
+            local incident_id=$1
+            local created_date=$2
+            
+            response=$(curl -s "${BASE_URL}/api/rest/plugins/webhook/connections/${CONNECTION_ID}/issues" -X 'POST' \
+                 -H "Authorization: Bearer ${API_KEY}" \
+                 -d "{
+              \"issueKey\":\"INC-$incident_id\",
+              \"title\":\"Incident $incident_id\",
+              \"type\":\"INCIDENT\",
+              \"originalStatus\":\"TODO\",
+              \"status\":\"TODO\",
+              \"createdDate\":\"$created_date\",
+              \"updatedDate\":\"$created_date\"
+            }")
+        }
+        
+        update_incident_status() {
+            local incident_id=$1
+            local created_date=$2
+            local updated_date=$3
+            
+            response=$(curl -s "${BASE_URL}/api/rest/plugins/webhook/connections/${CONNECTION_ID}/issues" -X 'POST' \
+                 -H "Authorization: Bearer ${API_KEY}" \
+                 -d "{
+              \"issueKey\":\"INC-$incident_id\",
+              \"title\":\"Incident $incident_id\",
+              \"type\":\"INCIDENT\",
+              \"originalStatus\":\"TODO\",
+              \"status\":\"DONE\",
+              \"createdDate\":\"$created_date\",
+              \"updatedDate\":\"$updated_date\",
+              \"resolutionDate\":\"$updated_date\"
+            }")
+        }
+        
+        cap_timestamp() {
+            local ts=$1
+            local current_ts=$(date +%s)
+            if [ "$ts" -gt "$current_ts" ]; then
+                echo "$current_ts"
+            else
+                echo "$ts"
+            fi
+        }
+        
+        ONE_HOUR=3600
+        ONE_DAY=$((24*ONE_HOUR))
+        ONE_WEEK=$((ONE_DAY * 7))
+        
+        end_ts=$(date +%s)
+        start_ts=$(get_start_ts)
+        current_ts=$start_ts
+        pr_id=1
+        deploy_id=1
+        incident_id=1
+        
+        # Main loop to generate data for the last six months
+        while [ "$current_ts" -lt "$end_ts" ]; do
+            created_date=$(date_format "$current_ts")
+            
+            merged_ts=$(cap_timestamp $((current_ts + ONE_HOUR + $(rand) % ONE_WEEK)))
+            merged_date=$(date_format "$merged_ts")
+            merge_commit_sha=$(openssl rand -hex 20)
+            
+            create_pr "$pr_id" "$created_date" "$merged_date" "$merge_commit_sha"
+            
+            deploy_finish_ts=$(cap_timestamp $((merged_ts + ONE_HOUR + $(rand) % (2*ONE_HOUR))))
+            deploy_finish_date=$(date_format "$deploy_finish_ts")
+            create_deployment "$deploy_id" "$merged_date" "$merge_commit_sha" "$deploy_finish_date"
+            
+            current_ts=$deploy_finish_ts
+            
+            if [ $(($(rand) % 10)) -eq 0 ]; then
+                incident_ts=$(cap_timestamp $((deploy_finish_ts + $(rand) % ONE_DAY)))
+                incident_date=$(date_format "$incident_ts")
+                create_incident "$incident_id" "$incident_date"
+                
+                fix_pr_merge_ts=$(cap_timestamp $((incident_ts + ONE_HOUR + $(rand) % (3*ONE_DAY))))
+                fix_pr_merge_date=$(date_format "$fix_pr_merge_ts")
+                fix_merge_commit_sha=$(openssl rand -hex 20)
+                pr_id=$((pr_id+1))
+                create_pr "$pr_id" "$incident_date" "$fix_pr_merge_date" "$fix_merge_commit_sha"
+                
+                fix_deploy_finish_ts=$(cap_timestamp $((fix_pr_merge_ts + ONE_HOUR + $(rand) % (2*ONE_HOUR))))
+                fix_deploy_finish_date=$(date_format "$fix_deploy_finish_ts")
+                deploy_id=$((deploy_id+1))
+                create_deployment "$deploy_id" "$fix_pr_merge_date" "$fix_merge_commit_sha" "$fix_deploy_finish_date"
+                
+                update_incident_status "$incident_id" "$incident_date" "$fix_deploy_finish_date"
+                incident_id=$((incident_id+1))
+        
+                current_ts=$fix_deploy_finish_ts
+            fi
+            current_ts=$((current_ts + $(rand) % 2*ONE_DAY))
+            pr_id=$((pr_id + 1))
+            deploy_id=$((deploy_id + 1))
+        done
+        
+        echo "Data generation complete. Created $((pr_id - 1)) pull requests, $((deploy_id - 1)) deployments, and $((incident_id - 1)) incidents."
+        sleep 10
+        
+        echo "Triggering DORA Metrics Collection"
+        resp=$(curl -s -X POST -H "Content-Type: application/json" "${TRIGGER_URL}/blueprints/${BLUEPRINT_ID}/trigger" -d '{"skipCollectors":false,"fullSync":false}')
+
