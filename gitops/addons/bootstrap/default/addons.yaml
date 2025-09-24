@@ -1010,6 +1010,16 @@ flux:
       - key: enable_flux
         operator: In
         values: ['true']
+  valuesObject:
+    gitRepository:
+      url: '{{.metadata.annotations.addons_repo_url}}'
+      branch: '{{.metadata.annotations.addons_repo_revision}}'
+    workloadsRepository:
+      url: '{{.metadata.annotations.workload_repo_url}}'
+      branch: '{{.metadata.annotations.workload_repo_revision}}'
+    secrets:
+      gitCredentials:
+        secretName: '{{.metadata.annotations.resource_prefix}}-gitlab-pat'
   ignoreDifferences:
     - group: rbac.authorization.k8s.io
       kind: ClusterRole
