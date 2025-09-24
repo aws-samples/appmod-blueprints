@@ -1,0 +1,16 @@
+gitRepository:
+  url: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
+  branch: "main"
+
+workloadsRepository:
+  url: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
+  branch: "main"
+
+platformAddons:
+  path: "./gitops/addons"
+
+workloads:
+  path: "./gitops/apps"
+
+sshRepository:
+  enabled: false
