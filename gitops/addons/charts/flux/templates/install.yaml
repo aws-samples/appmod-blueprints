@@ -616,7 +616,7 @@ spec:
       - name: manager
         image: fluxcd/source-controller:v1.2.4
         args:
-        - --events-addr=http://notification-controller.flux-system.svc.cluster.local./
+        - --events-addr=http://notification-controller.flux-system.svc.cluster.local
         - --watch-all-namespaces=true
         - --log-level=info
         - --log-encoding=json
@@ -685,7 +685,7 @@ spec:
       - name: manager
         image: fluxcd/kustomize-controller:v1.2.2
         args:
-        - --events-addr=http://notification-controller.flux-system.svc.cluster.local./
+        - --events-addr=http://notification-controller.flux-system.svc.cluster.local
         - --watch-all-namespaces=true
         - --log-level=info
         - --log-encoding=json
@@ -754,7 +754,7 @@ spec:
       - name: manager
         image: fluxcd/helm-controller:v0.37.4
         args:
-        - --events-addr=http://notification-controller.flux-system.svc.cluster.local./
+        - --events-addr=http://notification-controller.flux-system.svc.cluster.local
         - --watch-all-namespaces=true
         - --log-level=info
         - --log-encoding=json
