@@ -149,6 +149,7 @@ locals {
       addons_repo_path     = var.gitops_addons_repo_path
       addons_repo_basepath = var.gitops_addons_repo_base_path
       addons_repo_revision = var.gitops_addons_repo_revision
+      git_branch           = var.gitops_addons_repo_revision
     },
     {
       workload_repo_url      = local.gitops_workload_repo_url

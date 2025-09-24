@@ -917,7 +917,7 @@ flux:
       region: '{{.metadata.annotations.aws_region}}'
     git:
       repository: '{{.metadata.annotations.working_repo}}'
-      branch: '{{.metadata.annotations.git_branch}}'
+      branch: '{{.metadata.annotations.addons_repo_revision}}'
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
