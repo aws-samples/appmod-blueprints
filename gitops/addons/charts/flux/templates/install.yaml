@@ -621,6 +621,7 @@ spec:
         - --log-level=info
         - --log-encoding=json
         - --enable-leader-election
+        - --storage-path=/tmp
         ports:
         - containerPort: 8080
           name: http-prom
