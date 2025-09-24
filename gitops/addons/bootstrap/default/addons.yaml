@@ -1043,6 +1043,17 @@ flux:
         - /roleRef
         - /metadata/labels
         - /metadata/annotations
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+        - /spec/data/*/remoteRef/conversionStrategy
+        - /spec/data/*/remoteRef/decodingStrategy
+        - /spec/data/*/remoteRef/metadataPolicy
+        - /spec/target/template/engineVersion
+        - /spec/target/template/mergePolicy
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       jsonPointers:
