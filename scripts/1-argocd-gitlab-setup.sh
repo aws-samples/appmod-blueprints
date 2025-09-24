@@ -501,7 +501,7 @@ fix_git_revision_conflicts() {
     print_info "Checking for git revision conflicts..."
     
     # Get all applications with comparison errors
-    local apps_with_errors=$(kubectl get applications -n argocd -o json | \
+    apps_with_errors=$(kubectl get applications -n argocd -o json | \
         jq -r '.items[] | select(.status.conditions[]? | select(.type == "ComparisonError" and (.message | contains("cannot reference a different revision")))) | .metadata.name' 2>/dev/null || echo "")
     
     if [ -n "$apps_with_errors" ]; then
@@ -525,14 +525,14 @@ ensure_applicationsets() {
     print_info "Ensuring ApplicationSets are properly created..."
     
     # Check if bootstrap is healthy first
-    local bootstrap_status=$(kubectl get application bootstrap -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    bootstrap_status=$(kubectl get application bootstrap -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
     
     if [ "$bootstrap_status" != "Healthy" ]; then
         print_warning "Bootstrap application is not healthy ($bootstrap_status), syncing..."
         kubectl patch application bootstrap -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}' 2>/dev/null || true
         
         # Wait for bootstrap to become healthy
-        local wait_count=0
+        wait_count=0
         while [ $wait_count -lt 30 ]; do
             bootstrap_status=$(kubectl get application bootstrap -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
             if [ "$bootstrap_status" = "Healthy" ]; then
@@ -546,7 +546,7 @@ ensure_applicationsets() {
     fi
     
     # Check for required ApplicationSets
-    local required_appsets="cluster-addons"
+    required_appsets="cluster-addons"
     for appset in $required_appsets; do
         if ! kubectl get applicationset "$appset" -n argocd >/dev/null 2>&1; then
             print_warning "ApplicationSet $appset not found, forcing bootstrap refresh..."
@@ -596,7 +596,7 @@ ensure_keycloak_sync() {
     print_info "Ensuring Keycloak application syncs properly..."
     
     # Find Keycloak application (it may have cluster suffix)
-    local keycloak_app=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E '^keycloak' | head -1)
+    keycloak_app=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E '^keycloak' | head -1)
     
     if [ -z "$keycloak_app" ]; then
         print_warning "Keycloak application not found, checking if it should be enabled..."
@@ -606,8 +606,8 @@ ensure_keycloak_sync() {
     print_info "Found Keycloak application: $keycloak_app"
     
     # Check current status
-    local keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-    local keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
     
     print_info "Keycloak status: Health=$keycloak_health, Sync=$keycloak_sync"
     
@@ -627,7 +627,7 @@ ensure_keycloak_sync() {
         }
         
         # Wait for Keycloak to become healthy (up to 5 minutes)
-        local wait_count=0
+        wait_count=0
         while [ $wait_count -lt 30 ]; do
             keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
             keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
@@ -653,20 +653,20 @@ sync_apps_by_wave() {
     print_info "Syncing applications in sync-wave order..."
     
     # Sync applications in wave order, waiting for each wave to be mostly healthy
-    local current_wave=""
-    local wave_apps=()
+    current_wave=""
+    wave_apps=()
     
     for app_pattern in "${SYNC_WAVE_APPS[@]}"; do
         # Find actual application names matching the pattern
-        local matching_apps=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^${app_pattern}(-.*)?$" || echo "")
+        matching_apps=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^${app_pattern}(-.*)?$" || echo "")
         
         if [ -n "$matching_apps" ]; then
             echo "$matching_apps" | while read -r app; do
                 [ -z "$app" ] && continue
                 
                 print_info "Checking application: $app"
-                local app_health=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-                local app_sync=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+                app_health=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+                app_sync=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
                 
                 if [ "$app_health" != "Healthy" ] || [ "$app_sync" != "Synced" ]; then
                     print_info "  Syncing $app (Health: $app_health, Sync: $app_sync)"

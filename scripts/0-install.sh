@@ -206,14 +206,14 @@ sync_and_wait_app() {
     fi
     
     # Wait for the application to be healthy
-    local start_time=$(date +%s)
-    local end_time=$((start_time + max_wait))
-    local last_status=""
+    start_time=$(date +%s)
+    end_time=$((start_time + max_wait))
+    last_status=""
     
     while [ $(date +%s) -lt $end_time ]; do
-        local health=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-        local sync=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-        local current_status="$health/$sync"
+        health=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+        sync=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+        current_status="$health/$sync"
         
         if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
             print_status "SUCCESS" "Application $app_name is healthy and synced"
@@ -228,7 +228,7 @@ sync_and_wait_app() {
         
         # If app is healthy but not synced, that's often acceptable
         if [ "$health" = "Healthy" ] && [ "$sync" = "OutOfSync" ]; then
-            local remaining_time=$((end_time - $(date +%s)))
+            remaining_time=$((end_time - $(date +%s)))
             if [ $remaining_time -lt 60 ]; then
                 print_status "SUCCESS" "Application $app_name is healthy (OutOfSync acceptable)"
                 return 0
