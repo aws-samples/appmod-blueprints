@@ -17,7 +17,6 @@ apiVersion: pkg.crossplane.io/v1beta1
 kind: DeploymentRuntimeConfig
 metadata:
   name: aws-irsa-drc
-  namespace: {{ .Values.namespace | default "crossplane-system" }}
   annotations:
     argocd.argoproj.io/sync-wave: "3"
 spec:
