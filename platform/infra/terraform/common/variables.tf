@@ -79,6 +79,7 @@ variable "clusters" {
   type = map(object({
     name = string
     region = string
+    kubernetes_version = string
     environment = string
     auto_mode = bool
     addons = map(bool)
@@ -87,6 +88,7 @@ variable "clusters" {
     hub = {
       name = "hub"
       region = "us-west-2"
+      kubernetes_version= "1.32"
       environment = "control-plane"
       auto_mode = true
       addons = {}
@@ -94,6 +96,7 @@ variable "clusters" {
     spoke1 = {
       name = "spoke-dev"
       region = "us-west-2"
+      kubernetes_version= "1.32"
       environment = "dev"
       auto_mode = true
       addons = {}
@@ -101,6 +104,7 @@ variable "clusters" {
     spoke2 = {
       name = "spoke-prod"
       region = "us-west-2"
+      kubernetes_version= "1.32"
       environment = "prod"
       auto_mode = true
       addons = {}

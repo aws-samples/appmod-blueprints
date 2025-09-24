@@ -11,9 +11,8 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 
 export SKIP_GITLAB=${SKIP_GITLAB:-false}
 export GIT_USERNAME=${GIT_USERNAME:-user1}
-export IDE_PASSWORD=${IDE_PASSWORD:-"punkwalker!0912"}
-
-export GENEARATED_TFVAR=$(mktemp)
+export IDE_PASSWORD=${IDE_PASSWORD:-"punkwalker!0912"} #TODO: Update this for workshop
+export CONFIG_FILE=${CONFIG_FILE:- "../hub-config.yaml"}
 
 # Logging functions
 log() {
@@ -68,25 +67,27 @@ main() {
   
   # Validate backend configuration
   # validate_backend_config
-  # Initialize Terraform with S3 backend
+
+  # Set Terraform variables from environment
+  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
+  export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
+  yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
+
   if ! $SKIP_GITLAB ; then
-  # Create Gitlab first
+    # Initialize Terraform with S3 backend
     log "Initializing Terraform with S3 backend for gitlab infra..."
     if ! terraform -chdir=$SCRIPTDIR/gitlab_infra init --upgrade ; then
       log_error "Terraform initialization failed"
       exit 1
     fi
     
-    # Set Terraform variables from environment
-    export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
-    yq eval -o=json '.' ../hub-config.yaml > $GENEARATED_TFVAR.tfvars.json
     # Apply Terraform configuration
     log "Applying gitlab infra resources..."
     if ! terraform -chdir=$SCRIPTDIR/gitlab_infra apply \
-      -var-file="$GENEARATED_TFVAR.tfvars.json" \
+      -var-file="${GENERATED_TFVAR_FILE}" \
       -var="git_username=${GIT_USERNAME}" \
       -var="git_password=${IDE_PASSWORD}" \
-      -parallelism=3; then
+      -parallelism=3 -auto-approve; then
       log_error "Terraform apply failed"
       exit 1
     fi
@@ -101,19 +102,16 @@ main() {
     exit 1
   fi
   
-  # Set Terraform variables from environment
-  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
-  yq eval -o=json '.' ../hub-config.yaml > $GENEARATED_TFVAR.tfvars.json
   # Apply Terraform configuration
   log "Applying bootstrap resources..."
   if ! terraform -chdir=$SCRIPTDIR apply \
-    -var-file="$GENEARATED_TFVAR.tfvars.json" \
+    -var-file="${GENERATED_TFVAR_FILE}" \
     -var="gitlab_domain_name=${GITLAB_DOMAIN}" \
     -var="gitlab_security_groups=${GITLAB_SG_ID}" \
     -var="ide_password=${IDE_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
     -var="git_password=${IDE_PASSWORD}" \
-    -parallelism=3; then
+    -parallelism=3 -auto-approve; then
     log_error "Terraform apply failed"
     exit 1
   fi

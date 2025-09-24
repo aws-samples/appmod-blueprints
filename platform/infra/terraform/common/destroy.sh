@@ -9,9 +9,9 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
-export GIT_USERNAME=${GIT_USERNAME:-workshop-user}
-export IDE_PASSWORD=${IDE_PASSWORD:-punkwalker!0912}
-export GENEARATED_TFVAR=$(mktemp)
+export GIT_USERNAME=${GIT_USERNAME:-"user1"}
+export IDE_PASSWORD=${IDE_PASSWORD:-"punkwalker!0912"} #TODO: Update this for workshop
+export CONFIG_FILE=${CONFIG_FILE:-"${SCRIPTDIR}/../hub-config.yaml"}
 
 # Logging functions
 log() {
@@ -66,10 +66,15 @@ main() {
   
   # Validate backend configuration
   # validate_backend_config
+
+  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
+  export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
+  yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
+
   GITLAB_DOMAIN=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
   GITLAB_SG_ID=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
   # Initialize Terraform with S3 backend
-  log "Initializing Terraform with S3 backend..."
+  log "Initializing Terraform for bootstrap with S3 backend..."
   if ! terraform -chdir=$SCRIPTDIR init --upgrade ; then
     log_error "Terraform initialization failed"
     exit 1
@@ -78,8 +83,9 @@ main() {
   # Set Terraform variables from environment
   export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
   yq eval -o=json '.' ../hub-config.yaml > $GENEARATED_TFVAR.tfvars.json
+
   # Destroy Terraform resources
-  log "Destroying AWS git and IAM resources..."
+  log "Destroying bootstrap resources..."
   if ! terraform -chdir=$SCRIPTDIR destroy \
     -var-file="$GENEARATED_TFVAR.tfvars.json" \
     -var="gitlab_domain_name=${GITLAB_DOMAIN}" \
@@ -108,8 +114,6 @@ main() {
     exit 1
   fi
 
-
-  
   log_success "Common stack destroy completed successfully"
 }
 

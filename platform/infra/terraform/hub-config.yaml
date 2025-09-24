@@ -11,6 +11,7 @@ clusters:
   hub:
     name: cnoe-ref-impl
     region: us-west-2
+    kubernetes_version: 1.32
     environment: control-plane
     auto_mode: true
     addons:
@@ -50,6 +51,7 @@ clusters:
   spoke1:
     name: spoke-dev
     region: us-west-2
+    kubernetes_version: 1.32
     environment: dev
     auto_mode: true
     addons:
@@ -89,6 +91,7 @@ clusters:
   spoke2:
     name: spoke-prod
     region: us-west-2
+    kubernetes_version: 1.32
     environment: prod
     auto_mode: true
     addons:
