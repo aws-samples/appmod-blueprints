@@ -82,6 +82,7 @@ ack-iam:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -112,6 +113,7 @@ ack-eks:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -143,6 +145,7 @@ ack-s3:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -174,6 +177,7 @@ ack-dynamodb:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -204,6 +208,7 @@ ack-ec2:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
