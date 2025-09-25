@@ -40,8 +40,6 @@ main() {
     -var="resource_prefix=${RESOURCE_PREFIX}" \
     -var="is_workshop=${IS_WS}" \
     -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
-    -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
-    -backend-config="region=${AWS_REGION}" \
     -parallelism=3 -auto-approve; then
     log_error "Terraform apply for clusters stack failed"
     exit 1

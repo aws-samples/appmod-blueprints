@@ -13,7 +13,7 @@ source "${SCRIPTDIR}/argocd-utils.sh"
 
 export SKIP_GITLAB=${SKIP_GITLAB:-false}
 export IS_WS=${IS_WS:-false}
-export WS_PARTICIPANT_ROLE_ARN={$WS_PARTICIPANT_ROLE_ARN:-""}
+export WS_PARTICIPANT_ROLE_ARN=${WS_PARTICIPANT_ROLE_ARN:-""}
 export RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 export GIT_USERNAME=${GIT_USERNAME:-user1}
 export CONFIG_FILE=${CONFIG_FILE:-"${SCRIPTDIR}/../hub-config.yaml"}
