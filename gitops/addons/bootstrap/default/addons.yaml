@@ -934,6 +934,49 @@ crossplane:
       - ServerSideApply=true
       - Replace=true # For CRD updates
 
+crossplane-aws:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '6' # Needs to be after crossplane core
+  namespace: crossplane-system
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/crossplane-aws'
+  selector:
+    matchExpressions:
+      - key: enable_crossplane_aws
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      crossplane_irsa_role_arn: '{{.metadata.annotations.crossplane_irsa_role_arn}}'
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+  ignoreDifferences:
+    - group: apiextensions.crossplane.io
+      kind: CompositeResourceDefinition
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: apiextensions.crossplane.io
+      kind: Composition
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: pkg.crossplane.io
+      kind: Provider
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+
 grafana:
   enabled: false
   annotationsAppSet:
