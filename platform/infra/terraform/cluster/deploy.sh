@@ -33,7 +33,7 @@ main() {
   
   # Apply Terraform configuration
   log "Applying clusters stack..."
-  if ! terraform -chdir=$SCRIPTDIR/ apply \
+  if ! terraform -chdir=$SCRIPTDIR apply \
     -var-file="${GENERATED_TFVAR_FILE}" \
     -var="hub_vpc_id=${HUB_VPC_ID}" \
     -var="hub_subnet_ids=${HUB_SUBNET_IDS}" \
