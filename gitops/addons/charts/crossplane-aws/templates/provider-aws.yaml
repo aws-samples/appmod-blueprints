@@ -35,5 +35,5 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   credentials:
-    source: EKSPodIdentity
+    source: PodIdentity
 {{- end }}
