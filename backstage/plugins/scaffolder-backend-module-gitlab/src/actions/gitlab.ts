@@ -22,7 +22,6 @@ import {
   initRepoAndPush,
   parseRepoUrl,
 } from '@backstage/plugin-scaffolder-node';
-
 import { Gitlab, VariableType } from '@gitbeaker/rest';
 import { Config } from '@backstage/config';
 import { LoggerService } from '@backstage/backend-plugin-api';
@@ -56,7 +55,10 @@ async function customGitPush(input: {
 
   logger.info(`Starting git operation with ${timeout}s timeout`);
 
-  const runGitCommand = (args: string[], options: any = {}): Promise<string> => {
+  const runGitCommand = (
+    args: string[],
+    options: any = {},
+  ): Promise<string> => {
     return new Promise((resolve, reject) => {
       logger.info(`Running git command: git ${args.join(' ')}`);
 
@@ -82,7 +84,11 @@ async function customGitPush(input: {
         if (code === 0) {
           resolve(stdout.trim());
         } else {
-          reject(new Error(`Git command failed (exit code ${code}): ${stderr || stdout}`));
+          reject(
+            new Error(
+              `Git command failed (exit code ${code}): ${stderr || stdout}`,
+            ),
+          );
         }
       });
 
@@ -113,21 +119,25 @@ async function customGitPush(input: {
     await runGitCommand(['config', 'http.lowSpeedLimit', '1000']);
     await runGitCommand(['config', 'http.lowSpeedTime', String(timeout)]);
 
-    const authUrl = 'token' in auth
-      ? remoteUrl.replace(/^https?:\/\//, `https://oauth2:${auth.token}@`)
-      : remoteUrl.replace(/^https?:\/\//, `https://${auth.username}:${auth.password}@`);
+    const authUrl =
+      'token' in auth
+        ? remoteUrl.replace(/^https?:\/\//, `https://oauth2:${auth.token}@`)
+        : remoteUrl.replace(
+            /^https?:\/\//,
+            `https://${auth.username}:${auth.password}@`,
+          );
 
     await runGitCommand(['remote', 'add', 'origin', authUrl]);
     await runGitCommand(['add', '.']);
-    
+
     const commitOutput = await runGitCommand(['commit', '-m', commitMessage]);
-    const commitHash = commitOutput.match(/\[.+?\s([a-f0-9]+)\]/)?.[1] || 'unknown';
+    const commitHash =
+      commitOutput.match(/\[.+?\s([a-f0-9]+)\]/)?.[1] || 'unknown';
 
     await runGitCommand(['push', '-u', 'origin', defaultBranch]);
 
     logger.info('Git operation completed successfully');
     return { commitHash };
-
   } catch (error: any) {
     logger.error(`Git operation failed: ${error.message}`);
     throw error;
@@ -155,16 +165,32 @@ async function initRepoAndPushWithTimeout(input: {
     return customGitPush({ ...restInput, timeout });
   }
 
-  // Original implementation with timeout wrapper
+  // Original implementation with timeout wrapper (default behavior)
+  // Remove timeout and useCustomGit from input as initRepoAndPush doesn't expect them
+  const originalInput = {
+    dir: input.dir,
+    remoteUrl: input.remoteUrl,
+    auth: input.auth,
+    logger: input.logger,
+    defaultBranch: input.defaultBranch,
+    commitMessage: input.commitMessage,
+    gitAuthorInfo: input.gitAuthorInfo,
+    signingKey: input.signingKey,
+  };
+
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
-      reject(new Error(`Git push operation timed out after ${timeout} seconds`));
+      reject(
+        new Error(`Git push operation timed out after ${timeout} seconds`),
+      );
     }, timeout * 1000);
 
-    initRepoAndPush(restInput)
-      .then((result) => {
+    const result = initRepoAndPush(originalInput);
+
+    result
+      .then(gitResult => {
         clearTimeout(timeoutId);
-        resolve(result);
+        resolve(gitResult);
       })
       .catch((error: any) => {
         clearTimeout(timeoutId);
@@ -255,7 +281,8 @@ export function createPublishGitlabAction(options: {
         gitTimeout: z =>
           z
             .number({
-              description: 'Timeout in seconds for git operations (default: 60)',
+              description:
+                'Timeout in seconds for git operations (default: 60)',
             })
             .optional(),
         setUserAsOwner: z =>
@@ -367,7 +394,8 @@ export function createPublishGitlabAction(options: {
         useCustomGit: z =>
           z
             .boolean({
-              description: 'Use custom git implementation to avoid HTTP client timeout issues. Defaults to false for backward compatibility.',
+              description:
+                'Use custom git implementation to avoid HTTP client timeout issues. Defaults to false for backward compatibility.',
             })
             .optional(),
       },
@@ -451,7 +479,7 @@ export function createPublishGitlabAction(options: {
         targetNamespaceId = namespaceResponse.id;
         targetNamespaceKind = namespaceResponse.kind;
       } catch (e: any) {
-        if (e.cause?.response?.status === 404) {
+        if (e?.cause?.response?.status === 404) {
           throw new InputError(
             `The namespace ${owner} is not found or the user doesn't have permissions to access it`,
           );
@@ -479,6 +507,7 @@ export function createPublishGitlabAction(options: {
 
       if (!skipExisting || (skipExisting && !existingProject)) {
         ctx.logger.info(`Creating repo ${repo} in namespace ${owner}.`);
+
         let projectId: number;
         let http_url_to_repo: string;
 
@@ -493,7 +522,9 @@ export function createPublishGitlabAction(options: {
           projectId = result.id;
           http_url_to_repo = result.http_url_to_repo;
         } catch (e: any) {
-          ctx.logger.error(`GitLab repository creation failed: ${e.message}`, { error: e });
+          ctx.logger.error(`GitLab repository creation failed: ${e.message}`, {
+            error: e,
+          });
 
           // Check if this is a duplicate repository error
           if (e.cause?.response?.status === 400) {
@@ -501,24 +532,30 @@ export function createPublishGitlabAction(options: {
             const responseBody = e.cause?.response?.body;
 
             // Check for duplicate repository patterns
-            const responseBodyStr = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody || '');
-            if (errorMessage.includes('has already been taken') ||
+            const responseBodyStr =
+              typeof responseBody === 'string'
+                ? responseBody
+                : JSON.stringify(responseBody || '');
+            if (
+              errorMessage.includes('has already been taken') ||
               errorMessage.includes('already exists') ||
-              (responseBodyStr && (
-                responseBodyStr.includes('has already been taken') ||
-                responseBodyStr.includes('already exists')
-              ))) {
+              (responseBodyStr &&
+                (responseBodyStr.includes('has already been taken') ||
+                  responseBodyStr.includes('already exists')))
+            ) {
               throw new InputError(
-                `Repository '${repo}' already exists in namespace '${owner}'. Please choose a different repository name or enable the 'skipExisting' option.`
+                `Repository '${repo}' already exists in namespace '${owner}'. Please choose a different repository name or enable the 'skipExisting' option.`,
               );
             }
 
             // Check for invalid repository name
-            if (errorMessage.includes('can contain only') ||
+            if (
+              errorMessage.includes('can contain only') ||
               errorMessage.includes('invalid') ||
-              errorMessage.includes('not allowed')) {
+              errorMessage.includes('not allowed')
+            ) {
               throw new InputError(
-                `Invalid repository name '${repo}'. Repository names must contain only letters, digits, '_', '-' and '.'. They cannot start with '-', end in '.git' or end in '.atom'.`
+                `Invalid repository name '${repo}'. Repository names must contain only letters, digits, '_', '-' and '.'. They cannot start with '-', end in '.git' or end in '.atom'.`,
               );
             }
           }
@@ -526,20 +563,22 @@ export function createPublishGitlabAction(options: {
           // Check for permission errors
           if (e.cause?.response?.status === 403) {
             throw new InputError(
-              `Insufficient permissions to create repository '${repo}' in namespace '${owner}'. Please check your GitLab token permissions.`
+              `Insufficient permissions to create repository '${repo}' in namespace '${owner}'. Please check your GitLab token permissions.`,
             );
           }
 
           // Check for namespace not found
           if (e.cause?.response?.status === 404) {
             throw new InputError(
-              `Namespace '${owner}' not found or not accessible. Please verify the namespace exists and you have access to it.`
+              `Namespace '${owner}' not found or not accessible. Please verify the namespace exists and you have access to it.`,
             );
           }
 
           // For other errors, provide a more helpful message
           throw new InputError(
-            `Failed to create GitLab repository '${repo}' in namespace '${owner}': ${e.description || e.message}. ${printGitlabError(e)}`
+            `Failed to create GitLab repository '${repo}' in namespace '${owner}': ${
+              e.description || e.message
+            }. ${printGitlabError(e)}`,
           );
         }
 
@@ -586,9 +625,9 @@ export function createPublishGitlabAction(options: {
               typeof ctx.input.sourcePath === 'boolean'
                 ? ctx.workspacePath
                 : getRepoSourceDirectory(
-                  ctx.workspacePath,
-                  ctx.input.sourcePath,
-                ),
+                    ctx.workspacePath,
+                    ctx.input.sourcePath,
+                  ),
             remoteUrl: http_url_to_repo as string,
             defaultBranch,
             auth: {
@@ -643,7 +682,7 @@ export function createPublishGitlabAction(options: {
               }
             }
           }
-          ctx.output('commitHash', commitResult?.commitHash);
+          ctx.output('commitHash', commitResult.commitHash);
         }
 
         if (projectVariables) {
@@ -673,7 +712,8 @@ export function createPublishGitlabAction(options: {
               );
             } catch (e: any) {
               throw new InputError(
-                `Environment variable creation failed for ${variableWithDefaults.key
+                `Environment variable creation failed for ${
+                  variableWithDefaults.key
                 }. ${printGitlabError(e)}`,
               );
             }
@@ -715,9 +755,10 @@ function printGitlabError(error: any): string {
   // Add response body if available for more context
   if (error.cause?.response?.body) {
     try {
-      const body = typeof error.cause.response.body === 'string'
-        ? JSON.parse(error.cause.response.body)
-        : error.cause.response.body;
+      const body =
+        typeof error.cause.response.body === 'string'
+          ? JSON.parse(error.cause.response.body)
+          : error.cause.response.body;
       if (body.message) {
         errorInfo.details = body.message;
       }

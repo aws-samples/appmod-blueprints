@@ -55,3 +55,10 @@ tasks:
           --set repoURLGitRevision="main" \
           --set repoURLGitBasePath="gitops/addons/" | \
         grep -A 50 -B 5 "name: crossplane-aws"
+
+  backstage-validate:
+    desc: Validate Backstage configuration and check compilation
+    dir: ./backstage
+    cmds:
+      - yarn install
+      - yarn tsc
