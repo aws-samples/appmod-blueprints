@@ -9,6 +9,7 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
+DEPLOY_SCRIPTDIR="$SCRIPTDIR"
 source $SCRIPTDIR/../scripts/utils.sh
 
 # Main destroy function
@@ -28,11 +29,11 @@ main() {
 
 
   # Initialize Terraform with S3 backend
-  initialize_terraform "clusters" "$SCRIPT_DIR"
+  initialize_terraform "clusters" "$DEPLOY_SCRIPTDIR"
 
   # Destroy Terraform resources
   log "Destroying clusters stack..."
-  if ! terraform -chdir=$SCRIPTDIR destroy \
+  if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
     -var-file="${GENERATED_TFVAR_FILE}" \
     -var="hub_vpc_id=${HUB_VPC_ID}" \
     -var="hub_subnet_ids=${HUB_SUBNET_IDS}" \

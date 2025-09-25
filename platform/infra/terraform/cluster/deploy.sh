@@ -9,6 +9,8 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
+# Save the current script directory before sourcing utils.sh
+DEPLOY_SCRIPTDIR="$SCRIPTDIR"
 source $SCRIPTDIR/../scripts/utils.sh
 
 
@@ -29,11 +31,11 @@ main() {
   yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
 
   # Initialize Terraform with S3 backend
-  initialize_terraform "clusters" "$SCRIPTDIR"
+  initialize_terraform "clusters" "$DEPLOY_SCRIPTDIR"
   
   # Apply Terraform configuration
   log "Applying clusters stack..."
-  if ! terraform -chdir=$SCRIPTDIR apply \
+  if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
     -var-file="${GENERATED_TFVAR_FILE}" \
     -var="hub_vpc_id=${HUB_VPC_ID}" \
     -var="hub_subnet_ids=${HUB_SUBNET_IDS}" \
