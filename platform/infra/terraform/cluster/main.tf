@@ -6,7 +6,7 @@ module "eks" {
   version = "~> 20.31.6"
 
   cluster_name                   = each.value.name
-  cluster_version                = each.value.cluster_version
+  cluster_version                = each.value.kubernetes_version
   cluster_endpoint_public_access = true
 
   vpc_id     = each.value.environment == "control-plane" ? var.hub_vpc_id : module.vpc[each.key].vpc_id
