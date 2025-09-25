@@ -62,7 +62,9 @@ if [ -z "$USER_PASSWORD" ]; then
     # Fallback: try to get from job logs
     USER_PASSWORD=$(kubectl logs -n keycloak job/config 2>/dev/null | grep "USER1_PASSWORD=" | head -1 | cut -d"=" -f2)
 fi
-
+set -x
+update_workshop_var "USER_PASSWORD" "$USER_PASSWORD"
+set +x
 # Define fixed column widths (increased URL column for Grafana)
 TOOL_COL=14
 URL_COL=65
