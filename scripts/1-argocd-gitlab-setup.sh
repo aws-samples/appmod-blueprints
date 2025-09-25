@@ -60,24 +60,6 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-# Function to update or add environment variable to ~/.bashrc.d/platform.sh
-update_workshop_var() {
-    local var_name="$1"
-    local var_value="$2"
-    local workshop_file="$HOME/.bashrc.d/platform.sh"
-    
-    # Check if variable already exists in the file
-    if grep -q "^export ${var_name}=" "$workshop_file" 2>/dev/null; then
-        # Variable exists, update it
-        sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${var_value}\"|" "$workshop_file"
-        print_info "Updated ${var_name} in ${workshop_file}"
-    else
-        # Variable doesn't exist, add it
-        echo "export ${var_name}=\"${var_value}\"" >> "$workshop_file"
-        print_info "Added ${var_name} to ${workshop_file}"
-    fi
-}
-
 # Function to check if background build is still running
 check_backstage_build_status() {
     if [ -n "$BACKSTAGE_BUILD_PID" ] && kill -0 $BACKSTAGE_BUILD_PID 2>/dev/null; then

@@ -5,7 +5,7 @@ kind: CompositeResourceDefinition
 metadata:
   name: xbuckets.storage.example.com
   annotations:
-    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-wave: "20"
 spec:
   group: storage.example.com
   names:
@@ -48,7 +48,7 @@ metadata:
     provider: aws
     service: s3
   annotations:
-    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/sync-wave: "25"
 spec:
   compositeTypeRef:
     apiVersion: storage.example.com/v1alpha1
@@ -114,7 +114,7 @@ kind: CompositeResourceDefinition
 metadata:
   name: xdynamodbtables.database.example.com
   annotations:
-    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-wave: "20"
 spec:
   group: database.example.com
   names:
@@ -157,7 +157,7 @@ metadata:
     provider: aws
     service: dynamodb
   annotations:
-    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/sync-wave: "25"
 spec:
   compositeTypeRef:
     apiVersion: database.example.com/v1alpha1

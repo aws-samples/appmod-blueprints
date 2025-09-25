@@ -46,6 +46,7 @@ addons = {
   enable_backstage                    = true
   enable_cert_manager                 = true
   enable_crossplane                   = true
+  enable_crossplane_aws               = true
   enable_external_secrets             = true
   enable_flux                         = true
   enable_gitlab                       = true

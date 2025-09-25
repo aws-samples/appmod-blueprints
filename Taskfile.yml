@@ -42,3 +42,23 @@ tasks:
       - find ./gitops/addons/charts -name "Chart.lock" -delete
       - find ./gitops/addons/charts -name "charts" -type d -exec rm -rf {} + 2>/dev/null || true
       - echo "Cleaned all Helm dependency files"
+
+  test-applicationsets:
+    desc: Test ApplicationSet generation locally using helm template
+    cmds:
+      - |
+        cd ./gitops/addons/charts/application-sets && \
+        helm template test-appsets . \
+          -f ../../bootstrap/default/addons.yaml \
+          -f ../../environments/control-plane/addons.yaml \
+          --set repoURLGit="https://github.com/aws-samples/appmod-blueprints" \
+          --set repoURLGitRevision="main" \
+          --set repoURLGitBasePath="gitops/addons/" | \
+        grep -A 50 -B 5 "name: crossplane-aws"
+
+  backstage-validate:
+    desc: Validate Backstage configuration and check compilation
+    dir: ./backstage
+    cmds:
+      - yarn install
+      - yarn tsc
