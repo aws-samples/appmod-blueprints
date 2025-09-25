@@ -26,6 +26,6 @@ providers:
     runtimeConfigRef: "aws-irsa-drc"
 
 compositions:
-  enabled: false
+  enabled: true
 
 namespace: crossplane-system
