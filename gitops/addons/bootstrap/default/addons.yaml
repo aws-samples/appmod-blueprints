@@ -939,7 +939,6 @@ crossplane-aws:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
-      crossplane_irsa_role_arn: '{{.metadata.annotations.crossplane_irsa_role_arn}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
