@@ -5,7 +5,7 @@ kind: Provider
 metadata:
   name: provider-aws-s3
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-s3:{{ .Values.providers.aws.s3Version }}
   runtimeConfigRef:
@@ -16,7 +16,7 @@ kind: Provider
 metadata:
   name: provider-aws-dynamodb
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-dynamodb:{{ .Values.providers.aws.dynamodbVersion }}
   runtimeConfigRef:
