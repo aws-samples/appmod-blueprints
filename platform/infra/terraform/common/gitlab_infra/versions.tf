@@ -20,8 +20,9 @@ terraform {
     }
   }
   # Backend configuration provided via CLI parameters
-  # backend "s3" {
-  #   # bucket and dynamodb_table provided via -backend-config
-  #   key = "gitlabinfra/terraform.tfstate"
-  # }
+  backend "s3" {
+    # bucket and provided via -backend-config
+    key = "gitlabinfra/terraform.tfstate"
+    use_lockfile = true
+  }
 }

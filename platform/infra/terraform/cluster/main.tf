@@ -5,7 +5,7 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.31.6"
 
-  cluster_name                   = "${local.context_prefix}-${each.value.name}"
+  cluster_name                   = each.value.name
   cluster_version                = each.value.cluster_version
   cluster_endpoint_public_access = true
 
@@ -13,6 +13,22 @@ module "eks" {
   subnet_ids = each.value.environment == "control-plane" ? var.hub_subnet_ids : module.vpc[each.key].private_subnets
 
   enable_cluster_creator_admin_permissions = true
+
+  access_entries = var.is_workshop ? {
+    # This is the role that will be used by workshop participant
+    participant = {
+      principal_arn = var.workshop_participant_role_arn
+
+      policy_associations = {
+        admin = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+    }
+  } : {}
 
   cluster_compute_config = {
     enabled    = true

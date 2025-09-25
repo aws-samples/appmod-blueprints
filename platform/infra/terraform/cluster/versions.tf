@@ -10,7 +10,8 @@ terraform {
 
   # Backend configuration provided via CLI parameters
   backend "s3" {
-    # bucket and dynamodb_table provided via -backend-config
+    # bucket provided via -backend-config
     key = "clusters/terraform.tfstate"
+    use_lockfile = true
   }
 }

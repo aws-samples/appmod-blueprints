@@ -9,63 +9,28 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
-export GIT_USERNAME=${GIT_USERNAME:-"user1"}
-export IDE_PASSWORD=${IDE_PASSWORD:-"punkwalker!0912"} #TODO: Update this for workshop
-export CONFIG_FILE=${CONFIG_FILE:-"${SCRIPTDIR}/../hub-config.yaml"}
-
-# Logging functions
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-}
-
-log_error() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >&2
-}
-
-log_success() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"
-}
-
-# Validate required environment variables
-validate_backend_config() {
-  log "Validating S3 backend configuration..."
-  
-  if [[ -z "${TFSTATE_BUCKET_NAME:-}" ]]; then
-    log_error "TFSTATE_BUCKET_NAME environment variable is required"
-    exit 1
-  fi
-  
-  if [[ -z "${TFSTATE_LOCK_TABLE:-}" ]]; then
-    log_error "TFSTATE_LOCK_TABLE environment variable is required"
-    exit 1
-  fi
-  
-  local region="${AWS_REGION:-us-east-1}"
-  
-  # Check if S3 bucket exists and is accessible
-  if ! aws s3api head-bucket --bucket "${TFSTATE_BUCKET_NAME}" 2>/dev/null; then
-    log_error "S3 bucket '${TFSTATE_BUCKET_NAME}' does not exist or is not accessible"
-    exit 1
-  fi
-  
-  # Check if DynamoDB table exists
-  if ! aws dynamodb describe-table --table-name "${TFSTATE_LOCK_TABLE}" --region "${region}" >/dev/null 2>&1; then
-    log_error "DynamoDB table '${TFSTATE_LOCK_TABLE}' does not exist or is not accessible in region '${region}'"
-    exit 1
-  fi
-  
-  log_success "Backend configuration validated"
-  log "S3 Bucket: ${TFSTATE_BUCKET_NAME}"
-  log "DynamoDB Table: ${TFSTATE_LOCK_TABLE}"
-  log "Region: ${region}"
-}
+source $SCRIPTDIR/../scripts/utils.sh
 
 # Main destroy function
 main() {
-  log "Starting common stack destruction..."
   
+  if [[ -z "${USER1_PASSWORD:-}" ]]; then
+    log_error "USER1_PASSWORD environment variable is required"
+    exit 1
+  fi
+
+  # Remove ArgoCD resources
+  for cluster in "${CLUSTER_NAMES[@]}"; do
+      if ! cleanup_kubernetes_resources_with_fallback "$cluster"; then
+        log_warning "Failed to cleanup Kubernetes resources for cluster: $cluster"
+        exit 1
+      fi
+  done
+
+  log "Starting boostrap stack destruction..."
+
   # Validate backend configuration
-  # validate_backend_config
+  validate_backend_config
 
   export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
   export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
@@ -73,48 +38,45 @@ main() {
 
   GITLAB_DOMAIN=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
   GITLAB_SG_ID=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
+
+  # Remove GitLab resources from state
+  terraform state rm gitlab_personal_access_token.workshop
+  terraform state rm data.gitlab_user.workshop
+
   # Initialize Terraform with S3 backend
-  log "Initializing Terraform for bootstrap with S3 backend..."
-  if ! terraform -chdir=$SCRIPTDIR init --upgrade ; then
-    log_error "Terraform initialization failed"
-    exit 1
-  fi
-  
-  # Set Terraform variables from environment
-  export TF_VAR_resource_prefix="${RESOURCE_PREFIX:-peeks}"
-  yq eval -o=json '.' ../hub-config.yaml > $GENEARATED_TFVAR.tfvars.json
+  initialize_terraform "boostrap" "$SCRIPTDIR"
 
   # Destroy Terraform resources
   log "Destroying bootstrap resources..."
   if ! terraform -chdir=$SCRIPTDIR destroy \
-    -var-file="$GENEARATED_TFVAR.tfvars.json" \
+    -var-file="${GENERATED_TFVAR_FILE}" \
     -var="gitlab_domain_name=${GITLAB_DOMAIN}" \
     -var="gitlab_security_groups=${GITLAB_SG_ID}" \
-    -var="ide_password=${IDE_PASSWORD}" \
+    -var="ide_password=${USER1_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
-    -var="git_password=${IDE_PASSWORD}" \
+    -var="git_password=${USER1_PASSWORD}" \
     -auto-approve -refresh=false; then
-    log_error "Common stack destroy failed"
+    log_error "Bootstrap stack destroy failed"
     exit 1
   fi
 
-  log "Initializing Terraform with S3 backend..."
-  if ! terraform -chdir=$SCRIPTDIR/gitlab_infra init --upgrade ; then
-    log_error "Terraform initialization failed"
-    exit 1
-  fi
-  # Destroy Terraform resources
-  log "Destroying AWS git and IAM resources..."
-  if ! terraform -chdir=$SCRIPTDIR/gitlab_infra destroy \
-    -var-file="$GENEARATED_TFVAR.tfvars.json" \
-    -var="git_username=${GIT_USERNAME}" \
-    -var="git_password=${IDE_PASSWORD}" \
-    -auto-approve; then
-    log_error "Common stack destroy failed"
-    exit 1
+  if ! $SKIP_GITLAB ; then
+    
+    initialize_terraform "gitlab infra" "$SCRIPTDIR/gitlab_infra"
+
+    # Destroy Terraform resources
+    log "Destroying gitlab infra resources..."
+    if ! terraform -chdir=$SCRIPTDIR/gitlab_infra destroy \
+      -var-file="${GENERATED_TFVAR_FILE}" \
+      -var="git_username=${GIT_USERNAME}" \
+      -var="git_password=${IDE_PASSWORD}" \
+      -auto-approve; then
+      log_error "Gitlab infra stack destroy failed"
+      exit 1
+    fi
   fi
 
-  log_success "Common stack destroy completed successfully"
+  log_success "Bootstrap stack destroy completed successfully"
 }
 
 # Run main function
