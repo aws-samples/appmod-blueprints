@@ -31,7 +31,8 @@ kind: ProviderConfig
 metadata:
   name: provider-aws-config
   annotations:
-    argocd.argoproj.io/sync-wave: "15"
+    argocd.argoproj.io/sync-wave: "25"  # Increased to ensure Provider is fully ready
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   credentials:
     source: EKSPodIdentity
