@@ -40,7 +40,6 @@ main() {
     -var="hub_vpc_id=${HUB_VPC_ID}" \
     -var="hub_subnet_ids=$(echo "${HUB_SUBNET_IDS}" | sed "s/'/\"/g")" \
     -var="resource_prefix=${RESOURCE_PREFIX}" \
-    -var="is_workshop=${IS_WS}" \
     -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
     -parallelism=3 -auto-approve; then
     log_error "Terraform apply for clusters stack failed"

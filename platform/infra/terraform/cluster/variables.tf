@@ -14,12 +14,6 @@ variable "resource_prefix" {
   default     = "peeks"
 }
 
-variable "is_workshop" {
-  description = "Is stack deployed within AWS workshop"
-  type        = bool
-  default     = false
-}
-
 variable "workshop_participant_role_arn" {
   description = "AWS Workshop participant role ARN"
   type        = string
