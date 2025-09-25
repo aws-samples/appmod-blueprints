@@ -370,7 +370,7 @@ ack-efs:
       managedFieldsManagers:
         - kube-controller-manager
 
-aws_efs_csi_driver:
+aws-efs-csi-driver:
   enabled: false
   enableACK: false
   releaseName: aws-efs-csi-driver
@@ -397,7 +397,7 @@ aws_efs_csi_driver:
         annotations:
           eks.amazonaws.com/role-arn: '{{default "" (index .metadata.annotations "aws_efs_csi_driver_iam_role_arn")}}'
 
-aws_for_fluentbit:
+aws-for-fluentbit:
   enabled: false
   releaseName: aws-for-fluentbit
   namespace: '{{ default "kube-system" (index .metadata.annotations "aws_for_fluentbit_namespace") }}'
@@ -422,7 +422,7 @@ aws_for_fluentbit:
     serviceAccount:
       name: '{{ default "aws-for-fluentbit" (index .metadata.annotations "aws_for_fluentbit_service_account") }}'
 
-cert_manager:
+cert-manager:
   enabled: false
   releaseName: cert-manager
   namespace: '{{ default "cert-manager" (index .metadata.annotations "cert-manager_namespace") }}'
@@ -441,7 +441,7 @@ cert_manager:
   #   serviceAccount:
   #     name: '{{ default "cert-manager" (index .metadata.annotations "cert_manager_service_account") }}'
 
-external_dns:
+external-dns:
   enabled: false
   releaseName: external-dns
   namespace: '{{ default "kube-system" (index .metadata.annotations "external_dns_namespace") }}'
@@ -463,7 +463,7 @@ external_dns:
     txtOwnerId: '{{.metadata.annotations.aws_cluster_name}}'
     policy: '{{ default "upsert-only" (index .metadata.annotations "external_dns_policy")}}'
 
-opentelemetry_operator:
+opentelemetry-operator:
   enabled: false
   releaseName: opentelemetry-operator
   namespace: 'opentelemetry-operator-system'
@@ -502,7 +502,7 @@ kyverno:
       valuesObject:
         environment: '{{.metadata.labels.environment}}'
 
-kyverno_policy_reporter:
+kyverno-policy-reporter:
   enabled: false
   releaseName: kyverno-policy-reporter
   annotationsAppSet:
@@ -545,7 +545,7 @@ kyverno_policy_reporter:
         minimumPriority: 'warning'
         synchronize: true
 
-kyverno_policies:
+kyverno-policies:
   enabled: false
   releaseName: kyverno-policies
   annotationsAppSet:
@@ -564,7 +564,7 @@ kyverno_policies:
     validationFailureAction: Audit
     skipBackgroundRequests: false
 
-cni_metrics_helper:
+cni-metrics-helper:
   enabled: false
   releaseName: cni-metrics-helper
   annotationsAppSet:
@@ -582,7 +582,7 @@ cni_metrics_helper:
         operator: In
         values: ['true']
 
-kube_state_metrics:
+kube-state-metrics:
   enabled: false
   releaseName: kube-state-metrics
   namespace: '{{ default "kube-prometheus-stack" (index .metadata.annotations "kube_state_metrics_namespace")}}'
@@ -597,7 +597,7 @@ kube_state_metrics:
         operator: In
         values: ['true']
 
-prometheus_node_exporter:
+prometheus-node-exporter:
   enabled: false
   releaseName: prometheus-node-exporter
   annotationsAppSet:
@@ -612,7 +612,7 @@ prometheus_node_exporter:
         operator: In
         values: ['true']
 
-cw_prometheus:
+cw-prometheus:
   enabled: false
   namespace: '{{ default "amazon-cloudwatch" (index .metadata.annotations "cw_prometheus_namespace")}}'
   annotationsAppSet:
