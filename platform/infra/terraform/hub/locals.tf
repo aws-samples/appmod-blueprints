@@ -174,6 +174,10 @@ locals {
       external_secrets_service_account = local.external_secrets.service_account
     },
     {
+      # Crossplane configuration - using EKS Pod Identity (newer approach)
+      crossplane_pod_identity_association_id = module.crossplane_aws_provider_pod_identity.associations["crossplane-provider"].association_id
+    },
+    {
       ack_iam_service_account = local.iam_ack.service_account
       ack_iam_namespace       = local.iam_ack.namespace
       ack_eks_service_account = local.eks_ack.service_account

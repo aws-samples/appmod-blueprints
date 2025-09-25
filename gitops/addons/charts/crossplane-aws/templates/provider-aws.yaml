@@ -3,20 +3,15 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: crossplane-aws-provider
+  name: provider-aws
   namespace: {{ .Values.namespace | default "crossplane-system" }}
   annotations:
-    {{- if .Values.aws.irsaRoleArn }}
-    eks.amazonaws.com/role-arn: {{ .Values.aws.irsaRoleArn }}
-    {{- else }}
-    eks.amazonaws.com/role-arn: "{{ `{{ .Values.cluster.annotations.crossplane_irsa_role_arn }}` }}"
-    {{- end }}
     argocd.argoproj.io/sync-wave: "2"
 ---
 apiVersion: pkg.crossplane.io/v1beta1
 kind: DeploymentRuntimeConfig
 metadata:
-  name: aws-irsa-drc
+  name: aws-pod-identity-drc
   annotations:
     argocd.argoproj.io/sync-wave: "3"
 spec:
@@ -25,7 +20,7 @@ spec:
       selector: {}
       template:
         spec:
-          serviceAccountName: crossplane-aws-provider
+          serviceAccountName: provider-aws
           containers:
           - name: package-runtime
             args:
@@ -39,5 +34,5 @@ metadata:
     argocd.argoproj.io/sync-wave: "15"
 spec:
   credentials:
-    source: IRSA
+    source: EKSPodIdentity
 {{- end }}
