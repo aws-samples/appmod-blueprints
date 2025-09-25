@@ -101,7 +101,7 @@ spec:
       action: argocd:create-resources
       input:
         appName: ${{parameters.appname}}
-        appNamespace: team-${{ parameters.appname }}
+        namespace: team-${{ parameters.appname }}
         argoInstance: in-cluster
         projectName: default
         # necessary until we generate our own cert
