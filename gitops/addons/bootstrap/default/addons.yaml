@@ -72,6 +72,16 @@ ack-iam:
       - key: enable_ack_iam
         operator: In
         values: ['true']
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
   valuesObject:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
@@ -82,6 +92,21 @@ ack-iam:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -112,6 +137,21 @@ ack-eks:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -143,6 +183,11 @@ ack-s3:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /metadata/generation
+        - /metadata/managedFields
+        - /status
+        - /spec/versions/0/schema/openAPIV3Schema/properties
+        - /spec/versions/1/schema/openAPIV3Schema/properties
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -174,6 +219,21 @@ ack-dynamodb:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -204,6 +264,21 @@ ack-ec2:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/properties/*/description
+        - /spec/versions/*/schema/openAPIV3Schema/**/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -284,12 +359,18 @@ ack-efs:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
+        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
+        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
+        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
         - kube-controller-manager
 
-aws_efs_csi_driver:
+aws-efs-csi-driver:
   enabled: false
   enableACK: false
   releaseName: aws-efs-csi-driver
@@ -316,7 +397,7 @@ aws_efs_csi_driver:
         annotations:
           eks.amazonaws.com/role-arn: '{{default "" (index .metadata.annotations "aws_efs_csi_driver_iam_role_arn")}}'
 
-aws_for_fluentbit:
+aws-for-fluentbit:
   enabled: false
   releaseName: aws-for-fluentbit
   namespace: '{{ default "kube-system" (index .metadata.annotations "aws_for_fluentbit_namespace") }}'
@@ -341,7 +422,7 @@ aws_for_fluentbit:
     serviceAccount:
       name: '{{ default "aws-for-fluentbit" (index .metadata.annotations "aws_for_fluentbit_service_account") }}'
 
-cert_manager:
+cert-manager:
   enabled: false
   releaseName: cert-manager
   namespace: '{{ default "cert-manager" (index .metadata.annotations "cert-manager_namespace") }}'
@@ -360,7 +441,7 @@ cert_manager:
   #   serviceAccount:
   #     name: '{{ default "cert-manager" (index .metadata.annotations "cert_manager_service_account") }}'
 
-external_dns:
+external-dns:
   enabled: false
   releaseName: external-dns
   namespace: '{{ default "kube-system" (index .metadata.annotations "external_dns_namespace") }}'
@@ -382,7 +463,7 @@ external_dns:
     txtOwnerId: '{{.metadata.annotations.aws_cluster_name}}'
     policy: '{{ default "upsert-only" (index .metadata.annotations "external_dns_policy")}}'
 
-opentelemetry_operator:
+opentelemetry-operator:
   enabled: false
   releaseName: opentelemetry-operator
   namespace: 'opentelemetry-operator-system'
@@ -421,7 +502,7 @@ kyverno:
       valuesObject:
         environment: '{{.metadata.labels.environment}}'
 
-kyverno_policy_reporter:
+kyverno-policy-reporter:
   enabled: false
   releaseName: kyverno-policy-reporter
   annotationsAppSet:
@@ -464,7 +545,7 @@ kyverno_policy_reporter:
         minimumPriority: 'warning'
         synchronize: true
 
-kyverno_policies:
+kyverno-policies:
   enabled: false
   releaseName: kyverno-policies
   annotationsAppSet:
@@ -483,7 +564,7 @@ kyverno_policies:
     validationFailureAction: Audit
     skipBackgroundRequests: false
 
-cni_metrics_helper:
+cni-metrics-helper:
   enabled: false
   releaseName: cni-metrics-helper
   annotationsAppSet:
@@ -501,7 +582,7 @@ cni_metrics_helper:
         operator: In
         values: ['true']
 
-kube_state_metrics:
+kube-state-metrics:
   enabled: false
   releaseName: kube-state-metrics
   namespace: '{{ default "kube-prometheus-stack" (index .metadata.annotations "kube_state_metrics_namespace")}}'
@@ -516,7 +597,7 @@ kube_state_metrics:
         operator: In
         values: ['true']
 
-prometheus_node_exporter:
+prometheus-node-exporter:
   enabled: false
   releaseName: prometheus-node-exporter
   annotationsAppSet:
@@ -531,7 +612,7 @@ prometheus_node_exporter:
         operator: In
         values: ['true']
 
-cw_prometheus:
+cw-prometheus:
   enabled: false
   namespace: '{{ default "amazon-cloudwatch" (index .metadata.annotations "cw_prometheus_namespace")}}'
   annotationsAppSet:
@@ -602,7 +683,7 @@ argo-rollouts:
 ingress-nginx:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '3'
+    argocd.argoproj.io/sync-wave: '1'
   namespace: ingress-nginx
   chartName: ingress-nginx
   chartRepository: https://kubernetes.github.io/ingress-nginx
@@ -622,7 +703,7 @@ ingress-nginx:
 gitlab:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '4' # Needs to be after External and Ingress Nginx
+    argocd.argoproj.io/sync-wave: '2' # Needs to be after External and Ingress Nginx
   namespace: gitlab
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/gitlab'
@@ -641,7 +722,7 @@ gitlab:
 keycloak:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '5' # Needs to be after External Secrets, Ingress Nginx and Gitlab
+    argocd.argoproj.io/sync-wave: '3' # Needs to be after External Secrets, Ingress Nginx and Gitlab
   namespace: keycloak
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/keycloak'
@@ -673,11 +754,16 @@ keycloak:
         - /metadata/managedFields
         - /status
         # Ignore default values added by Kubernetes to volumeClaimTemplates
-        - /spec/volumeClaimTemplates/*/apiVersion
-        - /spec/volumeClaimTemplates/*/kind
-        - /spec/volumeClaimTemplates/*/metadata/creationTimestamp
-        - /spec/volumeClaimTemplates/*/spec/volumeMode
-        - /spec/volumeClaimTemplates/*/status
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/apiVersion
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/kind
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/metadata/creationTimestamp
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/spec/volumeMode
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/status
 
 argo-workflows:
   enabled: false
@@ -793,7 +879,8 @@ kubevela:
     - group: apiregistration.k8s.io
       kind: APIService
       jsonPointers:
-        - /spec/caBundle
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/caBundle
         - /status
         - /metadata/generation
         - /metadata/managedFields
@@ -808,11 +895,12 @@ kubevela:
 
 crossplane:
   enabled: false
+  chartName: crossplane
+  chartRepository: 'https://charts.crossplane.io/stable'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '2' # Needs to be after external-secrets and before infrastructure provisioning
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after external-secrets and before infrastructure provisioning
   namespace: crossplane-system
-  defaultVersion: '0.1.0'
-  path: '{{.metadata.annotations.addons_repo_basepath}}charts/crossplane'
+  defaultVersion: '1.17.1'
   selector:
     matchExpressions:
       - key: enable_crossplane
@@ -831,21 +919,52 @@ crossplane:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-    - group: external-secrets.io
-      kind: ExternalSecret
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+
+crossplane-aws:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '6' # Needs to be after crossplane core
+  namespace: crossplane-system
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/crossplane-aws'
+  selector:
+    matchExpressions:
+      - key: enable_crossplane_aws
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+  ignoreDifferences:
+    - group: apiextensions.crossplane.io
+      kind: CompositeResourceDefinition
       jsonPointers:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-    - group: ''
-      kind: Secret
+    - group: apiextensions.crossplane.io
+      kind: Composition
       jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: pkg.crossplane.io
+      kind: Provider
+      jsonPointers:
+        - /status
+        - /metadata/generation
         - /metadata/managedFields
   syncPolicy:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
-      - Replace=true # For CRD updates
 
 grafana:
   enabled: false
@@ -873,9 +992,12 @@ grafana:
         - /metadata/generation
         - /metadata/managedFields
         # Ignore default values added by ESO to remoteRef
-        - /spec/data/*/remoteRef/conversionStrategy
-        - /spec/data/*/remoteRef/decodingStrategy
-        - /spec/data/*/remoteRef/metadataPolicy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/conversionStrategy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/decodingStrategy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/metadataPolicy
     - group: ''
       kind: Secret
       jsonPointers:
@@ -901,7 +1023,7 @@ grafana:
 flux:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '1' # Needs to be early for alternative GitOps solution
+    argocd.argoproj.io/sync-wave: '4' # Needs to be early for alternative GitOps solution
   namespace: flux-system
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/flux'
@@ -911,52 +1033,58 @@ flux:
         operator: In
         values: ['true']
   valuesObject:
+    clusterName: '{{.metadata.annotations.cluster_name}}'
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
-    git:
-      repository: '{{.metadata.annotations.working_repo}}'
-      branch: '{{.metadata.annotations.git_branch}}'
+    gitRepository:
+      url: '{{.metadata.annotations.addons_repo_url}}'
+      branch: '{{.metadata.annotations.addons_repo_revision}}'
+    workloadsRepository:
+      url: '{{.metadata.annotations.workload_repo_url}}'
+      branch: '{{.metadata.annotations.workload_repo_revision}}'
+    platformAddons:
+      path: '{{.metadata.annotations.addons_repo_basepath}}addons'
+    workloads:
+      path: '{{.metadata.annotations.workload_repo_basepath}}apps'
+    secrets:
+      gitCredentials:
+        secretName: '{{.metadata.annotations.resource_prefix}}-gitlab-pat'
   ignoreDifferences:
-    - group: apiextensions.k8s.io
-      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
       jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
+        - /rules
+        - /metadata/labels
+        - /metadata/annotations
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+      jsonPointers:
+        - /subjects
+        - /roleRef
+        - /metadata/labels
+        - /metadata/annotations
     - group: external-secrets.io
       kind: ExternalSecret
       jsonPointers:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-    - group: ''
-      kind: Secret
-      jsonPointers:
-        - /metadata/managedFields
+        - /spec/data/0/remoteRef/conversionStrategy
+        - /spec/data/0/remoteRef/decodingStrategy
+        - /spec/data/0/remoteRef/metadataPolicy
+        - /spec/data/1/remoteRef/conversionStrategy
+        - /spec/data/1/remoteRef/decodingStrategy
+        - /spec/data/1/remoteRef/metadataPolicy
+        - /spec/target/template/engineVersion
+        - /spec/target/template/mergePolicy
     - group: source.toolkit.fluxcd.io
       kind: GitRepository
       jsonPointers:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-    - group: kustomize.toolkit.fluxcd.io
-      kind: Kustomization
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-  syncPolicy:
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
-      - Replace=true # For CRD updates
-    automated:
-      selfHeal: true
-      prune: false # Prevent conflicts with ArgoCD
-  conflictResolution:
-    policy: 'none' # Let ArgoCD handle conflicts
 
 backstage:
   enabled: false
@@ -985,9 +1113,12 @@ backstage:
         - /metadata/generation
         - /metadata/managedFields
         # Ignore default values added by ESO to remoteRef
-        - /spec/data/*/remoteRef/conversionStrategy
-        - /spec/data/*/remoteRef/decodingStrategy
-        - /spec/data/*/remoteRef/metadataPolicy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/conversionStrategy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/decodingStrategy
+        - /spec/versions/*/schema/openAPIV3Schema/description
+        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/metadataPolicy
     - group: ''
       kind: Secret
       jsonPointers:

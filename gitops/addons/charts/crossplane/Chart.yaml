@@ -1,5 +1,0 @@
-apiVersion: v2
-name: crossplane
-description: A Helm chart for Crossplane
-type: application
-version: 0.1.0

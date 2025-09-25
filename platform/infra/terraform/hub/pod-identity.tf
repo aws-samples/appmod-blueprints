@@ -43,6 +43,41 @@ module "external_secrets_pod_identity" {
 }
 
 ################################################################################
+# Crossplane AWS Provider EKS Pod Identity
+################################################################################
+# NOTE: AdministratorAccess is used for demo purposes. In production environments,
+# this should be restricted to only the specific AWS resources that Crossplane
+# will manage to follow security best practices and principle of least privilege.
+module "crossplane_aws_provider_pod_identity" {
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.4.0"
+
+  name = "crossplane-aws-provider"
+
+  attach_custom_policy = true
+  policy_statements = [
+    {
+      sid = "CrossplaneAdministratorAccess"
+      # WARNING: AdministratorAccess provides full AWS access
+      # In production, replace with specific policies for resources Crossplane will manage
+      actions   = ["*"]
+      resources = ["*"]
+    }
+  ]
+
+  # Pod Identity Associations
+  associations = {
+    crossplane-provider = {
+      cluster_name    = local.cluster_info.cluster_name
+      namespace       = "crossplane-system"
+      service_account = "provider-aws"
+    }
+  }
+
+  tags = local.tags
+}
+
+################################################################################
 # ArgoCD Hub Management
 ################################################################################
 data "aws_ssm_parameter" "argocd_hub_role" {

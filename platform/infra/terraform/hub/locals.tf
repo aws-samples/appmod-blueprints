@@ -117,6 +117,7 @@ locals {
     enable_vpa                             = try(var.addons.enable_vpa, false)
     enable_kubevela                        = try(var.addons.enable_kubevela, false)
     enable_crossplane                      = try(var.addons.enable_crossplane, false)
+    enable_crossplane_aws                  = try(var.addons.enable_crossplane_aws, false)
     enable_flux                            = try(var.addons.enable_flux, false)
     enable_grafana                         = try(var.addons.enable_grafana, false)
   }
@@ -171,6 +172,10 @@ locals {
     {
       external_secrets_namespace       = local.external_secrets.namespace
       external_secrets_service_account = local.external_secrets.service_account
+    },
+    {
+      # Crossplane configuration - using EKS Pod Identity (newer approach)
+      crossplane_pod_identity_association_id = module.crossplane_aws_provider_pod_identity.associations["crossplane-provider"].association_id
     },
     {
       ack_iam_service_account = local.iam_ack.service_account

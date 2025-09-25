@@ -9,13 +9,9 @@ terminate_argocd_operation() {
     local use_grpc_web=${2:-true}
     
     if [ "$use_grpc_web" = "true" ]; then
-        argocd app terminate-op "$app_name" --grpc-web 2>/dev/null || argocd app terminate-op "$app_name" 2>/dev/null || {
-            kubectl delete operation -n argocd -l app.kubernetes.io/instance="$app_name" 2>/dev/null || true
-        }
+        argocd app terminate-op "$app_name" --grpc-web 2>/dev/null || argocd app terminate-op "$app_name" 2>/dev/null || true
     else
-        argocd app terminate-op "$app_name" 2>/dev/null || {
-            kubectl delete operation -n argocd -l app.kubernetes.io/instance="$app_name" 2>/dev/null || true
-        }
+        argocd app terminate-op "$app_name" 2>/dev/null || true
     fi
 }
 

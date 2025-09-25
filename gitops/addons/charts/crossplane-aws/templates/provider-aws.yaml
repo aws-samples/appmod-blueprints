@@ -1,0 +1,39 @@
+{{- if .Values.providers.aws.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-aws
+  namespace: {{ .Values.namespace | default "crossplane-system" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: aws-pod-identity-drc
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          serviceAccountName: provider-aws
+          containers:
+          - name: package-runtime
+            args:
+            - --debug
+---
+apiVersion: aws.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: provider-aws-config
+  annotations:
+    argocd.argoproj.io/sync-wave: "25"  # Increased to ensure Provider is fully ready
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  credentials:
+    source: PodIdentity
+{{- end }}
