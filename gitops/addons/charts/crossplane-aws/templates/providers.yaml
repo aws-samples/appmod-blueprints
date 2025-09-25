@@ -9,7 +9,7 @@ metadata:
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-s3:{{ .Values.providers.aws.s3Version }}
   runtimeConfigRef:
-    name: {{ .Values.providers.aws.runtimeConfigRef }}
+    name: aws-pod-identity-drc
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -20,5 +20,5 @@ metadata:
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-dynamodb:{{ .Values.providers.aws.dynamodbVersion }}
   runtimeConfigRef:
-    name: {{ .Values.providers.aws.runtimeConfigRef }}
+    name: aws-pod-identity-drc
 {{- end }}
