@@ -8,8 +8,10 @@ export TF_CLI_ARGS="-no-color"
 SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
+GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
 
 source "${SCRIPTDIR}/argocd-utils.sh"
+source "${SCRIPTDIR}/colors.sh"
 
 export SKIP_GITLAB=${SKIP_GITLAB:-false}
 export IS_WS=${IS_WS:-false}
@@ -17,8 +19,9 @@ export WS_PARTICIPANT_ROLE_ARN=${WS_PARTICIPANT_ROLE_ARN:-""}
 export RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 export GIT_USERNAME=${GIT_USERNAME:-user1}
 export CONFIG_FILE=${CONFIG_FILE:-"${SCRIPTDIR}/../hub-config.yaml"}
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 export AWS_REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-east-1}}"
-CLUSTER_NAMES=($(yq eval '.clusters[].name' "$CONFIG_FILE"))
+export CLUSTER_NAMES=($(yq eval '.clusters[].name' "$CONFIG_FILE"))
 
 # Logging functions
 log() {
@@ -117,24 +120,26 @@ configure_eks_access() {
 # Configure kubectl with fallback
 configure_kubectl_with_fallback() {
   log "Configuring kubectl access..."
-   local cluster_name="${TF_VAR_resource_prefix}-$1"
+   local cluster_name=$1
    local region="${AWS_REGION}"
 
    if ! aws eks update-kubeconfig --name "$cluster_name" \
       --region "${region}" \
       --alias "$cluster_name" &>/dev/null; then
-     log_warning "kubectl can not be configured for cluster: $cluster_name"
-     configure_eks_access "$cluster_name"
+     log_error "Kubeconfig can not be updated for cluster: $cluster_name"
+     return 1
    fi
-
    
-   if kubectl get nodes --request-timeout=10s &>/dev/null; then
-      log_success "kubectl can connect to cluster: $cluster_name"
-      return 0
+   if ! kubectl get nodes --request-timeout=10s &>/dev/null; then
+      log_warning "kubectl can not connect to cluster: $cluster_name"
+      if ! configure_eks_access "$cluster_name"; then
+        log_error "Failed to configure EKS access for cluster: $cluster_name"
+        return 1
+      fi
    fi
 
-  log_error "kubectl configuration failed for cluster: $cluster_name "
-  return 1  
+  log_success "Kubeconfig updated successfully for cluster: $cluster_name"
+  return 0
 }
 
 # Validate required environment variables and backend resources
@@ -216,4 +221,85 @@ cleanup_kubernetes_resources_with_fallback() {
   delete_argocd_apps "${CORE_APPS[*]}" # will ignore core apps for cleanup
 
   delete_argocd_apps "${CORE_APPS[*]}" "only" # will not ignore core apps for final cleanup
+}
+
+gitlab_repository_setup(){
+  log "Setting up GitLab repository..."
+  # Wait for GitLab to be accessible (5 minute timeout)
+  local timeout=300
+  local elapsed=0
+  while ! curl -sf "https://${GITLAB_DOMAIN}" > /dev/null 2>&1; do
+    sleep 5
+    elapsed=$((elapsed + 5))
+    if [ $elapsed -ge $timeout ]; then
+      log_error "GitLab not accessible after 5 minutes"
+      exit 1
+    fi
+  done
+  
+  cd "$GIT_ROOT_PATH"
+  
+  git config --global credential.helper store
+  git config --global user.name "$GIT_USERNAME"
+  git config --global user.email "$GIT_USERNAME@workshop.local"
+  
+  git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+  
+  if ! git push --set-upstream gitlab "${WORKSHOP_GIT_BRANCH}":main; then 
+    log_error "Failed to push repository to GitLab"
+    exit 1
+  fi
+
+  cd -
+}
+
+update_backstage_defaults() {
+  print_header "Updating Backstage Template Configuration"
+
+  cd "$GIT_ROOT_PATH"
+
+  # Define catalog-info.yaml path
+  CATALOG_INFO_PATH="${GIT_ROOT_PATH}/platform/backstage/templates/catalog-info.yaml"
+
+  print_info "Using the following values for catalog-info.yaml update:"
+  echo "  Account ID: $AWS_ACCOUNT_ID"
+  echo "  AWS Region: $AWS_REGION"
+  echo "  GitLab Domain: $GITLAB_DOMAIN"
+  echo "  Git Username: $GIT_USERNAME"
+
+  print_step "Updating catalog-info.yaml with environment-specific values"
+
+  # Create backup before modifying
+  BACKUP_PATH="${CATALOG_INFO_PATH}.backup.$(date +%Y%m%d_%H%M%S)"
+  cp "$CATALOG_INFO_PATH" "$BACKUP_PATH"
+  print_info "Created backup: $BACKUP_PATH"
+
+  # Update the system-info entity in catalog-info.yaml
+  yq -i '
+    (select(.metadata.name == "system-info").spec.hostname) = "'$GITLAB_DOMAIN'" |
+    (select(.metadata.name == "system-info").spec.gituser) = "'$GIT_USERNAME'" |
+    (select(.metadata.name == "system-info").spec.aws_region) = "'$AWS_REGION'" |
+    (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'"
+  ' "$CATALOG_INFO_PATH"
+
+  print_success "Updated catalog-info.yaml with environment values"
+
+  # Stage the modified file
+  print_step "Staging catalog-info.yaml"
+  git add "$CATALOG_INFO_PATH"
+  print_success "Staged catalog-info.yaml"
+
+  print_success "Backstage template configuration updated!"
+
+  git commit -m "Update Backstage Template Configuration"
+
+  print_info "Templates can now reference these values using:"
+  echo "  ✓ Hostname: \${{ steps['fetchSystem'].output.entity.spec.hostname }}"
+  echo "  ✓ Git User: \${{ steps['fetchSystem'].output.entity.spec.gituser }}"
+  echo "  ✓ AWS Region: \${{ steps['fetchSystem'].output.entity.spec.aws_region }}"
+  echo "  ✓ AWS Account ID: \${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}"
+
+  print_info "Other templates should use the fetchSystem step to retrieve configuration from catalog-info.yaml"
+
+  cd -
 }

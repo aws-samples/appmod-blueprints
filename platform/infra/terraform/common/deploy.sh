@@ -9,6 +9,8 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
+# Save the current script directory before sourcing utils.sh
+DEPLOY_SCRIPTDIR="$SCRIPTDIR"
 source $SCRIPTDIR/../scripts/utils.sh
 
 # Main deployment function
@@ -27,35 +29,43 @@ main() {
 
   if ! $SKIP_GITLAB ; then
     # Initialize Terraform with S3 backend
-    initialize_terraform "gitlab infra" "$SCRIPTDIR/gitlab_infra"
+    initialize_terraform "gitlab infra" "$DEPLOY_SCRIPTDIR/gitlab_infra"
     
     # Apply Terraform configuration
     log "Applying gitlab infra resources..."
-    if ! terraform -chdir=$SCRIPTDIR/gitlab_infra apply \
+    if ! terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra apply \
       -var-file="${GENERATED_TFVAR_FILE}" \
       -var="git_username=${GIT_USERNAME}" \
       -var="git_password=${USER1_PASSWORD}" \
+      -var="working_repo=${WORKING_REPO}" \
       -parallelism=3 -auto-approve; then
       log_error "Terraform apply failed for gitlab infra stack"
       exit 1
     fi
+
+    export GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
+    GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
+
+    # Update backstage default values
+    update_backstage_defaults
+    # Push repo to Gitlab
+    gitlab_repository_setup
   fi
 
-  GITLAB_DOMAIN=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
-  GITLAB_SG_ID=$(terraform -chdir=$SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
   # Initialize Terraform with S3 backend
-  initialize_terraform "bootstrap" "$SCRIPTDIR"
+  initialize_terraform "bootstrap" "$DEPLOY_SCRIPTDIR"
   
   # Apply Terraform configuration
   log "Applying bootstrap resources..."
-  if ! terraform -chdir=$SCRIPTDIR apply \
+  if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
     -var-file="${GENERATED_TFVAR_FILE}" \
-    -var="gitlab_domain_name=${GITLAB_DOMAIN}" \
-    -var="gitlab_security_groups=${GITLAB_SG_ID}" \
+    -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
+    -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
     -var="ide_password=${USER1_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
     -var="git_password=${USER1_PASSWORD}" \
     -var="resource_prefix=${RESOURCE_PREFIX}" \
+    -var="working_repo=${WORKING_REPO}" \
     -parallelism=3 -auto-approve; then
     log_error "Terraform apply failed for bootstrap stack"
     exit 1

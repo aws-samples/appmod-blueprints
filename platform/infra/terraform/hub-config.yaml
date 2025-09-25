@@ -9,7 +9,7 @@ repo:
 
 clusters:
   hub:
-    name: cnoe-ref-impl
+    name: hub
     region: us-west-2
     kubernetes_version: 1.32
     environment: control-plane

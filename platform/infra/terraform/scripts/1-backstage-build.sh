@@ -47,7 +47,6 @@ STUCK_SYNC_TIMEOUT=${STUCK_SYNC_TIMEOUT:-180}  # 3 minutes default for stuck syn
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$SCRIPT_DIR/colors.sh"
-source "$SCRIPT_DIR/bootstrap-oidc-secrets.sh"
 
 set -e
 #set -x # debug

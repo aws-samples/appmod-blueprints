@@ -27,7 +27,7 @@ fi
 echo "=== END DEBUG ==="
 
 # Source colors and ArgoCD utilities
-source "$(dirname "$0")/colors.sh"
+source "$(dirname "$0")/utils.sh"
 source "$(dirname "$0")/argocd-utils.sh"
 
 # Configuration
@@ -40,12 +40,8 @@ ARGOCD_CHECK_INTERVAL=30 # 30 seconds
 
 # Define scripts to run in order
 SCRIPTS=(
-    "1-argocd-gitlab-setup.sh"
-    # "2-bootstrap-accounts.sh"
-    # "3-register-terraform-spoke-clusters.sh dev"
-    # "3-register-terraform-spoke-clusters.sh prod"
-    # "4-setup-keycloak.sh"
-    "6-tools-urls.sh"
+    "1-backstage-build.sh"
+    "2-tools-urls.sh"
 )
 
 # Function to print colored output
@@ -71,7 +67,6 @@ print_status() {
 # Function to wait for EKS clusters to be ready
 wait_for_clusters_ready() {
     print_status "INFO" "Checking EKS cluster readiness..."
-    
     print_status "INFO" "Using cluster names: ${CLUSTER_NAMES[*]}"
     
     local all_ready=false
@@ -165,12 +160,7 @@ wait_for_clusters_ready() {
     fi
 }
 
-# Function to wait for ArgoCD applications to be healthy (wrapper for shared utility)
-wait_for_argocd_apps_health() {
-    local timeout=$1
-    # Call the shared utility function from argocd-utils.sh
-    wait_for_argocd_health "$timeout" "$ARGOCD_CHECK_INTERVAL" "[INFO] "
-}
+
 
 # Function to sync and wait for specific ArgoCD application
 sync_and_wait_app() {
@@ -293,11 +283,12 @@ run_script_with_retry() {
                 # Brief wait for stabilization
                 sleep 30
                 
-                # Check overall ArgoCD health with shorter timeout
-                if wait_for_argocd_apps_health 300; then
+                # Check overall ArgoCD health with 30min timeout
+                print_status "INFO" "Waiting for ArgoCD applications to be healthy..."
+                if wait_for_argocd_apps_health 1800; then
                     print_status "SUCCESS" "ArgoCD platform is operational"
                 else
-                    print_status "WARN" "Some ArgoCD applications may still be syncing"
+                    print_status "WARN" "Some ArgoCD applications may still be syncing after 30 minutes"
                     # Show current status for debugging
                     kubectl get applications -n argocd -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status" --no-headers 2>/dev/null | head -10
                 fi
@@ -385,12 +376,25 @@ main() {
     print_status "INFO" "ArgoCD wait timeout: $ARGOCD_WAIT_TIMEOUT seconds"
     print_status "INFO" "Scripts to execute: ${SCRIPTS[*]}"
     
-    # Wait for all EKS clusters to be ready before proceeding
+    Wait for all EKS clusters to be ready before proceeding
     if ! wait_for_clusters_ready; then
         print_status "ERROR" "EKS clusters are not ready. Aborting bootstrap process."
         exit 1
     fi
+
+    for cluster in "${CLUSTER_NAMES[@]}"; do
+        if ! cleanup_kubernetes_resources_with_fallback "$cluster"; then
+            log_warning "Failed to cleanup Kubernetes resources for cluster: $cluster"
+            exit 1
+        fi
+    done
     
+    #TODO: Switch the kubeconfig context to the hub cluster, first cluster is assumed as Hub cluster
+    if ! kubectl config use-context "${CLUSTER_NAMES[0]}"; then
+        print_status "ERROR" "Failed to switch kubeconfig context to ${CLUSTER_NAMES[0]}"
+        exit 1
+    fi
+
     for script_entry in "${SCRIPTS[@]}"; do
         # Parse script name and arguments
         local script_name=$(echo "$script_entry" | cut -d' ' -f1)
