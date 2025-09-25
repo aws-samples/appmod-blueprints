@@ -103,7 +103,7 @@ spec:
         appName: ${{parameters.appname}}
         namespace: team-${{ parameters.appname }}
         argoInstance: in-cluster
-        projectName: default
+        projectName: ${{parameters.appname}}-project
         # necessary until we generate our own cert
         repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd
         path: "manifests"
