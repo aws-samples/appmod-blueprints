@@ -73,6 +73,8 @@ kargo:
   enabled: true
 crossplane:
   enabled: true
+crossplane_aws:
+  enabled: true
 flux:
   enabled: true
 grafana:
