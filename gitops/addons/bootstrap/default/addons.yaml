@@ -943,7 +943,6 @@ crossplane-aws:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
-    addonChartRepository: '{{.metadata.annotations.addons_repo_url}}'
   ignoreDifferences:
     - group: apiextensions.crossplane.io
       kind: CompositeResourceDefinition
