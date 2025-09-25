@@ -117,7 +117,9 @@ resource "aws_secretsmanager_secret_version" "devlake_encryption_secret" {
 
 resource "kubectl_manifest" "application_argocd_devlake" {
   depends_on = [
-    kubectl_manifest.devlake_secret_store
+    kubectl_manifest.devlake_secret_store,
+    kubectl_manifest.application_argocd_crossplane_compositions,
+    kubectl_manifest.application_argocd_crossplane_provider
   ]
 
   yaml_body = templatefile("${path.module}/templates/argocd-apps/devlake.yaml", {
