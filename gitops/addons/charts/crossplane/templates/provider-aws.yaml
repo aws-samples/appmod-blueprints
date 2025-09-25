@@ -1,4 +1,4 @@
-{{- if .Values.providers.aws }}
+{{- if .Values.providers.aws.enabled }}
 ---
 apiVersion: v1
 kind: ServiceAccount
