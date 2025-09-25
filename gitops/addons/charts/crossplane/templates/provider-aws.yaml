@@ -36,7 +36,7 @@ kind: ProviderConfig
 metadata:
   name: provider-aws-config
   annotations:
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   credentials:
     source: IRSA
