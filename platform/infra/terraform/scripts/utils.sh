@@ -16,7 +16,7 @@ export IS_WS=${IS_WS:-false}
 export WS_PARTICIPANT_ROLE_ARN={$WS_PARTICIPANT_ROLE_ARN:-""}
 export RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 export GIT_USERNAME=${GIT_USERNAME:-user1}
-export CONFIG_FILE=${CONFIG_FILE:- "../hub-config.yaml"}
+export CONFIG_FILE=${CONFIG_FILE:-"${SCRIPTDIR}/../hub-config.yaml"}
 export AWS_REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-east-1}}"
 CLUSTER_NAMES=($(yq eval '.clusters[].name' "$CONFIG_FILE"))
 
