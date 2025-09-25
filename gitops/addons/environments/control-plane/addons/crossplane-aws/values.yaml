@@ -1,0 +1,3 @@
+# Control plane environment specific values for crossplane-aws
+aws:
+  irsaRoleArn: "{{ .Values.global.crossplane_irsa_role_arn }}"

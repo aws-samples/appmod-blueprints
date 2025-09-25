@@ -1,0 +1,22 @@
+# AWS configuration for IRSA integration
+aws:
+  irsaRoleArn: ""
+
+# Provider configuration
+providers:
+  aws:
+    enabled: true
+    familyVersion: "v1.14.0"
+    s3Version: "v1.14.0"
+    dynamodbVersion: "v1.13.1"
+    apigatewayv2Version: "v1.13.1"
+    eksVersion: "v1.13.1"
+    iamVersion: "v1.13.1"
+    lambdaVersion: "v1.13.0"
+    rdsVersion: "v1.13.1"
+    runtimeConfigRef: "aws-irsa-drc"
+
+compositions:
+  enabled: true
+
+namespace: crossplane-system
