@@ -40,6 +40,8 @@ ack-eks:
   enabled: true
 ack-ec2:
   enabled: true
+ack-ecr:
+  enabled: true
 ack-efs:
   enabled: true
 ack-s3:

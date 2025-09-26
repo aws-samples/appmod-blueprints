@@ -36,6 +36,7 @@ account_ids = "<aws_account_id>" # update this with your spoke aws accounts ids
 addons = {
   enable_ack_dynamodb                 = true
   enable_ack_ec2                      = true
+  enable_ack_ecr                      = true
   enable_ack_efs                      = true
   enable_ack_eks                      = true
   enable_ack_iam                      = true
