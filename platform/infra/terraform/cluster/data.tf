@@ -15,3 +15,7 @@ data "aws_availability_zones" "available" {
     values = ["opt-in-not-required"]
   }
 }
+
+data "aws_vpc" "hub_vpc" {
+  id = var.hub_vpc_id
+}

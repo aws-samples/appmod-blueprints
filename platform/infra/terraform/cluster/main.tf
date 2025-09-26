@@ -30,6 +30,16 @@ module "eks" {
     }
   } : {}
 
+  cluster_security_group_additional_rules = {
+    ingress_hub_vpc = {
+      description = "Allow all traffic from IDE"
+      protocol    = "-1"
+      from_port   = 0
+      to_port     = 65535
+      type        = "ingress"
+      cidr_blocks = [data.aws_vpc.hub_vpc.cidr_block]
+    }
+  }
   cluster_compute_config = {
     enabled    = true
     node_pools = ["general-purpose", "system"]
