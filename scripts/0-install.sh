@@ -330,9 +330,19 @@ run_script_with_retry() {
                     
                     if [ -n "$stuck_apps" ]; then
                         echo "$stuck_apps" | while read -r app; do
-                            print_status "WARN" "Terminating stuck operation for $app"
+                            print_status "WARN" "Terminating stuck operation for $app (running > 180s)"
                             kubectl patch application "$app" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
+                            
+                            # Force refresh and resync after terminating operation
+                            print_status "INFO" "Forcing refresh and resync for $app"
+                            kubectl patch application "$app" -n argocd --type merge -p '{"spec":{"source":{"targetRevision":"HEAD"}}}' 2>/dev/null || true
+                            sleep 5
+                            kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
                         done
+                        
+                        # Wait for applications to stabilize after forced sync
+                        print_status "INFO" "Waiting for applications to stabilize after forced sync..."
+                        sleep 30
                     fi
                     
                     # Force restart ArgoCD components if they exist
