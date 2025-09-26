@@ -35,7 +35,7 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  hostname: 'd27hq4ftis8eat.cloudfront.net'
-  gituser: 'user1'
-  aws_region: 'us-west-2'
-  aws_account_id: '446916800607'
+  hostname: '{{ values.gitlabDomain }}'
+  gituser: '{{ values.gitUsername }}'
+  aws_region: '{{ values.awsRegion }}'
+  aws_account_id: '{{ values.awsAccountId }}'
