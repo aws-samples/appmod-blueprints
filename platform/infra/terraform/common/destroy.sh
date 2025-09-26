@@ -38,6 +38,7 @@ main() {
   yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
 
   if ! $SKIP_GITLAB ; then
+    initialize_terraform "gitlab infra" "$DEPLOY_SCRIPTDIR/gitlab_infra"
     GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
     GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
   fi
