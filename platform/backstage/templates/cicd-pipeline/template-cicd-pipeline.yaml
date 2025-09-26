@@ -63,6 +63,7 @@ spec:
           appname: ${{ parameters.appname }}
           namespace: team-${{ parameters.appname }}
           aws_region: ${{ parameters.aws_region }}
+          aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
           hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
           dockerfile_path: ${{parameters.dockerfile_path}}
           deployment_path: ${{parameters.deployment_path}}
@@ -72,7 +73,7 @@ spec:
       id: apply-prov-iam
       input:
         namespaced: true
-        manifest: ./podidentity.yaml
+        manifest: ./ekspodidentity.yaml
         clusterName: local
 
     - action: debug:wait
