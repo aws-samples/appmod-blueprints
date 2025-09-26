@@ -26,7 +26,7 @@ else
 fi
 echo "=== END DEBUG ==="
 
-GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
+GIT_ROOT_PATH=$(cd $WORKING_REPO && git rev-parse --show-toplevel)
 
 # Source utils.sh
 source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
@@ -52,7 +52,7 @@ main() {
     print_status "INFO" "Script directory: $SCRIPT_DIR"
     print_status "INFO" "Max retries per script: $MAX_RETRIES"
     print_status "INFO" "Retry delay: $RETRY_DELAY seconds"
-    print_status "INFO" "ArgoCD wait timeout: $ARGOCD_WAIT_TIMEOUT seconds"
+    print_status "INFO" "ArgoCD wait timeout: $WAIT_TIMEOUT seconds"
     print_status "INFO" "Scripts to execute: ${SCRIPTS[*]}"
     
     for cluster in "${CLUSTER_NAMES[@]}"; do
@@ -65,7 +65,7 @@ main() {
         exit 1
     fi
 
-    source "$SCRIPT_DIR/0-backstage-build.sh"
+    source "$SCRIPT_DIR/1-backstage-build.sh"
 
     if ! check_backstage_ecr_repo; then
         # Start Backstage Build Process
@@ -86,7 +86,7 @@ main() {
         local check_interval=$CHECK_INTERVAL
         while check_backstage_build_status; do
             if [ $elapsed -ge $WAIT_TIMEOUT ]; then
-                print_status "ERROR" "Backstage build timed out after ${build_timeout}s"
+                print_status "ERROR" "Backstage build timed out after ${WAIT_TIMEOUT}s"
                 return 1
             fi
             print_status "INFO" "Backstage build still running... (${elapsed}s elapsed)"

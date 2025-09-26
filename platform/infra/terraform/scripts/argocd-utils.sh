@@ -68,8 +68,8 @@ handle_revision_conflicts() {
 
 # Wait for ArgoCD applications health (30min default timeout)
 wait_for_argocd_apps_health() {
-    local timeout=${1:-WAIT_TIMEOUT}
-    local check_interval=${2:-CHECK_INTERVAL}
+    local timeout=${1:-1800}
+    local check_interval=${2:-30}
     local start_time=$(date +%s)
     local end_time=$((start_time + timeout))
     
@@ -79,7 +79,12 @@ wait_for_argocd_apps_health() {
             continue
         fi
         
-        local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{"\n"}{end}' 2>/dev/null)
+        local total_apps=0
+        local healthy_apps=0
+        local synced_apps=0
+        local unhealthy_apps=()
+        
+        local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null)
 
         while IFS=' ' read -r app health sync; do
             [ -z "$app" ] && continue
@@ -99,6 +104,11 @@ wait_for_argocd_apps_health() {
             fi
         done <<< "$app_status"
 
+        local health_pct=0
+        if [ $total_apps -gt 0 ]; then
+            health_pct=$((healthy_apps * 100 / total_apps))
+        fi
+
         print_info "ArgoCD status: $healthy_apps/$total_apps healthy ($health_pct%), $synced_apps/$total_apps synced"
         
         # Accept 80% healthy as success
@@ -110,10 +120,10 @@ wait_for_argocd_apps_health() {
         handle_stuck_operations
         sleep 2
         handle_revision_conflicts
-        sleep check_interval
+        sleep $check_interval
     done
     
-    log "Timeout waiting for ArgoCD applications health"
+    print_error "Timeout waiting for ArgoCD applications health"
     return 1
 }
 
