@@ -72,6 +72,11 @@ ack-iam:
       - key: enable_ack_iam
         operator: In
         values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-eks-controller" (index .metadata.annotations "ack_eks_service_account")}}'
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
@@ -84,6 +89,11 @@ ack-iam:
       kind: CustomResourceDefinition
       managedFieldsManagers:
         - kube-controller-manager
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-iam-controller" (index .metadata.annotations "ack_iam_service_account")}}'
 
 ack-eks:
   enabled: false
