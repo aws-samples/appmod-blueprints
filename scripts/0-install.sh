@@ -391,6 +391,9 @@ main() {
     print_status "INFO" "ArgoCD wait timeout: $ARGOCD_WAIT_TIMEOUT seconds"
     print_status "INFO" "Scripts to execute: ${SCRIPTS[*]}"
     
+    # Track failed scripts
+    local failed_scripts=()
+    
     # Wait for all EKS clusters to be ready before proceeding
     if ! wait_for_clusters_ready; then
         print_status "ERROR" "EKS clusters are not ready. Aborting bootstrap process."
@@ -423,20 +426,34 @@ main() {
         
         # Run script with retry logic
         if ! run_script_with_retry "$script_path" $script_args; then
-            print_status "ERROR" "Bootstrap process failed at script: $script_name"
-            show_final_status
-            exit 1
+            print_status "ERROR" "Script $script_name failed after $MAX_RETRIES attempts - continuing with remaining scripts"
+            failed_scripts+=("$script_name")
+            echo "----------------------------------------"
+            continue
         fi
         
         print_status "SUCCESS" "Script $script_name completed successfully"
         echo "----------------------------------------"
     done
     
-    print_status "SUCCESS" "Bootstrap deployment process completed successfully!"
-    print_status "INFO" "All scripts have been executed successfully:"
-    for script_name in "${SCRIPTS[@]}"; do
-        print_status "INFO" "  ✓ $script_name"
-    done
+    # Show final summary
+    if [ ${#failed_scripts[@]} -eq 0 ]; then
+        print_status "SUCCESS" "Bootstrap deployment process completed successfully!"
+        print_status "INFO" "All scripts executed successfully:"
+        for script_name in "${SCRIPTS[@]}"; do
+            print_status "INFO" "  ✓ $script_name"
+        done
+    else
+        print_status "WARN" "Bootstrap deployment completed with some failures:"
+        for script_entry in "${SCRIPTS[@]}"; do
+            local script_name=$(echo "$script_entry" | cut -d' ' -f1)
+            if [[ " ${failed_scripts[*]} " =~ " ${script_name} " ]]; then
+                print_status "ERROR" "  ✗ $script_name - FAILED"
+            else
+                print_status "INFO" "  ✓ $script_name - SUCCESS"
+            fi
+        done
+    fi
     
     # Show final status
     show_final_status

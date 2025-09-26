@@ -72,45 +72,28 @@ ack-iam:
       - key: enable_ack_iam
         operator: In
         values: ['true']
-  ignoreDifferences:
-    - group: apiextensions.k8s.io
-      kind: CustomResourceDefinition
-      jsonPointers:
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
   valuesObject:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
     serviceAccount:
-      name: '{{default "ack-iam-controller" (index .metadata.annotations "ack_iam_service_account")}}'
+      name: '{{default "ack-eks-controller" (index .metadata.annotations "ack_eks_service_account")}}'
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
         - kube-controller-manager
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-iam-controller" (index .metadata.annotations "ack_iam_service_account")}}'
 
 ack-eks:
   enabled: false
@@ -137,21 +120,9 @@ ack-eks:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -183,11 +154,9 @@ ack-s3:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /metadata/generation
-        - /metadata/managedFields
-        - /status
-        - /spec/versions/0/schema/openAPIV3Schema/properties
-        - /spec/versions/1/schema/openAPIV3Schema/properties
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -219,21 +188,9 @@ ack-dynamodb:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -264,21 +221,9 @@ ack-ec2:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/properties/*/properties/*/properties/*/description
-        - /spec/versions/*/schema/openAPIV3Schema/**/description
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -359,12 +304,9 @@ ack-efs:
       kind: CustomResourceDefinition
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/properties/generateName
-        - /spec/versions/*/schema/openAPIV3Schema/**/generateName
-        - /spec/versions/0/schema/openAPIV3Schema/properties/metadata/description
-        - /spec/versions/0/schema/openAPIV3Schema/properties/spec/description
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
       managedFieldsManagers:
@@ -753,17 +695,9 @@ keycloak:
       jsonPointers:
         - /metadata/managedFields
         - /status
-        # Ignore default values added by Kubernetes to volumeClaimTemplates
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/apiVersion
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/kind
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/metadata/creationTimestamp
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/spec/volumeMode
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/volumeClaimTemplates/*/status
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .volumeClaimTemplates?'
 
 argo-workflows:
   enabled: false
@@ -879,11 +813,12 @@ kubevela:
     - group: apiregistration.k8s.io
       kind: APIService
       jsonPointers:
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/caBundle
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .caBundle?'
     - group: '*'
       kind: '*'
       managedFieldsManagers:
@@ -919,11 +854,6 @@ crossplane:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-  syncPolicy:
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
-
 crossplane-aws:
   enabled: false
   annotationsAppSet:
@@ -961,11 +891,7 @@ crossplane-aws:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-  syncPolicy:
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
-
+  ignoreDifferences:
 grafana:
   enabled: false
   annotationsAppSet:
@@ -991,13 +917,9 @@ grafana:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-        # Ignore default values added by ESO to remoteRef
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/conversionStrategy
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/decodingStrategy
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/metadataPolicy
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .remoteRef?'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1112,13 +1034,9 @@ backstage:
         - /metadata/resourceVersion
         - /metadata/generation
         - /metadata/managedFields
-        # Ignore default values added by ESO to remoteRef
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/conversionStrategy
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/decodingStrategy
-        - /spec/versions/*/schema/openAPIV3Schema/description
-        - /spec/versions/*/schema/openAPIV3Schema/properties/*/description/data/*/remoteRef/metadataPolicy
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .remoteRef?'
     - group: ''
       kind: Secret
       jsonPointers:
