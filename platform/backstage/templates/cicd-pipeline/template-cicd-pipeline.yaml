@@ -72,7 +72,7 @@ spec:
       id: apply-prov-iam
       input:
         namespaced: true
-        manifest: podidentity.yaml
+        manifest: ./podidentity.yaml
         clusterName: local
 
     - action: debug:wait
