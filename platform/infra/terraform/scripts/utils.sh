@@ -258,6 +258,9 @@ update_backstage_defaults() {
 
   cd "$GIT_ROOT_PATH"
 
+  git config --global credential.helper store
+  git config --global user.name "$GIT_USERNAME"
+  git config --global user.email "$GIT_USERNAME@workshop.local"
   # Define catalog-info.yaml path
   CATALOG_INFO_PATH="${GIT_ROOT_PATH}/platform/backstage/templates/catalog-info.yaml"
 
