@@ -37,7 +37,7 @@ EOF
     #for SERVICE in iam ec2 eks secretsmanager; do
     for SERVICE in iam ec2 eks; do
         echo ">>>>>>>>>SERVICE:$SERVICE"
-        local ROLE_NAME="${RESOURCE_PREFIX}-cluster-mgmt-${SERVICE}"
+        ROLE_NAME="${RESOURCE_PREFIX}-cluster-mgmt-${SERVICE}"
 
         # # First, detach any managed policies
         # for policy in $(aws iam list-attached-role-policies --role-name "${ROLE_NAME}" --query 'AttachedPolicies[*].PolicyArn' --output text 2>/dev/null); do
@@ -55,13 +55,12 @@ EOF
         # aws iam delete-role --role-name "${ROLE_NAME}" 2>/dev/null
         
         # Generate the trust policy for this service
-        local TRUST_POLICY
         TRUST_POLICY=$(generate_trust_policy "$SERVICE")
         echo "${TRUST_POLICY}" > trust-${SERVICE}.json
 
         # Create the role with the trust policy
         echo "Creating role ${ROLE_NAME}"
-        local ROLE_DESCRIPTION="Workload role for ACK ${SERVICE} controller"
+        ROLE_DESCRIPTION="Workload role for ACK ${SERVICE} controller"
         if ! aws iam create-role \
             --role-name "${ROLE_NAME}" \
             --assume-role-policy-document file://trust-${SERVICE}.json \
@@ -72,13 +71,11 @@ EOF
         fi
 
         # Download and apply the recommended policies
-        local BASE_URL="https://raw.githubusercontent.com/aws-controllers-k8s/${SERVICE}-controller/main"
-        local POLICY_ARN_URL="${BASE_URL}/config/iam/recommended-policy-arn"
-        local POLICY_ARN_STRINGS
+        BASE_URL="https://raw.githubusercontent.com/aws-controllers-k8s/${SERVICE}-controller/main"
+        POLICY_ARN_URL="${BASE_URL}/config/iam/recommended-policy-arn"
         POLICY_ARN_STRINGS="$(wget -qO- ${POLICY_ARN_URL})"
 
-        local INLINE_POLICY_URL="${BASE_URL}/config/iam/recommended-inline-policy"
-        local INLINE_POLICY
+        INLINE_POLICY_URL="${BASE_URL}/config/iam/recommended-inline-policy"
         INLINE_POLICY="$(wget -qO- ${INLINE_POLICY_URL})"
 
         # Attach managed policies
@@ -104,7 +101,6 @@ EOF
 
         if [ $? -eq 0 ]; then
             echo "Successfully created and configured role ${ROLE_NAME}"
-            local ROLE_ARN
             ROLE_ARN=$(aws iam get-role --role-name "${ROLE_NAME}" --query Role.Arn --output text)
             echo "Role ARN: ${ROLE_ARN}"
         else
