@@ -830,6 +830,7 @@ kubevela:
 
 crossplane:
   enabled: false
+  releaseName: crossplane
   chartName: crossplane
   chartRepository: 'https://charts.crossplane.io/stable'
   annotationsAppSet:
@@ -856,6 +857,7 @@ crossplane:
         - /metadata/managedFields
 crossplane-aws:
   enabled: false
+  releaseName: crossplane-aws
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '6' # Needs to be after crossplane core
   namespace: crossplane-system
