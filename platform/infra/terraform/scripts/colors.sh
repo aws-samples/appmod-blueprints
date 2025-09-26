@@ -40,3 +40,23 @@ print_info() {
 print_step() {
     echo -e "${MAGENTA}➤ $1${NC}"
 }
+
+# Function to print colored output
+print_status() {
+    local msg_type=$1
+    local message=$2
+    case $msg_type in
+        "INFO")
+            echo -e "${BLUE}[INFO]${NC} $message"
+            ;;
+        "SUCCESS")
+            echo -e "${GREEN}[SUCCESS]${NC} $message"
+            ;;
+        "ERROR")
+            echo -e "${RED}[ERROR]${NC} $message"
+            ;;
+        "WARN")
+            echo -e "${YELLOW}[WARN]${NC} $message"
+            ;;
+    esac
+}

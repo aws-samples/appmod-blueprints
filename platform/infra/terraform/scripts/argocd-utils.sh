@@ -66,41 +66,76 @@ handle_revision_conflicts() {
     fi
 }
 
-# Wait for ArgoCD applications health (30min timeout)
+# Wait for ArgoCD applications health (30min default timeout)
 wait_for_argocd_apps_health() {
-    local timeout=${1:-1800}  # 30 minutes
+    local timeout=${1:-WAIT_TIMEOUT}
+    local check_interval=${2:-CHECK_INTERVAL}
     local start_time=$(date +%s)
     local end_time=$((start_time + timeout))
     
     while [ $(date +%s) -lt $end_time ]; do
         if ! kubectl get applications -n argocd >/dev/null 2>&1; then
-            sleep 30
+            sleep $check_interval
             continue
         fi
         
         local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{"\n"}{end}' 2>/dev/null)
-        local total_apps=$(echo "$app_status" | grep -v '^$' | wc -l)
+
+        while IFS=' ' read -r app health sync; do
+            [ -z "$app" ] && continue
+            total_apps=$((total_apps + 1))
+            
+            if [ "$health" = "Healthy" ]; then
+                healthy_apps=$((healthy_apps + 1))
+            fi
+            
+            if [ "$sync" = "Synced" ]; then
+                synced_apps=$((synced_apps + 1))
+            fi
+            
+            # Track unhealthy apps for syncing
+            if [ "$health" != "Healthy" ] || [ "$sync" = "OutOfSync" ]; then
+                unhealthy_apps+=("$app")
+            fi
+        done <<< "$app_status"
+
+        print_info "ArgoCD status: $healthy_apps/$total_apps healthy ($health_pct%), $synced_apps/$total_apps synced"
         
-        if [ "$total_apps" -eq 0 ]; then
-            sleep 30
-            continue
-        fi
-        
-        local healthy_apps=$(echo "$app_status" | awk '$2 == "Healthy" {count++} END {print count+0}')
-        local health_pct=$((healthy_apps * 100 / total_apps))
-        
-        log "ArgoCD status: $healthy_apps/$total_apps healthy ($health_pct%)"
-        
-        if [ $health_pct -ge 80 ]; then
-            log "ArgoCD applications sufficiently healthy ($health_pct%)"
+        # Accept 80% healthy as success
+        if [ $health_pct -ge 80 ] && [ $synced_apps -ge $((total_apps * 70 / 100)) ]; then
+            print_success "ArgoCD applications sufficiently healthy ($health_pct% healthy)"
             return 0
         fi
         
         handle_stuck_operations
+        sleep 2
         handle_revision_conflicts
-        sleep 30
+        sleep check_interval
     done
     
     log "Timeout waiting for ArgoCD applications health"
     return 1
+}
+
+# Function to show final status
+show_final_status() {
+    print_info "Final ArgoCD Applications Status:"
+    echo "----------------------------------------"
+    
+    if kubectl get applications -n argocd >/dev/null 2>&1; then
+        kubectl get applications -n argocd -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status" --no-headers | \
+        while read name sync health; do
+            if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
+                print_success "$name: $sync/$health"
+            elif [ "$health" = "Healthy" ]; then
+                print_warning "$name: $sync/$health"
+            else
+                print_error "$name: $sync/$health"
+            fi
+        done
+    else
+        print_error "Cannot access ArgoCD applications"
+    fi
+    
+    echo "----------------------------------------"
 }

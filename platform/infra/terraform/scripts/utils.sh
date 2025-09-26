@@ -38,6 +38,24 @@ log_success() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"
 }
 
+# Function to update or add environment variable to ~/.bashrc.d/platform.sh
+update_workshop_var() {
+    local var_name="$1"
+    local var_value="$2"
+    local workshop_file="$HOME/.bashrc.d/platform.sh"
+    
+    # Check if variable already exists in the file
+    if grep -q "^export ${var_name}=" "$workshop_file" 2>/dev/null; then
+        # Variable exists, update it
+        sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${var_value}\"|" "$workshop_file"
+        print_info "Updated ${var_name} in ${workshop_file}"
+    else
+        # Variable doesn't exist, add it
+        echo "export ${var_name}=\"${var_value}\"" >> "$workshop_file"
+        print_info "Added ${var_name} to ${workshop_file}"
+    fi
+}
+
 # Function to check and configure EKS access entries
 configure_eks_access() {
   local cluster_name=$1
