@@ -112,7 +112,7 @@ spec:
       action: catalog:register
       input:
         repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd/-/blob/main
-        catalogInfoPath: 'catalog-info.yaml'
+        catalogInfoPath: "/catalog-info.yaml"
   output:
     links:
       - title: Open in catalog
