@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: backstage-typecheck
+        name: Backstage TypeScript Check
+        entry: bash -c 'cd backstage && yarn tsc --noEmit'
+        language: system
+        files: '^backstage/.*\.(ts|tsx)$'
+        pass_filenames: false
+
+      - id: terraform-fmt
+        name: Terraform Format Check
+        entry: terraform fmt -check -recursive
+        language: system
+        files: '^platform/.*\.tf$'
+        pass_filenames: false

@@ -1,4 +1,31 @@
-# AppMod Blueprints - Platform Architecture
+# AppMod Blueprints - AI Context Document
+
+This document provides comprehensive context for AI assistants working with the AppMod Blueprints platform engineering solution. It includes architecture overview, common interaction patterns, troubleshooting guidance, and key concepts for effective AI assistance.
+
+## Quick Reference for AI Assistants
+
+### Project Overview
+AppMod Blueprints is a platform engineering solution that provides:
+- **GitOps-based application delivery** using ArgoCD and Kubernetes
+- **Developer self-service** through Backstage templates and service catalog
+- **Multi-environment management** with hub and spoke cluster architecture
+- **Identity and access management** via Keycloak OIDC integration
+- **Infrastructure as Code** using Terraform and Helm charts
+
+### Repository Relationship
+This repository (appmod-blueprints) works with the platform-engineering-on-eks repository:
+- **platform-engineering-on-eks**: Bootstrap infrastructure (CDK, IDE, base clusters)
+- **appmod-blueprints**: Platform implementation (GitOps, applications, developer tools)
+
+### Common User Interaction Patterns
+1. **Platform Adoption**: Users want to deploy the platform for their organization
+2. **Application Development**: Developers need to deploy applications using platform services
+3. **Troubleshooting**: Users encounter issues with GitOps, ArgoCD, or application deployments
+4. **Customization**: Teams want to modify platform components or add new services
+
+---
+
+# Platform Architecture Details
 
 ## Bootstrap Script Improvements (2025-09-02)
 
@@ -658,6 +685,117 @@ variable "create_github_repos" {
 4. **Monitoring Systems**: Prometheus, Grafana (optional)
 
 This architecture provides a production-ready platform engineering solution that combines infrastructure automation, GitOps workflows, developer productivity tools, and enterprise security in a scalable, maintainable manner.
+
+## AI Assistant Guidance
+
+### Key Concepts for AI Understanding
+
+#### GitOps Workflow
+- **Source of Truth**: Git repositories contain all configuration
+- **ArgoCD**: Monitors Git and applies changes to Kubernetes clusters
+- **ApplicationSets**: Generate multiple Applications from templates
+- **Sync Policies**: Automatic vs manual synchronization strategies
+
+#### Platform Services
+- **Backstage**: Developer portal for service catalog and templates
+- **Keycloak**: Identity provider for SSO across all platform services
+- **External Secrets**: Manages secrets from AWS Secrets Manager
+- **Ingress Controllers**: Handle traffic routing and SSL termination
+
+#### Common Troubleshooting Areas
+1. **ArgoCD Sync Issues**: Applications stuck in "OutOfSync" or "Progressing" state
+2. **Secret Management**: External Secrets not creating Kubernetes secrets
+3. **Authentication**: OIDC integration problems between services
+4. **Networking**: Ingress and load balancer configuration issues
+5. **Resource Dependencies**: Services failing due to missing prerequisites
+
+### Typical User Questions and Guidance
+
+#### "How do I deploy an application?"
+Guide users to:
+1. Use Backstage templates for scaffolding
+2. Understand GitOps workflow (Git commit → ArgoCD sync)
+3. Check ArgoCD UI for deployment status
+4. Review application logs and events for issues
+
+#### "ArgoCD shows my application as unhealthy"
+Help users:
+1. Check ArgoCD application details and events
+2. Verify Kubernetes resource status (`kubectl get pods`, `kubectl describe`)
+3. Review application logs (`kubectl logs`)
+4. Check for resource quotas or permission issues
+
+#### "I can't access platform services"
+Troubleshoot:
+1. Verify ingress configuration and DNS resolution
+2. Check Keycloak authentication and user permissions
+3. Validate SSL certificates and load balancer health
+4. Review security group and network policy settings
+
+#### "How do I customize the platform?"
+Direct users to:
+1. Modify Helm charts in `gitops/addons/charts/`
+2. Update ApplicationSet templates for new services
+3. Add custom Backstage templates in `platform/backstage/templates/`
+4. Configure environment-specific overrides
+
+### File Structure Context
+
+#### Critical Directories
+- `gitops/`: All GitOps configurations and ArgoCD ApplicationSets
+- `platform/infra/terraform/`: Infrastructure as Code modules
+- `platform/backstage/`: Developer portal configuration and templates
+- `scripts/`: Deployment and utility scripts
+
+#### Key Configuration Files
+- `gitops/addons/bootstrap/`: Core platform service ApplicationSets
+- `gitops/fleet/`: Multi-cluster management configurations
+- `platform/infra/terraform/*/variables.tf`: Infrastructure configuration options
+- `platform/backstage/templates/`: Software templates for developers
+
+### Environment Variables and Configuration
+
+#### Required Environment Variables
+```bash
+RESOURCE_PREFIX="peeks-workshop"     # Prefix for all AWS resources
+GIT_PASSWORD="${IDE_PASSWORD}"       # Authentication for Git operations
+TFSTATE_BUCKET_NAME="..."           # S3 bucket for Terraform state
+AWS_REGION="us-west-2"              # Target AWS region
+```
+
+#### Common Configuration Patterns
+- Resource naming: `${resource_prefix}-${component}-${type}`
+- Secret naming: `${resource_prefix}-${service}-${secret_type}`
+- Cluster naming: `${resource_prefix}-${environment}-cluster`
+
+### Integration Points
+
+#### With platform-engineering-on-eks Repository
+- Shares Terraform state backend (S3 bucket, DynamoDB table)
+- Uses IAM roles and policies created by bootstrap infrastructure
+- Inherits environment variables from CDK deployment
+- Connects to IDE environment for development workflow
+
+#### With AWS Services
+- **EKS**: Kubernetes clusters for application hosting
+- **Secrets Manager**: External secret storage
+- **Route 53**: DNS management for ingress
+- **CloudWatch**: Logging and monitoring integration
+
+### Best Practices for AI Assistance
+
+1. **Always check prerequisites**: Ensure bootstrap infrastructure exists before platform deployment
+2. **Verify environment variables**: Many issues stem from missing or incorrect environment configuration
+3. **Follow GitOps principles**: Changes should go through Git, not direct kubectl commands
+4. **Use deployment scripts**: Never run terraform commands directly, always use provided deploy.sh scripts
+5. **Check ArgoCD first**: For application issues, ArgoCD UI provides the best troubleshooting starting point
+
+### Related Documentation
+- **[README.md](README.md)**: Project overview and quick start
+- **[GETTING-STARTED.md](GETTING-STARTED.md)**: 30-minute evaluation guide
+- **[ARCHITECTURE.md](ARCHITECTURE.md)**: Detailed system architecture
+- **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)**: Step-by-step deployment instructions
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**: Common issues and solutions
 
 ## Deployment and Git Configuration (2025-08-29)
 

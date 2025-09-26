@@ -92,4 +92,12 @@ task taskcat-clean-deployment
 - [x] cloudwatch logs groups - like /aws/codebuild/PEEKSGITIAMStackDeployProje-30HWWmiBcgx0 or /aws/lambda/tCaT-peeks-workshop-test--IDEPEEKSIdePasswordExpor-OOmtoIML4oGw or tCaT-peeks-workshop-test-fleet-workshop-test-92b4118d493d47dcb827190d4e5ac6b9-IDEPEEKSIdeLogGroup3808F7B1-xMtRAbEgY8Ho
 
 
-sudo npm install -g yarn
+- Does WORKSHOP_ID=28c283c1-1d60-43fa-a604-4e983e0e8038 is the goor one ?
+- update region in backstage templates
+
+- gitlab - {"message":{"project_namespace.path":["can only include non-accented letters, digits, '_', '-' and '.'. It must not start with '-', '_', or '.', nor end with '-', '_', '.', '.git', or '.atom'."],"path":["can only include non-accented letters, digits, '_', '-' and '.'. It must not start with '-', '_', or '.', nor end with '-', '_', '.', '.git', or '.atom'."]}}
+
+#### Production Security Hardening - the hardening should be done, in a gitops manner, not using kubectl
+- same for installing network policy, load balancer controller, all should be done with gitops, and maybe gitops-bridge if we need dependency with resources deployed in terraform
+- add also the cleanup after destroy with tsk taskcat-clean-deployment-force, that can help remove any remaining aws resources deploy by the platform
+
