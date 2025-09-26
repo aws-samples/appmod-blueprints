@@ -72,7 +72,7 @@ start_backstage_build() {
     print_header "Starting Backstage build process"
 
     print_step "Creating Amazon Elastic Container Repository (Amazon ECR) for Backstage image"
-    || true
+    aws ecr create-repository --repository-name ${RESOURCE_PREFIX}-backstage --region $AWS_REGION
 
     print_step "Preparing Backstage for build"
     BACKSTAGE_PATH="${GIT_ROOT_PATH}/backstage"

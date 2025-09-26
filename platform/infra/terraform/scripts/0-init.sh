@@ -26,7 +26,7 @@ else
 fi
 echo "=== END DEBUG ==="
 
-GIT_ROOT_PATH=$(cd $WORKING_REPO && git rev-parse --show-toplevel)
+GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
 
 # Source utils.sh
 source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
