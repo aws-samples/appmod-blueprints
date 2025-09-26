@@ -4,21 +4,19 @@
 export TF_CLI_ARGS="-no-color"
 
 # set -euo pipefail  # Commented out to allow safe sourcing
-
-SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
-[[ -n "${DEBUG:-}" ]] && set -x
 GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
 
-source "${SCRIPTDIR}/argocd-utils.sh"
-source "${SCRIPTDIR}/colors.sh"
+[[ -n "${DEBUG:-}" ]] && set -x
+
+source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/argocd-utils.sh"
+source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/colors.sh"
 
 export SKIP_GITLAB=${SKIP_GITLAB:-false}
 export IS_WS=${IS_WS:-false}
 export WS_PARTICIPANT_ROLE_ARN=${WS_PARTICIPANT_ROLE_ARN:-""}
 export RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 export GIT_USERNAME=${GIT_USERNAME:-user1}
-export CONFIG_FILE=${CONFIG_FILE:-"${SCRIPTDIR}/../hub-config.yaml"}
+export CONFIG_FILE=${CONFIG_FILE:-"${GIT_ROOT_PATH}/platform/infra/terraform/hub-config.yaml"}
 export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 export AWS_REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-east-1}}"
 export CLUSTER_NAMES=($(yq eval '.clusters[].name' "$CONFIG_FILE"))
@@ -244,6 +242,12 @@ gitlab_repository_setup(){
   git config --global user.email "$GIT_USERNAME@workshop.local"
   
   git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+  
+  # Pull upstream with rebase
+  if ! git pull --rebase gitlab "main"; then
+    log_error "Failed to pull and rebase from upstream"
+    exit 1
+  fi
   
   if ! git push --set-upstream gitlab "${WORKSHOP_GIT_BRANCH}":main; then 
     log_error "Failed to push repository to GitLab"
