@@ -854,11 +854,6 @@ crossplane:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-  syncPolicy:
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
-
 crossplane-aws:
   enabled: false
   annotationsAppSet:
@@ -896,11 +891,7 @@ crossplane-aws:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-  syncPolicy:
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
-
+  ignoreDifferences:
 grafana:
   enabled: false
   annotationsAppSet:
