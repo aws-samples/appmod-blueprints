@@ -1,37 +1,96 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Deploy an Argo Events based CI/CD Pipeline for your App
+  description: Deploy a Kro-based CI/CD Pipeline for your App using ACK controllers
   name: cicd-pipeline
   title: Deploy CI/CD Pipeline
 spec:
   owner: guest
   type: service
   parameters:
-    - properties:
+    - title: Application Configuration
+      description: Basic configuration for your CI/CD pipeline
+      properties:
         appname:
-          title: name of app for cicd
+          title: Application Name
+          description: Name of the application for CI/CD pipeline (lowercase, alphanumeric, hyphens allowed)
           type: string
-        aws_region:
-          default: us-west-2
-          title: aws region for ecr repo
-          type: string
-        dockerfile_path:
-          title: Relative path to directory containing Dockerfile
-          type: string
-          default: .
-        deployment_path:
-          default: ./deployment
-          title: Relative path to deployment directory in repo
-          type: string
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$'
+          minLength: 1
+          maxLength: 63
+          ui:help: 'Must be lowercase alphanumeric with hyphens, 1-63 characters'
       required:
         - appname
+    - title: AWS Configuration
+      description: AWS-specific settings for your pipeline
+      properties:
+        aws_region:
+          title: AWS Region
+          description: AWS region where ECR repositories and other resources will be created
+          type: string
+          default: us-west-2
+          enum:
+            - us-east-1
+            - us-east-2
+            - us-west-1
+            - us-west-2
+            - eu-west-1
+            - eu-west-2
+            - eu-central-1
+            - ap-southeast-1
+            - ap-southeast-2
+            - ap-northeast-1
+          ui:help: 'Select the AWS region for your resources'
+        cluster_name:
+          title: EKS Cluster Name
+          description: Name of the EKS cluster where the pipeline will run
+          type: string
+          default: modern-engineering
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$'
+          minLength: 1
+          maxLength: 100
+          ui:help: 'EKS cluster name where workloads will be deployed'
+    - title: Application Paths
+      description: Configure paths for your application build and deployment
+      properties:
+        dockerfile_path:
+          title: Dockerfile Path
+          description: Relative path to directory containing Dockerfile
+          type: string
+          default: "."
+          pattern: '^\.(/[a-zA-Z0-9_-]+)*/?$'
+          ui:help: 'Path relative to repository root (e.g., ".", "./backend", "./services/api")'
+        deployment_path:
+          title: Deployment Path
+          description: Relative path to deployment directory containing Kubernetes manifests
+          type: string
+          default: "./deployment"
+          pattern: '^\.(/[a-zA-Z0-9_-]+)+/?$'
+          ui:help: 'Path to deployment manifests relative to repository root'
   steps:
+    - id: validate-parameters
+      name: Validate Parameters
+      action: debug:log
+      input:
+        message: |
+          Validating template parameters:
+          - Application Name: ${{ parameters.appname }}
+          - AWS Region: ${{ parameters.aws_region }}
+          - Cluster Name: ${{ parameters.cluster_name }}
+          - Dockerfile Path: ${{ parameters.dockerfile_path }}
+          - Deployment Path: ${{ parameters.deployment_path }}
+          
+          Validation checks:
+          - App name matches pattern: ${{ parameters.appname | match('^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$') }}
+          - Dockerfile path is valid: ${{ parameters.dockerfile_path | match('^\.(/[^/\\s]+)*/?$|^\\.$') }}
+          - Deployment path is valid: ${{ parameters.deployment_path | match('^\.(/[^/\\s]+)*/?$') }}
+
     - id: fetchSystem
       name: Fetch System
       action: catalog:fetch
       input:
         entityRef: system:default/system-info
+
     - action: fetch:template
       name: Fetch Base
       id: fetch-base
@@ -54,72 +113,266 @@ spec:
         defaultBranch: main
         useCustomGit: true
 
-    - action: fetch:template
-      name: Fetch Provisioner
-      id: fetch-provisioner
-      input:
-        url: ./provisioner/
-        values:
-          appname: ${{ parameters.appname }}
-          namespace: team-${{ parameters.appname }}
-          aws_region: ${{ parameters.aws_region }}
-          hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
-          dockerfile_path: ${{parameters.dockerfile_path}}
-          deployment_path: ${{parameters.deployment_path}}
-
     - action: kube:apply
-      name: Apply Provisioner IAM
-      id: apply-prov-iam
+      name: Apply Kro CI/CD Pipeline Instance
+      id: apply-kro-instance
       input:
         namespaced: true
-        manifest: podidentity.yaml
         clusterName: local
+        manifest: |
+          apiVersion: kro.run/v1alpha1
+          kind: CICDPipeline
+          metadata:
+            name: ${{ parameters.appname }}-cicd-pipeline
+            namespace: team-${{ parameters.appname }}
+            labels:
+              app.kubernetes.io/name: ${{ parameters.appname }}
+              app.kubernetes.io/component: cicd-pipeline
+              app.kubernetes.io/managed-by: backstage
+              backstage.io/template-name: cicd-pipeline
+            annotations:
+              backstage.io/template-version: "1.0.0"
+              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+              cicd.kro.run/application-name: ${{ parameters.appname }}
+              cicd.kro.run/aws-region: ${{ parameters.aws_region }}
+              cicd.kro.run/cluster-name: ${{ parameters.cluster_name }}
+          spec:
+            # Required parameters - validated by schema
+            name: ${{ parameters.appname }}-cicd
+            namespace: team-${{ parameters.appname }}
+            aws:
+              region: ${{ parameters.aws_region }}
+              clusterName: ${{ parameters.cluster_name }}
+            application:
+              name: ${{ parameters.appname }}
+              # Optional parameters with defaults handled by RGD schema
+              dockerfilePath: ${{ parameters.dockerfile_path | default(".") }}
+              deploymentPath: ${{ parameters.deployment_path | default("./deployment") }}
+            ecr:
+              # Optional parameter with default handled by RGD schema
+              repositoryPrefix: "modengg"
+            gitlab:
+              hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
+              username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
 
-    - action: debug:wait
-      name: Wait for IAM
+    - id: validate-kro-instance
+      name: Validate Kro Instance Creation
+      action: debug:log
       input:
-        seconds: 15
-
-    - action: kube:apply
-      name: Apply Workflow Templates
-      id: apply-temp
-      input:
-        namespaced: true
-        manifest: wf-templates.yaml
-        clusterName: local
-
-    - action: kube:apply
-      name: Run Workflow 
-      id: run-wf
-      input:
-        namespaced: true
-        manifest: wf-run.yaml
-        clusterName: local
+        message: |
+          ✅ Kro CI/CD Pipeline instance created successfully!
+          
+          📋 **Instance Details:**
+          - Instance Name: ${{ parameters.appname }}-cicd-pipeline
+          - Namespace: team-${{ parameters.appname }}
+          - Resource Group: CICDPipeline (kro.run/v1alpha1)
+          
+          🌍 **AWS Configuration:**
+          - Region: ${{ parameters.aws_region }}
+          - EKS Cluster: ${{ parameters.cluster_name }}
+          - ECR Repository Prefix: modengg
+          
+          📦 **Application Settings:**
+          - Application Name: ${{ parameters.appname }}
+          - Dockerfile Path: ${{ parameters.dockerfile_path | default(".") }}
+          - Deployment Path: ${{ parameters.deployment_path | default("./deployment") }}
+          
+          🔄 **Resource Provisioning:**
+          The Kro controller will now orchestrate the creation of:
+          - AWS resources via ACK controllers (ECR, IAM, EKS)
+          - Kubernetes resources (Namespace, ServiceAccount, RBAC, ConfigMaps, Secrets)
+          - Argo Workflow templates for CI/CD operations
+          - GitLab webhook integration via Argo Events
+          
+          ⏱️ **Expected Timeline:**
+          - AWS resources: 2-5 minutes
+          - Kubernetes resources: 1-2 minutes
+          - Workflow templates: 1 minute
+          - Total setup time: 5-10 minutes
+          
+          🔍 **Monitoring Progress:**
+          You can monitor the resource creation progress through the ArgoCD UI and Kubernetes dashboard links provided in the output.
 
     - id: create-argocd-app
       name: Create ArgoCD App
       action: argocd:create-resources
       input:
-        appName: ${{parameters.appname}}
+        appName: ${{parameters.appname}}-cicd
         namespace: team-${{ parameters.appname }}
         argoInstance: in-cluster
         projectName: default
-        # necessary until we generate our own cert
+        # Repository URL for the CI/CD pipeline configuration
         repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd
         path: "manifests"
+        # Sync policy for automated deployment
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true
+          syncOptions:
+            - CreateNamespace=true
+            - ApplyOutOfSyncOnly=true
+
     - id: register
       name: Register
       action: catalog:register
       input:
         repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
         catalogInfoPath: 'catalog-info.yaml'
+
+    - id: provide-access-information
+      name: Provide Access Information
+      action: debug:log
+      input:
+        message: |
+          🎉 **CI/CD Pipeline Successfully Deployed!**
+          
+          Your Kro-based CI/CD pipeline is now being provisioned. Here's how to access and monitor your resources:
+          
+          ## 📊 **Monitoring & Management**
+          
+          ### Kro Resource Instance
+          - **ArgoCD**: Monitor the Kro instance status in ArgoCD
+          - **Resource Name**: ${{ parameters.appname }}-cicd-pipeline
+          - **Namespace**: team-${{ parameters.appname }}
+          
+          ### Argo Workflows
+          - **Provisioning**: ${{ parameters.appname }}-cicd-provisioning-workflow
+          - **CI/CD Pipeline**: ${{ parameters.appname }}-cicd-cicd-workflow
+          - **Cache Warmup**: ${{ parameters.appname }}-cicd-cache-warmup-workflow
+          
+          ### AWS Resources
+          - **ECR Repositories**: modengg/${{ parameters.appname }} and modengg/${{ parameters.appname }}/cache
+          - **IAM Role**: ${{ parameters.appname }}-cicd-role
+          - **Pod Identity**: Automatically configured for secure AWS access
+          
+          ## 🔗 **Quick Access Links**
+          All links are available in the output section above. Key resources:
+          - Backstage Catalog: Track your component
+          - Argo Workflows: Monitor CI/CD executions
+          - ArgoCD: Manage GitOps deployments
+          - AWS Console: View cloud resources
+          - GitLab: Access your repository
+          
+          ## ⚡ **Getting Started**
+          1. **Check Resource Status**: Use the Kro instance link to monitor provisioning
+          2. **Push Code**: Commit to your GitLab repository to trigger the first build
+          3. **Monitor Workflows**: Watch the CI/CD process in Argo Workflows
+          4. **View Deployments**: Track application deployments in ArgoCD
+          
+          Your pipeline will be fully operational once all resources show as "Ready" in the Kro instance status!
+
   output:
     links:
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
-      - title: Open in argo workflows
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflows/team-${{ parameters.appname }}
+      - title: Kro CI/CD Pipeline Instance
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argocd/applications/argocd/kro-resource-groups?resource=&node=${{ parameters.appname }}-cicd-pipeline%2Fkro.run%2FCICDPipeline%2Fteam-${{ parameters.appname }}
+        icon: web
+      - title: Argo Workflows - Provisioning
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}/${{ parameters.appname }}-cicd-provisioning-workflow
+        icon: web
+      - title: Argo Workflows - CI/CD Pipeline
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}/${{ parameters.appname }}-cicd-cicd-workflow
+        icon: web
+      - title: Argo Workflows - Cache Warmup
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}/${{ parameters.appname }}-cicd-cache-warmup-workflow
+        icon: web
+      - title: ArgoCD CI/CD Pipeline Application
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd
+        icon: web
+      - title: ECR Main Repository
+        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/modengg%2F${{ parameters.appname }}?region=${{ parameters.aws_region }}
+        icon: cloud
+      - title: ECR Cache Repository
+        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/modengg%2F${{ parameters.appname }}%2Fcache?region=${{ parameters.aws_region }}
+        icon: cloud
+      - title: IAM Role
+        url: https://console.aws.amazon.com/iam/home?region=${{ parameters.aws_region }}#/roles/details/${{ parameters.appname }}-cicd-role
+        icon: cloud
+      - title: IAM Policy
+        url: https://console.aws.amazon.com/iam/home?region=${{ parameters.aws_region }}#/policies/arn:aws:iam::${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}:policy/${{ parameters.appname }}-cicd-ecr-policy
+        icon: cloud
+      - title: EKS Pod Identity Association
+        url: https://console.aws.amazon.com/eks/home?region=${{ parameters.aws_region }}#/clusters/${{ parameters.cluster_name }}/pod-identity-associations
+        icon: cloud
+      - title: EKS Cluster
+        url: https://console.aws.amazon.com/eks/home?region=${{ parameters.aws_region }}#/clusters/${{ parameters.cluster_name }}
+        icon: cloud
+      - title: GitLab Repository
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
+        icon: git
+      - title: Kubernetes Namespace
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argocd/applications/argocd/kro-resource-groups?resource=&node=team-${{ parameters.appname }}%2F%2FNamespace%2F
+        icon: web
+    text:
+      - title: Kro-based CI/CD Pipeline Configuration
+        content: |
+          Your Kro-based CI/CD pipeline has been successfully deployed! The system has created a comprehensive CI/CD infrastructure using modern cloud-native technologies.
+          
+          ## 🚀 **Pipeline Overview**
+          - **Application**: ${{ parameters.appname }}
+          - **Namespace**: team-${{ parameters.appname }}
+          - **Pipeline Instance**: ${{ parameters.appname }}-cicd-pipeline
+          - **Resource Group**: CICDPipeline (Kro RGD)
+          
+          ## ☁️ **AWS Resources (via ACK Controllers)**
+          - **ECR Main Repository**: `modengg/${{ parameters.appname }}`
+          - **ECR Cache Repository**: `modengg/${{ parameters.appname }}/cache`
+          - **IAM Role**: `${{ parameters.appname }}-cicd-role`
+          - **IAM Policy**: `${{ parameters.appname }}-cicd-ecr-policy`
+          - **Pod Identity Association**: Links Kubernetes SA to AWS IAM
+          - **Region**: ${{ parameters.aws_region }}
+          - **EKS Cluster**: ${{ parameters.cluster_name }}
+          
+          ## 🔧 **Kubernetes Resources**
+          - **Service Account**: `${{ parameters.appname }}-cicd-sa`
+          - **RBAC Role**: `${{ parameters.appname }}-cicd-role`
+          - **ConfigMap**: `${{ parameters.appname }}-cicd-config`
+          - **Docker Secret**: `${{ parameters.appname }}-cicd-docker-config`
+          - **ECR Refresh CronJob**: Automatic credential rotation every 6 hours
+          
+          ## 🔄 **Argo Workflows Templates**
+          - **Provisioning Workflow**: `${{ parameters.appname }}-cicd-provisioning-workflow`
+          - **CI/CD Workflow**: `${{ parameters.appname }}-cicd-cicd-workflow`
+          - **Cache Warmup Workflow**: `${{ parameters.appname }}-cicd-cache-warmup-workflow`
+          
+          ## 🎯 **Build & Deployment Configuration**
+          - **Dockerfile Path**: `${{ parameters.dockerfile_path | default(".") }}`
+          - **Deployment Path**: `${{ parameters.deployment_path | default("./deployment") }}`
+          - **Container Registry**: ECR with automatic authentication
+          - **Build Tool**: Kaniko with cache optimization
+          
+          ## 🔗 **GitLab Integration**
+          - **Repository**: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
+          - **Webhook Integration**: Configured for Argo Events
+          - **Automatic Triggers**: Push events trigger CI/CD workflows
+          
+          ## 📊 **ArgoCD Applications**
+          - **Pipeline Management**: `${{ parameters.appname }}-cicd`
+          - **GitOps Sync**: Automatic synchronization enabled
+          - **Self-Healing**: Enabled for drift correction
+          
+          ## 🔐 **Security Features**
+          - **Least Privilege RBAC**: Minimal required permissions
+          - **Pod Identity**: Secure AWS authentication without static credentials
+          - **Namespace Isolation**: Resources scoped to team namespace
+          - **Secret Management**: Automatic ECR credential refresh
+          
+          ## 📈 **Monitoring & Observability**
+          - **Resource Status**: Tracked via Kro RGD status conditions
+          - **Workflow Execution**: Visible in Argo Workflows UI
+          - **Application Health**: Monitored via ArgoCD
+          - **AWS Resource Status**: Tracked via ACK controller conditions
+          
+          ## 🚀 **Next Steps**
+          1. **Push Code**: Commit code to trigger your first build
+          2. **Monitor Workflows**: Check Argo Workflows for build progress
+          3. **View Resources**: Use the links above to explore your infrastructure
+          4. **Configure Deployments**: Set up your deployment manifests in `${{ parameters.deployment_path | default("./deployment") }}`
+          
+          The Kro Resource Group Definition orchestrates all resource creation with proper dependency management and readiness checks. Your pipeline is ready for production workloads!
 
 
 

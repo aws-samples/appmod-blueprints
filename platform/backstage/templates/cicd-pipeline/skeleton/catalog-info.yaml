@@ -1,22 +1,79 @@
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: ${{values.appname}}
-  description: Deploy CI/CD Pipeline for ${{ values.appname }}
+  name: ${{values.appname}}-cicd-pipeline
+  description: Kro-based CI/CD Pipeline for ${{ values.appname }}
   annotations:
+    # Kubernetes resource discovery
     backstage.io/kubernetes-namespace: ${{values.namespace}}
-    backstage.io/kubernetes-label-selector: 'entity-id=${{values.appname}}'
-    argocd/app-selector: 'entity-id=${{values.appname}}'
+    backstage.io/kubernetes-label-selector: 'app.kubernetes.io/name=${{values.appname}},app.kubernetes.io/component=cicd-pipeline'
+    # ArgoCD integration
+    argocd/app-selector: 'app.kubernetes.io/name=${{values.appname}}'
+    # Argo Workflows integration
     argo-workflows.cnoe.io/cluster-name: local
-    argo-workflows.cnoe.io/namespace: team-${{values.appname}}
-    argo-workflows.cnoe.io/label-selector: 'entity-id=${{values.appname}}'
+    argo-workflows.cnoe.io/namespace: ${{values.namespace}}
+    argo-workflows.cnoe.io/label-selector: 'app.kubernetes.io/name=${{values.appname}},app.kubernetes.io/component=cicd-pipeline'
+    # Kro resource tracking
+    kro.run/resource-group: cicdpipeline.kro.run
+    kro.run/instance-name: ${{values.appname}}-cicd-pipeline
+    kro.run/instance-namespace: ${{values.namespace}}
+    # AWS resource tracking
+    aws.amazon.com/ecr-main-repository: modengg/${{values.appname}}
+    aws.amazon.com/ecr-cache-repository: modengg/${{values.appname}}/cache
+    aws.amazon.com/iam-role: ${{values.appname}}-cicd-role
+    aws.amazon.com/iam-policy: ${{values.appname}}-cicd-ecr-policy
+    aws.amazon.com/region: ${{values.aws_region}}
+    # GitLab integration
+    gitlab.com/project-url: https://${{values.hostname}}/${{values.git_username}}/${{values.appname}}-cicd
+  labels:
+    # Component classification
+    app.kubernetes.io/name: ${{values.appname}}
+    app.kubernetes.io/component: cicd-pipeline
+    app.kubernetes.io/managed-by: kro
+    backstage.io/template-name: cicd-pipeline
+    # Environment and lifecycle
+    environment: multi
+    lifecycle: experimental
+    # Technology stack
+    technology: kro
+    technology.aws: ack
+    technology.cicd: argo-workflows
+    technology.gitops: argocd
   links:
-    - url: https://${{values.hostname}}/gitea?repo=${{values.appname}}-cicd
-      title: Repo URL
-      icon: github
+    - url: https://${{values.hostname}}/${{values.git_username}}/${{values.appname}}-cicd
+      title: GitLab Repository
+      icon: gitlab
+    - url: https://${{values.hostname}}/argo-workflows/workflow-templates/${{values.namespace}}/${{values.appname}}-cicd-cicd-workflow
+      title: CI/CD Workflow Template
+      icon: workflow
+    - url: https://${{values.hostname}}/argocd/applications/argocd/${{values.appname}}-cicd
+      title: ArgoCD Application
+      icon: argocd
+    - url: https://console.aws.amazon.com/ecr/repositories/private/{{values.aws_account_id}}/modengg%2F${{values.appname}}?region=${{values.aws_region}}
+      title: ECR Main Repository
+      icon: aws
+    - url: https://console.aws.amazon.com/ecr/repositories/private/{{values.aws_account_id}}/modengg%2F${{values.appname}}%2Fcache?region=${{values.aws_region}}
+      title: ECR Cache Repository
+      icon: aws
 spec:
   type: service
   lifecycle: experimental
   owner: guest
   system: ${{values.appname | dump}}
+  # Dependencies on platform components
+  dependsOn:
+    - resource:default/kro-controller
+    - resource:default/ack-ecr-controller
+    - resource:default/ack-iam-controller
+    - resource:default/ack-eks-controller
+    - resource:default/argo-workflows
+    - resource:default/argocd
+  # Provides CI/CD capabilities
+  providesApis:
+    - cicd-pipeline-api
+  # Consumes platform services
+  consumesApis:
+    - kubernetes-api
+    - aws-api
+    - gitlab-api
 

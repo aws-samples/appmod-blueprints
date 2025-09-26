@@ -164,7 +164,7 @@ spec:
                     volumes:
                       - name: docker-config
                         secret:
-                          secretName: "{{workflow.parameters.aws_region}}-regcred"
+                          secretName: "{{workflow.parameters.appname}}-cicd-docker-config"
                     container:
                       image: gcr.io/kaniko-project/executor:debug
                       volumeMounts:
@@ -172,8 +172,6 @@ spec:
                           mountPath: /workdir
                         - name: docker-config
                           mountPath: /kaniko/.docker
-                      # - name: cache
-                      #    mountPath: /cache
                       workingDir: /workdir
                       resources:
                         limits:
@@ -182,19 +180,25 @@ spec:
                       env:
                         - name: DOCKER_CONFIG
                           value: /kaniko/.docker
-                        - name: ECR_REPO
+                        - name: ECR_MAIN_REPO
                           valueFrom:
                             configMapKeyRef:
-                              name: "{{workflow.parameters.appname}}-ecr-repo"
-                              key: image
+                              name: "{{workflow.parameters.appname}}-cicd-config"
+                              key: ECR_MAIN_REPOSITORY
+                        - name: ECR_CACHE_REPO
+                          valueFrom:
+                            configMapKeyRef:
+                              name: "{{workflow.parameters.appname}}-cicd-config"
+                              key: ECR_CACHE_REPOSITORY
                       command: [
                                 "/busybox/sh",
                                 "-c",
                                 "/kaniko/executor \
                                 --dockerfile=Dockerfile \
                                 --context={{inputs.parameters.dockerfile-path}} \
-                                --destination=${ECR_REPO}:{{inputs.parameters.tag-version}} \
+                                --destination=${ECR_MAIN_REPO}:{{inputs.parameters.tag-version}} \
                                 --cache=true \
+                                --cache-repo=${ECR_CACHE_REPO} \
                                 --skip-tls-verify"
                                 ]
 
@@ -210,7 +214,7 @@ spec:
                       - secretRef:
                           name: gitea-credentials
                       - configMapRef:
-                          name: "{{workflow.parameters.appname}}-ecr-repo"
+                          name: "{{workflow.parameters.appname}}-cicd-config"
                       volumeMounts:
                         - mountPath: /workdir
                           name: workdir
@@ -229,10 +233,10 @@ spec:
                           git config --global user.name ARGO
                           git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
                           git pull --rebase
-                          echo "$image:{{inputs.parameters.tag}}" > ./deployment/"{{inputs.parameters.env}}"/image.txt
+                          echo "${ECR_MAIN_REPOSITORY}:{{inputs.parameters.tag}}" > ./deployment/"{{inputs.parameters.env}}"/image.txt
                           if [ -f $DEPLOY_PATH/application.yml ]; then
-                            sed  -i 's+image: <image>.*+image: '"${image}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
-                            sed  -i 's+image: '"$image"'.*+image: '"${image}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
+                            sed  -i 's+image: <image>.*+image: '"${ECR_MAIN_REPOSITORY}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
+                            sed  -i 's+image: '"${ECR_MAIN_REPOSITORY}"'.*+image: '"${ECR_MAIN_REPOSITORY}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
                           fi
                           m_count=$(git status -s | wc -l)
                           if [ $m_count -ge 1 ]; then
