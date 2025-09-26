@@ -849,8 +849,8 @@ for wave in -5 -3 -2 -1 0 2 3 4 5 6 7; do
             echo "$matching_apps" | while read -r app; do
                 [ -z "$app" ] && continue
                 
-                local app_sync=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-                local app_health=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+                app_sync=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+                app_health=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
                 
                 if [ "$wave_shown" = false ]; then
                     printf "%-9s | %-11s | %-4s | %s\n" "${wave_labels[$wave]}" "$app" "$app_sync" "$app_health"
@@ -865,10 +865,10 @@ done
 
 # Verify Keycloak specifically
 print_step "Verifying Keycloak deployment status"
-local keycloak_app=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E '^keycloak' | head -1)
+keycloak_app=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E '^keycloak' | head -1)
 if [ -n "$keycloak_app" ]; then
-    local keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-    local keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    keycloak_health=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    keycloak_sync=$(kubectl get application "$keycloak_app" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
     
     if [ "$keycloak_health" = "Healthy" ] && [ "$keycloak_sync" = "Synced" ]; then
         print_success "✅ Keycloak is healthy and synced - OIDC authentication ready"
