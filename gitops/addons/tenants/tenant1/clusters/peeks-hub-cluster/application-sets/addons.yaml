@@ -1,1 +1,4 @@
 # addons for specific clusters name if we want
+
+# Enable ECR ACK controller for CI/CD Pipeline RGD
+enable_ack_ecr: 'true'
