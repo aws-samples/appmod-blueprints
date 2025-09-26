@@ -105,7 +105,7 @@ spec:
         argoInstance: in-cluster
         projectName: ${{parameters.appname}}-project
         # necessary until we generate our own cert
-        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd
+        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
         path: "manifests"
     - id: register
       name: Register
