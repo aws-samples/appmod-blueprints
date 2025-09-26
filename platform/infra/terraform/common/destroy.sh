@@ -43,8 +43,9 @@ main() {
     GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
   fi
   # Remove GitLab resources from state, if they exist
-  terraform state rm gitlab_personal_access_token.workshop
-  terraform state rm data.gitlab_user.workshop
+  if ! terraform state rm gitlab_personal_access_token.workshop; || ! terraform state rm data.gitlab_user.workshop; then
+    log_warning "GitLab resources not found in state"
+  fi
 
   # Initialize Terraform with S3 backend
   initialize_terraform "boostrap" "$DEPLOY_SCRIPTDIR"
