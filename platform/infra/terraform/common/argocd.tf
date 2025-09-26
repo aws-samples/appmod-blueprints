@@ -69,7 +69,7 @@ module "gitops_bridge_bootstrap" {
       })
     ]
     timeout          = 600
-    create_namespace = false
+    create_namespace = true
   }
   # depends_on = [kubernetes_secret.git_secrets]
 }
