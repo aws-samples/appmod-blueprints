@@ -13,6 +13,9 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 DEPLOY_SCRIPTDIR="$SCRIPTDIR"
 source $SCRIPTDIR/../scripts/utils.sh
 
+# Check if clusters are created through Workshop
+export WORKSHOP_CLUSTERS=${WORKSHOP_CLUSTERS:-false}
+
 # Main deployment function
 main() {
   log "Starting bootstrap stack deployment..."
@@ -23,6 +26,15 @@ main() {
   fi
   # Validate backend configuration
   validate_backend_config
+
+  # Update config file cluster regions if WORKSHOP_CLUSTERS
+  if [[ "$WORKSHOP_CLUSTERS" == "true" ]]; then
+    log "Updating config file cluster regions..."
+    TEMP_CONFIG_FILE="$(mktemp).yaml"
+    cp "$CONFIG_FILE" "$TEMP_CONFIG_FILE"
+    yq eval '.clusters[].region = env(AWS_REGION)' -i "$TEMP_CONFIG_FILE"
+    CONFIG_FILE="$TEMP_CONFIG_FILE"
+  fi
 
   export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
   yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE

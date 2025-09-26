@@ -11,7 +11,7 @@ locals {
 
 locals {
   azs                       = slice(data.aws_availability_zones.available.names, 0, 2)
-  region                    = data.aws_region.current.id
+  # region                    = data.aws_region.current.id
   # use_ack                   = var.use_ack
   # enable_efs                = var.enable_efs
   # name                      = data.aws_eks_cluster.mgmt.name
@@ -130,7 +130,7 @@ locals {
     for k, v in var.clusters : k => merge(
       {
         aws_cluster_name = v.name
-        aws_region       = local.region # Using region from the current context
+        aws_region       = v.region
         aws_account_id   = data.aws_caller_identity.current.account_id
         aws_vpc_id       = local.cluster_vpc_ids[v.name]
         aws_grafana_url  = module.managed_grafana.workspace_endpoint
