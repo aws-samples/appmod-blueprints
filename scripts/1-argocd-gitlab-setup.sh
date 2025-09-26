@@ -841,9 +841,9 @@ for wave in -5 -3 -2 -1 0 2 3 4 5 6 7; do
         7) apps="backstage" ;;
     esac
     
-    local wave_shown=false
+    wave_shown=false
     for app_pattern in $apps; do
-        local matching_apps=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^${app_pattern}(-.*)?$" 2>/dev/null || echo "")
+        matching_apps=$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -E "^${app_pattern}(-.*)?$" 2>/dev/null || echo "")
         
         if [ -n "$matching_apps" ]; then
             echo "$matching_apps" | while read -r app; do
