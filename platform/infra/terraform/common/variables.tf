@@ -249,6 +249,7 @@ variable "gitops_platform_repo_revision" {
 variable "backstage_image" {
   description = "backstage image for workshop"
   type        = string
+  default = ""
 }
 
 variable "working_repo" {
