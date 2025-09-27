@@ -106,7 +106,7 @@ main() {
     source "$SCRIPT_DIR/2-tools-urls.sh"
 
 
-    source /etc/profile.d/workshop.sh
+    bash /etc/profile.d/workshop.sh
     # Source all bashrc.d files
     for file in ~/.bashrc.d/*.sh; do
     [ -f "$file" ] && source "$file" || true
