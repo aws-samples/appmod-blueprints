@@ -24,7 +24,7 @@ clusters:
       enable_ingress_nginx: true
       enable_argocd: true
       enable_argo_workflows: true
-      enable_backstage: false
+      enable_backstage: true
       enable_kargo: true
       enable_keycloak: true
       enable_gitlab: true
