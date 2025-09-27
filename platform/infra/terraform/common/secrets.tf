@@ -8,8 +8,16 @@ resource "random_string" "password_key" {
   }
 }
 
-# Keycloak Postgres password does not change
+# Keycloak Postgres password
 resource "random_password" "keycloak_postgres" {
+  length            = 32
+  override_special  = "/-+"
+  min_special       = 5
+  min_numeric       = 5
+}
+
+# Backstage Postgres password
+resource "random_password" "backstage_postgres" {
   length            = 32
   override_special  = "/-+"
   min_special       = 5
@@ -36,6 +44,7 @@ locals {
   user_password_hash = bcrypt(var.ide_password)
   keycloak_admin_password = random_password.keycloak_admin.result
   keycloak_postgres_password = random_password.keycloak_postgres.result
+  backstage_postgres_password = random_password.backstage_postgres.result
   password_key = random_string.password_key.result
 }
 
@@ -92,6 +101,7 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
   for_each = var.clusters
   secret_id     = aws_secretsmanager_secret.git_secret[each.key].id
   secret_string = jsonencode({
+    backstage_postgres_password = random_password.db_password.result
     keycloak = {
       admin_password = local.keycloak_admin_password
       postgres_password = local.keycloak_postgres_password

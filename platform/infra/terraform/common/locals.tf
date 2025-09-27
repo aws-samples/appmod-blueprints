@@ -16,6 +16,7 @@ locals {
   # enable_efs                = var.enable_efs
   # name                      = data.aws_eks_cluster.mgmt.name
   # environment               = var.environment
+  region                    = data.aws_region.current.id
   fleet_member              = "control-plane"
   tenant                    = var.tenant
   hub_cluster_key           = [for k, v in var.clusters : k if v.environment == "control-plane"][0]
@@ -37,7 +38,7 @@ locals {
   keycloak_realm            = "platform"
   keycloak_saml_url         = "http://${local.ingress_domain_name}/keycloak/realms/${local.keycloak_realm}/protocol/saml/descriptor"
   # git_hostname              = var.repo == "" ? "${local.gitlab_domain_name}" : var.git_hostname
-  # backstage_image           = var.backstage_image == "" ? "${data.aws_caller_identity.current.account_id}.dkr.ecr.${local.region}.amazonaws.com/${var.resource_prefix}-backstage:latest" : var.backstage_image
+  backstage_image           = var.backstage_image == "" ? "${data.aws_caller_identity.current.account_id}.dkr.ecr.${local.region}.amazonaws.com/${var.resource_prefix}-backstage:latest" : var.backstage_image
   gitops_addons_repo_url    = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
   gitops_fleet_repo_url       = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
   gitops_workload_repo_url  = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
@@ -189,10 +190,10 @@ locals {
         gitlab_domain_name = local.gitlab_domain_name
         git_username = var.git_username
         working_repo = var.working_repo
-        ide_password = var.ide_password
+        # ide_password = var.ide_password
         # ide_password_hash = local.user_password_hash
         # ide_password_key = local.password_key
-        # backstage_image = local.backstage_image
+        backstage_image = local.backstage_image
         # backstage_postgres_secret_name = "${var.resource_prefix}-backstage-postgresql-password"
         # backstage_postgres_secret_key = "password"
       },

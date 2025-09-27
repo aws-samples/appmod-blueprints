@@ -102,31 +102,8 @@ main() {
     # Show final status
     show_final_status
 
-    # Update ENV variables
-    print_step "Setting up environment variables for tools"
-    export KEYCLOAKIDPPASSWORD=$(kubectl get secret keycloak-config -n keycloak -o jsonpath='{.data.USER_PASSWORD}' 2>/dev/null | base64 -d || echo "")
-    export BACKSTAGEURL="https://$DOMAIN_NAME/backstage"
-    export GITLABPW="$IDE_PASSWORD"
-    export ARGOCDPW="$IDE_PASSWORD"
-    export ARGOCDURL="https://$DOMAIN_NAME/argocd"
-    export ARGOWFURL="https://$DOMAIN_NAME/argo-workflows"
-
-    # ArgoCD environment variables for Backstage integration
-    export ARGOCD_URL="https://$DOMAIN_NAME/argocd"
-    export GIT_HOSTNAME=$(echo $GITLAB_URL | sed 's|https://||')
-    export GIT_PASSWORD="$GITLAB_TOKEN"
-
-    update_workshop_var "GRAFANAURL" "$GRAFANAURL"
-    update_workshop_var "KEYCLOAKIDPPASSWORD" "$KEYCLOAKIDPPASSWORD"
-    update_workshop_var "BACKSTAGEURL" "$BACKSTAGEURL"
-    update_workshop_var "GITLABPW" "$GITLABPW"
-    update_workshop_var "ARGOCDPW" "$ARGOCDPW"
-    update_workshop_var "ARGOCDURL" "$ARGOCDURL"
-    update_workshop_var "ARGOWFURL" "$ARGOWFURL"
-    update_workshop_var "ARGOCD_URL" "$ARGOCD_URL"
-    update_workshop_var "GIT_HOSTNAME" "$GIT_HOSTNAME"
-    update_workshop_var "GIT_PASSWORD" "$GIT_PASSWORD"
-
+    # Set up Secrets and URLs for workshop.
+    source "$SCRIPT_DIR/2-tools-urls.sh"
 
 
     source /etc/profile.d/workshop.sh

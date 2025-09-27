@@ -10,8 +10,10 @@
 
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-source "$SCRIPT_DIR/colors.sh"
-# Source environment variables first
+GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
+source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
+
+# Source environment variables
 if [ -d /home/ec2-user/.bashrc.d ]; then
     for file in /home/ec2-user/.bashrc.d/*.sh; do
         if [ -f "$file" ]; then
@@ -19,10 +21,6 @@ if [ -d /home/ec2-user/.bashrc.d ]; then
         fi
     done
 fi
-
-# Switch to hub cluster context
-print_step "Switching to ${RESOURCE_PREFIX}-hub-cluster context..."
-kubectl config use-context ${RESOURCE_PREFIX}-hub-cluster 2>/dev/null || kubectx ${RESOURCE_PREFIX}-hub-cluster 2>/dev/null || echo "Warning: Could not switch context, using current context"
 
 # Get CloudFront domain name
 print_info "Retrieving CloudFront domain..."
@@ -49,20 +47,6 @@ else
     GRAFANA_URL="Grafana workspace not found"
 fi
 
-# Get credentials
-print_info "Retrieving credentials..."
-IDE_PASSWORD=$(kubectl get secret ide-password -n argocd -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
-KEYCLOAK_ADMIN_PASSWORD=$(kubectl get secret keycloak-config -n keycloak -o jsonpath='{.data.KC_BOOTSTRAP_ADMIN_PASSWORD}' 2>/dev/null | base64 -d)
-if [ -z "$KEYCLOAK_ADMIN_PASSWORD" ]; then
-    # Fallback: try to get from job logs
-    KEYCLOAK_ADMIN_PASSWORD=$(kubectl logs -n keycloak job/config 2>/dev/null | grep "ADMIN_PASSWORD=" | head -1 | cut -d"'" -f2)
-fi
-USER_PASSWORD=$(kubectl get secret keycloak-config -n keycloak -o jsonpath='{.data.USER_PASSWORD}' 2>/dev/null | base64 -d)
-if [ -z "$USER_PASSWORD" ]; then
-    # Fallback: try to get from job logs
-    USER_PASSWORD=$(kubectl logs -n keycloak job/config 2>/dev/null | grep "USER1_PASSWORD=" | head -1 | cut -d"=" -f2)
-fi
-
 # Define fixed column widths (increased URL column for Grafana)
 TOOL_COL=14
 URL_COL=65
@@ -83,6 +67,9 @@ WORKFLOWS_URL="https://$DOMAIN_NAME/argo-workflows"
 KEYCLOAK_ADMIN_URL="https://$DOMAIN_NAME/keycloak/admin/"
 KEYCLOAK_PLATFORM_URL="https://$DOMAIN_NAME/keycloak/realms/platform/account/"
 KEYCLOAK_PLATFORM_SHORT="https://$DOMAIN_NAME/keycloak/realms/platform/account/"
+KEYCLOAK_ADMIN_PASSWORD=$(kubectl get secret keycloak-config -n keycloak -o jsonpath='{.data.KC_BOOTSTRAP_ADMIN_PASSWORD}' 2>/dev/null | base64 -d || echo "")
+GIT_HOSTNAME=$(echo $GITLAB_URL | sed 's|https://||')
+USER_PASSWORD=$IDE_PASSWORD
 
 # Print header
 print_header "EKS Cluster Management Tools"
@@ -108,37 +95,13 @@ echo -e "${BOLD}+----------------+----------------------------------------------
 echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Grafana" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$GRAFANA_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "user1 / $IDE_PASSWORD" $CRED_COL)${BOLD} |${NC}"
 echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 
-# # Print full URLs for easy copy-paste
-# print_header "Full URLs for copy-paste"
-# print_info "ArgoCD: ${BOLD}$ARGOCD_URL${NC}"
-# print_info "Backstage: ${BOLD}$BACKSTAGE_URL${NC}"
-# print_info "Kargo: ${BOLD}$KARGO_URL${NC}"
-# print_info "Argo-Workflows: ${BOLD}$WORKFLOWS_URL${NC}"
-# print_info "Keycloak Admin: ${BOLD}$KEYCLOAK_ADMIN_URL${NC}"
-# print_info "Keycloak Platform Realm: ${BOLD}$KEYCLOAK_PLATFORM_URL${NC}"
-# print_info "GitLab: ${BOLD}$GITLAB_URL${NC}"
-
-# # Print credentials
-# print_header "Credentials"
-# print_info "ArgoCD Admin Password: ${BOLD}$IDE_PASSWORD${NC}"
-# print_info "GitLab Root Password: ${BOLD}$IDE_PASSWORD${NC} (main password)"
-# print_info "Keycloak Admin (admin): ${BOLD}$KEYCLOAK_ADMIN_PASSWORD${NC}"
-# print_info "Keycloak Users (user1/user2): ${BOLD}$USER_PASSWORD${NC}"
-
-# # Print usage instructions
-# print_header "Usage examples"
-# print_info "ArgoCD CLI login: ${BOLD}argocd login --username admin --password $IDE_PASSWORD --grpc-web-root-path /argocd $DOMAIN_NAME${NC}"
-# print_info "View applications: ${BOLD}argocd app list${NC}"
-# print_info "Sync application: ${BOLD}argocd app sync <app-name>${NC}"
-# print_info "Access Kargo: ${BOLD}curl --head -X GET $KARGO_URL${NC}"
-
-# # Print authentication examples
-# print_header "Authentication Examples"
-# print_info "Test Keycloak user1 authentication:"
-# print_info "${BOLD}curl -X POST https://$DOMAIN_NAME/keycloak/realms/platform/protocol/openid-connect/token \\${NC}"
-# print_info "${BOLD}  -H \"Content-Type: application/x-www-form-urlencoded\" \\${NC}"
-# print_info "${BOLD}  -d \"username=user1\" \\${NC}"
-# print_info "${BOLD}  -d \"password=$USER_PASSWORD\" \\${NC}"
-# print_info "${BOLD}  -d \"grant_type=password\" \\${NC}"
-# print_info "${BOLD}  -d \"client_id=argo-workflows\" \\${NC}"
-# print_info "${BOLD}  -d \"client_secret=orbAKJkIp0UbZVbrmMMiYdYzIlpLWHCD\"${NC}"
+update_workshop_var "ARGOCDURL" "$ARGOCD_URL"
+update_workshop_var "GIT_HOSTNAME" "$GIT_HOSTNAME"
+update_workshop_var "BACKSTAGEURL" "$BACKSTAGE_URL"
+update_workshop_var "KARGOURL" "$KARGO_URL"
+update_workshop_var "ARGOWFURL" "$ARGOWFURL"
+update_workshop_var "KEYCLOAKADMINURL" "$KEYCLOAK_ADMIN_URL"
+update_workshop_var "GITLABURL" "$GITLAB_URL"
+update_workshop_var "GRAFANAURL" "$GRAFANA_URL"
+update_workshop_var "KEYCLOAKADMINPASSWORD" "$KEYCLOAK_ADMIN_PASSWORD"
+update_workshop_var "USER_PASSWORD" "$USER_PASSWORD"

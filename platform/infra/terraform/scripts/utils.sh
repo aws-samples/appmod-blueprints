@@ -12,7 +12,6 @@ source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/argocd-utils.sh"
 source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/colors.sh"
 
 export SKIP_GITLAB=${SKIP_GITLAB:-false}
-export IS_WS=${IS_WS:-false}
 export WS_PARTICIPANT_ROLE_ARN=${WS_PARTICIPANT_ROLE_ARN:-""}
 export RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 export GIT_USERNAME=${GIT_USERNAME:-user1}

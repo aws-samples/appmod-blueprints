@@ -246,11 +246,10 @@ variable "gitops_platform_repo_revision" {
 #   sensitive   = true
 # }
 
-# variable "git_username" {
-#   description = "Git username for workshop"
-#   type        = string
-#   default     = "user1"
-# }
+variable "backstage_image" {
+  description = "backstage image for workshop"
+  type        = string
+}
 
 variable "working_repo" {
   description = "Working repository name"

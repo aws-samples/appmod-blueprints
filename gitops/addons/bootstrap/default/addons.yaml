@@ -807,10 +807,6 @@ kargo:
         issuerURL: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
       secret:
         name: kargo-admin-credentials
-      # adminAccount:
-      #   # $IDE_PASSWORD
-      #   passwordHash: '{{.metadata.annotations.ide_password_hash}}'
-      #   tokenSigningKey: '{{.metadata.annotations.ide_password_key}}'
     extraObjects:
     - apiVersion: external-secrets.io/v1
       kind: ExternalSecret # For Kargo Admin Credentials
@@ -1122,9 +1118,11 @@ backstage:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
     gitlab_domain_name: '{{.metadata.annotations.gitlab_domain_name}}'
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     backstage_image: '{{.metadata.annotations.backstage_image}}'
+    working_repo: '{{.metadata.annotations.working_repo}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

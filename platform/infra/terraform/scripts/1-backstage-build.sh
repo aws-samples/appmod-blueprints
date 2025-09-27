@@ -60,7 +60,7 @@ check_backstage_build_status() {
 }
 
 check_backstage_ecr_repo() {
-    if aws ecr describe-repositories --repository-names ${RESOURCE_PREFIX}-backstage --region $AWS_REGION 2>/dev/null; then
+    if aws ecr describe-repositories --repository-names ${RESOURCE_PREFIX}-backstage --region $AWS_REGION > /dev/null 2>&1; then
         print_info "Backstage ECR repository exist.. Assuming it has the backstage image, returning..."
         return 0
     fi
@@ -72,7 +72,7 @@ start_backstage_build() {
     print_header "Starting Backstage build process"
 
     print_step "Creating Amazon Elastic Container Repository (Amazon ECR) for Backstage image"
-    aws ecr create-repository --repository-name ${RESOURCE_PREFIX}-backstage --region $AWS_REGION
+    aws ecr create-repository --repository-name ${RESOURCE_PREFIX}-backstage --region $AWS_REGION > /dev/null 2>&1 || true
 
     print_step "Preparing Backstage for build"
     BACKSTAGE_PATH="${GIT_ROOT_PATH}/backstage"

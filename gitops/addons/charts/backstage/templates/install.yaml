@@ -605,7 +605,7 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   secretStoreRef:
-    name: keycloak
+    name: aws-secrets-manager
     kind: ClusterSecretStore
   refreshInterval: "30s"
   target:
@@ -623,14 +623,14 @@ spec:
       remoteRef:
         conversionStrategy: Default
         decodingStrategy: None
-        key: keycloak-clients
+        key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.global.aws_cluster_name }}/keycloak-clients
         metadataPolicy: None
         property: ARGOCD_SESSION_TOKEN
     - secretKey: BACKSTAGE_CLIENT_SECRET
       remoteRef:
         conversionStrategy: Default
         decodingStrategy: None
-        key: keycloak-clients
+        key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.global.aws_cluster_name }}/keycloak-clients
         metadataPolicy: None
         property: BACKSTAGE_CLIENT_SECRET
 ---
@@ -651,19 +651,14 @@ spec:
     name: backstage-postgres-vars
     creationPolicy: Owner
     deletionPolicy: Retain
-    template:
-      engineVersion: v2
-      mergePolicy: Replace
-      data:
-        POSTGRES_PASSWORD: "{{ `{{.password}}` }}"
   data:
-    - secretKey: password
+    - secretKey: POSTGRES_PASSWORD
       remoteRef:
         conversionStrategy: Default
         decodingStrategy: None
-        key: {{ .Values.global.resourcePrefix | default "peeks" }}-backstage-postgresql-password
+        key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.global.aws_cluster_name }}/secrets
         metadataPolicy: None
-        property: password
+        property: backstage_postgres_password
 ---
 apiVersion: v1
 kind: Secret
