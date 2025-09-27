@@ -43,6 +43,7 @@ addons = {
   enable_ack_s3                       = true
   enable_argocd                       = true
   enable_argo_rollouts                = true
+  enable_argo_events                  = true
   enable_argo_workflows               = true
   enable_backstage                    = true
   enable_cert_manager                 = true
