@@ -101,7 +101,7 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
   for_each = var.clusters
   secret_id     = aws_secretsmanager_secret.git_secret[each.key].id
   secret_string = jsonencode({
-    backstage_postgres_password = random_password.db_password.result
+    backstage_postgres_password = local.backstage_postgres_password
     keycloak = {
       admin_password = local.keycloak_admin_password
       postgres_password = local.keycloak_postgres_password
