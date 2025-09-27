@@ -67,6 +67,8 @@ keycloak:
   enabled: true
 argo-rollouts:
   enabled: true
+argo-events:
+  enabled: true
 argo-workflows:
   enabled: true
 backstage:

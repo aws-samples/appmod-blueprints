@@ -39,7 +39,6 @@ spec:
       ecrCacheRepoStatus: ${ecrcacherepo.status.conditions}
       iamPolicyStatus: ${iampolicy.status.conditions}
       iamRoleStatus: ${iamrole.status.conditions}
-      rolePolicyAttachmentStatus: ${rolepolicyattachment.status.conditions}
       podIdentityStatus: ${podidentityassoc.status.conditions}
       # Workflow template status
       provisioningWorkflowStatus: ${provisioningworkflow.status}
@@ -47,6 +46,7 @@ spec:
       cicdWorkflowStatus: ${cicdworkflow.status}
       cacheDockerfileStatus: ${cachedockerfile.status}
       setupWorkflowStatus: ${setupworkflow.status}
+
       # Argo Events status
       eventSourceStatus: ${eventsource.status}
       sensorStatus: ${sensor.status}
@@ -54,7 +54,7 @@ spec:
       webhookIngressStatus: ${webhookingress.status}
       # Overall readiness indicator
       kubernetesResourcesReady: ${appnamespace.status.phase == "Active" && serviceaccount.status && role.status && rolebinding.status && configmap.status && cachedockerfile.status && dockersecret.status && ecrrefreshcronjob.status && initialecrcredsetup.status.conditions.exists(x, x.type == 'Complete' && x.status == "True")}
-      awsResourcesReady: ${ecrmainrepo.status.conditions[0].status == "True" && ecrcacherepo.status.conditions[0].status == "True" && iamrole.status.conditions[0].status == "True" && podidentityassoc.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      awsResourcesReady: ${ecrmainrepo.status.conditions[0].status == "True" && ecrcacherepo.status.conditions[0].status == "True" && iampolicy.status.conditions[0].status == "True" && iamrole.status.conditions[0].status == "True" && podidentityassoc.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       workflowsReady: ${provisioningworkflow.status && cachewarmupworkflow.status && cicdworkflow.status}
       setupCompleted: ${setupworkflow.status}
       webhookIntegrationReady: ${eventsource.status && sensor.status && webhookservice.status && webhookingress.status}
@@ -86,7 +86,7 @@ spec:
         spec:
           name: >-
             ${schema.spec.ecr.repositoryPrefix}/${schema.spec.application.name}
-          repositoryPolicyText: |
+          policy: |
             {
               "Version": "2012-10-17",
               "Statement": [
@@ -103,7 +103,7 @@ spec:
                 }
               ]
             }
-          lifecyclePolicyText: |
+          lifecyclePolicy: |
             {
               "rules": [
                 {
@@ -134,7 +134,7 @@ spec:
         spec:
           name: >-
             ${schema.spec.ecr.repositoryPrefix}/${schema.spec.application.name}/cache
-          repositoryPolicyText: |
+          policy: |
             {
               "Version": "2012-10-17",
               "Statement": [
@@ -151,7 +151,7 @@ spec:
                 }
               ]
             }
-          lifecyclePolicyText: |
+          lifecyclePolicy: |
             {
               "rules": [
                 {
@@ -229,6 +229,8 @@ spec:
           name: ${schema.spec.name}-role
           description: IAM role for CI/CD pipeline with EKS pod identity
           path: '/'
+          policies:
+            - ${iampolicy.status.ackResourceMetadata.arn}
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",
@@ -246,20 +248,6 @@ spec:
               ]
             }
 
-    # IAM Role Policy Attachment
-    - id: rolepolicyattachment
-      readyWhen:
-        - ${rolepolicyattachment.status.conditions[0].status == "True"}
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: RolePolicyAttachment
-        metadata:
-          name: ${schema.spec.name}-role-policy-attachment
-          namespace: ${schema.spec.namespace}
-        spec:
-          policyARN: ${iampolicy.status.ackResourceMetadata.arn}
-          roleName: ${iamrole.status.ackResourceMetadata.name}
-
     # Pod Identity Association
     - id: podidentityassoc
       readyWhen:
@@ -273,7 +261,6 @@ spec:
           annotations:
             # Implicit dependencies through template references
             roleArn: ${iamrole.status.ackResourceMetadata.arn}
-            policyAttachmentArn: ${rolepolicyattachment.status.ackResourceMetadata.arn}
         spec:
           clusterName: ${schema.spec.aws.clusterName}
           roleARN: ${iamrole.status.ackResourceMetadata.arn}
@@ -1242,7 +1229,6 @@ spec:
                 value: ${schema.spec.application.name}
               - name: aws-region
                 value: ${schema.spec.aws.region}
-
     # Argo Events EventSource for GitLab webhooks
     - id: eventsource
       readyWhen:

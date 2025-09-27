@@ -655,6 +655,20 @@ argo-rollouts:
         operator: In
         values: ['true']
 
+argo-events:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  namespace: argo-events
+  chartName: argo-events
+  chartRepository: https://argoproj.github.io/argo-helm
+  defaultVersion: '2.4.8'
+  selector:
+    matchExpressions:
+      - key: enable_argo_events
+        operator: In
+        values: ['true']
+
 ingress-nginx:
   enabled: false
   annotationsAppSet:
