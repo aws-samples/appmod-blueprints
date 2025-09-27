@@ -221,7 +221,7 @@ cleanup_kubernetes_resources_with_fallback() {
   log "Attempting to clean up Kubernetes resources for $env..."
   
   # Test if kubectl is working
-  if ! kubectl get nodes --request-timeout=10s &>/dev/null; then
+  if ! kubectl get nodes --request-timeout=10s --context $env &>/dev/null; then
     log_warning "kubectl cannot connect to cluster, setting up kubectl access"
     configure_kubectl_with_fallback "$env" || {
       log_error "kubectl configuration failed, cannot proceed with cleanup"
@@ -231,11 +231,20 @@ cleanup_kubernetes_resources_with_fallback() {
   
   log_success "kubectl is working, proceeding with resource cleanup"
 
+  # First round of AppSet deletion
   delete_argocd_appsets
 
-  delete_argocd_apps "${CORE_APPS[*]}" # will ignore core apps for cleanup
+  # Delete Bootstrap apps by patching finalizers
+  delete_argocd_apps "${BOOTSTRAP_APPS[*]}" "delete" "true"
 
-  delete_argocd_apps "${CORE_APPS[*]}" "only" # will not ignore core apps for final cleanup
+  # Second round of AppSet deletion if any created by BOOTSTRAP APPS
+  delete_argocd_appsets
+
+  # Delete all apps except core apps
+  delete_argocd_apps "${CORE_APPS[*]}" "ignore" "false"
+
+  # Delete external-secrets specifically
+  delete_argocd_apps "external-secrets" "delete" "false"
 }
 
 gitlab_repository_setup(){

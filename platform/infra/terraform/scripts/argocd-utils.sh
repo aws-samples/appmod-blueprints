@@ -7,6 +7,7 @@ export CORE_APPS=(
     "external-secrets"
     "ingress-nginx"
     "argocd"
+    "gitlab"
 )
 
 export BOOTSTRAP_APPS=(
@@ -148,4 +149,59 @@ show_final_status() {
     fi
     
     echo "----------------------------------------"
+}
+
+delete_argocd_appsets() {
+    if kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1; then
+        kubectl get applicationsets.argoproj.io --all-namespaces --no-headers 2>/dev/null | while read -r namespace name _; do
+            kubectl delete applicationsets.argoproj.io "$name" -n "$namespace" --cascade=orphan 2>/dev/null || true
+        done
+        return 0
+    fi
+    log "No ArgoCD ApplicationSets found..."
+}
+
+delete_argocd_apps() {
+    local partial_names="$1"
+    local action="${2:-delete}"  # delete or ignore
+    local patch_required="${3:-false}"  # whether to patch finalizers
+    
+    local all_apps=$(kubectl get applications.argoproj.io --all-namespaces --no-headers 2>/dev/null)
+    
+    if [[ -z "$all_apps" ]]; then
+        log "No ArgoCD Applications found..."
+        return 0
+    fi
+    
+    # Process all apps
+    echo "$all_apps" | while read -r namespace name _; do
+        local should_process=false
+        
+        # Check if app matches any partial name
+        for partial in $partial_names; do
+            if [[ "$name" == *"$partial"* ]]; then
+                should_process=true
+                break
+            fi
+        done
+        
+        # Process based on action
+        if [[ "$action" == "ignore" && "$should_process" == "true" ]]; then
+            continue
+        elif [[ "$action" == "delete" && "$should_process" == "false" ]]; then
+            continue
+        fi
+        
+        # Remove finalizers if required
+        if [[ "$patch_required" == "true" ]]; then
+            kubectl patch application.argoproj.io "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+        fi
+        
+        kubectl delete application.argoproj.io "$name" -n "$namespace" --wait=false 2>/dev/null || true
+        
+        # Wait for deletion
+        while kubectl get application.argoproj.io "$name" -n "$namespace" >/dev/null 2>&1; do
+            sleep 5
+        done
+    done
 }
