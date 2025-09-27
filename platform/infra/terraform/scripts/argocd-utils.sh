@@ -166,9 +166,6 @@ delete_argocd_apps() {
     local action="${2:-delete}"  # delete or ignore
     local patch_required="${3:-false}"  # whether to patch finalizers
     
-    # Convert string to array
-    read -ra partial_names_array <<< "$partial_names_str"
-    
     local all_apps=$(kubectl get applications.argoproj.io --all-namespaces --no-headers 2>/dev/null)
     
     if [[ -z "$all_apps" ]]; then
@@ -180,8 +177,8 @@ delete_argocd_apps() {
     echo "$all_apps" | while read -r namespace name _; do
         local should_process=false
         
-        # Check if app matches any partial name
-        for partial in "${partial_names_array[@]}"; do
+        # Check if app matches any partial name (convert string to words)
+        for partial in $partial_names_str; do
             if [[ "$name" == *"$partial"* ]]; then
                 should_process=true
                 break
@@ -200,6 +197,7 @@ delete_argocd_apps() {
             kubectl patch application.argoproj.io "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
         fi
         
+        terminate_argocd_operation "$name" # Terminate any ongoing operation
         kubectl delete application.argoproj.io "$name" -n "$namespace" --wait=false 2>/dev/null || true
         
         # Wait for deletion
