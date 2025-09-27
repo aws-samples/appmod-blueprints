@@ -103,7 +103,7 @@ main() {
     show_final_status
 
     # Set up Secrets and URLs for workshop.
-    source "$SCRIPT_DIR/2-tools-urls.sh"
+    bash "$SCRIPT_DIR/2-tools-urls.sh"
 
 
     bash /etc/profile.d/workshop.sh
