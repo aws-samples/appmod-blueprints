@@ -162,9 +162,12 @@ delete_argocd_appsets() {
 }
 
 delete_argocd_apps() {
-    local partial_names="$1"
+    local partial_names_str="$1"
     local action="${2:-delete}"  # delete or ignore
     local patch_required="${3:-false}"  # whether to patch finalizers
+    
+    # Convert string to array
+    read -ra partial_names_array <<< "$partial_names_str"
     
     local all_apps=$(kubectl get applications.argoproj.io --all-namespaces --no-headers 2>/dev/null)
     
@@ -178,7 +181,7 @@ delete_argocd_apps() {
         local should_process=false
         
         # Check if app matches any partial name
-        for partial in ${partial_names}; do
+        for partial in "${partial_names_array[@]}"; do
             if [[ "$name" == *"$partial"* ]]; then
                 should_process=true
                 break
