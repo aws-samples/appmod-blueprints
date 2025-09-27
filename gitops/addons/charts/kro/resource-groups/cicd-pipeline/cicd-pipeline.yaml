@@ -38,7 +38,7 @@ spec:
     # Namespace creation - must be first
     - id: appnamespace
       readyWhen:
-        - ${appnamespace.metadata.name != ""}
+        - ${appnamespace.status.phase == "Active"}
       template:
         apiVersion: v1
         kind: Namespace
@@ -249,8 +249,6 @@ spec:
 
     # Service Account - minimal required permissions for CI/CD operations
     - id: serviceaccount
-      readyWhen:
-        - ${serviceaccount.metadata.name != ""}
       template:
         apiVersion: v1
         kind: ServiceAccount
@@ -359,9 +357,6 @@ spec:
     - id: configmap
       readyWhen:
         - ${configmap.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${ecrmainrepo.status.conditions[0].status == "True"}
-        - ${ecrcacherepo.status.conditions[0].status == "True"}
       template:
         apiVersion: v1
         kind: ConfigMap
@@ -380,7 +375,7 @@ spec:
           ECR_CACHE_REPOSITORY_NAME: ${ecrcacherepo.spec.name}
           # AWS configuration
           AWS_REGION: ${schema.spec.aws.region}
-          AWS_ACCOUNT_ID: ${ecrmainrepo.status.registryId}
+          AWS_ACCOUNT_ID: ${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}
           # Application configuration
           APPLICATION_NAME: ${schema.spec.application.name}
           DOCKERFILE_PATH: ${schema.spec.application.dockerfilePath}
@@ -407,9 +402,6 @@ spec:
     - id: dockersecret
       readyWhen:
         - ${dockersecret.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${ecrmainrepo.status.conditions[0].status == "True"}
-        - ${ecrcacherepo.status.conditions[0].status == "True"}
       template:
         apiVersion: v1
         kind: Secret
@@ -424,7 +416,7 @@ spec:
             # Reference to ECR repositories for credential management
             ecr.aws/main-repository: ${ecrmainrepo.status.repositoryURI}
             ecr.aws/cache-repository: ${ecrcacherepo.status.repositoryURI}
-            ecr.aws/registry-id: ${ecrmainrepo.status.registryId}
+            ecr.aws/registry-id: ${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}
             ecr.aws/region: ${schema.spec.aws.region}
             # Indicates this secret will be populated by ECR credential helper
             cicd.kro.run/credential-type: ecr-docker-config
@@ -441,9 +433,6 @@ spec:
     - id: ecrrefreshcronjob
       readyWhen:
         - ${ecrrefreshcronjob.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.metadata.name != ""}
-        - ${dockersecret.metadata.name != ""}
       template:
         apiVersion: batch/v1
         kind: CronJob
@@ -490,7 +479,7 @@ spec:
                           fi
 
                           # Get registry endpoint
-                          ECR_REGISTRY="${ecrmainrepo.status.registryId}.dkr.ecr.${schema.spec.aws.region}.amazonaws.com"
+                          ECR_REGISTRY="${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}.dkr.ecr.${schema.spec.aws.region}.amazonaws.com"
 
                           # Create docker config JSON with proper structure
                           DOCKER_CONFIG=$(cat <<EOF | base64 -w 0
@@ -533,9 +522,6 @@ spec:
     - id: provisioningworkflow
       readyWhen:
         - ${provisioningworkflow.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.metadata.name != ""}
-        - ${configmap.metadata.name != ""}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: WorkflowTemplate
@@ -612,7 +598,7 @@ spec:
                       exit 1
                     fi
 
-                    ECR_REGISTRY="${ecrmainrepo.status.registryId}.dkr.ecr.{{workflow.parameters.aws-region}}.amazonaws.com"
+                    ECR_REGISTRY="${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}.dkr.ecr.{{workflow.parameters.aws-region}}.amazonaws.com"
 
                     # Create docker config JSON with proper structure and auth field
                     DOCKER_CONFIG=$(cat <<EOF | base64 -w 0
@@ -667,62 +653,63 @@ spec:
                 command: ['/bin/sh', '-c']
                 envFrom:
                   - secretRef:
-                      name: gitea-credentials
+                      name: gitlab-credentials
                 args:
                   - |
                     apk add curl jq
 
                     # Get configuration from ConfigMap
-                    WEBHOOK_URL=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.WEBHOOK_ENDPOINT}')
-                    GITLAB_HOSTNAME=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.GITLAB_HOSTNAME}')
-                    GITLAB_USERNAME=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.GITLAB_USERNAME}')
-                    APP_NAME=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.APPLICATION_NAME}')
+                    webhook_url=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.WEBHOOK_ENDPOINT}')
+                    gitlab_hostname=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.GITLAB_HOSTNAME}')
+                    gitlab_username=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.GITLAB_USERNAME}')
+                    app_name=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.APPLICATION_NAME}')
+                    gitlab_token="$$GITLAB_TOKEN"
 
-                    hooks_api_url="${GITLAB_HOSTNAME}/gitea/api/v1/repos/${GITLAB_USERNAME}/${APP_NAME}-cicd/hooks"
+                    api_url="$$gitlab_hostname/gitea/api/v1/repos/$$gitlab_username/$$app_name-cicd/hooks"
 
-                    echo "Configuring GitLab webhook to point to Argo Events endpoint: $WEBHOOK_URL"
+                    echo "Configuring GitLab webhook to point to Argo Events endpoint: $$webhook_url"
 
                     # Check if webhook already exists
-                    existing_webhooks=$(curl -k -X 'GET' "${hooks_api_url}" \
+                    existing_webhooks=$(curl -k -X 'GET' "$$api_url" \
                       -H "accept: application/json" \
-                      -H "Authorization: token ${GITEA_TOKEN}" \
+                      -H "Authorization: token $$gitlab_token" \
                       -H "Content-Type: application/json" 2>/dev/null || echo "[]")
 
-                    webhook_exists=$(echo "$existing_webhooks" | jq -r --arg url "$WEBHOOK_URL" '.[] | select(.config.url == $url) | .id')
+                    webhook_exists=$(echo "$$existing_webhooks" | jq -r --arg url "$$webhook_url" '.[] | select(.config.url == $$url) | .id')
 
-                    if [ -z "$webhook_exists" ] || [ "$webhook_exists" = "null" ]; then
+                    if [ -z "$$webhook_exists" ] || [ "$$webhook_exists" = "null" ]; then
                       echo "Creating new GitLab webhook for Argo Events integration"
-                      webhook_response=$(curl -k -X 'POST' "${hooks_api_url}" \
+                      webhook_response=$(curl -k -X 'POST' "$$api_url" \
                         -H "accept: application/json" \
-                        -H "Authorization: token ${GITEA_TOKEN}" \
+                        -H "Authorization: token $$gitlab_token" \
                         -H "Content-Type: application/json" \
                         -d '{
                           "branch_filter": "main",
                           "type": "gitea", 
                           "events":["push"], 
                           "config": {
-                            "url": "'${WEBHOOK_URL}'", 
+                            "url": "'$$webhook_url'", 
                             "content_type": "json",
                             "http_method": "POST"
                           }, 
                           "active": true
                         }' 2>/dev/null)
                       
-                      if echo "$webhook_response" | jq -e '.id' > /dev/null 2>&1; then
-                        echo "GitLab webhook created successfully with ID: $(echo "$webhook_response" | jq -r '.id')"
+                      if echo "$$webhook_response" | jq -e '.id' > /dev/null 2>&1; then
+                        echo "GitLab webhook created successfully with ID: $$(echo "$$webhook_response" | jq -r '.id')"
                       else
-                        echo "Warning: Failed to create webhook, but continuing. Response: $webhook_response"
+                        echo "Warning: Failed to create webhook, but continuing. Response: $$webhook_response"
                       fi
                     else
-                      echo "GitLab webhook already exists with ID: $webhook_exists"
+                      echo "GitLab webhook already exists with ID: $$webhook_exists"
                       echo "Updating existing webhook configuration"
-                      curl -k -X 'PATCH' "${hooks_api_url}/${webhook_exists}" \
+                      curl -k -X 'PATCH' "$$api_url/$$webhook_exists" \
                         -H "accept: application/json" \
-                        -H "Authorization: token ${GITEA_TOKEN}" \
+                        -H "Authorization: token $$gitlab_token" \
                         -H "Content-Type: application/json" \
                         -d '{
                           "config": {
-                            "url": "'${WEBHOOK_URL}'", 
+                            "url": "'$$webhook_url'", 
                             "content_type": "json",
                             "http_method": "POST"
                           }, 
@@ -768,10 +755,6 @@ spec:
     - id: cachewarmupworkflow
       readyWhen:
         - ${cachewarmupworkflow.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.metadata.name != ""}
-        - ${configmap.metadata.name != ""}
-        - ${dockersecret.metadata.name != ""}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: WorkflowTemplate
@@ -841,10 +824,6 @@ spec:
     - id: cicdworkflow
       readyWhen:
         - ${cicdworkflow.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.metadata.name != ""}
-        - ${configmap.metadata.name != ""}
-        - ${dockersecret.metadata.name != ""}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: WorkflowTemplate
@@ -1037,7 +1016,6 @@ spec:
     - id: cachedockerfile
       readyWhen:
         - ${cachedockerfile.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
       template:
         apiVersion: v1
         kind: ConfigMap
@@ -1072,12 +1050,7 @@ spec:
     # Initial ECR credential setup Job - runs once during deployment
     - id: initialecrcredsetup
       readyWhen:
-        - ${initialecrcredsetup.status.conditions.exists(x, x.type == 'Complete' && x.status == "True")}
-        - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.status}
-        - ${dockersecret.status}
-        - ${ecrmainrepo.status.conditions[0].status == "True"}
-        - ${ecrcacherepo.status.conditions[0].status == "True"}
+        - ${initialecrcredsetup.metadata.name != ""}
       template:
         apiVersion: batch/v1
         kind: Job
@@ -1123,7 +1096,7 @@ spec:
                       fi
 
                       # Get registry endpoint
-                      ECR_REGISTRY="${ecrmainrepo.status.registryId}.dkr.ecr.${schema.spec.aws.region}.amazonaws.com"
+                      ECR_REGISTRY="${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}.dkr.ecr.${schema.spec.aws.region}.amazonaws.com"
 
                       # Create docker config JSON with proper structure
                       DOCKER_CONFIG=$(cat <<EOF | base64 -w 0
@@ -1174,14 +1147,6 @@ spec:
 
     # Setup Workflow for initial configuration
     - id: setupworkflow
-      readyWhen:
-        - ${setupworkflow.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.metadata.name != ""}
-        - ${configmap.metadata.name != ""}
-        - ${dockersecret.metadata.name != ""}
-        - ${provisioningworkflow.metadata.name != ""}
-        - ${initialecrcredsetup.status.conditions.exists(x, x.type == 'Complete' && x.status == "True")}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Workflow
@@ -1206,7 +1171,6 @@ spec:
     - id: eventsource
       readyWhen:
         - ${eventsource.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: EventSource
@@ -1233,10 +1197,6 @@ spec:
     - id: sensor
       readyWhen:
         - ${sensor.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${eventsource.metadata.name != ""}
-        - ${serviceaccount.metadata.name != ""}
-        - ${cicdworkflow.metadata.name != ""}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Sensor
@@ -1295,8 +1255,8 @@ spec:
                             - name: git-token
                               valueFrom:
                                 secretKeyRef:
-                                  name: gitea-credentials
-                                  key: GITEA_TOKEN
+                                  name: gitlab-credentials
+                                  key: GITLAB_TOKEN
                             - name: repo-name
                               value: '${schema.spec.application.name}-cicd'
                             - name: dockerfile-path
@@ -1319,8 +1279,6 @@ spec:
     - id: webhookservice
       readyWhen:
         - ${webhookservice.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${eventsource.metadata.name != ""}
       template:
         apiVersion: v1
         kind: Service
@@ -1345,8 +1303,6 @@ spec:
     - id: webhookingress
       readyWhen:
         - ${webhookingress.metadata.name != ""}
-        - ${appnamespace.status.phase == "Active"}
-        - ${webhookservice.metadata.name != ""}
       template:
         apiVersion: networking.k8s.io/v1
         kind: Ingress
