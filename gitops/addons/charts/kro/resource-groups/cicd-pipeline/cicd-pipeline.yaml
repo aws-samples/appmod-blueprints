@@ -25,44 +25,20 @@ spec:
         hostname: string
         username: string
     status:
-      # Kubernetes native resources status
-      namespaceStatus: ${appnamespace.status}
-      serviceAccountStatus: ${serviceaccount.status}
-      rbacRoleStatus: ${role.status}
-      rbacRoleBindingStatus: ${rolebinding.status}
-      configMapStatus: ${configmap.status}
-      dockerSecretStatus: ${dockersecret.status}
-      ecrRefreshCronJobStatus: ${ecrrefreshcronjob.status}
-      initialEcrCredSetupStatus: ${initialecrcredsetup.status.conditions}
-      # AWS resources status via ACK
-      ecrMainRepoStatus: ${ecrmainrepo.status.conditions}
-      ecrCacheRepoStatus: ${ecrcacherepo.status.conditions}
-      iamPolicyStatus: ${iampolicy.status.conditions}
-      iamRoleStatus: ${iamrole.status.conditions}
-      podIdentityStatus: ${podidentityassoc.status.conditions}
-      # Workflow template status
-      provisioningWorkflowStatus: ${provisioningworkflow.status}
-      cacheWarmupWorkflowStatus: ${cachewarmupworkflow.status}
-      cicdWorkflowStatus: ${cicdworkflow.status}
-      cacheDockerfileStatus: ${cachedockerfile.status}
-      setupWorkflowStatus: ${setupworkflow.status}
-
-      # Argo Events status
-      eventSourceStatus: ${eventsource.status}
-      sensorStatus: ${sensor.status}
-      webhookServiceStatus: ${webhookservice.status}
-      webhookIngressStatus: ${webhookingress.status}
-      # Overall readiness indicator
-      kubernetesResourcesReady: ${appnamespace.status.phase == "Active" && serviceaccount.status && role.status && rolebinding.status && configmap.status && cachedockerfile.status && dockersecret.status && ecrrefreshcronjob.status && initialecrcredsetup.status.conditions.exists(x, x.type == 'Complete' && x.status == "True")}
-      awsResourcesReady: ${ecrmainrepo.status.conditions[0].status == "True" && ecrcacherepo.status.conditions[0].status == "True" && iampolicy.status.conditions[0].status == "True" && iamrole.status.conditions[0].status == "True" && podidentityassoc.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
-      workflowsReady: ${provisioningworkflow.status && cachewarmupworkflow.status && cicdworkflow.status}
-      setupCompleted: ${setupworkflow.status}
-      webhookIntegrationReady: ${eventsource.status && sensor.status && webhookservice.status && webhookingress.status}
+      # ECR Repository information
+      ecrMainRepositoryURI: ${ecrmainrepo.status.repositoryURI}
+      ecrCacheRepositoryURI: ${ecrcacherepo.status.repositoryURI}
+      # IAM Role information
+      iamRoleARN: ${iamrole.status.ackResourceMetadata.arn}
+      # Service Account information
+      serviceAccountName: ${serviceaccount.metadata.name}
+      # Namespace information
+      namespace: ${appnamespace.metadata.name}
   resources:
     # Namespace creation - must be first
     - id: appnamespace
       readyWhen:
-        - ${appnamespace.status.phase == "Active"}
+        - ${appnamespace.metadata.name != ""}
       template:
         apiVersion: v1
         kind: Namespace
@@ -274,8 +250,7 @@ spec:
     # Service Account - minimal required permissions for CI/CD operations
     - id: serviceaccount
       readyWhen:
-        - ${serviceaccount.status}
-        - ${appnamespace.status.phase == "Active"}
+        - ${serviceaccount.metadata.name != ""}
       template:
         apiVersion: v1
         kind: ServiceAccount
@@ -299,7 +274,7 @@ spec:
     # RBAC Role for CI/CD operations - minimal required permissions
     - id: role
       readyWhen:
-        - ${role.status}
+        - ${role.metadata.name != ""}
       template:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
@@ -361,9 +336,7 @@ spec:
     # RBAC Role Binding - follows principle of least privilege
     - id: rolebinding
       readyWhen:
-        - ${rolebinding.status}
-        - ${role.status}
-        - ${serviceaccount.status}
+        - ${rolebinding.metadata.name != ""}
       template:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
@@ -385,7 +358,7 @@ spec:
     # ConfigMap for ECR repository information and CI/CD configuration
     - id: configmap
       readyWhen:
-        - ${configmap.status}
+        - ${configmap.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
         - ${ecrmainrepo.status.conditions[0].status == "True"}
         - ${ecrcacherepo.status.conditions[0].status == "True"}
@@ -403,8 +376,8 @@ spec:
           # ECR repository information
           ECR_MAIN_REPOSITORY: ${ecrmainrepo.status.repositoryURI}
           ECR_CACHE_REPOSITORY: ${ecrcacherepo.status.repositoryURI}
-          ECR_MAIN_REPOSITORY_NAME: ${ecrmainrepo.status.repositoryName}
-          ECR_CACHE_REPOSITORY_NAME: ${ecrcacherepo.status.repositoryName}
+          ECR_MAIN_REPOSITORY_NAME: ${ecrmainrepo.spec.name}
+          ECR_CACHE_REPOSITORY_NAME: ${ecrcacherepo.spec.name}
           # AWS configuration
           AWS_REGION: ${schema.spec.aws.region}
           AWS_ACCOUNT_ID: ${ecrmainrepo.status.registryId}
@@ -433,7 +406,7 @@ spec:
     # Docker registry secret for ECR authentication - properly scoped to namespace
     - id: dockersecret
       readyWhen:
-        - ${dockersecret.status}
+        - ${dockersecret.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
         - ${ecrmainrepo.status.conditions[0].status == "True"}
         - ${ecrcacherepo.status.conditions[0].status == "True"}
@@ -467,10 +440,10 @@ spec:
     # CronJob for ECR credential refresh - ensures Docker registry secrets stay current
     - id: ecrrefreshcronjob
       readyWhen:
-        - ${ecrrefreshcronjob.status}
+        - ${ecrrefreshcronjob.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.status}
-        - ${dockersecret.status}
+        - ${serviceaccount.metadata.name != ""}
+        - ${dockersecret.metadata.name != ""}
       template:
         apiVersion: batch/v1
         kind: CronJob
@@ -559,10 +532,10 @@ spec:
     # Argo WorkflowTemplate for provisioning operations
     - id: provisioningworkflow
       readyWhen:
-        - ${provisioningworkflow.status}
+        - ${provisioningworkflow.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.status}
-        - ${configmap.status}
+        - ${serviceaccount.metadata.name != ""}
+        - ${configmap.metadata.name != ""}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: WorkflowTemplate
@@ -607,14 +580,14 @@ spec:
                     echo "Validating AWS resources for {{workflow.parameters.application-name}}"
 
                     # Validate ECR repositories exist and are accessible
-                    aws ecr describe-repositories --repository-names ${ecrmainrepo.status.repositoryName} --region {{workflow.parameters.aws-region}}
-                    aws ecr describe-repositories --repository-names ${ecrcacherepo.status.repositoryName} --region {{workflow.parameters.aws-region}}
+                    aws ecr describe-repositories --repository-names ${ecrmainrepo.spec.name} --region {{workflow.parameters.aws-region}}
+                    aws ecr describe-repositories --repository-names ${ecrcacherepo.spec.name} --region {{workflow.parameters.aws-region}}
 
                     # Test ECR authentication
                     aws ecr get-login-password --region {{workflow.parameters.aws-region}} > /dev/null
 
                     # Validate IAM role exists
-                    aws iam get-role --role-name ${iamrole.status.ackResourceMetadata.name}
+                    aws iam get-role --role-name ${iamrole.spec.name}
 
                     echo "All AWS resources validated successfully"
                 env:
@@ -794,11 +767,11 @@ spec:
     # Argo WorkflowTemplate for cache warmup operations
     - id: cachewarmupworkflow
       readyWhen:
-        - ${cachewarmupworkflow.status}
+        - ${cachewarmupworkflow.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.status}
-        - ${configmap.status}
-        - ${dockersecret.status}
+        - ${serviceaccount.metadata.name != ""}
+        - ${configmap.metadata.name != ""}
+        - ${dockersecret.metadata.name != ""}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: WorkflowTemplate
@@ -867,11 +840,11 @@ spec:
     # Argo WorkflowTemplate for CI/CD operations
     - id: cicdworkflow
       readyWhen:
-        - ${cicdworkflow.status}
+        - ${cicdworkflow.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.status}
-        - ${configmap.status}
-        - ${dockersecret.status}
+        - ${serviceaccount.metadata.name != ""}
+        - ${configmap.metadata.name != ""}
+        - ${dockersecret.metadata.name != ""}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: WorkflowTemplate
@@ -1063,7 +1036,7 @@ spec:
     # ConfigMap for cache warmup Dockerfiles
     - id: cachedockerfile
       readyWhen:
-        - ${cachedockerfile.status}
+        - ${cachedockerfile.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
       template:
         apiVersion: v1
@@ -1202,12 +1175,12 @@ spec:
     # Setup Workflow for initial configuration
     - id: setupworkflow
       readyWhen:
-        - ${setupworkflow.status}
+        - ${setupworkflow.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
-        - ${serviceaccount.status}
-        - ${configmap.status}
-        - ${dockersecret.status}
-        - ${provisioningworkflow.status}
+        - ${serviceaccount.metadata.name != ""}
+        - ${configmap.metadata.name != ""}
+        - ${dockersecret.metadata.name != ""}
+        - ${provisioningworkflow.metadata.name != ""}
         - ${initialecrcredsetup.status.conditions.exists(x, x.type == 'Complete' && x.status == "True")}
       template:
         apiVersion: argoproj.io/v1alpha1
@@ -1232,7 +1205,7 @@ spec:
     # Argo Events EventSource for GitLab webhooks
     - id: eventsource
       readyWhen:
-        - ${eventsource.status}
+        - ${eventsource.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
       template:
         apiVersion: argoproj.io/v1alpha1
@@ -1259,11 +1232,11 @@ spec:
     # Argo Events Sensor for triggering CI/CD workflows
     - id: sensor
       readyWhen:
-        - ${sensor.status}
+        - ${sensor.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
-        - ${eventsource.status}
-        - ${serviceaccount.status}
-        - ${cicdworkflow.status}
+        - ${eventsource.metadata.name != ""}
+        - ${serviceaccount.metadata.name != ""}
+        - ${cicdworkflow.metadata.name != ""}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Sensor
@@ -1345,9 +1318,9 @@ spec:
     # Service for exposing the EventSource webhook endpoint
     - id: webhookservice
       readyWhen:
-        - ${webhookservice.status}
+        - ${webhookservice.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
-        - ${eventsource.status}
+        - ${eventsource.metadata.name != ""}
       template:
         apiVersion: v1
         kind: Service
@@ -1371,9 +1344,9 @@ spec:
     # Ingress for external webhook access
     - id: webhookingress
       readyWhen:
-        - ${webhookingress.status}
+        - ${webhookingress.metadata.name != ""}
         - ${appnamespace.status.phase == "Active"}
-        - ${webhookservice.status}
+        - ${webhookservice.metadata.name != ""}
       template:
         apiVersion: networking.k8s.io/v1
         kind: Ingress
