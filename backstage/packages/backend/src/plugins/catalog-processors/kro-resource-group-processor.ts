@@ -6,7 +6,7 @@ import {
 import { LocationSpec } from '@backstage/plugin-catalog-common';
 import { Entity } from '@backstage/catalog-model';
 import { Config } from '@backstage/config';
-import { Logger } from 'winston';
+import { LoggerService } from '@backstage/backend-plugin-api';
 
 /**
  * Catalog processor for Kro ResourceGroup entities
@@ -16,7 +16,7 @@ import { Logger } from 'winston';
 export class KroResourceGroupProcessor implements CatalogProcessor {
   constructor(
     private readonly config: Config,
-    private readonly logger: Logger,
+    private readonly logger: LoggerService,
   ) { }
 
   getProcessorName(): string {
@@ -33,7 +33,7 @@ export class KroResourceGroupProcessor implements CatalogProcessor {
 
   async preProcessEntity(
     entity: Entity,
-    location: LocationSpec,
+    _location: LocationSpec,
     emit: CatalogProcessorEmit,
   ): Promise<Entity> {
     // Only process Kro ResourceGroup entities
@@ -164,7 +164,7 @@ export class KroResourceGroupProcessor implements CatalogProcessor {
               target: {
                 kind: 'System',
                 namespace: entity.metadata.namespace || 'default',
-                name: entity.spec.system,
+                name: String(entity.spec?.system),
               },
               type: 'partOf',
             }),
