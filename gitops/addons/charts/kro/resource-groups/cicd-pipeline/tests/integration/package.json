@@ -6,7 +6,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "vitest run --config vitest.integration.config.js"
+    "test:e2e": "vitest run --config vitest.integration.config.js",
+    "test:workflow": "vitest run workflow-integration.test.js",
+    "test:workflow:watch": "vitest workflow-integration.test.js"
   },
   "devDependencies": {
     "vitest": "^1.0.0",
