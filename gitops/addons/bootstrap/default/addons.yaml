@@ -940,7 +940,7 @@ crossplane-aws:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-  ignoreDifferences:
+
 grafana:
   enabled: false
   annotationsAppSet:

@@ -1,5 +1,6 @@
 import { createBackend } from '@backstage/backend-defaults';
 import { authModuleKeycloakOIDCProvider } from './plugins/auth';
+import { kroBackendModule } from './plugins/kro';
 
 const backend = createBackend();
 
@@ -60,5 +61,8 @@ backend.add(import('@terasky/backstage-plugin-kro-resources-backend'));
 
 // Internal Developer Platform custom plugins
 backend.add(authModuleKeycloakOIDCProvider);
+
+// Enhanced Kro plugin configuration with error handling
+backend.add(kroBackendModule);
 
 backend.start();
