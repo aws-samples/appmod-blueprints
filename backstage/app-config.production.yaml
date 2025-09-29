@@ -1,4 +1,3 @@
-# Required for newer Backstage versions - must be at root level
 enablePermissions: true
 
 app:

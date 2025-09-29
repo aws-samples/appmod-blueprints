@@ -1,1 +1,2 @@
 # Backstage override configuration for your local development environment
+enablePermissions: true
