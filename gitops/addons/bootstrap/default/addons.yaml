@@ -917,7 +917,7 @@ crossplane-aws:
         values: ['true']
   valuesObject:
     global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'ta.annotations.resource_prefix}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
