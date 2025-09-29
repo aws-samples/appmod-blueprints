@@ -74,7 +74,31 @@ sleep 10
 # Delete the test namespace (this should cascade delete most resources)
 echo -e "${BLUE}[INFO]${NC} Deleting test namespace..."
 if kubectl get namespace "$TEST_NAMESPACE" >/dev/null 2>&1; then
-    kubectl delete namespace "$TEST_NAMESPACE" --timeout=120s
+    kubectl delete namespace "$TEST_NAMESPACE" --timeout=30s &
+    NAMESPACE_PID=$!
+    
+    # Wait a bit and check if namespace deletion is stuck
+    sleep 15
+    if kill -0 $NAMESPACE_PID 2>/dev/null; then
+        echo -e "${YELLOW}[WARNING]${NC} Namespace deletion taking longer, checking for stuck resources..."
+        
+        # Check for ECR repositories with finalizers
+        if kubectl get repository -n "$TEST_NAMESPACE" 2>/dev/null | grep -q "test-cicd-pipeline"; then
+            echo -e "${YELLOW}[WARNING]${NC} Found ECR repositories with finalizers, removing them..."
+            kubectl get repository -n "$TEST_NAMESPACE" -o name | xargs -I {} kubectl patch {} -n "$TEST_NAMESPACE" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+        fi
+        
+        # Check for other ACK resources with finalizers
+        for resource_type in policy.iam.services.k8s.aws role.iam.services.k8s.aws podidentityassociation.eks.services.k8s.aws; do
+            if kubectl get "$resource_type" -n "$TEST_NAMESPACE" 2>/dev/null | grep -q "test-cicd-pipeline"; then
+                echo -e "${YELLOW}[WARNING]${NC} Found $resource_type with finalizers, removing them..."
+                kubectl get "$resource_type" -n "$TEST_NAMESPACE" -o name | xargs -I {} kubectl patch {} -n "$TEST_NAMESPACE" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+            fi
+        done
+    fi
+    
+    # Wait for the namespace deletion to complete
+    wait $NAMESPACE_PID 2>/dev/null || true
     echo -e "${GREEN}[SUCCESS]${NC} Test namespace deleted"
 else
     echo -e "${YELLOW}[INFO]${NC} Test namespace not found"

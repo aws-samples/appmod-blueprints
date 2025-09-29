@@ -1,9 +1,9 @@
 apiVersion: crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
-  name: podidentities.aws.modern-engineering.com
+  name: podidentities.aws.peeks-hub-cluster.com
 spec:
-  group: aws.modern-engineering.com
+  group: aws.peeks-hub-cluster.com
   names:
     kind: CICDPodIdentity 
     plural: cicdpodidentities 
@@ -54,7 +54,7 @@ spec:
               namespace: ${{values.namespace}}
             spec:
               forProvider:
-                clusterName: "modern-engineering"
+                clusterName: "peeks-hub-cluster"
                 namespace: "${{values.namespace}}"
                 region: "${{values.aws_region}}"
                 roleArnRef:
