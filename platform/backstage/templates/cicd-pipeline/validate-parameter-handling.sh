@@ -89,8 +89,8 @@ echo "✓ aws_region default value: $AWS_REGION_DEFAULT"
 
 # Check cluster_name default
 CLUSTER_DEFAULT=$(yq '.spec.parameters[1].properties.cluster_name.default' "$TEMPLATE_FILE")
-if [ "$CLUSTER_DEFAULT" != "modern-engineering" ]; then
-    echo "ERROR: cluster_name default should be 'modern-engineering', found: $CLUSTER_DEFAULT"
+if [ "$CLUSTER_DEFAULT" != "peeks-hub-cluster" ]; then
+    echo "ERROR: cluster_name default should be 'peeks-hub-cluster', found: $CLUSTER_DEFAULT"
     exit 1
 fi
 

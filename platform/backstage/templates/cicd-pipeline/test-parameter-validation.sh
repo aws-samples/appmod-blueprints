@@ -97,7 +97,7 @@ echo ""
 echo "Testing cluster_name validation pattern: $CLUSTER_PATTERN"
 
 # Valid cluster name examples
-valid_cluster_names=("a" "A" "test" "Test" "my-cluster" "Cluster-1" "EKS-Cluster" "modern-engineering")
+valid_cluster_names=("a" "A" "test" "Test" "my-cluster" "Cluster-1" "EKS-Cluster" "peeks-hub-cluster")
 for name in "${valid_cluster_names[@]}"; do
     if [[ $name =~ $CLUSTER_PATTERN ]]; then
         echo "✓ Valid cluster_name: '$name'"

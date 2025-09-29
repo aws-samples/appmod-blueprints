@@ -45,7 +45,7 @@ spec:
           title: EKS Cluster Name
           description: Name of the EKS cluster where the pipeline will run
           type: string
-          default: modern-engineering
+          default: peeks-hub-cluster
           pattern: '^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$'
           minLength: 1
           maxLength: 100

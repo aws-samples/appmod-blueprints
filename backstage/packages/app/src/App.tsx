@@ -20,8 +20,8 @@ import {
 import { TechDocsAddons } from '@backstage/plugin-techdocs-react';
 import { ReportIssue } from '@backstage/plugin-techdocs-module-addons-contrib';
 import { UserSettingsPage } from '@backstage/plugin-user-settings';
-import {apis, keycloakOIDCAuthApiRef} from './apis';
-import {configApiRef, useApi} from "@backstage/core-plugin-api";
+import { apis, keycloakOIDCAuthApiRef } from './apis';
+import { configApiRef, useApi } from "@backstage/core-plugin-api";
 import { entityPage } from './components/catalog/EntityPage';
 import { searchPage } from './components/search/SearchPage';
 import { Root } from './components/Root';
@@ -43,7 +43,8 @@ import { customTheme } from './customPlatform/customTheme';
 import { HomepageCompositionRoot } from '@backstage/plugin-home';
 import { CustomHomepage } from './customPlatform/CustomHomepage';
 import { TechRadarPage } from '@backstage-community/plugin-tech-radar';
-import { KroPage, kroPlugin } from '@terasky/backstage-plugin-kro-resources-frontend';
+// Temporarily commented out until frontend plugin is properly configured
+// import { kroResourcesPlugin, KroResourceTable } from '@terasky/backstage-plugin-kro-resources-frontend';
 
 const app = createApp({
   apis,
@@ -92,9 +93,10 @@ const app = createApp({
     bind(orgPlugin.externalRoutes, {
       catalogIndex: catalogPlugin.routes.catalogIndex,
     });
-    bind(kroPlugin.externalRoutes, {
-      catalogIndex: catalogPlugin.routes.catalogIndex,
-    });
+    // Temporarily commented out until frontend plugin is properly configured
+    // bind(kroResourcesPlugin.externalRoutes, {
+    //   catalogIndex: catalogPlugin.routes.catalogIndex,
+    // });
   },
   components: {
     SignInPage: props => {
@@ -160,7 +162,8 @@ const routes = (
       path="/tech-radar"
       element={<TechRadarPage width={1500} height={800} />}
     />
-    <Route path="/kro" element={<KroPage />} />
+    {/* Temporarily commented out until frontend plugin is properly configured */}
+    {/* <Route path="/kro" element={<KroResourceTable />} /> */}
   </FlatRoutes>
 );
 

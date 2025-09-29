@@ -14,6 +14,50 @@ TEST_NAMESPACE="test-cicd-pipeline"
 
 echo -e "${BLUE}[INFO]${NC} Cleaning up Kro CI/CD Pipeline test resources"
 
+# Function to delete ECR images
+delete_ecr_images() {
+    local repo_name="$1"
+    echo -e "${BLUE}[INFO]${NC} Checking for images in ECR repository: $repo_name"
+    
+    # List images in the repository
+    local images=$(aws ecr list-images --repository-name "$repo_name" --region us-west-2 --query 'imageIds[*]' --output json 2>/dev/null || echo "[]")
+    
+    if [ "$images" != "[]" ] && [ "$images" != "" ]; then
+        echo -e "${YELLOW}[WARNING]${NC} Found images in repository $repo_name, deleting them..."
+        aws ecr batch-delete-image --repository-name "$repo_name" --region us-west-2 --image-ids "$images" >/dev/null 2>&1 || true
+        echo -e "${GREEN}[SUCCESS]${NC} Images deleted from repository $repo_name"
+    else
+        echo -e "${BLUE}[INFO]${NC} No images found in repository $repo_name"
+    fi
+}
+
+# Clean up ECR images first to prevent finalizer issues
+echo -e "${BLUE}[INFO]${NC} Cleaning up ECR images to prevent finalizer issues..."
+
+# Get ECR repository names from the CICDPipeline status
+if kubectl get cicdpipeline test-cicd-pipeline -n default >/dev/null 2>&1; then
+    echo -e "${BLUE}[INFO]${NC} Getting ECR repository information from CICDPipeline..."
+    
+    # Extract repository names from the status
+    main_repo_uri=$(kubectl get cicdpipeline test-cicd-pipeline -n default -o jsonpath='{.status.ecrMainRepositoryURI}' 2>/dev/null || echo "")
+    cache_repo_uri=$(kubectl get cicdpipeline test-cicd-pipeline -n default -o jsonpath='{.status.ecrCacheRepositoryURI}' 2>/dev/null || echo "")
+    
+    if [ -n "$main_repo_uri" ]; then
+        main_repo_name=$(echo "$main_repo_uri" | cut -d'/' -f2-)
+        delete_ecr_images "$main_repo_name"
+    fi
+    
+    if [ -n "$cache_repo_uri" ]; then
+        cache_repo_name=$(echo "$cache_repo_uri" | cut -d'/' -f2-)
+        delete_ecr_images "$cache_repo_name"
+    fi
+else
+    # Fallback: try common repository names
+    echo -e "${YELLOW}[WARNING]${NC} CICDPipeline not found, trying common repository names..."
+    delete_ecr_images "peeks/test-app" || true
+    delete_ecr_images "peeks/test-app/cache" || true
+fi
+
 # Delete the CICDPipeline instance
 echo -e "${BLUE}[INFO]${NC} Deleting CICDPipeline instance..."
 if kubectl get cicdpipeline test-cicd-pipeline -n default >/dev/null 2>&1; then
@@ -30,7 +74,7 @@ sleep 10
 # Delete the test namespace (this should cascade delete most resources)
 echo -e "${BLUE}[INFO]${NC} Deleting test namespace..."
 if kubectl get namespace "$TEST_NAMESPACE" >/dev/null 2>&1; then
-    kubectl delete namespace "$TEST_NAMESPACE" --timeout=60s
+    kubectl delete namespace "$TEST_NAMESPACE" --timeout=120s
     echo -e "${GREEN}[SUCCESS]${NC} Test namespace deleted"
 else
     echo -e "${YELLOW}[INFO]${NC} Test namespace not found"

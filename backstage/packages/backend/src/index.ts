@@ -1,6 +1,8 @@
 import { createBackend } from '@backstage/backend-defaults';
 import { authModuleKeycloakOIDCProvider } from './plugins/auth';
 import { kroBackendModule } from './plugins/kro';
+import { catalogKroModule } from './plugins/catalog-kro-module';
+import { kubernetesIngestorKroModule } from './plugins/kubernetes-ingestor-kro-module';
 
 const backend = createBackend();
 
@@ -64,5 +66,11 @@ backend.add(authModuleKeycloakOIDCProvider);
 
 // Enhanced Kro plugin configuration with error handling
 backend.add(kroBackendModule);
+
+// Kro catalog integration module
+backend.add(catalogKroModule);
+
+// Kubernetes Ingestor Kro integration module
+backend.add(kubernetesIngestorKroModule);
 
 backend.start();
