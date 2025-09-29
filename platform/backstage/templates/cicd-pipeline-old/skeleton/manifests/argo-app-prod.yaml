@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ${{values.appname}}-prod-cd
+  namespace: argocd
+  labels:
+    entity-id: ${{values.appname}}
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    namespace: ${{values.namespace}}
+    name: prod-cluster
+  source:
+    repoURL: https://${{values.hostname}}/${{values.gituser}}/${{values.appname}}
+    targetRevision: main
+    path: deployment/prod
+  syncPolicy:
+    automated:
+      prune: true
+    syncOptions:
+    - CreateNamespace=true
