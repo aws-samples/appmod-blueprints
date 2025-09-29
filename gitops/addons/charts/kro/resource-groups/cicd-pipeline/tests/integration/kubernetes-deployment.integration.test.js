@@ -48,7 +48,7 @@ spec:
     dockerfilePath: "."
     deploymentPath: "./deployment"
   ecr:
-    repositoryPrefix: "modengg"
+    repositoryPrefix: "peeks"
   gitlab:
     hostname: "gitlab.example.com"
     username: "testuser"

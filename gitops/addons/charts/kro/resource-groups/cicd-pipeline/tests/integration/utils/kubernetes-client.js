@@ -217,8 +217,8 @@ export class KubernetesTestClient {
           name,
           namespace,
           annotations: {
-            'ecr.aws/main-repository': '123456789012.dkr.ecr.us-west-2.amazonaws.com/modengg/test-app',
-            'ecr.aws/cache-repository': '123456789012.dkr.ecr.us-west-2.amazonaws.com/modengg/test-app/cache',
+            'ecr.aws/main-repository': '123456789012.dkr.ecr.us-west-2.amazonaws.com/peeks/test-app',
+            'ecr.aws/cache-repository': '123456789012.dkr.ecr.us-west-2.amazonaws.com/peeks/test-app/cache',
             'ecr.aws/registry-id': '123456789012',
             'ecr.aws/region': 'us-west-2',
             'cicd.kro.run/credential-type': 'ecr-docker-config',
@@ -248,10 +248,10 @@ export class KubernetesTestClient {
       return {
         metadata: { name, namespace },
         data: {
-          ECR_MAIN_REPOSITORY: '123456789012.dkr.ecr.us-west-2.amazonaws.com/modengg/test-app',
-          ECR_CACHE_REPOSITORY: '123456789012.dkr.ecr.us-west-2.amazonaws.com/modengg/test-app/cache',
-          ECR_MAIN_REPOSITORY_NAME: 'modengg/test-app',
-          ECR_CACHE_REPOSITORY_NAME: 'modengg/test-app/cache',
+          ECR_MAIN_REPOSITORY: '123456789012.dkr.ecr.us-west-2.amazonaws.com/peeks/test-app',
+          ECR_CACHE_REPOSITORY: '123456789012.dkr.ecr.us-west-2.amazonaws.com/peeks/test-app/cache',
+          ECR_MAIN_REPOSITORY_NAME: 'peeks/test-app',
+          ECR_CACHE_REPOSITORY_NAME: 'peeks/test-app/cache',
           AWS_REGION: 'us-west-2',
           AWS_ACCOUNT_ID: '123456789012',
           APPLICATION_NAME: 'test-app',

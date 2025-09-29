@@ -150,7 +150,7 @@ spec:
               deploymentPath: ${{ parameters.deployment_path | default("./deployment") }}
             ecr:
               # Optional parameter with default handled by RGD schema
-              repositoryPrefix: "modengg"
+              repositoryPrefix: "peeks"
             gitlab:
               hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
               username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
@@ -170,7 +170,7 @@ spec:
           🌍 **AWS Configuration:**
           - Region: ${{ parameters.aws_region }}
           - EKS Cluster: ${{ parameters.cluster_name }}
-          - ECR Repository Prefix: modengg
+          - ECR Repository Prefix: peeks
           
           📦 **Application Settings:**
           - Application Name: ${{ parameters.appname }}
@@ -242,7 +242,7 @@ spec:
           - **Cache Warmup**: ${{ parameters.appname }}-cicd-cache-warmup-workflow
           
           ### AWS Resources
-          - **ECR Repositories**: modengg/${{ parameters.appname }} and modengg/${{ parameters.appname }}/cache
+          - **ECR Repositories**: peeks/${{ parameters.appname }} and peeks/${{ parameters.appname }}/cache
           - **IAM Role**: ${{ parameters.appname }}-cicd-role
           - **Pod Identity**: Automatically configured for secure AWS access
           
@@ -283,10 +283,10 @@ spec:
         url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd
         icon: web
       - title: ECR Main Repository
-        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/modengg%2F${{ parameters.appname }}?region=${{ parameters.aws_region }}
+        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks%2F${{ parameters.appname }}?region=${{ parameters.aws_region }}
         icon: cloud
       - title: ECR Cache Repository
-        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/modengg%2F${{ parameters.appname }}%2Fcache?region=${{ parameters.aws_region }}
+        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks%2F${{ parameters.appname }}%2Fcache?region=${{ parameters.aws_region }}
         icon: cloud
       - title: IAM Role
         url: https://console.aws.amazon.com/iam/home?region=${{ parameters.aws_region }}#/roles/details/${{ parameters.appname }}-cicd-role
@@ -318,8 +318,8 @@ spec:
           - **Resource Group**: CICDPipeline (Kro RGD)
           
           ## ☁️ **AWS Resources (via ACK Controllers)**
-          - **ECR Main Repository**: `modengg/${{ parameters.appname }}`
-          - **ECR Cache Repository**: `modengg/${{ parameters.appname }}/cache`
+          - **ECR Main Repository**: `peeks/${{ parameters.appname }}`
+          - **ECR Cache Repository**: `peeks/${{ parameters.appname }}/cache`
           - **IAM Role**: `${{ parameters.appname }}-cicd-role`
           - **IAM Policy**: `${{ parameters.appname }}-cicd-ecr-policy`
           - **Pod Identity Association**: Links Kubernetes SA to AWS IAM

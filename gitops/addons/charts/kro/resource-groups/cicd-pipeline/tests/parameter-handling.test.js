@@ -18,7 +18,7 @@ describe('Parameter Handling', () => {
       // Check default value definitions in schema
       expect(schemaSpec.application.dockerfilePath).toBe('string | default="."');
       expect(schemaSpec.application.deploymentPath).toBe('string | default="./deployment"');
-      expect(schemaSpec.ecr.repositoryPrefix).toBe('string | default="modengg"');
+      expect(schemaSpec.ecr.repositoryPrefix).toBe('string | default="peeks"');
 
       // Test with minimal schema instance (missing optional fields)
       const minimalSchema = createMockSchemaInstance({
@@ -52,12 +52,12 @@ describe('Parameter Handling', () => {
         minimalSchema.spec.ecr = {};
       }
       if (!minimalSchema.spec.ecr.repositoryPrefix) {
-        minimalSchema.spec.ecr.repositoryPrefix = 'modengg';
+        minimalSchema.spec.ecr.repositoryPrefix = 'peeks';
       }
 
       expect(minimalSchema.spec.application.dockerfilePath).toBe('.');
       expect(minimalSchema.spec.application.deploymentPath).toBe('./deployment');
-      expect(minimalSchema.spec.ecr.repositoryPrefix).toBe('modengg');
+      expect(minimalSchema.spec.ecr.repositoryPrefix).toBe('peeks');
     });
 
     it('should preserve explicitly provided values over defaults', () => {
@@ -288,7 +288,7 @@ describe('Parameter Handling', () => {
 
     it('should validate ECR repository prefix format', () => {
       const validPrefixes = [
-        'modengg',
+        'peeks',
         'myorg',
         'company-name',
         'org123',

@@ -29,7 +29,7 @@ export function createMockSchemaInstance(overrides = {}) {
         deploymentPath: './deployment'
       },
       ecr: {
-        repositoryPrefix: 'modengg'
+        repositoryPrefix: 'peeks'
       },
       gitlab: {
         hostname: 'gitlab.example.com',
@@ -99,22 +99,22 @@ export function createMockResourceStatus(resourceId, ready = true) {
     ecrmainrepo: {
       status: {
         conditions: ready ? [{ status: 'True' }] : [{ status: 'False' }],
-        repositoryURI: '123456789012.dkr.ecr.us-west-2.amazonaws.com/modengg/test-app',
-        repositoryName: 'modengg/test-app',
+        repositoryURI: '123456789012.dkr.ecr.us-west-2.amazonaws.com/peeks/test-app',
+        repositoryName: 'peeks/test-app',
         registryId: '123456789012',
         ackResourceMetadata: {
-          arn: 'arn:aws:ecr:us-west-2:123456789012:repository/modengg/test-app'
+          arn: 'arn:aws:ecr:us-west-2:123456789012:repository/peeks/test-app'
         }
       }
     },
     ecrcacherepo: {
       status: {
         conditions: ready ? [{ status: 'True' }] : [{ status: 'False' }],
-        repositoryURI: '123456789012.dkr.ecr.us-west-2.amazonaws.com/modengg/test-app/cache',
-        repositoryName: 'modengg/test-app/cache',
+        repositoryURI: '123456789012.dkr.ecr.us-west-2.amazonaws.com/peeks/test-app/cache',
+        repositoryName: 'peeks/test-app/cache',
         registryId: '123456789012',
         ackResourceMetadata: {
-          arn: 'arn:aws:ecr:us-west-2:123456789012:repository/modengg/test-app/cache'
+          arn: 'arn:aws:ecr:us-west-2:123456789012:repository/peeks/test-app/cache'
         }
       }
     },
