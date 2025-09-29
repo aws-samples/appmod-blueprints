@@ -917,7 +917,7 @@ crossplane-aws:
         values: ['true']
   valuesObject:
     global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'ta.annotations.resource_prefix}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
@@ -1060,7 +1060,7 @@ flux:
 backstage:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '7' # Needs to be after all addons
+    argocd.argoproj.io/sync-wave: '10' # Needs to be after Keycloak, External Secrets, and Kro
   namespace: backstage
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/backstage'
@@ -1091,3 +1091,26 @@ backstage:
       jsonPointers:
         - /metadata/resourceVersion
         - /metadata/managedFields
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /metadata/managedFields
+        - /status
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /metadata/managedFields
+        - /status
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+      jsonPointers:
+        - /rules
+        - /metadata/labels
+        - /metadata/annotations
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+      jsonPointers:
+        - /subjects
+        - /roleRef
+        - /metadata/labels
+        - /metadata/annotations
