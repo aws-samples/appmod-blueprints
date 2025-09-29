@@ -49,7 +49,7 @@ describe('RGD Schema Validation', () => {
 
       // ECR configuration
       expect(schemaSpec.ecr).toBeDefined();
-      expect(schemaSpec.ecr.repositoryPrefix).toBe('string | default="modengg"');
+      expect(schemaSpec.ecr.repositoryPrefix).toBe('string | default="peeks"');
 
       // GitLab configuration
       expect(schemaSpec.gitlab).toBeDefined();
@@ -119,7 +119,7 @@ describe('RGD Schema Validation', () => {
       // These should get default values when processed by Kro
       expect(instanceWithDefaults.spec.application.dockerfilePath).toBe('.');
       expect(instanceWithDefaults.spec.application.deploymentPath).toBe('./deployment');
-      expect(instanceWithDefaults.spec.ecr.repositoryPrefix).toBe('modengg');
+      expect(instanceWithDefaults.spec.ecr.repositoryPrefix).toBe('peeks');
     });
 
     it('should validate AWS region format', () => {
@@ -198,7 +198,7 @@ describe('RGD Schema Validation', () => {
     });
 
     it('should validate ECR repository prefix format', () => {
-      const validPrefixes = ['modengg', 'myorg', 'company-name', 'org123'];
+      const validPrefixes = ['peeks', 'myorg', 'company-name', 'org123'];
       const invalidPrefixes = ['', 'Org-With-Caps', 'org_with_underscores', 'org with spaces'];
 
       validPrefixes.forEach(prefix => {

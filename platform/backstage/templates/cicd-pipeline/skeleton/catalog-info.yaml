@@ -18,8 +18,8 @@ metadata:
     kro.run/instance-name: ${{values.appname}}-cicd-pipeline
     kro.run/instance-namespace: ${{values.namespace}}
     # AWS resource tracking
-    aws.amazon.com/ecr-main-repository: modengg/${{values.appname}}
-    aws.amazon.com/ecr-cache-repository: modengg/${{values.appname}}/cache
+    aws.amazon.com/ecr-main-repository: peeks/${{values.appname}}
+    aws.amazon.com/ecr-cache-repository: peeks/${{values.appname}}/cache
     aws.amazon.com/iam-role: ${{values.appname}}-cicd-role
     aws.amazon.com/iam-policy: ${{values.appname}}-cicd-ecr-policy
     aws.amazon.com/region: ${{values.aws_region}}
@@ -49,10 +49,10 @@ metadata:
     - url: https://${{values.hostname}}/argocd/applications/argocd/${{values.appname}}-cicd
       title: ArgoCD Application
       icon: argocd
-    - url: https://console.aws.amazon.com/ecr/repositories/private/{{values.aws_account_id}}/modengg%2F${{values.appname}}?region=${{values.aws_region}}
+    - url: https://console.aws.amazon.com/ecr/repositories/private/{{values.aws_account_id}}/peeks%2F${{values.appname}}?region=${{values.aws_region}}
       title: ECR Main Repository
       icon: aws
-    - url: https://console.aws.amazon.com/ecr/repositories/private/{{values.aws_account_id}}/modengg%2F${{values.appname}}%2Fcache?region=${{values.aws_region}}
+    - url: https://console.aws.amazon.com/ecr/repositories/private/{{values.aws_account_id}}/peeks%2F${{values.appname}}%2Fcache?region=${{values.aws_region}}
       title: ECR Cache Repository
       icon: aws
 spec:

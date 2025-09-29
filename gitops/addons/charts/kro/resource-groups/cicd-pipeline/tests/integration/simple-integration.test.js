@@ -113,7 +113,7 @@ spec:
     dockerfilePath: "."
     deploymentPath: "./deployment"
   ecr:
-    repositoryPrefix: "modengg"
+    repositoryPrefix: "peeks"
   gitlab:
     hostname: "gitlab.example.com"
     username: "testuser"
@@ -223,8 +223,8 @@ spec:
 
   describe('AWS Resource Validation', () => {
     it('should create ECR repositories through ACK controllers', async () => {
-      const mainRepoName = 'modengg/test-app';
-      const cacheRepoName = 'modengg/test-app/cache';
+      const mainRepoName = 'peeks/test-app';
+      const cacheRepoName = 'peeks/test-app/cache';
 
       const mainRepo = await awsClient.waitForECRRepository(mainRepoName, 30000);
       expect(mainRepo).toBeDefined();
@@ -283,8 +283,8 @@ spec:
       );
 
       // Both mock and real modes should have properly formatted ECR repository URIs
-      expect(configMap.data.ECR_MAIN_REPOSITORY).toMatch(/\.dkr\.ecr\..+\.amazonaws\.com\/modengg\/test-app$/);
-      expect(configMap.data.ECR_CACHE_REPOSITORY).toMatch(/\.dkr\.ecr\..+\.amazonaws\.com\/modengg\/test-app\/cache$/);
+      expect(configMap.data.ECR_MAIN_REPOSITORY).toMatch(/\.dkr\.ecr\..+\.amazonaws\.com\/peeks\/test-app$/);
+      expect(configMap.data.ECR_CACHE_REPOSITORY).toMatch(/\.dkr\.ecr\..+\.amazonaws\.com\/peeks\/test-app\/cache$/);
       expect(configMap.data.AWS_ACCOUNT_ID).toMatch(/^\d{12}$/);
       expect(configMap.data.APPLICATION_NAME).toBe('test-app');
       expect(configMap.data.AWS_REGION).toBe('us-west-2');

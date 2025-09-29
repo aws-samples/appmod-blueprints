@@ -1,3 +1,4 @@
+# kubectl get workflowtemplate,workflow,eventsource,sensor,ingress -n test-cicd-pipeline
 ---
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
@@ -15,12 +16,11 @@ spec:
       aws:
         region: string
         clusterName: string
+        resourcePrefix: string | default="peeks"
       application:
         name: string
         dockerfilePath: string | default="."
         deploymentPath: string | default="./deployment"
-      ecr:
-        repositoryPrefix: string | default="modengg"
       gitlab:
         hostname: string
         username: string
@@ -61,7 +61,7 @@ spec:
           namespace: ${schema.spec.namespace}
         spec:
           name: >-
-            ${schema.spec.ecr.repositoryPrefix}/${schema.spec.application.name}
+            ${schema.spec.aws.resourcePrefix}/${schema.spec.application.name}
           policy: |
             {
               "Version": "2012-10-17",
@@ -109,7 +109,7 @@ spec:
           namespace: ${schema.spec.namespace}
         spec:
           name: >-
-            ${schema.spec.ecr.repositoryPrefix}/${schema.spec.application.name}/cache
+            ${schema.spec.aws.resourcePrefix}/${schema.spec.application.name}/cache
           policy: |
             {
               "Version": "2012-10-17",
@@ -154,10 +154,10 @@ spec:
         apiVersion: iam.services.k8s.aws/v1alpha1
         kind: Policy
         metadata:
-          name: ${schema.spec.name}-ecr-policy
+          name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
           namespace: ${schema.spec.namespace}
         spec:
-          name: ${schema.spec.name}-ecr-policy
+          name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
           description: ECR access policy for CI/CD pipeline
           path: '/'
           policyDocument: |
@@ -199,10 +199,10 @@ spec:
         apiVersion: iam.services.k8s.aws/v1alpha1
         kind: Role
         metadata:
-          name: ${schema.spec.name}-role
+          name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
           namespace: ${schema.spec.namespace}
         spec:
-          name: ${schema.spec.name}-role
+          name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
           description: IAM role for CI/CD pipeline with EKS pod identity
           path: '/'
           policies:
@@ -311,7 +311,7 @@ spec:
             verbs: ['get', 'list', 'update', 'patch']
           # Permissions for workflow execution
           - apiGroups: ['argoproj.io']
-            resources: ['workflows', 'workflowtemplates']
+            resources: ['workflows', 'workflowtemplates', 'workflowtaskresults']
             verbs: ['get', 'list', 'create', 'update', 'patch', 'delete']
           # Permissions for Argo Events integration
           - apiGroups: ['argoproj.io']
@@ -397,6 +397,34 @@ spec:
           DOCKER_CONFIG_SECRET_NAME: ${schema.spec.name}-docker-config
           ECR_CREDENTIAL_REFRESH_SCHEDULE: '0 */6 * * *'
           ECR_CREDENTIAL_TTL: '12h'
+
+    # ExternalSecret to pull GitLab credentials from AWS Secrets Manager
+    - id: gitlabexternalsecret
+      readyWhen:
+        - ${gitlabexternalsecret.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
+      template:
+        apiVersion: external-secrets.io/v1beta1
+        kind: ExternalSecret
+        metadata:
+          name: gitlab-credentials
+          namespace: ${schema.spec.namespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.application.name}
+            app.kubernetes.io/component: cicd-pipeline
+            app.kubernetes.io/managed-by: kro
+        spec:
+          refreshInterval: 1h
+          secretStoreRef:
+            name: aws-secrets-manager
+            kind: ClusterSecretStore
+          target:
+            name: gitlab-credentials
+            creationPolicy: Owner
+          data:
+            - secretKey: GITLAB_TOKEN
+              remoteRef:
+                key: ${schema.spec.aws.resourcePrefix}-gitlab-pat
+                property: token
 
     # Docker registry secret for ECR authentication - properly scoped to namespace
     - id: dockersecret
@@ -591,6 +619,11 @@ spec:
                   - |
                     echo "Setting up Docker registry secrets for ${schema.spec.application.name}"
 
+                    # Install jq and kubectl
+                    yum update -y && yum install -y jq
+                    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                    chmod +x kubectl && mv kubectl /usr/local/bin/
+
                     # Get ECR login token
                     ECR_TOKEN=$(aws ecr get-login-password --region {{workflow.parameters.aws-region}})
                     if [ $? -ne 0 ]; then
@@ -723,7 +756,7 @@ spec:
               container:
                 image: gcr.io/kaniko-project/executor:latest
                 args:
-                  - --dockerfile=/dev/null
+                  - --dockerfile=/tmp/Dockerfile
                   - --context=dir:///workspace/empty
                   - --destination=${ecrcacherepo.status.repositoryURI}:cache-base
                   - --cache=true
@@ -742,6 +775,8 @@ spec:
                     readOnly: true
                   - name: empty-context
                     mountPath: /workspace/empty
+                  - name: dockerfile
+                    mountPath: /tmp
               volumes:
                 - name: docker-config
                   secret:
@@ -750,6 +785,12 @@ spec:
                     defaultMode: 0644
                 - name: empty-context
                   emptyDir: {}
+                - name: dockerfile
+                  configMap:
+                    name: ${schema.spec.name}-cache-dockerfile
+                    items:
+                      - key: Dockerfile
+                        path: Dockerfile
 
     # Argo WorkflowTemplate for cache warmup operations
     - id: cachewarmupworkflow
@@ -1084,6 +1125,11 @@ spec:
                     - |
                       echo "Starting initial ECR credential setup for ${schema.spec.application.name}"
 
+                      # Install kubectl
+                      yum update -y && yum install -y jq
+                      curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                      chmod +x kubectl && mv kubectl /usr/local/bin/
+
                       # Wait for ECR repositories to be fully ready
                       echo "Waiting for ECR repositories to be ready..."
                       sleep 10
@@ -1151,7 +1197,7 @@ spec:
         apiVersion: argoproj.io/v1alpha1
         kind: Workflow
         metadata:
-          generateName: ${schema.spec.name}-setup-
+          name: ${schema.spec.name}-setup-workflow
           namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}

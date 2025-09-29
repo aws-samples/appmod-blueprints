@@ -32,7 +32,7 @@ describe('Resource Template Generation and Substitution', () => {
       expect(template.kind).toBe('Repository');
       expect(template.metadata.name).toBe('test-app-cicd-main-repo');
       expect(template.metadata.namespace).toBe('test-namespace');
-      expect(template.spec.name).toBe('modengg/test-app');
+      expect(template.spec.name).toBe('peeks/test-app');
 
       // Verify repository policy
       const policy = JSON.parse(template.spec.repositoryPolicyText);
@@ -58,7 +58,7 @@ describe('Resource Template Generation and Substitution', () => {
       expect(template.kind).toBe('Repository');
       expect(template.metadata.name).toBe('test-app-cicd-cache-repo');
       expect(template.metadata.namespace).toBe('test-namespace');
-      expect(template.spec.name).toBe('modengg/test-app/cache');
+      expect(template.spec.name).toBe('peeks/test-app/cache');
 
       // Verify cache-specific lifecycle policy
       const lifecyclePolicy = JSON.parse(template.spec.lifecyclePolicyText);
@@ -99,8 +99,8 @@ describe('Resource Template Generation and Substitution', () => {
       expect(repoStatement.Effect).toBe('Allow');
       expect(repoStatement.Action).toContain('ecr:BatchCheckLayerAvailability');
       expect(repoStatement.Action).toContain('ecr:PutImage');
-      expect(repoStatement.Resource).toContain('arn:aws:ecr:us-west-2:123456789012:repository/modengg/test-app');
-      expect(repoStatement.Resource).toContain('arn:aws:ecr:us-west-2:123456789012:repository/modengg/test-app/cache');
+      expect(repoStatement.Resource).toContain('arn:aws:ecr:us-west-2:123456789012:repository/peeks/test-app');
+      expect(repoStatement.Resource).toContain('arn:aws:ecr:us-west-2:123456789012:repository/peeks/test-app/cache');
     });
 
     it('should generate correct IAM role template', () => {
@@ -271,10 +271,10 @@ describe('Resource Template Generation and Substitution', () => {
       expect(template.metadata.namespace).toBe('test-namespace');
 
       // Verify data contains all required configuration
-      expect(template.data.ECR_MAIN_REPOSITORY).toBe('123456789012.dkr.ecr.us-west-2.amazonaws.com/modengg/test-app');
-      expect(template.data.ECR_CACHE_REPOSITORY).toBe('123456789012.dkr.ecr.us-west-2.amazonaws.com/modengg/test-app/cache');
-      expect(template.data.ECR_MAIN_REPOSITORY_NAME).toBe('modengg/test-app');
-      expect(template.data.ECR_CACHE_REPOSITORY_NAME).toBe('modengg/test-app/cache');
+      expect(template.data.ECR_MAIN_REPOSITORY).toBe('123456789012.dkr.ecr.us-west-2.amazonaws.com/peeks/test-app');
+      expect(template.data.ECR_CACHE_REPOSITORY).toBe('123456789012.dkr.ecr.us-west-2.amazonaws.com/peeks/test-app/cache');
+      expect(template.data.ECR_MAIN_REPOSITORY_NAME).toBe('peeks/test-app');
+      expect(template.data.ECR_CACHE_REPOSITORY_NAME).toBe('peeks/test-app/cache');
       expect(template.data.AWS_REGION).toBe('us-west-2');
       expect(template.data.AWS_ACCOUNT_ID).toBe('123456789012');
       expect(template.data.APPLICATION_NAME).toBe('test-app');

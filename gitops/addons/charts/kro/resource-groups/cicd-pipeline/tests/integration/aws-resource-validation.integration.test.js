@@ -48,7 +48,7 @@ spec:
     dockerfilePath: "."
     deploymentPath: "./deployment"
   ecr:
-    repositoryPrefix: "modengg"
+    repositoryPrefix: "peeks"
   gitlab:
     hostname: "gitlab.example.com"
     username: "testuser"
@@ -57,23 +57,23 @@ spec:
       await kubernetesClient.applyKroInstance(instanceYaml, testNamespace);
 
       // Wait for repositories to be created
-      const mainRepo = await awsClient.waitForECRRepository('modengg/test-aws-app', 180000);
-      const cacheRepo = await awsClient.waitForECRRepository('modengg/test-aws-app/cache', 180000);
+      const mainRepo = await awsClient.waitForECRRepository('peeks/test-aws-app', 180000);
+      const cacheRepo = await awsClient.waitForECRRepository('peeks/test-aws-app/cache', 180000);
 
-      expect(mainRepo.repositoryName).toBe('modengg/test-aws-app');
-      expect(cacheRepo.repositoryName).toBe('modengg/test-aws-app/cache');
+      expect(mainRepo.repositoryName).toBe('peeks/test-aws-app');
+      expect(cacheRepo.repositoryName).toBe('peeks/test-aws-app/cache');
 
       // Validate repository URIs follow AWS ECR format
-      expect(mainRepo.repositoryUri).toMatch(/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/modengg\/test-aws-app$/);
-      expect(cacheRepo.repositoryUri).toMatch(/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/modengg\/test-aws-app\/cache$/);
+      expect(mainRepo.repositoryUri).toMatch(/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/peeks\/test-aws-app$/);
+      expect(cacheRepo.repositoryUri).toMatch(/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/peeks\/test-aws-app\/cache$/);
     }, 200000);
 
     it('should validate ECR repository policies allow proper access', async () => {
-      const mainRepo = await awsClient.checkECRRepository('modengg/test-aws-app');
+      const mainRepo = await awsClient.checkECRRepository('peeks/test-aws-app');
       expect(mainRepo).toBeDefined();
 
       // Repository should exist and be accessible
-      expect(mainRepo.repositoryArn).toContain(':repository/modengg/test-aws-app');
+      expect(mainRepo.repositoryArn).toContain(':repository/peeks/test-aws-app');
       expect(mainRepo.registryId).toMatch(/^\d{12}$/);
     });
 
@@ -172,8 +172,8 @@ spec:
   describe('AWS Resource Status and Health', () => {
     it('should validate all AWS resources are in healthy state', async () => {
       // Check ECR repositories are accessible
-      const mainRepo = await awsClient.checkECRRepository('modengg/test-aws-app');
-      const cacheRepo = await awsClient.checkECRRepository('modengg/test-aws-app/cache');
+      const mainRepo = await awsClient.checkECRRepository('peeks/test-aws-app');
+      const cacheRepo = await awsClient.checkECRRepository('peeks/test-aws-app/cache');
 
       expect(mainRepo).toBeDefined();
       expect(cacheRepo).toBeDefined();
@@ -196,7 +196,7 @@ spec:
     });
 
     it('should validate AWS resource ARNs are properly formatted', async () => {
-      const mainRepo = await awsClient.checkECRRepository('modengg/test-aws-app');
+      const mainRepo = await awsClient.checkECRRepository('peeks/test-aws-app');
       const role = await awsClient.checkIAMRole(`${testInstanceName}-role`);
       const policy = await awsClient.checkIAMPolicy(`${testInstanceName}-ecr-policy`);
 
@@ -235,8 +235,8 @@ spec:
       );
 
       // ConfigMap should contain AWS resource information
-      expect(configMap.data.ECR_MAIN_REPOSITORY).toMatch(/\.dkr\.ecr\..+\.amazonaws\.com\/modengg\/test-aws-app$/);
-      expect(configMap.data.ECR_CACHE_REPOSITORY).toMatch(/\.dkr\.ecr\..+\.amazonaws\.com\/modengg\/test-aws-app\/cache$/);
+      expect(configMap.data.ECR_MAIN_REPOSITORY).toMatch(/\.dkr\.ecr\..+\.amazonaws\.com\/peeks\/test-aws-app$/);
+      expect(configMap.data.ECR_CACHE_REPOSITORY).toMatch(/\.dkr\.ecr\..+\.amazonaws\.com\/peeks\/test-aws-app\/cache$/);
       expect(configMap.data.AWS_ACCOUNT_ID).toMatch(/^\d{12}$/);
       expect(configMap.data.IAM_ROLE_ARN).toMatch(/^arn:aws:iam::\d{12}:role\/.+$/);
 

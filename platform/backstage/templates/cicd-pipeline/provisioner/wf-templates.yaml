@@ -75,17 +75,17 @@ spec:
       command: ["/bin/bash", "-c"]
       args:
       - |
-        output=$(aws ecr describe-repositories --repository-names "modengg/{{workflow.parameters.appname}}" --region "{{workflow.parameters.aws_region}}" 2>&1)
+        output=$(aws ecr describe-repositories --repository-names "peeks/{{workflow.parameters.appname}}" --region "{{workflow.parameters.aws_region}}" 2>&1)
         status=$?
         if [[ ! "${status}" -eq 0 ]]; then
-            output=$(aws ecr create-repository --repository-name "modengg/{{workflow.parameters.appname}}" --region "{{workflow.parameters.aws_region}}" 2>&1)
+            output=$(aws ecr create-repository --repository-name "peeks/{{workflow.parameters.appname}}" --region "{{workflow.parameters.aws_region}}" 2>&1)
         fi
-        output=$(aws ecr describe-repositories --repository-names "modengg/{{workflow.parameters.appname}}/cache" --region "{{workflow.parameters.aws_region}}" 2>&1)
+        output=$(aws ecr describe-repositories --repository-names "peeks/{{workflow.parameters.appname}}/cache" --region "{{workflow.parameters.aws_region}}" 2>&1)
         status=$?
         if [[ ! "${status}" -eq 0 ]]; then
-            output=$(aws ecr create-repository --repository-name "modengg/{{workflow.parameters.appname}}/cache" --region "{{workflow.parameters.aws_region}}" 2>&1)
+            output=$(aws ecr create-repository --repository-name "peeks/{{workflow.parameters.appname}}/cache" --region "{{workflow.parameters.aws_region}}" 2>&1)
         fi
-        aws ecr describe-repositories --repository-names "modengg/{{workflow.parameters.appname}}" --region "{{workflow.parameters.aws_region}}" --query "repositories[0].repositoryUri" --output text
+        aws ecr describe-repositories --repository-names "peeks/{{workflow.parameters.appname}}" --region "{{workflow.parameters.aws_region}}" --query "repositories[0].repositoryUri" --output text
 
   - name: create-ecr-configmap
     inputs:
