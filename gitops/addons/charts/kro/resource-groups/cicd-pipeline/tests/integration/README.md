@@ -18,6 +18,7 @@ The integration test suite validates the complete CI/CD pipeline provisioning wo
 1. **`pipeline-provisioning.integration.test.js`** - End-to-end pipeline provisioning tests
 2. **`aws-resource-validation.integration.test.js`** - AWS resource creation and validation tests
 3. **`kubernetes-deployment.integration.test.js`** - Kubernetes resource deployment and configuration tests
+4. **`workflow-integration.test.js`** - Argo Workflows integration and webhook triggering tests
 
 ### Utility Files
 
@@ -208,6 +209,9 @@ npx vitest run aws-resource-validation.integration.test.js --config vitest.integ
 
 # Kubernetes deployment tests
 npx vitest run kubernetes-deployment.integration.test.js --config vitest.integration.config.js
+
+# Workflow integration tests
+npx vitest run workflow-integration.test.js --config vitest.workflow.config.js
 ```
 
 ### Run with Coverage
