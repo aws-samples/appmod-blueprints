@@ -76,7 +76,7 @@ auth:
 
 scaffolder:
   # see https://backstage.io/docs/features/software-templates/configuration for software template options
-  defaultTimeout: 300000  # 5 minutes in milliseconds
+  defaultTimeout: 300000 # 5 minutes in milliseconds
   defaultCommitMessage: 'Initial commit from Backstage template'
 
 catalog:
@@ -128,6 +128,87 @@ catalog:
 
 kubernetes:
   # see https://backstage.io/docs/features/kubernetes/configuration for kubernetes configuration options
+  serviceLocatorMethod:
+    type: 'multiTenant'
+  clusterLocatorMethods:
+    - type: 'config'
+      clusters:
+        - url: ${K8S_CLUSTER_URL}
+          name: ${K8S_CLUSTER_NAME}
+          authProvider: 'serviceAccount'
+          serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+          # Additional configuration for Kro resources
+          customResources:
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'resourcegraphdefinitions'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'cicdpipelines'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'eksclusters'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'eksclusterwithvpcs'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'vpcs'
+
+kubernetesIngestor:
+  refreshInterval: 300 # 5 minutes in seconds
+  resources:
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'ResourceGraphDefinition'
+    # Kro instances (these will be discovered dynamically based on ResourceGraphDefinitions)
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'CICDPipeline'
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'EksCluster'
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'EksclusterWithVpc'
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'Vpc'
+    - apiVersion: 'apps/v1'
+      kind: 'Deployment'
+    - apiVersion: 'v1'
+      kind: 'Service'
+    - apiVersion: 'v1'
+      kind: 'ConfigMap'
+    - apiVersion: 'v1'
+      kind: 'Secret'
+  clusters:
+    - name: ${K8S_CLUSTER_NAME}
+      url: ${K8S_CLUSTER_URL}
+      authProvider: 'serviceAccount'
+      serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+
+# Kro plugin configuration for ResourceGroup management
+kro:
+  clusters:
+    - name: ${K8S_CLUSTER_NAME}
+      url: ${K8S_CLUSTER_URL}
+      authProvider: 'serviceAccount'
+      serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+      # Namespace configuration for ResourceGroup discovery
+      skipTLSVerify: false
+      caData: ${K8S_CLUSTER_CA_DATA}
+  # ResourceGroup entity processing configuration
+  entityProcessing:
+    # Enable automatic catalog ingestion of ResourceGroups
+    enabled: true
+    # Refresh interval for ResourceGroup status updates
+    refreshInterval: 300
+    # Namespace filtering (empty means all namespaces)
+    namespaces: []
+    # Label selectors for ResourceGroup filtering
+    labelSelectors: []
+  # Integration with existing Kubernetes plugin
+  integration:
+    # Show ResourceGroups in Kubernetes plugin views
+    showInKubernetesViews: true
+    # Enable ResourceGroup relationship mapping
+    enableRelationshipMapping: true
 
 # see https://backstage.io/docs/permissions/getting-started for more on the permission framework
 permission:

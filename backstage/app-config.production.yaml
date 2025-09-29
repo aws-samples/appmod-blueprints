@@ -11,7 +11,7 @@ backend:
   baseUrl: http://localhost:7007/backstage
   # The listener can also be expressed as a single <host>:<port> string. In this case we bind to
   # all interfaces, the most permissive setting. The right value depends on your specific deployment.
-  listen: ":7007"
+  listen: ':7007'
 
   # config options: https://node-postgres.com/apis/client
   database:
@@ -31,6 +31,52 @@ backend:
 auth:
   providers:
     guest: {}
+
+# Production Kubernetes configuration with Kro support
+kubernetes:
+  serviceLocatorMethod:
+    type: 'multiTenant'
+  clusterLocatorMethods:
+    - type: 'config'
+      clusters:
+        - url: ${K8S_CLUSTER_URL}
+          name: ${K8S_CLUSTER_NAME}
+          authProvider: 'serviceAccount'
+          serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+          customResources:
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'resourcegraphdefinitions'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'cicdpipelines'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'eksclusters'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'eksclusterwithvpcs'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'vpcs'
+
+# Production Kro plugin configuration
+kro:
+  clusters:
+    - name: ${K8S_CLUSTER_NAME}
+      url: ${K8S_CLUSTER_URL}
+      authProvider: 'serviceAccount'
+      serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+      skipTLSVerify: false
+      caData: ${K8S_CLUSTER_CA_DATA}
+  entityProcessing:
+    enabled: true
+    refreshInterval: 300
+    namespaces: []
+    labelSelectors: []
+  integration:
+    showInKubernetesViews: true
+    enableRelationshipMapping: true
 
 argocd:
   instances:
