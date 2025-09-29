@@ -43,6 +43,7 @@ import { customTheme } from './customPlatform/customTheme';
 import { HomepageCompositionRoot } from '@backstage/plugin-home';
 import { CustomHomepage } from './customPlatform/CustomHomepage';
 import { TechRadarPage } from '@backstage-community/plugin-tech-radar';
+import { KroPage, kroPlugin } from '@terasky/backstage-plugin-kro';
 
 const app = createApp({
   apis,
@@ -89,6 +90,9 @@ const app = createApp({
       viewTechDoc: techdocsPlugin.routes.docRoot,
     });
     bind(orgPlugin.externalRoutes, {
+      catalogIndex: catalogPlugin.routes.catalogIndex,
+    });
+    bind(kroPlugin.externalRoutes, {
       catalogIndex: catalogPlugin.routes.catalogIndex,
     });
   },
@@ -156,6 +160,7 @@ const routes = (
       path="/tech-radar"
       element={<TechRadarPage width={1500} height={800} />}
     />
+    <Route path="/kro" element={<KroPage />} />
   </FlatRoutes>
 );
 

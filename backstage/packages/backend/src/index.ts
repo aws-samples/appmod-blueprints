@@ -52,6 +52,12 @@ backend.add(import('@backstage/plugin-search-backend-module-techdocs'));
 // kubernetes
 backend.add(import('@backstage/plugin-kubernetes-backend'));
 
+// kubernetes ingestor plugin
+backend.add(import('@terasky/backstage-plugin-kubernetes-ingestor-backend'));
+
+// kro plugin
+backend.add(import('@terasky/backstage-plugin-kro-backend'));
+
 // Internal Developer Platform custom plugins
 backend.add(authModuleKeycloakOIDCProvider);
 
