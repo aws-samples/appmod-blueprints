@@ -96,6 +96,10 @@ catalog:
     pullRequestBranchName: backstage-integration
   rules:
     - allow: [Component, System, API, Resource, Location]
+    # Allow Kro ResourceGroup entities (they appear as Components with type 'kro-resource-group')
+    - allow: [Component]
+      spec:
+        type: kro-resource-group
   locations:
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
@@ -112,6 +116,12 @@ catalog:
       target: ../../examples/org.yaml
       rules:
         - allow: [User, Group]
+
+    # Kro ResourceGroup examples
+    - type: file
+      target: ../../examples/kro-resource-groups.yaml
+      rules:
+        - allow: [Component, System]
 
     ## Uncomment these lines to add more example data
     # - type: url
@@ -157,31 +167,75 @@ kubernetes:
 
 kubernetesIngestor:
   refreshInterval: 300 # 5 minutes in seconds
+  # Entity processing configuration for ResourceGroups
+  entityProcessing:
+    # Enable automatic catalog ingestion
+    enabled: true
+    # Transform Kro resources into catalog entities
+    transformKroResources: true
+    # Namespace filtering (empty means all namespaces)
+    namespaces: []
+    # Label selectors for resource filtering
+    labelSelectors: []
   resources:
+    # Kro ResourceGraphDefinitions (templates for ResourceGroups)
     - apiVersion: 'kro.run/v1alpha1'
       kind: 'ResourceGraphDefinition'
+      # Enable catalog ingestion for ResourceGraphDefinitions
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
     # Kro instances (these will be discovered dynamically based on ResourceGraphDefinitions)
     - apiVersion: 'kro.run/v1alpha1'
       kind: 'CICDPipeline'
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
     - apiVersion: 'kro.run/v1alpha1'
       kind: 'EksCluster'
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
     - apiVersion: 'kro.run/v1alpha1'
       kind: 'EksclusterWithVpc'
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
     - apiVersion: 'kro.run/v1alpha1'
       kind: 'Vpc'
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
+    # Standard Kubernetes resources (for relationship mapping)
     - apiVersion: 'apps/v1'
       kind: 'Deployment'
+      catalogIngestion:
+        enabled: false # Don't ingest all deployments, only those managed by ResourceGroups
     - apiVersion: 'v1'
       kind: 'Service'
+      catalogIngestion:
+        enabled: false
     - apiVersion: 'v1'
       kind: 'ConfigMap'
+      catalogIngestion:
+        enabled: false
     - apiVersion: 'v1'
       kind: 'Secret'
+      catalogIngestion:
+        enabled: false
   clusters:
     - name: ${K8S_CLUSTER_NAME}
       url: ${K8S_CLUSTER_URL}
       authProvider: 'serviceAccount'
       serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+      # Additional cluster configuration for ResourceGroup discovery
+      skipTLSVerify: false
+      caData: ${K8S_CLUSTER_CA_DATA}
 
 # Kro plugin configuration for ResourceGroup management
 kro:

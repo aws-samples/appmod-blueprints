@@ -499,6 +499,11 @@ spec:
                         - |
                           echo "Starting ECR credential refresh for ${schema.spec.application.name}"
 
+                          # Install kubectl
+                          yum update -y && yum install -y jq
+                          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                          chmod +x kubectl && mv kubectl /usr/local/bin/
+
                           # Get ECR login token
                           ECR_TOKEN=$(aws ecr get-login-password --region ${schema.spec.aws.region})
                           if [ $? -ne 0 ]; then
