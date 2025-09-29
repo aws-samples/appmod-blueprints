@@ -1,0 +1,71 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: ${{values.appname}}-cicd-provisioner-and-warmup-
+  namespace: ${{values.namespace}}
+  labels:
+    entity-id: ${{values.appname}}
+spec:
+  volumeClaimTemplates:
+  - metadata:
+      name: workdir
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: gp3
+      resources:
+        requests:
+          storage: 256Mi
+
+  entrypoint: main
+  serviceAccountName: ${{values.appname}}-cicd-provisioner
+  arguments:
+    parameters:
+    - name: appname
+      value: ${{values.appname}}
+    - name: namespace
+      value: ${{values.namespace}}
+    - name: aws_region
+      value: ${{values.aws_region}}
+    - name: hostname
+      value: ${{values.hostname}}
+    - name: apprepo
+      value: ${{values.hostname}}/gitea/giteaAdmin/${{values.appname}}
+    - name: dockerfile_path
+      value: ${{values.dockerfile_path}}
+    - name: deployment_path
+      value: ${{values.deployment_path}}
+
+  templates:
+  - name: main
+    steps:
+    - - name: run-provisioner
+        templateRef:
+          name: cicd-provisioner-template
+          template: cicd-provisioner
+        arguments:
+          parameters:
+          - name: appname
+            value: "{{workflow.parameters.appname}}"
+          - name: namespace
+            value: "{{workflow.parameters.namespace}}"
+          - name: aws_region
+            value: "{{workflow.parameters.aws_region}}"
+          - name: hostname
+            value: "{{workflow.parameters.hostname}}"
+
+    - - name: run-warmup
+        templateRef:
+          name: cicd-cache-warmup-template
+          template: cicd-warmup
+        arguments:
+          parameters:
+          - name: appname
+            value: "{{workflow.parameters.appname}}"
+          - name: apprepo
+            value: "{{workflow.parameters.apprepo}}"
+          - name: aws_region
+            value: "{{workflow.parameters.aws_region}}"
+          - name: dockerfile_path
+            value: "{{workflow.parameters.dockerfile_path}}"
+          - name: deployment_path
+            value: "{{workflow.parameters.deployment_path}}"

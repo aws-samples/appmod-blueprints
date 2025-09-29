@@ -1,0 +1,126 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  description: Deploy an Argo Events based CI/CD Pipeline for your App
+  name: cicd-pipeline
+  title: Deploy CI/CD Pipeline
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - properties:
+        appname:
+          title: name of app for cicd
+          type: string
+        aws_region:
+          default: us-west-2
+          title: aws region for ecr repo
+          type: string
+        dockerfile_path:
+          title: Relative path to directory containing Dockerfile
+          type: string
+          default: .
+        deployment_path:
+          default: ./deployment
+          title: Relative path to deployment directory in repo
+          type: string
+      required:
+        - appname
+  steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
+    - action: fetch:template
+      name: Fetch Base
+      id: fetch-base
+      input:
+        url: ./skeleton/
+        values:
+          appname: ${{ parameters.appname }}
+          namespace: team-${{ parameters.appname }}
+          aws_region: ${{ parameters.aws_region }}
+          hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
+          dockerfile_path: ${{parameters.dockerfile_path}}
+          deployment_path: ${{parameters.deployment_path}}
+
+    - id: publish
+      name: Publishing to GitLab repository
+      action: publish:gitlab
+      input:
+        # Hard coded value for this demo purposes only.
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.appname}}-cicd&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
+        defaultBranch: main
+        useCustomGit: true
+
+    - action: fetch:template
+      name: Fetch Provisioner
+      id: fetch-provisioner
+      input:
+        url: ./provisioner/
+        values:
+          appname: ${{ parameters.appname }}
+          namespace: team-${{ parameters.appname }}
+          aws_region: ${{ parameters.aws_region }}
+          aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
+          hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
+          dockerfile_path: ${{parameters.dockerfile_path}}
+          deployment_path: ${{parameters.deployment_path}}
+
+    - action: kube:apply
+      name: Apply Provisioner IAM
+      id: apply-prov-iam
+      input:
+        namespaced: true
+        manifest: ./ekspodidentity.yaml
+        clusterName: local
+
+    - action: debug:wait
+      name: Wait for IAM
+      input:
+        seconds: 15
+
+    - action: kube:apply
+      name: Apply Workflow Templates
+      id: apply-temp
+      input:
+        namespaced: true
+        manifest: wf-templates.yaml
+        clusterName: local
+
+    - action: kube:apply
+      name: Run Workflow 
+      id: run-wf
+      input:
+        namespaced: true
+        manifest: wf-run.yaml
+        clusterName: local
+
+    - id: create-argocd-app
+      name: Create ArgoCD App
+      action: argocd:create-resources
+      input:
+        appName: ${{parameters.appname}}
+        namespace: team-${{ parameters.appname }}
+        argoInstance: in-cluster
+        projectName: ${{parameters.appname}}-project
+        # necessary until we generate our own cert
+        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
+        path: "manifests"
+    - id: register
+      name: Register
+      action: catalog:register
+      input:
+        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd/-/blob/main
+        catalogInfoPath: "/catalog-info.yaml"
+  output:
+    links:
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: Open in argo workflows
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflows/team-${{ parameters.appname }}
+
+
+
