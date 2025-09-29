@@ -1,8 +1,9 @@
+# Required for newer Backstage versions - must be at root level
+enablePermissions: true
+
 app:
   title: Internal Developer Platform
   baseUrl: http://localhost:3000/backstage
-  # Required for newer Backstage versions
-  enablePermissions: true
 
 organization:
   name: Internal Developer Platform
