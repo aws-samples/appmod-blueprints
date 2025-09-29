@@ -241,6 +241,7 @@ kubernetesIngestor:
 
 # Kro plugin configuration for ResourceGroup management
 kro:
+  enablePermissions: true
   clusters:
     - name: ${K8S_CLUSTER_NAME}
       url: ${K8S_CLUSTER_URL}
