@@ -67,7 +67,7 @@ metadata:
   name: "${{values.appname}}-cicd-podidentity"
 spec:
   forProvider:
-    clusterName: "modern-engineering"
+    clusterName: "peeks-hub-cluster"
     namespace: "${{values.namespace}}"
     region: "${{values.aws_region}}"
     roleArnRef:
