@@ -43,7 +43,7 @@ import { customTheme } from './customPlatform/customTheme';
 import { HomepageCompositionRoot } from '@backstage/plugin-home';
 import { CustomHomepage } from './customPlatform/CustomHomepage';
 import { TechRadarPage } from '@backstage-community/plugin-tech-radar';
-import { KroPage, kroPlugin } from '@terasky/backstage-plugin-kro';
+import { KroPage, kroPlugin } from '@terasky/backstage-plugin-kro-resources-frontend';
 
 const app = createApp({
   apis,
