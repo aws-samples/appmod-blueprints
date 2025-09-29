@@ -1,6 +1,6 @@
 import { createBackendModule } from '@backstage/backend-plugin-api';
 import { coreServices } from '@backstage/backend-plugin-api';
-import { KroEntityTransformer } from './kro-entity-transformer';
+// import { KroEntityTransformer } from './kro-entity-transformer';
 
 /**
  * Kubernetes Ingestor module for Kro ResourceGroup integration
@@ -16,8 +16,8 @@ export const kubernetesIngestorKroModule = createBackendModule({
         logger: coreServices.logger,
       },
       async init({ config, logger }) {
-        // Initialize Kro entity transformer
-        const kroTransformer = new KroEntityTransformer(logger);
+        // Initialize Kro entity transformer (for future use)
+        // const kroTransformer = new KroEntityTransformer(logger);
 
         // Validate Kro configuration
         const kroConfig = config.getOptionalConfig('kro');

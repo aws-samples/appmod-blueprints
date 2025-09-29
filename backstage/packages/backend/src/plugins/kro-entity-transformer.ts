@@ -1,19 +1,19 @@
 import { Entity } from '@backstage/catalog-model';
-import { Logger } from 'winston';
+import { LoggerService } from '@backstage/backend-plugin-api';
 
 /**
  * Entity transformer for Kro ResourceGroups
  * Transforms Kubernetes ResourceGroup resources into Backstage catalog entities
  */
 export class KroEntityTransformer {
-  constructor(private readonly logger: Logger) { }
+  constructor(private readonly logger: LoggerService) { }
 
   /**
    * Transform a Kubernetes ResourceGroup into a Backstage catalog entity
    */
   transformResourceGroup(kubernetesResource: any, clusterName: string): Entity | null {
     try {
-      const { metadata, spec, status } = kubernetesResource;
+      const { metadata, status } = kubernetesResource;
 
       if (!metadata?.name) {
         this.logger.warn('ResourceGroup missing required metadata.name, skipping transformation');
@@ -51,11 +51,12 @@ export class KroEntityTransformer {
         },
       };
 
-      // Add status information if available
+      // Add status information as annotations if available
       if (status) {
-        entity.status = {
-          phase: status.phase || 'Unknown',
-          conditions: status.conditions || [],
+        entity.metadata.annotations = {
+          ...entity.metadata.annotations,
+          'kro.run/status-phase': status.phase || 'Unknown',
+          'kro.run/status-conditions': JSON.stringify(status.conditions || []),
         };
       }
 
@@ -82,7 +83,7 @@ export class KroEntityTransformer {
    */
   transformResourceGraphDefinition(kubernetesResource: any, clusterName: string): Entity | null {
     try {
-      const { metadata, spec } = kubernetesResource;
+      const { metadata } = kubernetesResource;
 
       if (!metadata?.name) {
         this.logger.warn('ResourceGraphDefinition missing required metadata.name, skipping transformation');
