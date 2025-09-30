@@ -5,7 +5,7 @@
 
 export CORE_APPS=(
     "external-secrets"
-    "ingress-nginx"
+    # "ingress-nginx"
     "argocd"
     "gitlab"
 )
@@ -178,8 +178,8 @@ delete_argocd_apps() {
         local should_process=false
         
         # Check if app matches any partial name (convert string to words)
-        for partial in $partial_names_str; do
-            if [[ "$name" == *"$partial"* ]]; then
+        echo "$partial_names_str" | tr ' ' '\n' | while read -r partial; do
+            if [[ -n "$partial" && "$name" == *"$partial"* ]]; then
                 should_process=true
                 break
             fi
@@ -200,8 +200,18 @@ delete_argocd_apps() {
         terminate_argocd_operation "$name" # Terminate any ongoing operation
         kubectl delete application.argoproj.io "$name" -n "$namespace" --wait=false 2>/dev/null || true
         
-        # Wait for deletion
+        # Wait for deletion with 5 minute timeout
+        local delete_start=$(date +%s)
+        local delete_timeout=300  # 5 minutes
+        
         while kubectl get application.argoproj.io "$name" -n "$namespace" >/dev/null 2>&1; do
+            local elapsed=$(($(date +%s) - delete_start))
+            if [ $elapsed -ge $delete_timeout ]; then
+                echo "Force deleting stuck application: $name"
+                kubectl patch application.argoproj.io "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
+                kubectl delete application.argoproj.io "$name" -n "$namespace" --force --grace-period=0 2>/dev/null || true
+                break
+            fi
             sleep 5
         done
     done

@@ -22,12 +22,12 @@ main() {
   fi
 
   # Remove ArgoCD resources
-  # for cluster in "${CLUSTER_NAMES[@]}"; do
-  #     if ! cleanup_kubernetes_resources_with_fallback "$cluster"; then
-  #       log_warning "Failed to cleanup Kubernetes resources for cluster: $cluster"
-  #       exit 1
-  #     fi
-  # done
+  for cluster in "${CLUSTER_NAMES[@]}"; do
+      if ! cleanup_kubernetes_resources_with_fallback "$cluster"; then
+        log_warning "Failed to cleanup Kubernetes resources for cluster: $cluster"
+        exit 1
+      fi
+  done
 
   log "Starting boostrap stack destruction..."
 
@@ -61,8 +61,19 @@ main() {
     -var="git_password=${USER1_PASSWORD}" \
     -var="working_repo=${WORKING_REPO}" \
     -auto-approve -refresh=false; then
-    log_error "Bootstrap stack destroy failed"
-    exit 1
+    log_warning "Bootstrap stack destroy failed, trying again"
+    if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
+      -var-file="${GENERATED_TFVAR_FILE}" \
+      -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
+      -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
+      -var="ide_password=${USER1_PASSWORD}" \
+      -var="git_username=${GIT_USERNAME}" \
+      -var="git_password=${USER1_PASSWORD}" \
+      -var="working_repo=${WORKING_REPO}" \
+      -auto-approve -refresh=false; then
+      log_error "Bootstrap stack destroy failed again, exiting"
+      exit 1
+    fi
   fi
 
   if ! $SKIP_GITLAB ; then
@@ -77,8 +88,16 @@ main() {
       -var="git_password=${IDE_PASSWORD}" \
       -var="working_repo=${WORKING_REPO}" \
       -auto-approve; then
-      log_error "Gitlab infra stack destroy failed"
-      exit 1
+      log_warning "Gitlab infra stack destroy failed, trying one more time"
+      if ! terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra destroy \
+        -var-file="${GENERATED_TFVAR_FILE}" \
+        -var="git_username=${GIT_USERNAME}" \
+        -var="git_password=${IDE_PASSWORD}" \
+        -var="working_repo=${WORKING_REPO}" \
+        -auto-approve; then
+        log_error "Gitlab infra stack destroy failed again, exiting"
+        exit 1
+      fi
     fi
   fi
 

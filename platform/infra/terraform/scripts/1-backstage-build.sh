@@ -91,3 +91,12 @@ start_backstage_build() {
     export BACKSTAGE_BUILD_PID=$!
     print_info "Backstage build started with PID: $BACKSTAGE_BUILD_PID (logs: $BACKSTAGE_LOG)"
 }
+delete_backstage_ecr_repo() {
+    if aws ecr describe-repositories --repository-names ${RESOURCE_PREFIX}-backstage --region $AWS_REGION > /dev/null 2>&1; then
+        print_info "Deleting Backstage ECR repository..."
+        aws ecr delete-repository --repository-name ${RESOURCE_PREFIX}-backstage --region $AWS_REGION --force > /dev/null 2>&1
+        print_success "Backstage ECR repository deleted"
+    else
+        print_info "Backstage ECR repository does not exist"
+    fi
+}

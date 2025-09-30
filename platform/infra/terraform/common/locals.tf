@@ -190,7 +190,7 @@ locals {
         gitlab_domain_name = local.gitlab_domain_name
         git_username = var.git_username
         working_repo = var.working_repo
-        # ide_password = var.ide_password
+        ide_password = var.ide_password # TODO: remove this and use External Secret instead
         # ide_password_hash = local.user_password_hash
         # ide_password_key = local.password_key
         backstage_image = local.backstage_image
