@@ -57,6 +57,8 @@ import {
   EntityKubernetesContent,
   isKubernetesAvailable,
 } from '@backstage/plugin-kubernetes';
+import { KubernetesContentWithKro } from '../kubernetes/KubernetesContentWithKro';
+import { KroNavigationHelper, shouldShowKroNavigation } from '../kubernetes/KroNavigationHelper';
 import {
   IfKroResourceGraphAvailable,
   IfKroOverviewAvailable,
@@ -165,7 +167,18 @@ const serviceEntityPage = (
       title="Kubernetes"
       if={isKubernetesAvailable}
     >
-      <EntityKubernetesContent />
+      <Grid container spacing={3}>
+        <EntitySwitch>
+          <EntitySwitch.Case if={shouldShowKroNavigation}>
+            <Grid item xs={12}>
+              <KroNavigationHelper />
+            </Grid>
+          </EntitySwitch.Case>
+        </EntitySwitch>
+        <Grid item xs={12}>
+          <KubernetesContentWithKro />
+        </Grid>
+      </Grid>
     </EntityLayout.Route>
 
     <EntityLayout.Route
@@ -230,7 +243,18 @@ const websiteEntityPage = (
       title="Kubernetes"
       if={isKubernetesAvailable}
     >
-      <EntityKubernetesContent />
+      <Grid container spacing={3}>
+        <EntitySwitch>
+          <EntitySwitch.Case if={shouldShowKroNavigation}>
+            <Grid item xs={12}>
+              <KroNavigationHelper />
+            </Grid>
+          </EntitySwitch.Case>
+        </EntitySwitch>
+        <Grid item xs={12}>
+          <KubernetesContentWithKro />
+        </Grid>
+      </Grid>
     </EntityLayout.Route>
 
     <EntityLayout.Route
@@ -487,7 +511,14 @@ const resourceGroupPage = (
       title="Kubernetes"
       if={isKubernetesAvailable}
     >
-      <EntityKubernetesContent />
+      <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <KroNavigationHelper />
+        </Grid>
+        <Grid item xs={12}>
+          <KubernetesContentWithKro />
+        </Grid>
+      </Grid>
     </EntityLayout.Route>
 
     <EntityLayout.Route path="/dependencies" title="Dependencies">
