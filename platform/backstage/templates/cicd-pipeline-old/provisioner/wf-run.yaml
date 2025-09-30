@@ -27,9 +27,9 @@ spec:
     - name: aws_region
       value: ${{values.aws_region}}
     - name: hostname
-      value: ${{values.hostname}}
+      value: ${{values.gitlab_hostname}}
     - name: apprepo
-      value: ${{values.hostname}}/gitea/giteaAdmin/${{values.appname}}
+      value: ${{values.gitlab_hostname}}/gitea/giteaAdmin/${{values.appname}}
     - name: dockerfile_path
       value: ${{values.dockerfile_path}}
     - name: deployment_path

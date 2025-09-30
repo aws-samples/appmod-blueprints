@@ -13,7 +13,7 @@ spec:
     namespace: ${{values.namespace}}
     name: prod-cluster
   source:
-    repoURL: https://${{values.hostname}}/${{values.gituser}}/${{values.appname}}
+    repoURL: https://${{values.gitlab_hostname}}/${{values.gituser}}/${{values.appname}}
     targetRevision: main
     path: deployment/prod
   syncPolicy:

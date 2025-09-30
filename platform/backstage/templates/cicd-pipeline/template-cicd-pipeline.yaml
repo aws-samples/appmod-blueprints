@@ -100,7 +100,7 @@ spec:
           appname: ${{ parameters.appname }}
           namespace: team-${{ parameters.appname }}
           aws_region: ${{ parameters.aws_region }}
-          hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
+          hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           dockerfile_path: ${{parameters.dockerfile_path}}
           deployment_path: ${{parameters.deployment_path}}
 
@@ -109,7 +109,7 @@ spec:
       action: publish:gitlab
       input:
         # Hard coded value for this demo purposes only.
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}?repo=${{parameters.appname}}-cicd&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.appname}}-cicd&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
         useCustomGit: true
 
@@ -148,7 +148,7 @@ spec:
               dockerfilePath: ${{ parameters.dockerfile_path | default(".") }}
               deploymentPath: ${{ parameters.deployment_path | default("./deployment") }}
             gitlab:
-              hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
+              hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
               username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
 
     - id: validate-kro-instance
@@ -198,14 +198,14 @@ spec:
         argoInstance: in-cluster
         projectName: ${{parameters.appname}}-project
         # Repository URL for the CI/CD pipeline configuration
-        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
+        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
         path: "manifests"
 
     - id: register
       name: Register
       action: catalog:register
       input:
-        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd/-/blob/main
+        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd/-/blob/main
         catalogInfoPath: "/catalog-info.yaml"
 
     - id: provide-access-information
@@ -256,19 +256,19 @@ spec:
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
       - title: Kro CI/CD Pipeline Instance
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argocd/applications/argocd/kro-resource-groups?resource=&node=${{ parameters.appname }}-cicd-pipeline%2Fkro.run%2FCICDPipeline%2Fteam-${{ parameters.appname }}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/kro-resource-groups?resource=&node=${{ parameters.appname }}-cicd-pipeline%2Fkro.run%2FCICDPipeline%2Fteam-${{ parameters.appname }}
         icon: web
       - title: Argo Workflows - Provisioning
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}/${{ parameters.appname }}-cicd-provisioning-workflow
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}/${{ parameters.appname }}-cicd-provisioning-workflow
         icon: web
       - title: Argo Workflows - CI/CD Pipeline
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}/${{ parameters.appname }}-cicd-cicd-workflow
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}/${{ parameters.appname }}-cicd-cicd-workflow
         icon: web
       - title: Argo Workflows - Cache Warmup
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}/${{ parameters.appname }}-cicd-cache-warmup-workflow
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}/${{ parameters.appname }}-cicd-cache-warmup-workflow
         icon: web
       - title: ArgoCD CI/CD Pipeline Application
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd?view=tree&resource=
         icon: web
       - title: ECR Main Repository
         url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks%2F${{ parameters.appname }}?region=${{ parameters.aws_region }}
@@ -289,10 +289,10 @@ spec:
         url: https://console.aws.amazon.com/eks/home?region=${{ parameters.aws_region }}#/clusters/${{ parameters.cluster_name }}
         icon: cloud
       - title: GitLab Repository
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
+        url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
         icon: git
       - title: Kubernetes Namespace
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/argocd/applications/argocd/kro-resource-groups?resource=&node=team-${{ parameters.appname }}%2F%2FNamespace%2F
+        url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/argocd/applications/argocd/kro-resource-groups?resource=&node=team-${{ parameters.appname }}%2F%2FNamespace%2F
         icon: web
     text:
       - title: Kro-based CI/CD Pipeline Configuration
@@ -333,7 +333,7 @@ spec:
           - **Build Tool**: Kaniko with cache optimization
           
           ## 🔗 **GitLab Integration**
-          - **Repository**: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
+          - **Repository**: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
           - **Webhook Integration**: Configured for Argo Events
           - **Automatic Triggers**: Push events trigger CI/CD workflows
           

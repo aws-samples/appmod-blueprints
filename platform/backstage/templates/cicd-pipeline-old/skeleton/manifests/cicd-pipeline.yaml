@@ -48,7 +48,7 @@ spec:
                 arguments:
                   parameters:
                     - name: apprepo
-                      value: ${{values.hostname}}/gitea/giteaAdmin/${{values.appname}}
+                      value: ${{values.gitlab_hostname}}/gitea/giteaAdmin/${{values.appname}}
                     - name: branch
                       value: main
                     - name: tag-version
@@ -281,7 +281,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: ${{values.hostname}}
+    - host: ${{values.gitlab_hostname}}
       http:
         paths:
           - backend:

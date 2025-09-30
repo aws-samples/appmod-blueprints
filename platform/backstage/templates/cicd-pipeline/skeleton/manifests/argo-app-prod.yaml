@@ -21,7 +21,7 @@ spec:
     namespace: ${{values.namespace}}
     name: prod-cluster
   source:
-    repoURL: https://${{values.hostname}}/${{values.gituser}}/${{values.appname}}
+    repoURL: https://${{values.gitlab_hostname}}/${{values.gituser}}/${{values.appname}}
     targetRevision: main
     # Use the deployment path parameter from the template
     path: ${{values.deployment_path}}/prod

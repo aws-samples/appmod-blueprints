@@ -11,7 +11,7 @@ metadata:
     argo-workflows.cnoe.io/namespace: team-${{values.appname}}
     argo-workflows.cnoe.io/label-selector: 'entity-id=${{values.appname}}'
   links:
-    - url: https://${{values.hostname}}/gitea?repo=${{values.appname}}-cicd
+    - url: https://${{values.gitlab_hostname}}/gitea?repo=${{values.appname}}-cicd
       title: Repo URL
       icon: github
 spec:

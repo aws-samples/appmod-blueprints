@@ -36,7 +36,8 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  hostname: 'd15rvat21gcp87.cloudfront.net'
+  gitlab_hostname: 'd15rvat21gcp87.cloudfront.net'
+  argocd_hostname: 'dcu3gsco485x8.cloudfront.net'
   gituser: 'user1'
   aws_region: 'us-west-2'
   aws_account_id: '665742499430'

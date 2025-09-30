@@ -46,7 +46,7 @@ spec:
           type: string
         repoHostUrl:
           type: string
-          default: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
+          default: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           ui:widget: hidden
         repoUsername:
           type: string

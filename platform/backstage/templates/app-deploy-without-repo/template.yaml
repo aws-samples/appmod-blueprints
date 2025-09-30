@@ -54,7 +54,7 @@ spec:
         appNamespace: ${{parameters.appNamespace}}
         argoInstance: ${{parameters.environment}}
         projectName: default
-        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}
+        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}
         path: ${{parameters.repoPath}}
     - id: template-output
       name: Template Output
