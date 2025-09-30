@@ -132,7 +132,14 @@ spec:
       ]
     }
 ---
-apiVersion: eks.services.k8s.aws/v1alpha1
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: RolePolicyAttachment
+metadata:
+  name: ${{values.appname}}-cicd-policy-attachment
+  namespace: ${{values.namespace}}
+spec:
+  policyARN: arn:aws:iam::${{values.aws_account_id}}:policy/${{values.aws_resource_prefix}}-${{values.appname}}-ecr-access-policy
+  roleName: ${{values.aws_resource_prefix}}-${{values.appname}}-role
 kind: PodIdentityAssociation
 metadata:
   name: ${{values.appname}}-cicd-podidentity
