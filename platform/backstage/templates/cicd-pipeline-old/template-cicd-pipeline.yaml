@@ -3,7 +3,7 @@ kind: Template
 metadata:
   description: Deploy an Argo Events based CI/CD Pipeline for your App
   name: cicd-pipeline
-  title: Deploy CI/CD Pipeline
+  title: OLD Deploy CI/CD Pipeline 
 spec:
   owner: guest
   type: service
