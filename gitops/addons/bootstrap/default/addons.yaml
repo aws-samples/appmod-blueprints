@@ -628,6 +628,9 @@ multi-acct:
       - key: enable_mutli_acct
         operator: In
         values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
 
 ingress-class-alb:
   enabled: false
