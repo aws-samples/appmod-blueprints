@@ -42,7 +42,7 @@ CHECK_INTERVAL=30 # 30 seconds
 # Define scripts to run in order
 SCRIPTS=(
     "1-backstage-build.sh"
-    "2-tools-urls.sh"
+    "1-tools-urls.sh"
 )
 
 
@@ -103,14 +103,13 @@ main() {
     show_final_status
 
     # Set up Secrets and URLs for workshop.
-    bash "$SCRIPT_DIR/2-tools-urls.sh"
+    bash "$SCRIPT_DIR/1-tools-urls.sh"
 
-
-    bash /etc/profile.d/workshop.sh
-    # Source all bashrc.d files
-    for file in ~/.bashrc.d/*.sh; do
-    [ -f "$file" ] && source "$file" || true
-    done
+    # bash /etc/profile.d/workshop.sh
+    # # Source all bashrc.d files
+    # for file in ~/.bashrc.d/*.sh; do
+    # [ -f "$file" ] && source "$file" || true
+    # done
 }
 
 # Trap to handle script interruption

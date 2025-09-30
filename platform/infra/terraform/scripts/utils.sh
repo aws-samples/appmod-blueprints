@@ -10,6 +10,7 @@ GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
 
 source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/argocd-utils.sh"
 source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/colors.sh"
+source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/backstage-utils.sh"
 
 export SKIP_GITLAB=${SKIP_GITLAB:-false}
 export WS_PARTICIPANT_ROLE_ARN=${WS_PARTICIPANT_ROLE_ARN:-""}
