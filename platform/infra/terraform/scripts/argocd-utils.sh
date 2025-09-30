@@ -178,7 +178,7 @@ delete_argocd_apps() {
         local should_process=false
         
         # Check if app matches any partial name (convert string to words)
-        echo "$partial_names_str" | tr ' ' '\n' | while read -r partial; do
+        for partial in $partial_names_str; do
             if [[ -n "$partial" && "$name" == *"$partial"* ]]; then
                 should_process=true
                 break

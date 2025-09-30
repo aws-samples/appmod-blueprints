@@ -42,13 +42,15 @@ main() {
     GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
     GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
   fi
+
+
+  # Initialize Terraform with S3 backend
+  initialize_terraform "boostrap" "$DEPLOY_SCRIPTDIR"
+  
   # Remove GitLab resources from state, if they exist
   if ! terraform state rm gitlab_personal_access_token.workshop || ! terraform state rm data.gitlab_user.workshop; then
     log_warning "GitLab resources not found in state"
   fi
-
-  # Initialize Terraform with S3 backend
-  initialize_terraform "boostrap" "$DEPLOY_SCRIPTDIR"
 
   # Destroy Terraform resources
   log "Destroying bootstrap resources..."
