@@ -14,7 +14,7 @@ spec:
     - name: aws_region
       value: ${{values.aws_region}}
     - name: hostname
-      value: ${{values.hostname}}
+      value: ${{values.gitlab_hostname}}
 
   templates:
   - name: cicd-provisioner
@@ -130,7 +130,7 @@ spec:
     - name: appname
       value: ${{values.appname}}
     - name: apprepo
-      value: ${{values.hostname}}/gitea/giteaAdmin/${{values.appname}}-cicd
+      value: ${{values.gitlab_hostname}}/gitea/giteaAdmin/${{values.appname}}-cicd
     - name: aws_region
       value: ${{values.aws_region}}
     - name: dockerfile_path
