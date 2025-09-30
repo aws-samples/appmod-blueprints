@@ -1,9 +1,4 @@
 apiVersion: v1
-kind: Namespace
-metadata:
-  name: ${{values.namespace}}
----
-apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: ${{values.appname}}-cicd-sa
