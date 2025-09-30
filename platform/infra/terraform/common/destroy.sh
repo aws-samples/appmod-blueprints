@@ -21,7 +21,7 @@ main() {
     exit 1
   fi
 
-  # Remove ArgoCD resources
+  # Remove ArgoCD resources from all clusters
   for cluster in "${CLUSTER_NAMES[@]}"; do
       if ! cleanup_kubernetes_resources_with_fallback "$cluster"; then
         log_warning "Failed to cleanup Kubernetes resources for cluster: $cluster"

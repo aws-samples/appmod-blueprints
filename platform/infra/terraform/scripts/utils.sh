@@ -240,6 +240,18 @@ cleanup_kubernetes_resources_with_fallback() {
   # # Second round of AppSet deletion if any created by BOOTSTRAP APPS
   delete_argocd_appsets
 
+  #TODO: Remove this once we have a better way to handle webhook deletion
+  kubect delete mutatingwebhookconfigurations.admissionregistration.k8s.io kyverno-resource-mutating-webhook-cfg || true
+  kubectl delete mutatingwebhookconfigurations.admissionregistration.k8s.io kyverno-verify-mutating-webhook-cfg || true
+  kubectl delete mutatingwebhookconfigurations.admissionregistration.k8s.io kyverno-policy-mutating-webhook-cfg || true
+  kubectl delete mutatingwebhookconfigurations.admissionregistration.k8s.io kargo || true
+  kubectl delete validatingwebhookconfigurations.admissionregistration.k8s.io kyverno-cleanup-validating-webhook-cfg || true
+  kubectl delete validatingwebhookconfigurations.admissionregistration.k8s.io kyverno-exception-validating-webhook-cfg || true
+  kubectl delete validatingwebhookconfigurations.admissionregistration.k8s.io kyverno-global-context-validating-webhook-cfg || true
+  kubectl delete validatingwebhookconfigurations.admissionregistration.k8s.io kyverno-policy-validating-webhook-cfg || true
+  kubectl delete validatingwebhookconfigurations.admissionregistration.k8s.io kyverno-resource-validating-webhook-cfg || true
+  kubectl delete validatingwebhookconfigurations.admissionregistration.k8s.io kyverno-ttl-validating-webhook-cfg || true
+  
   # Delete all apps except core apps
   delete_argocd_apps "${CORE_APPS[*]}" "ignore" "false"
 
