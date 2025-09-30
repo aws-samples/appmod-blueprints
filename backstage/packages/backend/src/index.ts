@@ -3,6 +3,9 @@ import { authModuleKeycloakOIDCProvider } from './plugins/auth';
 import { kroBackendModule } from './plugins/kro';
 import { catalogKroModule } from './plugins/catalog-kro-module';
 import { kubernetesIngestorKroModule } from './plugins/kubernetes-ingestor-kro-module';
+import { kroSecurityModule } from './plugins/kro-security';
+import { kroPermissionsModule } from './plugins/kro-permissions';
+import { kroAuditModule } from './plugins/kro-audit';
 
 const backend = createBackend();
 
@@ -72,5 +75,13 @@ backend.add(catalogKroModule);
 
 // Kubernetes Ingestor Kro integration module
 backend.add(kubernetesIngestorKroModule);
+
+// Kro security and permissions modules
+backend.add(kroSecurityModule);
+backend.add(kroPermissionsModule);
+backend.add(kroAuditModule);
+
+// Kubernetes Kro integration module
+backend.add(import('./plugins/kubernetes-kro-integration').then(m => m.kubernetesKroIntegrationModule));
 
 backend.start();

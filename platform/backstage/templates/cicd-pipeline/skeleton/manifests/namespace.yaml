@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${{values.namespace}}
+  labels:
+    app.kubernetes.io/name: ${{values.appname}}
+    app.kubernetes.io/component: cicd-pipeline
+    app.kubernetes.io/managed-by: argocd
+    backstage.io/template-name: cicd-pipeline
+    argocd.argoproj.io/instance: ${{values.appname}}-cicd
+  annotations:
+    backstage.io/template-version: "1.0.0"
+    backstage.io/created-by: ${{values.created_by}}
+    # ArgoCD sync wave to create namespace first
+    argocd.argoproj.io/sync-wave: "0"

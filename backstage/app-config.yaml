@@ -242,6 +242,23 @@ kubernetesIngestor:
 # Kro plugin configuration for ResourceGroup management
 kro:
   enablePermissions: true
+  enableAuditLogging: true
+
+  # Security configuration
+  rbacValidation:
+    enabled: true
+    strictMode: false
+    cacheTimeout: 300 # 5 minutes
+
+  auditLogging:
+    enabled: true
+    logLevel: 'info'
+    includeSuccessEvents: true
+
+  errorHandling:
+    enableDetailedErrors: true
+    includeStackTrace: false
+
   clusters:
     - name: ${K8S_CLUSTER_NAME}
       url: ${K8S_CLUSTER_URL}
@@ -250,6 +267,35 @@ kro:
       # Namespace configuration for ResourceGroup discovery
       skipTLSVerify: false
       caData: ${K8S_CLUSTER_CA_DATA}
+      # RBAC configuration for this cluster
+      rbac:
+        # Service account permissions required for Kro operations
+        requiredPermissions:
+          - apiGroups: ['kro.run']
+            resources: ['resourcegraphdefinitions']
+            verbs:
+              ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+          - apiGroups: ['kro.run']
+            resources:
+              ['cicdpipelines', 'eksclusters', 'eksclusterwithvpcs', 'vpcs']
+            verbs:
+              ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+          - apiGroups: ['']
+            resources: ['events']
+            verbs: ['get', 'list', 'watch']
+        # Minimum required permissions for read-only access
+        readOnlyPermissions:
+          - apiGroups: ['kro.run']
+            resources:
+              [
+                'resourcegraphdefinitions',
+                'cicdpipelines',
+                'eksclusters',
+                'eksclusterwithvpcs',
+                'vpcs',
+              ]
+            verbs: ['get', 'list', 'watch']
+
   # ResourceGroup entity processing configuration
   entityProcessing:
     # Enable automatic catalog ingestion of ResourceGroups
@@ -260,6 +306,7 @@ kro:
     namespaces: []
     # Label selectors for ResourceGroup filtering
     labelSelectors: []
+
   # Integration with existing Kubernetes plugin
   integration:
     # Show ResourceGroups in Kubernetes plugin views

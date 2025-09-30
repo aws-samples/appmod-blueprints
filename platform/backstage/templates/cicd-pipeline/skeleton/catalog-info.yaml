@@ -13,10 +13,15 @@ metadata:
     argo-workflows.cnoe.io/cluster-name: local
     argo-workflows.cnoe.io/namespace: ${{values.namespace}}
     argo-workflows.cnoe.io/label-selector: 'app.kubernetes.io/name=${{values.appname}},app.kubernetes.io/component=cicd-pipeline'
-    # Kro resource tracking
+    # Kro resource tracking (GitOps managed)
     kro.run/resource-group: cicdpipeline.kro.run
     kro.run/instance-name: ${{values.appname}}-cicd-pipeline
     kro.run/instance-namespace: ${{values.namespace}}
+    # ArgoCD integration
+    argocd.argoproj.io/instance: ${{values.appname}}-cicd
+    argocd.argoproj.io/project: ${{values.appname}}-project
+    # GitOps source repository
+    backstage.io/source-location: url:https://${{values.gitlab_hostname}}/${{values.git_username}}/${{values.appname}}-cicd/tree/main/
     # AWS resource tracking
     aws.amazon.com/ecr-main-repository: peeks/${{values.appname}}
     aws.amazon.com/ecr-cache-repository: peeks/${{values.appname}}/cache
