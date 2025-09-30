@@ -194,17 +194,77 @@ spec:
           🔍 **Monitoring Progress:**
           You can monitor the resource creation progress through the ArgoCD UI and Kubernetes dashboard links provided in the output.
 
-    - id: create-argocd-app
-      name: Create ArgoCD App
-      action: argocd:create-resources
+    # COMMENTED OUT: Using kubernetes:apply instead for better project permission control
+    # - id: create-argocd-app
+    #   name: Create ArgoCD App
+    #   action: argocd:create-resources
+    #   input:
+    #     appName: ${{parameters.appname}}-cicd
+    #     namespace: team-${{ parameters.appname }}
+    #     argoInstance: in-cluster
+    #     projectName: ${{parameters.appname}}-project
+    #     # Repository URL for the CI/CD pipeline configuration
+    #     repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
+    #     path: "manifests"
+
+    - id: create-argocd-project
+      name: Create ArgoCD Project
+      action: kubernetes:apply
       input:
-        appName: ${{parameters.appname}}-cicd
-        namespace: team-${{ parameters.appname }}
-        argoInstance: in-cluster
-        projectName: ${{parameters.appname}}-project
-        # Repository URL for the CI/CD pipeline configuration
-        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
-        path: "manifests"
+        namespaced: true
+        clusterName: local
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: AppProject
+          metadata:
+            name: ${{parameters.appname}}-project
+            namespace: argocd
+          spec:
+            destinations:
+              - name: local
+                namespace: team-${{ parameters.appname }}
+                server: https://kubernetes.default.svc
+              - name: argocd
+                namespace: argocd
+                server: https://kubernetes.default.svc
+            sourceRepos:
+              - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
+            namespaceResourceWhitelist:
+              - group: ""
+                kind: Namespace
+              - group: "*"
+                kind: "*"
+            clusterResourceWhitelist:
+              - group: "*"
+                kind: "*"
+
+    - id: create-argocd-app
+      name: Create ArgoCD Application
+      action: kubernetes:apply
+      input:
+        namespaced: true
+        clusterName: local
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{parameters.appname}}-cicd
+            namespace: argocd
+          spec:
+            project: ${{parameters.appname}}-project
+            source:
+              repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
+              path: manifests
+              targetRevision: HEAD
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: team-${{ parameters.appname }}
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
 
     - id: register
       name: Register
