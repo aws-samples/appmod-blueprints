@@ -35,7 +35,8 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  hostname: '{{ values.gitlabDomain }}'
+  gitlab_hostname: '{{ values.gitlabDomain }}'
+  argocd_hostname: '{{ values.argocdDomain }}'
   gituser: '{{ values.gitUsername }}'
   aws_region: '{{ values.awsRegion }}'
   aws_account_id: '{{ values.awsAccountId }}'
