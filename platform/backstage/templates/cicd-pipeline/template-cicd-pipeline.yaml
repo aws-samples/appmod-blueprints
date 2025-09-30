@@ -3,7 +3,7 @@ kind: Template
 metadata:
   description: Deploy a Kro-based CI/CD Pipeline for your App using ACK controllers
   name: cicd-pipeline
-  title: Deploy CI/CD Pipeline
+  title: Deploy CI/CD Pipeline With KRO
 spec:
   owner: guest
   type: service
@@ -137,20 +137,16 @@ spec:
               cicd.kro.run/aws-region: ${{ parameters.aws_region }}
               cicd.kro.run/cluster-name: ${{ parameters.cluster_name }}
           spec:
-            # Required parameters - validated by schema
             name: ${{ parameters.appname }}-cicd
             namespace: team-${{ parameters.appname }}
             aws:
               region: ${{ parameters.aws_region }}
               clusterName: ${{ parameters.cluster_name }}
+              resourcePrefix: "peeks"
             application:
               name: ${{ parameters.appname }}
-              # Optional parameters with defaults handled by RGD schema
               dockerfilePath: ${{ parameters.dockerfile_path | default(".") }}
               deploymentPath: ${{ parameters.deployment_path | default("./deployment") }}
-            ecr:
-              # Optional parameter with default handled by RGD schema
-              repositoryPrefix: "peeks"
             gitlab:
               hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}
               username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
