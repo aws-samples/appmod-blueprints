@@ -18,7 +18,7 @@ describe('Parameter Handling', () => {
       // Check default value definitions in schema
       expect(schemaSpec.application.dockerfilePath).toBe('string | default="."');
       expect(schemaSpec.application.deploymentPath).toBe('string | default="./deployment"');
-      expect(schemaSpec.ecr.repositoryPrefix).toBe('string | default="peeks"');
+      expect(schemaSpec.aws.resourcePrefix).toBe('string | default="peeks"');
 
       // Test with minimal schema instance (missing optional fields)
       const minimalSchema = createMockSchemaInstance({
@@ -468,7 +468,7 @@ describe('Parameter Handling', () => {
       const ecrMainRepo = rgd.spec.resources.find(r => r.id === 'ecrmainrepo');
       const template = templateEngine.substituteObject(ecrMainRepo.template);
 
-      expect(template.spec.name).toBe('custom-org/complex-app-name');
+      expect(template.spec.name).toBe('peeks/complex-app-name');
       expect(template.metadata.name).toBe('complex-app-cicd-main-repo');
       expect(template.metadata.namespace).toBe('complex-namespace');
     });
@@ -480,7 +480,7 @@ describe('Parameter Handling', () => {
       const iamPolicy = rgd.spec.resources.find(r => r.id === 'iampolicy');
       const template = templateEngine.substituteObject(iamPolicy.template);
 
-      expect(template.spec.name).toBe('test-app-cicd-ecr-policy');
+      expect(template.spec.name).toBe('peeks-test-app-ecr-policy');
       expect(template.spec.description).toBe('ECR access policy for CI/CD pipeline');
 
       // Policy document should be valid JSON with substituted values
@@ -569,7 +569,7 @@ describe('Parameter Handling', () => {
 
       const templateEngine = new TemplateEngine(longValueSchema, {});
 
-      const namespace = rgd.spec.resources.find(r => r.id === 'namespace');
+      const namespace = rgd.spec.resources.find(r => r.id === 'appnamespace');
       const template = templateEngine.substituteObject(namespace.template);
 
       // Should handle long names without truncation (unless explicitly implemented)

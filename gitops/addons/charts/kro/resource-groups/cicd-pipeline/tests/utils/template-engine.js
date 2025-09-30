@@ -39,6 +39,27 @@ export class TemplateEngine {
       return match; // Return original if not found
     });
 
+    // Handle ownerAccountID expressions like ${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}
+    template = template.replace(/\$\{([^.]+)\.status\.ackResourceMetadata\.ownerAccountID\}/g, (match, resourceId) => {
+      const resourceStatus = this.resourceStatuses[resourceId];
+      if (resourceStatus && resourceStatus.status) {
+        // For ECR resources, extract account ID from repositoryURI or use registryId
+        if (resourceStatus.status.repositoryURI) {
+          const accountIdMatch = resourceStatus.status.repositoryURI.match(/^(\d+)\.dkr\.ecr/);
+          if (accountIdMatch) {
+            return accountIdMatch[1];
+          }
+        }
+        if (resourceStatus.status.registryId) {
+          return resourceStatus.status.registryId;
+        }
+        if (resourceStatus.status.ackResourceMetadata && resourceStatus.status.ackResourceMetadata.ownerAccountID) {
+          return resourceStatus.status.ackResourceMetadata.ownerAccountID;
+        }
+      }
+      return match; // Return original if not found
+    });
+
     return template;
   }
 

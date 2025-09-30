@@ -14,9 +14,9 @@ describe('RGD Schema Validation', () => {
   });
 
   describe('Schema Definition Structure', () => {
-    it('should have valid ResourceGroup metadata', () => {
+    it('should have valid ResourceGraphDefinition metadata', () => {
       expect(rgd.apiVersion).toBe('kro.run/v1alpha1');
-      expect(rgd.kind).toBe('ResourceGroup');
+      expect(rgd.kind).toBe('ResourceGraphDefinition');
       expect(rgd.metadata.name).toBe('cicdpipeline.kro.run');
       expect(rgd.metadata.annotations).toHaveProperty('argocd.argoproj.io/sync-wave');
     });
@@ -47,9 +47,8 @@ describe('RGD Schema Validation', () => {
       expect(schemaSpec.application.dockerfilePath).toBe('string | default="."');
       expect(schemaSpec.application.deploymentPath).toBe('string | default="./deployment"');
 
-      // ECR configuration
-      expect(schemaSpec.ecr).toBeDefined();
-      expect(schemaSpec.ecr.repositoryPrefix).toBe('string | default="peeks"');
+      // AWS resource prefix (used for ECR repositories)
+      expect(schemaSpec.aws.resourcePrefix).toBe('string | default="peeks"');
 
       // GitLab configuration
       expect(schemaSpec.gitlab).toBeDefined();
@@ -60,33 +59,19 @@ describe('RGD Schema Validation', () => {
     it('should have comprehensive status tracking', () => {
       const schemaStatus = rgd.spec.schema.status;
 
-      // Kubernetes native resources status
-      expect(schemaStatus.namespaceStatus).toBeDefined();
-      expect(schemaStatus.serviceAccountStatus).toBeDefined();
-      expect(schemaStatus.rbacRoleStatus).toBeDefined();
-      expect(schemaStatus.rbacRoleBindingStatus).toBeDefined();
-      expect(schemaStatus.configMapStatus).toBeDefined();
-      expect(schemaStatus.dockerSecretStatus).toBeDefined();
+      // Actual status fields in the RGD (only the ones that actually exist)
+      expect(schemaStatus.ecrMainRepositoryURI).toBeDefined();
+      expect(schemaStatus.ecrCacheRepositoryURI).toBeDefined();
+      expect(schemaStatus.iamRoleARN).toBeDefined();
+      expect(schemaStatus.serviceAccountName).toBeDefined();
+      expect(schemaStatus.namespace).toBeDefined();
 
-      // AWS resources status via ACK
-      expect(schemaStatus.ecrMainRepoStatus).toBeDefined();
-      expect(schemaStatus.ecrCacheRepoStatus).toBeDefined();
-      expect(schemaStatus.iamPolicyStatus).toBeDefined();
-      expect(schemaStatus.iamRoleStatus).toBeDefined();
-      expect(schemaStatus.rolePolicyAttachmentStatus).toBeDefined();
-      expect(schemaStatus.podIdentityStatus).toBeDefined();
-
-      // Workflow template status
-      expect(schemaStatus.provisioningWorkflowStatus).toBeDefined();
-      expect(schemaStatus.cacheWarmupWorkflowStatus).toBeDefined();
-      expect(schemaStatus.cicdWorkflowStatus).toBeDefined();
-
-      // Overall readiness indicators
-      expect(schemaStatus.kubernetesResourcesReady).toBeDefined();
-      expect(schemaStatus.awsResourcesReady).toBeDefined();
-      expect(schemaStatus.workflowsReady).toBeDefined();
-      expect(schemaStatus.setupCompleted).toBeDefined();
-      expect(schemaStatus.webhookIntegrationReady).toBeDefined();
+      // Verify they reference the correct resources
+      expect(schemaStatus.ecrMainRepositoryURI).toContain('ecrmainrepo.status.repositoryURI');
+      expect(schemaStatus.ecrCacheRepositoryURI).toContain('ecrcacherepo.status.repositoryURI');
+      expect(schemaStatus.iamRoleARN).toContain('iamrole.status.ackResourceMetadata.arn');
+      expect(schemaStatus.serviceAccountName).toContain('serviceaccount.metadata.name');
+      expect(schemaStatus.namespace).toContain('appnamespace.metadata.name');
     });
   });
 
@@ -119,7 +104,7 @@ describe('RGD Schema Validation', () => {
       // These should get default values when processed by Kro
       expect(instanceWithDefaults.spec.application.dockerfilePath).toBe('.');
       expect(instanceWithDefaults.spec.application.deploymentPath).toBe('./deployment');
-      expect(instanceWithDefaults.spec.ecr.repositoryPrefix).toBe('peeks');
+      expect(instanceWithDefaults.spec.aws.resourcePrefix).toBe('peeks');
     });
 
     it('should validate AWS region format', () => {

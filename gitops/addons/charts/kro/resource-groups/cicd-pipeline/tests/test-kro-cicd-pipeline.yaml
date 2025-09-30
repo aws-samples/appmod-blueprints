@@ -1,0 +1,34 @@
+apiVersion: kro.run/v1alpha1
+kind: CICDPipeline
+metadata:
+  name: test-app-cicd-pipeline
+  namespace: team-test-app
+  labels:
+    app.kubernetes.io/name: test-app
+    app.kubernetes.io/component: cicd-pipeline
+    app.kubernetes.io/managed-by: kro-test
+    test.kro.run/test-instance: 'true'
+  annotations:
+    test.kro.run/test-version: '1.0.0'
+    test.kro.run/created-by: 'kro-test-suite'
+    cicd.kro.run/application-name: test-app
+    cicd.kro.run/aws-region: us-west-2
+    cicd.kro.run/cluster-name: modern-engineering
+spec:
+  # Required parameters - validated by schema
+  name: test-app-cicd
+  namespace: team-test-app
+  aws:
+    region: us-west-2
+    clusterName: modern-engineering
+  application:
+    name: test-app
+    # Optional parameters with defaults handled by RGD schema
+    dockerfilePath: '.'
+    deploymentPath: './deployment'
+  ecr:
+    # Optional parameter with default handled by RGD schema
+    repositoryPrefix: 'modengg'
+  gitlab:
+    hostname: 'gitea.modern-engineering.internal'
+    username: 'giteaAdmin'

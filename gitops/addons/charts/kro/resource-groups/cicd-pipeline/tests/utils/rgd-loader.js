@@ -21,15 +21,13 @@ export function createMockSchemaInstance(overrides = {}) {
       namespace: 'test-namespace',
       aws: {
         region: 'us-west-2',
-        clusterName: 'test-cluster'
+        clusterName: 'test-cluster',
+        resourcePrefix: 'peeks'
       },
       application: {
         name: 'test-app',
         dockerfilePath: '.',
         deploymentPath: './deployment'
-      },
-      ecr: {
-        repositoryPrefix: 'peeks'
       },
       gitlab: {
         hostname: 'gitlab.example.com',
@@ -103,7 +101,8 @@ export function createMockResourceStatus(resourceId, ready = true) {
         repositoryName: 'peeks/test-app',
         registryId: '123456789012',
         ackResourceMetadata: {
-          arn: 'arn:aws:ecr:us-west-2:123456789012:repository/peeks/test-app'
+          arn: 'arn:aws:ecr:us-west-2:123456789012:repository/peeks/test-app',
+          ownerAccountID: '123456789012'
         }
       }
     },
@@ -114,7 +113,8 @@ export function createMockResourceStatus(resourceId, ready = true) {
         repositoryName: 'peeks/test-app/cache',
         registryId: '123456789012',
         ackResourceMetadata: {
-          arn: 'arn:aws:ecr:us-west-2:123456789012:repository/peeks/test-app/cache'
+          arn: 'arn:aws:ecr:us-west-2:123456789012:repository/peeks/test-app/cache',
+          ownerAccountID: '123456789012'
         }
       }
     },

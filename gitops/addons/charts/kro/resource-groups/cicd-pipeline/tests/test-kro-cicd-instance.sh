@@ -120,12 +120,12 @@ check_resource_status() {
             # Check CICDPipeline instance status
             local status
             if [ "$namespace" = "cluster-wide" ]; then
-                status=$(kubectl get cicdpipeline "$resource_name" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+                status=$(kubectl get cicdpipeline "$resource_name" -o jsonpath='{.status.conditions[?(@.type=="InstanceSynced")].status}' 2>/dev/null || echo "Unknown")
             else
-                status=$(kubectl get cicdpipeline "$resource_name" -n "$namespace" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+                status=$(kubectl get cicdpipeline "$resource_name" -n "$namespace" -o jsonpath='{.status.conditions[?(@.type=="InstanceSynced")].status}' 2>/dev/null || echo "Unknown")
             fi
             if [ "$status" = "True" ]; then
-                echo -e "${GREEN}[SUCCESS]${NC} ✓ $resource_type/$resource_name is ready"
+                echo -e "${GREEN}[SUCCESS]${NC} ✓ $resource_type/$resource_name is synced and ready"
                 return 0
             else
                 echo -e "${YELLOW}[WARNING]${NC} ⚠ $resource_type/$resource_name status: $status"
@@ -220,6 +220,7 @@ echo -e "${BLUE}[INFO]${NC} Step 5: Comprehensive resource status validation..."
 TOTAL_RESOURCES=0
 SUCCESSFUL_RESOURCES=0
 FAILED_RESOURCES=0
+FAILED_RESOURCES_LIST=()
 
 # Function to check and count resource status
 check_and_count() {
@@ -233,6 +234,11 @@ check_and_count() {
         SUCCESSFUL_RESOURCES=$((SUCCESSFUL_RESOURCES + 1))
     else
         FAILED_RESOURCES=$((FAILED_RESOURCES + 1))
+        if [ "$namespace" = "cluster-wide" ]; then
+            FAILED_RESOURCES_LIST+=("$resource_type/$resource_name")
+        else
+            FAILED_RESOURCES_LIST+=("$resource_type/$resource_name (namespace: $namespace)")
+        fi
     fi
 }
 
@@ -365,6 +371,14 @@ echo -e "${BLUE}[INFO]${NC} Total Resources Checked: $TOTAL_RESOURCES"
 echo -e "${GREEN}[SUCCESS]${NC} Successful Resources: $SUCCESSFUL_RESOURCES"
 echo -e "${RED}[ERROR]${NC} Failed Resources: $FAILED_RESOURCES"
 
+# Display failed resources if any
+if [ $FAILED_RESOURCES -gt 0 ]; then
+    echo -e "${RED}[ERROR]${NC} Failed Resources Details:"
+    for failed_resource in "${FAILED_RESOURCES_LIST[@]}"; do
+        echo -e "${RED}[ERROR]${NC}   ✗ $failed_resource"
+    done
+fi
+
 # Calculate success percentage
 if [ $TOTAL_RESOURCES -gt 0 ]; then
     SUCCESS_PERCENTAGE=$((SUCCESSFUL_RESOURCES * 100 / TOTAL_RESOURCES))
@@ -380,11 +394,28 @@ if [ $FAILED_RESOURCES -eq 0 ] && [ $SUCCESSFUL_RESOURCES -gt 0 ]; then
     exit 0
 elif [ $SUCCESS_PERCENTAGE -ge 80 ]; then
     echo -e "${YELLOW}[WARNING]${NC} ⚠ Most resources are ready, but some may still be initializing"
-    echo -e "${YELLOW}[WARNING]${NC} ⚠ Consider waiting longer or checking logs for failed resources"
+    echo -e "${YELLOW}[WARNING]${NC} ⚠ Consider waiting longer or checking logs for the failed resources listed above"
+    if [ $FAILED_RESOURCES -gt 0 ]; then
+        echo -e "${YELLOW}[WARNING]${NC} ⚠ You can check individual resource status with:"
+        for failed_resource in "${FAILED_RESOURCES_LIST[@]}"; do
+            resource_parts=(${failed_resource//\// })
+            resource_type="${resource_parts[0]}"
+            resource_name="${resource_parts[1]}"
+            if [[ "$failed_resource" == *"namespace:"* ]]; then
+                namespace=$(echo "$failed_resource" | sed -n 's/.*namespace: \([^)]*\).*/\1/p')
+                echo -e "${YELLOW}[WARNING]${NC}   kubectl describe $resource_type $resource_name -n $namespace"
+            else
+                echo -e "${YELLOW}[WARNING]${NC}   kubectl describe $resource_type $resource_name"
+            fi
+        done
+    fi
     exit 1
 else
     echo -e "${RED}[ERROR]${NC} ✗ SIGNIFICANT ISSUES DETECTED"
     echo -e "${RED}[ERROR]${NC} ✗ Multiple resources failed or are not ready"
+    if [ $FAILED_RESOURCES -gt 0 ]; then
+        echo -e "${RED}[ERROR]${NC} ✗ Check the failed resources listed above for detailed error information"
+    fi
     exit 2
 fi
 
