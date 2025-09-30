@@ -108,6 +108,9 @@ metadata:
 spec:
   name: ${{values.aws_resource_prefix}}-${{values.appname}}-role
   description: IAM role for ${{values.appname}} CI/CD pipeline
+  path: '/'
+  policies:
+    - arn:aws:iam::${{values.aws_account_id}}:policy/${{values.aws_resource_prefix}}-${{values.appname}}-ecr-access-policy
   assumeRolePolicyDocument: |
     {
       "Version": "2012-10-17",
@@ -126,15 +129,6 @@ spec:
         }
       ]
     }
----
-apiVersion: iam.services.k8s.aws/v1alpha1
-kind: RolePolicyAttachment
-metadata:
-  name: ${{values.appname}}-cicd-policy-attachment
-  namespace: ${{values.namespace}}
-spec:
-  policyARN: arn:aws:iam::${{values.aws_account_id}}:policy/${{values.aws_resource_prefix}}-${{values.appname}}-ecr-access-policy
-  roleName: ${{values.aws_resource_prefix}}-${{values.appname}}-role
 ---
 apiVersion: eks.services.k8s.aws/v1alpha1
 kind: PodIdentityAssociation
