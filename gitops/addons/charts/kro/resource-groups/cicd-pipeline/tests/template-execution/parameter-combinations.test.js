@@ -176,7 +176,7 @@ describe('Backstage Template Parameter Combinations', () => {
       const pathsConfig = templateSpec.spec.parameters.find(p => p.title === 'Application Paths');
 
       expect(awsConfig.properties.aws_region.default).toBe('us-west-2');
-      expect(awsConfig.properties.cluster_name.default).toBe('modern-engineering');
+      expect(awsConfig.properties.cluster_name.default).toBe('peeks-hub-cluster');
       expect(pathsConfig.properties.dockerfile_path.default).toBe('.');
       expect(pathsConfig.properties.deployment_path.default).toBe('./deployment');
     });

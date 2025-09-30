@@ -62,3 +62,259 @@ tasks:
     cmds:
       - yarn install
       - yarn tsc
+
+  # ===== CICD PIPELINE KRO RGD TESTS =====
+
+  test-kro-unit:
+    desc: 'Run unit tests for CI/CD Pipeline Kro RGD'
+    dir: gitops/addons/charts/kro/resource-groups/cicd-pipeline/tests
+    cmds:
+      - |
+        echo "🧪 Running CI/CD Pipeline Kro RGD Unit Tests..."
+        echo "📍 Location: gitops/addons/charts/kro/resource-groups/cicd-pipeline/tests"
+        echo ""
+
+        # Check if npm is available
+        if ! command -v npm &> /dev/null; then
+          echo "❌ npm is required but not installed"
+          echo "💡 Please install Node.js and npm to run unit tests"
+          exit 1
+        fi
+
+        # Install dependencies if needed
+        if [ ! -d "node_modules" ]; then
+          echo "📦 Installing test dependencies..."
+          npm install
+        fi
+
+        # Run unit tests
+        echo "🔬 Running unit tests..."
+        npm run test
+    summary: |
+      Runs comprehensive unit tests for the CI/CD Pipeline Kro RGD:
+      - Schema validation tests
+      - Parameter handling tests  
+      - Resource template generation tests
+      - Dependency ordering tests
+
+  test-kro-integration:
+    desc: 'Run integration tests for CI/CD Pipeline Kro RGD'
+    dir: gitops/addons/charts/kro/resource-groups/cicd-pipeline/tests
+    cmds:
+      - |
+        echo "🔗 Running CI/CD Pipeline Kro RGD Integration Tests..."
+        echo "📍 Location: gitops/addons/charts/kro/resource-groups/cicd-pipeline/tests/integration"
+        echo ""
+
+        # Check if npm is available
+        if ! command -v npm &> /dev/null; then
+          echo "❌ npm is required but not installed"
+          echo "💡 Please install Node.js and npm to run integration tests"
+          exit 1
+        fi
+
+        # Run integration tests
+        echo "🔗 Running integration tests..."
+        npm run test:integration
+    summary: |
+      Runs integration tests for the CI/CD Pipeline Kro RGD:
+      - AWS resource validation tests
+      - Kubernetes deployment tests
+      - End-to-end integration validation
+
+  test-kro-template:
+    desc: 'Run Backstage template execution tests'
+    dir: gitops/addons/charts/kro/resource-groups/cicd-pipeline/tests/template-execution
+    cmds:
+      - |
+        echo "📋 Running Backstage Template Execution Tests..."
+        echo "📍 Location: gitops/addons/charts/kro/resource-groups/cicd-pipeline/tests/template-execution"
+        echo ""
+
+        # Check if npm is available
+        if ! command -v npm &> /dev/null; then
+          echo "❌ npm is required but not installed"
+          echo "💡 Please install Node.js and npm to run template tests"
+          exit 1
+        fi
+
+        # Install dependencies if needed
+        if [ ! -d "node_modules" ]; then
+          echo "📦 Installing test dependencies..."
+          npm install
+        fi
+
+        # Run template execution tests
+        echo "📋 Running template execution tests..."
+        npm run test
+    summary: |
+      Runs Backstage template execution tests:
+      - Template parameter validation
+      - YAML manifest generation tests
+      - GitLab integration validation
+      - ArgoCD application creation tests
+      - Pipeline creation validation
+
+  test-kro-deployment:
+    desc: 'Run deployment test for CI/CD Pipeline Kro RGD (requires cluster access)'
+    dir: gitops/addons/charts/kro/resource-groups/cicd-pipeline
+    cmds:
+      - |
+        echo "🚀 Running CI/CD Pipeline Kro RGD Deployment Test..."
+        echo "📍 Location: gitops/addons/charts/kro/resource-groups/cicd-pipeline"
+        echo "⚠️  This test requires active Kubernetes cluster access"
+        echo ""
+
+        # Check if kubectl is available
+        if ! command -v kubectl &> /dev/null; then
+          echo "❌ kubectl is required but not installed"
+          echo "💡 Please install kubectl to run deployment tests"
+          exit 1
+        fi
+
+        # Check cluster connectivity
+        echo "🔍 Checking cluster connectivity..."
+        kubectl cluster-info --request-timeout=10s || {
+          echo "❌ Cannot connect to Kubernetes cluster"
+          echo "💡 Please ensure kubectl is configured and cluster is accessible"
+          exit 1
+        }
+
+        # Run deployment test
+        echo "🚀 Running deployment test..."
+        ./tests/test-kro-cicd-instance.sh
+    summary: |
+      Runs full deployment test for the CI/CD Pipeline Kro RGD:
+      - Deploys RGD to active Kubernetes cluster
+      - Creates test CICDPipeline instance
+      - Validates resource creation and dependencies
+      - Verifies resource status and readiness
+
+  test-kro-clean:
+    desc: 'Clean up CI/CD Pipeline Kro RGD test resources (requires cluster access)'
+    dir: gitops/addons/charts/kro/resource-groups/cicd-pipeline
+    cmds:
+      - |
+        echo "🧹 Cleaning up CI/CD Pipeline Kro RGD Test Resources..."
+        echo "📍 Location: gitops/addons/charts/kro/resource-groups/cicd-pipeline"
+        echo "⚠️  This will delete test resources from the cluster"
+        echo ""
+
+        # Check if kubectl is available
+        if ! command -v kubectl &> /dev/null; then
+          echo "❌ kubectl is required but not installed"
+          echo "💡 Please install kubectl to run cleanup"
+          exit 1
+        fi
+
+        # Check cluster connectivity
+        echo "🔍 Checking cluster connectivity..."
+        kubectl cluster-info --request-timeout=10s || {
+          echo "❌ Cannot connect to Kubernetes cluster"
+          echo "💡 Please ensure kubectl is configured and cluster is accessible"
+          exit 1
+        }
+
+        # Run cleanup
+        echo "🧹 Running cleanup script..."
+        ./tests/cleanup-kro-test.sh
+    summary: |
+      Cleans up test resources created by test-kro-deployment:
+      - Deletes test CICDPipeline instance
+      - Removes test namespace and all resources
+      - Cleans up AWS resources (ECR images, IAM roles/policies)
+      - Provides clean slate for next test run
+
+  test-kro-dryrun:
+    desc: 'Run dry-run validation for CI/CD Pipeline Kro RGD (no cluster required)'
+    dir: gitops/addons/charts/kro/resource-groups/cicd-pipeline
+    cmds:
+      - |
+        echo "🔍 Running CI/CD Pipeline Kro RGD Dry-Run Validation..."
+        echo "📍 Location: gitops/addons/charts/kro/resource-groups/cicd-pipeline"
+        echo "✅ This test does not require cluster access"
+        echo ""
+
+        # Run dry-run test
+        echo "🔍 Running dry-run validation..."
+        ./tests/test-kro-cicd-instance-dryrun.sh
+    summary: |
+      Runs dry-run validation for the CI/CD Pipeline Kro RGD:
+      - Validates RGD YAML syntax and structure
+      - Tests parameter substitution
+      - Validates resource template generation
+      - No cluster access required
+
+  test-kro-workflow:
+    desc: 'Run workflow integration tests (requires cluster and AWS access)'
+    dir: gitops/addons/charts/kro/resource-groups/cicd-pipeline/tests
+    cmds:
+      - |
+        echo "⚙️  Running Workflow Integration Tests..."
+        echo "📍 Location: gitops/addons/charts/kro/resource-groups/cicd-pipeline/tests"
+        echo "⚠️  This test requires active Kubernetes cluster and AWS access"
+        echo ""
+
+        # Check if npm is available
+        if ! command -v npm &> /dev/null; then
+          echo "❌ npm is required but not installed"
+          echo "💡 Please install Node.js and npm to run workflow tests"
+          exit 1
+        fi
+
+        # Run workflow integration tests
+        echo "⚙️  Running workflow integration tests..."
+        npm run test:workflow
+    summary: |
+      Runs workflow integration tests for the CI/CD Pipeline Kro RGD:
+      - Tests Argo Workflows integration
+      - Validates ECR credential management
+      - Tests GitLab webhook integration
+      - Requires active cluster and AWS credentials
+
+  test-kro-all:
+    desc: 'Run all CI/CD Pipeline Kro RGD tests'
+    deps: [test-kro-unit, test-kro-template, test-kro-dryrun]
+    cmds:
+      - |
+        echo ""
+        echo "🎉 All CI/CD Pipeline Kro RGD tests completed!"
+        echo ""
+        echo "📋 Summary of tests executed:"
+        echo "  ✅ Unit tests (schema, parameters, templates)"
+        echo "  ✅ Template execution tests (Backstage integration)"
+        echo "  ✅ Dry-run validation (syntax and structure)"
+        echo ""
+        echo "💡 Additional tests available:"
+        echo "  - task test-kro-integration (requires npm and cluster access)"
+        echo "  - task test-kro-deployment (requires cluster access)"
+        echo "  - task test-kro-workflow (requires cluster and AWS access)"
+    summary: |
+      Runs comprehensive test suite for CI/CD Pipeline Kro RGD:
+      - Executes unit tests, template tests, and dry-run validation
+      - Provides complete validation without requiring cluster access
+      - Additional integration tests available separately
+
+  default:
+    desc: 'Show available tasks'
+    cmds:
+      - |
+        echo "📋 Available tasks:"
+        echo ""
+        echo "🔧 HELM CHART MANAGEMENT:"
+        echo "  task build-helm-dependencies    - Build Helm chart dependencies"
+        echo "  task check-helm-dependencies    - Check which charts have dependencies"
+        echo "  task clean-helm-dependencies    - Clean generated dependency files"
+        echo "  task test-applicationsets       - Test ApplicationSet generation"
+        echo ""
+        echo "🏗️  BACKSTAGE:"
+        echo "  task backstage-validate         - Validate Backstage configuration"
+        echo ""
+        echo "🧪 CI/CD PIPELINE KRO RGD TESTS:"
+        echo "  task test-kro-unit              - Run unit tests (schema, parameters, templates)"
+        echo "  task test-kro-template          - Run Backstage template execution tests"
+        echo "  task test-kro-dryrun            - Run dry-run validation (no cluster required)"
+        echo "  task test-kro-integration       - Run integration tests (requires cluster)"
+        echo "  task test-kro-deployment        - Run deployment test (requires cluster)"
+        echo "  task test-kro-workflow          - Run workflow integration tests (requires cluster + AWS)"
+        echo "  task test-kro-all               - Run all basic tests (unit, template, dry-run)"

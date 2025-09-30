@@ -276,7 +276,7 @@ Service account has minimal required permissions:
 Use the provided validation script:
 
 ```bash
-./validate-webhook-integration.sh {namespace} {app-name} {gitlab-hostname}
+./tests/validate-webhook-integration.sh {namespace} {app-name} {gitlab-hostname}
 ```
 
 The script validates:

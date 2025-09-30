@@ -124,7 +124,7 @@ spec:
           kind: CICDPipeline
           metadata:
             name: ${{ parameters.appname }}-cicd-pipeline
-            namespace: team-${{ parameters.appname }}
+            namespace: default
             labels:
               app.kubernetes.io/name: ${{ parameters.appname }}
               app.kubernetes.io/component: cicd-pipeline
