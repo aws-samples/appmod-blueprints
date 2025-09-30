@@ -115,10 +115,9 @@ spec:
 
     - id: create-argocd-project
       name: Create ArgoCD Project
-      action: kubernetes:apply
+      action: kube:apply
       input:
         namespaced: true
-        clusterName: local
         manifest: |
           apiVersion: argoproj.io/v1alpha1
           kind: AppProject
@@ -154,10 +153,9 @@ spec:
 
     - id: create-argocd-app
       name: Create ArgoCD Application (GitOps)
-      action: kubernetes:apply
+      action: kube:apply
       input:
         namespaced: true
-        clusterName: local
         manifest: |
           apiVersion: argoproj.io/v1alpha1
           kind: Application
