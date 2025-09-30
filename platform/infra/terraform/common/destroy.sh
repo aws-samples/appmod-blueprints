@@ -46,11 +46,13 @@ main() {
 
   # Initialize Terraform with S3 backend
   initialize_terraform "boostrap" "$DEPLOY_SCRIPTDIR"
-  
+
+  cd "$DEPLOY_SCRIPTDIR" # Get into common stack directory
   # Remove GitLab resources from state, if they exist
   if ! terraform state rm gitlab_personal_access_token.workshop || ! terraform state rm data.gitlab_user.workshop; then
     log_warning "GitLab resources not found in state"
   fi
+  cd - # Go back
 
   # Destroy Terraform resources
   log "Destroying bootstrap resources..."
