@@ -89,8 +89,6 @@ spec:
           title: Workload Repository URL
           type: string
           description: Git repository URL for workload
-          ui:help: "Leave empty to use default system repository"
-          description: Git repository URL for workload
           ui:help: "Will be auto-populated from system configuration"
     - title: Cluster Addons Configuration
       properties:
