@@ -1,0 +1,247 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: ${{ values.name }}.kro.run
+  namespace: ${{ values.namespace }}
+  labels:
+    app.kubernetes.io/name: ${{ values.name }}
+    app.kubernetes.io/component: resourcegroup
+    app.kubernetes.io/part-of: ${{ values.name }}
+    environment: ${{ values.environment }}
+  annotations:
+    backstage.io/kubernetes-id: ${{ values.name }}
+    kro.run/description: "${{ values.description }}"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: Microservice
+    spec:
+      name: string
+      namespace: string | default=${{ values.namespace }}
+      image: string | default=${{ values.image }}
+      port: integer | default=${{ values.port }}
+      replicas: integer | default=${{ values.replicas }}
+      serviceAccount: string | default=${{ values.serviceAccount }}
+      resources:
+        requests:
+          cpu: string | default=${{ values.cpuRequest }}
+          memory: string | default=${{ values.memoryRequest }}
+        limits:
+          cpu: string | default=${{ values.cpuLimit }}
+          memory: string | default=${{ values.memoryLimit }}
+      service:
+        type: string | default=${{ values.serviceType }}
+        port: integer | default=${{ values.servicePort }}
+      ingress:
+        enabled: boolean | default=${{ values.ingressEnabled }}
+        class: string | default=${{ values.ingressClass }}
+        {% if values.hostname -%}
+        hostname: string | default=${{ values.hostname }}
+        {% endif -%}
+        pathPrefix: string | default=${{ values.pathPrefix }}
+        tlsEnabled: boolean | default=${{ values.tlsEnabled }}
+      config:
+        enabled: boolean | default=${{ values.configMapEnabled }}
+      secrets:
+        enabled: boolean | default=${{ values.secretEnabled }}
+      healthCheck:
+        path: string | default=${{ values.healthCheckPath }}
+        readinessPath: string | default=${{ values.readinessCheckPath }}
+        livenessInitialDelay: integer | default=${{ values.livenessInitialDelay }}
+        readinessInitialDelay: integer | default=${{ values.readinessInitialDelay }}
+    status:
+      deploymentConditions: ${deployment.status.conditions}
+      availableReplicas: ${deployment.status.availableReplicas}
+      {% if values.ingressEnabled -%}
+      url: {% if values.hostname -%}https://${schema.spec.ingress.hostname}{% else -%}${ingress.status.loadBalancer.ingress[0].hostname}{% endif -%}
+      {% endif -%}
+
+  resources:
+  {% if values.configMapEnabled -%}
+  - id: configmap
+    template:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: ${schema.spec.name}-config
+        namespace: ${schema.spec.namespace}
+        labels:
+          app.kubernetes.io/name: ${schema.spec.name}
+          app.kubernetes.io/component: config
+          app.kubernetes.io/part-of: ${schema.spec.name}
+      data:
+        {% for key, value in values.configData.items() -%}
+        {{ key }}: "{{ value }}"
+        {% endfor -%}
+  {% endif -%}
+
+  {% if values.secretEnabled -%}
+  - id: secret
+    template:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: ${schema.spec.name}-secret
+        namespace: ${schema.spec.namespace}
+        labels:
+          app.kubernetes.io/name: ${schema.spec.name}
+          app.kubernetes.io/component: secret
+          app.kubernetes.io/part-of: ${schema.spec.name}
+      type: Opaque
+      data:
+        {% for key, value in values.secretData.items() -%}
+        {{ key }}: {{ value | b64encode }}
+        {% endfor -%}
+  {% endif -%}
+
+  - id: deployment
+    readyWhen:
+      - ${deployment.spec.replicas == deployment.status.availableReplicas}
+    template:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ${schema.spec.name}
+        namespace: ${schema.spec.namespace}
+        labels:
+          app.kubernetes.io/name: ${schema.spec.name}
+          app.kubernetes.io/component: microservice
+          app.kubernetes.io/part-of: ${schema.spec.name}
+          environment: ${{ values.environment }}
+      spec:
+        replicas: ${schema.spec.replicas}
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app: ${schema.spec.name}
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: ${schema.spec.name}
+              app: ${schema.spec.name}
+              environment: ${{ values.environment }}
+          spec:
+            serviceAccountName: ${schema.spec.serviceAccount}
+            containers:
+            - name: microservice
+              image: ${schema.spec.image}
+              imagePullPolicy: Always
+              ports:
+              - containerPort: ${schema.spec.port}
+                name: http
+              resources:
+                requests:
+                  cpu: ${schema.spec.resources.requests.cpu}
+                  memory: ${schema.spec.resources.requests.memory}
+                limits:
+                  cpu: ${schema.spec.resources.limits.cpu}
+                  memory: ${schema.spec.resources.limits.memory}
+              env:
+              - name: ENVIRONMENT
+                value: "${{ values.environment }}"
+              - name: SERVICE_NAME
+                value: ${schema.spec.name}
+              - name: SERVICE_PORT
+                value: "${schema.spec.port}"
+              {% if values.configMapEnabled -%}
+              envFrom:
+              - configMapRef:
+                  name: ${configmap.metadata.name}
+              {% endif -%}
+              {% if values.secretEnabled -%}
+              {% if not values.configMapEnabled -%}
+              envFrom:
+              {% endif -%}
+              - secretRef:
+                  name: ${secret.metadata.name}
+              {% endif -%}
+              livenessProbe:
+                httpGet:
+                  path: ${schema.spec.healthCheck.path}
+                  port: http
+                initialDelaySeconds: ${schema.spec.healthCheck.livenessInitialDelay}
+                periodSeconds: 10
+                timeoutSeconds: 5
+                failureThreshold: 3
+              readinessProbe:
+                httpGet:
+                  path: ${schema.spec.healthCheck.readinessPath}
+                  port: http
+                initialDelaySeconds: ${schema.spec.healthCheck.readinessInitialDelay}
+                periodSeconds: 5
+                timeoutSeconds: 3
+                failureThreshold: 3
+            restartPolicy: Always
+
+  - id: service
+    template:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: ${deployment.metadata.name}
+        namespace: ${deployment.metadata.namespace}
+        labels:
+          app.kubernetes.io/name: ${schema.spec.name}
+          app.kubernetes.io/component: service
+          app.kubernetes.io/part-of: ${schema.spec.name}
+      spec:
+        selector:
+          app: ${schema.spec.name}
+        ports:
+        - name: http
+          protocol: TCP
+          port: ${schema.spec.service.port}
+          targetPort: ${schema.spec.port}
+        type: ${schema.spec.service.type}
+
+  {% if values.ingressEnabled -%}
+  - id: ingress
+    includeWhen:
+    - ${schema.spec.ingress.enabled}  
+    template:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: ${deployment.metadata.name}
+        namespace: ${deployment.metadata.namespace}
+        labels:
+          app.kubernetes.io/name: ${schema.spec.name}
+          app.kubernetes.io/component: ingress
+          app.kubernetes.io/part-of: ${schema.spec.name}
+        annotations:
+          kubernetes.io/ingress.class: ${schema.spec.ingress.class}
+          {% if values.ingressClass == 'alb' -%}
+          alb.ingress.kubernetes.io/scheme: internet-facing
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/healthcheck-path: ${schema.spec.healthCheck.path}
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}{% if values.tlsEnabled %}, {"HTTPS": 443}{% endif %}]'
+          {% if values.tlsEnabled -%}
+          alb.ingress.kubernetes.io/ssl-redirect: '443'
+          {% endif -%}
+          {% endif -%}
+          {% if values.ingressClass == 'nginx' -%}
+          nginx.ingress.kubernetes.io/rewrite-target: /
+          {% endif -%}
+      spec:
+        {% if values.tlsEnabled and values.hostname -%}
+        tls:
+        - hosts:
+          - ${schema.spec.ingress.hostname}
+          secretName: ${schema.spec.name}-tls
+        {% endif -%}
+        rules:
+        {% if values.hostname -%}
+        - host: ${schema.spec.ingress.hostname}
+          http:
+        {% else -%}
+        - http:
+        {% endif -%}
+            paths:
+            - path: ${schema.spec.ingress.pathPrefix}
+              pathType: Prefix
+              backend:
+                service:
+                  name: ${service.metadata.name}
+                  port:
+                    number: ${schema.spec.service.port}
+  {% endif -%}

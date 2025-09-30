@@ -1219,166 +1219,170 @@ spec:
               - name: aws-region
                 value: ${schema.spec.aws.region}
     # Argo Events EventSource for GitLab webhooks
-    - id: eventsource
-      readyWhen:
-        - ${eventsource.metadata.name != ""}
-      template:
-        apiVersion: argoproj.io/v1alpha1
-        kind: EventSource
-        metadata:
-          name: ${schema.spec.name}-gitlab-eventsource
-          namespace: ${schema.spec.namespace}
-          labels:
-            app.kubernetes.io/name: ${schema.spec.application.name}
-            app.kubernetes.io/component: cicd-pipeline
-            app.kubernetes.io/managed-by: kro
-        spec:
-          service:
-            ports:
-              - port: 12000
-                targetPort: 12000
-          webhook:
-            gitlab-webhook:
-              port: '12000'
-              endpoint: /webhook
-              method: POST
-              url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.spec.namespace}.svc.cluster.local:12000/webhook
+    # COMMENTED OUT: This resource is now managed by Backstage template to avoid conflicts
+    # - id: eventsource
+    #   readyWhen:
+    #     - ${eventsource.metadata.name != ""}
+    #   template:
+    #     apiVersion: argoproj.io/v1alpha1
+    #     kind: EventSource
+    #     metadata:
+    #       name: ${schema.spec.name}-gitlab-eventsource
+    #       namespace: ${schema.spec.namespace}
+    #       labels:
+    #         app.kubernetes.io/name: ${schema.spec.application.name}
+    #         app.kubernetes.io/component: cicd-pipeline
+    #         app.kubernetes.io/managed-by: kro
+    #     spec:
+    #       service:
+    #         ports:
+    #           - port: 12000
+    #             targetPort: 12000
+    #       webhook:
+    #         gitlab-webhook:
+    #           port: '12000'
+    #           endpoint: /webhook
+    #           method: POST
+    #           url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.spec.namespace}.svc.cluster.local:12000/webhook
 
     # Argo Events Sensor for triggering CI/CD workflows
-    - id: sensor
-      readyWhen:
-        - ${sensor.metadata.name != ""}
-      template:
-        apiVersion: argoproj.io/v1alpha1
-        kind: Sensor
-        metadata:
-          name: ${schema.spec.name}-gitlab-sensor
-          namespace: ${schema.spec.namespace}
-          labels:
-            app.kubernetes.io/name: ${schema.spec.application.name}
-            app.kubernetes.io/component: cicd-pipeline
-            app.kubernetes.io/managed-by: kro
-        spec:
-          template:
-            serviceAccountName: ${schema.spec.name}-sa
-          dependencies:
-            - name: gitlab-webhook
-              eventSourceName: ${schema.spec.name}-gitlab-eventsource
-              eventName: gitlab-webhook
-              filters:
-                data:
-                  - path: object_kind
-                    type: string
-                    value:
-                      - 'push'
-                  - path: ref
-                    type: string
-                    value:
-                      - 'refs/heads/main'
-          triggers:
-            - template:
-                name: gitlab-workflow-trigger
-                argoWorkflow:
-                  operation: submit
-                  source:
-                    resource:
-                      apiVersion: argoproj.io/v1alpha1
-                      kind: Workflow
-                      metadata:
-                        generateName: ${schema.spec.name}-cicd-
-                        namespace: ${schema.spec.namespace}
-                        labels:
-                          app.kubernetes.io/name: ${schema.spec.application.name}
-                          app.kubernetes.io/component: cicd-pipeline
-                          triggered-by: gitlab-webhook
-                      spec:
-                        serviceAccountName: ${schema.spec.name}-sa
-                        workflowTemplateRef:
-                          name: ${schema.spec.name}-cicd-workflow
-                        arguments:
-                          parameters:
-                            - name: git-url
-                              value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}-cicd.git'
-                            - name: git-revision
-                              value: 'main'
-                            - name: git-username
-                              value: ${schema.spec.gitlab.username}
-                            - name: git-token
-                              valueFrom:
-                                secretKeyRef:
-                                  name: gitlab-credentials
-                                  key: GITLAB_TOKEN
-                            - name: repo-name
-                              value: '${schema.spec.application.name}-cicd'
-                            - name: dockerfile-path
-                              value: ${schema.spec.application.dockerfilePath}
-                            - name: deployment-path
-                              value: ${schema.spec.application.deploymentPath}
-                  parameters:
-                    - src:
-                        dependencyName: gitlab-webhook
-                        dataKey: body.commits.0.id
-                      dest: spec.arguments.parameters.0.value
-                      operation: prepend
-                    - src:
-                        dependencyName: gitlab-webhook
-                        dataKey: body.ref
-                      dest: spec.arguments.parameters.1.value
-                      operation: override
+    # COMMENTED OUT: This resource is now managed by Backstage template to avoid conflicts
+    # - id: sensor
+    #   readyWhen:
+    #     - ${sensor.metadata.name != ""}
+    #   template:
+    #     apiVersion: argoproj.io/v1alpha1
+    #     kind: Sensor
+    #     metadata:
+    #       name: ${schema.spec.name}-gitlab-sensor
+    #       namespace: ${schema.spec.namespace}
+    #       labels:
+    #         app.kubernetes.io/name: ${schema.spec.application.name}
+    #         app.kubernetes.io/component: cicd-pipeline
+    #         app.kubernetes.io/managed-by: kro
+    #     spec:
+    #       template:
+    #         serviceAccountName: ${schema.spec.name}-sa
+    #       dependencies:
+    #         - name: gitlab-webhook
+    #           eventSourceName: ${schema.spec.name}-gitlab-eventsource
+    #           eventName: gitlab-webhook
+    #           filters:
+    #             data:
+    #               - path: object_kind
+    #                 type: string
+    #                 value:
+    #                   - 'push'
+    #               - path: ref
+    #                 type: string
+    #                 value:
+    #                   - 'refs/heads/main'
+    #       triggers:
+    #         - template:
+    #             name: gitlab-workflow-trigger
+    #             argoWorkflow:
+    #               operation: submit
+    #               source:
+    #                 resource:
+    #                   apiVersion: argoproj.io/v1alpha1
+    #                   kind: Workflow
+    #                   metadata:
+    #                     generateName: ${schema.spec.name}-cicd-
+    #                     namespace: ${schema.spec.namespace}
+    #                     labels:
+    #                       app.kubernetes.io/name: ${schema.spec.application.name}
+    #                       app.kubernetes.io/component: cicd-pipeline
+    #                       triggered-by: gitlab-webhook
+    #                   spec:
+    #                     serviceAccountName: ${schema.spec.name}-sa
+    #                     workflowTemplateRef:
+    #                       name: ${schema.spec.name}-cicd-workflow
+    #                     arguments:
+    #                       parameters:
+    #                         - name: git-url
+    #                           value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}-cicd.git'
+    #                         - name: git-revision
+    #                           value: 'main'
+    #                         - name: git-username
+    #                           value: ${schema.spec.gitlab.username}
+    #                         - name: git-token
+    #                           valueFrom:
+    #                             secretKeyRef:
+    #                               name: gitlab-credentials
+    #                               key: GITLAB_TOKEN
+    #                         - name: repo-name
+    #                           value: '${schema.spec.application.name}-cicd'
+    #                         - name: dockerfile-path
+    #                           value: ${schema.spec.application.dockerfilePath}
+    #                         - name: deployment-path
+    #                           value: ${schema.spec.application.deploymentPath}
+    #               parameters:
+    #                 - src:
+    #                     dependencyName: gitlab-webhook
+    #                     dataKey: body.commits.0.id
+    #                   dest: spec.arguments.parameters.0.value
+    #                   operation: prepend
+    #                 - src:
+    #                     dependencyName: gitlab-webhook
+    #                     dataKey: body.ref
+    #                   dest: spec.arguments.parameters.1.value
+    #                   operation: override
 
     # Service for exposing the EventSource webhook endpoint
-    - id: webhookservice
-      readyWhen:
-        - ${webhookservice.metadata.name != ""}
-      template:
-        apiVersion: v1
-        kind: Service
-        metadata:
-          name: ${schema.spec.name}-webhook-service
-          namespace: ${schema.spec.namespace}
-          labels:
-            app.kubernetes.io/name: ${schema.spec.application.name}
-            app.kubernetes.io/component: cicd-pipeline
-            app.kubernetes.io/managed-by: kro
-        spec:
-          selector:
-            eventsource-name: ${schema.spec.name}-gitlab-eventsource
-          ports:
-            - name: webhook
-              port: 80
-              targetPort: 12000
-              protocol: TCP
-          type: ClusterIP
+    # COMMENTED OUT: This resource is now managed by Backstage template to avoid conflicts
+    # - id: webhookservice
+    #   readyWhen:
+    #     - ${webhookservice.metadata.name != ""}
+    #   template:
+    #     apiVersion: v1
+    #     kind: Service
+    #     metadata:
+    #       name: ${schema.spec.name}-webhook-service
+    #       namespace: ${schema.spec.namespace}
+    #       labels:
+    #         app.kubernetes.io/name: ${schema.spec.application.name}
+    #         app.kubernetes.io/component: cicd-pipeline
+    #         app.kubernetes.io/managed-by: kro
+    #     spec:
+    #       selector:
+    #         eventsource-name: ${schema.spec.name}-gitlab-eventsource
+    #       ports:
+    #         - name: webhook
+    #           port: 80
+    #           targetPort: 12000
+    #           protocol: TCP
+    #       type: ClusterIP
 
     # Ingress for external webhook access
-    - id: webhookingress
-      readyWhen:
-        - ${webhookingress.metadata.name != ""}
-      template:
-        apiVersion: networking.k8s.io/v1
-        kind: Ingress
-        metadata:
-          name: ${schema.spec.name}-webhook-ingress
-          namespace: ${schema.spec.namespace}
-          labels:
-            app.kubernetes.io/name: ${schema.spec.application.name}
-            app.kubernetes.io/component: cicd-pipeline
-            app.kubernetes.io/managed-by: kro
-          annotations:
-            kubernetes.io/ingress.class: alb
-            alb.ingress.kubernetes.io/scheme: internet-facing
-            alb.ingress.kubernetes.io/target-type: ip
-            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-            alb.ingress.kubernetes.io/healthcheck-path: /health
-        spec:
-          rules:
-            - host: ${schema.spec.gitlab.hostname}
-              http:
-                paths:
-                  - path: /argo-events/${schema.spec.application.name}
-                    pathType: Prefix
-                    backend:
-                      service:
-                        name: ${schema.spec.name}-webhook-service
-                        port:
-                          number: 80
+    # COMMENTED OUT: This resource is now managed by Backstage template to avoid conflicts
+    # - id: webhookingress
+    #   readyWhen:
+    #     - ${webhookingress.metadata.name != ""}
+    #   template:
+    #     apiVersion: networking.k8s.io/v1
+    #     kind: Ingress
+    #     metadata:
+    #       name: ${schema.spec.name}-webhook-ingress
+    #       namespace: ${schema.spec.namespace}
+    #       labels:
+    #         app.kubernetes.io/name: ${schema.spec.application.name}
+    #         app.kubernetes.io/component: cicd-pipeline
+    #         app.kubernetes.io/managed-by: kro
+    #       annotations:
+    #         kubernetes.io/ingress.class: alb
+    #         alb.ingress.kubernetes.io/scheme: internet-facing
+    #         alb.ingress.kubernetes.io/target-type: ip
+    #         alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    #         alb.ingress.kubernetes.io/healthcheck-path: /health
+    #     spec:
+    #       rules:
+    #         - host: ${schema.spec.gitlab.hostname}
+    #           http:
+    #             paths:
+    #               - path: /argo-events/${schema.spec.application.name}
+    #                 pathType: Prefix
+    #                 backend:
+    #                   service:
+    #                     name: ${schema.spec.name}-webhook-service
+    #                     port:
+    #                       number: 80
