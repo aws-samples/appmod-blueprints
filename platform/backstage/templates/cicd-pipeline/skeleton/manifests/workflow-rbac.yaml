@@ -1,152 +1,143 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: team-${{values.appname}}
+  name: ${{values.namespace}}
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: ${{values.appname}}-cicd-sa
-  namespace: ${{ values.namespace }}
+  namespace: ${{values.namespace}}
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::${{values.aws_account_id}}:role/${{values.aws_resource_prefix}}-${{values.appname}}-role
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ${{values.appname}}-argo-workflow-runner
+  namespace: ${{values.namespace}}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "update", "patch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows", "workflowtemplates", "workflowtaskresults"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["eventsources", "sensors"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: ${{values.appname}}-cicd-sa-binding
-  namespace: ${{ values.namespace }}
+  namespace: ${{values.namespace}}
 subjects:
-- kind: ServiceAccount
-  name: ${{values.appname}}-cicd-sa
+  - kind: ServiceAccount
+    name: ${{values.appname}}-cicd-sa
+    namespace: ${{values.namespace}}
 roleRef:
   kind: Role
   name: ${{values.appname}}-argo-workflow-runner
   apiGroup: rbac.authorization.k8s.io
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${{values.appname}}-operate-workflow-sa
+  namespace: ${{values.namespace}}
+---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: RoleBinding
 metadata:
+  name: ${{values.appname}}-operate-workflow-sa-binding
+  namespace: ${{values.namespace}}
+subjects:
+  - kind: ServiceAccount
+    name: ${{values.appname}}-operate-workflow-sa
+    namespace: ${{values.namespace}}
+roleRef:
+  kind: Role
   name: ${{values.appname}}-argo-workflow-runner
-  namespace: ${{ values.namespace }}
-rules:
-- apiGroups:
-  - argoproj.io
-  resources:
-  - workflows
-  - workflows/status
-  - workflows/finalizers
-  verbs:
-  - get
-  - list
-  - watch
-  - update
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  - pods/log
-  - persistentvolumeclaims
-  verbs:
-  - create
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  - secrets
-  verbs:
-  - get
-  - watch
-  - list
+  apiGroup: rbac.authorization.k8s.io
 ---
-# PodIdentityAssociation
-apiVersion: eks.aws.upbound.io/v1beta1
-kind: PodIdentityAssociation
-metadata:
-  name: "${{values.appname}}-cicd-podidentity"
-spec:
-  forProvider:
-    clusterName: "peeks-hub-cluster"
-    namespace: "${{values.namespace}}"
-    region: "${{values.aws_region}}"
-    roleArnRef:
-      name: "${{values.appname}}-cicd-iam-role"
-    serviceAccount: "${{values.appname}}-cicd-sa"
-
----
-# IAM Role
-apiVersion: iam.aws.upbound.io/v1beta1
-kind: Role
-metadata:
-  name: "${{values.appname}}-cicd-iam-role"
-spec:
-  forProvider:
-    assumeRolePolicy: |
-      {
-        "Version": "2012-10-17",
-        "Statement": [
-          {
-            "Effect": "Allow",
-            "Principal": {
-              "Service": "pods.eks.amazonaws.com"
-            },
-            "Action": [
-              "sts:AssumeRole",
-              "sts:TagSession"
-            ]
-          }
-        ]
-      }
-
----
-# IAM Policy
-apiVersion: iam.aws.upbound.io/v1beta1
+apiVersion: iam.services.k8s.aws/v1alpha1
 kind: Policy
 metadata:
-  name: "${{values.appname}}-cicd-ecr-access-policy"
+  name: ${{values.appname}}-cicd-ecr-access-policy
+  namespace: ${{values.namespace}}
 spec:
-  forProvider:
-    description: ECR Access Policy
-    policy: |
-      {
-        "Version": "2012-10-17",
-        "Statement": [
-          {
-            "Effect": "Allow",
-            "Action": [
-                "ecr:GetAuthorizationToken",
-                "ecr:BatchCheckLayerAvailability",
-                "ecr:GetDownloadUrlForLayer",
-                "ecr:GetRepositoryPolicy",
-                "ecr:DescribeRepositories",
-                "ecr:ListImages",
-                "ecr:DescribeImages",
-                "ecr:BatchGetImage",
-                "ecr:GetLifecyclePolicy",
-                "ecr:GetLifecyclePolicyPreview",
-                "ecr:ListTagsForResource",
-                "ecr:DescribeImageScanFindings",
-                "ecr:InitiateLayerUpload",
-                "ecr:UploadLayerPart",
-                "ecr:CompleteLayerUpload",
-                "ecr:PutImage"
-            ],
-            "Resource": "*"
-          }
-        ]
-      }
-
+  name: ${{values.aws_resource_prefix}}-${{values.appname}}-ecr-access-policy
+  description: ECR access policy for ${{values.appname}} CI/CD pipeline
+  policyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "ecr:GetAuthorizationToken",
+            "ecr:BatchCheckLayerAvailability",
+            "ecr:GetDownloadUrlForLayer",
+            "ecr:BatchGetImage",
+            "ecr:PutImage",
+            "ecr:InitiateLayerUpload",
+            "ecr:UploadLayerPart",
+            "ecr:CompleteLayerUpload"
+          ],
+          "Resource": "*"
+        }
+      ]
+    }
 ---
-# IAM Policy Attachment
-apiVersion: iam.aws.upbound.io/v1beta1
-kind: RolePolicyAttachment
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: Role
 metadata:
-  name: "${{values.appname}}-cicd-ecr-access-policy-attachment"
+  name: ${{values.appname}}-cicd-iam-role
+  namespace: ${{values.namespace}}
 spec:
-  forProvider:
-    policyArnRef:
-      name: "${{values.appname}}-cicd-ecr-access-policy"
-    roleRef:
-      name: "${{values.appname}}-cicd-iam-role"
-
+  name: ${{values.aws_resource_prefix}}-${{values.appname}}-role
+  description: IAM role for ${{values.appname}} CI/CD pipeline
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "Service": "pods.eks.amazonaws.com"
+          },
+          "Action": "sts:AssumeRole",
+          "Condition": {
+            "ArnEquals": {
+              "aws:SourceArn": "arn:aws:eks:${{values.aws_region}}:${{values.aws_account_id}}:podidentityassociation/${{values.cluster_name}}/*"
+            }
+          }
+        }
+      ]
+    }
+---
+apiVersion: eks.services.k8s.aws/v1alpha1
+kind: PodIdentityAssociation
+metadata:
+  name: ${{values.appname}}-cicd-podidentity
+  namespace: ${{values.namespace}}
+spec:
+  clusterName: ${{values.cluster_name}}
+  roleARN: arn:aws:iam::${{values.aws_account_id}}:role/${{values.aws_resource_prefix}}-${{values.appname}}-role
+  serviceAccount: ${{values.appname}}-cicd-sa
