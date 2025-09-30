@@ -139,5 +139,6 @@ metadata:
   namespace: ${{values.namespace}}
 spec:
   clusterName: ${{values.cluster_name}}
+  namespace: ${{values.namespace}}
   roleARN: arn:aws:iam::${{values.aws_account_id}}:role/${{values.aws_resource_prefix}}-${{values.appname}}-role
   serviceAccount: ${{values.appname}}-cicd-sa

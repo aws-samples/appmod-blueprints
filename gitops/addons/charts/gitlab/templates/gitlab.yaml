@@ -142,8 +142,7 @@ spec:
             memory: "8Gi"
             cpu: "4"
           limits:
-            memory: "8Gi"
-            cpu: "4"
+            memory: "12Gi"
         securityContext:
           privileged: false
           runAsUser: 0
