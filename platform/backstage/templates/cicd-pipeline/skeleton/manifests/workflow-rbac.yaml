@@ -120,7 +120,10 @@ spec:
           "Principal": {
             "Service": "pods.eks.amazonaws.com"
           },
-          "Action": "sts:AssumeRole",
+          "Action": [
+            "sts:AssumeRole",
+            "sts:TagSession"
+          ],
           "Condition": {
             "ArnEquals": {
               "aws:SourceArn": "arn:aws:eks:${{values.aws_region}}:${{values.aws_account_id}}:podidentityassociation/${{values.cluster_name}}/*"
@@ -135,6 +138,8 @@ kind: PodIdentityAssociation
 metadata:
   name: ${{values.appname}}-cicd-podidentity
   namespace: ${{values.namespace}}
+  annotations:
+    services.k8s.aws/region: ${{values.aws_region}}
 spec:
   clusterName: ${{values.cluster_name}}
   namespace: ${{values.namespace}}
