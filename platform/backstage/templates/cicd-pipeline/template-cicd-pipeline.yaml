@@ -100,7 +100,12 @@ spec:
           appname: ${{ parameters.appname }}
           namespace: team-${{ parameters.appname }}
           aws_region: ${{ parameters.aws_region }}
-          hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
+          aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
+          gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
+          argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
+          git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
+          cluster_name: ${{ parameters.cluster_name }}
+          aws_resource_prefix: peeks
           dockerfile_path: ${{parameters.dockerfile_path}}
           deployment_path: ${{parameters.deployment_path}}
 
@@ -292,7 +297,7 @@ spec:
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
         icon: git
       - title: Kubernetes Namespace
-        url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/argocd/applications/argocd/kro-resource-groups?resource=&node=team-${{ parameters.appname }}%2F%2FNamespace%2F
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/kro-resource-groups?resource=&node=team-${{ parameters.appname }}%2F%2FNamespace%2F
         icon: web
     text:
       - title: Kro-based CI/CD Pipeline Configuration
