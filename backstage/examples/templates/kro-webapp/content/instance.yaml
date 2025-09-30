@@ -1,0 +1,30 @@
+apiVersion: kro.run/v1alpha1
+kind: WebApp
+metadata:
+  name: ${{ values.name }}
+  namespace: ${{ values.namespace }}
+  labels:
+    app.kubernetes.io/name: ${{ values.name }}
+    app.kubernetes.io/component: instance
+    app.kubernetes.io/part-of: ${{ values.name }}
+    environment: ${{ values.environment }}
+  annotations:
+    backstage.io/kubernetes-id: ${{ values.name }}
+    kro.run/description: "${{ values.description }}"
+spec:
+  name: ${{ values.name }}
+  namespace: ${{ values.namespace }}
+  image: ${{ values.image }}
+  port: ${{ values.port }}
+  replicas: ${{ values.replicas }}
+  service:
+    enabled: ${{ values.serviceEnabled }}
+    port: ${{ values.servicePort }}
+  ingress:
+    enabled: ${{ values.ingressEnabled }}
+    class: ${{ values.ingressClass }}
+    healthCheckPath: ${{ values.healthCheckPath }}
+  serviceAccount: ${{ values.serviceAccount }}
+  {% if values.s3BucketName -%}
+  s3bucketName: ${{ values.s3BucketName }}
+  {% endif -%}
