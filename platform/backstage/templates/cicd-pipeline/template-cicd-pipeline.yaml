@@ -271,16 +271,16 @@ spec:
         url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd?view=tree&resource=
         icon: web
       - title: ECR Main Repository
-        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks%2F${{ parameters.appname }}?region=${{ parameters.aws_region }}
+        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks/${{ parameters.appname }}?region=${{ parameters.aws_region }}
         icon: cloud
       - title: ECR Cache Repository
-        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks%2F${{ parameters.appname }}%2Fcache?region=${{ parameters.aws_region }}
+        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks/${{ parameters.appname }}/cache?region=${{ parameters.aws_region }}
         icon: cloud
       - title: IAM Role
-        url: https://console.aws.amazon.com/iam/home?region=${{ parameters.aws_region }}#/roles/details/${{ parameters.appname }}-cicd-role
+        url: https://console.aws.amazon.com/iam/home?region=${{ parameters.aws_region }}#/roles/details/peeks-${{ parameters.appname }}-role?section=permissions
         icon: cloud
       - title: IAM Policy
-        url: https://console.aws.amazon.com/iam/home?region=${{ parameters.aws_region }}#/policies/arn:aws:iam::${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}:policy/${{ parameters.appname }}-cicd-ecr-policy
+        url: https://console.aws.amazon.com/iam/home?region=${{ parameters.aws_region }}#/policies/details/arn%3Aaws%3Aiam%3A%3A${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}%3Apolicy%2Fpeeks-${{ parameters.appname }}-ecr-access-policy?section=permissions
         icon: cloud
       - title: EKS Pod Identity Association
         url: https://console.aws.amazon.com/eks/home?region=${{ parameters.aws_region }}#/clusters/${{ parameters.cluster_name }}/pod-identity-associations
