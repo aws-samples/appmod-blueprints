@@ -49,6 +49,7 @@ print_info "Using the following values for catalog-info.yaml update:"
 echo "  Account ID: $AWS_ACCOUNT_ID"
 echo "  AWS Region: $AWS_REGION"
 echo "  GitLab Domain: $GITLAB_DOMAIN"
+echo "  ArgoCD URL: $ARGOCD_URL"
 echo "  Git Username: $GIT_USERNAME"
 
 print_step "Updating catalog-info.yaml with environment-specific values"
@@ -60,7 +61,8 @@ print_info "Created backup: $BACKUP_PATH"
 
 # Update the system-info entity in catalog-info.yaml
 yq -i '
-  (select(.metadata.name == "system-info").spec.hostname) = "'$GITLAB_DOMAIN'" |
+  (select(.metadata.name == "system-info").spec.gitlab_hostname) = "'$GITLAB_DOMAIN'" |
+  (select(.metadata.name == "system-info").spec.argocd_hostname) = "'${ARGOCD_URL#https://}'" |
   (select(.metadata.name == "system-info").spec.gituser) = "'$GIT_USERNAME'" |
   (select(.metadata.name == "system-info").spec.aws_region) = "'$AWS_REGION'" |
   (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'"
@@ -76,7 +78,8 @@ print_success "Staged catalog-info.yaml"
 print_success "Backstage template configuration updated!"
 
 print_info "Templates can now reference these values using:"
-echo "  ✓ Hostname: \${{ steps['fetchSystem'].output.entity.spec.hostname }}"
+echo "  ✓ GitLab Hostname: \${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}"
+echo "  ✓ ArgoCD Hostname: \${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}"
 echo "  ✓ Git User: \${{ steps['fetchSystem'].output.entity.spec.gituser }}"
 echo "  ✓ AWS Region: \${{ steps['fetchSystem'].output.entity.spec.aws_region }}"
 echo "  ✓ AWS Account ID: \${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}"
