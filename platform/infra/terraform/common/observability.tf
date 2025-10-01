@@ -59,7 +59,6 @@ module "managed_grafana" {
   saml_org_assertion           = "org"
   saml_role_assertion          = "role"
   saml_login_validity_duration = 120
-  # Dummy values for SAML configuration to setup will be updated after keycloak integration
   saml_idp_metadata_url = local.keycloak_saml_url
 
   tags = local.tags
@@ -107,19 +106,3 @@ resource "aws_prometheus_scraper" "peeks-scraper" {
     data.aws_caller_identity.current.account_id
   )
 }
-# # Create SSM parameters for Prometheus workspace information
-# resource "aws_ssm_parameter" "amp_endpoint" {
-#   name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
-#   type      = "String"
-#   value     = module.managed_service_prometheus.workspace_prometheus_endpoint
-#   overwrite = true
-#   tags      = local.tags
-# }
-
-# resource "aws_ssm_parameter" "amp_arn" {
-#   name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
-#   type      = "String"
-#   value     = module.managed_service_prometheus.workspace_arn
-#   overwrite = true
-#   tags      = local.tags
-# }

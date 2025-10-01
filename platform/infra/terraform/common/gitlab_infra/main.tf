@@ -51,8 +51,6 @@ resource "kubernetes_service" "gitlab_nlb" {
     namespace = "gitlab"
     annotations = {
       "service.beta.kubernetes.io/aws-load-balancer-name" = "gitlab"
-      # "service.beta.kubernetes.io/aws-load-balancer-type" = "external"
-      # "service.beta.kubernetes.io/aws-load-balancer-scheme" = "internet-facing"
       "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
       "service.beta.kubernetes.io/aws-load-balancer-security-groups" = local.gitlab_security_groups
       "service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules" = "true"

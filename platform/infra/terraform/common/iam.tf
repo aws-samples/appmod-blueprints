@@ -69,12 +69,7 @@ resource "aws_eks_access_policy_association" "spoke" {
     type       = "cluster"
   }
 }
-# # Creating parameter for all clusters to read
-# resource "aws_ssm_parameter" "argocd_hub_role" {
-#   name  = "${local.context_prefix}-${var.ssm_parameter_name_argocd_role_suffix}"
-#   type  = "String"
-#   value = aws_iam_role.argocd_central.arn
-# }
+
 
 # ################################################################################
 # # Team Roles Backend
@@ -104,12 +99,7 @@ resource "aws_eks_access_entry" "backend_team" {
   kubernetes_groups = ["backend-team-view"]
   type              = "STANDARD"
 }
-# # Creating parameter for all clusters to read
-# resource "aws_ssm_parameter" "backend_team_view_role" {
-#   name  = "${local.context_prefix}-${var.backend_team_view_role_suffix}"
-#   type  = "String"
-#   value = aws_iam_role.backend_team_view.arn
-# }
+
 ################################################################################
 # Team Roles Frontend
 ################################################################################
@@ -138,10 +128,3 @@ resource "aws_eks_access_entry" "frontend_team" {
   kubernetes_groups = ["frontend-team-view"]
   type              = "STANDARD"
 }
-
-# # Creating parameter for all clusters to read
-# resource "aws_ssm_parameter" "frontend_team_view_role" {
-#   name  = "${local.context_prefix}-${var.frontend_team_view_role_suffix}"
-#   type  = "String"
-#   value = aws_iam_role.frontend_team_view.arn
-# }

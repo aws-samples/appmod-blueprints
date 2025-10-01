@@ -4,8 +4,6 @@
 
 # Create namespace for ingress-nginx
 resource "kubernetes_namespace" "ingress_nginx" {
-  # depends_on = [local.cluster_info]
-
   metadata {
     name = "ingress-nginx"
   }

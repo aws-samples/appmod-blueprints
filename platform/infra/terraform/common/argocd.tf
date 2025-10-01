@@ -1,6 +1,13 @@
 ################################################################################
 # GitOps Bridge: Bootstrap
 ################################################################################
+# Creating Namespace for better cleanup of ArgoCD helm release
+resource "kubernetes_namespace" "argocd" {
+  metadata {
+    name = local.argocd_namespace
+  }
+}
+
 module "gitops_bridge_bootstrap" {
   source  = "gitops-bridge-dev/gitops-bridge/helm"
   version = "0.1.0"
@@ -14,7 +21,7 @@ module "gitops_bridge_bootstrap" {
   apps = local.argocd_apps
   argocd = {
     name             = "argocd"
-    namespace        = local.argocd_namespace
+    namespace        = kubernetes_namespace.argocd.metadata[0].name
     chart_version    = "7.9.1"
     values           = [
       templatefile("${path.module}/manifests/argocd-initial-values.yaml", {
@@ -23,7 +30,7 @@ module "gitops_bridge_bootstrap" {
       })
     ]
     timeout          = 600
-    create_namespace = true
+    create_namespace = false
   }
 }
 
@@ -77,39 +84,3 @@ resource "kubernetes_secret" "git_secrets" {
   }
   data = each.value
 }
-# ################################################################################
-# # ArgoCD NLB Ingress
-# ################################################################################
-# resource "kubernetes_ingress_v1" "argocd_nlb" {
-#   depends_on = [module.gitops_bridge_bootstrap]
-
-#   metadata {
-#     name      = "argocd-nlb"
-#     namespace = local.argocd_namespace
-#     annotations = {
-#       "kubernetes.io/ingress.class" = "nginx"
-#     }
-#   }
-
-#   spec {
-#     ingress_class_name = "nginx"
-#     rule {
-#       host = local.ingress_nlb_domain_name
-#       http {
-#         path {
-#           path      = "/argocd"
-#           path_type = "Prefix"
-
-#           backend {
-#             service {
-#               name = "argocd-server"
-#               port {
-#                 number = 80
-#               }
-#             }
-#           }
-#         }
-#       }
-#     }
-#   }
-# }

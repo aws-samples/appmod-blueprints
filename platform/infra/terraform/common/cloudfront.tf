@@ -100,6 +100,5 @@ resource "aws_cloudfront_distribution" "ingress" {
 
   tags = {
     Name        = "${local.ingress_name[local.hub_cluster.name]}-cloudfront"
-    # Environment = local.environment
   }
 }

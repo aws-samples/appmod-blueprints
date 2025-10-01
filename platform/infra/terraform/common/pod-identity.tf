@@ -54,28 +54,6 @@ module "external_secrets_pod_identity" {
         service_account = local.external_secrets.service_account
       }
     }
-  # associations = merge(
-  #   {
-  #     addon = {
-  #       cluster_name    = each.value.name
-  #       namespace       = local.external_secrets.namespace
-  #       service_account = local.external_secrets.service_account
-  #     }
-  #   },
-  #   each.value.environment == "control-plane" ? { # only for hub cluster
-  #     keycloak-config = {
-  #       cluster_name    = each.value.name
-  #       namespace       = local.keycloak.namespace
-  #       service_account = local.keycloak.service_account
-  #     }
-  #   } : {
-  #     fleet = {
-  #     cluster_name    = each.value.name
-  #     namespace       = local.external_secrets.namespace_fleet
-  #     service_account = local.external_secrets.service_account
-  #   }
-  #   }
-  # )
 
   tags = local.tags
 }

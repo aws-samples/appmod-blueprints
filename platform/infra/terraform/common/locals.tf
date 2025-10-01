@@ -11,11 +11,6 @@ locals {
 
 locals {
   azs                       = slice(data.aws_availability_zones.available.names, 0, 2)
-  # region                    = data.aws_region.current.id
-  # use_ack                   = var.use_ack
-  # enable_efs                = var.enable_efs
-  # name                      = data.aws_eks_cluster.mgmt.name
-  # environment               = var.environment
   region                    = data.aws_region.current.id
   fleet_member              = "control-plane"
   tenant                    = var.tenant
@@ -23,16 +18,12 @@ locals {
   hub_cluster               = [for k, v in var.clusters : v if v.environment == "control-plane"][0]
   spoke_clusters            = { for k, v in var.clusters : k => v if v.environment != "control-plane" }
   cluster_vpc_ids           = { for k, v in var.clusters : v.name => data.aws_eks_cluster.clusters[k].vpc_config[0].vpc_id }
-  # cluster_version           = var.kubernetes_version
   argocd_namespace          = "argocd"
-  # ingress_name              = "${data.aws_eks_cluster.mgmt.name}-ingress"
   ingress_name              = { for k, v in var.clusters : v.name => "${v.name}-ingress" }
-  # ingress_security_groups   = "${aws_security_group.ingress_http[local.hub_cluster.name].id},${aws_security_group.ingress_https.id}"
   ingress_security_groups   = { for k, v in var.clusters : v.name => "${aws_security_group.ingress_http[k].id},${aws_security_group.ingress_https[k].id}" }
   gitlab_security_groups    = var.gitlab_security_groups
   ingress_nlb_domain_name   = "${data.aws_lb.ingress_nginx.dns_name}"
   ingress_domain_name       = aws_cloudfront_distribution.ingress.domain_name
-  # gitlab_nlb_domain_name    = "${data.aws_lb.gitlab_nlb.dns_name}"
   gitlab_domain_name        = var.gitlab_domain_name
   git_username              = var.git_username
   keycloak_realm            = "platform"
@@ -83,6 +74,7 @@ locals {
     namespace       = "kargo"
     service_account = "kargo-controller"
   }
+
   # karpenter = {
   #   namespace       = "kube-system"
   #   service_account = "karpenter"
@@ -191,11 +183,7 @@ locals {
         git_username = var.git_username
         working_repo = var.working_repo
         ide_password = var.ide_password # TODO: remove this and use External Secret instead
-        # ide_password_hash = local.user_password_hash
-        # ide_password_key = local.password_key
         backstage_image = local.backstage_image
-        # backstage_postgres_secret_name = "${var.resource_prefix}-backstage-postgresql-password"
-        # backstage_postgres_secret_key = "password"
       },
     )
   }
@@ -203,22 +191,4 @@ locals {
   argocd_apps = {
     applicationsets = file("${path.module}/manifests/applicationsets.yaml")
   }
-  # role_arns = []
-  # # # Generate dynamic access entries for each admin rolelocals {
-  # admin_access_entries = {
-  #   for role_arn in local.role_arns : role_arn => {
-  #     principal_arn = role_arn
-  #     policy_associations = {
-  #       admins = {
-  #         policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-  #         access_scope = {
-  #           type = "cluster"
-  #         }
-  #       }
-  #     }
-  #   }
-  # }
-
-  # # Merging dynamic entries with static entries if needed
-  # access_entries = merge({}, local.admin_access_entries)
 }
