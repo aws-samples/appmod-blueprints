@@ -1,0 +1,40 @@
+# Debug version 2 - ServiceAccount and ConfigMap only
+---
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: cicdpipeline-debug2.kro.run
+  namespace: kro-system
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: CICDPipelineDebug2
+    spec:
+      name: string
+      namespace: string
+      application:
+        name: string
+
+  resources:
+    # Service Account - basic resource
+    - id: serviceaccount
+      template:
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: ${schema.spec.name}-sa
+          namespace: ${schema.spec.namespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.application.name}
+
+    # ConfigMap - basic resource
+    - id: configmap
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.spec.name}-config
+          namespace: ${schema.spec.namespace}
+        data:
+          app-name: ${schema.spec.application.name}
+          pipeline-name: ${schema.spec.name}

@@ -1,12 +1,12 @@
-# EventBus moved to Kro template for better dependency management
-# ---
-# apiVersion: argoproj.io/v1alpha1
-# kind: EventBus
-# metadata:
-#   name: default
-#   namespace: ${{values.namespace}}
-# spec:
-#   nats:
-#     native:
-#       replicas: 3
-#       auth: token
+# EventBus for Argo Events - managed separately from KRO
+---
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: argo-events
+spec:
+  nats:
+    native:
+      replicas: 3
+      auth: token

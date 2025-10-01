@@ -35,24 +35,6 @@ spec:
       # Namespace information (from service account)
       namespace: ${serviceaccount.metadata.namespace}
   resources:
-    # EventBus for Argo Events (must be first)
-    - id: eventbus
-      template:
-        apiVersion: argoproj.io/v1alpha1
-        kind: EventBus
-        metadata:
-          name: default
-          namespace: ${schema.spec.namespace}
-          labels:
-            app.kubernetes.io/name: ${schema.spec.application.name}
-            app.kubernetes.io/component: cicd-pipeline
-            app.kubernetes.io/managed-by: kro
-        spec:
-          nats:
-            native:
-              replicas: 3
-              auth: token
-
     # ECR Repository for main application images
     - id: ecrmainrepo
       readyWhen:
