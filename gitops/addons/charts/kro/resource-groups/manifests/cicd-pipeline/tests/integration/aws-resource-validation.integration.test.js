@@ -263,6 +263,9 @@ spec:
       // Should have ECR registry entries
       const registryKeys = Object.keys(dockerConfig.auths);
       expect(registryKeys.some(key => key.includes('.dkr.ecr.') && key.includes('.amazonaws.com'))).toBe(true);
+      // Should have ECR registry entries
+      const registryKeys = Object.keys(dockerConfig.auths);
+      expect(registryKeys.some(key => /\.dkr\.ecr\.[^.]+\.amazonaws\.com/.test(key))).toBe(true);
     });
   });
 });
