@@ -618,11 +618,7 @@ kro-manifests:
       - key: enable_kro_manifests
         operator: In
         values: ['true']
-  selector:
-    matchExpressions:
-      - key: enable_kro_eks_rgs
-        operator: In
-        values: ['true']
+
 
 multi-acct:
   enabled: false

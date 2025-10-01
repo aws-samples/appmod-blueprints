@@ -572,7 +572,7 @@ SYNC_WAVE_APPS=(
     # Wave -3  
     "kro"
     # Wave -2
-    "kro-eks-rgs"
+    "kro-manifests"
     # Wave -1
     "ack-ec2" "ack-eks" "ack-iam" "external-secrets"
     # Wave 0
@@ -830,7 +830,7 @@ for wave in -5 -3 -2 -1 0 2 3 4 5 6 7; do
     case $wave in
         -5) apps="multi-acct" ;;
         -3) apps="kro" ;;
-        -2) apps="kro-eks-rgs" ;;
+        -2) apps="kro-manifests" ;;
         -1) apps="ack-ec2 ack-eks ack-iam external-secrets" ;;
         0) apps="argocd ack-efs ingress-class-alb metrics-server" ;;
         2) apps="cert-manager" ;;
