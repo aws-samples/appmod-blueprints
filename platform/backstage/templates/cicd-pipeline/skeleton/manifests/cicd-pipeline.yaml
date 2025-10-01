@@ -49,7 +49,7 @@
                 arguments:
                   parameters:
                     - name: apprepo
-                      value: ${{values.gitlab_hostname}}/${{values.gitlab_username}}/${{values.appname}}
+                      value: ${{values.gitlab_hostname}}/${{values.gitlab_username}}/${{values.appname}}-cicd
                     - name: branch
                       value: main
                     - name: tag-version
