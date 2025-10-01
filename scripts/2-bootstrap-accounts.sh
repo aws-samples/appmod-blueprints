@@ -122,9 +122,9 @@ done
 print_step "Ensuring KRO applications are fully synced..."
 
 # Check for stuck applications first
-check_and_recover_stuck_apps "kro-${RESOURCE_PREFIX}-hub-cluster kro-eks-rgs-${RESOURCE_PREFIX}-hub-cluster"
+check_and_recover_stuck_apps "kro-${RESOURCE_PREFIX}-hub-cluster kro-manifests-${RESOURCE_PREFIX}-hub-cluster"
 
-for app in kro-${RESOURCE_PREFIX}-hub-cluster kro-eks-rgs-${RESOURCE_PREFIX}-hub-cluster; do
+for app in kro-${RESOURCE_PREFIX}-hub-cluster kro-manifests-${RESOURCE_PREFIX}-hub-cluster; do
   while [ "$(kubectl get application $app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)" != "Synced" ]; do
     print_info "Waiting for $app to sync..."
     sleep 10
