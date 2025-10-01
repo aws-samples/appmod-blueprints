@@ -34,6 +34,9 @@ main() {
   # Validate backend configuration
   validate_backend_config
 
+  # Delete backstage ecr repo
+  delete_backstage_ecr_repo
+  
   export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
   yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
 

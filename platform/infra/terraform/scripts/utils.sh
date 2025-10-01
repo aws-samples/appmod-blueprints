@@ -10,7 +10,6 @@ GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
 
 source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/argocd-utils.sh"
 source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/colors.sh"
-source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/backstage-utils.sh"
 
 export SKIP_GITLAB=${SKIP_GITLAB:-false}
 export WS_PARTICIPANT_ROLE_ARN=${WS_PARTICIPANT_ROLE_ARN:-""}
@@ -355,4 +354,14 @@ update_backstage_defaults() {
   print_info "Other templates should use the fetchSystem step to retrieve configuration from catalog-info.yaml"
 
   cd -
+}
+
+delete_backstage_ecr_repo() {
+    if aws ecr describe-repositories --repository-names ${RESOURCE_PREFIX}-backstage --region $AWS_REGION > /dev/null 2>&1; then
+        print_info "Deleting Backstage ECR repository..."
+        aws ecr delete-repository --repository-name ${RESOURCE_PREFIX}-backstage --region $AWS_REGION --force > /dev/null 2>&1
+        print_success "Backstage ECR repository deleted"
+    else
+        print_info "Backstage ECR repository does not exist"
+    fi
 }

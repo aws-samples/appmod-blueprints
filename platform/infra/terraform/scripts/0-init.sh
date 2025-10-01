@@ -65,7 +65,7 @@ main() {
         exit 1
     fi
 
-    source "$SCRIPT_DIR/1-backstage-build.sh"
+    source "$SCRIPT_DIR/backstage-utils.sh"
 
     if ! check_backstage_ecr_repo; then
         # Start Backstage Build Process
