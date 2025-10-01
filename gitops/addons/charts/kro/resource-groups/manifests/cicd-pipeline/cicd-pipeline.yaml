@@ -37,8 +37,6 @@ spec:
   resources:
     # EventBus for Argo Events (must be first)
     - id: eventbus
-      readyWhen:
-        - ${eventbus.status.phase == "Running"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: EventBus
@@ -1289,8 +1287,6 @@ spec:
                 value: ${schema.spec.aws.region}
     # Argo Events EventSource for GitLab webhooks
     - id: eventsource
-      readyWhen:
-        - ${eventsource.status.phase == "Running"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: EventSource
@@ -1315,8 +1311,6 @@ spec:
 
     # Argo Events Sensor for triggering CI/CD workflows
     - id: sensor
-      readyWhen:
-        - ${sensor.status.phase == "Running"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Sensor
