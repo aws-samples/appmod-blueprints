@@ -96,7 +96,7 @@ locals {
     enable_ack_efs                               = try(var.addons.enable_ack_efs, false)
     enable_ack_s3                                = try(var.addons.enable_ack_s3, false)
     enable_kro                                   = try(var.addons.enable_kro, false)
-    enable_kro_eks_rgs                           = try(var.addons.enable_kro_eks_rgs, false)
+    enable_kro_manifests                         = try(var.addons.enable_kro_manifests, false)
     enable_mutli_acct                            = try(var.addons.enable_mutli_acct, false)
     enable_ingress_class_alb                     = try(var.addons.enable_ingress_class_alb, false)
 

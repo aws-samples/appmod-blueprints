@@ -50,7 +50,7 @@ ack-dynamodb:
   enabled: true
 kro:
   enabled: true
-kro-eks-rgs:
+kro-manifests:
   enabled: true
 kubevela:
   enabled: true
