@@ -1,11 +1,9 @@
 #!/bin/bash
 
 # Robust ArgoCD utility functions
-# Source this file in other scripts: source "$(dirname "$0")/argocd-utils.sh"
 
 export CORE_APPS=(
     "external-secrets"
-    # "ingress-nginx"
     "argocd"
     "gitlab"
 )

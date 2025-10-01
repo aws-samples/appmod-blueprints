@@ -1,11 +1,5 @@
 #!/bin/bash
 
-# Bootstrap script to run deployment scripts in order with retry logic
-# Runs: 1-argocd-gitlab-setup.sh, 2-bootstrap-accounts.sh, 3-register-terraform-spoke-clusters.sh (dev/prod), and 6-tools-urls.sh in sequence
-# Each script must succeed before proceeding to the next
-
-# Removed set -e to allow proper error handling in cluster waiting logic
-
 #be sure we source env var
 source /etc/profile.d/workshop.sh
 # Source all environment files in .bashrc.d
@@ -32,28 +26,17 @@ GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
 source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
 
 # Configuration
-MAX_RETRIES=3
-RETRY_DELAY=45  # Increased from 30 to 45 seconds
 SCRIPT_DIR="$(dirname "$0")"
 WAIT_TIMEOUT=1800  #(30 minutes)
 CHECK_INTERVAL=30 # 30 seconds
-
-
-# Define scripts to run in order
-SCRIPTS=(
-    "1-backstage-build.sh"
-    "1-tools-urls.sh"
-)
 
 
 # Main execution
 main() {
     print_status "INFO" "Starting bootstrap deployment process"
     print_status "INFO" "Script directory: $SCRIPT_DIR"
-    print_status "INFO" "Max retries per script: $MAX_RETRIES"
-    print_status "INFO" "Retry delay: $RETRY_DELAY seconds"
-    print_status "INFO" "ArgoCD wait timeout: $WAIT_TIMEOUT seconds"
-    print_status "INFO" "Scripts to execute: ${SCRIPTS[*]}"
+    print_status "INFO" "ArgoCD re-check interval: $CHECK_INTERVAL seconds"
+    print_status "INFO" "ArgoCD apps wait timeout: $WAIT_TIMEOUT seconds"
     
     for cluster in "${CLUSTER_NAMES[@]}"; do
         configure_kubectl_with_fallback "$cluster"
@@ -104,12 +87,6 @@ main() {
 
     # Set up Secrets and URLs for workshop.
     bash "$SCRIPT_DIR/1-tools-urls.sh"
-
-    # bash /etc/profile.d/workshop.sh
-    # # Source all bashrc.d files
-    # for file in ~/.bashrc.d/*.sh; do
-    # [ -f "$file" ] && source "$file" || true
-    # done
 }
 
 # Trap to handle script interruption

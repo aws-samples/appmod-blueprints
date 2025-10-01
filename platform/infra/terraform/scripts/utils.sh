@@ -193,28 +193,6 @@ initialize_terraform() {
   log_success "Terraform initialized successfully"
 }
 
-# Check current AWS account and cluster status
-check_cluster_status() {
-  local cluster_name="${TF_VAR_resource_prefix}-$1"
-  log "Checking $cluster_name cluster status..."
-  # Check AWS account
-  CURRENT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
-  if [ -z "$CURRENT_ACCOUNT" ]; then
-    log_error "Cannot determine current AWS account. Check AWS credentials."
-    exit 1
-  fi
-  log "Current AWS Account: $CURRENT_ACCOUNT"
-
-  CLUSTER_STATUS=$(aws eks describe-cluster --name "$cluster_name" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
-
-  if [ "$CLUSTER_STATUS" == "NOT_FOUND" ]; then
-    log_error "Cluster $cluster_name not found in AWS"
-    exit 1
-  fi
-
-  log "Cluster status in AWS: $CLUSTER_STATUS"
-}
-
 # Cleanup Kubernetes resources with fallback
 cleanup_kubernetes_resources_with_fallback() {
   local env=$1

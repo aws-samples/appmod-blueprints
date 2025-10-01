@@ -1,12 +1,4 @@
 #!/bin/bash
-#########################################################################
-# Script: 6-tools-urls.sh
-# Description: Displays URLs and credentials for all tools deployed in the
-#              EKS cluster management environment with perfect table alignment
-# Author: AWS
-# Date: 2025-05-20
-# Usage: ./6-tools-urls.sh
-#########################################################################
 
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"

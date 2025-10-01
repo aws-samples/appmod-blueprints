@@ -1,24 +1,5 @@
 #!/bin/bash
 
-#############################################################################
-# ArgoCD and GitLab Setup Script
-#############################################################################
-#
-# DESCRIPTION:
-#   This script configures ArgoCD and GitLab for the EKS cluster management
-#   environment. It:
-#   1. Updates the kubeconfig to connect to the hub cluster
-#   2. Retrieves and displays the ArgoCD URL and credentials
-#   3. Sets up GitLab repository for HTTPS access
-#   4. Configures Git remote for the working repository
-#   5. Creates a secret in ArgoCD for Git repository access
-#   6. Logs in to ArgoCD CLI and lists applications
-#
-# USAGE:
-#   ./1-argocd-gitlab-setup.sh
-#
-# PREREQUISITES:
-
 # Source environment variables first
 if [ -d /home/ec2-user/.bashrc.d ]; then
     for file in /home/ec2-user/.bashrc.d/*.sh; do
@@ -27,19 +8,6 @@ if [ -d /home/ec2-user/.bashrc.d ]; then
         fi
     done
 fi
-#   - The management cluster must be created (run 0-initial-setup.sh first)
-#   - Environment variables must be set:
-#     - AWS_REGION: AWS region where resources are deployed
-#     - WORKSPACE_PATH: Path to the workspace directory
-#     - WORKING_REPO: Name of the working repository
-#     - GIT_USERNAME: Git username for authentication
-#     - IDE_PASSWORD: Password for ArgoCD and GitLab authentication
-#
-# SEQUENCE:
-#   This is the second script (1) in the setup sequence.
-#   Run after 0-initial-setup.sh and before 2-bootstrap-accounts.sh
-#
-#############################################################################
 
 # Source the colors script
 GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
