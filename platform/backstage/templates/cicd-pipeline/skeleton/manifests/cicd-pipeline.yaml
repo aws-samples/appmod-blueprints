@@ -29,232 +29,232 @@
 #     - name: source-dep
 #       eventSourceName: ${{values.appname}}-cicd
 #       eventName: github
-  triggers:
-    - template:
-        name: "${{values.appname}}-cicd-argo-workflow-trigger"
-        argoWorkflow:
-          operation: submit
-          source:
-            resource:
-              apiVersion: argoproj.io/v1alpha1
-              kind: Workflow
-              metadata:
-                generateName: ${{values.appname}}-cicd-flow-
-                namespace: ${{values.namespace}}
-                labels:
-                  entity-id: ${{values.appname}}
-              spec:
-                serviceAccountName: ${{values.appname}}-cicd-sa
-                entrypoint: ci-build
-                arguments:
-                  parameters:
-                    - name: apprepo
-                      value: ${{values.gitlab_hostname}}/${{values.gitlab_username}}/${{values.appname}}-cicd
-                    - name: branch
-                      value: main
-                    - name: tag-version
-                      value: 0.0.1
-                    - name: aws_region
-                      value: ${{values.aws_region}}
-                    - name: dockerfile-path
-                      value: ${{values.dockerfile_path}}
-                    - name: deployment-path
-                      value: ${{values.deployment_path}}
-                    - name: appname
-                      value: ${{values.appname}}
-                volumeClaimTemplates:
-                - metadata:
-                    name: workdir
-                  spec:
-                    accessModes: ["ReadWriteOnce"]
-                    storageClassName: gp3
-                    resources:
-                      requests:
-                        storage: 512Mi
-                #volumes:
-                #- name: cache
-                #  persistentVolumeClaim:
-                #    claimName: ${{values.appname}}-cache-vol
-                templates:
-                  - name: ci-build
-                    dag:
-                      tasks:
-                        - name: clean
-                          template: cleandir
-
-                        - name: clone
-                          template: clonerepo
-                          arguments:
-                            parameters:
-                              - name: apprepo
-                                value: "{{workflow.parameters.apprepo}}"
-                              - name: branch
-                                value: "{{workflow.parameters.branch}}"
-                          depends: "clean"
-
-                        - name: build-and-push-image
-                          template: build-image-kaniko
-                          arguments:
-                            parameters:
-                              - name: tag-version
-                                value: "{{workflow.parameters.tag-version}}"
-                              - name: dockerfile-path
-                                value: "{{workflow.parameters.dockerfile-path}}"
-                          depends: "clone"
-
-                        - name: update-and-push-image-version
-                          template: update-image-tag
-                          arguments:
-                            parameters:
-                              - name: env
-                                value: dev
-                              - name: tag
-                                value: "{{workflow.parameters.tag-version}}"
-                              - name: apprepo
-                                value: "{{workflow.parameters.apprepo}}"
-                              - name: deployment-path
-                                value: "{{workflow.parameters.deployment-path}}"
-                          depends: "build-and-push-image"
-                        
-                  - name: cleandir 
-                    container:
-                      volumeMounts:
-                        - mountPath: /workdir
-                          name: workdir
-                      image: alpine:3.20
-                      workingDir: /workdir
-                      args:
-                        - /bin/sh
-                        - -c
-                        - |
-                          set -ex
-                          if [ "$(ls -A /workdir)" ]; then
-                            echo "Directory /workdir is not empty. Removing contents..."
-                            rm -rf /workdir/*
-                          fi
-                        
-                  - name: clonerepo
-                    inputs:
-                      parameters:
-                        - name: apprepo
-                        - name: branch
-                    container:
-                      volumeMounts:
-                        - mountPath: /workdir
-                          name: workdir
-                      image: alpine/git:v2.45.1
-                      workingDir: /workdir
-                      args:
-                        - clone
-                        - --depth
-                        - "1"
-                        - --branch
-                        - "{{inputs.parameters.branch}}"
-                        - --single-branch
-                        - "https://{{inputs.parameters.apprepo}}"
-                        - -c
-                        - http.sslVerify=false
-                        - .
-
-
-                  - name: build-image-kaniko
-                    inputs:
-                      parameters:
-                        - name: tag-version
-                        - name: dockerfile-path
-                    volumes:
-                      - name: docker-config
-                        secret:
-                          secretName: "{{workflow.parameters.appname}}-cicd-docker-config"
-                    container:
-                      image: gcr.io/kaniko-project/executor:debug
-                      volumeMounts:
-                        - name: workdir
-                          mountPath: /workdir
-                        - name: docker-config
-                          mountPath: /kaniko/.docker
-                      workingDir: /workdir
-                      resources:
-                        limits:
-                          cpu: 2
-                          memory: 6Gi
-                      env:
-                        - name: DOCKER_CONFIG
-                          value: /kaniko/.docker
-                        - name: ECR_MAIN_REPO
-                          valueFrom:
-                            configMapKeyRef:
-                              name: "{{workflow.parameters.appname}}-cicd-config"
-                              key: ECR_MAIN_REPOSITORY
-                        - name: ECR_CACHE_REPO
-                          valueFrom:
-                            configMapKeyRef:
-                              name: "{{workflow.parameters.appname}}-cicd-config"
-                              key: ECR_CACHE_REPOSITORY
-                      command: [
-                                "/busybox/sh",
-                                "-c",
-                                "/kaniko/executor \
-                                --dockerfile=Dockerfile \
-                                --context={{inputs.parameters.dockerfile-path}} \
-                                --destination=${ECR_MAIN_REPO}:{{inputs.parameters.tag-version}} \
-                                --cache=true \
-                                --cache-repo=${ECR_CACHE_REPO} \
-                                --skip-tls-verify"
-                                ]
-
-                  - name: update-image-tag
-                    inputs:
-                      parameters:
-                        - name: env 
-                        - name: tag
-                        - name: apprepo
-                        - name: deployment-path
-                    container:
-                      envFrom:
-                      - secretRef:
-                          name: gitlab-credentials
-                      - configMapRef:
-                          name: "{{workflow.parameters.appname}}-cicd-config"
-                      volumeMounts:
-                        - mountPath: /workdir
-                          name: workdir
-                      image: alpine/git:v2.45.2
-                      workingDir: /workdir
-                      command: ['/bin/sh']
-                      args:
-                        - -c
-                        - |
-                          apk add --no-cache sed
-                          set -ex
-                          DEPLOY_PATH="{{inputs.parameters.deployment-path}}/{{inputs.parameters.env}}"
-                          tag="{{inputs.parameters.tag}}"
-                          mkdir -p $DEPLOY_PATH
-                          git config --global user.email "noreply@aws.com" 
-                          git config --global user.name ARGO
-                          git remote set-url origin https://${{values.gitlab_username}}:${GITLAB_TOKEN}@"{{inputs.parameters.apprepo}}".git
-                          git pull --rebase
-                          echo "${ECR_MAIN_REPOSITORY}:{{inputs.parameters.tag}}" > ./deployment/"{{inputs.parameters.env}}"/image.txt
-                          if [ -f $DEPLOY_PATH/application.yml ]; then
-                            sed  -i 's+image: <image>.*+image: '"${ECR_MAIN_REPOSITORY}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
-                            sed  -i 's+image: '"${ECR_MAIN_REPOSITORY}"'.*+image: '"${ECR_MAIN_REPOSITORY}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
-                          fi
-                          m_count=$(git status -s | wc -l)
-                          if [ $m_count -ge 1 ]; then
-                            git add "{{inputs.parameters.deployment-path}}"
-                            image_version="{{inputs.parameters.tag}}"
-                            git commit -m "[SKIP CI] Updated image version to $image_version"
-                            git push --set-upstream origin main
-                          else
-                            echo "No updates to values file, skipping git push"
-                          fi
-
-          parameters:
-            - src:
-                dependencyName: source-dep
-                dataTemplate: "{{ .Input.body.head_commit.id }}"
-              dest: spec.arguments.parameters.2.value
-              operation: overwrite
+#   triggers:
+#     - template:
+#         name: "${{values.appname}}-cicd-argo-workflow-trigger"
+#         argoWorkflow:
+#           operation: submit
+#          source:
+#            resource:
+#              apiVersion: argoproj.io/v1alpha1
+#              kind: Workflow
+#              metadata:
+#                generateName: ${{values.appname}}-cicd-flow-
+#                namespace: ${{values.namespace}}
+#                labels:
+#                  entity-id: ${{values.appname}}
+#              spec:
+#                serviceAccountName: ${{values.appname}}-cicd-sa
+#                entrypoint: ci-build
+#                arguments:
+#                  parameters:
+#                    - name: apprepo
+#                      value: ${{values.gitlab_hostname}}/${{values.gitlab_username}}/${{values.appname}}-cicd
+#                    - name: branch
+#                      value: main
+#                    - name: tag-version
+#                      value: 0.0.1
+#                    - name: aws_region
+#                      value: ${{values.aws_region}}
+#                    - name: dockerfile-path
+#                      value: ${{values.dockerfile_path}}
+#                    - name: deployment-path
+#                      value: ${{values.deployment_path}}
+#                    - name: appname
+#                      value: ${{values.appname}}
+#                volumeClaimTemplates:
+#                - metadata:
+#                    name: workdir
+#                  spec:
+#                    accessModes: ["ReadWriteOnce"]
+#                    storageClassName: gp3
+#                    resources:
+#                      requests:
+#                        storage: 512Mi
+#                #volumes:
+#                #- name: cache
+#                #  persistentVolumeClaim:
+#                #    claimName: ${{values.appname}}-cache-vol
+#                templates:
+#                  - name: ci-build
+#                    dag:
+#                      tasks:
+#                        - name: clean
+#                          template: cleandir
+#
+#                        - name: clone
+#                          template: clonerepo
+#                          arguments:
+#                            parameters:
+#                              - name: apprepo
+#                                value: "{{workflow.parameters.apprepo}}"
+#                              - name: branch
+#                                value: "{{workflow.parameters.branch}}"
+#                          depends: "clean"
+#
+#                        - name: build-and-push-image
+#                          template: build-image-kaniko
+#                          arguments:
+#                            parameters:
+#                              - name: tag-version
+#                                value: "{{workflow.parameters.tag-version}}"
+#                              - name: dockerfile-path
+#                                value: "{{workflow.parameters.dockerfile-path}}"
+#                          depends: "clone"
+#
+#                        - name: update-and-push-image-version
+#                          template: update-image-tag
+#                          arguments:
+#                            parameters:
+#                              - name: env
+#                                value: dev
+#                              - name: tag
+#                                value: "{{workflow.parameters.tag-version}}"
+#                              - name: apprepo
+#                                value: "{{workflow.parameters.apprepo}}"
+#                              - name: deployment-path
+#                                value: "{{workflow.parameters.deployment-path}}"
+#                          depends: "build-and-push-image"
+#                        
+#                  - name: cleandir 
+#                    container:
+#                      volumeMounts:
+#                        - mountPath: /workdir
+#                          name: workdir
+#                      image: alpine:3.20
+#                      workingDir: /workdir
+#                      args:
+#                        - /bin/sh
+#                        - -c
+#                        - |
+#                          set -ex
+#                          if [ "$(ls -A /workdir)" ]; then
+#                            echo "Directory /workdir is not empty. Removing contents..."
+#                            rm -rf /workdir/*
+#                          fi
+#                        
+#                  - name: clonerepo
+#                    inputs:
+#                      parameters:
+#                        - name: apprepo
+#                        - name: branch
+#                    container:
+#                      volumeMounts:
+#                        - mountPath: /workdir
+#                          name: workdir
+#                      image: alpine/git:v2.45.1
+#                      workingDir: /workdir
+#                      args:
+#                        - clone
+#                        - --depth
+#                        - "1"
+#                        - --branch
+#                        - "{{inputs.parameters.branch}}"
+#                        - --single-branch
+#                        - "https://{{inputs.parameters.apprepo}}"
+#                        - -c
+#                        - http.sslVerify=false
+#                        - .
+#
+#
+#                  - name: build-image-kaniko
+#                    inputs:
+#                      parameters:
+#                        - name: tag-version
+#                        - name: dockerfile-path
+#                    volumes:
+#                      - name: docker-config
+#                        secret:
+#                          secretName: "{{workflow.parameters.appname}}-cicd-docker-config"
+#                    container:
+#                      image: gcr.io/kaniko-project/executor:debug
+#                      volumeMounts:
+#                        - name: workdir
+#                          mountPath: /workdir
+#                        - name: docker-config
+#                          mountPath: /kaniko/.docker
+#                      workingDir: /workdir
+#                      resources:
+#                        limits:
+#                          cpu: 2
+#                          memory: 6Gi
+#                      env:
+#                        - name: DOCKER_CONFIG
+#                          value: /kaniko/.docker
+#                        - name: ECR_MAIN_REPO
+#                          valueFrom:
+#                            configMapKeyRef:
+#                              name: "{{workflow.parameters.appname}}-cicd-config"
+#                              key: ECR_MAIN_REPOSITORY
+#                        - name: ECR_CACHE_REPO
+#                          valueFrom:
+#                            configMapKeyRef:
+#                              name: "{{workflow.parameters.appname}}-cicd-config"
+#                              key: ECR_CACHE_REPOSITORY
+#                      command: [
+#                                "/busybox/sh",
+#                                "-c",
+#                                "/kaniko/executor \
+#                                --dockerfile=Dockerfile \
+#                                --context={{inputs.parameters.dockerfile-path}} \
+#                                --destination=${ECR_MAIN_REPO}:{{inputs.parameters.tag-version}} \
+#                                --cache=true \
+#                                --cache-repo=${ECR_CACHE_REPO} \
+#                                --skip-tls-verify"
+#                                ]
+#
+#                  - name: update-image-tag
+#                    inputs:
+#                      parameters:
+#                        - name: env 
+#                        - name: tag
+#                        - name: apprepo
+#                        - name: deployment-path
+#                    container:
+#                      envFrom:
+#                      - secretRef:
+#                          name: gitlab-credentials
+#                      - configMapRef:
+#                          name: "{{workflow.parameters.appname}}-cicd-config"
+#                      volumeMounts:
+#                        - mountPath: /workdir
+#                          name: workdir
+#                      image: alpine/git:v2.45.2
+#                      workingDir: /workdir
+#                      command: ['/bin/sh']
+#                      args:
+#                        - -c
+#                        - |
+#                          apk add --no-cache sed
+#                          set -ex
+#                          DEPLOY_PATH="{{inputs.parameters.deployment-path}}/{{inputs.parameters.env}}"
+#                          tag="{{inputs.parameters.tag}}"
+#                          mkdir -p $DEPLOY_PATH
+#                          git config --global user.email "noreply@aws.com" 
+#                          git config --global user.name ARGO
+#                          git remote set-url origin https://${{values.gitlab_username}}:${GITLAB_TOKEN}@"{{inputs.parameters.apprepo}}".git
+#                          git pull --rebase
+#                          echo "${ECR_MAIN_REPOSITORY}:{{inputs.parameters.tag}}" > ./deployment/"{{inputs.parameters.env}}"/image.txt
+#                          if [ -f $DEPLOY_PATH/application.yml ]; then
+#                            sed  -i 's+image: <image>.*+image: '"${ECR_MAIN_REPOSITORY}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
+#                            sed  -i 's+image: '"${ECR_MAIN_REPOSITORY}"'.*+image: '"${ECR_MAIN_REPOSITORY}:${tag}"'+g' "${DEPLOY_PATH}/application.yml"
+#                          fi
+#                          m_count=$(git status -s | wc -l)
+#                          if [ $m_count -ge 1 ]; then
+#                            git add "{{inputs.parameters.deployment-path}}"
+#                            image_version="{{inputs.parameters.tag}}"
+#                            git commit -m "[SKIP CI] Updated image version to $image_version"
+#                            git push --set-upstream origin main
+#                          else
+#                            echo "No updates to values file, skipping git push"
+#                          fi
+#
+#          parameters:
+#            - src:
+#                dependencyName: source-dep
+#                dataTemplate: "{{ .Input.body.head_commit.id }}"
+#              dest: spec.arguments.parameters.2.value
+#              operation: overwrite
 ---
 apiVersion: v1
 kind: Service
