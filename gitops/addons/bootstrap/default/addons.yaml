@@ -601,15 +601,17 @@ cw-prometheus:
         operator: In
         values: ['true']
 
-kro-eks-rgs:
+kro-manifests:
   enabled: false
   type: manifest
   namespace: kro
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-2' # Needs to be before resources that needs PodIdentity
-  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/eks'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups'
   chartRepository: '{{.metadata.annotations.addons_repo_url}}'
   targetRevision: '{{.metadata.annotations.addons_repo_revision}}'
+  # Only include directories with plain manifests (exclude Helm charts)
+  exclude: 'charts/kro/resource-groups/{efs,iam}/**'
   selector:
     matchExpressions:
       - key: enable_kro_eks_rgs
