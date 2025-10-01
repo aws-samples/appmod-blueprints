@@ -48,7 +48,7 @@ spec:
                 arguments:
                   parameters:
                     - name: apprepo
-                      value: ${{values.gitlab_hostname}}/gitea/giteaAdmin/${{values.appname}}
+                      value: ${{values.gitlab_hostname}}/${{values.gitlab_username}}/${{values.appname}}
                     - name: branch
                       value: main
                     - name: tag-version
@@ -212,7 +212,7 @@ spec:
                     container:
                       envFrom:
                       - secretRef:
-                          name: gitea-credentials
+                          name: gitlab-credentials
                       - configMapRef:
                           name: "{{workflow.parameters.appname}}-cicd-config"
                       volumeMounts:
@@ -231,7 +231,7 @@ spec:
                           mkdir -p $DEPLOY_PATH
                           git config --global user.email "noreply@aws.com" 
                           git config --global user.name ARGO
-                          git remote set-url origin https://giteaAdmin:${GITEA_TOKEN}@"{{inputs.parameters.apprepo}}".git
+                          git remote set-url origin https://${{values.gitlab_username}}:${GITLAB_TOKEN}@"{{inputs.parameters.apprepo}}".git
                           git pull --rebase
                           echo "${ECR_MAIN_REPOSITORY}:{{inputs.parameters.tag}}" > ./deployment/"{{inputs.parameters.env}}"/image.txt
                           if [ -f $DEPLOY_PATH/application.yml ]; then
@@ -253,6 +253,7 @@ spec:
                 dependencyName: source-dep
                 dataTemplate: "{{ .Input.body.head_commit.id }}"
               dest: spec.arguments.parameters.2.value
+              operation: overwrite
 ---
 apiVersion: v1
 kind: Service

@@ -33,22 +33,8 @@ spec:
       # Service Account information
       serviceAccountName: ${serviceaccount.metadata.name}
       # Namespace information
-      namespace: ${appnamespace.metadata.name}
+      namespace: ${schema.spec.namespace}
   resources:
-    # Namespace creation - must be first
-    - id: appnamespace
-      readyWhen:
-        - ${appnamespace.status.phase == "Active"}
-      template:
-        apiVersion: v1
-        kind: Namespace
-        metadata:
-          name: ${schema.spec.namespace}
-          labels:
-            name: ${schema.spec.namespace}
-            app.kubernetes.io/name: ${schema.spec.application.name}
-            app.kubernetes.io/component: cicd-pipeline
-
     # ECR Repository for main application images
     - id: ecrmainrepo
       readyWhen:
@@ -59,6 +45,15 @@ spec:
         metadata:
           name: ${schema.spec.name}-main-repo
           namespace: ${schema.spec.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
         spec:
           name: >-
             ${schema.spec.aws.resourcePrefix}/${schema.spec.application.name}
@@ -107,6 +102,15 @@ spec:
         metadata:
           name: ${schema.spec.name}-cache-repo
           namespace: ${schema.spec.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
         spec:
           name: >-
             ${schema.spec.aws.resourcePrefix}/${schema.spec.application.name}/cache
@@ -156,6 +160,15 @@ spec:
         metadata:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
           namespace: ${schema.spec.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
         spec:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
           description: ECR access policy for CI/CD pipeline
@@ -201,6 +214,15 @@ spec:
         metadata:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
           namespace: ${schema.spec.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
         spec:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
           description: IAM role for CI/CD pipeline with EKS pod identity
@@ -234,7 +256,15 @@ spec:
         metadata:
           name: ${schema.spec.name}-pod-association
           namespace: ${schema.spec.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             # Implicit dependencies through template references
             roleArn: ${iamrole.status.ackResourceMetadata.arn}
         spec:
@@ -255,11 +285,19 @@ spec:
         metadata:
           name: ${schema.spec.name}-sa
           namespace: ${schema.spec.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
             app.kubernetes.io/managed-by: kro
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             # Implicit dependency on IAM role through template reference
             eks.amazonaws.com/role-arn: ${iamrole.status.ackResourceMetadata.arn}
             # Reference to Pod Identity Association for tracking
@@ -408,6 +446,15 @@ spec:
         metadata:
           name: gitlab-credentials
           namespace: ${schema.spec.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
