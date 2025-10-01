@@ -51,6 +51,7 @@ SCRIPTS=(
     "3-register-terraform-spoke-clusters.sh dev"
     "3-register-terraform-spoke-clusters.sh prod"
     "4-setup-keycloak.sh"
+    "5-gitlabInit.sh"
     "6-tools-urls.sh"
 )
 

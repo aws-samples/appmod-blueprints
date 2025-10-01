@@ -10,9 +10,6 @@ variable "secret_name_ssh_secrets" {
   default     = "peeks-git-ssh-secrets"
 }
 
-
-# Removed unused gitops repository variables and gitea_external_url
-
 variable "ssm_parameter_name_argocd_role_suffix" {
   description = "SSM parameter name for ArgoCD role"
   type        = string
@@ -34,13 +31,8 @@ variable "frontend_team_view_role_suffix" {
   default     = "frontend-team-view-role"
 }
 
-variable "gitea_user" {
-  description = "User to login on the Gitea instance"
-  type        = string
-  default     = "user1"
-}
 variable "git_password" {
-  description = "Password to login on the Gitea instance"
+  description = "Password to login on the Git instance"
   type        = string
   sensitive   = true
   default     = ""
@@ -63,8 +55,6 @@ variable "working_repo" {
   type        = string
   default     = "platform-on-eks-workshop"
 }
-
-# Removed unused gitea_external_url and gitea_repo_prefix variables
 
 variable "create_github_repos" {
   description = "Create Github repos"

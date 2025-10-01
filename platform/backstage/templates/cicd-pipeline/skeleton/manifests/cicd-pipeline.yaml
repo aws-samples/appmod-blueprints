@@ -1,33 +1,34 @@
-apiVersion: argoproj.io/v1alpha1
-kind: EventSource
-metadata:
-  name: ${{values.appname}}-cicd
-  namespace: ${{values.namespace}}
-spec:
-  service:
-    ports:
-      - port: 12000
-        targetPort: 12000
-  webhook:
-    github:
-      port: "12000"
-      endpoint: /
-      method: POST
-      filter: 
-        expression: 'indexOf(body.head_commit.message, "[SKIP CI]") == -1'
----
-apiVersion: argoproj.io/v1alpha1
-kind: Sensor
-metadata:
-  name: ${{values.appname}}-cicd
-  namespace: ${{values.namespace}}
-spec:
-  template:
-    serviceAccountName: ${{values.appname}}-operate-workflow-sa
-  dependencies:
-    - name: source-dep
-      eventSourceName: ${{values.appname}}-cicd
-      eventName: github
+# EventSource and Sensor moved to Kro template for better dependency management
+# apiVersion: argoproj.io/v1alpha1
+# kind: EventSource
+# metadata:
+#   name: ${{values.appname}}-cicd
+#   namespace: ${{values.namespace}}
+# spec:
+#   service:
+#     ports:
+#       - port: 12000
+#         targetPort: 12000
+#   webhook:
+#     github:
+#       port: "12000"
+#       endpoint: /
+#       method: POST
+#       filter: 
+#         expression: 'indexOf(body.head_commit.message, "[SKIP CI]") == -1'
+# ---
+# apiVersion: argoproj.io/v1alpha1
+# kind: Sensor
+# metadata:
+#   name: ${{values.appname}}-cicd
+#   namespace: ${{values.namespace}}
+# spec:
+#   template:
+#     serviceAccountName: ${{values.appname}}-operate-workflow-sa
+#   dependencies:
+#     - name: source-dep
+#       eventSourceName: ${{values.appname}}-cicd
+#       eventName: github
   triggers:
     - template:
         name: "${{values.appname}}-cicd-argo-workflow-trigger"

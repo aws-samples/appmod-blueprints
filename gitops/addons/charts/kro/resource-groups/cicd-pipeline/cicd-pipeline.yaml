@@ -35,6 +35,26 @@ spec:
       # Namespace information
       namespace: ${schema.spec.namespace}
   resources:
+    # EventBus for Argo Events (must be first)
+    - id: eventbus
+      readyWhen:
+        - ${eventbus.status.conditions.exists(x, x.type == 'Deployed' && x.status == "True")}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: EventBus
+        metadata:
+          name: default
+          namespace: ${schema.spec.namespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.application.name}
+            app.kubernetes.io/component: cicd-pipeline
+            app.kubernetes.io/managed-by: kro
+        spec:
+          nats:
+            native:
+              replicas: 3
+              auth: token
+
     # ECR Repository for main application images
     - id: ecrmainrepo
       readyWhen:
@@ -1270,104 +1290,115 @@ spec:
               - name: aws-region
                 value: ${schema.spec.aws.region}
     # Argo Events EventSource for GitLab webhooks
-    # COMMENTED OUT: This resource is now managed by Backstage template to avoid conflicts
-    # - id: eventsource
-    #   readyWhen:
-    #     - ${eventsource.metadata.name != ""}
-    #   template:
-    #     apiVersion: argoproj.io/v1alpha1
-    #     kind: EventSource
-    #     metadata:
-    #       name: ${schema.spec.name}-gitlab-eventsource
-    #       namespace: ${schema.spec.namespace}
-    #       labels:
-    #         app.kubernetes.io/name: ${schema.spec.application.name}
-    #         app.kubernetes.io/component: cicd-pipeline
-    #         app.kubernetes.io/managed-by: kro
-    #     spec:
-    #       service:
-    #         ports:
-    #           - port: 12000
-    #             targetPort: 12000
-    #       webhook:
-    #         gitlab-webhook:
-    #           port: '12000'
-    #           endpoint: /webhook
-    #           method: POST
-    #           url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.spec.namespace}.svc.cluster.local:12000/webhook
+    - id: eventsource
+      readyWhen:
+        - ${eventsource.metadata.name != ""}
+        - ${eventbus.status.conditions.exists(x, x.type == 'Deployed' && x.status == "True")}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: EventSource
+        metadata:
+          name: ${schema.spec.name}-gitlab-eventsource
+          namespace: ${schema.spec.namespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.application.name}
+            app.kubernetes.io/component: cicd-pipeline
+            app.kubernetes.io/managed-by: kro
+        spec:
+          service:
+            ports:
+              - port: 12000
+                targetPort: 12000
+          webhook:
+            gitlab-webhook:
+              port: '12000'
+              endpoint: /webhook
+              method: POST
+              url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.spec.namespace}.svc.cluster.local:12000/webhook
 
     # Argo Events Sensor for triggering CI/CD workflows
-    # COMMENTED OUT: This resource is now managed by Backstage template to avoid conflicts
-    # - id: sensor
-    #   readyWhen:
-    #     - ${sensor.metadata.name != ""}
-    #   template:
-    #     apiVersion: argoproj.io/v1alpha1
-    #     kind: Sensor
-    #     metadata:
-    #       name: ${schema.spec.name}-gitlab-sensor
-    #       namespace: ${schema.spec.namespace}
-    #       labels:
-    #         app.kubernetes.io/name: ${schema.spec.application.name}
-    #         app.kubernetes.io/component: cicd-pipeline
-    #         app.kubernetes.io/managed-by: kro
-    #     spec:
-    #       template:
-    #         serviceAccountName: ${schema.spec.name}-sa
-    #       dependencies:
-    #         - name: gitlab-webhook
-    #           eventSourceName: ${schema.spec.name}-gitlab-eventsource
-    #           eventName: gitlab-webhook
-    #           filters:
-    #             data:
-    #               - path: object_kind
-    #                 type: string
-    #                 value:
-    #                   - 'push'
-    #               - path: ref
-    #                 type: string
-    #                 value:
-    #                   - 'refs/heads/main'
-    #       triggers:
-    #         - template:
-    #             name: gitlab-workflow-trigger
-    #             argoWorkflow:
-    #               operation: submit
-    #               source:
-    #                 resource:
-    #                   apiVersion: argoproj.io/v1alpha1
-    #                   kind: Workflow
-    #                   metadata:
-    #                     generateName: ${schema.spec.name}-cicd-
-    #                     namespace: ${schema.spec.namespace}
-    #                     labels:
-    #                       app.kubernetes.io/name: ${schema.spec.application.name}
-    #                       app.kubernetes.io/component: cicd-pipeline
-    #                       triggered-by: gitlab-webhook
-    #                   spec:
-    #                     serviceAccountName: ${schema.spec.name}-sa
-    #                     workflowTemplateRef:
-    #                       name: ${schema.spec.name}-cicd-workflow
-    #                     arguments:
-    #                       parameters:
-    #                         - name: git-url
-    #                           value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}-cicd.git'
-    #                         - name: git-revision
-    #                           value: 'main'
-    #                         - name: git-username
-    #                           value: ${schema.spec.gitlab.username}
-    #                         - name: git-token
-    #                           valueFrom:
-    #                             secretKeyRef:
-    #                               name: gitlab-credentials
-    #                               key: GITLAB_TOKEN
-    #                         - name: repo-name
-    #                           value: '${schema.spec.application.name}-cicd'
-    #                         - name: dockerfile-path
-    #                           value: ${schema.spec.application.dockerfilePath}
-    #                         - name: deployment-path
-    #                           value: ${schema.spec.application.deploymentPath}
-    #               parameters:
+    - id: sensor
+      readyWhen:
+        - ${sensor.metadata.name != ""}
+        - ${eventbus.status.conditions.exists(x, x.type == 'Deployed' && x.status == "True")}
+        - ${eventsource.metadata.name != ""}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: Sensor
+        metadata:
+          name: ${schema.spec.name}-gitlab-sensor
+          namespace: ${schema.spec.namespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.application.name}
+            app.kubernetes.io/component: cicd-pipeline
+            app.kubernetes.io/managed-by: kro
+        spec:
+          template:
+            serviceAccountName: ${schema.spec.name}-sa
+          dependencies:
+            - name: gitlab-webhook
+              eventSourceName: ${schema.spec.name}-gitlab-eventsource
+              eventName: gitlab-webhook
+              filters:
+                data:
+                  - path: object_kind
+                    type: string
+                    value:
+                      - 'push'
+                  - path: ref
+                    type: string
+                    value:
+                      - 'refs/heads/main'
+          triggers:
+            - template:
+                name: gitlab-workflow-trigger
+                argoWorkflow:
+                  operation: submit
+                  source:
+                    resource:
+                      apiVersion: argoproj.io/v1alpha1
+                      kind: Workflow
+                      metadata:
+                        generateName: ${schema.spec.name}-cicd-
+                        namespace: ${schema.spec.namespace}
+                        labels:
+                          app.kubernetes.io/name: ${schema.spec.application.name}
+                          app.kubernetes.io/component: cicd-pipeline
+                          triggered-by: gitlab-webhook
+                      spec:
+                        serviceAccountName: ${schema.spec.name}-sa
+                        workflowTemplateRef:
+                          name: ${schema.spec.name}-cicd-workflow
+                        arguments:
+                          parameters:
+                            - name: git-url
+                              value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}.git'
+                            - name: git-revision
+                              value: 'main'
+                            - name: git-username
+                              value: ${schema.spec.gitlab.username}
+                            - name: git-token
+                              valueFrom:
+                                secretKeyRef:
+                                  name: gitlab-credentials
+                                  key: GITLAB_TOKEN
+                            - name: repo-name
+                              value: '${schema.spec.application.name}'
+                            - name: dockerfile-path
+                              value: ${schema.spec.application.dockerfilePath}
+                            - name: deployment-path
+                              value: ${schema.spec.application.deploymentPath}
+                  parameters:
+                    - src:
+                        dependencyName: gitlab-webhook
+                        dataKey: body.commits.0.id
+                      dest: spec.arguments.parameters.0.value
+                      operation: prepend
+                    - src:
+                        dependencyName: gitlab-webhook
+                        dataKey: body.ref
+                      dest: spec.arguments.parameters.1.value
+                      operation: overwrite
     #                 - src:
     #                     dependencyName: gitlab-webhook
     #                     dataKey: body.commits.0.id
