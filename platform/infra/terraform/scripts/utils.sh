@@ -283,11 +283,11 @@ gitlab_repository_setup(){
     git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
   fi
   
-  # Pull upstream with rebase
-  if ! git pull --rebase gitlab "main"; then
-    log_error "Failed to pull and rebase from upstream"
-    exit 1
-  fi
+  # # Pull upstream with rebase
+  # if ! git pull --rebase gitlab "main"; then
+  #   log_error "Failed to pull and rebase from upstream"
+  #   exit 1
+  # fi
   
   if ! git push --set-upstream gitlab "${WORKSHOP_GIT_BRANCH}":main; then 
     log_error "Failed to push repository to GitLab"
