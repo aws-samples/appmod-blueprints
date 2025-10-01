@@ -32,8 +32,8 @@ spec:
       iamRoleARN: ${iamrole.status.ackResourceMetadata.arn}
       # Service Account information
       serviceAccountName: ${serviceaccount.metadata.name}
-      # Namespace information
-      namespace: ${spec.namespace}
+      # Namespace information (from service account)
+      namespace: ${serviceaccount.metadata.namespace}
   resources:
     # EventBus for Argo Events (must be first)
     - id: eventbus
