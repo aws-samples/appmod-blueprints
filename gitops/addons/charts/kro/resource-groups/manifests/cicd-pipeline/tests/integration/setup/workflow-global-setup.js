@@ -53,7 +53,7 @@ export async function setup() {
 
     // Check required CRDs
     const requiredCRDs = [
-      { name: 'resourcegroupdefinitions.kro.run', description: 'Kro ResourceGroupDefinitions' },
+      { name: 'ResourceGraphDefinitiondefinitions.kro.run', description: 'Kro ResourceGraphDefinitionDefinitions' },
       { name: 'workflows.argoproj.io', description: 'Argo Workflows' },
       { name: 'workflowtemplates.argoproj.io', description: 'Argo WorkflowTemplates' },
       { name: 'eventsources.argoproj.io', description: 'Argo Events EventSources' },
@@ -84,7 +84,7 @@ export async function setup() {
     }
 
     // Check if the CI/CD Pipeline RGD is installed
-    console.log('Checking for CI/CD Pipeline ResourceGroupDefinition...');
+    console.log('Checking for CI/CD Pipeline ResourceGraphDefinitionDefinition...');
     const rgdResult = kubectl('get rgd cicdpipeline', { allowFailure: true });
     if (!rgdResult) {
       console.warn('⚠️  CI/CD Pipeline RGD not found. Please install it first.');

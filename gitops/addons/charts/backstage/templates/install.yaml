@@ -57,15 +57,15 @@ rules:
   - apiGroups: ['kro.run']
     resources: ['*']
     verbs: ['get', 'list', 'watch']
-  # AWS Controller for Kubernetes (ACK) resources that ResourceGroups may manage
+  # AWS Controller for Kubernetes (ACK) resources that ResourceGraphDefinitions may manage
   - apiGroups: ['ecr.services.k8s.aws', 'iam.services.k8s.aws', 'eks.services.k8s.aws']
     resources: ['*']
     verbs: ['get', 'list', 'watch']
-  # Argo Workflows resources that ResourceGroups may manage
+  # Argo Workflows resources that ResourceGraphDefinitions may manage
   - apiGroups: ['argoproj.io']
     resources: ['workflows', 'workflowtemplates', 'cronworkflows', 'workflowtaskresults']
     verbs: ['get', 'list', 'watch']
-  # External Secrets resources that ResourceGroups may manage
+  # External Secrets resources that ResourceGraphDefinitions may manage
   - apiGroups: ['external-secrets.io']
     resources: ['externalsecrets', 'secretstores', 'clustersecretstores']
     verbs: ['get', 'list', 'watch']
@@ -237,7 +237,7 @@ data:
       clusterLocatorMethods:
         - $include: k8s-config.yaml
     
-    # Kro plugin configuration for ResourceGroup management
+    # Kro plugin configuration for ResourceGraphDefinition management
     kro:
       enablePermissions: true
       clusters:
@@ -254,21 +254,21 @@ data:
           authProvider: 'serviceAccount'
           skipTLSVerify: true
           serviceAccountToken: SA_TOKEN
-      # ResourceGroup entity processing configuration
+      # ResourceGraphDefinition entity processing configuration
       entityProcessing:
-        # Enable automatic catalog ingestion of ResourceGroups
+        # Enable automatic catalog ingestion of ResourceGraphDefinitions
         enabled: true
-        # Refresh interval for ResourceGroup status updates
+        # Refresh interval for ResourceGraphDefinition status updates
         refreshInterval: 300
         # Namespace filtering (empty means all namespaces)
         namespaces: []
-        # Label selectors for ResourceGroup filtering
+        # Label selectors for ResourceGraphDefinition filtering
         labelSelectors: []
       # Integration with existing Kubernetes plugin
       integration:
-        # Show ResourceGroups in Kubernetes plugin views
+        # Show ResourceGraphDefinitions in Kubernetes plugin views
         showInKubernetesViews: true
-        # Enable ResourceGroup relationship mapping
+        # Enable ResourceGraphDefinition relationship mapping
         enableRelationshipMapping: true
     
     # Kubernetes resource ingestion configuration with Kro support
