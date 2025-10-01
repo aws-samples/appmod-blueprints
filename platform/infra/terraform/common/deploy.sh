@@ -60,6 +60,10 @@ main() {
 
     # Update backstage default values
     update_backstage_defaults
+
+    # Create spoke cluster secret values
+    create_spoke_cluster_secret_values
+    
     # Push repo to Gitlab
     gitlab_repository_setup
   fi

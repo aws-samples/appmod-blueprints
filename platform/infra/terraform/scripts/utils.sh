@@ -285,12 +285,12 @@ gitlab_repository_setup(){
   if ! git remote get-url gitlab >/dev/null 2>&1; then
     git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
   fi
-  
-  # # Pull upstream with rebase
-  # if ! git pull --rebase gitlab "main"; then
-  #   log_error "Failed to pull and rebase from upstream"
-  #   exit 1
-  # fi
+
+  if ! git diff --cached --quiet; then
+    git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files "
+  else
+    print_info "No changes to commit"
+  fi
   
   if ! git push --set-upstream gitlab "${WORKSHOP_GIT_BRANCH}":main; then 
     log_error "Failed to push repository to GitLab"
@@ -305,9 +305,6 @@ update_backstage_defaults() {
 
   cd "$GIT_ROOT_PATH"
 
-  git config --global credential.helper store
-  git config --global user.name "$GIT_USERNAME"
-  git config --global user.email "$GIT_USERNAME@workshop.local"
   # Define catalog-info.yaml path
   CATALOG_INFO_PATH="${GIT_ROOT_PATH}/platform/backstage/templates/catalog-info.yaml"
 
@@ -319,12 +316,6 @@ update_backstage_defaults() {
 
   print_step "Updating catalog-info.yaml with environment-specific values"
 
-  # Create backup before modifying
-  # BACKUP_PATH="${CATALOG_INFO_PATH}.backup.$(date +%Y%m%d_%H%M%S)"
-  # cp "$CATALOG_INFO_PATH" "$BACKUP_PATH"
-  # print_info "Created backup: $BACKUP_PATH"
-
-  # Update the system-info entity in catalog-info.yaml
   yq -i '
     (select(.metadata.name == "system-info").spec.hostname) = "'$GITLAB_DOMAIN'" |
     (select(.metadata.name == "system-info").spec.gituser) = "'$GIT_USERNAME'" |
@@ -341,12 +332,6 @@ update_backstage_defaults() {
   print_success "Staged catalog-info.yaml"
 
   print_success "Backstage template configuration updated!"
-
-  if ! git diff --cached --quiet; then
-    git commit -m "Update Backstage Template Configuration"
-  else
-    print_info "No changes to commit"
-  fi
 
   print_info "Templates can now reference these values using:"
   echo "  ✓ Hostname: \${{ steps['fetchSystem'].output.entity.spec.hostname }}"
@@ -367,4 +352,27 @@ delete_backstage_ecr_repo() {
     else
         print_info "Backstage ECR repository does not exist"
     fi
+}
+
+create_spoke_cluster_secret_values() {
+
+  cd "$GIT_ROOT_PATH"
+  while IFS= read -r cluster_name; do
+    local dir_path="gitops/fleet/members/fleet-${cluster_name}"
+    mkdir -p "$dir_path"
+    
+    cat > "${dir_path}/values.yaml" << EOF
+externalSecret:
+  enabled: true
+  clusterName: ${cluster_name}
+  secretStoreRefKind: ClusterSecretStore
+  secretStoreRefName: aws-secrets-manager
+  secretManagerSecretNamePrefix: ${RESOURCE_PREFIX}
+  server: remote
+EOF
+  done < <(yq '.clusters[] | select(.environment != "control-plane") | .name' "$CONFIG_FILE")
+
+  git add .
+
+  cd -
 }
