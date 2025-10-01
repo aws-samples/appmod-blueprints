@@ -421,6 +421,10 @@ spec:
             name: gitlab-credentials
             creationPolicy: Owner
           data:
+            - secretKey: GITLAB_USERNAME
+              remoteRef:
+                key: ${schema.spec.aws.resourcePrefix}-gitlab-pat
+                property: username
             - secretKey: GITLAB_TOKEN
               remoteRef:
                 key: ${schema.spec.aws.resourcePrefix}-gitlab-pat
