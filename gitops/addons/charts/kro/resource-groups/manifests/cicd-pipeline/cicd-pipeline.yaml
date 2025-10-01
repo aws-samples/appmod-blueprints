@@ -38,7 +38,7 @@ spec:
     # EventBus for Argo Events (must be first)
     - id: eventbus
       readyWhen:
-        - ${eventbus.status.conditions.exists(x, x.type == 'Deployed' && x.status == "True")}
+        - ${eventbus.status.phase == "Running"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: EventBus
@@ -329,8 +329,6 @@ spec:
 
     # RBAC Role for CI/CD operations - minimal required permissions
     - id: role
-      readyWhen:
-        - ${role.metadata.name != ""}
       template:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
@@ -1292,8 +1290,7 @@ spec:
     # Argo Events EventSource for GitLab webhooks
     - id: eventsource
       readyWhen:
-        - ${eventsource.metadata.name != ""}
-        - ${eventbus.status.conditions.exists(x, x.type == 'Deployed' && x.status == "True")}
+        - ${eventsource.status.phase == "Running"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: EventSource
@@ -1319,9 +1316,7 @@ spec:
     # Argo Events Sensor for triggering CI/CD workflows
     - id: sensor
       readyWhen:
-        - ${sensor.metadata.name != ""}
-        - ${eventbus.status.conditions.exists(x, x.type == 'Deployed' && x.status == "True")}
-        - ${eventsource.metadata.name != ""}
+        - ${sensor.status.phase == "Running"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Sensor
