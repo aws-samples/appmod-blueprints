@@ -1,50 +1,4 @@
 ################################################################################
-# GitOps Bridge: Private ssh keys for git
-################################################################################
-# resource "kubernetes_namespace" "argocd" {
-#   depends_on = [
-#     local.cluster_info
-#   ]
-
-#   metadata {
-#     name = local.argocd_namespace
-#   }
-# }
-
-
-
-# # Create IDE password secret in ArgoCD namespace
-# resource "kubernetes_secret" "ide_password" {
-#   depends_on = [kubernetes_namespace.argocd]
-
-#   metadata {
-#     name      = "ide-password"
-#     namespace = "argocd"
-#   }
-
-#   data = {
-#     password = var.ide_password
-#   }
-# }
-
-# # Create Git credentials secret in ArgoCD namespace
-# resource "kubernetes_secret" "git_credentials" {
-#   depends_on = [kubernetes_namespace.argocd]
-
-#   metadata {
-#     name      = "git-credentials"
-#     namespace = "argocd"
-#   }
-
-#   data = {
-#     GIT_HOSTNAME = "${local.git_hostname}"
-#     GIT_USERNAME = "${var.git_org_name}"
-#     GIT_PASSWORD = jsondecode(data.aws_secretsmanager_secret_version.keycloak_user_password.secret_string)["password"]
-#     WORKING_REPO = var.working_repo
-#   }
-# }
-
-################################################################################
 # GitOps Bridge: Bootstrap
 ################################################################################
 module "gitops_bridge_bootstrap" {
@@ -71,7 +25,6 @@ module "gitops_bridge_bootstrap" {
     timeout          = 600
     create_namespace = true
   }
-  # depends_on = [kubernetes_secret.git_secrets]
 }
 
 # ArgoCD Git Secret
@@ -88,7 +41,7 @@ resource "kubernetes_secret" "git_secrets" {
       username= "not-used"
       password= local.gitlab_token
     }
-    git-reposiotory = {
+    git-repository = {
       secret-type= "repository"
       url= "https://${local.gitlab_domain_name}/${local.git_username}/${var.working_repo}.git"
       type= "git"

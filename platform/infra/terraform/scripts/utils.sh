@@ -257,6 +257,9 @@ cleanup_kubernetes_resources_with_fallback() {
 
   # Delete external-secrets specifically
   delete_argocd_apps "external-secrets" "delete" "false"
+
+  # Delete only ArgoCD apps of Core Apps by patching finalizer
+  delete_argocd_apps "${CORE_APPS[*]}" "delete" "true"
 }
 
 gitlab_repository_setup(){

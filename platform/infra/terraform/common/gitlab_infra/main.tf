@@ -2,30 +2,6 @@
 # GitLab Network Load Balancer
 ################################################################################
 
-# Security group for GitLab NLB
-resource "aws_security_group" "gitlab_ssh" {
-  name        = "${local.hub_cluster.name}-gitlab-ssh"
-  description = "SSH for GitLab"
-  vpc_id      = local.cluster_vpc_ids[local.hub_cluster.name]
-
-  ingress {
-    description = "SSH for GitLab"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  tags = {
-    Name = "${local.hub_cluster.name}-gitlab-ssh"
-  }
-}
-
 # Security group for HTTP access (port 80) for GitLab
 resource "aws_security_group" "gitlab_http" {
   name        = "${local.hub_cluster.name}-gitlab-http"
