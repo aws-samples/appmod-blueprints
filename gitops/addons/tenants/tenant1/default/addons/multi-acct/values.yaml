@@ -1,5 +1,3 @@
 clusters:
   # cluster-dev: "123456789101"
   # cluster-prod-no: "123456789101"
-
-  peeks-spoke-staging: "665742499430"

@@ -1,0 +1,29 @@
+# Debug version of CICDPipeline RGD - EventBus only
+---
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: cicdpipeline-debug.kro.run
+  namespace: kro-system
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: CICDPipelineDebug
+    spec:
+      name: string
+      namespace: string
+
+  resources:
+    # EventBus for Argo Events (must be first)
+    - id: eventbus
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: EventBus
+        metadata:
+          name: ${schema.spec.name}-eventbus
+          namespace: ${schema.spec.namespace}
+        spec:
+          nats:
+            native:
+              replicas: 1
+              auth: token
