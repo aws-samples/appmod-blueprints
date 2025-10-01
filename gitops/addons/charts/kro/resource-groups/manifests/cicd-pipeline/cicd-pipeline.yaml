@@ -56,7 +56,7 @@ spec:
     # ECR Repository for main application images
     - id: ecrmainrepo
       readyWhen:
-        - ${ecrmainrepo.status.conditions[0].status == "True"}
+        - ${ecrmainrepo.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       template:
         apiVersion: ecr.services.k8s.aws/v1alpha1
         kind: Repository
@@ -113,7 +113,7 @@ spec:
     # ECR Repository for cache images
     - id: ecrcacherepo
       readyWhen:
-        - ${ecrcacherepo.status.conditions[0].status == "True"}
+        - ${ecrcacherepo.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       template:
         apiVersion: ecr.services.k8s.aws/v1alpha1
         kind: Repository
@@ -171,7 +171,7 @@ spec:
     # IAM Policy for ECR access
     - id: iampolicy
       readyWhen:
-        - ${iampolicy.status.conditions[0].status == "True"}
+        - ${iampolicy.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       template:
         apiVersion: iam.services.k8s.aws/v1alpha1
         kind: Policy
@@ -225,7 +225,7 @@ spec:
     # IAM Role with EKS pod identity trust policy
     - id: iamrole
       readyWhen:
-        - ${iamrole.status.conditions[0].status == "True"}
+        - ${iamrole.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       template:
         apiVersion: iam.services.k8s.aws/v1alpha1
         kind: Role
