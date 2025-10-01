@@ -1,147 +1,27 @@
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: ${{values.appname}}-cicd-sa
-  namespace: ${{values.namespace}}
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::${{values.aws_account_id}}:role/${{values.aws_resource_prefix}}-${{values.appname}}-role
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: ${{values.appname}}-argo-workflow-runner
-  namespace: ${{values.namespace}}
-rules:
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "create", "update", "patch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "list", "update", "patch"]
-  - apiGroups: ["argoproj.io"]
-    resources: ["workflows", "workflowtemplates", "workflowtaskresults"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
-  - apiGroups: ["argoproj.io"]
-    resources: ["eventsources", "sensors"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "patch"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: ${{values.appname}}-cicd-sa-binding
-  namespace: ${{values.namespace}}
-subjects:
-  - kind: ServiceAccount
-    name: ${{values.appname}}-cicd-sa
-    namespace: ${{values.namespace}}
-roleRef:
-  kind: Role
-  name: ${{values.appname}}-argo-workflow-runner
-  apiGroup: rbac.authorization.k8s.io
----
+# This file intentionally left minimal - most resources are now managed by Kro CICDPipeline
+# Only keeping resources that Kro doesn't create
+
+# Additional ServiceAccount for workflow operations (different from the main one Kro creates)
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: ${{values.appname}}-operate-workflow-sa
   namespace: ${{values.namespace}}
+  labels:
+    app.kubernetes.io/name: ${{values.appname}}
+    app.kubernetes.io/component: cicd-pipeline
 ---
+# Additional RoleBinding for workflow operations
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: ${{values.appname}}-operate-workflow-sa-binding
   namespace: ${{values.namespace}}
 subjects:
-  - kind: ServiceAccount
-    name: ${{values.appname}}-operate-workflow-sa
-    namespace: ${{values.namespace}}
+- kind: ServiceAccount
+  name: ${{values.appname}}-operate-workflow-sa
+  namespace: ${{values.namespace}}
 roleRef:
-  kind: Role
-  name: ${{values.appname}}-argo-workflow-runner
+  kind: ClusterRole
+  name: argo-workflows-server
   apiGroup: rbac.authorization.k8s.io
----
-apiVersion: iam.services.k8s.aws/v1alpha1
-kind: Policy
-metadata:
-  name: ${{values.appname}}-cicd-ecr-access-policy
-  namespace: ${{values.namespace}}
-spec:
-  name: ${{values.aws_resource_prefix}}-${{values.appname}}-ecr-access-policy
-  description: ECR access policy for ${{values.appname}} CI/CD pipeline
-  policyDocument: |
-    {
-      "Version": "2012-10-17",
-      "Statement": [
-        {
-          "Effect": "Allow",
-          "Action": [
-            "ecr:GetAuthorizationToken",
-            "ecr:BatchCheckLayerAvailability",
-            "ecr:GetDownloadUrlForLayer",
-            "ecr:BatchGetImage",
-            "ecr:PutImage",
-            "ecr:InitiateLayerUpload",
-            "ecr:UploadLayerPart",
-            "ecr:CompleteLayerUpload"
-          ],
-          "Resource": "*"
-        }
-      ]
-    }
----
-apiVersion: iam.services.k8s.aws/v1alpha1
-kind: Role
-metadata:
-  name: ${{values.appname}}-cicd-iam-role
-  namespace: ${{values.namespace}}
-spec:
-  name: ${{values.aws_resource_prefix}}-${{values.appname}}-role
-  description: IAM role for ${{values.appname}} CI/CD pipeline
-  path: '/'
-  policies:
-    - arn:aws:iam::${{values.aws_account_id}}:policy/${{values.aws_resource_prefix}}-${{values.appname}}-ecr-access-policy
-  assumeRolePolicyDocument: |
-    {
-      "Version": "2012-10-17",
-      "Statement": [
-        {
-          "Effect": "Allow",
-          "Principal": {
-            "Service": "pods.eks.amazonaws.com"
-          },
-          "Action": [
-            "sts:AssumeRole",
-            "sts:TagSession"
-          ],
-          "Condition": {
-            "ArnEquals": {
-              "aws:SourceArn": "arn:aws:eks:${{values.aws_region}}:${{values.aws_account_id}}:podidentityassociation/${{values.cluster_name}}/*"
-            }
-          }
-        }
-      ]
-    }
-# ---
-# apiVersion: eks.services.k8s.aws/v1alpha1
-# kind: PodIdentityAssociation
-# metadata:
-#   name: ${{values.appname}}-cicd-podidentity
-#   namespace: ${{values.namespace}}
-#   annotations:
-#     services.k8s.aws/region: ${{values.aws_region}}
-# spec:
-#   clusterName: ${{values.cluster_name}}
-#   namespace: ${{values.namespace}}
-#   roleARN: arn:aws:iam::${{values.aws_account_id}}:role/${{values.aws_resource_prefix}}-${{values.appname}}-role
-#   serviceAccount: ${{values.appname}}-cicd-sa
