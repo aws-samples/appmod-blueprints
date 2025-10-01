@@ -615,8 +615,6 @@ kro-manifests:
       - key: enable_kro_manifests
         operator: In
         values: ['true']
-  # Only include directories with plain manifests (exclude Helm charts)
-  exclude: 'charts/kro/resource-groups/{efs,iam}/**'
   selector:
     matchExpressions:
       - key: enable_kro_eks_rgs
