@@ -603,6 +603,7 @@ cw-prometheus:
 
 kro-manifests:
   enabled: false
+  type: manifest
   namespace: kro
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-2' # Needs to be before resources that needs PodIdentity
