@@ -1383,7 +1383,7 @@ spec:
                                   name: gitlab-credentials
                                   key: GITLAB_TOKEN
                             - name: repo-name
-                              value: '${schema.spec.application.name}'
+                              value: '${schema.spec.application.name}-cicd'
                             - name: dockerfile-path
                               value: ${schema.spec.application.dockerfilePath}
                             - name: deployment-path
