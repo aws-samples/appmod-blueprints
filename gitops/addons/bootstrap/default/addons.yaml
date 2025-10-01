@@ -606,9 +606,9 @@ kro-manifests:
   namespace: kro
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-2' # Needs to be before resources that needs PodIdentity
-  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/eks'
-  chartRepository: '{{.metadata.annotations.addons_repo_url}}'
-  targetRevision: '{{.metadata.annotations.addons_repo_revision}}'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/manifests'
+  directory:
+    recurse: true
   selector:
     matchExpressions:
       - key: enable_kro_manifests
