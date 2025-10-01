@@ -132,16 +132,16 @@ spec:
         }
       ]
     }
----
-apiVersion: eks.services.k8s.aws/v1alpha1
-kind: PodIdentityAssociation
-metadata:
-  name: ${{values.appname}}-cicd-podidentity
-  namespace: ${{values.namespace}}
-  annotations:
-    services.k8s.aws/region: ${{values.aws_region}}
-spec:
-  clusterName: ${{values.cluster_name}}
-  namespace: ${{values.namespace}}
-  roleARN: arn:aws:iam::${{values.aws_account_id}}:role/${{values.aws_resource_prefix}}-${{values.appname}}-role
-  serviceAccount: ${{values.appname}}-cicd-sa
+# ---
+# apiVersion: eks.services.k8s.aws/v1alpha1
+# kind: PodIdentityAssociation
+# metadata:
+#   name: ${{values.appname}}-cicd-podidentity
+#   namespace: ${{values.namespace}}
+#   annotations:
+#     services.k8s.aws/region: ${{values.aws_region}}
+# spec:
+#   clusterName: ${{values.cluster_name}}
+#   namespace: ${{values.namespace}}
+#   roleARN: arn:aws:iam::${{values.aws_account_id}}:role/${{values.aws_resource_prefix}}-${{values.appname}}-role
+#   serviceAccount: ${{values.appname}}-cicd-sa
