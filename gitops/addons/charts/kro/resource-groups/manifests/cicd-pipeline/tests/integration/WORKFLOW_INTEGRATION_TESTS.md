@@ -35,7 +35,7 @@ Before running the workflow integration tests, ensure the following are installe
 2. **Kro** - Resource orchestration controller
 3. **Argo Workflows** - Workflow execution engine
 4. **Argo Events** - Event-driven workflow triggering
-5. **CI/CD Pipeline RGD** - The ResourceGroupDefinition being tested
+5. **CI/CD Pipeline RGD** - The ResourceGraphDefinitionDefinition being tested
 
 ### Optional Components (for full functionality)
 

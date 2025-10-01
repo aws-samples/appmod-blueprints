@@ -23,7 +23,7 @@ The test suite validates the RGD's schema definition, parameter handling, resour
 ## Test Coverage
 
 ### Schema Validation (14 tests)
-- ✅ ResourceGroup metadata validation
+- ✅ ResourceGraphDefinition metadata validation
 - ✅ Schema structure validation
 - ✅ Required schema fields validation
 - ✅ Status tracking validation
@@ -71,7 +71,7 @@ The test suite validates the RGD's schema definition, parameter handling, resour
 ## Key Validations
 
 ### 1. Schema Structure
-- Validates that the RGD follows the correct Kro ResourceGroup structure
+- Validates that the RGD follows the correct Kro ResourceGraphDefinition structure
 - Ensures all required fields are present and properly typed
 - Verifies comprehensive status tracking for all resources
 
