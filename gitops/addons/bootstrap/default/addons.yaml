@@ -610,6 +610,7 @@ kro-manifests:
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/manifests'
   directory:
     recurse: true
+    exclude: "*/tests/**"
   selector:
     matchExpressions:
       - key: enable_kro_manifests

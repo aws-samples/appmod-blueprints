@@ -123,6 +123,10 @@ spec:
       - repoURL: {{ $repoURLGit | squote }}
         path: {{$chartConfig.path | squote }}
         targetRevision: {{ $repoURLGitRevision | squote }}
+        {{- if $chartConfig.directory }}
+        directory:
+        {{- toYaml $chartConfig.directory | nindent 10 }}
+        {{- end }}
         {{- else }}
       - repoURL: '{{`{{ .values.addonChartRepository }}`}}'
         chart: '{{`{{ .values.chart }}`}}'
