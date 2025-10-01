@@ -33,7 +33,7 @@ spec:
       # Service Account information
       serviceAccountName: ${serviceaccount.metadata.name}
       # Namespace information
-      namespace: ${schema.spec.namespace}
+      namespace: ${spec.namespace}
   resources:
     # EventBus for Argo Events (must be first)
     - id: eventbus
