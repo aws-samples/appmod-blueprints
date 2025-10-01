@@ -67,7 +67,7 @@ spec:
           namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
+              kind: CICDPipeline
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -124,7 +124,7 @@ spec:
           namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
+              kind: CICDPipeline
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -182,7 +182,7 @@ spec:
           namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
+              kind: CICDPipeline
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -236,7 +236,7 @@ spec:
           namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
+              kind: CICDPipeline
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -278,7 +278,7 @@ spec:
           namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
+              kind: CICDPipeline
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -307,7 +307,7 @@ spec:
           namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
+              kind: CICDPipeline
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -468,7 +468,7 @@ spec:
           namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
+              kind: CICDPipeline
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
