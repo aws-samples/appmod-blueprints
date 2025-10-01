@@ -19,7 +19,7 @@ spec:
   project: default
   destination:
     namespace: ${{values.namespace}}
-    name: prod-cluster
+    name: peeks-spoke-prod
   source:
     repoURL: https://${{values.gitlab_hostname}}/${{values.gituser}}/${{values.appname}}
     targetRevision: main
