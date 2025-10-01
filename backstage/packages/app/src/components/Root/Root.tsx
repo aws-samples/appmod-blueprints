@@ -28,6 +28,7 @@ import MenuIcon from '@material-ui/icons/Menu';
 import SearchIcon from '@material-ui/icons/Search';
 import { MyGroupsSidebarItem } from '@backstage/plugin-org';
 import GroupIcon from '@material-ui/icons/People';
+import AccountTreeIcon from '@material-ui/icons/AccountTree';
 
 const useSidebarLogoStyles = makeStyles({
   root: {
@@ -81,6 +82,7 @@ export const Root = ({ children }: PropsWithChildren<{}>) => (
         <SidebarScrollWrapper>
           {/* Items in this group will be scrollable if they run out of space */}
           <SidebarItem icon={MapIcon} to="tech-radar" text="Tech Radar" />
+          <SidebarItem icon={AccountTreeIcon} to="kro" text="Kro ResourceGroups" />
         </SidebarScrollWrapper>
       </SidebarGroup>
       <SidebarSpace />

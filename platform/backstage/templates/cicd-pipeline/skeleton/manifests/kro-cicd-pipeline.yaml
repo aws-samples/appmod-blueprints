@@ -1,0 +1,38 @@
+apiVersion: kro.run/v1alpha1
+kind: CICDPipeline
+metadata:
+  name: ${{values.appname}}-cicd-pipeline
+  #namespace: ${{values.namespace}}
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: ${{values.appname}}
+    app.kubernetes.io/component: cicd-pipeline
+    app.kubernetes.io/managed-by: argocd
+    backstage.io/template-name: cicd-pipeline
+    argocd.argoproj.io/instance: ${{values.appname}}-cicd
+  annotations:
+    backstage.io/template-version: "1.0.0"
+    backstage.io/created-by: ${{values.created_by}}
+    cicd.kro.run/application-name: ${{values.appname}}
+    cicd.kro.run/aws-region: ${{values.aws_region}}
+    cicd.kro.run/cluster-name: ${{values.cluster_name}}
+    # ArgoCD sync wave to ensure proper ordering
+    argocd.argoproj.io/sync-wave: "1"
+    # ArgoCD hook for lifecycle management
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  name: ${{values.appname}}-cicd
+  #namespace: ${{values.namespace}}
+  namespace: argocd
+  aws:
+    region: ${{values.aws_region}}
+    clusterName: ${{values.cluster_name}}
+    resourcePrefix: "${{values.aws_resource_prefix}}"
+  application:
+    name: ${{values.appname}}
+    dockerfilePath: ${{values.dockerfile_path}}
+    deploymentPath: ${{values.deployment_path}}
+  gitlab:
+    hostname: ${{values.gitlab_hostname}}
+    username: ${{values.git_username}}

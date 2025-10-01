@@ -37,6 +37,40 @@ rules:
       - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-kro-reader
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-integration
+    app.kubernetes.io/part-of: platform
+rules:
+  # Kro ResourceGraphDefinition permissions
+  - apiGroups: ['kro.run']
+    resources: ['resourcegraphdefinitions']
+    verbs: ['get', 'list', 'watch']
+  # Kro ResourceGraphDefinition status access
+  - apiGroups: ['kro.run']
+    resources: ['resourcegraphdefinitions/status']
+    verbs: ['get', 'list', 'watch']
+  # Kro instance permissions (for the actual resources created from ResourceGraphDefinitions)
+  - apiGroups: ['kro.run']
+    resources: ['*']
+    verbs: ['get', 'list', 'watch']
+  # AWS Controller for Kubernetes (ACK) resources that ResourceGraphDefinitions may manage
+  - apiGroups: ['ecr.services.k8s.aws', 'iam.services.k8s.aws', 'eks.services.k8s.aws']
+    resources: ['*']
+    verbs: ['get', 'list', 'watch']
+  # Argo Workflows resources that ResourceGraphDefinitions may manage
+  - apiGroups: ['argoproj.io']
+    resources: ['workflows', 'workflowtemplates', 'cronworkflows', 'workflowtaskresults']
+    verbs: ['get', 'list', 'watch']
+  # External Secrets resources that ResourceGraphDefinitions may manage
+  - apiGroups: ['external-secrets.io']
+    resources: ['externalsecrets', 'secretstores', 'clustersecretstores']
+    verbs: ['get', 'list', 'watch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: backstage-argo-worfklows
@@ -61,6 +95,23 @@ subjects:
   - kind: ServiceAccount
     name: backstage
     namespace: backstage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-kro-reader-binding
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-integration
+    app.kubernetes.io/part-of: platform
+subjects:
+- kind: ServiceAccount
+  name: backstage
+  namespace: backstage
+roleRef:
+  kind: ClusterRole
+  name: backstage-kro-reader
+  apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -185,6 +236,76 @@ data:
         type: 'multiTenant'
       clusterLocatorMethods:
         - $include: k8s-config.yaml
+    
+    # Kro plugin configuration for ResourceGraphDefinition management
+    kro:
+      enablePermissions: true
+      clusters:
+        - name: local
+          url: https://kubernetes.default.svc.cluster.local
+          authProvider: 'serviceAccount'
+          skipTLSVerify: true
+          serviceAccountToken:
+            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+          caData:
+            $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        - name: workshop
+          url: K8S_SERVER
+          authProvider: 'serviceAccount'
+          skipTLSVerify: true
+          serviceAccountToken: SA_TOKEN
+      # ResourceGraphDefinition entity processing configuration
+      entityProcessing:
+        # Enable automatic catalog ingestion of ResourceGraphDefinitions
+        enabled: true
+        # Refresh interval for ResourceGraphDefinition status updates
+        refreshInterval: 300
+        # Namespace filtering (empty means all namespaces)
+        namespaces: []
+        # Label selectors for ResourceGraphDefinition filtering
+        labelSelectors: []
+      # Integration with existing Kubernetes plugin
+      integration:
+        # Show ResourceGraphDefinitions in Kubernetes plugin views
+        showInKubernetesViews: true
+        # Enable ResourceGraphDefinition relationship mapping
+        enableRelationshipMapping: true
+    
+    # Kubernetes resource ingestion configuration with Kro support
+    kubernetesIngestor:
+      refreshInterval: 300 # 5 minutes in seconds
+      resources:
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'ResourceGraphDefinition'
+        # Kro instances (these will be discovered dynamically based on ResourceGraphDefinitions)
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'CICDPipeline'
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'EksCluster'
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'EksclusterWithVpc'
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'Vpc'
+        - apiVersion: 'apps/v1'
+          kind: 'Deployment'
+        - apiVersion: 'v1'
+          kind: 'Service'
+        - apiVersion: 'v1'
+          kind: 'ConfigMap'
+        - apiVersion: 'v1'
+          kind: 'Secret'
+      clusters:
+        - name: local
+          url: https://kubernetes.default.svc.cluster.local
+          authProvider: 'serviceAccount'
+          skipTLSVerify: true
+          serviceAccountToken:
+            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        - name: workshop
+          url: K8S_SERVER
+          authProvider: 'serviceAccount'
+          skipTLSVerify: true
+          serviceAccountToken: SA_TOKEN
     argocd:
       username: admin
       password: ${ARGOCD_ADMIN_PASSWORD}
@@ -204,13 +325,58 @@ metadata:
   name: k8s-config
   namespace: backstage
 stringData:
-  k8s-config.yaml: "type: 'config'\nclusters:\n  - url: https://kubernetes.default.svc.cluster.local\n
-    \   name: local\n    authProvider: 'serviceAccount'\n    skipTLSVerify: true\n
-    \   skipMetricsLookup: true\n    serviceAccountToken: \n      $file: /var/run/secrets/kubernetes.io/serviceaccount/token\n
-    \   caData: \n      $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt\n
-    \ - url: K8S_SERVER\n
-    \   name: workshop\n    authProvider: 'serviceAccount'\n    skipTLSVerify: true\n
-    \   skipMetricsLookup: true\n    serviceAccountToken: SA_TOKEN\n"
+  k8s-config.yaml: |
+    type: 'config'
+    clusters:
+      - url: https://kubernetes.default.svc.cluster.local
+        name: local
+        authProvider: 'serviceAccount'
+        skipTLSVerify: true
+        skipMetricsLookup: true
+        serviceAccountToken: 
+          $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        caData: 
+          $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        # Additional configuration for Kro resources
+        customResources:
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'resourcegraphdefinitions'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'cicdpipelines'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'eksclusters'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'eksclusterwithvpcs'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'vpcs'
+      - url: K8S_SERVER
+        name: workshop
+        authProvider: 'serviceAccount'
+        skipTLSVerify: true
+        skipMetricsLookup: true
+        serviceAccountToken: SA_TOKEN
+        # Additional configuration for Kro resources
+        customResources:
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'resourcegraphdefinitions'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'cicdpipelines'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'eksclusters'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'eksclusterwithvpcs'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'vpcs'
 ---
 apiVersion: v1
 kind: Service

@@ -723,3 +723,146 @@ git commit -m "Fix chart dependencies"
 ```
 
 This ensures ArgoCD can properly render charts with their dependencies without needing to fetch them at runtime.
+
+## Kro ResourceGraphDefinition readyWhen Conditions - Best Practices
+
+### Key Principle
+
+**readyWhen conditions should ONLY reference the current resource itself, never other resources.**
+
+### Why This Matters
+
+When Kro validates CEL expressions in `readyWhen` conditions, each resource is evaluated in isolation. The CEL expression context for `readyWhen` validation only has access to the current resource, not other resources in the RGD. This means:
+
+- ✅ **Correct**: `${serviceaccount.metadata.name != ""}` (self-reference)
+- ❌ **Incorrect**: `${eventsource.metadata.name != ""}` (reference to other resource)
+
+### Correct Patterns by Resource Type
+
+#### AWS ACK Resources
+Use status conditions to check if the resource is actually ready:
+```yaml
+- id: ecrmainrepo
+  readyWhen:
+    - ${ecrmainrepo.status.conditions[0].status == "True"}
+
+- id: iamrole
+  readyWhen:
+    - ${iamrole.status.conditions[0].status == "True"}
+
+- id: podidentityassoc
+  readyWhen:
+    - ${podidentityassoc.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+```
+
+#### Kubernetes Resources with Status Phases
+Check the appropriate status field:
+```yaml
+- id: appnamespace
+  readyWhen:
+    - ${appnamespace.status.phase == "Active"}
+```
+
+#### Simple Kubernetes Resources
+Use metadata.name check or no readyWhen at all:
+```yaml
+- id: role
+  readyWhen:
+    - ${role.metadata.name != ""}
+
+- id: configmap
+  readyWhen:
+    - ${configmap.metadata.name != ""}
+```
+
+#### Resources That Don't Need readyWhen
+Some resources are created immediately and don't need readiness checks:
+```yaml
+- id: serviceaccount
+  template:
+    # No readyWhen needed
+
+- id: setupworkflow
+  template:
+    # No readyWhen needed
+```
+
+### How Dependencies Work
+
+Dependencies between resources are handled **implicitly through template variable usage**, not through readyWhen conditions.
+
+#### Example: Correct Dependency Handling
+```yaml
+# The rolebinding depends on both role and serviceaccount
+- id: rolebinding
+  readyWhen:
+    - ${rolebinding.metadata.name != ""}  # Only self-reference
+  template:
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    subjects:
+      - kind: ServiceAccount
+        name: ${serviceaccount.metadata.name}  # Dependency expressed here
+    roleRef:
+      name: ${role.metadata.name}  # Dependency expressed here
+```
+
+### Common Mistakes to Avoid
+
+#### ❌ Cross-Resource References in readyWhen
+```yaml
+# WRONG - This will cause "undeclared reference" errors
+- id: sensor
+  readyWhen:
+    - ${sensor.metadata.name != ""}
+    - ${eventsource.metadata.name != ""}  # ❌ References other resource
+    - ${cicdworkflow.metadata.name != ""}  # ❌ References other resource
+```
+
+#### ✅ Correct Self-Reference Only
+```yaml
+# CORRECT - Only references itself
+- id: sensor
+  readyWhen:
+    - ${sensor.metadata.name != ""}
+  template:
+    # Dependencies expressed through template variables
+    dependencies:
+      - name: gitlab-webhook
+        eventSourceName: ${eventsource.metadata.name}  # ✅ Dependency in template
+```
+
+#### ❌ Incorrect Field References
+```yaml
+# WRONG - ServiceAccount doesn't have spec.name
+- id: serviceaccount
+  readyWhen:
+    - ${serviceaccount.spec.name != ""}  # ❌ Field doesn't exist
+```
+
+#### ✅ Correct Field References
+```yaml
+# CORRECT - Use metadata.name for Kubernetes resources
+- id: serviceaccount
+  readyWhen:
+    - ${serviceaccount.metadata.name != ""}  # ✅ Correct field
+```
+
+### Validation Errors and Solutions
+
+#### Error: "undeclared reference to 'resourcename'"
+**Cause**: readyWhen condition references another resource
+**Solution**: Remove the cross-resource reference, keep only self-references
+
+#### Error: "field doesn't exist"
+**Cause**: Referencing incorrect field (e.g., spec.name on ServiceAccount)
+**Solution**: Use correct field path (e.g., metadata.name for Kubernetes resources)
+
+### Summary
+
+1. **readyWhen = Self-reference only**: Check when THIS resource is ready
+2. **Dependencies = Template variables**: Express dependencies through template variable usage
+3. **Field validation**: Use correct field paths for each resource type
+4. **Keep it simple**: Many resources don't need readyWhen conditions at all
+
+This approach ensures that Kro can validate CEL expressions successfully and that resource dependencies are handled correctly through the implicit dependency resolution system.

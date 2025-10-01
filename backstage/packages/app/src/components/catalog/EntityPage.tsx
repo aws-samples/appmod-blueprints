@@ -57,6 +57,15 @@ import {
   EntityKubernetesContent,
   isKubernetesAvailable,
 } from '@backstage/plugin-kubernetes';
+import { KubernetesContentWithKro } from '../kubernetes/KubernetesContentWithKro';
+import { KroNavigationHelper, shouldShowKroNavigation } from '../kubernetes/KroNavigationHelper';
+import {
+  IfKroResourceGraphAvailable,
+  IfKroOverviewAvailable,
+  KroOverviewCard,
+  KroResourceGraph,
+  isKroAvailable,
+} from '@terasky/backstage-plugin-kro-resources-frontend';
 
 const techdocsContent = (
   <EntityTechdocsContent>
@@ -158,7 +167,37 @@ const serviceEntityPage = (
       title="Kubernetes"
       if={isKubernetesAvailable}
     >
-      <EntityKubernetesContent />
+      <Grid container spacing={3}>
+        <EntitySwitch>
+          <EntitySwitch.Case if={shouldShowKroNavigation}>
+            <Grid item xs={12}>
+              <KroNavigationHelper />
+            </Grid>
+          </EntitySwitch.Case>
+        </EntitySwitch>
+        <Grid item xs={12}>
+          <KubernetesContentWithKro />
+        </Grid>
+      </Grid>
+    </EntityLayout.Route>
+
+    <EntityLayout.Route
+      path="/kro"
+      title="Kro Details"
+      if={isKroAvailable}
+    >
+      <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <IfKroOverviewAvailable>
+            <KroOverviewCard />
+          </IfKroOverviewAvailable>
+        </Grid>
+        <Grid item xs={12}>
+          <IfKroResourceGraphAvailable>
+            <KroResourceGraph />
+          </IfKroResourceGraphAvailable>
+        </Grid>
+      </Grid>
     </EntityLayout.Route>
 
     <EntityLayout.Route path="/api" title="API">
@@ -204,7 +243,37 @@ const websiteEntityPage = (
       title="Kubernetes"
       if={isKubernetesAvailable}
     >
-      <EntityKubernetesContent />
+      <Grid container spacing={3}>
+        <EntitySwitch>
+          <EntitySwitch.Case if={shouldShowKroNavigation}>
+            <Grid item xs={12}>
+              <KroNavigationHelper />
+            </Grid>
+          </EntitySwitch.Case>
+        </EntitySwitch>
+        <Grid item xs={12}>
+          <KubernetesContentWithKro />
+        </Grid>
+      </Grid>
+    </EntityLayout.Route>
+
+    <EntityLayout.Route
+      path="/kro"
+      title="Kro Details"
+      if={isKroAvailable}
+    >
+      <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <IfKroOverviewAvailable>
+            <KroOverviewCard />
+          </IfKroOverviewAvailable>
+        </Grid>
+        <Grid item xs={12}>
+          <IfKroResourceGraphAvailable>
+            <KroResourceGraph />
+          </IfKroResourceGraphAvailable>
+        </Grid>
+      </Grid>
     </EntityLayout.Route>
 
     <EntityLayout.Route path="/dependencies" title="Dependencies">
@@ -396,6 +465,79 @@ const domainPage = (
   </EntityLayout>
 );
 
+const resourceGroupPage = (
+  <EntityLayout>
+    <EntityLayout.Route path="/" title="Overview">
+      <Grid container spacing={3} alignItems="stretch">
+        {entityWarningContent}
+        <Grid item md={6}>
+          <EntityAboutCard variant="gridItem" />
+        </Grid>
+        <Grid item md={6} xs={12}>
+          <EntityCatalogGraphCard variant="gridItem" height={400} />
+        </Grid>
+        <Grid item md={4} xs={12}>
+          <EntityLinksCard />
+        </Grid>
+        <Grid item md={8} xs={12}>
+          <IfKroOverviewAvailable>
+            <KroOverviewCard />
+          </IfKroOverviewAvailable>
+        </Grid>
+      </Grid>
+    </EntityLayout.Route>
+
+    <EntityLayout.Route
+      path="/kro"
+      title="Kro Details"
+      if={isKroAvailable}
+    >
+      <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <IfKroOverviewAvailable>
+            <KroOverviewCard />
+          </IfKroOverviewAvailable>
+        </Grid>
+        <Grid item xs={12}>
+          <IfKroResourceGraphAvailable>
+            <KroResourceGraph />
+          </IfKroResourceGraphAvailable>
+        </Grid>
+      </Grid>
+    </EntityLayout.Route>
+
+    <EntityLayout.Route
+      path="/kubernetes"
+      title="Kubernetes"
+      if={isKubernetesAvailable}
+    >
+      <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <KroNavigationHelper />
+        </Grid>
+        <Grid item xs={12}>
+          <KubernetesContentWithKro />
+        </Grid>
+      </Grid>
+    </EntityLayout.Route>
+
+    <EntityLayout.Route path="/dependencies" title="Dependencies">
+      <Grid container spacing={3} alignItems="stretch">
+        <Grid item md={6}>
+          <EntityDependsOnComponentsCard variant="gridItem" />
+        </Grid>
+        <Grid item md={6}>
+          <EntityDependsOnResourcesCard variant="gridItem" />
+        </Grid>
+      </Grid>
+    </EntityLayout.Route>
+
+    <EntityLayout.Route path="/docs" title="Docs">
+      {techdocsContent}
+    </EntityLayout.Route>
+  </EntityLayout>
+);
+
 export const entityPage = (
   <EntitySwitch>
     <EntitySwitch.Case if={isKind('component')} children={componentPage} />
@@ -404,6 +546,7 @@ export const entityPage = (
     <EntitySwitch.Case if={isKind('user')} children={userPage} />
     <EntitySwitch.Case if={isKind('system')} children={systemPage} />
     <EntitySwitch.Case if={isKind('domain')} children={domainPage} />
+    <EntitySwitch.Case if={isKind('resourcegroup')} children={resourceGroupPage} />
 
     <EntitySwitch.Case>{defaultEntityPage}</EntitySwitch.Case>
   </EntitySwitch>

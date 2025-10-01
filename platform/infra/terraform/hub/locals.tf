@@ -55,6 +55,11 @@ locals {
     service_account = "ack-ec2-controller"
   }
 
+  ecr_ack = {
+    namespace       = "ack-system"
+    service_account = "ack-ecr-controller"
+  }
+
   aws_addons = {
     enable_cert_manager                          = try(var.addons.enable_cert_manager, false)
     enable_aws_efs_csi_driver                    = try(var.addons.enable_aws_efs_csi_driver, false)
@@ -87,10 +92,11 @@ locals {
     enable_ack_eks                               = try(var.addons.enable_ack_eks, false)
     enable_cni_metrics_helper                    = try(var.addons.enable_cni_metrics_helper, false)
     enable_ack_ec2                               = try(var.addons.enable_ack_ec2, false)
+    enable_ack_ecr                               = try(var.addons.enable_ack_ecr, false)
     enable_ack_efs                               = try(var.addons.enable_ack_efs, false)
     enable_ack_s3                                = try(var.addons.enable_ack_s3, false)
     enable_kro                                   = try(var.addons.enable_kro, false)
-    enable_kro_eks_rgs                           = try(var.addons.enable_kro_eks_rgs, false)
+    enable_kro_manifests                         = try(var.addons.enable_kro_manifests, false)
     enable_mutli_acct                            = try(var.addons.enable_mutli_acct, false)
     enable_ingress_class_alb                     = try(var.addons.enable_ingress_class_alb, false)
 
@@ -184,6 +190,8 @@ locals {
       ack_eks_namespace       = local.eks_ack.namespace
       ack_ec2_service_account = local.ec2_ack.service_account
       ack_ec2_namespace       = local.ec2_ack.namespace
+      ack_ecr_service_account = local.ecr_ack.service_account
+      ack_ecr_namespace       = local.ecr_ack.namespace
     },
     {
       aws_load_balancer_controller_namespace       = local.aws_load_balancer_controller.namespace

@@ -1,0 +1,289 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: kro-microservice-template
+  title: Kro Microservice ResourceGroup Template
+  description: Create a comprehensive Kro ResourceGroup for microservices with deployment, service, ingress, configmap, and secret
+  tags:
+    - kro
+    - kubernetes
+    - microservice
+    - resourcegroup
+    - production-ready
+spec:
+  owner: platform-team
+  type: kro-resource-group
+
+  parameters:
+    - title: Basic Information
+      required:
+        - name
+        - namespace
+      properties:
+        name:
+          title: Microservice Name
+          type: string
+          description: Name of the microservice
+          pattern: '^[a-z0-9-]+$'
+          ui:autofocus: true
+          ui:help: 'Must be lowercase alphanumeric with hyphens only'
+        namespace:
+          title: Kubernetes Namespace
+          type: string
+          description: Target namespace for the microservice
+          default: default
+          pattern: '^[a-z0-9-]+$'
+        description:
+          title: Description
+          type: string
+          description: Brief description of the microservice
+          ui:widget: textarea
+          ui:options:
+            rows: 3
+
+    - title: Application Configuration
+      properties:
+        image:
+          title: Container Image
+          type: string
+          description: Docker image for the microservice
+          default: nginx:latest
+        port:
+          title: Container Port
+          type: integer
+          description: Port the application listens on
+          default: 8080
+          minimum: 1
+          maximum: 65535
+        replicas:
+          title: Number of Replicas
+          type: integer
+          description: Number of pod replicas
+          default: 2
+          minimum: 1
+          maximum: 20
+        serviceAccount:
+          title: Service Account
+          type: string
+          description: Kubernetes service account name
+          default: default
+
+    - title: Resource Configuration
+      properties:
+        cpuRequest:
+          title: CPU Request
+          type: string
+          description: CPU resource request
+          default: "100m"
+        memoryRequest:
+          title: Memory Request
+          type: string
+          description: Memory resource request
+          default: "128Mi"
+        cpuLimit:
+          title: CPU Limit
+          type: string
+          description: CPU resource limit
+          default: "500m"
+        memoryLimit:
+          title: Memory Limit
+          type: string
+          description: Memory resource limit
+          default: "512Mi"
+
+    - title: Service Configuration
+      properties:
+        serviceType:
+          title: Service Type
+          type: string
+          description: Kubernetes service type
+          default: ClusterIP
+          enum:
+            - ClusterIP
+            - NodePort
+            - LoadBalancer
+        servicePort:
+          title: Service Port
+          type: integer
+          description: Port for the Kubernetes service
+          default: 80
+          minimum: 1
+          maximum: 65535
+
+    - title: Ingress Configuration
+      properties:
+        ingressEnabled:
+          title: Enable Ingress
+          type: boolean
+          description: Create an ingress for external access
+          default: true
+        ingressClass:
+          title: Ingress Class
+          type: string
+          description: Ingress class to use
+          default: alb
+          enum:
+            - alb
+            - nginx
+            - traefik
+        hostname:
+          title: Hostname
+          type: string
+          description: Hostname for the ingress (optional)
+          default: ""
+        pathPrefix:
+          title: Path Prefix
+          type: string
+          description: Path prefix for the ingress
+          default: "/"
+        tlsEnabled:
+          title: Enable TLS
+          type: boolean
+          description: Enable TLS/SSL for the ingress
+          default: false
+
+    - title: Configuration Management
+      properties:
+        configMapEnabled:
+          title: Enable ConfigMap
+          type: boolean
+          description: Create a ConfigMap for application configuration
+          default: true
+        configData:
+          title: Configuration Data
+          type: object
+          description: Key-value pairs for the ConfigMap
+          default:
+            APP_ENV: "production"
+            LOG_LEVEL: "info"
+          ui:widget: textarea
+          ui:options:
+            rows: 5
+        secretEnabled:
+          title: Enable Secret
+          type: boolean
+          description: Create a Secret for sensitive data
+          default: true
+        secretData:
+          title: Secret Data
+          type: object
+          description: Key-value pairs for the Secret (will be base64 encoded)
+          default:
+            DATABASE_PASSWORD: "changeme"
+            API_KEY: "your-api-key"
+          ui:widget: textarea
+          ui:options:
+            rows: 3
+
+    - title: Health Checks
+      properties:
+        healthCheckPath:
+          title: Health Check Path
+          type: string
+          description: Path for health checks
+          default: /health
+        readinessCheckPath:
+          title: Readiness Check Path
+          type: string
+          description: Path for readiness checks
+          default: /ready
+        livenessInitialDelay:
+          title: Liveness Initial Delay (seconds)
+          type: integer
+          description: Initial delay for liveness probe
+          default: 30
+          minimum: 0
+        readinessInitialDelay:
+          title: Readiness Initial Delay (seconds)
+          type: integer
+          description: Initial delay for readiness probe
+          default: 5
+          minimum: 0
+
+    - title: Environment Configuration
+      properties:
+        environment:
+          title: Environment
+          type: string
+          description: Deployment environment
+          default: production
+          enum:
+            - development
+            - staging
+            - production
+
+    - title: Repository Information
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+              - gitlab.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./content
+        values:
+          name: ${{ parameters.name }}
+          namespace: ${{ parameters.namespace }}
+          description: ${{ parameters.description }}
+          image: ${{ parameters.image }}
+          port: ${{ parameters.port }}
+          replicas: ${{ parameters.replicas }}
+          serviceAccount: ${{ parameters.serviceAccount }}
+          cpuRequest: ${{ parameters.cpuRequest }}
+          memoryRequest: ${{ parameters.memoryRequest }}
+          cpuLimit: ${{ parameters.cpuLimit }}
+          memoryLimit: ${{ parameters.memoryLimit }}
+          serviceType: ${{ parameters.serviceType }}
+          servicePort: ${{ parameters.servicePort }}
+          ingressEnabled: ${{ parameters.ingressEnabled }}
+          ingressClass: ${{ parameters.ingressClass }}
+          hostname: ${{ parameters.hostname }}
+          pathPrefix: ${{ parameters.pathPrefix }}
+          tlsEnabled: ${{ parameters.tlsEnabled }}
+          configMapEnabled: ${{ parameters.configMapEnabled }}
+          configData: ${{ parameters.configData }}
+          secretEnabled: ${{ parameters.secretEnabled }}
+          secretData: ${{ parameters.secretData }}
+          healthCheckPath: ${{ parameters.healthCheckPath }}
+          readinessCheckPath: ${{ parameters.readinessCheckPath }}
+          livenessInitialDelay: ${{ parameters.livenessInitialDelay }}
+          readinessInitialDelay: ${{ parameters.readinessInitialDelay }}
+          environment: ${{ parameters.environment }}
+
+    - id: publish
+      name: Publish to Repository
+      action: publish:github
+      input:
+        allowedHosts: ['github.com', 'gitlab.com']
+        description: 'Kro Microservice ResourceGroup: ${{ parameters.name }}'
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        gitCommitMessage: 'Initial commit for ${{ parameters.name }} Kro Microservice ResourceGroup'
+
+    - id: register
+      name: Register in Catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: View ResourceGroup
+        icon: dashboard
+        url: ${{ steps['publish'].output.remoteUrl }}/blob/main/resourcegroup.yaml

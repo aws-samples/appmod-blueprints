@@ -1,5 +1,11 @@
 import { createBackend } from '@backstage/backend-defaults';
 import { authModuleKeycloakOIDCProvider } from './plugins/auth';
+import { kroBackendModule } from './plugins/kro';
+import { catalogKroModule } from './plugins/catalog-kro-module';
+import { kubernetesIngestorKroModule } from './plugins/kubernetes-ingestor-kro-module';
+import { kroSecurityModule } from './plugins/kro-security';
+import { kroPermissionsModule } from './plugins/kro-permissions';
+import { kroAuditModule } from './plugins/kro-audit';
 
 const backend = createBackend();
 
@@ -52,7 +58,30 @@ backend.add(import('@backstage/plugin-search-backend-module-techdocs'));
 // kubernetes
 backend.add(import('@backstage/plugin-kubernetes-backend'));
 
+// kubernetes ingestor plugin
+backend.add(import('@terasky/backstage-plugin-kubernetes-ingestor'));
+
+// kro plugin
+backend.add(import('@terasky/backstage-plugin-kro-resources-backend'));
+
 // Internal Developer Platform custom plugins
 backend.add(authModuleKeycloakOIDCProvider);
+
+// Enhanced Kro plugin configuration with error handling
+backend.add(kroBackendModule);
+
+// Kro catalog integration module
+backend.add(catalogKroModule);
+
+// Kubernetes Ingestor Kro integration module
+backend.add(kubernetesIngestorKroModule);
+
+// Kro security and permissions modules
+backend.add(kroSecurityModule);
+backend.add(kroPermissionsModule);
+backend.add(kroAuditModule);
+
+// Kubernetes Kro integration module
+backend.add(import('./plugins/kubernetes-kro-integration').then(m => m.kubernetesKroIntegrationModule));
 
 backend.start();

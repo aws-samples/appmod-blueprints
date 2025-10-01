@@ -73,7 +73,7 @@ variable "addons" {
     enable_ack_ec2                      = true
     enable_ack_efs                      = true
     enable_kro                          = true
-    enable_kro_eks_rgs                  = true
+    enable_kro_manifests                = true
     enable_mutli_acct                   = true
   }
 }

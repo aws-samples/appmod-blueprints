@@ -1,0 +1,328 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  description: Deploy a Kro-based CI/CD Pipeline using GitOps with ArgoCD
+  name: cicd-pipeline-gitops
+  title: Deploy CI/CD Pipeline With KRO (GitOps)
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - title: Application Configuration
+      description: Basic configuration for your CI/CD pipeline
+      properties:
+        appname:
+          title: Application Name
+          description: Name of the application for CI/CD pipeline (lowercase, alphanumeric, hyphens allowed)
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$'
+          minLength: 1
+          maxLength: 63
+          ui:help: 'Must be lowercase alphanumeric with hyphens, 1-63 characters'
+      required:
+        - appname
+    - title: AWS Configuration
+      description: AWS-specific settings for your pipeline
+      properties:
+        aws_region:
+          title: AWS Region
+          description: AWS region where ECR repositories and other resources will be created
+          type: string
+          default: us-west-2
+          enum:
+            - us-east-1
+            - us-east-2
+            - us-west-1
+            - us-west-2
+            - eu-west-1
+            - eu-west-2
+            - eu-central-1
+            - ap-southeast-1
+            - ap-southeast-2
+            - ap-northeast-1
+          ui:help: 'Select the AWS region for your resources'
+        cluster_name:
+          title: EKS Cluster Name
+          description: Name of the EKS cluster where the pipeline will run
+          type: string
+          default: peeks-hub-cluster
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$'
+          minLength: 1
+          maxLength: 100
+          ui:help: 'EKS cluster name where workloads will be deployed'
+    - title: Application Paths
+      description: Configure paths for your application build and deployment
+      properties:
+        dockerfile_path:
+          title: Dockerfile Path
+          description: Relative path to directory containing Dockerfile
+          type: string
+          default: "."
+          pattern: '^\.(/[a-zA-Z0-9_-]+)*/?$|^\.$'
+          ui:help: 'Path relative to repository root (e.g., ".", "./backend", "./services/api")'
+        deployment_path:
+          title: Deployment Path
+          description: Relative path to deployment directory containing Kubernetes manifests
+          type: string
+          default: "./deployment"
+          pattern: '^\.(/[a-zA-Z0-9_-]+)+/?$'
+          ui:help: 'Path to deployment manifests relative to repository root'
+  steps:
+    - id: validate-parameters
+      name: Validate Parameters
+      action: debug:log
+      input:
+        message: |
+          Validating template parameters:
+          - Application Name: ${{ parameters.appname }}
+          - AWS Region: ${{ parameters.aws_region }}
+          - Cluster Name: ${{ parameters.cluster_name }}
+          - Dockerfile Path: ${{ parameters.dockerfile_path }}
+          - Deployment Path: ${{ parameters.deployment_path }}
+
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
+
+    - action: fetch:template
+      name: Fetch Base
+      id: fetch-base
+      input:
+        url: ./skeleton/
+        values:
+          appname: ${{ parameters.appname }}
+          namespace: team-${{ parameters.appname }}
+          aws_region: ${{ parameters.aws_region }}
+          aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
+          gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
+          argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
+          git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
+          cluster_name: ${{ parameters.cluster_name }}
+          aws_resource_prefix: peeks
+          dockerfile_path: ${{parameters.dockerfile_path}}
+          deployment_path: ${{parameters.deployment_path}}
+          created_by: ${{ user.entity.metadata.name | default("unknown") }}
+
+    - id: publish
+      name: Publishing to GitLab repository
+      action: publish:gitlab
+      input:
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.appname}}-cicd&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
+        defaultBranch: main
+        useCustomGit: true
+
+    - id: create-argocd-project
+      name: Create ArgoCD Project
+      action: kube:apply
+      input:
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: AppProject
+          metadata:
+            name: ${{parameters.appname}}-project
+            namespace: argocd
+            labels:
+              app.kubernetes.io/name: ${{parameters.appname}}
+              app.kubernetes.io/component: cicd-pipeline
+              app.kubernetes.io/managed-by: backstage
+              backstage.io/template-name: cicd-pipeline-gitops
+            annotations:
+              backstage.io/template-version: "1.0.0"
+              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+          spec:
+            destinations:
+              - name: local
+                namespace: team-${{ parameters.appname }}
+                server: https://kubernetes.default.svc
+              - name: argocd
+                namespace: argocd
+                server: https://kubernetes.default.svc
+            sourceRepos:
+              - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
+            namespaceResourceWhitelist:
+              - group: ""
+                kind: Namespace
+              - group: "*"
+                kind: "*"
+            clusterResourceWhitelist:
+              - group: "*"
+                kind: "*"
+
+    - id: create-argocd-app
+      name: Create ArgoCD Application (GitOps)
+      action: kube:apply
+      input:
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{parameters.appname}}-cicd
+            namespace: argocd
+            labels:
+              app.kubernetes.io/name: ${{parameters.appname}}
+              app.kubernetes.io/component: cicd-pipeline
+              app.kubernetes.io/managed-by: backstage
+              backstage.io/template-name: cicd-pipeline-gitops
+            annotations:
+              backstage.io/template-version: "1.0.0"
+              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+              argocd.argoproj.io/finalizer: resources-finalizer.argocd.argoproj.io
+          spec:
+            project: ${{parameters.appname}}-project
+            source:
+              repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
+              path: manifests
+              targetRevision: HEAD
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: team-${{ parameters.appname }}
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+                - PrunePropagationPolicy=foreground
+                - PruneLast=true
+              retry:
+                limit: 5
+                backoff:
+                  duration: 5s
+                  factor: 2
+                  maxDuration: 3m
+            ignoreDifferences:
+              - group: kro.run
+                kind: CICDPipeline
+                jsonPointers:
+                  - /status
+            info:
+              - name: 'Kro CICDPipeline Status'
+                value: 'Check the CICDPipeline resource status for detailed information'
+
+    - id: register
+      name: Register
+      action: catalog:register
+      input:
+        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd/-/blob/main
+        catalogInfoPath: "/catalog-info.yaml"
+
+    - id: wait-for-sync
+      name: Wait for Initial Sync
+      action: debug:log
+      input:
+        message: |
+          🔄 **GitOps Deployment Initiated!**
+          
+          Your CI/CD pipeline is now being deployed via GitOps using ArgoCD. The CICDPipeline Kro resource 
+          will be created and managed by ArgoCD, making it fully visible in the ArgoCD UI.
+          
+          ## 📊 **GitOps Benefits**
+          - ✅ **Full Visibility**: CICDPipeline appears in ArgoCD applications
+          - ✅ **Version Control**: All changes tracked in Git
+          - ✅ **Rollback Capability**: Easy rollback to previous versions
+          - ✅ **Drift Detection**: ArgoCD monitors and corrects configuration drift
+          - ✅ **Audit Trail**: Complete history of all changes
+          
+          ## 🔍 **Monitoring Deployment**
+          1. **ArgoCD Application**: Monitor sync status and health
+          2. **Kro Resource Status**: Check CICDPipeline resource conditions
+          3. **Resource Creation**: Watch AWS and Kubernetes resources being created
+          
+          The ArgoCD application will automatically sync and create the CICDPipeline resource,
+          which will then orchestrate the creation of all required AWS and Kubernetes resources.
+
+  output:
+    links:
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: ArgoCD Application (GitOps)
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd?view=tree&resource=
+        icon: web
+      - title: Kro CICDPipeline Resource
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd?view=tree&resource=&node=${{ parameters.appname }}-cicd-pipeline%2Fkro.run%2FCICDPipeline%2Fteam-${{ parameters.appname }}
+        icon: web
+      - title: GitLab Repository (GitOps Source)
+        url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
+        icon: git
+      - title: ArgoCD Project
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/settings/projects/${{ parameters.appname }}-project
+        icon: web
+      - title: Argo Workflows (After Sync)
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}
+        icon: web
+      - title: ECR Main Repository (After Provisioning)
+        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks/${{ parameters.appname }}?region=${{ parameters.aws_region }}
+        icon: cloud
+      - title: EKS Cluster
+        url: https://console.aws.amazon.com/eks/home?region=${{ parameters.aws_region }}#/clusters/${{ parameters.cluster_name }}
+        icon: cloud
+    text:
+      - title: GitOps-based Kro CI/CD Pipeline
+        content: |
+          🎉 **GitOps CI/CD Pipeline Successfully Initiated!**
+          
+          Your Kro-based CI/CD pipeline is now being deployed using GitOps principles with ArgoCD. 
+          This approach provides better visibility, version control, and management capabilities.
+          
+          ## 🔄 **GitOps Workflow**
+          1. **Repository Created**: GitLab repository with Kro manifests
+          2. **ArgoCD Application**: Monitors repository for changes
+          3. **Automatic Sync**: ArgoCD deploys CICDPipeline resource
+          4. **Kro Orchestration**: CICDPipeline creates all required resources
+          5. **Continuous Monitoring**: ArgoCD ensures desired state
+          
+          ## 📊 **Key Advantages**
+          
+          ### **Full ArgoCD Visibility**
+          - CICDPipeline resource appears in ArgoCD application tree
+          - Real-time sync status and health monitoring
+          - Visual representation of all managed resources
+          
+          ### **GitOps Benefits**
+          - **Version Control**: All configuration changes tracked in Git
+          - **Rollback**: Easy rollback to any previous version
+          - **Audit Trail**: Complete history of who changed what and when
+          - **Drift Detection**: ArgoCD automatically corrects configuration drift
+          
+          ### **Enhanced Management**
+          - **Declarative**: Infrastructure as Code approach
+          - **Reproducible**: Consistent deployments across environments
+          - **Scalable**: Easy to replicate for multiple applications
+          
+          ## 🚀 **What Happens Next**
+          
+          1. **ArgoCD Sync** (1-2 minutes):
+             - ArgoCD detects the new repository
+             - Syncs and creates the CICDPipeline resource
+             - CICDPipeline appears in ArgoCD UI
+          
+          2. **Kro Resource Orchestration** (5-10 minutes):
+             - AWS resources created via ACK controllers
+             - Kubernetes resources provisioned
+             - Argo Workflow templates deployed
+          
+          3. **Pipeline Ready** (10-15 minutes total):
+             - Complete CI/CD infrastructure operational
+             - Ready to process code commits
+             - Full monitoring and observability enabled
+          
+          ## 📋 **Resource Overview**
+          - **Application**: ${{ parameters.appname }}
+          - **Namespace**: team-${{ parameters.appname }}
+          - **ArgoCD Project**: ${{ parameters.appname }}-project
+          - **GitOps Repository**: ${{ parameters.appname }}-cicd
+          - **AWS Region**: ${{ parameters.aws_region }}
+          - **EKS Cluster**: ${{ parameters.cluster_name }}
+          
+          ## 🔗 **Next Steps**
+          1. **Monitor ArgoCD**: Watch the application sync progress
+          2. **Check Kro Status**: Verify CICDPipeline resource health
+          3. **Push Code**: Commit to trigger your first CI/CD run
+          4. **Explore Resources**: Use the links above to explore your infrastructure
+          
+          Your pipeline is now fully integrated with GitOps and will be completely visible and manageable through ArgoCD! 🎯

@@ -229,6 +229,39 @@ ack-ec2:
       managedFieldsManagers:
         - kube-controller-manager
 
+ack-ecr:
+  enabled: false
+  enableACK: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
+  namespace: ack-system
+  chartName: ecr-chart
+  defaultVersion: '1.0.19'
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  selector:
+    matchExpressions:
+      - key: enable_ack_ecr
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-ecr-controller" (index .metadata.annotations "ack_ecr_service_account")}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      managedFieldsManagers:
+        - kube-controller-manager
+
 external-secrets:
   enabled: false
   enableACK: false
@@ -266,7 +299,7 @@ kro:
   namespace: kro-system
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-3' # Needs to be before resources that needs PodIdentity
-  defaultVersion: '0.2.1'
+  defaultVersion: '0.4.1'
   chartName: kro
   chartNamespace: kro-run/kro
   chartRepository: ghcr.io
@@ -568,20 +601,22 @@ cw-prometheus:
         operator: In
         values: ['true']
 
-kro-eks-rgs:
+kro-manifests:
   enabled: false
   type: manifest
   namespace: kro
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-2' # Needs to be before resources that needs PodIdentity
-  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/eks'
-  chartRepository: '{{.metadata.annotations.addons_repo_url}}'
-  targetRevision: '{{.metadata.annotations.addons_repo_revision}}'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/manifests'
+  directory:
+    recurse: true
+    exclude: "*/tests/**"
   selector:
     matchExpressions:
-      - key: enable_kro_eks_rgs
+      - key: enable_kro_manifests
         operator: In
         values: ['true']
+
 
 multi-acct:
   enabled: false
@@ -595,6 +630,9 @@ multi-acct:
       - key: enable_mutli_acct
         operator: In
         values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
 
 ingress-class-alb:
   enabled: false
@@ -619,6 +657,20 @@ argo-rollouts:
   selector:
     matchExpressions:
       - key: enable_argo_rollouts
+        operator: In
+        values: ['true']
+
+argo-events:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  namespace: argo-events
+  chartName: argo-events
+  chartRepository: https://argoproj.github.io/argo-helm
+  defaultVersion: '2.4.8'
+  selector:
+    matchExpressions:
+      - key: enable_argo_events
         operator: In
         values: ['true']
 
@@ -893,7 +945,7 @@ crossplane-aws:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-  ignoreDifferences:
+
 grafana:
   enabled: false
   annotationsAppSet:
@@ -1013,7 +1065,7 @@ flux:
 backstage:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '7' # Needs to be after all addons
+    argocd.argoproj.io/sync-wave: '10' # Needs to be after Keycloak, External Secrets, and Kro
   namespace: backstage
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/backstage'
@@ -1044,3 +1096,26 @@ backstage:
       jsonPointers:
         - /metadata/resourceVersion
         - /metadata/managedFields
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /metadata/managedFields
+        - /status
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /metadata/managedFields
+        - /status
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+      jsonPointers:
+        - /rules
+        - /metadata/labels
+        - /metadata/annotations
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+      jsonPointers:
+        - /subjects
+        - /roleRef
+        - /metadata/labels
+        - /metadata/annotations

@@ -40,6 +40,8 @@ ack-eks:
   enabled: true
 ack-ec2:
   enabled: true
+ack-ecr:
+  enabled: true
 ack-efs:
   enabled: true
 ack-s3:
@@ -48,7 +50,7 @@ ack-dynamodb:
   enabled: true
 kro:
   enabled: true
-kro-eks-rgs:
+kro-manifests:
   enabled: true
 kubevela:
   enabled: true
@@ -64,6 +66,8 @@ gitlab:
 keycloak:
   enabled: true
 argo-rollouts:
+  enabled: true
+argo-events:
   enabled: true
 argo-workflows:
   enabled: true

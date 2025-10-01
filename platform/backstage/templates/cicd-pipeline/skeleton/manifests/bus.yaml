@@ -1,9 +1,10 @@
+# EventBus for Argo Events - managed separately from KRO
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: EventBus
 metadata:
   name: default
-  namespace: ${{values.namespace}}
+  namespace: argo-events
 spec:
   nats:
     native:
