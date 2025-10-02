@@ -57,6 +57,7 @@ spec:
         spec:
           name: >-
             ${schema.spec.aws.resourcePrefix}/${schema.spec.application.name}
+          forceDelete: true
           policy: |
             {
               "Version": "2012-10-17",
@@ -114,6 +115,7 @@ spec:
         spec:
           name: >-
             ${schema.spec.aws.resourcePrefix}/${schema.spec.application.name}/cache
+          forceDelete: true
           policy: |
             {
               "Version": "2012-10-17",

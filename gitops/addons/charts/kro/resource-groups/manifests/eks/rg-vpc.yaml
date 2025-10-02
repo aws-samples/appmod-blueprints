@@ -2,7 +2,15 @@ apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
   name: vpc.kro.run
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
   annotations:
+            argocd.argoproj.io/sync-wave: "2"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-1"
 spec:
@@ -32,7 +40,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-vpc
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         cidrBlocks: 
@@ -49,7 +65,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-igw
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         vpc: ${vpc.status.vpcID}
@@ -63,7 +87,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-nat-gateway1
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         subnetID: ${publicSubnet1.status.subnetID}
@@ -78,7 +110,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-nat-gateway2
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         subnetID: ${publicSubnet2.status.subnetID}
@@ -93,7 +133,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-eip1
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         tags:
@@ -106,7 +154,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-eip2
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         tags:
@@ -119,7 +175,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-public-routetable
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         vpcID: ${vpc.status.vpcID}
@@ -136,7 +200,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-private-routetable1
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         vpcID: ${vpc.status.vpcID}
@@ -153,7 +225,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-private-routetable2
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         vpcID: ${vpc.status.vpcID}
@@ -170,7 +250,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-public-subnet1
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         availabilityZone: ${schema.spec.region}a
@@ -191,7 +279,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-public-subnet2
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         availabilityZone: ${schema.spec.region}b
@@ -212,7 +308,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-private-subnet1
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         availabilityZone: ${schema.spec.region}a
@@ -232,7 +336,15 @@ spec:
       metadata:
         namespace: ${schema.spec.name}
         name: ${schema.spec.name}-private-subnet2
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: Vpc
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
         annotations:
+            argocd.argoproj.io/sync-wave: "2"
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         availabilityZone: ${schema.spec.region}b

@@ -14,9 +14,7 @@ spec:
         - environment
         - region
         - k8sVersion
-        - managementAccountId
         - tenant
-        - accountId
       properties:
         clusterName:
           title: EKS Cluster Name
@@ -42,8 +40,8 @@ spec:
         accountId:
           title: Account ID
           type: string
-          description: AWS Account ID
-          ui:help: "Enter your AWS Account ID (12 digits)"
+          description: AWS Account ID (optional - defaults to system default)
+          ui:help: "Enter your AWS Account ID (12 digits) or leave empty for default"
         managementAccountId:
           title: Management Account ID
           type: string
@@ -161,16 +159,17 @@ spec:
         targetPath: ./repo
     - id: addCluster
       name: Add new Clusters
+      if: ${{ (parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id) !== (parameters.managementAccountId or steps['fetchSystem'].output.entity.spec.aws_account_id) }}
       action: roadiehq:utils:fs:append
       input:
         path: ./repo/gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml
-        content: "\n  ${{ parameters.clusterName }}: \"${{ parameters.accountId }}\""
+        content: "\n  ${{ parameters.clusterName }}: \"${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\""
     - id: addKroClusterConfig
       name: Update KRO Clusters Configuration
       action: roadiehq:utils:fs:append
       input:
         path: ./repo/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
-        content: "\n  ${{ parameters.clusterName }}:\n    managementAccountId: \"${{ parameters.managementAccountId }}\"\n    accountId: \"${{ parameters.accountId }}\"\n    tenant: \"${{ parameters.tenant }}\"\n    environment: \"${{ parameters.environment }}\"\n    region: \"${{ parameters.region }}\"\n    k8sVersion: \"${{ parameters.k8sVersion }}\"\n    gitops:\n      addonsRepoUrl: \"${{ parameters.addonsRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n      fleetRepoUrl: \"${{ parameters.fleetRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n      platformRepoUrl: \"${{ parameters.platformRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n      workloadRepoUrl: \"${{ parameters.workloadRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n    addons:\n      enable_ingress_class_alb: \"${{ parameters.enableIngressClassAlb }}\"\n      enable_argo_rollouts: \"${{ parameters.enableArgoRollouts }}\"\n      enable_metrics_server: \"${{ parameters.enableMetricsServer }}\"\n      enable_external_secrets: \"${{ parameters.enableExternalSecrets }}\"\n      enable_kyverno: \"${{ parameters.enableKyverno }}\"\n      enable_kyverno_policies: \"${{ parameters.enableKyvernoPolicies }}\"\n      enable_kyverno_policy_reporter: \"${{ parameters.enableKyvernoPolicyReporter }}\"\n      enable_ack_iam: \"${{ parameters.enableAckIam }}\"\n      enable_ack_eks: \"${{ parameters.enableAckEks }}\"\n      enable_ack_efs: \"${{ parameters.enableAckEfs }}\"\n      enable_aws_efs_csi_driver: \"${{ parameters.enableAwsEfsCsiDriver }}\""
+        content: "\n  ${{ parameters.clusterName }}:\n    managementAccountId: \"${{ parameters.managementAccountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\"\n    accountId: \"${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\"\n    tenant: \"${{ parameters.tenant }}\"\n    environment: \"${{ parameters.environment }}\"\n    region: \"${{ parameters.region }}\"\n    k8sVersion: \"${{ parameters.k8sVersion }}\"\n    gitops:\n      addonsRepoUrl: \"${{ parameters.addonsRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n      fleetRepoUrl: \"${{ parameters.fleetRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n      platformRepoUrl: \"${{ parameters.platformRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n      workloadRepoUrl: \"${{ parameters.workloadRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n    addons:\n      enable_ingress_class_alb: \"${{ parameters.enableIngressClassAlb }}\"\n      enable_argo_rollouts: \"${{ parameters.enableArgoRollouts }}\"\n      enable_metrics_server: \"${{ parameters.enableMetricsServer }}\"\n      enable_external_secrets: \"${{ parameters.enableExternalSecrets }}\"\n      enable_kyverno: \"${{ parameters.enableKyverno }}\"\n      enable_kyverno_policies: \"${{ parameters.enableKyvernoPolicies }}\"\n      enable_kyverno_policy_reporter: \"${{ parameters.enableKyvernoPolicyReporter }}\"\n      enable_ack_iam: \"${{ parameters.enableAckIam }}\"\n      enable_ack_eks: \"${{ parameters.enableAckEks }}\"\n      enable_ack_efs: \"${{ parameters.enableAckEfs }}\"\n      enable_aws_efs_csi_driver: \"${{ parameters.enableAwsEfsCsiDriver }}\""
     - id: addComponent
       name: Add new component for Cluster
       action: roadiehq:utils:fs:write

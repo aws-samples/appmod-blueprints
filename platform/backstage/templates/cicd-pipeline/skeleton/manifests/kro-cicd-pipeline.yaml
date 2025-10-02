@@ -2,8 +2,7 @@ apiVersion: kro.run/v1alpha1
 kind: CICDPipeline
 metadata:
   name: ${{values.appname}}-cicd-pipeline
-  #namespace: ${{values.namespace}}
-  namespace: argocd
+  namespace: ${{values.namespace}}
   labels:
     app.kubernetes.io/name: ${{values.appname}}
     app.kubernetes.io/component: cicd-pipeline
