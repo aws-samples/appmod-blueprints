@@ -748,7 +748,7 @@ spec:
 
                      echo "API URL: $$api_url"
                      echo "Webhook URL: $$webhook_url"
-                     echo "GitLab Token: ${gitlab_token:0:10}..."
+                     echo "GitLab Token: $${gitlab_token:0:10}..."
                      
                      # Check if webhook already exists
                      echo "Checking existing webhooks..."
