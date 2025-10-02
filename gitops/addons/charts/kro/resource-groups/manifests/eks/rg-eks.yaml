@@ -4,17 +4,9 @@ apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
   name: ekscluster.kro.run
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
   annotations:
-            argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "2"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "-1"
 spec:
   schema:
     apiVersion: v1alpha1
