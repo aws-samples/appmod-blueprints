@@ -104,11 +104,11 @@ export class KroResourceGroupService {
 
       return definitions;
     } catch (error) {
-      this.errorHandler.logKubernetesError(error as Error, {
+      const connectionError = this.errorHandler.handleConnectionError(error as Error, {
         cluster,
         operation: 'discover-resource-graph-definitions',
       });
-      throw new Error(`Failed to discover ResourceGraphDefinitions: ${(error as Error).message}`);
+      throw new Error(`Failed to discover ResourceGraphDefinitions: ${connectionError.message}`);
     }
   }
 

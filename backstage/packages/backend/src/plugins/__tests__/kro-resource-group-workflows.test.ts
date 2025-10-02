@@ -225,6 +225,7 @@ describe('Kro ResourceGroup Workflows', () => {
           repository: 'https://github.com/example/my-app',
         },
         status: {
+          phase: 'Creating',
           conditions: [
             {
               type: 'Ready',
@@ -746,7 +747,7 @@ describe('Kro ResourceGroup Workflows', () => {
       expect(mockRBACValidator.validateKubernetesPermissions).toHaveBeenCalledWith(
         mockUser,
         'create',
-        'kro.run/v1alpha1/cicdpipelines',
+        'kro.run/v1alpha1/cicd-pipelines',
         'default',
         'test-cluster'
       );

@@ -9,7 +9,7 @@ describe('GitLab Integration and ArgoCD App Creation', () => {
 
   beforeAll(() => {
     // Load the Backstage template
-    const templatePath = path.resolve(__dirname, '../../../../../../platform/backstage/templates/cicd-pipeline/template-cicd-pipeline-gitops.yaml');
+    const templatePath = path.resolve(__dirname, '../../../../../../../platform/backstage/templates/cicd-pipeline/template-cicd-pipeline-gitops.yaml');
     templateContent = fs.readFileSync(templatePath, 'utf8');
     templateSpec = yaml.load(templateContent);
   });
