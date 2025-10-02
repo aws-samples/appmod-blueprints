@@ -742,7 +742,7 @@ spec:
                      app_name=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.APPLICATION_NAME}')
                      gitlab_token="$$GITLAB_TOKEN"
 
-                     api_url="$$gitlab_hostname/gitea/api/v1/repos/$$gitlab_username/$$app_name/hooks"
+                     api_url="https://$$gitlab_hostname/api/v4/projects/$$gitlab_username%2F$$app_name/hooks"
 
                      echo "Configuring GitLab webhook to point to Argo Events endpoint: $$webhook_url"
 
@@ -761,15 +761,21 @@ spec:
                          -H "Authorization: token $$gitlab_token" \
                          -H "Content-Type: application/json" \
                          -d '{
-                           "branch_filter": "main",
-                           "type": "gitea", 
-                           "events":["push"], 
-                           "config": {
-                             "url": "'$$webhook_url'", 
-                             "content_type": "json",
-                             "http_method": "POST"
-                           }, 
-                           "active": true
+                           "url": "'$$webhook_url'",
+                           "push_events": true,
+                           "issues_events": false,
+                           "merge_requests_events": false,
+                           "tag_push_events": false,
+                           "note_events": false,
+                           "job_events": false,
+                           "pipeline_events": false,
+                           "wiki_page_events": false,
+                           "deployment_events": false,
+                           "releases_events": false,
+                           "subgroup_events": false,
+                           "enable_ssl_verification": false,
+                           "token": "",
+                           "push_events_branch_filter": "main"
                          }' 2>/dev/null)
                        
                        if echo "$$webhook_response" | jq -e '.id' > /dev/null 2>&1; then
@@ -780,17 +786,15 @@ spec:
                      else
                        echo "GitLab webhook already exists with ID: $$webhook_exists"
                        echo "Updating existing webhook configuration"
-                       curl -k -X 'PATCH' "$$api_url/$$webhook_exists" \
+                       curl -k -X 'PUT' "$$api_url/$$webhook_exists" \
                          -H "accept: application/json" \
                          -H "Authorization: token $$gitlab_token" \
                          -H "Content-Type: application/json" \
                          -d '{
-                           "config": {
-                             "url": "'$$webhook_url'", 
-                             "content_type": "json",
-                             "http_method": "POST"
-                           }, 
-                           "active": true
+                           "url": "'$$webhook_url'",
+                           "push_events": true,
+                           "enable_ssl_verification": false,
+                           "push_events_branch_filter": "main"
                          }' 2>/dev/null || echo "Warning: Failed to update existing webhook"
                      fi
 
