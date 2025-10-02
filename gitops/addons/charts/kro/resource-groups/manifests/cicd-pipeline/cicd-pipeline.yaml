@@ -413,7 +413,7 @@ spec:
           GITLAB_HOSTNAME: ${schema.spec.gitlab.hostname}
           GITLAB_USERNAME: ${schema.spec.gitlab.username}
           # Webhook configuration
-          WEBHOOK_ENDPOINT: 'https://${schema.spec.hub.hostname}/argo-events/${schema.spec.application.name}'
+          WEBHOOK_ENDPOINT: 'https://${schema.spec.hub.hostname}/argo-events/${schema.spec.name}'
           WEBHOOK_SERVICE_NAME: ${schema.spec.name}-webhook-service
           EVENTSOURCE_NAME: ${schema.spec.name}-gitlab-eventsource
           SENSOR_NAME: ${schema.spec.name}-gitlab-sensor
