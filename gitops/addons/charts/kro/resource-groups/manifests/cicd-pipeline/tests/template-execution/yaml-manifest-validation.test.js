@@ -10,7 +10,7 @@ describe('Inline YAML Manifest Validation', () => {
 
   beforeAll(() => {
     // Load the Backstage template
-    const templatePath = path.resolve(__dirname, '../../../../../../../../platform/backstage/templates/cicd-pipeline/template-cicd-pipeline.yaml');
+    const templatePath = path.resolve(__dirname, '../../../../../../platform/backstage/templates/cicd-pipeline/template-cicd-pipeline-gitops.yaml');
     templateContent = fs.readFileSync(templatePath, 'utf8');
     templateSpec = yaml.load(templateContent);
   });
@@ -114,47 +114,41 @@ describe('Inline YAML Manifest Validation', () => {
     });
 
     it('should have correct spec structure', () => {
-      const kubeApplyStep = templateSpec.spec.steps.find(
-        step => step.id === 'apply-kro-instance'
+      // In GitOps template, the Kro resource is created through skeleton files
+      // Check that the fetch-base step is configured correctly
+      const fetchBaseStep = templateSpec.spec.steps.find(
+        step => step.id === 'fetch-base'
       );
 
-      const manifestTemplate = kubeApplyStep.input.manifest;
-
-      // Check spec structure
-      expect(manifestTemplate).toContain('spec:');
-      expect(manifestTemplate).toContain('name: ${{ parameters.appname }}-cicd');
-      expect(manifestTemplate).toContain('namespace: team-${{ parameters.appname }}');
-      expect(manifestTemplate).toContain('aws:');
-      expect(manifestTemplate).toContain('region: ${{ parameters.aws_region }}');
-      expect(manifestTemplate).toContain('clusterName: ${{ parameters.cluster_name }}');
-      expect(manifestTemplate).toContain('application:');
-      expect(manifestTemplate).toContain('ecr:');
-      expect(manifestTemplate).toContain('gitlab:');
+      expect(fetchBaseStep.input.values.appname).toBe('${{ parameters.appname }}');
+      expect(fetchBaseStep.input.values.namespace).toBe('team-${{ parameters.appname }}');
+      expect(fetchBaseStep.input.values.aws_region).toBe('${{ parameters.aws_region }}');
+      expect(fetchBaseStep.input.values.cluster_name).toBe('${{ parameters.cluster_name }}');
+      expect(fetchBaseStep.input.values.dockerfile_path).toBe('${{parameters.dockerfile_path}}');
+      expect(fetchBaseStep.input.values.deployment_path).toBe('${{parameters.deployment_path}}');
     });
 
     it('should handle default values correctly', () => {
-      const kubeApplyStep = templateSpec.spec.steps.find(
-        step => step.id === 'apply-kro-instance'
+      // In GitOps template, check the fetch-base step values
+      const fetchBaseStep = templateSpec.spec.steps.find(
+        step => step.id === 'fetch-base'
       );
 
-      const manifestTemplate = kubeApplyStep.input.manifest;
-
-      // Check default value handling
-      expect(manifestTemplate).toContain('dockerfilePath: ${{ parameters.dockerfile_path | default(".") }}');
-      expect(manifestTemplate).toContain('deploymentPath: ${{ parameters.deployment_path | default("./deployment") }}');
-      expect(manifestTemplate).toContain('repositoryPrefix: "peeks"');
+      // Check default value handling in template values
+      expect(fetchBaseStep.input.values.dockerfile_path).toBe('${{parameters.dockerfile_path}}');
+      expect(fetchBaseStep.input.values.deployment_path).toBe('${{parameters.deployment_path}}');
+      expect(fetchBaseStep.input.values.aws_resource_prefix).toBe('peeks');
     });
 
     it('should reference system information correctly', () => {
-      const kubeApplyStep = templateSpec.spec.steps.find(
-        step => step.id === 'apply-kro-instance'
+      // In GitOps template, check the fetch-base step values
+      const fetchBaseStep = templateSpec.spec.steps.find(
+        step => step.id === 'fetch-base'
       );
 
-      const manifestTemplate = kubeApplyStep.input.manifest;
-
       // Check system information templating
-      expect(manifestTemplate).toContain("hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}");
-      expect(manifestTemplate).toContain("username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}");
+      expect(fetchBaseStep.input.values.gitlab_hostname).toBe("${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}");
+      expect(fetchBaseStep.input.values.git_username).toBe("${{ steps['fetchSystem'].output.entity.spec.gituser }}");
     });
   });
 
@@ -233,10 +227,11 @@ describe('Inline YAML Manifest Validation', () => {
       );
 
       expect(argoCDStep).toBeDefined();
-      expect(argoCDStep.action).toBe('argocd:create-resources');
-      expect(argoCDStep.input.appName).toContain('${{parameters.appname}}-cicd');
-      expect(argoCDStep.input.namespace).toContain('team-${{ parameters.appname }}');
-      expect(argoCDStep.input.syncPolicy.automated).toBeDefined();
+      expect(argoCDStep.action).toBe('kube:apply');
+      expect(argoCDStep.input.manifest).toContain('${{parameters.appname}}-cicd');
+      expect(argoCDStep.input.manifest).toContain('team-${{ parameters.appname }}');
+      expect(argoCDStep.input.manifest).toContain('prune: true');
+      expect(argoCDStep.input.manifest).toContain('selfHeal: true');
     });
   });
 

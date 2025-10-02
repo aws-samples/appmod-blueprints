@@ -1,6 +1,5 @@
 import { createBackendModule } from '@backstage/backend-plugin-api';
 import { coreServices } from '@backstage/backend-plugin-api';
-import { BackstageIdentityResponse } from '@backstage/plugin-auth-node';
 
 /**
  * Audit event types for ResourceGroup operations
@@ -10,6 +9,7 @@ export enum KroAuditEventType {
   RESOURCE_GROUP_CREATED = 'resourcegroup.created',
   RESOURCE_GROUP_UPDATED = 'resourcegroup.updated',
   RESOURCE_GROUP_DELETED = 'resourcegroup.deleted',
+  RESOURCE_GROUP_CREATION_FAILED = 'resourcegroup.creation.failed',
   RESOURCE_GROUP_TEMPLATE_EXECUTED = 'resourcegroup.template.executed',
   PERMISSION_DENIED = 'permission.denied',
   AUTHENTICATION_FAILED = 'authentication.failed',
@@ -53,7 +53,7 @@ export class KroAuditLogger {
    */
   logResourceGroupOperation(
     eventType: KroAuditEventType,
-    user: BackstageIdentityResponse,
+    user: any,
     resource: {
       type: string;
       name: string;
@@ -85,121 +85,121 @@ export class KroAuditLogger {
       audit: true,
     });
   }
-}  /**
-  
- * Log permission denied events
+
+  /**
+   * Log permission denied events
    */
-logPermissionDenied(
-  user: BackstageIdentityResponse,
-  resource: {
-  type: string;
-  name?: string;
-  namespace?: string;
-  cluster?: string;
-},
-  action: string,
-  reason ?: string
-): void {
-  this.logResourceGroupOperation(
-    KroAuditEventType.PERMISSION_DENIED,
-    user,
-    {
-      type: resource.type,
-      name: resource.name || 'unknown',
-      namespace: resource.namespace,
-      cluster: resource.cluster,
+  logPermissionDenied(
+    user: any,
+    resource: {
+      type: string;
+      name?: string;
+      namespace?: string;
+      cluster?: string;
     },
-    action,
-    'failure',
-    { reason },
-    reason
-  );
-}
+    action: string,
+    reason?: string
+  ): void {
+    this.logResourceGroupOperation(
+      KroAuditEventType.PERMISSION_DENIED,
+      user,
+      {
+        type: resource.type,
+        name: resource.name || 'unknown',
+        namespace: resource.namespace,
+        cluster: resource.cluster,
+      },
+      action,
+      'failure',
+      { reason },
+      reason
+    );
+  }
 
-/**
- * Log authentication failures
- */
-logAuthenticationFailure(
-  user: BackstageIdentityResponse,
-  resource: {
-  type: string;
-  name?: string;
-  namespace?: string;
-  cluster?: string;
-},
-  action: string,
-  error: string
-): void {
-  this.logResourceGroupOperation(
-    KroAuditEventType.AUTHENTICATION_FAILED,
-    user,
-    {
-      type: resource.type,
-      name: resource.name || 'unknown',
-      namespace: resource.namespace,
-      cluster: resource.cluster,
+  /**
+   * Log authentication failures
+   */
+  logAuthenticationFailure(
+    user: any,
+    resource: {
+      type: string;
+      name?: string;
+      namespace?: string;
+      cluster?: string;
     },
-    action,
-    'failure',
-    {},
-    error
-  );
-}
+    action: string,
+    error: string
+  ): void {
+    this.logResourceGroupOperation(
+      KroAuditEventType.AUTHENTICATION_FAILED,
+      user,
+      {
+        type: resource.type,
+        name: resource.name || 'unknown',
+        namespace: resource.namespace,
+        cluster: resource.cluster,
+      },
+      action,
+      'failure',
+      {},
+      error
+    );
+  }
 
-/**
- * Log authorization failures
- */
-logAuthorizationFailure(
-  user: BackstageIdentityResponse,
-  resource: {
-  type: string;
-  name?: string;
-  namespace?: string;
-  cluster?: string;
-},
-  action: string,
-  error: string
-): void {
-  this.logResourceGroupOperation(
-    KroAuditEventType.AUTHORIZATION_FAILED,
-    user,
-    {
-      type: resource.type,
-      name: resource.name || 'unknown',
-      namespace: resource.namespace,
-      cluster: resource.cluster,
+  /**
+   * Log authorization failures
+   */
+  logAuthorizationFailure(
+    user: any,
+    resource: {
+      type: string;
+      name?: string;
+      namespace?: string;
+      cluster?: string;
     },
-    action,
-    'failure',
-    {},
-    error
-  );
-}
+    action: string,
+    error: string
+  ): void {
+    this.logResourceGroupOperation(
+      KroAuditEventType.AUTHORIZATION_FAILED,
+      user,
+      {
+        type: resource.type,
+        name: resource.name || 'unknown',
+        namespace: resource.namespace,
+        cluster: resource.cluster,
+      },
+      action,
+      'failure',
+      {},
+      error
+    );
+  }
 
-/**
- * Log successful ResourceGroup operations
- */
-logResourceGroupSuccess(
-  eventType: KroAuditEventType,
-  user: BackstageIdentityResponse,
-  resource: {
-  type: string;
-  name: string;
-  namespace?: string;
-  cluster?: string;
-},
-  action: string,
-  details ?: Record<string, any>
-): void {
-  this.logResourceGroupOperation(
-    eventType,
-    user,
-    resource,
-    action,
-    'success',
-    details
-  );
-}
+  /**
+   * Log successful ResourceGroup operations
+   */
+  logResourceGroupSuccess(
+    eventType: KroAuditEventType,
+    user: any,
+    resource: {
+      type: string;
+      name: string;
+      namespace?: string;
+      cluster?: string;
+    },
+    action: string,
+    details?: Record<string, any>
+  ): void {
+    this.logResourceGroupOperation(
+      eventType,
+      user,
+      resource,
+      action,
+      'success',
+      details
+    );
+  }
 }
 
 /**

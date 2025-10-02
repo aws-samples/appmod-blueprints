@@ -71,7 +71,7 @@ describe('RGD Schema Validation', () => {
       expect(schemaStatus.ecrCacheRepositoryURI).toContain('ecrcacherepo.status.repositoryURI');
       expect(schemaStatus.iamRoleARN).toContain('iamrole.status.ackResourceMetadata.arn');
       expect(schemaStatus.serviceAccountName).toContain('serviceaccount.metadata.name');
-      expect(schemaStatus.namespace).toContain('appnamespace.metadata.name');
+      expect(schemaStatus.namespace).toContain('${schema.spec.namespace}');
     });
   });
 
