@@ -1045,7 +1045,7 @@ spec:
                      echo "Updating deployment manifests with new image tag"
 
                      # Clone the repository
-                     REPO_URL="https://{{workflow.parameters.git-username}}:{{workflow.parameters.git-token}}@${schema.spec.gitlab.hostname}/{{workflow.parameters.git-username}}/{{workflow.parameters.repo-name}}.git"
+                     REPO_URL="https://{{workflow.parameters.git-username}}:$GITLAB_TOKEN@${schema.spec.gitlab.hostname}/{{workflow.parameters.git-username}}/{{workflow.parameters.repo-name}}.git"
                      git clone $REPO_URL /tmp/repo
                      cd /tmp/repo/{{workflow.parameters.deployment-path}}
 
@@ -1077,6 +1077,8 @@ spec:
                  envFrom:
                    - configMapRef:
                        name: ${schema.spec.name}-config
+                   - secretRef:
+                       name: gitlab-credentials
 
              - name: notify-status
                container:
@@ -1332,10 +1334,7 @@ spec:
                              - name: git-username
                                value: ${schema.spec.gitlab.username}
                              - name: git-token
-                               valueFrom:
-                                 secretKeyRef:
-                                   name: gitlab-credentials
-                                   key: GITLAB_TOKEN
+                               value: 'placeholder-will-use-env-var'
                              - name: repo-name
                                value: '${schema.spec.application.name}'
                              - name: dockerfile-path
