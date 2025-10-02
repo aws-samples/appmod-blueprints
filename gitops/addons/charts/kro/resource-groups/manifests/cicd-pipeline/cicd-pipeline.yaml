@@ -985,9 +985,9 @@ spec:
                  args:
                    - |
                      echo "Checking out code from {{workflow.parameters.git-url}}"
-                     git clone {{workflow.parameters.git-url}} /workspace/source
-                     cd /workspace/source
-                     git checkout {{workflow.parameters.git-revision}}
+                     git clone {{workflow.parameters.git-url}} /workspace/source || exit 1
+                     cd /workspace/source || exit 1
+                     git checkout {{workflow.parameters.git-revision}} || git checkout -b {{workflow.parameters.git-revision}}
                      echo "Code checkout completed"
                      ls -la /workspace/source
                  volumeMounts:
