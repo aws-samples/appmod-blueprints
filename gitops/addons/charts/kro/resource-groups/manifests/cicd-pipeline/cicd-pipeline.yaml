@@ -1425,7 +1425,7 @@ spec:
           annotations:
             nginx.ingress.kubernetes.io/proxy-body-size: 512m
             nginx.ingress.kubernetes.io/use-regex: "true"
-            nginx.ingress.kubernetes.io/rewrite-target: /$2
+            nginx.ingress.kubernetes.io/rewrite-target: /webhook
             nginx.ingress.kubernetes.io/priority: "100"
         spec:
           ingressClassName: nginx
@@ -1435,8 +1435,8 @@ spec:
                 paths:
                   - backend:
                       service:
-                        name: ${schema.spec.name}-webhook-service
+                        name: ${schema.spec.name}-gitlab-eventsource-eventsource-svc
                         port:
                           number: 12000
-                    path: /argo-events/${schema.spec.name}(/|$)(.*)
-                    pathType: ImplementationSpecific
+                    path: /argo-events/${schema.spec.name}
+                    pathType: Exact
