@@ -99,13 +99,13 @@ spec:
         namespace: ${schema.spec.name}
         labels:
           app.kubernetes.io/instance: ${schema.spec.name}
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: EksclusterWithVpc
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: EksclusterWithVpc
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
         annotations:
             argocd.argoproj.io/sync-wave: "2"
             argocd.argoproj.io/tracking-id: clusters:kro.run/Vpc:${schema.spec.name}/${schema.spec.name}
@@ -129,13 +129,13 @@ spec:
         namespace: ${schema.spec.name}
         labels:
           app.kubernetes.io/instance: ${schema.spec.name}
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: EksclusterWithVpc
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: EksclusterWithVpc
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
         annotations:
             argocd.argoproj.io/sync-wave: "2"
             argocd.argoproj.io/tracking-id: clusters:kro.run/EksCluster:${schema.spec.name}/${schema.spec.name}                     
