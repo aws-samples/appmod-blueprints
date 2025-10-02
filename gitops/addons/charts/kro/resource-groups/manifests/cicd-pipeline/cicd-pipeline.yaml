@@ -738,7 +738,7 @@ spec:
                      app_name=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.APPLICATION_NAME}')
                      gitlab_token="$$GITLAB_TOKEN"
 
-                     api_url="$$gitlab_hostname/gitea/api/v1/repos/$$gitlab_username/$$app_name-cicd/hooks"
+                     api_url="$$gitlab_hostname/gitea/api/v1/repos/$$gitlab_username/$$app_name/hooks"
 
                      echo "Configuring GitLab webhook to point to Argo Events endpoint: $$webhook_url"
 
@@ -1333,7 +1333,7 @@ spec:
                                    name: gitlab-credentials
                                    key: GITLAB_TOKEN
                              - name: repo-name
-                               value: '${schema.spec.application.name}-cicd'
+                               value: '${schema.spec.application.name}'
                              - name: dockerfile-path
                                value: ${schema.spec.application.dockerfilePath}
                              - name: deployment-path
