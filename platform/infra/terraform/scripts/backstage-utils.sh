@@ -21,15 +21,9 @@ set -e
 # Function to check if background build is still running
 check_backstage_build_status() {
     if [ -n "$BACKSTAGE_BUILD_PID" ] && kill -0 $BACKSTAGE_BUILD_PID 2>/dev/null; then
-        return 2  # Still running
+        return 0  # Still running
     else
-        if [ -z "$BACKSTAGE_BUILD_EXIT_CODE" ]; then
-            set +e
-            wait $BACKSTAGE_BUILD_PID 2>/dev/null
-            export BACKSTAGE_BUILD_EXIT_CODE=$?
-            set -e
-        fi
-        return $BACKSTAGE_BUILD_EXIT_CODE
+        return 1  # Finished or failed
     fi
 }
 
