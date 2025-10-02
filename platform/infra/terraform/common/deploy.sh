@@ -51,8 +51,16 @@ main() {
       -var="git_password=${USER1_PASSWORD}" \
       -var="working_repo=${WORKING_REPO}" \
       -parallelism=3 -auto-approve; then
-      log_error "Terraform apply failed for gitlab infra stack"
-      exit 1
+      log_warning "Terraform apply failed for gitlab infra stack, trying again..."
+      if ! terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra apply \
+        -var-file="${GENERATED_TFVAR_FILE}" \
+        -var="git_username=${GIT_USERNAME}" \
+        -var="git_password=${USER1_PASSWORD}" \
+        -var="working_repo=${WORKING_REPO}" \
+        -parallelism=3 -auto-approve; then
+        log_error "Terraform apply failed for gitlab infra stack again, exiting"
+        exit 1
+      fi
     fi
 
     export GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
@@ -83,8 +91,20 @@ main() {
     -var="resource_prefix=${RESOURCE_PREFIX}" \
     -var="working_repo=${WORKING_REPO}" \
     -parallelism=3 -auto-approve; then
-    log_error "Terraform apply failed for bootstrap stack"
-    exit 1
+    log_warning "Terraform apply failed for bootstrap stack, trying again..."
+    if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
+      -var-file="${GENERATED_TFVAR_FILE}" \
+      -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
+      -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
+      -var="ide_password=${USER1_PASSWORD}" \
+      -var="git_username=${GIT_USERNAME}" \
+      -var="git_password=${USER1_PASSWORD}" \
+      -var="resource_prefix=${RESOURCE_PREFIX}" \
+      -var="working_repo=${WORKING_REPO}" \
+      -parallelism=3 -auto-approve; then
+      log_error "Terraform apply failed for bootstrap stack again, exiting"
+      exit 1
+    fi
   fi
   
   log_success "Cootstrap stack deployment completed successfully"

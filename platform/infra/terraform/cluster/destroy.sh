@@ -40,8 +40,17 @@ main() {
     -var="resource_prefix=${RESOURCE_PREFIX}" \
     -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
     -auto-approve; then
-    log_error "Clusters stack destroy failed..."
-    exit 1
+    log_warning "Clusters stack destroy failed, trying again..."
+    if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
+      -var-file="${GENERATED_TFVAR_FILE}" \
+      -var="hub_vpc_id=${HUB_VPC_ID}" \
+      -var="hub_subnet_ids=$(echo "${HUB_SUBNET_IDS}" | sed "s/'/\"/g")" \
+      -var="resource_prefix=${RESOURCE_PREFIX}" \
+      -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
+      -auto-approve; then
+      log_error "Clusters stack destroy failed again, exiting"
+      exit 1
+    fi
   fi
 
   log_success "Clusters stack destroy completed successfully"

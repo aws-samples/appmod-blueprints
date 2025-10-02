@@ -42,8 +42,17 @@ main() {
     -var="resource_prefix=${RESOURCE_PREFIX}" \
     -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
     -parallelism=3 -auto-approve; then
-    log_error "Terraform apply for clusters stack failed"
-    exit 1
+    log_warning "Terraform apply for clusters stack failed, trying again..."
+    if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
+      -var-file="${GENERATED_TFVAR_FILE}" \
+      -var="hub_vpc_id=${HUB_VPC_ID}" \
+      -var="hub_subnet_ids=$(echo "${HUB_SUBNET_IDS}" | sed "s/'/\"/g")" \
+      -var="resource_prefix=${RESOURCE_PREFIX}" \
+      -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
+      -parallelism=3 -auto-approve; then
+      log_error "Terraform apply for clusters stack failed again, exiting"
+      exit 1
+    fi
   fi
 
   log_success "Clusters stack deployment completed successfully"
