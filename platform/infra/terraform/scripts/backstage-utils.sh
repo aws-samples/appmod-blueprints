@@ -23,8 +23,11 @@ check_backstage_build_status() {
     if [ -n "$BACKSTAGE_BUILD_PID" ] && kill -0 $BACKSTAGE_BUILD_PID 2>/dev/null; then
         return 2  # Still running
     else
-        wait $BACKSTAGE_BUILD_PID 2>/dev/null
-        return $?  # Return actual exit code
+        if [ -z "$BACKSTAGE_BUILD_EXIT_CODE" ]; then
+            wait $BACKSTAGE_BUILD_PID 2>/dev/null
+            export BACKSTAGE_BUILD_EXIT_CODE=$?
+        fi
+        return $BACKSTAGE_BUILD_EXIT_CODE
     fi
 }
 
