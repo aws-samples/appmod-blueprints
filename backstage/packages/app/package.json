@@ -11,6 +11,7 @@
     "build": "backstage-cli package build",
     "clean": "backstage-cli package clean",
     "test": "backstage-cli package test",
+    "test:kro": "backstage-cli package test --testPathPattern=\"KroIntegration\\.test\\.tsx\" --verbose",
     "lint": "backstage-cli package lint"
   },
   "dependencies": {

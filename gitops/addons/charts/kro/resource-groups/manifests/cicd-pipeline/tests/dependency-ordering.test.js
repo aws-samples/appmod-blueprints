@@ -41,9 +41,9 @@ describe('Dependency Ordering and Readiness Conditions', () => {
     it('should have proper dependency ordering for Kubernetes resources', () => {
       const resources = rgd.spec.resources;
 
-      // Namespace should be first (no dependencies) - using actual resource ID
-      const namespace = resources.find(r => r.id === 'appnamespace');
-      expect(namespace.readyWhen).toEqual(['${appnamespace.status.phase == "Active"}']);
+      // EventBus should be first (no dependencies on other resources)
+      const eventbus = resources.find(r => r.id === 'eventbus');
+      expect(eventbus.readyWhen).toEqual(['${eventbus.status.conditions.exists(x, x.type == \'Deployed\' && x.status == "True")}']);
 
       // Service account has no readyWhen conditions in the actual RGD
       const serviceAccount = resources.find(r => r.id === 'serviceaccount');
@@ -95,10 +95,12 @@ describe('Dependency Ordering and Readiness Conditions', () => {
 
       // EventSource should check metadata name
       const eventSource = resources.find(r => r.id === 'eventsource');
+      expect(eventSource).toBeDefined();
       expect(eventSource.readyWhen).toEqual(['${eventsource.metadata.name != ""}']);
 
       // Sensor should check metadata name
       const sensor = resources.find(r => r.id === 'sensor');
+      expect(sensor).toBeDefined();
       expect(sensor.readyWhen).toEqual(['${sensor.metadata.name != ""}']);
 
       // Webhook service should check metadata name
@@ -112,21 +114,21 @@ describe('Dependency Ordering and Readiness Conditions', () => {
   });
 
   describe('ReadyWhen Condition Evaluation', () => {
-    it('should correctly evaluate namespace readiness conditions', () => {
+    it('should correctly evaluate eventbus readiness conditions', () => {
       const readyStatuses = {
-        namespace: createMockResourceStatus('namespace', true)
+        eventbus: createMockResourceStatus('eventbus', true)
       };
       const notReadyStatuses = {
-        namespace: createMockResourceStatus('namespace', false)
+        eventbus: createMockResourceStatus('eventbus', false)
       };
 
       const readyEngine = new TemplateEngine(mockSchema, readyStatuses);
       const notReadyEngine = new TemplateEngine(mockSchema, notReadyStatuses);
 
-      const namespace = rgd.spec.resources.find(r => r.id === 'appnamespace');
+      const eventbus = rgd.spec.resources.find(r => r.id === 'eventbus');
 
-      expect(readyEngine.evaluateReadyWhen(namespace.readyWhen)).toBe(true);
-      expect(notReadyEngine.evaluateReadyWhen(namespace.readyWhen)).toBe(false);
+      expect(readyEngine.evaluateReadyWhen(eventbus.readyWhen)).toBe(true);
+      expect(notReadyEngine.evaluateReadyWhen(eventbus.readyWhen)).toBe(false);
     });
 
     it('should correctly evaluate ACK resource readiness conditions', () => {
@@ -332,7 +334,7 @@ describe('Dependency Ordering and Readiness Conditions', () => {
       expect(schemaStatus.ecrCacheRepositoryURI).toContain('ecrcacherepo.status.repositoryURI');
       expect(schemaStatus.iamRoleARN).toContain('iamrole.status.ackResourceMetadata.arn');
       expect(schemaStatus.serviceAccountName).toContain('serviceaccount.metadata.name');
-      expect(schemaStatus.namespace).toContain('appnamespace.metadata.name');
+      expect(schemaStatus.namespace).toContain('${schema.spec.namespace}');
     });
 
     it('should have proper readiness aggregation conditions', () => {

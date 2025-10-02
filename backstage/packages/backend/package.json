@@ -12,6 +12,8 @@
     "build": "backstage-cli package build",
     "lint": "backstage-cli package lint",
     "test": "backstage-cli package test",
+    "test:kro": "backstage-cli package test --testPathPattern=\"kro.*test\\.ts\" --verbose",
+    "test:kro:coverage": "backstage-cli package test --testPathPattern=\"kro.*test\\.ts\" --coverage",
     "clean": "backstage-cli package clean",
     "build-image": "docker build ../.. -f Dockerfile --tag backstage"
   },

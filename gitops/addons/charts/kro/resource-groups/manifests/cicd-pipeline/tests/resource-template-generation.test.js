@@ -204,16 +204,16 @@ describe('Resource Template Generation and Substitution', () => {
   });
 
   describe('Kubernetes Resource Templates', () => {
-    it('should generate correct namespace template', () => {
-      const namespace = rgd.spec.resources.find(r => r.id === 'appnamespace');
-      expect(namespace).toBeDefined();
+    it('should generate correct service account template', () => {
+      const serviceAccount = rgd.spec.resources.find(r => r.id === 'serviceaccount');
+      expect(serviceAccount).toBeDefined();
 
-      const template = templateEngine.substituteObject(namespace.template);
+      const template = templateEngine.substituteObject(serviceAccount.template);
 
       expect(template.apiVersion).toBe('v1');
-      expect(template.kind).toBe('Namespace');
-      expect(template.metadata.name).toBe('test-namespace');
-      expect(template.metadata.labels.name).toBe('test-namespace');
+      expect(template.kind).toBe('ServiceAccount');
+      expect(template.metadata.name).toBe('test-app-cicd-sa');
+      expect(template.metadata.namespace).toBe('test-namespace');
       expect(template.metadata.labels['app.kubernetes.io/name']).toBe('test-app');
       expect(template.metadata.labels['app.kubernetes.io/component']).toBe('cicd-pipeline');
     });

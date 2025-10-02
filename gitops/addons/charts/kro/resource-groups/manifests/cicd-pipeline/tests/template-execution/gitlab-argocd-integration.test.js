@@ -9,7 +9,7 @@ describe('GitLab Integration and ArgoCD App Creation', () => {
 
   beforeAll(() => {
     // Load the Backstage template
-    const templatePath = path.resolve(__dirname, '../../../../../../../../platform/backstage/templates/cicd-pipeline/template-cicd-pipeline.yaml');
+    const templatePath = path.resolve(__dirname, '../../../../../../platform/backstage/templates/cicd-pipeline/template-cicd-pipeline-gitops.yaml');
     templateContent = fs.readFileSync(templatePath, 'utf8');
     templateSpec = yaml.load(templateContent);
   });
@@ -26,7 +26,7 @@ describe('GitLab Integration and ArgoCD App Creation', () => {
 
       const input = publishStep.input;
       expect(input.repoUrl).toContain('${{parameters.appname}}-cicd');
-      expect(input.repoUrl).toContain("${{ steps['fetchSystem'].output.entity.spec.hostname }}");
+      expect(input.repoUrl).toContain("${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}");
       expect(input.repoUrl).toContain("${{ steps['fetchSystem'].output.entity.spec.gituser }}");
       expect(input.defaultBranch).toBe('main');
       expect(input.useCustomGit).toBe(true);
@@ -57,17 +57,17 @@ describe('GitLab Integration and ArgoCD App Creation', () => {
 
       // Check GitLab configuration in Kro instance
       expect(manifestTemplate).toContain('gitlab:');
-      expect(manifestTemplate).toContain("hostname: ${{ steps['fetchSystem'].output.entity.spec.hostname }}");
+      expect(manifestTemplate).toContain("hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}");
       expect(manifestTemplate).toContain("username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}");
     });
 
     it('should provide GitLab repository link in output', () => {
       const output = templateSpec.spec.output;
-      const gitlabLink = output.links.find(link => link.title === 'GitLab Repository');
+      const gitlabLink = output.links.find(link => link.title === 'GitLab Repository (GitOps Source)');
 
       expect(gitlabLink).toBeDefined();
       expect(gitlabLink.icon).toBe('git');
-      expect(gitlabLink.url).toContain("${{ steps['fetchSystem'].output.entity.spec.hostname }}");
+      expect(gitlabLink.url).toContain("${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}");
       expect(gitlabLink.url).toContain("${{ steps['fetchSystem'].output.entity.spec.gituser }}");
       expect(gitlabLink.url).toContain('${{ parameters.appname }}-cicd');
     });
@@ -80,7 +80,7 @@ describe('GitLab Integration and ArgoCD App Creation', () => {
       );
 
       expect(argoCDStep).toBeDefined();
-      expect(argoCDStep.name).toBe('Create ArgoCD App');
+      expect(argoCDStep.name).toBe('Create ArgoCD Application (GitOps)');
       expect(argoCDStep.action).toBe('argocd:create-resources');
 
       const input = argoCDStep.input;
@@ -96,7 +96,7 @@ describe('GitLab Integration and ArgoCD App Creation', () => {
       );
 
       const input = argoCDStep.input;
-      expect(input.repoUrl).toContain("${{ steps['fetchSystem'].output.entity.spec.hostname }}");
+      expect(input.repoUrl).toContain("${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}");
       expect(input.repoUrl).toContain("${{ steps['fetchSystem'].output.entity.spec.gituser }}");
       expect(input.repoUrl).toContain('${{parameters.appname}}-cicd');
       expect(input.path).toBe('manifests');
@@ -146,7 +146,7 @@ describe('GitLab Integration and ArgoCD App Creation', () => {
       expect(registerStep).toBeDefined();
       expect(registerStep.action).toBe('catalog:register');
       expect(registerStep.input.repoContentsUrl).toBe("${{ steps['publish'].output.repoContentsUrl }}");
-      expect(registerStep.input.catalogInfoPath).toBe('catalog-info.yaml');
+      expect(registerStep.input.catalogInfoPath).toBe('/catalog-info.yaml');
     });
 
     it('should execute registration after GitLab publish', () => {
@@ -203,7 +203,7 @@ describe('GitLab Integration and ArgoCD App Creation', () => {
       expect(values.appname).toBe('${{ parameters.appname }}');
       expect(values.namespace).toBe('team-${{ parameters.appname }}');
       expect(values.aws_region).toBe('${{ parameters.aws_region }}');
-      expect(values.hostname).toBe("${{ steps['fetchSystem'].output.entity.spec.hostname }}");
+      expect(values.gitlab_hostname).toBe("${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}");
     });
   });
 
