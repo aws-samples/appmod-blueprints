@@ -22,8 +22,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   name: ${{values.appname}}-cicd
-  #namespace: ${{values.namespace}}
-  namespace: argocd
+  namespace: ${{values.namespace}}
   aws:
     region: ${{values.aws_region}}
     clusterName: ${{values.cluster_name}}

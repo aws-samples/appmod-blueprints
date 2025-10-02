@@ -32,8 +32,6 @@ spec:
       iamRoleARN: ${iamrole.status.ackResourceMetadata.arn}
       # Service Account information
       serviceAccountName: ${serviceaccount.metadata.name}
-      # Namespace information (from service account)
-      namespace: ${serviceaccount.metadata.namespace}
   resources:
     # ECR Repository for main application images
     - id: ecrmainrepo
@@ -44,7 +42,6 @@ spec:
         kind: Repository
         metadata:
           name: ${schema.spec.name}-main-repo
-          namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: CICDPipeline
@@ -102,7 +99,6 @@ spec:
         kind: Repository
         metadata:
           name: ${schema.spec.name}-cache-repo
-          namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: CICDPipeline
@@ -161,7 +157,6 @@ spec:
         kind: Policy
         metadata:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
-          namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: CICDPipeline
@@ -215,7 +210,6 @@ spec:
         kind: Role
         metadata:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
-          namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: CICDPipeline
@@ -257,7 +251,6 @@ spec:
         kind: PodIdentityAssociation
         metadata:
           name: ${schema.spec.name}-pod-association
-          namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: CICDPipeline
@@ -273,7 +266,7 @@ spec:
           clusterName: ${schema.spec.aws.clusterName}
           roleARN: ${iamrole.status.ackResourceMetadata.arn}
           serviceAccount: ${schema.spec.name}-sa
-          namespace: ${schema.spec.namespace}
+          namespace: ${schema.metadata.namespace}
           tags:
             Application: ${schema.spec.application.name}
             Component: cicd-pipeline
@@ -286,7 +279,6 @@ spec:
         kind: ServiceAccount
         metadata:
           name: ${schema.spec.name}-sa
-          namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: CICDPipeline
@@ -316,7 +308,6 @@ spec:
         kind: Role
         metadata:
           name: ${schema.spec.name}-role
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -378,14 +369,13 @@ spec:
         kind: RoleBinding
         metadata:
           name: ${schema.spec.name}-rolebinding
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
         subjects:
           - kind: ServiceAccount
             name: ${schema.spec.name}-sa
-            namespace: ${schema.spec.namespace}
+            namespace: ${schema.metadata.namespace}
         roleRef:
           kind: Role
           name: ${schema.spec.name}-role
@@ -400,7 +390,6 @@ spec:
         kind: ConfigMap
         metadata:
           name: ${schema.spec.name}-config
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -430,7 +419,7 @@ spec:
           SERVICE_ACCOUNT_NAME: ${schema.spec.name}-sa
           IAM_ROLE_ARN: ${iamrole.status.ackResourceMetadata.arn}
           # Namespace scoping
-          PIPELINE_NAMESPACE: ${schema.spec.namespace}
+          PIPELINE_NAMESPACE: ${schema.metadata.namespace}
           # ECR credential management
           DOCKER_CONFIG_SECRET_NAME: ${schema.spec.name}-docker-config
           ECR_CREDENTIAL_REFRESH_SCHEDULE: '0 */6 * * *'
@@ -445,7 +434,6 @@ spec:
         kind: ExternalSecret
         metadata:
           name: gitlab-credentials
-          namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: CICDPipeline
@@ -486,7 +474,6 @@ spec:
         kind: Secret
         metadata:
           name: ${schema.spec.name}-docker-config
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -517,7 +504,6 @@ spec:
         kind: CronJob
         metadata:
           name: ${schema.spec.name}-ecr-refresh
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -580,14 +566,14 @@ spec:
                           )
 
                           # Update the secret with new credentials
-                          kubectl patch secret ${schema.spec.name}-docker-config -n ${schema.spec.namespace} \
+                          kubectl patch secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
                             --type='merge' \
                             -p="{\"data\":{\".dockerconfigjson\":\"$DOCKER_CONFIG\"}}"
 
                           if [ $? -eq 0 ]; then
                             echo "Successfully updated ECR credentials for ${schema.spec.application.name}"
                             # Add timestamp annotation to track last refresh
-                            kubectl annotate secret ${schema.spec.name}-docker-config -n ${schema.spec.namespace} \
+                            kubectl annotate secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
                               cicd.kro.run/last-refresh="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
                           else
                             echo "ERROR: Failed to update ECR credentials"
@@ -611,7 +597,6 @@ spec:
         kind: WorkflowTemplate
         metadata:
           name: ${schema.spec.name}-provisioning-workflow
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -704,20 +689,20 @@ spec:
                     )
 
                     # Update the secret with new credentials
-                    kubectl patch secret ${schema.spec.name}-docker-config -n ${schema.spec.namespace} \
+                    kubectl patch secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
                       --type='merge' \
                       -p="{\"data\":{\".dockerconfigjson\":\"$DOCKER_CONFIG\"}}"
 
                     if [ $? -eq 0 ]; then
                       echo "Docker registry secrets updated successfully"
                       # Add initial timestamp annotation
-                      kubectl annotate secret ${schema.spec.name}-docker-config -n ${schema.spec.namespace} \
+                      kubectl annotate secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
                         cicd.kro.run/last-refresh="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                         cicd.kro.run/initial-setup="true" --overwrite
                       
                       # Verify the secret is properly formatted
                       echo "Verifying Docker config secret format..."
-                      kubectl get secret ${schema.spec.name}-docker-config -n ${schema.spec.namespace} -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq . > /dev/null
+                      kubectl get secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq . > /dev/null
                       if [ $? -eq 0 ]; then
                         echo "Docker config secret format verified successfully"
                       else
@@ -748,10 +733,10 @@ spec:
                     apk add curl jq
 
                     # Get configuration from ConfigMap
-                    webhook_url=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.WEBHOOK_ENDPOINT}')
-                    gitlab_hostname=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.GITLAB_HOSTNAME}')
-                    gitlab_username=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.GITLAB_USERNAME}')
-                    app_name=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.spec.namespace} -o jsonpath='{.data.APPLICATION_NAME}')
+                    webhook_url=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.WEBHOOK_ENDPOINT}')
+                    gitlab_hostname=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.GITLAB_HOSTNAME}')
+                    gitlab_username=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.GITLAB_USERNAME}')
+                    app_name=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.APPLICATION_NAME}')
                     gitlab_token="$$GITLAB_TOKEN"
 
                     api_url="$$gitlab_hostname/gitea/api/v1/repos/$$gitlab_username/$$app_name-cicd/hooks"
@@ -857,7 +842,6 @@ spec:
         kind: WorkflowTemplate
         metadata:
           name: ${schema.spec.name}-cache-warmup-workflow
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -926,7 +910,6 @@ spec:
         kind: WorkflowTemplate
         metadata:
           name: ${schema.spec.name}-cicd-workflow
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -1118,7 +1101,6 @@ spec:
         kind: ConfigMap
         metadata:
           name: ${schema.spec.name}-cache-dockerfile
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -1153,7 +1135,6 @@ spec:
         kind: Job
         metadata:
           name: ${schema.spec.name}-initial-ecr-setup
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -1215,20 +1196,20 @@ spec:
                       )
 
                       # Update the secret with new credentials
-                      kubectl patch secret ${schema.spec.name}-docker-config -n ${schema.spec.namespace} \
+                      kubectl patch secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
                         --type='merge' \
                         -p="{\"data\":{\".dockerconfigjson\":\"$DOCKER_CONFIG\"}}"
 
                       if [ $? -eq 0 ]; then
                         echo "Successfully set up initial ECR credentials for ${schema.spec.application.name}"
                         # Add timestamp annotation to track setup
-                        kubectl annotate secret ${schema.spec.name}-docker-config -n ${schema.spec.namespace} \
+                        kubectl annotate secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
                           cicd.kro.run/initial-setup="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                           cicd.kro.run/last-refresh="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
                         
                         # Verify the secret is properly formatted
                         echo "Verifying Docker config secret format..."
-                        kubectl get secret ${schema.spec.name}-docker-config -n ${schema.spec.namespace} -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq . > /dev/null
+                        kubectl get secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq . > /dev/null
                         if [ $? -eq 0 ]; then
                           echo "Docker config secret format verified successfully"
                         else
@@ -1254,7 +1235,6 @@ spec:
         kind: Workflow
         metadata:
           name: ${schema.spec.name}-setup-workflow
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-setup
@@ -1276,7 +1256,6 @@ spec:
         kind: EventSource
         metadata:
           name: ${schema.spec.name}-gitlab-eventsource
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -1291,7 +1270,7 @@ spec:
               port: '12000'
               endpoint: /webhook
               method: POST
-              url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.spec.namespace}.svc.cluster.local:12000/webhook
+              url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.metadata.namespace}.svc.cluster.local:12000/webhook
 
     # Argo Events Sensor for triggering CI/CD workflows
     - id: sensor
@@ -1300,7 +1279,6 @@ spec:
         kind: Sensor
         metadata:
           name: ${schema.spec.name}-gitlab-sensor
-          namespace: ${schema.spec.namespace}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -1333,7 +1311,7 @@ spec:
                       kind: Workflow
                       metadata:
                         generateName: ${schema.spec.name}-cicd-
-                        namespace: ${schema.spec.namespace}
+                        namespace: ${schema.metadata.namespace}
                         labels:
                           app.kubernetes.io/name: ${schema.spec.application.name}
                           app.kubernetes.io/component: cicd-pipeline
@@ -1385,59 +1363,73 @@ spec:
 
     # Service for exposing the EventSource webhook endpoint
     # COMMENTED OUT: This resource is now managed by Backstage template to avoid conflicts
-    # - id: webhookservice
-    #   readyWhen:
-    #     - ${webhookservice.metadata.name != ""}
-    #   template:
-    #     apiVersion: v1
-    #     kind: Service
-    #     metadata:
-    #       name: ${schema.spec.name}-webhook-service
-    #       namespace: ${schema.spec.namespace}
-    #       labels:
-    #         app.kubernetes.io/name: ${schema.spec.application.name}
-    #         app.kubernetes.io/component: cicd-pipeline
-    #         app.kubernetes.io/managed-by: kro
-    #     spec:
-    #       selector:
-    #         eventsource-name: ${schema.spec.name}-gitlab-eventsource
-    #       ports:
-    #         - name: webhook
-    #           port: 80
-    #           targetPort: 12000
-    #           protocol: TCP
-    #       type: ClusterIP
+     - id: webhookservice
+       readyWhen:
+         - ${webhookservice.metadata.name != ""}
+       template:
+         apiVersion: v1
+         kind: Service
+         metadata:
+           name: ${schema.spec.name}-webhook-service
+           namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: CICDPipeline
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+           labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+         spec:
+           selector:
+             eventsource-name: ${schema.spec.name}-gitlab-eventsource
+           ports:
+             - name: webhook
+               port: 80
+               targetPort: 12000
+               protocol: TCP
+           type: ClusterIP
 
     # Ingress for external webhook access
     # COMMENTED OUT: This resource is now managed by Backstage template to avoid conflicts
-    # - id: webhookingress
-    #   readyWhen:
-    #     - ${webhookingress.metadata.name != ""}
-    #   template:
-    #     apiVersion: networking.k8s.io/v1
-    #     kind: Ingress
-    #     metadata:
-    #       name: ${schema.spec.name}-webhook-ingress
-    #       namespace: ${schema.spec.namespace}
-    #       labels:
-    #         app.kubernetes.io/name: ${schema.spec.application.name}
-    #         app.kubernetes.io/component: cicd-pipeline
-    #         app.kubernetes.io/managed-by: kro
-    #       annotations:
-    #         kubernetes.io/ingress.class: alb
-    #         alb.ingress.kubernetes.io/scheme: internet-facing
-    #         alb.ingress.kubernetes.io/target-type: ip
-    #         alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-    #         alb.ingress.kubernetes.io/healthcheck-path: /health
-    #     spec:
-    #       rules:
-    #         - host: ${schema.spec.gitlab.hostname}
-    #           http:
-    #             paths:
-    #               - path: /argo-events/${schema.spec.application.name}
-    #                 pathType: Prefix
-    #                 backend:
-    #                   service:
-    #                     name: ${schema.spec.name}-webhook-service
-    #                     port:
-    #                       number: 80
+     - id: webhookingress
+       readyWhen:
+         - ${webhookingress.metadata.name != ""}
+       template:
+         apiVersion: networking.k8s.io/v1
+         kind: Ingress
+         metadata:
+           name: ${schema.spec.name}-webhook-ingress
+           namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: CICDPipeline
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+           labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+           annotations:
+             kubernetes.io/ingress.class: alb
+             alb.ingress.kubernetes.io/scheme: internet-facing
+             alb.ingress.kubernetes.io/target-type: ip
+             alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+             alb.ingress.kubernetes.io/healthcheck-path: /health
+         spec:
+           rules:
+             - host: ${schema.spec.gitlab.hostname}
+               http:
+                 paths:
+                   - path: /argo-events/${schema.spec.application.name}
+                     pathType: Prefix
+                     backend:
+                       service:
+                         name: ${schema.spec.name}-webhook-service
+                         port:
+                           number: 80
