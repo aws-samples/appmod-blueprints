@@ -27,9 +27,13 @@ check_backstage_build_status() {
     fi
 }
 
-check_backstage_ecr_repo() {
-    if aws ecr describe-repositories --repository-names ${RESOURCE_PREFIX}-backstage --region $AWS_REGION > /dev/null 2>&1; then
-        print_info "Backstage ECR repository exist.. Assuming it has the backstage image, returning..."
+check_backstage_ecr_image() {
+    if ! aws ecr describe-repositories --repository-names ${RESOURCE_PREFIX}-backstage --region $AWS_REGION > /dev/null 2>&1; then
+        return 1
+    fi
+
+    if aws ecr describe-images --repository-name ${RESOURCE_PREFIX}-backstage --image-ids imageTag=latest --region $AWS_REGION > /dev/null 2>&1; then
+        print_info "Backstage ECR image with latest tag exists, returning..."
         return 0
     fi
 

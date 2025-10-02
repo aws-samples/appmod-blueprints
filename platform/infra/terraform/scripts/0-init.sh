@@ -50,7 +50,7 @@ main() {
 
     source "$SCRIPT_DIR/backstage-utils.sh"
 
-    if ! check_backstage_ecr_repo; then
+    if ! check_backstage_ecr_image; then
         # Start Backstage Build Process
         start_backstage_build
     fi
