@@ -243,17 +243,17 @@ spec:
       - title: ArgoCD Application (GitOps)
         url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd?view=tree&resource=
         icon: web
-      - title: Kro CICDPipeline Resource
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd?view=tree&resource=&node=${{ parameters.appname }}-cicd-pipeline%2Fkro.run%2FCICDPipeline%2Fteam-${{ parameters.appname }}
-        icon: web
       - title: GitLab Repository (GitOps Source)
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
         icon: git
       - title: ArgoCD Project
         url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/settings/projects/${{ parameters.appname }}-project
         icon: web
-      - title: Argo Workflows (After Sync)
+      - title: Argo Workflows templates (After Sync)
         url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}
+        icon: web
+      - title: Argo Workflows (After Sync)
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflows/team-${{ parameters.appname }}
         icon: web
       - title: ECR Main Repository (After Provisioning)
         url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks/${{ parameters.appname }}?region=${{ parameters.aws_region }}
