@@ -24,6 +24,8 @@ spec:
       gitlab:
        hostname: string
        username: string
+      hub:
+       hostname: string
     status:
       # ECR Repository information
       ecrMainRepositoryURI: ${ecrmainrepo.status.repositoryURI}
@@ -411,7 +413,7 @@ spec:
           GITLAB_HOSTNAME: ${schema.spec.gitlab.hostname}
           GITLAB_USERNAME: ${schema.spec.gitlab.username}
           # Webhook configuration
-          WEBHOOK_ENDPOINT: 'http://${schema.spec.gitlab.hostname}/argo-events/${schema.spec.application.name}'
+          WEBHOOK_ENDPOINT: 'https://${schema.spec.hub.hostname}/argo-events/${schema.spec.application.name}'
           WEBHOOK_SERVICE_NAME: ${schema.spec.name}-webhook-service
           EVENTSOURCE_NAME: ${schema.spec.name}-gitlab-eventsource
           SENSOR_NAME: ${schema.spec.name}-gitlab-sensor
@@ -641,9 +643,6 @@ spec:
                      # Test ECR authentication
                      aws ecr get-login-password --region {{workflow.parameters.aws-region}} > /dev/null
 
-                     # Validate IAM role exists
-                     aws iam get-role --role-name ${iamrole.spec.name}
-
                      echo "All AWS resources validated successfully"
                  env:
                    - name: AWS_REGION
@@ -731,6 +730,10 @@ spec:
                  args:
                    - |
                      apk add curl jq
+                     
+                     # Install kubectl
+                     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                     chmod +x kubectl && mv kubectl /usr/local/bin/
 
                      # Get configuration from ConfigMap
                      webhook_url=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.WEBHOOK_ENDPOINT}')
@@ -749,7 +752,7 @@ spec:
                        -H "Authorization: token $$gitlab_token" \
                        -H "Content-Type: application/json" 2>/dev/null || echo "[]")
 
-                     webhook_exists=$(echo "$$existing_webhooks" | jq -r --arg url "$$webhook_url" '.[] | select(.config.url == $$url) | .id')
+                     webhook_exists=$(echo "$$existing_webhooks" | jq -r --arg url "$$webhook_url" '.[] | select(.config.url == $url) | .id')
 
                      if [ -z "$$webhook_exists" ] || [ "$$webhook_exists" = "null" ]; then
                        echo "Creating new GitLab webhook for Argo Events integration"
@@ -1292,11 +1295,11 @@ spec:
                eventName: gitlab-webhook
                filters:
                  data:
-                   - path: object_kind
+                   - path: body.object_kind
                      type: string
                      value:
                        - 'push'
-                   - path: ref
+                   - path: body.ref
                      type: string
                      value:
                        - 'refs/heads/main'
@@ -1407,7 +1410,7 @@ spec:
         spec:
           ingressClassName: nginx
           rules:
-            - host: ${schema.spec.gitlab.hostname}
+            - host: ${schema.spec.hub.hostname}
               http:
                 paths:
                   - backend:
