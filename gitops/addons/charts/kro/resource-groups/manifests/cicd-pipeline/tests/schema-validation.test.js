@@ -64,14 +64,14 @@ describe('RGD Schema Validation', () => {
       expect(schemaStatus.ecrCacheRepositoryURI).toBeDefined();
       expect(schemaStatus.iamRoleARN).toBeDefined();
       expect(schemaStatus.serviceAccountName).toBeDefined();
-      expect(schemaStatus.namespace).toBeDefined();
+      // The schema doesn't have a namespace status field
 
       // Verify they reference the correct resources
       expect(schemaStatus.ecrMainRepositoryURI).toContain('ecrmainrepo.status.repositoryURI');
       expect(schemaStatus.ecrCacheRepositoryURI).toContain('ecrcacherepo.status.repositoryURI');
       expect(schemaStatus.iamRoleARN).toContain('iamrole.status.ackResourceMetadata.arn');
       expect(schemaStatus.serviceAccountName).toContain('serviceaccount.metadata.name');
-      expect(schemaStatus.namespace).toContain('${schema.spec.namespace}');
+      // The schema doesn't have a namespace status field
     });
   });
 

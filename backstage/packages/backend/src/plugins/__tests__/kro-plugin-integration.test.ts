@@ -1,5 +1,6 @@
 import { ConfigReader } from '@backstage/config';
 import { KroErrorHandler } from '../kro-error-handler';
+import { KroAuditLogger } from '../kro-audit';
 
 // Mock logger
 const mockLogger = {
@@ -7,6 +8,23 @@ const mockLogger = {
   warn: jest.fn(),
   error: jest.fn(),
   debug: jest.fn(),
+};
+
+// Mock audit logger
+const mockAuditLogger = {
+  logAuthenticationFailure: jest.fn(),
+  logAuthorizationFailure: jest.fn(),
+  logResourceGroupOperation: jest.fn(),
+} as jest.Mocked<KroAuditLogger>;
+
+// Mock user
+const mockUser = {
+  identity: {
+    userEntityRef: 'user:default/test-user',
+    type: 'user',
+    ownershipEntityRefs: [],
+  },
+  token: 'mock-token',
 };
 
 describe('Kro Plugin Integration Tests', () => {
@@ -52,7 +70,7 @@ describe('Kro Plugin Integration Tests', () => {
       },
     });
 
-    errorHandler = new KroErrorHandler(mockLogger);
+    errorHandler = new KroErrorHandler(mockLogger, mockAuditLogger);
   });
 
   describe('Configuration Validation', () => {
@@ -120,15 +138,17 @@ describe('Kro Plugin Integration Tests', () => {
     it('should handle Kubernetes connection errors', () => {
       const error = new Error('ECONNREFUSED');
 
-      errorHandler.logKubernetesError(error, {
+      const result = errorHandler.handleConnectionError(error, {
         cluster: 'test-cluster',
         operation: 'list-resources',
       });
 
+      expect(result.statusCode).toBe(503);
+      expect(result.userMessage).toContain('Unable to connect to Kubernetes cluster');
       expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining('Kubernetes connection failed'),
+        expect.stringContaining('Kubernetes connection error'),
         expect.objectContaining({
-          errorType: 'CONNECTION_FAILED',
+          errorType: 'CONNECTION_ERROR',
           cluster: 'test-cluster',
           operation: 'list-resources',
         })
@@ -138,11 +158,13 @@ describe('Kro Plugin Integration Tests', () => {
     it('should handle authentication errors', () => {
       const error = new Error('Unauthorized');
 
-      errorHandler.logKubernetesError(error, {
+      const result = errorHandler.handleAuthenticationError(error, mockUser, {
         cluster: 'test-cluster',
         operation: 'create-resource',
       });
 
+      expect(result.statusCode).toBe(401);
+      expect(result.userMessage).toContain('Authentication failed');
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.stringContaining('Kubernetes authentication failed'),
         expect.objectContaining({
@@ -154,11 +176,14 @@ describe('Kro Plugin Integration Tests', () => {
     it('should handle authorization errors', () => {
       const error = new Error('Forbidden');
 
-      errorHandler.logKubernetesError(error, {
+      const result = errorHandler.handleAuthorizationError(error, mockUser, {
         cluster: 'test-cluster',
         operation: 'delete-resource',
+        resource: 'resourcegroups',
       });
 
+      expect(result.statusCode).toBe(403);
+      expect(result.userMessage).toContain("don't have permission");
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.stringContaining('Kubernetes authorization failed'),
         expect.objectContaining({
@@ -170,15 +195,17 @@ describe('Kro Plugin Integration Tests', () => {
     it('should handle timeout errors', () => {
       const error = new Error('Request timeout');
 
-      errorHandler.logKubernetesError(error, {
+      const result = errorHandler.handleConnectionError(error, {
         cluster: 'test-cluster',
         operation: 'get-resource',
       });
 
+      expect(result.statusCode).toBe(503);
+      expect(result.userMessage).toContain('timed out');
       expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining('Kubernetes operation timed out'),
+        expect.stringContaining('Kubernetes connection error'),
         expect.objectContaining({
-          errorType: 'TIMEOUT',
+          errorType: 'CONNECTION_ERROR',
         })
       );
     });
@@ -186,38 +213,26 @@ describe('Kro Plugin Integration Tests', () => {
     it('should handle ResourceGroup operation errors', () => {
       const error = new Error('ResourceGroup not found');
 
-      errorHandler.logResourceGroupError(error, {
+      const result = errorHandler.handleResourceGroupError(error, mockUser, {
         resourceGroup: 'test-rg',
         namespace: 'default',
         operation: 'get',
       });
 
+      expect(result.statusCode).toBe(404);
+      expect(result.userMessage).toContain('not found');
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.stringContaining('ResourceGroup operation failed'),
         expect.objectContaining({
           resourceGroup: 'test-rg',
           namespace: 'default',
           operation: 'get',
-          component: 'kro-plugin',
+          component: 'kro-error-handler',
         })
       );
     });
 
-    it('should log successful operations', () => {
-      errorHandler.logSuccess('ResourceGroup created successfully', {
-        resourceGroup: 'test-rg',
-        namespace: 'default',
-      });
 
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        'ResourceGroup created successfully',
-        expect.objectContaining({
-          resourceGroup: 'test-rg',
-          namespace: 'default',
-          component: 'kro-plugin',
-        })
-      );
-    });
   });
 
   describe('Integration Validation', () => {

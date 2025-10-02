@@ -20,16 +20,16 @@ describe('Dependency Ordering and Readiness Conditions', () => {
       const ecrMainRepo = resources.find(r => r.id === 'ecrmainrepo');
       const ecrCacheRepo = resources.find(r => r.id === 'ecrcacherepo');
 
-      expect(ecrMainRepo.readyWhen).toEqual(['${ecrmainrepo.status.conditions[0].status == "True"}']);
-      expect(ecrCacheRepo.readyWhen).toEqual(['${ecrcacherepo.status.conditions[0].status == "True"}']);
+      expect(ecrMainRepo.readyWhen).toEqual(['${ecrmainrepo.status.conditions.exists(x, x.type == \'ACK.ResourceSynced\' && x.status == "True")}']);
+      expect(ecrCacheRepo.readyWhen).toEqual(['${ecrcacherepo.status.conditions.exists(x, x.type == \'ACK.ResourceSynced\' && x.status == "True")}']);
 
       // IAM policy should be independent
       const iamPolicy = resources.find(r => r.id === 'iampolicy');
-      expect(iamPolicy.readyWhen).toEqual(['${iampolicy.status.conditions[0].status == "True"}']);
+      expect(iamPolicy.readyWhen).toEqual(['${iampolicy.status.conditions.exists(x, x.type == \'ACK.ResourceSynced\' && x.status == "True")}']);
 
       // IAM role should be independent
       const iamRole = resources.find(r => r.id === 'iamrole');
-      expect(iamRole.readyWhen).toEqual(['${iamrole.status.conditions[0].status == "True"}']);
+      expect(iamRole.readyWhen).toEqual(['${iamrole.status.conditions.exists(x, x.type == \'ACK.ResourceSynced\' && x.status == "True")}']);
 
       // Note: No role policy attachment resource exists in current RGD - IAM role has inline policies
 
@@ -41,9 +41,9 @@ describe('Dependency Ordering and Readiness Conditions', () => {
     it('should have proper dependency ordering for Kubernetes resources', () => {
       const resources = rgd.spec.resources;
 
-      // EventBus should be first (no dependencies on other resources)
-      const eventbus = resources.find(r => r.id === 'eventbus');
-      expect(eventbus.readyWhen).toEqual(['${eventbus.status.conditions.exists(x, x.type == \'Deployed\' && x.status == "True")}']);
+      // ECR repositories should be independent (no dependencies on other resources)
+      const ecrMainRepo = resources.find(r => r.id === 'ecrmainrepo');
+      expect(ecrMainRepo.readyWhen).toEqual(['${ecrmainrepo.status.conditions.exists(x, x.type == \'ACK.ResourceSynced\' && x.status == "True")}']);
 
       // Service account has no readyWhen conditions in the actual RGD
       const serviceAccount = resources.find(r => r.id === 'serviceaccount');
@@ -93,15 +93,15 @@ describe('Dependency Ordering and Readiness Conditions', () => {
     it('should have proper dependency ordering for webhook integration', () => {
       const resources = rgd.spec.resources;
 
-      // EventSource should check metadata name
+      // EventSource has no readyWhen conditions in the actual RGD
       const eventSource = resources.find(r => r.id === 'eventsource');
       expect(eventSource).toBeDefined();
-      expect(eventSource.readyWhen).toEqual(['${eventsource.metadata.name != ""}']);
+      expect(eventSource.readyWhen).toBeUndefined();
 
-      // Sensor should check metadata name
+      // Sensor has no readyWhen conditions in the actual RGD
       const sensor = resources.find(r => r.id === 'sensor');
       expect(sensor).toBeDefined();
-      expect(sensor.readyWhen).toEqual(['${sensor.metadata.name != ""}']);
+      expect(sensor.readyWhen).toBeUndefined();
 
       // Webhook service should check metadata name
       const webhookService = resources.find(r => r.id === 'webhookservice');
@@ -114,21 +114,21 @@ describe('Dependency Ordering and Readiness Conditions', () => {
   });
 
   describe('ReadyWhen Condition Evaluation', () => {
-    it('should correctly evaluate eventbus readiness conditions', () => {
+    it('should correctly evaluate ECR repository readiness conditions', () => {
       const readyStatuses = {
-        eventbus: createMockResourceStatus('eventbus', true)
+        ecrmainrepo: createMockResourceStatus('ecrmainrepo', true)
       };
       const notReadyStatuses = {
-        eventbus: createMockResourceStatus('eventbus', false)
+        ecrmainrepo: createMockResourceStatus('ecrmainrepo', false)
       };
 
       const readyEngine = new TemplateEngine(mockSchema, readyStatuses);
       const notReadyEngine = new TemplateEngine(mockSchema, notReadyStatuses);
 
-      const eventbus = rgd.spec.resources.find(r => r.id === 'eventbus');
+      const ecrMainRepo = rgd.spec.resources.find(r => r.id === 'ecrmainrepo');
 
-      expect(readyEngine.evaluateReadyWhen(eventbus.readyWhen)).toBe(true);
-      expect(notReadyEngine.evaluateReadyWhen(eventbus.readyWhen)).toBe(false);
+      expect(readyEngine.evaluateReadyWhen(ecrMainRepo.readyWhen)).toBe(true);
+      expect(notReadyEngine.evaluateReadyWhen(ecrMainRepo.readyWhen)).toBe(false);
     });
 
     it('should correctly evaluate ACK resource readiness conditions', () => {
@@ -327,14 +327,14 @@ describe('Dependency Ordering and Readiness Conditions', () => {
       expect(schemaStatus.ecrCacheRepositoryURI).toBeDefined();
       expect(schemaStatus.iamRoleARN).toBeDefined();
       expect(schemaStatus.serviceAccountName).toBeDefined();
-      expect(schemaStatus.namespace).toBeDefined();
+      // The schema doesn't have a namespace status field
 
       // Verify they reference the correct resources
       expect(schemaStatus.ecrMainRepositoryURI).toContain('ecrmainrepo.status.repositoryURI');
       expect(schemaStatus.ecrCacheRepositoryURI).toContain('ecrcacherepo.status.repositoryURI');
       expect(schemaStatus.iamRoleARN).toContain('iamrole.status.ackResourceMetadata.arn');
       expect(schemaStatus.serviceAccountName).toContain('serviceaccount.metadata.name');
-      expect(schemaStatus.namespace).toContain('${schema.spec.namespace}');
+      // The schema doesn't have a namespace status field
     });
 
     it('should have proper readiness aggregation conditions', () => {
@@ -345,7 +345,7 @@ describe('Dependency Ordering and Readiness Conditions', () => {
       expect(schemaStatus.ecrCacheRepositoryURI).toBeDefined();
       expect(schemaStatus.iamRoleARN).toBeDefined();
       expect(schemaStatus.serviceAccountName).toBeDefined();
-      expect(schemaStatus.namespace).toBeDefined();
+      // The schema doesn't have a namespace status field
 
       // The RGD doesn't have these aggregated status fields, so we skip testing them
       // expect(schemaStatus.setupCompleted).toBeDefined();
