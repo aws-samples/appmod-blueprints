@@ -34,3 +34,5 @@ spec:
   gitlab:
     hostname: ${{values.gitlab_hostname}}
     username: ${{values.git_username}}
+  hub:
+    hostname: ${{values.argocd_hostname}}
