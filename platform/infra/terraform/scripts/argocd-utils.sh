@@ -205,7 +205,7 @@ delete_argocd_apps() {
         while kubectl get application.argoproj.io "$name" -n "$namespace" >/dev/null 2>&1; do
             local elapsed=$(($(date +%s) - delete_start))
             if [ $elapsed -ge $delete_timeout ]; then
-                echo "Force deleting stuck application: $name"
+                log "Force deleting stuck application: $name"
                 kubectl patch application.argoproj.io "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
                 kubectl delete application.argoproj.io "$name" -n "$namespace" --force --grace-period=0 2>/dev/null || true
                 break
@@ -213,4 +213,10 @@ delete_argocd_apps() {
             sleep 5
         done
     done
+
+    log "Deleting ArgoCD namespace..."
+    if ! kubectl delete namespace argocd --timeout=60s 2>/dev/null; then
+        log "ArgoCD namespace didn't delete gracefully, Force deleting..."
+        kubectl delete namespace argocd --force --grace-period=0 2>/dev/null || true
+    fi
 }
