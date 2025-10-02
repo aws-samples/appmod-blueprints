@@ -1344,11 +1344,6 @@ spec:
                    parameters:
                      - src:
                          dependencyName: gitlab-webhook
-                         dataKey: body.commits.0.id
-                       dest: spec.arguments.parameters.0.value
-                       operation: prepend
-                     - src:
-                         dependencyName: gitlab-webhook
                          dataKey: body.ref
                        dest: spec.arguments.parameters.1.value
                        operation: overwrite
