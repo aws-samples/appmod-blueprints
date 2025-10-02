@@ -746,19 +746,35 @@ spec:
 
                      echo "Configuring GitLab webhook to point to Argo Events endpoint: $$webhook_url"
 
+                     echo "API URL: $$api_url"
+                     echo "Webhook URL: $$webhook_url"
+                     echo "GitLab Token: ${gitlab_token:0:10}..."
+                     
                      # Check if webhook already exists
+                     echo "Checking existing webhooks..."
                      existing_webhooks=$(curl -k -X 'GET' "$$api_url" \
                        -H "accept: application/json" \
-                       -H "Authorization: token $$gitlab_token" \
-                       -H "Content-Type: application/json" 2>/dev/null || echo "[]")
-
-                     webhook_exists=$(echo "$$existing_webhooks" | jq -r --arg url "$$webhook_url" '.[] | select(.config.url == $url) | .id')
+                       -H "Authorization: Bearer $$gitlab_token" \
+                       -H "Content-Type: application/json" -w "HTTP_CODE:%{http_code}" 2>/dev/null)
+                     
+                     http_code=$(echo "$$existing_webhooks" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+                     response_body=$(echo "$$existing_webhooks" | sed 's/HTTP_CODE:[0-9]*$//')
+                     
+                     echo "HTTP Code: $$http_code"
+                     echo "Response: $$response_body"
+                     
+                     if [ "$$http_code" = "200" ]; then
+                       webhook_exists=$(echo "$$response_body" | jq -r --arg url "$$webhook_url" '.[] | select(.url == $url) | .id' 2>/dev/null || echo "")
+                     else
+                       echo "Failed to get existing webhooks, HTTP code: $$http_code"
+                       webhook_exists=""
+                     fi
 
                      if [ -z "$$webhook_exists" ] || [ "$$webhook_exists" = "null" ]; then
                        echo "Creating new GitLab webhook for Argo Events integration"
                        webhook_response=$(curl -k -X 'POST' "$$api_url" \
                          -H "accept: application/json" \
-                         -H "Authorization: token $$gitlab_token" \
+                         -H "Authorization: Bearer $$gitlab_token" \
                          -H "Content-Type: application/json" \
                          -d '{
                            "url": "'$$webhook_url'",
@@ -776,12 +792,18 @@ spec:
                            "enable_ssl_verification": false,
                            "token": "",
                            "push_events_branch_filter": "main"
-                         }' 2>/dev/null)
+                         }' -w "HTTP_CODE:%{http_code}" 2>/dev/null)
                        
-                       if echo "$$webhook_response" | jq -e '.id' > /dev/null 2>&1; then
-                         echo "GitLab webhook created successfully with ID: $$(echo "$$webhook_response" | jq -r '.id')"
+                       create_http_code=$(echo "$$webhook_response" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+                       create_response_body=$(echo "$$webhook_response" | sed 's/HTTP_CODE:[0-9]*$//')
+                       
+                       echo "Create HTTP Code: $$create_http_code"
+                       echo "Create Response: $$create_response_body"
+                       
+                       if [ "$$create_http_code" = "201" ] && echo "$$create_response_body" | jq -e '.id' > /dev/null 2>&1; then
+                         echo "GitLab webhook created successfully with ID: $$(echo "$$create_response_body" | jq -r '.id')"
                        else
-                         echo "Warning: Failed to create webhook, but continuing. Response: $$webhook_response"
+                         echo "Warning: Failed to create webhook. HTTP Code: $$create_http_code, Response: $$create_response_body"
                        fi
                      else
                        echo "GitLab webhook already exists with ID: $$webhook_exists"
