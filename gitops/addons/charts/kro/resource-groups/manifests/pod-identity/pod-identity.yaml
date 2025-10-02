@@ -3,7 +3,7 @@ kind: ResourceGraphDefinition
 metadata:
   name: podidentity.kro.run
   annotations:
-    argocd.argoproj.io/sync-wave: "-5"
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   schema:
     apiVersion: v1alpha1

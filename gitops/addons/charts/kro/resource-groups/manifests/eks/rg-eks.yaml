@@ -5,7 +5,7 @@ kind: ResourceGraphDefinition
 metadata:
   name: ekscluster.kro.run
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "0"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   schema:
@@ -118,7 +118,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             argocd.argoproj.io/sync-wave: "1"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -167,7 +167,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             argocd.argoproj.io/sync-wave: "1"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -209,7 +209,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             clusterRoleArn: "${clusterRole.status.ackResourceMetadata.arn}"
             nodeRoleArn: "${nodeRole.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
@@ -270,7 +270,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             clusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -295,7 +295,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
             #force dependency on ekscluster
             eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
@@ -365,7 +365,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             # GitOps Bridge
             accountId: "${schema.spec.accountId}"
             aws_account_id: "${schema.spec.accountId}"
@@ -449,7 +449,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -475,7 +475,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -505,7 +505,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-external-secrets-role"
@@ -544,7 +544,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -574,7 +574,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-ack-iam"
@@ -619,7 +619,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             policy: "${externalDnsPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -661,7 +661,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -688,7 +688,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-adot-collector-role"
@@ -728,7 +728,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -759,7 +759,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-kyverno-policy-reporter-role"
@@ -799,7 +799,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -829,7 +829,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cni-metrics-helper-policy"
@@ -863,7 +863,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cni-metrics-helper-role"
@@ -903,7 +903,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -933,7 +933,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cloudwatch-observability-role"
@@ -973,7 +973,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -1003,7 +1003,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-ack-iam-policy"
@@ -1096,7 +1096,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             policy: "${ackIamPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -1138,7 +1138,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -1164,7 +1164,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-ack-eks-policy"
@@ -1201,7 +1201,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             policy: "${ackEksPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -1243,7 +1243,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/sync-wave: "2"
+            argocd.argoproj.io/sync-wave: "0"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"

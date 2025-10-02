@@ -4,7 +4,7 @@ metadata:
   name: vpc.kro.run
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   schema:
     apiVersion: v1alpha1
