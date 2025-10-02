@@ -51,6 +51,7 @@ spec:
                controller: false
           annotations:
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+             ecr.services.k8s.aws/force-delete: "true"
        spec:
           name: >-
              ${schema.spec.aws.resourcePrefix}/${schema.spec.application.name}
