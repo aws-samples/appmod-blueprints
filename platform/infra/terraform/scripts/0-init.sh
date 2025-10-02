@@ -67,17 +67,29 @@ main() {
         print_status "INFO" "Waiting for Backstage build to complete..."
         local elapsed=0
         local check_interval=$CHECK_INTERVAL
-        while check_backstage_build_status; do
-            if [ $elapsed -ge $WAIT_TIMEOUT ]; then
-                print_status "ERROR" "Backstage build timed out after ${WAIT_TIMEOUT}s"
-                return 1
+        local status 
+        while true; do
+            check_backstage_build_status
+            status=$?
+            if [ $status -eq 2 ]; then
+                if [ $elapsed -ge $WAIT_TIMEOUT ]; then
+                    print_status "ERROR" "Backstage build timed out after ${WAIT_TIMEOUT}s"
+                    exit 1
+                fi
+                print_status "INFO" "Backstage build still running... (${elapsed}s elapsed)"
+                sleep $check_interval
+                elapsed=$((elapsed + check_interval))
+            else
+                break
             fi
-            print_status "INFO" "Backstage build still running... (${elapsed}s elapsed)"
-            sleep $check_interval
-            elapsed=$((elapsed + check_interval))
         done
         
-        print_status "SUCCESS" "Backstage build completed"
+        if [ $status -eq 0 ]; then
+            print_status "SUCCESS" "Backstage build completed"
+        else
+            print_status "ERROR" "Backstage build failed with exit code $status"
+            exit 1
+        fi
     fi
 
     print_status "SUCCESS" "Bootstrap deployment process completed successfully!"
