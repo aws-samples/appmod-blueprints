@@ -41,6 +41,7 @@ spec:
             controller: false
         annotations:
           argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         cidrBlocks: 
