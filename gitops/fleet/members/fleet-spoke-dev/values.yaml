@@ -25,3 +25,4 @@ externalSecret:
     enable_ack_iam: "true"
     enable_ack_s3: "true"
     enable_kubevela: "true"
+    enable_platform_manifests: "true"
