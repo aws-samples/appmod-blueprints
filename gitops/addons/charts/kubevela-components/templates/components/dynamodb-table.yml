@@ -1,0 +1,63 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  annotations:
+    definition.oam.dev/alias: ""
+    definition.oam.dev/description: Amazon DynamoDB Table
+  name: dynamodb-table
+spec:
+  schematic:
+    cue:
+      template: |
+        output: {
+        	apiVersion: "dynamodb.aws.upbound.io/v1beta1"
+        	kind:       "Table"
+        	metadata: name: parameter.tableName
+        	spec: forProvider: {
+        		attribute: [
+        			{
+        				name: parameter.partitionKeyName
+        				type: "S"
+        			},
+        			{
+        				name: parameter.sortKeyName
+        				type: "S"
+        			},
+        		]
+        		hashKey:      parameter.partitionKeyName
+        		rangeKey:     parameter.sortKeyName
+        		billingMode:  "PROVISIONED"
+        		readCapacity: parameter.readCapacity
+        		region:       parameter.region
+        		tags: Environment: parameter.environment
+        		writeCapacity: parameter.writeCapacity
+        	}
+        }
+
+        parameter: {
+        	// Table name
+        	tableName: string
+
+        	// Partition key name
+        	partitionKeyName: string
+
+        	// Sort key name
+        	sortKeyName: string
+
+        	// Read capacity units
+        	readCapacity: *20 | int
+
+        	// Write capacity units
+        	writeCapacity: *20 | int
+
+        	// AWS region
+        	region: string
+
+        	// Environment tag
+        	environment: *"dev" | string
+        }
+  workload:
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+

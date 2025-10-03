@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kubevela-components
+description: KubeVela component definitions, traits, and Crossplane compositions for the platform
+type: application
+version: 0.1.0
+appVersion: "1.0"
