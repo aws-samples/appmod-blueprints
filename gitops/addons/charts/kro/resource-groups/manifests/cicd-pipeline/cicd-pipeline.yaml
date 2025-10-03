@@ -313,6 +313,8 @@ spec:
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
        rules:
           # Minimal permissions for CI/CD operations
           - apiGroups: ['']
@@ -374,6 +376,8 @@ spec:
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
        subjects:
           - kind: ServiceAccount
             name: ${schema.spec.name}-sa
