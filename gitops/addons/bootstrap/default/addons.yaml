@@ -923,6 +923,7 @@ crossplane-aws:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
