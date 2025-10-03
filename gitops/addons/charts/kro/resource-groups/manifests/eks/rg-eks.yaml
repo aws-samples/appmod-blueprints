@@ -5,8 +5,8 @@ kind: ResourceGraphDefinition
 metadata:
   name: ekscluster.kro.run
   annotations:
+    argocd.argoproj.io/sync-wave: "0"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "-1"
 spec:
   schema:
     apiVersion: v1alpha1
@@ -103,7 +103,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cluster-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cluster-role"
@@ -136,7 +144,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cluster-node-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cluster-node-role"
@@ -169,7 +185,15 @@ spec:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}"
           # implicit dependencies with roles
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             clusterRoleArn: "${clusterRole.status.ackResourceMetadata.arn}"
             nodeRoleArn: "${nodeRole.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
@@ -222,7 +246,15 @@ spec:
         metadata:
           name: eks-pod-identity-agent
           namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             clusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -239,7 +271,15 @@ spec:
         kind: Role
         metadata:
           name: "${schema.spec.name}-argocd-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
             #force dependency on ekscluster
             eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
@@ -301,7 +341,15 @@ spec:
             enable_ack_efs: "${schema.spec.addons.enable_ack_efs}"
             enable_aws_efs_csi_driver: "${schema.spec.addons.enable_aws_efs_csi_driver}"
 
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             # GitOps Bridge
             accountId: "${schema.spec.accountId}"
             aws_account_id: "${schema.spec.accountId}"
@@ -353,7 +401,6 @@ spec:
             # karpenter_sqs_queue_name: "${schema.spec.addons.karpenter_sqs_queue_name}"
 
         type: Opaque
-        # TODO bug in KRO, it always see some drifts..
         stringData:
           name: "${schema.spec.name}"
           server: "${ekscluster.status.endpoint}"
@@ -377,7 +424,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-access-entry"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -395,7 +450,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-access-entry-admin"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -417,7 +480,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-external-secrets-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-external-secrets-role"
@@ -448,7 +519,15 @@ spec:
         metadata:
           name: "${schema.spec.name}-external-secrets"
           namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -470,7 +549,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-iam"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-ack-iam"
@@ -507,7 +594,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-external-dns-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             policy: "${externalDnsPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -541,7 +636,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-external-dns"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -560,7 +663,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-adot-collector-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-adot-collector-role"
@@ -592,7 +703,15 @@ spec:
         metadata:
           name: "${schema.spec.name}-adot-collector"
           namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -615,7 +734,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-kyverno-policy-reporter-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-kyverno-policy-reporter-role"
@@ -647,7 +774,15 @@ spec:
         metadata:
           name: "${schema.spec.name}-kyverno-policy-reporter"
           namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -669,7 +804,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cni-metrics-helper-policy"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cni-metrics-helper-policy"
@@ -695,7 +838,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cni-metrics-helper-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cni-metrics-helper-role"
@@ -727,7 +878,15 @@ spec:
         metadata:
           name: "${schema.spec.name}-cni-metrics-helper"
           namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -749,7 +908,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cloudwatch-observability-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cloudwatch-observability-role"
@@ -781,7 +948,15 @@ spec:
         metadata:
           name: "${schema.spec.name}-cloudwatch-observability"
           namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -803,7 +978,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-iam-policy"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-ack-iam-policy"
@@ -888,7 +1071,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-iam-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             policy: "${ackIamPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -922,7 +1113,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-iam"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -940,7 +1139,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-eks-policy"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-ack-eks-policy"
@@ -969,7 +1176,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-eks-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             policy: "${ackEksPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -1003,7 +1218,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-eks"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"

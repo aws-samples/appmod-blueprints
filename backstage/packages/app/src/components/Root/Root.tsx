@@ -82,7 +82,7 @@ export const Root = ({ children }: PropsWithChildren<{}>) => (
         <SidebarScrollWrapper>
           {/* Items in this group will be scrollable if they run out of space */}
           <SidebarItem icon={MapIcon} to="tech-radar" text="Tech Radar" />
-          <SidebarItem icon={AccountTreeIcon} to="kro" text="Kro ResourceGroups" />
+
         </SidebarScrollWrapper>
       </SidebarGroup>
       <SidebarSpace />

@@ -169,7 +169,7 @@ template: {
 			}
 			spec: {
 				secretStoreRef: {
-					name: "secrets-manager-cs"
+					name: "aws-secrets-manager"
 					kind: "ClusterSecretStore"
 				}
 				target: {

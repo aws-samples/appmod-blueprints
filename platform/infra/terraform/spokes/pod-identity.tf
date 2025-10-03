@@ -171,87 +171,29 @@ module "cni_metrics_helper_pod_identity" {
 }
 
 ################################################################################
-# ACK S3 Controller EKS Access
+# Crossplane Provider AWS EKS Access
 ################################################################################
-module "ack_s3_pod_identity" {
-  count   = local.aws_addons.enable_ack_s3 ? 1 : 0
+module "crossplane_provider_aws_pod_identity" {
+  count   = local.aws_addons.enable_crossplane ? 1 : 0
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 1.11.0"
 
-  name = "ack-s3-controller"
+  name = "crossplane-provider-aws"
 
   additional_policy_arns = {
-    AmazonS3FullAccess = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    AdministratorAccess = "arn:aws:iam::aws:policy/AdministratorAccess"
   }
-
-  policy_statements = [
-    {
-      sid    = "S3AllPermission"
-      effect = "Allow"
-      actions = [
-        "s3:*",
-        "s3-object-lambda:*"
-      ]
-      resources = ["*"]
-    },
-    {
-      sid    = "S3ReplicationPassRole"
-      effect = "Allow"
-      actions = ["iam:PassRole"]
-      resources = ["*"]
-      condition = {
-        StringEquals = {
-          "iam:PassedToService" = "s3.amazonaws.com"
-        }
-      }
-    }
-  ]
 
   # Pod Identity Associations
   associations = {
     addon = {
       cluster_name    = module.eks.cluster_name
-      namespace       = "ack-system"
-      service_account = "ack-s3-controller"
+      namespace       = "crossplane-system"
+      service_account = "provider-aws"
     }
   }
 
   tags = local.tags
 }
 
-################################################################################
-# ACK DynamoDB Controller EKS Access
-################################################################################
-module "ack_dynamodb_pod_identity" {
-  count   = local.aws_addons.enable_ack_dynamodb ? 1 : 0
-  source  = "terraform-aws-modules/eks-pod-identity/aws"
-  version = "~> 1.11.0"
 
-  name = "ack-dynamodb-controller"
-
-  additional_policy_arns = {
-    AmazonDynamoDBFullAccess = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
-  }
-
-  policy_statements = [
-    {
-      sid    = "DynamoDBAllPermission"
-      effect = "Allow"
-      actions = [
-        "dynamodb:*"
-      ]
-      resources = ["*"]
-    }
-  ]
-
-  # Pod Identity Associations
-  associations = {
-    addon = {
-      cluster_name    = module.eks.cluster_name
-      namespace       = "ack-system"
-      service_account = "ack-dynamodb-controller"
-    }
-  }
-
-  tags = local.tags
-}

@@ -21,7 +21,7 @@ import {
 } from '@material-ui/icons';
 import { useEntity } from '@backstage/plugin-catalog-react';
 import { useRouteRef } from '@backstage/core-plugin-api';
-import { catalogEntityRouteRef } from '@backstage/plugin-catalog-react';
+import { entityRouteRef } from '@backstage/plugin-catalog-react';
 import { Entity } from '@backstage/catalog-model';
 
 const useStyles = makeStyles((theme) => ({
@@ -59,7 +59,7 @@ interface RelatedResource {
 export const KroNavigationHelper: React.FC = () => {
   const classes = useStyles();
   const { entity } = useEntity();
-  const catalogEntityRoute = useRouteRef(catalogEntityRouteRef);
+  const catalogEntityRoute = useRouteRef(entityRouteRef);
 
   // Extract related resources from entity annotations and relations
   const getRelatedResources = (): RelatedResource[] => {
@@ -193,7 +193,7 @@ export const KroNavigationHelper: React.FC = () => {
                   </ListItemIcon>
                   <ListItemText
                     primary={
-                      <Box display="flex" alignItems="center" gap={1}>
+                      <Box display="flex" alignItems="center" style={{ gap: 8 }}>
                         <Typography variant="body2">
                           {resource.name}
                         </Typography>

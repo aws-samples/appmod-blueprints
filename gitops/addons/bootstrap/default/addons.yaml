@@ -923,6 +923,7 @@ crossplane-aws:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
@@ -1119,3 +1120,19 @@ backstage:
         - /roleRef
         - /metadata/labels
         - /metadata/annotations
+
+platform-manifests:
+  enabled: false
+  namespace: default
+  defaultVersion: '1.0.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/platform-manifests'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '10'
+  selector:
+    matchExpressions:
+      - key: enable_platform_manifests
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'

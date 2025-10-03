@@ -21,7 +21,7 @@ spec:
     namespace: ${{values.namespace}}
     name: peeks-spoke-prod
   source:
-    repoURL: https://${{values.gitlab_hostname}}/${{values.gituser}}/${{values.appname}}
+    repoURL: https://${{values.gitlab_hostname}}/${{values.git_username}}/${{values.appname}}.git
     targetRevision: main
     # Use the deployment path parameter from the template
     path: ${{values.deployment_path}}/prod

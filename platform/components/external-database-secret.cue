@@ -37,7 +37,7 @@ template: {
 			refreshInterval: "1h"
 			secretStoreRef: {
 				kind: "ClusterSecretStore"
-				name: "secrets-manager-cs"
+				name: "aws-secret-manager"
 			}
 			target: {
 				name:           parameter.secret_name

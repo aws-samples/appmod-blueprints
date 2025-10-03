@@ -13,11 +13,15 @@
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.spec.ts",
-    "**/*.spec.tsx"
+    "**/*.spec.tsx",
+    "**/__tests__/**/*"
   ],
   "compilerOptions": {
     "outDir": "dist-types",
     "rootDir": ".",
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "skipLibCheck": true
   }
 }

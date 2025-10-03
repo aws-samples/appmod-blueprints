@@ -34,6 +34,9 @@ backend.add(
   import('@backstage/plugin-catalog-backend-module-scaffolder-entity-model'),
 );
 
+// Add GitLab integration for catalog processing
+backend.add(import('@backstage/plugin-catalog-backend-module-gitlab'));
+
 // See https://backstage.io/docs/features/software-catalog/configuration#subscribing-to-catalog-errors
 backend.add(import('@backstage/plugin-catalog-backend-module-logs'));
 
@@ -82,6 +85,6 @@ backend.add(kroPermissionsModule);
 backend.add(kroAuditModule);
 
 // Kubernetes Kro integration module
-backend.add(import('./plugins/kubernetes-kro-integration').then(m => m.kubernetesKroIntegrationModule));
+backend.add(import('./plugins/kubernetes-kro-integration'));
 
 backend.start();

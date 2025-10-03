@@ -1,202 +1,312 @@
+import { Config } from '@backstage/config';
+import { Entity } from '@backstage/catalog-model';
 import {
   CatalogProcessor,
   CatalogProcessorEmit,
+  LocationSpec,
   processingResult,
 } from '@backstage/plugin-catalog-node';
-import { LocationSpec } from '@backstage/plugin-catalog-common';
-import { Entity } from '@backstage/catalog-model';
-import { Config } from '@backstage/config';
-import { LoggerService } from '@backstage/backend-plugin-api';
 
-/**
- * Catalog processor for Kro ResourceGroup entities
- * Processes ResourceGroups discovered by the Kubernetes Ingestor
- * and transforms them into Backstage catalog entities
- */
 export class KroResourceGroupProcessor implements CatalogProcessor {
+  private kubernetesClient: any;
+
   constructor(
-    private readonly config: Config,
-    private readonly logger: LoggerService,
-  ) { }
+    private config: Config,
+    private logger: any,
+  ) {
+    this.initializeKubernetesClient();
+  }
+
+  private initializeKubernetesClient() {
+    // Initialize Kubernetes client based on configuration
+    // This would be implemented with actual Kubernetes client
+  }
 
   getProcessorName(): string {
     return 'KroResourceGroupProcessor';
   }
 
-  async validateEntityKind(entity: Entity): Promise<boolean> {
-    return (
-      entity.apiVersion === 'backstage.io/v1alpha1' &&
-      entity.kind === 'Component' &&
-      entity.spec?.type === 'kro-resource-group'
-    );
-  }
-
-  async preProcessEntity(
-    entity: Entity,
-    _location: LocationSpec,
+  async readLocation(
+    location: LocationSpec,
+    _optional: boolean,
     emit: CatalogProcessorEmit,
-  ): Promise<Entity> {
-    // Only process Kro ResourceGroup entities
-    if (!await this.validateEntityKind(entity)) {
-      return entity;
+  ): Promise<boolean> {
+    if (location.type === 'kro-resource-graph-definitions') {
+      await this.processResourceGraphDefinitions(location.target, emit);
+      return true;
     }
 
-    try {
-      // Enhance entity with ResourceGroup-specific metadata
-      const enhancedEntity = await this.enhanceResourceGroupEntity(entity);
-
-      // Emit relationships for ResourceGroup dependencies
-      await this.emitResourceGroupRelationships(enhancedEntity, emit);
-
-      this.logger.info(`Processed ResourceGroup entity: ${entity.metadata.name}`, {
-        processor: 'KroResourceGroupProcessor',
-        entityName: entity.metadata.name,
-        namespace: entity.metadata.namespace,
-      });
-
-      return enhancedEntity;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to process ResourceGroup entity: ${entity.metadata.name}`, {
-        processor: 'KroResourceGroupProcessor',
-        error: errorMessage,
-        entityName: entity.metadata.name,
-      });
-
-      // Return original entity if processing fails
-      return entity;
+    if (location.type === 'kro-resource-groups') {
+      await this.processResourceGroups(location.target, emit);
+      return true;
     }
+
+    return false;
   }
 
-  /**
-   * Enhance ResourceGroup entity with additional metadata and annotations
-   */
-  private async enhanceResourceGroupEntity(entity: Entity): Promise<Entity> {
-    const enhanced = { ...entity };
-
-    // Ensure proper annotations for ResourceGroups
-    if (!enhanced.metadata.annotations) {
-      enhanced.metadata.annotations = {};
-    }
-
-    // Add ResourceGroup-specific annotations
-    if (!enhanced.metadata.annotations['kro.run/resource-group']) {
-      enhanced.metadata.annotations['kro.run/resource-group'] = 'true';
-    }
-
-    // Add Kubernetes cluster information if available
-    const kubernetesId = enhanced.metadata.annotations['backstage.io/kubernetes-id'];
-    if (kubernetesId && !enhanced.metadata.annotations['backstage.io/kubernetes-cluster']) {
-      // Extract cluster name from kubernetes-id or use default
-      const clusterName = this.extractClusterName(kubernetesId);
-      enhanced.metadata.annotations['backstage.io/kubernetes-cluster'] = clusterName;
-    }
-
-    // Ensure proper labels
-    if (!enhanced.metadata.labels) {
-      enhanced.metadata.labels = {};
-    }
-
-    // Add ResourceGroup type label
-    enhanced.metadata.labels['kro.run/type'] = 'resource-group';
-
-    // Add lifecycle label if not present
-    if (!enhanced.spec?.lifecycle) {
-      if (!enhanced.spec) enhanced.spec = {};
-      enhanced.spec.lifecycle = 'production';
-    }
-
-    // Ensure owner is set
-    if (!enhanced.spec?.owner) {
-      if (!enhanced.spec) enhanced.spec = {};
-      enhanced.spec.owner = 'platform-team';
-    }
-
-    return enhanced;
-  }
-
-  /**
-   * Emit relationships for ResourceGroup entities
-   */
-  private async emitResourceGroupRelationships(
-    entity: Entity,
+  private async processResourceGraphDefinitions(
+    cluster: string,
     emit: CatalogProcessorEmit,
   ): Promise<void> {
     try {
-      // Extract ResourceGroup definition from annotations
-      const resourceGroupData = entity.metadata.annotations?.['kro.run/definition'];
+      this.logger.info('Processing ResourceGraphDefinitions', { cluster });
 
-      if (resourceGroupData) {
-        const definition = JSON.parse(resourceGroupData);
+      const rgds = await this.kubernetesClient.listResourceGraphDefinitions(cluster);
 
-        // Emit relationships for managed resources
-        if (definition.spec?.resources) {
-          for (const resource of definition.spec.resources) {
-            if (resource.template?.metadata?.name) {
-              emit(
-                processingResult.relation({
-                  source: {
-                    kind: entity.kind,
-                    namespace: entity.metadata.namespace || 'default',
-                    name: entity.metadata.name,
-                  },
-                  target: {
-                    kind: resource.template.kind || 'Component',
-                    namespace: resource.template.metadata.namespace || entity.metadata.namespace || 'default',
-                    name: resource.template.metadata.name,
-                  },
-                  type: 'ownedBy',
-                }),
-              );
-            }
+      for (const rgd of rgds) {
+        try {
+          const entity = this.transformResourceGraphDefinitionToEntity(rgd, cluster);
+          if (entity) {
+            emit(processingResult.entity({
+              type: 'kro-resource-graph-definitions',
+              target: cluster,
+            }, entity));
           }
-        }
-
-        // Emit system relationship if specified
-        if (entity.spec?.system) {
-          emit(
-            processingResult.relation({
-              source: {
-                kind: entity.kind,
-                namespace: entity.metadata.namespace || 'default',
-                name: entity.metadata.name,
-              },
-              target: {
-                kind: 'System',
-                namespace: entity.metadata.namespace || 'default',
-                name: String(entity.spec?.system),
-              },
-              type: 'partOf',
-            }),
-          );
+        } catch (error) {
+          this.logger.warn('Skipping malformed ResourceGraphDefinition', {
+            name: rgd.metadata?.name,
+            namespace: rgd.metadata?.namespace,
+            error: (error as Error).message,
+          });
         }
       }
     } catch (error) {
-      this.logger.warn(`Failed to emit relationships for ResourceGroup: ${entity.metadata.name}`, {
-        error: error instanceof Error ? error.message : String(error),
+      if ((error as Error).message.includes('Unauthorized')) {
+        this.logger.error('Authentication failed for cluster', {
+          cluster,
+          errorType: 'AUTHENTICATION_FAILED',
+          error: (error as Error).message,
+        });
+      } else {
+        this.logger.error('Failed to fetch ResourceGraphDefinitions', {
+          cluster,
+          error: (error as Error).message,
+        });
+      }
+    }
+  }
+
+  private async processResourceGroups(
+    cluster: string,
+    emit: CatalogProcessorEmit,
+  ): Promise<void> {
+    try {
+      this.logger.info('Processing ResourceGroups', { cluster });
+
+      const resourceGroups = await this.kubernetesClient.listResourceGroups(cluster);
+
+      for (const rg of resourceGroups) {
+        try {
+          const entity = this.transformResourceGroupToEntity(rg, cluster);
+          if (entity) {
+            emit(processingResult.entity({
+              type: 'kro-resource-groups',
+              target: cluster,
+            }, entity));
+          }
+        } catch (error) {
+          this.logger.warn('Skipping malformed ResourceGroup', {
+            name: rg.metadata?.name,
+            namespace: rg.metadata?.namespace,
+            error: (error as Error).message,
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error('Failed to fetch ResourceGroups', {
+        cluster,
+        error: (error as Error).message,
       });
     }
   }
 
-  /**
-   * Extract cluster name from kubernetes-id annotation
-   */
-  private extractClusterName(kubernetesId: string): string {
-    // Try to extract cluster name from kubernetes-id format
-    // Expected format: cluster-name:namespace:resource-name
-    const parts = kubernetesId.split(':');
-    if (parts.length >= 1) {
-      return parts[0];
+  private transformResourceGraphDefinitionToEntity(rgd: any, cluster: string): Entity | null {
+    if (!rgd.metadata?.name) {
+      throw new Error('ResourceGraphDefinition missing required name');
     }
 
-    // Fallback to default cluster name from config
-    const kroConfig = this.config.getOptionalConfig('kro');
-    const clusters = kroConfig?.getOptionalConfigArray('clusters') || [];
+    const name = rgd.metadata.name;
+    const namespace = rgd.metadata.namespace || 'default';
+    const labels = rgd.metadata.labels || {};
+    const annotations = rgd.metadata.annotations || {};
 
-    if (clusters.length > 0) {
-      return clusters[0].getString('name');
+    // Determine lifecycle from labels or default to production
+    const lifecycle = labels['backstage.io/lifecycle'] || 'production';
+
+    // Determine owner from annotations or default to platform-team
+    const owner = annotations['backstage.io/owner'] || 'platform-team';
+
+    const entity: Entity = {
+      apiVersion: 'backstage.io/v1alpha1',
+      kind: 'Component',
+      metadata: {
+        name,
+        namespace,
+        annotations: {
+          'backstage.io/kubernetes-id': name,
+          'kro.run/resource-graph-definition': name,
+          'backstage.io/source-location': `kro:${cluster}/${namespace}/${name}`,
+          ...annotations,
+        },
+        labels: {
+          'backstage.io/kubernetes-cluster': cluster,
+          'kro.run/version': 'v1alpha1',
+          ...labels,
+        },
+        title: annotations['kro.run/display-name'] || name,
+        description: annotations['kro.run/description'],
+      },
+      spec: {
+        type: 'kro-resource-group',
+        lifecycle,
+        owner,
+        system: annotations['backstage.io/system'],
+      },
+    };
+
+    // Add status if available
+    if (rgd.status) {
+      (entity as any).status = {
+        phase: this.extractPhase(rgd.status),
+        conditions: rgd.status.conditions || [],
+      };
+
+      // Add status annotation for failed resources
+      if ((entity as any).status.phase === 'Failed') {
+        entity.metadata.annotations!['backstage.io/status'] = 'Failed';
+      }
     }
 
-    return 'default';
+    return entity;
   }
+
+  private transformResourceGroupToEntity(rg: any, cluster: string): Entity | null {
+    if (!rg.metadata?.name) {
+      throw new Error('ResourceGroup missing required name');
+    }
+
+    const name = rg.metadata.name;
+    const namespace = rg.metadata.namespace || 'default';
+    const labels = rg.metadata.labels || {};
+    const annotations = rg.metadata.annotations || {};
+
+    // Determine lifecycle from labels or namespace
+    let lifecycle = labels['backstage.io/lifecycle'] || 'production';
+    if (namespace.startsWith('dev-') || namespace === 'development') {
+      lifecycle = 'development';
+    } else if (namespace.startsWith('staging') || namespace === 'staging') {
+      lifecycle = 'staging';
+    }
+
+    // Determine owner from annotations
+    const owner = annotations['backstage.io/owner'] ||
+      annotations['kro.run/created-by'] ||
+      'platform-team';
+
+    const entity: Entity = {
+      apiVersion: 'backstage.io/v1alpha1',
+      kind: 'Component',
+      metadata: {
+        name,
+        namespace,
+        annotations: {
+          'backstage.io/kubernetes-id': name,
+          'kro.run/resource-group': name,
+          'backstage.io/source-location': `kro:${cluster}/${namespace}/${name}`,
+          ...annotations,
+        },
+        labels: {
+          'backstage.io/kubernetes-cluster': cluster,
+          'kro.run/version': 'v1alpha1',
+          ...labels,
+        },
+        title: annotations['kro.run/display-name'] || name,
+        description: annotations['kro.run/description'],
+      },
+      spec: {
+        type: 'kro-resource-group',
+        lifecycle,
+        owner,
+        system: annotations['backstage.io/system'],
+      },
+    };
+
+    // Add relationships
+    const relations = [];
+
+    // Relationship to ResourceGraphDefinition
+    const rgdName = labels['kro.run/resource-graph-definition'];
+    if (rgdName) {
+      relations.push({
+        type: 'ownedBy',
+        targetRef: `component:${namespace}/${rgdName}`,
+      });
+    }
+
+    // Relationships to managed resources
+    if (rg.status?.managedResources) {
+      for (const resource of rg.status.managedResources) {
+        const resourceNamespace = resource.namespace || namespace;
+        relations.push({
+          type: 'dependsOn',
+          targetRef: `resource:${resourceNamespace}/${resource.name}`,
+        });
+      }
+    }
+
+    if (relations.length > 0) {
+      entity.relations = relations;
+    }
+
+    // Add status if available
+    if (rg.status) {
+      (entity as any).status = {
+        phase: this.extractPhase(rg.status),
+        conditions: rg.status.conditions || [],
+      };
+
+      // Add status annotation for failed resources
+      if ((entity as any).status.phase === 'Failed') {
+        entity.metadata.annotations!['backstage.io/status'] = 'Failed';
+      }
+    }
+
+    return entity;
+  }
+
+  private extractPhase(status: any): string {
+    if (status.phase) {
+      return status.phase;
+    }
+
+    // Determine phase from conditions
+    const readyCondition = status.conditions?.find((c: any) => c.type === 'Ready');
+    if (readyCondition) {
+      if (readyCondition.status === 'True') {
+        return 'Ready';
+      } else if (readyCondition.reason === 'Failed' || readyCondition.status === 'False') {
+        return 'Failed';
+      } else {
+        return 'Pending';
+      }
+    }
+
+    return 'Unknown';
+  }
+}
+
+// Helper function to create location for ResourceGraphDefinitions
+export function createResourceGraphDefinitionLocation(cluster: string): LocationSpec {
+  return {
+    type: 'kro-resource-graph-definitions',
+    target: cluster,
+  };
+}
+
+// Helper function to create location for ResourceGroups
+export function createResourceGroupLocation(cluster: string): LocationSpec {
+  return {
+    type: 'kro-resource-groups',
+    target: cluster,
+  };
 }

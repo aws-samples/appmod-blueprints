@@ -63,6 +63,86 @@ tasks:
       - yarn install
       - yarn tsc
 
+  test-backstage-kro:
+    desc: 'Run Kro plugin integration tests'
+    dir: ./backstage
+    cmds:
+      - |
+        echo "🧪 Running Kro Plugin Integration Tests..."
+        echo "📍 Location: backstage/packages/backend/src/plugins/__tests__"
+        echo ""
+
+        # Check if yarn is available
+        if ! command -v yarn &> /dev/null; then
+          echo "❌ yarn is required but not installed"
+          echo "💡 Please install yarn to run Kro plugin tests"
+          exit 1
+        fi
+
+        # Install dependencies if needed
+        echo "📦 Installing dependencies..."
+        yarn install
+
+        # Run Kro plugin tests
+        echo "🧪 Running Kro plugin integration tests..."
+        yarn test:kro
+    summary: |
+      Runs comprehensive Kro plugin integration tests:
+      - Plugin initialization and configuration tests
+      - ResourceGraphDefinition discovery and management tests
+      - Catalog integration and entity relationship tests
+      - Permission validation and security tests
+      - Frontend component integration tests
+
+  test-backstage-kro-frontend:
+    desc: 'Run Kro frontend component tests'
+    dir: ./backstage
+    cmds:
+      - |
+        echo "🎨 Running Kro Frontend Component Tests..."
+        echo "📍 Location: backstage/packages/app/src/components/__tests__"
+        echo ""
+
+        # Install dependencies if needed
+        echo "📦 Installing dependencies..."
+        yarn install
+
+        # Run frontend tests specifically
+        echo "🎨 Running Kro frontend component tests..."
+        yarn test --testPathPattern="KroIntegration.test.tsx" --verbose --no-coverage --passWithNoTests
+    summary: |
+      Runs Kro frontend component tests:
+      - ResourceGroup table rendering and filtering
+      - ResourceGroup details display components
+      - Create form validation and submission
+      - Catalog API integration and error handling
+      - Entity relationship display components
+
+  test-backstage-kro-backend:
+    desc: 'Run Kro backend integration tests'
+    dir: ./backstage
+    cmds:
+      - |
+        echo "⚙️  Running Kro Backend Integration Tests..."
+        echo "📍 Location: backstage/packages/backend/src/plugins/__tests__"
+        echo ""
+
+        # Install dependencies if needed
+        echo "📦 Installing dependencies..."
+        yarn install
+
+        # Run backend tests specifically
+        echo "⚙️  Running Kro backend integration tests..."
+        yarn test --testPathPattern="kro.*test\.ts" --verbose --no-coverage --passWithNoTests
+    summary: |
+      Runs Kro backend integration tests:
+      - Plugin initialization and configuration validation
+      - ResourceGraphDefinition discovery workflows
+      - ResourceGroup creation and management operations
+      - Catalog integration and entity processing
+      - RBAC validation and permission scenarios
+      - Security components and audit logging
+
   # ===== CICD PIPELINE KRO RGD TESTS =====
 
   test-kro-unit:
@@ -295,6 +375,38 @@ tasks:
       - Provides complete validation without requiring cluster access
       - Additional integration tests available separately
 
+  test-kro-complete:
+    desc: 'Run all Kro tests (RGD + Backstage plugin integration)'
+    deps: [test-kro-all, test-backstage-kro]
+    cmds:
+      - |
+        echo ""
+        echo "🎉 Complete Kro Test Suite Finished!"
+        echo ""
+        echo "📋 Summary of all tests executed:"
+        echo ""
+        echo "🔧 KRO RGD TESTS:"
+        echo "  ✅ Unit tests (schema, parameters, templates)"
+        echo "  ✅ Template execution tests (Backstage integration)"
+        echo "  ✅ Dry-run validation (syntax and structure)"
+        echo ""
+        echo "🏗️  BACKSTAGE PLUGIN TESTS:"
+        echo "  ✅ Plugin initialization and configuration"
+        echo "  ✅ ResourceGraphDefinition discovery and management"
+        echo "  ✅ Catalog integration and entity relationships"
+        echo "  ✅ Permission validation and security"
+        echo "  ✅ Frontend component integration"
+        echo ""
+        echo "💡 Additional integration tests available:"
+        echo "  - task test-kro-integration (requires cluster access)"
+        echo "  - task test-kro-deployment (requires cluster access)"
+        echo "  - task test-kro-workflow (requires cluster and AWS access)"
+    summary: |
+      Runs the complete Kro test suite including:
+      - All CI/CD Pipeline Kro RGD tests (unit, template, dry-run)
+      - All Backstage plugin integration tests (frontend + backend)
+      - Comprehensive validation of the entire Kro ecosystem
+
   default:
     desc: 'Show available tasks'
     cmds:
@@ -309,6 +421,9 @@ tasks:
         echo ""
         echo "🏗️  BACKSTAGE:"
         echo "  task backstage-validate         - Validate Backstage configuration"
+        echo "  task test-backstage-kro         - Run Kro plugin integration tests"
+        echo "  task test-backstage-kro-frontend - Run Kro frontend component tests"
+        echo "  task test-backstage-kro-backend - Run Kro backend integration tests"
         echo ""
         echo "🧪 CI/CD PIPELINE KRO RGD TESTS:"
         echo "  task test-kro-unit              - Run unit tests (schema, parameters, templates)"
@@ -317,4 +432,7 @@ tasks:
         echo "  task test-kro-integration       - Run integration tests (requires cluster)"
         echo "  task test-kro-deployment        - Run deployment test (requires cluster)"
         echo "  task test-kro-workflow          - Run workflow integration tests (requires cluster + AWS)"
-        echo "  task test-kro-all               - Run all basic tests (unit, template, dry-run)"
+        echo "  task test-kro-all               - Run all basic RGD tests (unit, template, dry-run)"
+        echo ""
+        echo "🔗 COMPLETE KRO TEST SUITE:"
+        echo "  task test-kro-complete          - Run ALL Kro tests (RGD + Backstage plugin)"

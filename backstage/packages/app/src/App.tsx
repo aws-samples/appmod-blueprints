@@ -10,7 +10,7 @@ import {
   catalogImportPlugin,
 } from '@backstage/plugin-catalog-import';
 import { ScaffolderPage, scaffolderPlugin } from '@backstage/plugin-scaffolder';
-import { orgPlugin } from '@backstage/plugin-org';
+
 import { SearchPage } from '@backstage/plugin-search';
 import {
   TechDocsIndexPage,
@@ -43,8 +43,7 @@ import { customTheme } from './customPlatform/customTheme';
 import { HomepageCompositionRoot } from '@backstage/plugin-home';
 import { CustomHomepage } from './customPlatform/CustomHomepage';
 import { TechRadarPage } from '@backstage-community/plugin-tech-radar';
-// Temporarily commented out until frontend plugin is properly configured
-// import { kroResourcesPlugin, KroResourceTable } from '@terasky/backstage-plugin-kro-resources-frontend';
+
 
 const app = createApp({
   apis,
@@ -90,13 +89,6 @@ const app = createApp({
       registerComponent: catalogImportPlugin.routes.importPage,
       viewTechDoc: techdocsPlugin.routes.docRoot,
     });
-    bind(orgPlugin.externalRoutes, {
-      catalogIndex: catalogPlugin.routes.catalogIndex,
-    });
-    // Temporarily commented out until frontend plugin is properly configured
-    // bind(kroResourcesPlugin.externalRoutes, {
-    //   catalogIndex: catalogPlugin.routes.catalogIndex,
-    // });
   },
   components: {
     SignInPage: props => {
@@ -162,8 +154,7 @@ const routes = (
       path="/tech-radar"
       element={<TechRadarPage width={1500} height={800} />}
     />
-    {/* Temporarily commented out until frontend plugin is properly configured */}
-    {/* <Route path="/kro" element={<KroResourceTable />} /> */}
+
   </FlatRoutes>
 );
 

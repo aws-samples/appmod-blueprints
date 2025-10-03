@@ -866,3 +866,190 @@ Dependencies between resources are handled **implicitly through template variabl
 4. **Keep it simple**: Many resources don't need readyWhen conditions at all
 
 This approach ensures that Kro can validate CEL expressions successfully and that resource dependencies are handled correctly through the implicit dependency resolution system.
+
+## ACK Controller Role Management and Multi-Cluster Architecture
+
+### Overview
+The platform uses AWS Controllers for Kubernetes (ACK) to manage AWS resources from Kubernetes clusters. This requires careful IAM role configuration for cross-account and multi-cluster scenarios.
+
+### Role Architecture
+
+#### Hub Cluster ACK Controllers
+The hub cluster runs ACK controllers that manage resources across multiple AWS accounts and clusters:
+
+**Pod Identity Associations**:
+- `ack-eks-controller` → `peeks-ack-eks-controller-role-mgmt`
+- `ack-ec2-controller` → `peeks-ack-ec2-controller-role-mgmt`  
+- `ack-iam-controller` → `peeks-ack-iam-controller-role-mgmt`
+- `ack-ecr-controller` → `peeks-ack-ecr-controller-role-mgmt`
+- `ack-s3-controller` → `peeks-ack-s3-controller-role-mgmt`
+- `ack-dynamodb-controller` → `peeks-ack-dynamodb-controller-role-mgmt`
+
+#### Cross-Account Role Assumption
+ACK controllers use a **role chaining pattern** for cross-account access:
+
+1. **Pod Identity Role** (e.g., `peeks-ack-eks-controller-role-mgmt`) - Base role with EKS Pod Identity trust
+2. **Management Role** (e.g., `peeks-hub-cluster-cluster-mgmt-eks`) - Target role with actual AWS permissions
+
+### ACK Role Team Map Configuration
+
+#### ConfigMap Structure
+The `ack-role-team-map` ConfigMap in the `ack-system` namespace maps namespaces to target roles:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ack-role-team-map
+  namespace: ack-system
+data:
+  # Format: namespace-name: "target-role-arn"
+  peeks-spoke-staging: "arn:aws:iam::665742499430:role/peeks-hub-cluster-cluster-mgmt-eks"
+```
+
+#### Multi-Account Template
+The ConfigMap is generated from Helm template in `/gitops/addons/charts/multi-acct/templates/configmap.yaml`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ack-role-team-map
+  namespace: ack-system
+data:
+  {{- range $key, $value := .Values.clusters }}
+  ec2.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-ec2"
+  eks.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-eks"
+  iam.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-iam"
+  {{- end }}
+```
+
+#### Values Configuration
+Clusters are defined in `/gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml`:
+
+```yaml
+clusters:
+  peeks-spoke-staging: "<account-id>"
+  # Add more clusters as needed
+```
+
+### Role Trust Relationships
+
+#### Pod Identity Trust Policy
+ACK controller roles must trust the EKS Pod Identity service:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "pods.eks.amazonaws.com"
+      },
+      "Action": [
+        "sts:AssumeRole",
+        "sts:TagSession"
+      ]
+    }
+  ]
+}
+```
+
+#### Cross-Account Role Chain
+1. **EKS Pod Identity** assumes `peeks-ack-eks-controller-role-mgmt`
+2. **ACK Controller** assumes `peeks-hub-cluster-cluster-mgmt-eks` (via role mapping)
+3. **Management Role** has permissions to create/manage AWS resources
+
+### Troubleshooting Common Issues
+
+#### Issue: "User is not authorized to perform: sts:TagSession"
+**Cause**: Role trust policy missing `sts:TagSession` permission
+**Solution**: Add `sts:TagSession` to the trust policy alongside `sts:AssumeRole`
+
+#### Issue: "Key not found in CARM configmap"
+**Cause**: Missing entry in `ack-role-team-map` ConfigMap
+**Solution**: Add namespace mapping to the multi-acct values.yaml and let ArgoCD sync
+
+#### Issue: "Parsing role ARN: arn: invalid prefix"
+**Cause**: ConfigMap contains account ID instead of full role ARN
+**Solution**: Ensure ConfigMap values are full ARN format: `arn:aws:iam::ACCOUNT:role/ROLE-NAME`
+
+#### Issue: ArgoCD Restores ConfigMap
+**Cause**: Manual kubectl changes are reverted by ArgoCD GitOps sync
+**Solution**: Always update the source Helm values in Git, never modify ConfigMap directly
+
+### Best Practices
+
+#### 1. Use GitOps for Role Mapping
+Always update role mappings through Git commits to the multi-acct values.yaml file:
+
+```bash
+# Correct approach
+vim /gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml
+git add . && git commit -m "Add cluster role mapping"
+git push
+
+# Incorrect approach (will be reverted)
+kubectl patch configmap ack-role-team-map -n ack-system ...
+```
+
+#### 2. Consistent Role Naming
+Follow the established naming pattern for management roles:
+- `{resource-prefix}-cluster-mgmt-eks` for EKS permissions
+- `{resource-prefix}-cluster-mgmt-ec2` for EC2 permissions  
+- `{resource-prefix}-cluster-mgmt-iam` for IAM permissions
+
+#### 3. Namespace-Based Isolation
+Use Kubernetes namespaces to isolate resources by environment/cluster:
+- `peeks-spoke-staging` namespace → staging cluster resources
+- `peeks-spoke-prod` namespace → production cluster resources
+
+#### 4. Monitor ACK Controller Logs
+Check ACK controller logs for role assumption issues:
+
+```bash
+kubectl logs -n ack-system deployment/eks-chart --tail=50
+kubectl logs -n ack-system deployment/ec2-chart --tail=50
+```
+
+### Kro Integration with ACK
+
+#### Resource Graph Definitions (RGDs)
+Kro RGDs create ACK resources in specific namespaces, triggering the role mapping:
+
+```yaml
+# RGD creates resources in peeks-spoke-staging namespace
+apiVersion: kro.run/v1alpha1
+kind: EksCluster
+metadata:
+  name: peeks-spoke-staging
+  namespace: peeks-spoke-staging  # This triggers role mapping lookup
+```
+
+#### Role Mapping Flow
+1. **Kro** creates ACK resources in namespace `peeks-spoke-staging`
+2. **ACK Controller** looks up `peeks-spoke-staging` in `ack-role-team-map`
+3. **ACK Controller** assumes role `peeks-hub-cluster-cluster-mgmt-eks`
+4. **Management Role** creates AWS resources (EKS cluster, VPC, etc.)
+
+### Security Considerations
+
+#### Least Privilege Access
+Management roles should have minimal permissions for their specific service:
+- EKS management role: Only EKS, EC2 (for nodes), IAM (for service roles)
+- ECR management role: Only ECR repository management
+- S3 management role: Only S3 bucket operations
+
+#### Cross-Account Boundaries
+When managing resources across AWS accounts:
+1. Create management roles in each target account
+2. Update role mappings to point to correct account ARNs
+3. Ensure hub cluster ACK roles can assume cross-account roles
+
+#### Audit and Monitoring
+- Enable CloudTrail for role assumption events
+- Monitor ACK controller metrics and logs
+- Set up alerts for failed role assumptions
+
+This architecture provides secure, scalable multi-cluster resource management while maintaining clear separation of concerns and following AWS security best practices.

@@ -569,8 +569,8 @@ describe('Parameter Handling', () => {
 
       const templateEngine = new TemplateEngine(longValueSchema, {});
 
-      const namespace = rgd.spec.resources.find(r => r.id === 'appnamespace');
-      const template = templateEngine.substituteObject(namespace.template);
+      const serviceAccount = rgd.spec.resources.find(r => r.id === 'serviceaccount');
+      const template = templateEngine.substituteObject(serviceAccount.template);
 
       // Should handle long names without truncation (unless explicitly implemented)
       expect(template.metadata.labels['app.kubernetes.io/name']).toBe('very-long-application-name-that-exceeds-normal-length');

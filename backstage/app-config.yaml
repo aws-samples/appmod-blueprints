@@ -35,6 +35,11 @@ backend:
   # workingDirectory: /tmp # Use this to configure a working directory for the scaffolder, defaults to the OS temp-dir
 
 integrations:
+  # Local file system integration for static files
+  local:
+    - host: localhost
+      # Allow reading local files
+      allowedHosts: ['localhost']
   gitlab:
     - token: ${GIT_PASSWORD}
       apiBaseUrl: https://${GIT_HOSTNAME}/api/v4
@@ -97,19 +102,36 @@ catalog:
     entityFilename: catalog-info.yaml
     pullRequestBranchName: backstage-integration
   rules:
-    - allow: [Component, System, API, Resource, Location]
+    - allow: [Component, System, API, Resource, Location, Template]
     # Allow Kro ResourceGroup entities (they appear as Components with type 'kro-resource-group')
     - allow: [Component]
       spec:
         type: kro-resource-group
   locations:
-    # Local example data, file locations are relative to the backend process, typically `packages/backend`
-    - type: file
-      target: ../../examples/entities.yaml
+    # GitLab-hosted catalog locations
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/entities.yaml
+      rules:
+        - allow: [Component, System, API, Resource, Location, User, Group]
 
-    # Local example template
-    - type: file
-      target: ../../examples/template/template.yaml
+    # GitLab-hosted templates
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/template/template.yaml
+      rules:
+        - allow: [Template]
+
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/templates/kro-webapp/template.yaml
+      rules:
+        - allow: [Template]
+    
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/templates/kro-microservice/template.yaml
+      rules:
+        - allow: [Template]
+    
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/templates/kro-job/template.yaml
       rules:
         - allow: [Template]
 

@@ -69,7 +69,7 @@ export class KroRBACValidator {
 
       // For service account authentication, we assume the service account has proper permissions
       // In a real implementation, you would check the user's Kubernetes permissions
-      if (user.identity.type === 'service') {
+      if ((user.identity as any).type === 'service') {
         return { allowed: true };
       }
 
@@ -180,7 +180,7 @@ export class KroRBACValidator {
       const userGroups = await this.getUserGroups(username);
 
       // Check if user has required permissions
-      const resourcePermissions = permissionMappings[resource];
+      const resourcePermissions = (permissionMappings as any)[resource];
       if (!resourcePermissions) {
         // If resource is not in our mapping, deny by default
         return false;
@@ -290,8 +290,8 @@ export class KroPermissionPolicy implements PermissionPolicy {
         user,
         kubernetesVerb,
         kubernetesResource,
-        request.resourceRef?.namespace,
-        request.resourceRef?.cluster
+        (request as any).resourceRef?.namespace,
+        (request as any).resourceRef?.cluster
       );
 
       if (validation.allowed) {
@@ -340,14 +340,15 @@ export const kroPermissionsModule = createBackendModule({
         logger: coreServices.logger,
         policy: coreServices.permissions,
       },
-      async init({ config, logger, policy }) {
+      async init({ logger }) {
         logger.info('Initializing Kro permissions module');
 
         // Create RBAC validator
         const rbacValidator = new KroRBACValidator(logger, null); // kubernetesApi would be injected here
 
         // Create and register permission policy
-        const kroPolicy = new KroPermissionPolicy(rbacValidator, logger);
+        // Initialize KRO policy
+        new KroPermissionPolicy(rbacValidator, logger);
 
         // Note: In a real implementation, you would register this policy with the permission system
         // This is a simplified example showing the structure

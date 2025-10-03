@@ -21,8 +21,7 @@ spec:
     - ./ray-serve/template-ray-serve.yaml
     - ./serverless-microservice/template-serverless-microservice.yaml
     - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
-    - ./cicd-pipeline/template-cicd-pipeline-gitops.yaml
-    - ./cicd-pipeline-old/template-cicd-pipeline.yaml
+    - ./cicd-pipeline/template-cicd-pipeline.yaml
     - ./create-env-aurora-postgres/template-env-aurora-postgres.yaml
     - ./s3-lambda-terraform/template-s3-lambda-terraform.yaml
     - ./stepfunctions-bedrock-terraform/template-stepfunctions-bedrock-terraform.yaml
@@ -36,8 +35,8 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  gitlab_hostname: 'd15rvat21gcp87.cloudfront.net'
-  argocd_hostname: 'dcu3gsco485x8.cloudfront.net'
-  gituser: 'user1'
-  aws_region: 'us-west-2'
-  aws_account_id: '665742499430'
+  gitlab_hostname: '{{ values.gitlabDomain }}'
+  argocd_hostname: '{{ values.argocdDomain }}'
+  gituser: '{{ values.gitUsername }}'
+  aws_region: '{{ values.awsRegion }}'
+  aws_account_id: '{{ values.awsAccountId }}'

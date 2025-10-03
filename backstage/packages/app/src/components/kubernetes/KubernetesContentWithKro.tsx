@@ -1,4 +1,3 @@
-import React from 'react';
 import { Grid, Typography, Card, CardContent, Chip } from '@material-ui/core';
 import { EntityKubernetesContent } from '@backstage/plugin-kubernetes';
 import { useEntity } from '@backstage/plugin-catalog-react';

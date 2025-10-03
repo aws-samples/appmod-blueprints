@@ -9,7 +9,7 @@ describe('Backstage Template Execution Tests', () => {
 
   beforeAll(() => {
     // Load the Backstage template
-    const templatePath = path.resolve(__dirname, '../../../../../../../../platform/backstage/templates/cicd-pipeline/template-cicd-pipeline.yaml');
+    const templatePath = path.resolve(__dirname, '../../../../../../../platform/backstage/templates/cicd-pipeline/template-cicd-pipeline-gitops.yaml');
     templateContent = fs.readFileSync(templatePath, 'utf8');
     templateSpec = yaml.load(templateContent);
   });
@@ -18,10 +18,10 @@ describe('Backstage Template Execution Tests', () => {
     it('should have correct template metadata', () => {
       expect(templateSpec.apiVersion).toBe('scaffolder.backstage.io/v1beta3');
       expect(templateSpec.kind).toBe('Template');
-      expect(templateSpec.metadata.name).toBe('cicd-pipeline');
-      expect(templateSpec.metadata.title).toBe('Deploy CI/CD Pipeline');
+      expect(templateSpec.metadata.name).toBe('cicd-pipeline-gitops');
+      expect(templateSpec.metadata.title).toBe('Deploy CI/CD Pipeline With KRO (GitOps)');
       expect(templateSpec.metadata.description).toContain('Kro-based CI/CD Pipeline');
-      expect(templateSpec.metadata.description).toContain('ACK controllers');
+      expect(templateSpec.metadata.description).toContain('GitOps');
     });
 
     it('should have proper ownership and type', () => {
@@ -43,6 +43,7 @@ describe('Backstage Template Execution Tests', () => {
         'publish',
         'apply-kro-instance',
         'validate-kro-instance',
+        'create-argocd-project',
         'create-argocd-app',
         'register',
         'provide-access-information'
@@ -159,7 +160,7 @@ describe('Backstage Template Execution Tests', () => {
           );
 
           expect(publishStep.input.repoUrl).toContain('${{parameters.appname}}-cicd');
-          expect(publishStep.input.repoUrl).toContain("${{ steps['fetchSystem'].output.entity.spec.hostname }}");
+          expect(publishStep.input.repoUrl).toContain("${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}");
         });
 
         it('should create correct ArgoCD application for scenario', () => {
@@ -167,8 +168,8 @@ describe('Backstage Template Execution Tests', () => {
             step => step.id === 'create-argocd-app'
           );
 
-          expect(argoCDStep.input.appName).toBe('${{parameters.appname}}-cicd');
-          expect(argoCDStep.input.namespace).toBe('team-${{ parameters.appname }}');
+          expect(argoCDStep.input.manifest).toContain('${{parameters.appname}}-cicd');
+          expect(argoCDStep.input.manifest).toContain('team-${{ parameters.appname }}');
         });
 
         it('should provide correct output links for scenario', () => {
@@ -285,7 +286,7 @@ describe('Backstage Template Execution Tests', () => {
       );
 
       expect(registerStep.action).toBe('catalog:register');
-      expect(registerStep.input.catalogInfoPath).toBe('catalog-info.yaml');
+      expect(registerStep.input.catalogInfoPath).toBe('/catalog-info.yaml');
 
       // Should provide catalog link in output
       const catalogLink = templateSpec.spec.output.links.find(
@@ -314,13 +315,13 @@ describe('Backstage Template Execution Tests', () => {
         step => step.id === 'create-argocd-app'
       );
 
-      expect(argoCDStep.action).toBe('argocd:create-resources');
-      expect(argoCDStep.input.syncPolicy.automated.prune).toBe(true);
-      expect(argoCDStep.input.syncPolicy.automated.selfHeal).toBe(true);
+      expect(argoCDStep.action).toBe('kube:apply');
+      expect(argoCDStep.input.manifest).toContain('prune: true');
+      expect(argoCDStep.input.manifest).toContain('selfHeal: true');
 
       // Should provide ArgoCD link in output
       const argoCDLink = templateSpec.spec.output.links.find(
-        link => link.title === 'ArgoCD CI/CD Pipeline Application'
+        link => link.title === 'ArgoCD Application (GitOps)'
       );
       expect(argoCDLink).toBeDefined();
     });

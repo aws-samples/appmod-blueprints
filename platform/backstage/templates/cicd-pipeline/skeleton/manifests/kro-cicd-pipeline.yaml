@@ -2,8 +2,7 @@ apiVersion: kro.run/v1alpha1
 kind: CICDPipeline
 metadata:
   name: ${{values.appname}}-cicd-pipeline
-  #namespace: ${{values.namespace}}
-  namespace: argocd
+  namespace: ${{values.namespace}}
   labels:
     app.kubernetes.io/name: ${{values.appname}}
     app.kubernetes.io/component: cicd-pipeline
@@ -23,8 +22,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   name: ${{values.appname}}-cicd
-  #namespace: ${{values.namespace}}
-  namespace: argocd
+  namespace: ${{values.namespace}}
   aws:
     region: ${{values.aws_region}}
     clusterName: ${{values.cluster_name}}
@@ -36,3 +34,5 @@ spec:
   gitlab:
     hostname: ${{values.gitlab_hostname}}
     username: ${{values.git_username}}
+  hub:
+    hostname: ${{values.argocd_hostname}}
