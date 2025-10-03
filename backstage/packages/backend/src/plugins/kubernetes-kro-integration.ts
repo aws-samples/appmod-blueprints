@@ -1,6 +1,5 @@
 import { createBackendModule } from '@backstage/backend-plugin-api';
 import { coreServices } from '@backstage/backend-plugin-api';
-import { kubernetesServiceRef } from '@backstage/plugin-kubernetes-node';
 
 /**
  * Backend module that enhances the Kubernetes plugin to include
@@ -14,9 +13,8 @@ export const kubernetesKroIntegrationModule = createBackendModule({
       deps: {
         config: coreServices.rootConfig,
         logger: coreServices.logger,
-        kubernetes: kubernetesServiceRef,
       },
-      async init({ config, logger, kubernetes }) {
+      async init({ config, logger }) {
         logger.info('Initializing Kubernetes-Kro integration module');
 
         // Get Kro configuration
@@ -29,11 +27,12 @@ export const kubernetesKroIntegrationModule = createBackendModule({
         }
 
         // Enhance Kubernetes plugin with Kro resource types
-        const customResources = kubernetesConfig.getOptionalConfigArray('clusterLocatorMethods')
+        const clusterConfig = kubernetesConfig.getOptionalConfigArray('clusterLocatorMethods')
           ?.find(method => method.getString('type') === 'config')
           ?.getOptionalConfigArray('clusters')
-          ?.find(() => true) // Get first cluster config
-          ?.getOptionalConfigArray('customResources') || [];
+          ?.find(() => true); // Get first cluster config
+        
+        const customResources = clusterConfig?.getOptionalConfigArray('customResources') || [];
 
         const kroResourceTypes = [
           {
@@ -137,7 +136,7 @@ export class KroResourceRelationshipMapper {
       return relationships;
 
     } catch (error) {
-      this.logger.error('Failed to map Kro resource relationships', { error: error.message });
+      this.logger.error('Failed to map Kro resource relationships', { error: (error as Error).message });
       return new Map();
     }
   }
@@ -235,3 +234,5 @@ export class KroResourceFilter {
     });
   }
 }
+
+export default kubernetesKroIntegrationModule;

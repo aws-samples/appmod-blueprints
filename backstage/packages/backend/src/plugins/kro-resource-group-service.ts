@@ -62,7 +62,6 @@ export class KroResourceGroupService {
   private kubernetesClient: any;
 
   constructor(
-    private config: Config,
     private logger: any,
     private errorHandler: KroErrorHandler,
     private auditLogger: KroAuditLogger,
@@ -210,7 +209,7 @@ export class KroResourceGroupService {
     }
   }
 
-  async getResourceGroup(user: any, cluster: string, namespace: string, name: string): Promise<ResourceGroupInfo> {
+  async getResourceGroup(_user: any, cluster: string, namespace: string, name: string): Promise<ResourceGroupInfo> {
     const resourceGroup = await this.kubernetesClient.getResourceGroup(cluster, namespace, name);
 
     return {
@@ -223,7 +222,7 @@ export class KroResourceGroupService {
     };
   }
 
-  async listResourceGroups(user: any, cluster: string, options: ResourceGroupListOptions = {}): Promise<ResourceGroupInfo[]> {
+  async listResourceGroups(_user: any, cluster: string, options: ResourceGroupListOptions = {}): Promise<ResourceGroupInfo[]> {
     const resourceGroups = await this.kubernetesClient.listResourceGroups(cluster, options);
 
     return resourceGroups
