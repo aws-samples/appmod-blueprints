@@ -94,7 +94,7 @@ module "eks_monitoring" {
   enable_apiserver_monitoring  = true
   enable_adotcollector_metrics = true
 
-  grafana_api_key = module.managed_grafana.workspace_api_keys[operator].key
+  grafana_api_key = module.managed_grafana.workspace_api_keys["operator"].key
   grafana_url     = module.managed_grafana.workspace_endpoint
 
   # prevents the module to create a workspace
