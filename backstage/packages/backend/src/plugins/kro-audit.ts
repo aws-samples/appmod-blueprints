@@ -214,11 +214,12 @@ export const kroAuditModule = createBackendModule({
         config: coreServices.rootConfig,
         logger: coreServices.logger,
       },
-      async init({ config, logger }) {
+      async init({ logger }) {
         logger.info('Initializing Kro audit logging module');
 
         // Create audit logger instance
-        const auditLogger = new KroAuditLogger(logger);
+        // Initialize audit logger
+        new KroAuditLogger(logger);
 
         // Register audit logger as a service (in a real implementation)
         // This would be made available to other parts of the application

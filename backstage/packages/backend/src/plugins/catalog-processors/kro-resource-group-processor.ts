@@ -166,13 +166,13 @@ export class KroResourceGroupProcessor implements CatalogProcessor {
 
     // Add status if available
     if (rgd.status) {
-      entity.status = {
+      (entity as any).status = {
         phase: this.extractPhase(rgd.status),
         conditions: rgd.status.conditions || [],
       };
 
       // Add status annotation for failed resources
-      if (entity.status.phase === 'Failed') {
+      if ((entity as any).status.phase === 'Failed') {
         entity.metadata.annotations!['backstage.io/status'] = 'Failed';
       }
     }
@@ -260,13 +260,13 @@ export class KroResourceGroupProcessor implements CatalogProcessor {
 
     // Add status if available
     if (rg.status) {
-      entity.status = {
+      (entity as any).status = {
         phase: this.extractPhase(rg.status),
         conditions: rg.status.conditions || [],
       };
 
       // Add status annotation for failed resources
-      if (entity.status.phase === 'Failed') {
+      if ((entity as any).status.phase === 'Failed') {
         entity.metadata.annotations!['backstage.io/status'] = 'Failed';
       }
     }
