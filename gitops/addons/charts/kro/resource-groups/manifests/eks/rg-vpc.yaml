@@ -40,7 +40,6 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
@@ -66,7 +65,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         vpc: ${vpc.status.vpcID}
@@ -88,7 +87,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         subnetID: ${publicSubnet1.status.subnetID}
@@ -111,7 +110,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         subnetID: ${publicSubnet2.status.subnetID}
@@ -134,7 +133,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         tags:
@@ -155,7 +154,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         tags:
@@ -176,7 +175,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         vpcID: ${vpc.status.vpcID}
@@ -201,7 +200,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         vpcID: ${vpc.status.vpcID}
@@ -226,7 +225,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         vpcID: ${vpc.status.vpcID}
@@ -251,7 +250,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         availabilityZone: ${schema.spec.region}a
@@ -280,7 +279,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         availabilityZone: ${schema.spec.region}b
@@ -309,7 +308,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         availabilityZone: ${schema.spec.region}a
@@ -337,7 +336,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/sync-wave: "2"
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
         availabilityZone: ${schema.spec.region}b
