@@ -54,6 +54,8 @@ kro-manifests:
   enabled: true
 kubevela:
   enabled: true
+kubevela-components:
+  enabled: true
 multi-acct:
   enabled: true
 
