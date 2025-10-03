@@ -21,4 +21,26 @@ spec:
   package: xpkg.upbound.io/upbound/provider-aws-dynamodb:{{ .Values.providers.aws.dynamodbVersion }}
   runtimeConfigRef:
     name: aws-pod-identity-drc
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-iam:{{ .Values.providers.aws.iamVersion }}
+  runtimeConfigRef:
+    name: aws-pod-identity-drc
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-eks
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-eks:{{ .Values.providers.aws.eksVersion }}
+  runtimeConfigRef:
+    name: aws-pod-identity-drc
 {{- end }}
