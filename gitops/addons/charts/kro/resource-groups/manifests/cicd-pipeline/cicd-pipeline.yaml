@@ -945,6 +945,15 @@ spec:
        spec:
           serviceAccountName: ${schema.spec.name}-sa
           entrypoint: cicd-pipeline
+          volumeClaimTemplates:
+            - metadata:
+                name: workdir
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                storageClassName: gp3
+                resources:
+                  requests:
+                    storage: 256Mi
           arguments:
              parameters:
                - name: git-url
@@ -995,14 +1004,14 @@ spec:
                      
                      # Clone with token authentication
                      REPO_URL=$(echo "{{workflow.parameters.git-url}}" | sed 's|https://|https://{{workflow.parameters.git-username}}:'$GITLAB_TOKEN'@|')
-                     git clone $REPO_URL /workspace/source || exit 1
-                     cd /workspace/source || exit 1
+                     git clone $REPO_URL /workdir/source || exit 1
+                     cd /workdir/source || exit 1
                      git checkout $BRANCH_NAME || git checkout -b $BRANCH_NAME
                      echo "Code checkout completed"
-                     ls -la /workspace/source
+                     ls -la /workdir/source
                  volumeMounts:
-                   - name: workspace
-                     mountPath: /workspace
+                   - name: workdir
+                     mountPath: /workdir
                    - name: gitlab-secret
                      mountPath: /etc/gitlab-secret
                      readOnly: true
@@ -1019,7 +1028,7 @@ spec:
                  command: [sh, -c]
                  args:
                    - |
-                     cd /workspace/source
+                     cd /workdir/source
                      echo "Running unit tests for {{workflow.parameters.repo-name}}"
 
                      # Check if package.json exists for Node.js projects
@@ -1039,11 +1048,8 @@ spec:
 
                      echo "Test phase completed"
                  volumeMounts:
-                   - name: workspace
-                     mountPath: /workspace
-               volumes:
-                 - name: workspace
-                   emptyDir: {}
+                   - name: workdir
+                     mountPath: /workdir
 
              - name: kaniko-build
                container:
