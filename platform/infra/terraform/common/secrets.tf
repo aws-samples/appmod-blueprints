@@ -112,3 +112,19 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
     git_token = local.gitlab_token
   })
 }
+
+# Create the secret for AMP endpoint to be used in Kubevela service
+# Only for backward compatibility
+# TODO: Move this to cluster config secret
+resource "aws_secretsmanager_secret" "argorollouts_secret" {
+  name = "/platform/amp"
+}
+
+# Create the secret version with key-value pairs
+resource "aws_secretsmanager_secret_version" "argorollouts_secret_version" {
+  secret_id = aws_secretsmanager_secret.argorollouts_secret.id
+  secret_string = jsonencode({
+    amp-region = local.hub_cluster.region
+    amp-workspace = module.managed_service_prometheus.workspace_prometheus_endpoint
+  })
+}
