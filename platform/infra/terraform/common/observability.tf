@@ -47,6 +47,11 @@ module "managed_grafana" {
       key_role        = "ADMIN"
       seconds_to_live = 3600
     }
+    operator = { # For terraform-aws-observability-accelerator module
+      key_name        = "grafana-operator"
+      key_role        = "ADMIN"
+      seconds_to_live = 432000
+    }
   }
 
   # Workspace SAML configuration
@@ -62,6 +67,59 @@ module "managed_grafana" {
   saml_idp_metadata_url = local.keycloak_saml_url
 
   tags = local.tags
+}
+
+################################################################################
+# EKS Monitoring with Terraform Observability Accelerator
+################################################################################
+
+module "eks_monitoring" {
+  source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
+  eks_cluster_id         = data.aws_eks_cluster.clusters[local.hub_cluster_key].id
+  enable_amazon_eks_adot = true
+  enable_cert_manager    = false
+  enable_java            = true
+  enable_nginx           = true
+  enable_custom_metrics  = true
+
+  # This configuration section results in actions performed on AMG and AMP; and it needs to be done just once
+  # And hence, this in performed in conjunction with the setup of the eks_cluster_1 EKS cluster
+  enable_dashboards       = true
+  enable_external_secrets = false
+  enable_fluxcd           = false
+  enable_alerting_rules   = true
+  enable_recording_rules  = true
+
+  # Additional dashboards
+  enable_apiserver_monitoring  = true
+  enable_adotcollector_metrics = true
+
+  grafana_api_key = module.managed_grafana.workspace_api_keys[operator].key
+  grafana_url     = module.managed_grafana.workspace_endpoint
+
+  # prevents the module to create a workspace
+  enable_managed_prometheus = false
+
+  managed_prometheus_workspace_id       = module.managed_service_prometheus.workspace_id
+  managed_prometheus_workspace_endpoint = module.managed_service_prometheus.workspace_prometheus_endpoint
+  managed_prometheus_workspace_region   = local.hub_cluster.region
+
+  prometheus_config = {
+    global_scrape_interval = "60s"
+    global_scrape_timeout  = "15s"
+    scrape_sample_limit    = 2000
+  }
+
+  custom_metrics_config = {
+    polyglot_app_config = {
+      enableBasicAuth       = false
+      path                  = "/metrics"
+      basicAuthUsername     = "username"
+      basicAuthPassword     = "password"
+      ports                 = ".*:(8080)$"
+      droppedSeriesPrefixes = "(unspecified.*)$"
+    }
+  }
 }
 
 locals{
