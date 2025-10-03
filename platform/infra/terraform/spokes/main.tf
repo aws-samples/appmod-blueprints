@@ -184,6 +184,7 @@ locals {
     {
       ingress_security_groups = local.ingress_security_groups
       ingress_name = var.ingress_name
+      enable_platform_manifests = try(var.addons.enable_platform_manifests, false) ? "true" : "false"
     },
     #try(local.external_dns_addons_metadata, {})  # Will default to empty map if not defined
     #can(local.external_dns_addons_metadata) ? local.external_dns_addons_metadata : {}  # Will default to empty map if not defined
