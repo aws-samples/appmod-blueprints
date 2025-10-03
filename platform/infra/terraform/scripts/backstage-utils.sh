@@ -21,9 +21,14 @@ set -e
 # Function to check if background build is still running
 check_backstage_build_status() {
     if [ -n "$BACKSTAGE_BUILD_PID" ] && kill -0 $BACKSTAGE_BUILD_PID 2>/dev/null; then
-        return 0  # Still running
+        return 2  # Still running
     else
-        return 1  # Finished or failed
+        # Process finished, check log for success/failure
+        if [ -f "$BACKSTAGE_LOG" ] && grep -q "Image successfully pushed" "$BACKSTAGE_LOG"; then
+            return 0  # Success
+        else
+            return 1  # Failed
+        fi
     fi
 }
 
@@ -59,6 +64,7 @@ start_backstage_build() {
 
     # Create a temporary log file for the background build
     BACKSTAGE_LOG="/tmp/backstage_build_$$.log"
+    export BACKSTAGE_LOG
     $SCRIPT_DIR/build_backstage.sh "$BACKSTAGE_PATH" > "$BACKSTAGE_LOG" 2>&1 &
     export BACKSTAGE_BUILD_PID=$!
     print_info "Backstage build started with PID: $BACKSTAGE_BUILD_PID (logs: $BACKSTAGE_LOG)"

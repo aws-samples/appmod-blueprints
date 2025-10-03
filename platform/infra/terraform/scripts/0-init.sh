@@ -53,6 +53,8 @@ main() {
     if ! check_backstage_ecr_image; then
         # Start Backstage Build Process
         start_backstage_build
+        # Ensure BACKSTAGE_BUILD_PID is available in this scope
+        export BACKSTAGE_BUILD_PID
     fi
 
     # Wait for Argo CD apps to be healthy
@@ -62,33 +64,35 @@ main() {
         exit 1
     fi
     
-    # Wait for Backstage build to complete with timeout if it has started
+    # Wait for Backstage build to complete if it has started
     if [[ -n $BACKSTAGE_BUILD_PID ]]; then
         print_status "INFO" "Waiting for Backstage build to complete..."
-        local elapsed=0
-        local check_interval=$CHECK_INTERVAL
-        local status 
-        while true; do
-            check_backstage_build_status
-            status=$?
-            if [ $status -eq 2 ]; then
-                if [ $elapsed -ge $WAIT_TIMEOUT ]; then
-                    print_status "ERROR" "Backstage build timed out after ${WAIT_TIMEOUT}s"
-                    exit 1
-                fi
-                print_status "INFO" "Backstage build still running... (${elapsed}s elapsed)"
-                sleep $check_interval
-                elapsed=$((elapsed + check_interval))
-            else
-                break
-            fi
-        done
         
-        if [ $status -eq 0 ]; then
-            print_status "SUCCESS" "Backstage build completed"
+        # Check if the process is still running
+        if kill -0 $BACKSTAGE_BUILD_PID 2>/dev/null; then
+            print_status "INFO" "Backstage build is still running, waiting for completion..."
+            if wait $BACKSTAGE_BUILD_PID; then
+                print_status "SUCCESS" "Backstage image build completed successfully"
+            else
+                print_status "ERROR" "Backstage image build failed"
+                if [ -f "$BACKSTAGE_LOG" ]; then
+                    print_status "ERROR" "Build log (last 20 lines):"
+                    tail -n 20 "$BACKSTAGE_LOG" | sed 's/^/  /'
+                fi
+                exit 1
+            fi
         else
-            print_status "ERROR" "Backstage build failed with exit code $status"
-            exit 1
+            # Process already finished, check exit status
+            if wait $BACKSTAGE_BUILD_PID 2>/dev/null; then
+                print_status "SUCCESS" "Backstage image build already completed successfully"
+            else
+                print_status "ERROR" "Backstage image build failed"
+                if [ -f "$BACKSTAGE_LOG" ]; then
+                    print_status "ERROR" "Build log (last 20 lines):"
+                    tail -n 20 "$BACKSTAGE_LOG" | sed 's/^/  /'
+                fi
+                exit 1
+            fi
         fi
     fi
 
