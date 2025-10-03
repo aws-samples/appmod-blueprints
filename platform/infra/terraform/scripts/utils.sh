@@ -215,8 +215,11 @@ cleanup_kubernetes_resources_with_fallback() {
   # Delete Bootstrap apps by patching finalizers
   delete_argocd_apps "${BOOTSTRAP_APPS[*]}" "delete" "true"
 
-  # # Second round of AppSet deletion if any created by BOOTSTRAP APPS
+  # Second round of AppSet deletion if any created by BOOTSTRAP APPS
   delete_argocd_appsets
+
+  # Delete all kyverno apps as it blocks resource deletion
+  delete_argocd_apps "kyverno" "delete" "false"
 
   #TODO: Remove this once we have a better way to handle webhook deletion
   kubectl delete mutatingwebhookconfigurations.admissionregistration.k8s.io kyverno-resource-mutating-webhook-cfg || true
