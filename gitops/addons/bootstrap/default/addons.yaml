@@ -1165,11 +1165,9 @@ backstage:
 
 platform-manifests:
   enabled: false
-  chartName: platform-manifests
   namespace: default
-  releaseName: platform-manifests
   defaultVersion: '1.0.0'
-  chartRepository: ''
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/platform-manifests'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '10'
   selector:
