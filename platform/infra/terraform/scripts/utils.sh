@@ -238,6 +238,13 @@ cleanup_kubernetes_resources_with_fallback() {
 
   # Delete only ArgoCD apps of Core Apps by patching finalizer
   delete_argocd_apps "${CORE_APPS[*]}" "delete" "true"
+
+  # Delete ArgoCD namespace if it exists
+  log "Deleting ArgoCD namespace..."
+  if ! kubectl delete namespace argocd --timeout=60s 2>/dev/null; then
+      log "ArgoCD namespace didn't delete gracefully, Force deleting..."
+      kubectl delete namespace argocd --force --grace-period=0 2>/dev/null || true
+  fi
 }
 
 gitlab_repository_setup(){

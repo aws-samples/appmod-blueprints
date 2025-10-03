@@ -213,10 +213,4 @@ delete_argocd_apps() {
             sleep 5
         done
     done
-
-    log "Deleting ArgoCD namespace..."
-    if ! kubectl delete namespace argocd --timeout=60s 2>/dev/null; then
-        log "ArgoCD namespace didn't delete gracefully, Force deleting..."
-        kubectl delete namespace argocd --force --grace-period=0 2>/dev/null || true
-    fi
 }
