@@ -1063,48 +1063,6 @@ flux:
         - /metadata/generation
         - /metadata/managedFields
 
-kubevela-components:
-  enabled: false
-  annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '4' # Needs to be after KubeVela core
-  namespace: vela-system
-  defaultVersion: '0.1.0'
-  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kubevela-components'
-  selector:
-    matchExpressions:
-      - key: enable_kubevela_components
-        operator: In
-        values: ['true']
-  valuesObject:
-    aws:
-      region: '{{.metadata.annotations.aws_region}}'
-      accountId: '{{.metadata.annotations.aws_account_id}}'
-  ignoreDifferences:
-    - group: core.oam.dev
-      kind: ComponentDefinition
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-    - group: core.oam.dev
-      kind: TraitDefinition
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-    - group: apiextensions.crossplane.io
-      kind: CompositeResourceDefinition
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-    - group: apiextensions.crossplane.io
-      kind: Composition
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-
 backstage:
   enabled: false
   annotationsAppSet:
