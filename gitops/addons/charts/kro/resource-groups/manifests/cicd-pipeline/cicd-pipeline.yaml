@@ -1056,7 +1056,7 @@ spec:
                  image: gcr.io/kaniko-project/executor:latest
                  args:
                    - --dockerfile={{workflow.parameters.dockerfile-path}}/Dockerfile
-                   - --context=git://{{workflow.parameters.git-url}}#{{workflow.parameters.git-revision}}
+                   - --context=/workdir/source
                    - --destination=${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}
                    - --destination=${ecrmainrepo.status.repositoryURI}:latest
                    - --cache=true
@@ -1076,6 +1076,8 @@ spec:
                    - name: docker-config
                      mountPath: /kaniko/.docker
                      readOnly: true
+                   - name: workdir
+                     mountPath: /workdir
                volumes:
                  - name: docker-config
                    secret:
