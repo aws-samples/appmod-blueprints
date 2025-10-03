@@ -88,6 +88,7 @@ locals {
     enable_aws_argocd                            = try(var.addons.enable_aws_argocd , false)
     enable_cw_prometheus                         = try(var.addons.enable_cw_prometheus, false)
     enable_cni_metrics_helper                    = try(var.addons.enable_cni_metrics_helper, false)
+    enable_crossplane                            = try(var.addons.enable_crossplane, false)
 
   }
   oss_addons = {
