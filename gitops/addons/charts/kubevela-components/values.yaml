@@ -1,0 +1,14 @@
+# KubeVela Components Configuration
+components:
+  enabled: true
+
+traits:
+  enabled: true
+
+compositions:
+  enabled: true
+  
+# AWS Configuration
+aws:
+  region: us-west-2
+  accountId: ""

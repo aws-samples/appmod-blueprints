@@ -1,0 +1,26 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  annotations:
+    definition.oam.dev/alias: ""
+    definition.oam.dev/description: S3 Bucket
+  name: s3-bucket
+spec:
+  schematic:
+    cue:
+      template: |
+        output: {
+        	apiVersion: "s3.aws.upbound.io/v1beta1"
+        	kind:       "Bucket"
+        	metadata: name: "\(parameter.name)"
+        	spec: forProvider: region: "\(parameter.region)"
+        }
+        parameter: {
+        	name:   string
+        	region: string
+        }
+  workload:
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+
