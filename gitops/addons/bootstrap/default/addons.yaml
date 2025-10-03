@@ -1120,6 +1120,7 @@ backstage:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
       aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
     gitlab_domain_name: '{{.metadata.annotations.gitlab_domain_name}}'
+    git_username: '{{.metadata.annotations.git_username}}'
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     backstage_image: '{{.metadata.annotations.backstage_image}}'
     working_repo: '{{.metadata.annotations.working_repo}}'
