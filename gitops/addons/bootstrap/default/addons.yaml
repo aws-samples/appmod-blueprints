@@ -1162,3 +1162,21 @@ backstage:
         - /roleRef
         - /metadata/labels
         - /metadata/annotations
+
+platform-manifests:
+  enabled: false
+  chartName: platform-manifests
+  namespace: default
+  releaseName: platform-manifests
+  defaultVersion: '1.0.0'
+  chartRepository: ''
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '10'
+  selector:
+    matchExpressions:
+      - key: enable_platform_manifests
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'

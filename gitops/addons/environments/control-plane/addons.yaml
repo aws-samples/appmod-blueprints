@@ -85,3 +85,5 @@ flux:
   enabled: true
 grafana:
   enabled: false
+platform-manifests:
+  enabled: true
