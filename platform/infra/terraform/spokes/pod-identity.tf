@@ -181,7 +181,7 @@ module "crossplane_provider_aws_pod_identity" {
   name = "crossplane-provider-aws"
 
   additional_policy_arns = {
-    PowerUserAccess = "arn:aws:iam::aws:policy/PowerUserAccess"
+    AdministratorAccess = "arn:aws:iam::aws:policy/AdministratorAccess"
   }
 
   # Pod Identity Associations
