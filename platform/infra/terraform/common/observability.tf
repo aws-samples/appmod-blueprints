@@ -72,16 +72,14 @@ module "managed_grafana" {
 ################################################################################
 # EKS Monitoring with Terraform Observability Accelerator
 ################################################################################
-
-module "eks_monitoring" {
-  for_each = local.spoke_clusters
-  
+# For spoek-dev cluster
+module "eks_monitoring_spoke_dev" {
   source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
-  eks_cluster_id         = data.aws_eks_cluster.clusters[each.key].id
+  eks_cluster_id         = data.aws_eks_cluster.clusters["spoke1"].id
   
   providers = {
-    kubectl = each.key == "spoke1" ? kubectl.spoke1 : kubectl.spoke2
-    helm = each.key == "spoke1" ? helm.spoke1 : helm.spoke2
+    kubectl = kubectl.spoke1
+    helm = helm.spoke1
   }
 
   enable_amazon_eks_adot = true
@@ -90,18 +88,72 @@ module "eks_monitoring" {
   enable_nginx           = true
   enable_custom_metrics  = true
 
-  enable_dashboards       = each.key == "spoke1" ? true : false
+  enable_dashboards       = true
   enable_external_secrets = false
   enable_fluxcd           = false
-  enable_alerting_rules   = each.key == "spoke1" ? true : false
-  enable_recording_rules  = each.key == "spoke1" ? true : false
+  enable_alerting_rules   = true
+  enable_recording_rules  = true
 
-  enable_apiserver_monitoring  = each.key == "spoke1" ? true : false
-  enable_adotcollector_metrics = each.key == "spoke1" ? true : false
-  enable_nvidia_monitoring     = false
+  enable_apiserver_monitoring  = true
+  enable_adotcollector_metrics = true
 
-  grafana_api_key = each.key == "spoke1" ? module.managed_grafana.workspace_api_keys["operator"].key : ""
-  grafana_url     = each.key == "spoke1" ? module.managed_grafana.workspace_endpoint : ""
+  grafana_api_key = module.managed_grafana.workspace_api_keys["operator"].key
+  grafana_url     = module.managed_grafana.workspace_endpoint
+
+  # prevents the module to create a workspace
+  enable_managed_prometheus = false
+
+  managed_prometheus_workspace_id       = module.managed_service_prometheus.workspace_id
+  managed_prometheus_workspace_endpoint = module.managed_service_prometheus.workspace_prometheus_endpoint
+  managed_prometheus_workspace_region   = local.hub_cluster.region
+
+  prometheus_config = {
+    global_scrape_interval = "60s"
+    global_scrape_timeout  = "15s"
+    scrape_sample_limit    = 2000
+  }
+
+  custom_metrics_config = {
+    polyglot_app_config = {
+      enableBasicAuth       = false
+      path                  = "/metrics"
+      basicAuthUsername     = "username"
+      basicAuthPassword     = "password"
+      ports                 = ".*:(8080)$"
+      droppedSeriesPrefixes = "(unspecified.*)$"
+    }
+  }
+}
+
+# For spoek-prod cluster
+module "eks_monitoring_spoke_prod" {
+  source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
+  eks_cluster_id         = data.aws_eks_cluster.clusters["spoke2"].id
+  
+  providers = {
+    kubectl = kubectl.spoke2
+    helm = helm.spoke2
+  }
+
+  enable_amazon_eks_adot = true
+  enable_cert_manager    = false
+  enable_java            = true
+  enable_nginx           = true
+  enable_custom_metrics  = true
+
+  # Since the following were enabled in conjunction with the set up of the
+  # spoke-dev EKS cluster, we will skip them with the spoke-prod EKS cluster
+  enable_dashboards       = false
+  enable_external_secrets = false
+  enable_fluxcd           = false
+  enable_alerting_rules   = false
+  enable_recording_rules  = false
+
+  enable_apiserver_monitoring  = false
+  enable_adotcollector_metrics = false
+
+  # grafana_api_key = module.managed_grafana.workspace_api_keys["operator"].key
+  # grafana_url     = module.managed_grafana.workspace_endpoint
 
   enable_managed_prometheus = false
 
