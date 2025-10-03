@@ -107,7 +107,6 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-            argocd.argoproj.io/sync-wave: "2"
             argocd.argoproj.io/tracking-id: clusters:kro.run/Vpc:${schema.spec.name}/${schema.spec.name}
       spec:
         name: ${schema.spec.name}
@@ -137,7 +136,6 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-            argocd.argoproj.io/sync-wave: "2"
             argocd.argoproj.io/tracking-id: clusters:kro.run/EksCluster:${schema.spec.name}/${schema.spec.name}                     
       spec:
           name: ${schema.spec.name}
