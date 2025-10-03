@@ -929,7 +929,7 @@ Clusters are defined in `/gitops/addons/tenants/tenant1/default/addons/multi-acc
 
 ```yaml
 clusters:
-  peeks-spoke-staging: "665742499430"
+  peeks-spoke-staging: "<account-id>"
   # Add more clusters as needed
 ```
 

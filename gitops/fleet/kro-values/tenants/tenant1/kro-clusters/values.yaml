@@ -51,28 +51,3 @@ clusters:
   #     enable_ack_efs: "false"
   #     enable_aws_efs_csi_driver: "false"
   # # END MARKER FOR SED
-
-  peeks-spoke-staging:
-    managementAccountId: "665742499430"
-    accountId: "665742499430"
-    tenant: "tenant1"
-    environment: "staging"
-    region: "us-west-2"
-    k8sVersion: "1.31"
-    gitops:
-      addonsRepoUrl: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
-      fleetRepoUrl: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
-      platformRepoUrl: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
-      workloadRepoUrl: "https://d15rvat21gcp87.cloudfront.net/user1/platform-on-eks-workshop.git"
-    addons:
-      enable_ingress_class_alb: "true"
-      enable_argo_rollouts: "true"
-      enable_metrics_server: "true"
-      enable_external_secrets: "false"
-      enable_kyverno: "false"
-      enable_kyverno_policies: "false"
-      enable_kyverno_policy_reporter: "false"
-      enable_ack_iam: "false"
-      enable_ack_eks: "false"
-      enable_ack_efs: "false"
-      enable_aws_efs_csi_driver: "false"
