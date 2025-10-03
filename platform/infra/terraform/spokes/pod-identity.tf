@@ -220,6 +220,32 @@ module "ack_s3_pod_identity" {
 }
 
 ################################################################################
+# Crossplane Provider AWS EKS Access
+################################################################################
+module "crossplane_provider_aws_pod_identity" {
+  count   = local.aws_addons.enable_crossplane ? 1 : 0
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 1.11.0"
+
+  name = "crossplane-provider-aws"
+
+  additional_policy_arns = {
+    PowerUserAccess = "arn:aws:iam::aws:policy/PowerUserAccess"
+  }
+
+  # Pod Identity Associations
+  associations = {
+    addon = {
+      cluster_name    = module.eks.cluster_name
+      namespace       = "crossplane-system"
+      service_account = "provider-aws"
+    }
+  }
+
+  tags = local.tags
+}
+
+################################################################################
 # ACK DynamoDB Controller EKS Access
 ################################################################################
 module "ack_dynamodb_pod_identity" {
