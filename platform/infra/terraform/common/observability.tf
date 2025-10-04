@@ -74,6 +74,7 @@ module "managed_grafana" {
 ################################################################################
 # For spoek-dev cluster
 module "eks_monitoring_spoke_dev" {
+  depends_on = [module.gitops_bridge_bootstrap]
   source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
   eks_cluster_id         = data.aws_eks_cluster.clusters["spoke1"].id
   
@@ -127,6 +128,7 @@ module "eks_monitoring_spoke_dev" {
 
 # For spoek-prod cluster
 module "eks_monitoring_spoke_prod" {
+  depends_on = [module.gitops_bridge_bootstrap]
   source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
   eks_cluster_id         = data.aws_eks_cluster.clusters["spoke2"].id
   
