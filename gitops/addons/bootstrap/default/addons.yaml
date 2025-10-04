@@ -1050,7 +1050,8 @@ flux:
         operator: In
         values: ['true']
   valuesObject:
-    clusterName: '{{.metadata.annotations.cluster_name}}'
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    git_username: '{{.metadata.annotations.git_username}}'
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     aws:
@@ -1065,9 +1066,6 @@ flux:
       path: '{{.metadata.annotations.addons_repo_basepath}}addons'
     workloads:
       path: '{{.metadata.annotations.workload_repo_basepath}}apps'
-    secrets:
-      gitCredentials:
-        secretName: '{{.metadata.annotations.resource_prefix}}-gitlab-pat'
   ignoreDifferences:
     - group: rbac.authorization.k8s.io
       kind: ClusterRole
