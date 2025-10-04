@@ -117,7 +117,7 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
 # Only for backward compatibility
 # TODO: Move this to cluster config secret
 resource "aws_secretsmanager_secret" "argorollouts_secret" {
-  name = "/platform/amp"
+  name = "${local.context_prefix}/platform/amp"
 }
 
 # Create the secret version with key-value pairs
