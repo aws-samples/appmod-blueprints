@@ -24,6 +24,19 @@ main() {
     log_error "USER1_PASSWORD environment variable is required"
     exit 1
   fi
+
+  # Configure kubectl access to use kubectl in terraform external resources
+  for cluster in "${CLUSTER_NAMES[@]}"; do
+    if ! kubectl get nodes --request-timeout=10s --context $cluster &>/dev/null; then
+      log_warning "kubectl cannot connect to cluster, setting up kubectl access"
+      configure_kubectl_with_fallback "$cluster" || {
+        log_error "kubectl configuration failed, cannot proceed with bootstrap"
+        exit 1
+      }
+    fi
+    log_success "kubectl is working for $cluster, proceeding..."
+  done
+
   # Validate backend configuration
   validate_backend_config
 

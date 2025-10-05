@@ -74,23 +74,24 @@ module "managed_grafana" {
 ################################################################################
 # For spoek-dev cluster
 
-# To ensure the CRD is installed before terraform-aws-observability-accelerator is deployed
-data "kubernetes_resource" "spoke_dev_flux_crd" {
+# Wait for Flux CRD to be available
+resource "null_resource" "spoke_dev_flux_crd_wait" {
   depends_on = [module.gitops_bridge_bootstrap]
-  provider = kubernetes.spoke1
   
-  api_version = "apiextensions.k8s.io/v1"
-  kind        = "CustomResourceDefinition"
-
-  metadata {
-    name      = "kustomizations.kustomize.toolkit.fluxcd.io"
+  provisioner "local-exec" {
+    command = <<-EOT
+      while ! kubectl --context ${local.spoke_clusters["spoke1"].name} get crd kustomizations.kustomize.toolkit.fluxcd.io >/dev/null 2>&1; do
+        sleep 10
+      done
+      kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=Established crd/kustomizations.kustomize.toolkit.fluxcd.io --timeout=600s >/dev/null
+    EOT
   }
 }
 
 module "eks_monitoring_spoke_dev" {
   depends_on = [
     module.gitops_bridge_bootstrap,
-    data.kubernetes_resource.spoke_dev_flux_crd, # Add dependency on CRD availibility
+    null_resource.spoke_dev_flux_crd_wait,
     ]
     
   source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
@@ -146,22 +147,23 @@ module "eks_monitoring_spoke_dev" {
 
 # For spoek-prod cluster
 
-# To ensure the CRD is installed before terraform-aws-observability-accelerator is deployed
-data "kubernetes_resource" "spoke_prod_flux_crd" {
+# Wait for Flux CRD to be available
+resource "null_resource" "spoke_prod_flux_crd_wait" {
   depends_on = [module.gitops_bridge_bootstrap]
-  provider = kubernetes.spoke2
   
-  api_version = "apiextensions.k8s.io/v1"
-  kind        = "CustomResourceDefinition"
-
-  metadata {
-    name      = "kustomizations.kustomize.toolkit.fluxcd.io"
+  provisioner "local-exec" {
+    command = <<-EOT
+      while ! kubectl --context ${local.spoke_clusters["spoke2"].name} get crd kustomizations.kustomize.toolkit.fluxcd.io >/dev/null 2>&1; do
+        sleep 10
+      done
+      kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=Established crd/kustomizations.kustomize.toolkit.fluxcd.io --timeout=600s >/dev/null
+    EOT
   }
 }
 module "eks_monitoring_spoke_prod" {
   depends_on = [
     module.gitops_bridge_bootstrap,
-    data.kubernetes_resource.spoke_prod_flux_crd, # Add dependency on CRD availibility
+    null_resource.spoke_prod_flux_crd_wait,
    ]
 
   source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
