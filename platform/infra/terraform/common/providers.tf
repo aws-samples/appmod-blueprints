@@ -131,3 +131,39 @@ provider "kubectl" {
     ]
   }
 }
+
+provider "kubernetes" {
+  alias                  = "spoke1" # For Spoke 1 cluster
+  host                   = data.aws_eks_cluster.clusters["spoke1"].endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.clusters["spoke1"].certificate_authority[0].data)
+
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    # This requires the awscli to be installed locally where Terraform is executed
+    args = [
+      "eks",
+      "get-token",
+      "--cluster-name", data.aws_eks_cluster.clusters["spoke1"].name,
+      "--region", local.spoke_clusters["spoke1"].region
+    ]
+  }
+}
+
+provider "kubernetes" {
+  alias                  = "spoke2" # For Spoke 2 cluster
+  host                   = data.aws_eks_cluster.clusters["spoke2"].endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.clusters["spoke2"].certificate_authority[0].data)
+
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    # This requires the awscli to be installed locally where Terraform is executed
+    args = [
+      "eks",
+      "get-token",
+      "--cluster-name", data.aws_eks_cluster.clusters["spoke2"].name,
+      "--region", local.spoke_clusters["spoke2"].region
+    ]
+  }
+}

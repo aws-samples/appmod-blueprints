@@ -73,8 +73,26 @@ module "managed_grafana" {
 # EKS Monitoring with Terraform Observability Accelerator
 ################################################################################
 # For spoek-dev cluster
-module "eks_monitoring_spoke_dev" {
+
+# To ensure the CRD is installed before terraform-aws-observability-accelerator is deployed
+data "kubernetes_resource" "spoke_dev_flux_crd" {
   depends_on = [module.gitops_bridge_bootstrap]
+  provider = kubernetes.spoke1
+  
+  api_version = "apiextensions.k8s.io/v1"
+  kind        = "CustomResourceDefinition"
+
+  metadata {
+    name      = "kustomizations.kustomize.toolkit.fluxcd.io"
+  }
+}
+
+module "eks_monitoring_spoke_dev" {
+  depends_on = [
+    module.gitops_bridge_bootstrap,
+    data.kubernetes_resource.spoke_dev_flux_crd, # Add dependency on CRD availibility
+    ]
+    
   source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
   eks_cluster_id         = data.aws_eks_cluster.clusters["spoke1"].id
   
@@ -127,8 +145,25 @@ module "eks_monitoring_spoke_dev" {
 }
 
 # For spoek-prod cluster
-module "eks_monitoring_spoke_prod" {
+
+# To ensure the CRD is installed before terraform-aws-observability-accelerator is deployed
+data "kubernetes_resource" "spoke_prod_flux_crd" {
   depends_on = [module.gitops_bridge_bootstrap]
+  provider = kubernetes.spoke2
+  
+  api_version = "apiextensions.k8s.io/v1"
+  kind        = "CustomResourceDefinition"
+
+  metadata {
+    name      = "kustomizations.kustomize.toolkit.fluxcd.io"
+  }
+}
+module "eks_monitoring_spoke_prod" {
+  depends_on = [
+    module.gitops_bridge_bootstrap,
+    data.kubernetes_resource.spoke_prod_flux_crd, # Add dependency on CRD availibility
+   ]
+
   source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
   eks_cluster_id         = data.aws_eks_cluster.clusters["spoke2"].id
   
