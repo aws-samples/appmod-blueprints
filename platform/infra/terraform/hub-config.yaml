@@ -89,6 +89,7 @@ clusters:
       enable_argo_workflows: false
       enable_kargo: false
       enable_backstage: false
+      enable_platform_manifests: true
   spoke2:
     name: spoke-prod
     region: us-west-2
@@ -130,3 +131,4 @@ clusters:
       enable_argo_workflows: false
       enable_kargo: false
       enable_backstage: false
+      enable_platform_manifests: true
