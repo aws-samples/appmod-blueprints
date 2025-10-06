@@ -146,6 +146,33 @@ module "eks_monitoring_spoke_dev" {
   }
 }
 
+# This is needed for Grafana Operator to work correctly
+# As ESO is not deployed through terraform-aws-observability-accelerator
+resource "kubectl_manifest" "spoke_dev_grafana_secret" {
+  yaml_body  = <<YAML
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: grafana-admin-credentials
+  namespace: grafana-operator
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: grafana-admin-credentials
+  dataFrom:
+  - extract:
+      key: "${local.context_prefix}-${data.aws_eks_cluster.clusters["spoke1"].id}/secrets"
+      property: grafana_api_key
+      conversionStrategy: Default
+      decodingStrategy: None
+      metadataPolicy: None
+YAML
+  depends_on = [module.eks_monitoring_spoke_dev]
+}
+
 # For spoek-prod cluster
 
 # Wait for Flux CRD to be available
@@ -218,6 +245,33 @@ module "eks_monitoring_spoke_prod" {
       droppedSeriesPrefixes = "(unspecified.*)$"
     }
   }
+}
+
+# This is needed for Grafana Operator to work correctly
+# As ESO is not deployed through terraform-aws-observability-accelerator
+resource "kubectl_manifest" "spoke_prod_grafana_secret" {
+  yaml_body  = <<YAML
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: grafana-admin-credentials
+  namespace: grafana-operator
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: grafana-admin-credentials
+  dataFrom:
+  - extract:
+      key: "${local.context_prefix}-${data.aws_eks_cluster.clusters["spoke2"].id}/secrets"
+      property: grafana_api_key
+      conversionStrategy: Default
+      decodingStrategy: None
+      metadataPolicy: None
+YAML
+  depends_on = [module.eks_monitoring_spoke_prod]
 }
 
 locals{

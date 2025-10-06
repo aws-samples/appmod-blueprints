@@ -110,6 +110,7 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
     user_password_hash = local.user_password_hash
     user_password_key = local.password_key
     git_token = local.gitlab_token
+    grafana_api_key = module.managed_grafana.workspace_api_keys["operator"].key
   })
 }
 
