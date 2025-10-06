@@ -34,9 +34,9 @@ module "external_secrets_pod_identity" {
   name = "external-secrets"
 
   attach_external_secrets_policy        = true
-  external_secrets_kms_key_arns         = ["arn:aws:kms:${each.value.region}:*:key/${each.value.name}/*"]
-  external_secrets_secrets_manager_arns = ["arn:aws:secretsmanager:${each.value.region}:*:secret:${local.context_prefix}-*"]
-  external_secrets_ssm_parameter_arns   = ["arn:aws:ssm:${each.value.region}:*:parameter/${each.value.name}/*"]
+  external_secrets_kms_key_arns         = ["arn:aws:kms:${local.region}:*:key/eks/${each.value.name}/*"]
+  external_secrets_secrets_manager_arns = ["arn:aws:secretsmanager:${local.region}:*:secret:${local.context_prefix}-*"]
+  external_secrets_ssm_parameter_arns   = ["arn:aws:ssm:${local.region}:*:parameter/${each.value.name}/*"]
   external_secrets_create_permission    = each.value.environment == "control-plane" ? true : false #only for hub
   attach_custom_policy                  = each.value.environment == "control-plane" ? true : false #only for hub
   policy_statements = [
