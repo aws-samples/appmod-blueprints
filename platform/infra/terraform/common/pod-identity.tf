@@ -34,9 +34,9 @@ module "external_secrets_pod_identity" {
   name = "external-secrets"
 
   attach_external_secrets_policy        = true
-  external_secrets_kms_key_arns         = ["arn:aws:kms:${local.region}:*:key/eks/${each.value.name}/*"]
-  external_secrets_secrets_manager_arns = ["arn:aws:secretsmanager:${local.region}:*:secret:${local.context_prefix}-*"]
-  external_secrets_ssm_parameter_arns   = ["arn:aws:ssm:${local.region}:*:parameter/${each.value.name}/*"]
+  external_secrets_kms_key_arns         = ["arn:aws:kms:${each.value.region}:*:key/${each.value.name}/*"]
+  external_secrets_secrets_manager_arns = ["arn:aws:secretsmanager:${each.value.region}:*:secret:${local.context_prefix}-*"]
+  external_secrets_ssm_parameter_arns   = ["arn:aws:ssm:${each.value.region}:*:parameter/${each.value.name}/*"]
   external_secrets_create_permission    = each.value.environment == "control-plane" ? true : false #only for hub
   attach_custom_policy                  = each.value.environment == "control-plane" ? true : false #only for hub
   policy_statements = [
@@ -47,13 +47,28 @@ module "external_secrets_pod_identity" {
     }
   ]
   # Pod Identity Associations
-  associations = {
+  associations = merge(
+    {
       addon = {
         cluster_name    = each.value.name
         namespace       = local.external_secrets.namespace
         service_account = local.external_secrets.service_account
       }
+    },
+    each.value.environment == "control-plane" ? { # only for hub cluster
+      keycloak-config = {
+        cluster_name    = each.value.name
+        namespace       = local.keycloak.namespace
+        service_account = local.keycloak.service_account
+      }
+    } : {
+      fleet = {
+      cluster_name    = each.value.name
+      namespace       = local.external_secrets.namespace_fleet
+      service_account = local.external_secrets.service_account
     }
+    }
+  )
 
   tags = local.tags
 }
@@ -234,22 +249,18 @@ module "adot_collector_pod_identity" {
 variable "policy_arn_urls" {
   type    = map(string)
   default = {
-    iam      = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-policy-arn"
-    ec2      = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-policy-arn"
-    eks      = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-policy-arn"
-    s3       = "https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/main/config/iam/recommended-policy-arn"
-    dynamodb = "https://raw.githubusercontent.com/aws-controllers-k8s/dynamodb-controller/main/config/iam/recommended-policy-arn"
+    iam = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-policy-arn"
+    ec2 = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-policy-arn"
+    eks = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-policy-arn"
   }
 }
 
 variable "inline_policy_urls" {
   type    = map(string)
   default = {
-    iam      = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-inline-policy"
-    ec2      = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-inline-policy"
-    eks      = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-inline-policy"
-    s3       = "https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/main/config/iam/recommended-inline-policy"
-    dynamodb = "https://raw.githubusercontent.com/aws-controllers-k8s/dynamodb-controller/main/config/iam/recommended-inline-policy"
+    iam = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-inline-policy"
+    ec2 = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-inline-policy"
+    eks = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-inline-policy"
   }
 }
 
@@ -270,7 +281,7 @@ locals {
   ack_combinations = {
     for combination in flatten([
       for cluster_key, cluster_value in var.clusters : [
-        for service in ["iam", "ec2", "eks", "s3", "dynamodb"] : {
+        for service in ["iam", "ec2", "eks"] : {
           key = "${cluster_key}-${service}"
           cluster_key = cluster_key
           cluster_value = cluster_value
@@ -385,12 +396,6 @@ locals {
       "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
       "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
       "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-    ]
-    s3 = [
-      "arn:aws:iam::aws:policy/AmazonS3FullAccess"
-    ]
-    dynamodb = [
-      "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
     ]
   }
 
@@ -551,67 +556,6 @@ locals {
             "eks:DisassociateAccessPolicy",
             "eks:ListAssociatedAccessPolicies",
             "iam:PassRole"
-          ]
-          Resource = "*"
-        }
-      ]
-    }
-    s3 = {
-      Version = "2012-10-17"
-      Statement = [
-        {
-          Effect = "Allow"
-          Action = [
-            "s3:CreateBucket",
-            "s3:DeleteBucket",
-            "s3:GetBucketLocation",
-            "s3:GetBucketVersioning",
-            "s3:ListBucket",
-            "s3:ListAllMyBuckets",
-            "s3:PutBucketVersioning",
-            "s3:PutBucketTagging",
-            "s3:GetBucketTagging",
-            "s3:DeleteBucketTagging",
-            "s3:PutBucketPolicy",
-            "s3:GetBucketPolicy",
-            "s3:DeleteBucketPolicy",
-            "s3:PutBucketAcl",
-            "s3:GetBucketAcl",
-            "s3:PutBucketCors",
-            "s3:GetBucketCors",
-            "s3:DeleteBucketCors",
-            "s3:PutBucketNotification",
-            "s3:GetBucketNotification"
-          ]
-          Resource = "*"
-        }
-      ]
-    }
-    dynamodb = {
-      Version = "2012-10-17"
-      Statement = [
-        {
-          Effect = "Allow"
-          Action = [
-            "dynamodb:CreateTable",
-            "dynamodb:DeleteTable",
-            "dynamodb:DescribeTable",
-            "dynamodb:ListTables",
-            "dynamodb:UpdateTable",
-            "dynamodb:TagResource",
-            "dynamodb:UntagResource",
-            "dynamodb:ListTagsOfResource",
-            "dynamodb:CreateBackup",
-            "dynamodb:DeleteBackup",
-            "dynamodb:DescribeBackup",
-            "dynamodb:ListBackups",
-            "dynamodb:RestoreTableFromBackup",
-            "dynamodb:PutItem",
-            "dynamodb:GetItem",
-            "dynamodb:UpdateItem",
-            "dynamodb:DeleteItem",
-            "dynamodb:Query",
-            "dynamodb:Scan"
           ]
           Resource = "*"
         }
