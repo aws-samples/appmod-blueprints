@@ -32,7 +32,7 @@ data:
         access: proxy
         jsonData:
           authType: default
-          defaultRegion: {{ .Values.aws.region | default "us-east-1" }}
+          defaultRegion: {{ .Values.aws.region | default "us-west-2" }}
           customMetricsNamespaces: 'AWS/EKS,AWS/ApplicationELB,AWS/NetworkELB,AWS/RDS,AWS/Lambda'
           assumeRoleArn: ''
         editable: true
@@ -43,7 +43,7 @@ data:
         access: proxy
         jsonData:
           authType: default
-          defaultRegion: {{ .Values.aws.region | default "us-east-1" }}
+          defaultRegion: {{ .Values.aws.region | default "us-west-2" }}
           assumeRoleArn: ''
         editable: true
         secureJsonData: {}

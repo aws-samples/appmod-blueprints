@@ -10,20 +10,21 @@ repo:
 clusters:
   hub:
     name: hub
-    region: us-west-2
+    region: us-west-2 # replaced by deploy.sh
     kubernetes_version: 1.32
     environment: control-plane
     auto_mode: true
     addons:
       enable_ingress_class_alb: true
+      enable_argocd: true
+      enable_argo_events: true
       enable_argo_rollouts: true
+      enable_argo_workflows: true
       enable_kyverno_policies: true
       enable_metrics_server: true
       enable_kyverno: true
       enable_kyverno_policy_reporter: true
       enable_ingress_nginx: true
-      enable_argocd: true
-      enable_argo_workflows: true
       enable_backstage: true
       enable_kargo: true
       enable_keycloak: true
@@ -34,8 +35,10 @@ clusters:
       enable_ack_eks: true
       enable_ack_ec2: true
       enable_ack_efs: false
+      enable_crossplane: true
+      enable_crossplane_aws: true
       enable_kro: true
-      enable_kro_eks_rgs: true
+      enable_kro_manifests: true
       enable_mutli_acct: true
       enable_kubevela: true
       enable_ack_s3: true
@@ -50,12 +53,15 @@ clusters:
       enable_prometheus_node_exporter: false
   spoke1:
     name: spoke-dev
-    region: us-west-2
+    region: us-west-2 # replaced by deploy.sh
     kubernetes_version: 1.32
     environment: dev
     auto_mode: true
     addons:
       enable_argocd: false
+      enable_argo_events: false
+      enable_argo_rollouts: true
+      enable_argo_workflows: false
       enable_ack_iam: true
       enable_ack_eks: true
       enable_ack_ec2: true
@@ -82,22 +88,23 @@ clusters:
       enable_kro_eks_rgs: false
       enable_mutli_acct: false
       enable_ingress_class_alb: false
-      enable_argo_rollouts: false
       enable_ingress_nginx: true
       enable_gitlab: false
       enable_keycloak: false
-      enable_argo_workflows: false
       enable_kargo: false
       enable_backstage: false
       enable_platform_manifests: true
   spoke2:
     name: spoke-prod
-    region: us-west-2
+    region: us-west-2 # replaced by deploy.sh
     kubernetes_version: 1.32
     environment: prod
     auto_mode: true
     addons:
       enable_argocd: false
+      enable_argo_events: false
+      enable_argo_rollouts: true
+      enable_argo_workflows: false
       enable_ack_iam: true
       enable_ack_eks: true
       enable_ack_ec2: true
@@ -124,11 +131,9 @@ clusters:
       enable_kro_eks_rgs: false
       enable_mutli_acct: false
       enable_ingress_class_alb: false
-      enable_argo_rollouts: false
       enable_ingress_nginx: true
       enable_gitlab: false
       enable_keycloak: false
-      enable_argo_workflows: false
       enable_kargo: false
       enable_backstage: false
       enable_platform_manifests: true

@@ -63,6 +63,13 @@ main() {
         show_final_status
         exit 1
     fi
+
+
+    # Initialize GitLab configuration
+    bash "$SCRIPT_DIR/2-gitlab-init.sh"
+
+    # Set up Secrets and URLs for workshop.
+    bash "$SCRIPT_DIR/1-tools-urls.sh"
     
     # Wait for Backstage build to complete if it has started
     if [[ -n $BACKSTAGE_BUILD_PID ]]; then
@@ -101,8 +108,6 @@ main() {
     # Show final status
     show_final_status
 
-    # Set up Secrets and URLs for workshop.
-    bash "$SCRIPT_DIR/1-tools-urls.sh"
 }
 
 # Trap to handle script interruption

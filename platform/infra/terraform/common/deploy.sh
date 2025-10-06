@@ -20,12 +20,12 @@ export WORKSHOP_CLUSTERS=${WORKSHOP_CLUSTERS:-false}
 main() {
   log "Starting bootstrap stack deployment..."
 
-  if [[ -z "${USER1_PASSWORD:-}" ]]; then
+  if [[ -z "${USER1_PASSWORD:-${USER_PASSWORD:-}}" ]]; then
     log_error "USER1_PASSWORD environment variable is required"
     exit 1
   fi
 
-  # Configure kubectl access to use kubectl in terraform external resources
+    # Configure kubectl access to use kubectl in terraform external resources
   for cluster in "${CLUSTER_NAMES[@]}"; do
     if ! kubectl get nodes --request-timeout=10s --context $cluster &>/dev/null; then
       log_warning "kubectl cannot connect to cluster, setting up kubectl access"
@@ -36,7 +36,7 @@ main() {
     fi
     log_success "kubectl is working for $cluster, proceeding..."
   done
-
+  
   # Validate backend configuration
   validate_backend_config
 
@@ -79,9 +79,6 @@ main() {
     export GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
     GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
 
-    # Update backstage default values
-    update_backstage_defaults
-
     # Create spoke cluster secret values
     create_spoke_cluster_secret_values
     
@@ -119,6 +116,12 @@ main() {
       exit 1
     fi
   fi
+  
+  # Get ArgoCD domain from Terraform output
+  export ARGOCD_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
+  
+  # Update backstage default values now that both domains are available
+  update_backstage_defaults
   
   log_success "Cootstrap stack deployment completed successfully"
 }

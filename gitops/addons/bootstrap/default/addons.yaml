@@ -537,7 +537,7 @@ kyverno-policies:
   values:
     podSecurityStandard: restricted
     validationFailureAction: Audit
-    skipBackgroundRequests: false
+    skipBackgroundRequests: true
 
 cni-metrics-helper:
   enabled: false

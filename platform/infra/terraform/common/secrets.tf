@@ -117,9 +117,7 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
 # Only for backward compatibility
 # TODO: Move this to cluster config secret
 resource "aws_secretsmanager_secret" "argorollouts_secret" {
-  name = "${local.context_prefix}/platform/amp-1"
-  description             = "Secrets for AMP endpoint URL to be used by Kubevela"
-  recovery_window_in_days = 0
+  name = "${local.context_prefix}/platform/amp"
 }
 
 # Create the secret version with key-value pairs

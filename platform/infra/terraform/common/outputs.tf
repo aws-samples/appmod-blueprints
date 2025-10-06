@@ -10,3 +10,8 @@ output "gitlab_access" {
   value       = "Gitlab URL: https://${local.gitlab_domain_name}/\nLogin: ${var.git_username}\nPassword: ${var.ide_password}"
   sensitive   = true
 }
+
+output "ingress_domain_name" {
+  description = "The CloudFront domain name for ingress"
+  value       = local.ingress_domain_name
+}
