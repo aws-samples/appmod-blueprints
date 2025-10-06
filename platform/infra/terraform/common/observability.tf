@@ -119,7 +119,7 @@ module "eks_monitoring_spoke_dev" {
   enable_adotcollector_metrics = true
 
   grafana_api_key = module.managed_grafana.workspace_api_keys["operator"].key
-  grafana_url     = module.managed_grafana.workspace_endpoint
+  grafana_url     = "https://${module.managed_grafana.workspace_endpoint}"
 
   # prevents the module to create a workspace
   enable_managed_prometheus = false
