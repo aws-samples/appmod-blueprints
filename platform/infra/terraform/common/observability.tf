@@ -100,6 +100,7 @@ module "eks_monitoring_spoke_dev" {
   providers = {
     kubectl = kubectl.spoke1
     helm = helm.spoke1
+    kubernetes = kubernetes.spoke1
   }
 
   enable_amazon_eks_adot = true
@@ -172,6 +173,7 @@ module "eks_monitoring_spoke_prod" {
   providers = {
     kubectl = kubectl.spoke2
     helm = helm.spoke2
+    kubernetes = kubernetes.spoke2
   }
 
   enable_amazon_eks_adot = true
