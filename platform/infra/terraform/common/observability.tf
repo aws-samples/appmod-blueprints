@@ -149,6 +149,7 @@ module "eks_monitoring_spoke_dev" {
 # This is needed for Grafana Operator to work correctly
 # As ESO is not deployed through terraform-aws-observability-accelerator
 resource "kubectl_manifest" "spoke_dev_grafana_secret" {
+  provider = kubectl.spoke1
   yaml_body  = <<YAML
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -162,8 +163,9 @@ spec:
     kind: ClusterSecretStore
   target:
     name: grafana-admin-credentials
-  dataFrom:
-  - extract:
+  data:
+  - secretKey: GF_SECURITY_ADMIN_APIKEY
+    remoteRef:
       key: "${local.context_prefix}-${data.aws_eks_cluster.clusters["spoke1"].id}/secrets"
       property: grafana_api_key
       conversionStrategy: Default
@@ -250,6 +252,7 @@ module "eks_monitoring_spoke_prod" {
 # This is needed for Grafana Operator to work correctly
 # As ESO is not deployed through terraform-aws-observability-accelerator
 resource "kubectl_manifest" "spoke_prod_grafana_secret" {
+  provider = kubectl.spoke2
   yaml_body  = <<YAML
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -263,8 +266,9 @@ spec:
     kind: ClusterSecretStore
   target:
     name: grafana-admin-credentials
-  dataFrom:
-  - extract:
+  data:
+  - secretKey: GF_SECURITY_ADMIN_APIKEY
+    remoteRef:
       key: "${local.context_prefix}-${data.aws_eks_cluster.clusters["spoke2"].id}/secrets"
       property: grafana_api_key
       conversionStrategy: Default
