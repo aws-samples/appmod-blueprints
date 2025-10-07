@@ -94,7 +94,7 @@ module "eks_monitoring_spoke_dev" {
     null_resource.spoke_dev_flux_crd_wait,
     ]
     
-  source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
+  source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
   eks_cluster_id         = data.aws_eks_cluster.clusters["spoke1"].id
   
   providers = {
@@ -196,7 +196,7 @@ module "eks_monitoring_spoke_prod" {
     null_resource.spoke_prod_flux_crd_wait,
    ]
 
-  source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.0"
+  source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
   eks_cluster_id         = data.aws_eks_cluster.clusters["spoke2"].id
   
   providers = {
