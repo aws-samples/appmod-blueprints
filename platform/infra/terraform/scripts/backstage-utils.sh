@@ -54,12 +54,6 @@ start_backstage_build() {
     print_step "Preparing Backstage for build"
     BACKSTAGE_PATH="${GIT_ROOT_PATH}/backstage"
 
-    # Update yarn lockfile if needed (for new dependencies)
-    # print_info "Updating Backstage dependencies and lockfile..."
-    # cd "$BACKSTAGE_PATH"
-    # yarn install
-    # cd - > /dev/null
-
     print_info "Building Backstage image in background..."
 
     # Create a temporary log file for the background build

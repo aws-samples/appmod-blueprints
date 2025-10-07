@@ -15,6 +15,7 @@ export SKIP_GITLAB=${SKIP_GITLAB:-false}
 export WS_PARTICIPANT_ROLE_ARN=${WS_PARTICIPANT_ROLE_ARN:-""}
 export RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 export GIT_USERNAME=${GIT_USERNAME:-user1}
+export USER1_PASSWORD=${USER1_PASSWORD:-${IDE_PASSWORD:-""}}
 export CONFIG_FILE=${CONFIG_FILE:-"${GIT_ROOT_PATH}/platform/infra/terraform/hub-config.yaml"}
 export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 export AWS_REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"

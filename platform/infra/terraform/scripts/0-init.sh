@@ -67,9 +67,6 @@ main() {
 
     # Initialize GitLab configuration
     bash "$SCRIPT_DIR/2-gitlab-init.sh"
-
-    # Set up Secrets and URLs for workshop.
-    bash "$SCRIPT_DIR/1-tools-urls.sh"
     
     # Wait for Backstage build to complete if it has started
     if [[ -n $BACKSTAGE_BUILD_PID ]]; then
@@ -105,6 +102,9 @@ main() {
 
     print_status "SUCCESS" "Bootstrap deployment process completed successfully!"
 
+    # Set up Secrets and URLs for workshop.
+    bash "$SCRIPT_DIR/1-tools-urls.sh"
+    
     # Show final status
     show_final_status
 

@@ -28,8 +28,8 @@ resource "aws_eks_pod_identity_association" "argocd_repo_server" {
 ################################################################################
 module "external_secrets_pod_identity" {
   for_each = { for k, v in var.clusters : k => v if try(v.addons.enable_external_secrets, false) }
-  source  = "terraform-aws-modules/eks-pod-identity/aws"
-  version = "~> 1.4.0"
+  source   = "terraform-aws-modules/eks-pod-identity/aws"
+  version  = "~> 1.4.0"
 
   name = "external-secrets"
 
@@ -61,12 +61,12 @@ module "external_secrets_pod_identity" {
         namespace       = local.keycloak.namespace
         service_account = local.keycloak.service_account
       }
-    } : {
+      } : {
       fleet = {
-      cluster_name    = each.value.name
-      namespace       = local.external_secrets.namespace_fleet
-      service_account = local.external_secrets.service_account
-    }
+        cluster_name    = each.value.name
+        namespace       = local.external_secrets.namespace_fleet
+        service_account = local.external_secrets.service_account
+      }
     }
   )
 
@@ -78,8 +78,8 @@ module "external_secrets_pod_identity" {
 ################################################################################
 module "aws_cloudwatch_observability_pod_identity" {
   for_each = local.spoke_clusters
-  source = "terraform-aws-modules/eks-pod-identity/aws"
-  version = "~> 1.11.0"
+  source   = "terraform-aws-modules/eks-pod-identity/aws"
+  version  = "~> 1.11.0"
 
   name = "aws-cloudwatch-observability"
 
@@ -102,8 +102,8 @@ module "aws_cloudwatch_observability_pod_identity" {
 ################################################################################
 module "kyverno_policy_reporter_pod_identity" {
   for_each = local.spoke_clusters
-  source = "terraform-aws-modules/eks-pod-identity/aws"
-  version = "~> 1.11.0"
+  source   = "terraform-aws-modules/eks-pod-identity/aws"
+  version  = "~> 1.11.0"
 
   name = "kyverno-policy-reporter"
 
@@ -128,8 +128,8 @@ module "kyverno_policy_reporter_pod_identity" {
 ################################################################################
 module "aws_ebs_csi_pod_identity" {
   for_each = local.spoke_clusters
-  source = "terraform-aws-modules/eks-pod-identity/aws"
-  version = "~> 1.11.0"
+  source   = "terraform-aws-modules/eks-pod-identity/aws"
+  version  = "~> 1.11.0"
 
   name = "aws-ebs-csi"
 
@@ -144,7 +144,7 @@ module "aws_ebs_csi_pod_identity" {
       service_account = local.ebs_csi_controller.service_account
     }
   }
-  
+
   tags = local.tags
 }
 
@@ -153,8 +153,8 @@ module "aws_ebs_csi_pod_identity" {
 ################################################################################
 module "aws_lb_controller_pod_identity" {
   for_each = local.spoke_clusters
-  source = "terraform-aws-modules/eks-pod-identity/aws"
-  version = "~> 1.11.0"
+  source   = "terraform-aws-modules/eks-pod-identity/aws"
+  version  = "~> 1.11.0"
 
   name = "aws-lbc"
 
@@ -199,9 +199,9 @@ resource "aws_iam_policy" "cni_metrics_helper_pod_identity_policy" {
 
 module "cni_metrics_helper_pod_identity" {
   for_each = local.spoke_clusters
-  source = "terraform-aws-modules/eks-pod-identity/aws"
-  version = "~> 1.11.0"
-  name = "cni-metrics-helper-${each.value.name}"
+  source   = "terraform-aws-modules/eks-pod-identity/aws"
+  version  = "~> 1.11.0"
+  name     = "cni-metrics-helper-${each.value.name}"
 
   additional_policy_arns = {
     "cni-metrics-help" : aws_iam_policy.cni_metrics_helper_pod_identity_policy.arn
@@ -224,13 +224,13 @@ module "cni_metrics_helper_pod_identity" {
 
 module "adot_collector_pod_identity" {
   for_each = local.spoke_clusters # only for spoke clusters
-  source = "terraform-aws-modules/eks-pod-identity/aws"
-  version = "~> 1.11.0"
+  source   = "terraform-aws-modules/eks-pod-identity/aws"
+  version  = "~> 1.11.0"
 
   name = "adot-collector"
 
   additional_policy_arns = {
-      "PrometheusReadWrite": "arn:aws:iam::aws:policy/AmazonPrometheusRemoteWriteAccess"
+    "PrometheusReadWrite" : "arn:aws:iam::aws:policy/AmazonPrometheusRemoteWriteAccess"
   }
 
   # Pod Identity Associations
@@ -247,22 +247,26 @@ module "adot_collector_pod_identity" {
 
 # Define variables for the policy URLs
 variable "policy_arn_urls" {
-  type    = map(string)
+  type = map(string)
   default = {
-    iam = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-policy-arn"
-    ec2 = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-policy-arn"
-    eks = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-policy-arn"
-    ecr = "https://raw.githubusercontent.com/aws-controllers-k8s/ecr-controller/main/config/iam/recommended-policy-arn"
+    iam      = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-policy-arn"
+    ec2      = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-policy-arn"
+    eks      = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-policy-arn"
+    ecr      = "https://raw.githubusercontent.com/aws-controllers-k8s/ecr-controller/main/config/iam/recommended-policy-arn"
+    s3       = "https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/main/config/iam/recommended-policy-arn"
+    dynamodb = "https://raw.githubusercontent.com/aws-controllers-k8s/dynamodb-controller/main/config/iam/recommended-policy-arn"
   }
 }
 
 variable "inline_policy_urls" {
-  type    = map(string)
+  type = map(string)
   default = {
-    iam = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-inline-policy"
-    ec2 = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-inline-policy"
-    eks = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-inline-policy"
-    ecr = "https://raw.githubusercontent.com/aws-controllers-k8s/ecr-controller/main/config/iam/recommended-inline-policy"
+    iam      = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-inline-policy"
+    ec2      = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-inline-policy"
+    eks      = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-inline-policy"
+    ecr      = "https://raw.githubusercontent.com/aws-controllers-k8s/ecr-controller/main/config/iam/recommended-inline-policy"
+    s3       = "https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/main/config/iam/recommended-inline-policy"
+    dynamodb = "https://raw.githubusercontent.com/aws-controllers-k8s/dynamodb-controller/main/config/iam/recommended-inline-policy"
   }
 }
 
@@ -283,11 +287,11 @@ locals {
   ack_combinations = {
     for combination in flatten([
       for cluster_key, cluster_value in var.clusters : [
-        for service in ["iam", "ec2", "eks", "ecr"] : {
-          key = "${cluster_key}-${service}"
-          cluster_key = cluster_key
+        for service in ["iam", "ec2", "eks", "ecr", "s3", "dynamodb"] : {
+          key           = "${cluster_key}-${service}"
+          cluster_key   = cluster_key
           cluster_value = cluster_value
-          service = service
+          service       = service
         }
       ]
     ]) : combination.key => combination
@@ -297,13 +301,13 @@ locals {
 # Create IAM roles for ACK controllers
 resource "aws_iam_role" "ack_controller" {
   for_each = local.ack_combinations
-  name        = "${var.resource_prefix}-ack-${each.value.service}-controller-role-${each.value.cluster_key}"
-  
+  name     = "${var.resource_prefix}-ack-${each.value.service}-controller-role-${each.value.cluster_key}"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid = "AllowEksAuthToAssumeRoleForPodIdentity"
+        Sid    = "AllowEksAuthToAssumeRoleForPodIdentity"
         Effect = "Allow"
         Principal = {
           Service = "pods.eks.amazonaws.com"
@@ -337,7 +341,7 @@ resource "aws_iam_role_policy_attachment" "ack_controller_policy_attachment" {
 resource "aws_iam_role_policy" "ack_controller_inline_policy" {
   for_each = local.ack_combinations
 
-  role   = aws_iam_role.ack_controller[each.key].name
+  role = aws_iam_role.ack_controller[each.key].name
   policy = can(jsondecode(data.http.inline_policy[each.value.service].body)) ? data.http.inline_policy[each.value.service].body : jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -356,8 +360,8 @@ data "aws_iam_policy_document" "ack_controller_cross_account_policy" {
   for_each = local.ack_combinations
 
   statement {
-    sid    = "AllowCrossAccountAccess"
-    effect = "Allow"
+    sid     = "AllowCrossAccountAccess"
+    effect  = "Allow"
     actions = ["sts:AssumeRole", "sts:TagSession"]
     resources = [
       "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-cluster-mgmt-${each.key}"
@@ -402,13 +406,19 @@ locals {
     ecr = [
       "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
     ]
+    s3 = [
+      "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    ]
+    dynamodb = [
+      "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+    ]
   }
 
   # Combined structure for roles and policy attachments
   ack_workload_resources = {
     for k, v in local.ack_combinations : k => {
-      combination = v
-      policies = lookup(local.ack_managed_policies, v.service, [])
+      combination   = v
+      policies      = lookup(local.ack_managed_policies, v.service, [])
       inline_policy = lookup(local.ack_inline_policies, v.service, null)
     }
   }
@@ -418,7 +428,7 @@ locals {
 resource "aws_iam_role" "ack_workload_role" {
   for_each = local.ack_workload_resources
   name     = "${local.context_prefix}-cluster-mgmt-${each.key}"
-  
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -431,7 +441,7 @@ resource "aws_iam_role" "ack_workload_role" {
       }
     ]
   })
-  
+
   description = "Workload role for ACK ${each.key} controller"
   tags        = local.tags
 }
@@ -443,8 +453,8 @@ resource "aws_iam_role_policy_attachment" "ack_workload_managed_policies" {
       for k, v in local.ack_workload_resources : [
         for policy in v.policies : {
           combination_key = k
-          policy  = policy
-          key     = "${k}-${replace(policy, "/[^a-zA-Z0-9]/", "-")}"
+          policy          = policy
+          key             = "${k}-${replace(policy, "/[^a-zA-Z0-9]/", "-")}"
         }
       ]
     ]) : combo.key => combo
@@ -596,6 +606,67 @@ locals {
         }
       ]
     }
+    s3 = {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Effect = "Allow"
+          Action = [
+            "s3:CreateBucket",
+            "s3:DeleteBucket",
+            "s3:GetBucketLocation",
+            "s3:GetBucketVersioning",
+            "s3:ListBucket",
+            "s3:ListAllMyBuckets",
+            "s3:PutBucketVersioning",
+            "s3:PutBucketTagging",
+            "s3:GetBucketTagging",
+            "s3:DeleteBucketTagging",
+            "s3:PutBucketPolicy",
+            "s3:GetBucketPolicy",
+            "s3:DeleteBucketPolicy",
+            "s3:PutBucketAcl",
+            "s3:GetBucketAcl",
+            "s3:PutBucketCors",
+            "s3:GetBucketCors",
+            "s3:DeleteBucketCors",
+            "s3:PutBucketNotification",
+            "s3:GetBucketNotification"
+          ]
+          Resource = "*"
+        }
+      ]
+    }
+    dynamodb = {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Effect = "Allow"
+          Action = [
+            "dynamodb:CreateTable",
+            "dynamodb:DeleteTable",
+            "dynamodb:DescribeTable",
+            "dynamodb:ListTables",
+            "dynamodb:UpdateTable",
+            "dynamodb:TagResource",
+            "dynamodb:UntagResource",
+            "dynamodb:ListTagsOfResource",
+            "dynamodb:CreateBackup",
+            "dynamodb:DeleteBackup",
+            "dynamodb:DescribeBackup",
+            "dynamodb:ListBackups",
+            "dynamodb:RestoreTableFromBackup",
+            "dynamodb:PutItem",
+            "dynamodb:GetItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:Query",
+            "dynamodb:Scan"
+          ]
+          Resource = "*"
+        }
+      ]
+    }
   }
 }
 
@@ -605,7 +676,7 @@ locals {
 
 resource "aws_iam_role" "kargo_controller_role" {
   name = "${local.hub_cluster.name}-kargo-controller-role"
-  
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -621,7 +692,7 @@ resource "aws_iam_role" "kargo_controller_role" {
       }
     ]
   })
-  
+
   description = "IAM role for Kargo to access Amazon ECR"
   tags        = local.tags
 }
