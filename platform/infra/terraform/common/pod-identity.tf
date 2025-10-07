@@ -331,7 +331,7 @@ locals {
 resource "aws_iam_role_policy_attachment" "ack_controller_policy_attachment" {
   for_each = {
     for k, v in local.ack_combinations : k => v
-    if local.valid_policies[v.service] != null && can(regex("^arn:aws", local.valid_policies[v.service]))
+    if lookup(local.valid_policies, v.service, null) != null && can(regex("^arn:aws", lookup(local.valid_policies, v.service, "")))
   }
 
   role       = aws_iam_role.ack_controller[each.key].name
