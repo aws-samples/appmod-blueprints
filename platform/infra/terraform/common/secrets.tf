@@ -118,7 +118,7 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
 # Only for backward compatibility
 # TODO: Move this to cluster config secret
 resource "aws_secretsmanager_secret" "argorollouts_secret" {
-  name = "${local.context_prefix}-hub/platform/amp"
+  name = "${local.context_prefix}/platform/amp"
   description = "Platform AMP Endpoint"
   recovery_window_in_days = 0
 }
