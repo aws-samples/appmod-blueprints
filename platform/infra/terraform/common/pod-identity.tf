@@ -252,6 +252,7 @@ variable "policy_arn_urls" {
     iam = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-policy-arn"
     ec2 = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-policy-arn"
     eks = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-policy-arn"
+    ecr = "https://raw.githubusercontent.com/aws-controllers-k8s/ecr-controller/main/config/iam/recommended-policy-arn"
   }
 }
 
@@ -261,6 +262,7 @@ variable "inline_policy_urls" {
     iam = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-inline-policy"
     ec2 = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-inline-policy"
     eks = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-inline-policy"
+    ecr = "https://raw.githubusercontent.com/aws-controllers-k8s/ecr-controller/main/config/iam/recommended-inline-policy"
   }
 }
 
@@ -281,7 +283,7 @@ locals {
   ack_combinations = {
     for combination in flatten([
       for cluster_key, cluster_value in var.clusters : [
-        for service in ["iam", "ec2", "eks"] : {
+        for service in ["iam", "ec2", "eks", "ecr"] : {
           key = "${cluster_key}-${service}"
           cluster_key = cluster_key
           cluster_value = cluster_value
@@ -396,6 +398,9 @@ locals {
       "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
       "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
       "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+    ]
+    ecr = [
+      "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
     ]
   }
 
@@ -556,6 +561,36 @@ locals {
             "eks:DisassociateAccessPolicy",
             "eks:ListAssociatedAccessPolicies",
             "iam:PassRole"
+          ]
+          Resource = "*"
+        }
+      ]
+    }
+    ecr = {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Effect = "Allow"
+          Action = [
+            "ecr:CreateRepository",
+            "ecr:DeleteRepository",
+            "ecr:DescribeRepositories",
+            "ecr:ListTagsForResource",
+            "ecr:TagResource",
+            "ecr:UntagResource",
+            "ecr:PutRepositoryPolicy",
+            "ecr:DeleteRepositoryPolicy",
+            "ecr:GetRepositoryPolicy",
+            "ecr:PutLifecyclePolicy",
+            "ecr:GetLifecyclePolicy",
+            "ecr:DeleteLifecyclePolicy",
+            "ecr:PutImageScanningConfiguration",
+            "ecr:PutImageTagMutability",
+            "ecr:PutReplicationConfiguration",
+            "ecr:DescribeRegistry",
+            "ecr:GetRegistryPolicy",
+            "ecr:PutRegistryPolicy",
+            "ecr:DeleteRegistryPolicy"
           ]
           Resource = "*"
         }

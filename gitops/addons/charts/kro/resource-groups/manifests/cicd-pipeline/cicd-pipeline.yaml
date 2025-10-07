@@ -450,7 +450,7 @@ spec:
       readyWhen:
        - ${gitlabexternalsecret.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
       template:
-       apiVersion: external-secrets.io/v1beta1
+       apiVersion: external-secrets.io/v1
        kind: ExternalSecret
        metadata:
           name: gitlab-credentials
@@ -475,15 +475,14 @@ spec:
           target:
               name: gitlab-credentials
               creationPolicy: Owner
+              template:
+                data:
+                  GITLAB_USERNAME: ${schema.spec.gitlab.username}
           data:
-             - secretKey: GITLAB_USERNAME
-               remoteRef:
-                 key: ${schema.spec.aws.resourcePrefix}-gitlab-pat
-                 property: username
              - secretKey: GITLAB_TOKEN
                remoteRef:
-                 key: ${schema.spec.aws.resourcePrefix}-gitlab-pat
-                 property: token
+                 key: ${schema.spec.aws.resourcePrefix}-hub/secrets
+                 property: git_token
 
     # Docker registry secret for ECR authentication - properly scoped to namespace
     - id: dockersecret

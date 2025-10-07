@@ -34,6 +34,7 @@ clusters:
       enable_ack_iam: true
       enable_ack_eks: true
       enable_ack_ec2: true
+      enable_ack_ecr: true
       enable_ack_efs: false
       enable_crossplane: true
       enable_crossplane_aws: true
@@ -65,6 +66,7 @@ clusters:
       enable_ack_iam: true
       enable_ack_eks: true
       enable_ack_ec2: true
+      enable_ack_ecr: true
       enable_ack_s3: true
       enable_external_secrets: true
       enable_flux: true
@@ -108,6 +110,7 @@ clusters:
       enable_ack_iam: true
       enable_ack_eks: true
       enable_ack_ec2: true
+      enable_ack_ecr: true
       enable_ack_s3: true
       enable_external_secrets: true
       enable_flux: true
