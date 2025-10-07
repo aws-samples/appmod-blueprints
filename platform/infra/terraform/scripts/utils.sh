@@ -21,19 +21,6 @@ export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output tex
 export AWS_REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
 export WORKSHOP_CLUSTERS=${WORKSHOP_CLUSTERS:-false}
 
-# Update config file cluster regions if WORKSHOP_CLUSTERS
-if [[ "$WORKSHOP_CLUSTERS" == "true" ]]; then
-  log "Updating config file for workshop..."
-  TEMP_CONFIG_FILE="$(mktemp).yaml"
-  cp "$CONFIG_FILE" "$TEMP_CONFIG_FILE"
-
-  yq eval '.clusters[].name = env(RESOURCE_PREFIX) + "-" + .clusters[].name' -i "$TEMP_CONFIG_FILE"
-  yq eval '.clusters[].region = env(AWS_REGION)' -i "$TEMP_CONFIG_FILE"
-  export CONFIG_FILE="$TEMP_CONFIG_FILE"
-fi
-
-export CLUSTER_NAMES=($(yq eval '.clusters[].name' "$CONFIG_FILE"))
-
 # Logging functions
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -50,6 +37,21 @@ log_warning() {
 log_success() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"
 }
+
+# Update config file cluster regions if WORKSHOP_CLUSTERS
+if [[ "$WORKSHOP_CLUSTERS" == "true" ]]; then
+  log "Updating config file for workshop..."
+  TEMP_CONFIG_FILE="$(mktemp).yaml"
+  cp "$CONFIG_FILE" "$TEMP_CONFIG_FILE"
+
+  yq eval '.clusters[].name = env(RESOURCE_PREFIX) + "-" + .clusters[].name' -i "$TEMP_CONFIG_FILE"
+  yq eval '.clusters[].region = env(AWS_REGION)' -i "$TEMP_CONFIG_FILE"
+  export CONFIG_FILE="$TEMP_CONFIG_FILE"
+fi
+
+export CLUSTER_NAMES=($(yq eval '.clusters[].name' "$CONFIG_FILE"))
+
+
 
 # Function to update or add environment variable to ~/.bashrc.d/platform.sh
 update_workshop_var() {
