@@ -273,16 +273,23 @@ gitlab_repository_setup(){
   if ! git remote get-url gitlab >/dev/null 2>&1; then
     git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
   fi
-
-  if ! git diff --cached --quiet; then
-    git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files "
+  
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    git add .
+    git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files " || true
   else
     print_info "No changes to commit"
   fi
+
+  if ! git pull --rebase gitlab main; then
+    log_warning "Failed to pull with rebase from GitLab"
+  fi
   
-  if ! git push --set-upstream gitlab "${WORKSHOP_GIT_BRANCH}":main; then 
-    log_error "Failed to push repository to GitLab"
-    exit 1
+  if ! git push --set-upstream gitlab "${WORKSHOP_GIT_BRANCH}":main --force; then
+    if ! git push gitlab "${WORKSHOP_GIT_BRANCH}":main --force; then 
+      log_error "Failed to push repository to GitLab"
+      exit 1
+    fi
   fi
 
   cd -
