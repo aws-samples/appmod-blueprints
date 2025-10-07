@@ -40,15 +40,6 @@ main() {
   # Validate backend configuration
   validate_backend_config
 
-  # Update config file cluster regions if WORKSHOP_CLUSTERS
-  if [[ "$WORKSHOP_CLUSTERS" == "true" ]]; then
-    log "Updating config file cluster regions..."
-    TEMP_CONFIG_FILE="$(mktemp).yaml"
-    cp "$CONFIG_FILE" "$TEMP_CONFIG_FILE"
-    yq eval '.clusters[].region = env(AWS_REGION)' -i "$TEMP_CONFIG_FILE"
-    CONFIG_FILE="$TEMP_CONFIG_FILE"
-  fi
-
   export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
   yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
 

@@ -19,6 +19,19 @@ export USER1_PASSWORD=${USER1_PASSWORD:-${IDE_PASSWORD:-""}}
 export CONFIG_FILE=${CONFIG_FILE:-"${GIT_ROOT_PATH}/platform/infra/terraform/hub-config.yaml"}
 export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 export AWS_REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
+export WORKSHOP_CLUSTERS=${WORKSHOP_CLUSTERS:-false}
+
+# Update config file cluster regions if WORKSHOP_CLUSTERS
+if [[ "$WORKSHOP_CLUSTERS" == "true" ]]; then
+  log "Updating config file for workshop..."
+  TEMP_CONFIG_FILE="$(mktemp).yaml"
+  cp "$CONFIG_FILE" "$TEMP_CONFIG_FILE"
+
+  yq eval '.clusters[].name = env(RESOURCE_PREFIX) + "-" + .clusters[].name' -i "$TEMP_CONFIG_FILE"
+  yq eval '.clusters[].region = env(AWS_REGION)' -i "$TEMP_CONFIG_FILE"
+  export CONFIG_FILE="$TEMP_CONFIG_FILE"
+fi
+
 export CLUSTER_NAMES=($(yq eval '.clusters[].name' "$CONFIG_FILE"))
 
 # Logging functions
