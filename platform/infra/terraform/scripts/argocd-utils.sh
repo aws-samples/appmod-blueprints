@@ -200,7 +200,7 @@ delete_argocd_apps() {
         
         # Wait for deletion with 5 minute timeout
         local delete_start=$(date +%s)
-        local delete_timeout=200  # 2 minutes
+        local delete_timeout=120  # 2 minutes
         
         while kubectl get application.argoproj.io "$name" -n "$namespace" >/dev/null 2>&1; do
             local elapsed=$(($(date +%s) - delete_start))
