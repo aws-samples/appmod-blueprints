@@ -180,7 +180,7 @@ template: {
 					{
 						secretKey: "amp-workspace-url"
 						remoteRef: {
-							key: "/platform/amp"
+							key: "peeks/platform/amp"
               property: "amp-workspace"
 						}
 					},

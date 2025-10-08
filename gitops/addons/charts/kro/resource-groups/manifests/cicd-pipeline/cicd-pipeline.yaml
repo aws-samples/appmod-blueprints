@@ -478,6 +478,7 @@ spec:
               template:
                 data:
                   GITLAB_USERNAME: ${schema.spec.gitlab.username}
+                  GITLAB_TOKEN: '{{ .GITLAB_TOKEN }}'
           data:
              - secretKey: GITLAB_TOKEN
                remoteRef:
