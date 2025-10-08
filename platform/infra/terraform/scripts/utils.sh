@@ -44,7 +44,7 @@ if [[ "$WORKSHOP_CLUSTERS" == "true" ]]; then
   TEMP_CONFIG_FILE="$(mktemp).yaml"
   cp "$CONFIG_FILE" "$TEMP_CONFIG_FILE"
 
-  yq eval '.clusters[].name = env(RESOURCE_PREFIX) + "-" + .clusters[].name' -i "$TEMP_CONFIG_FILE"
+  yq eval '.clusters[].name = .resource_prefix + "-" + .clusters[].name' -i "$TEMP_CONFIG_FILE"
   yq eval '.clusters[].region = env(AWS_REGION)' -i "$TEMP_CONFIG_FILE"
   export CONFIG_FILE="$TEMP_CONFIG_FILE"
 fi
