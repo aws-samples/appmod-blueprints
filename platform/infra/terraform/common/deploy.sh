@@ -72,6 +72,12 @@ main() {
   export GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
   GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
 
+  # Create spoke cluster secret values
+  create_spoke_cluster_secret_values
+
+  # Push repo to Gitlab
+  gitlab_repository_setup
+  
   # Initialize Terraform with S3 backend
   initialize_terraform "bootstrap" "$DEPLOY_SCRIPTDIR"
   
@@ -105,9 +111,6 @@ main() {
 
   # Get ArgoCD domain from Terraform output
   export ARGOCD_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
-
-  # Create spoke cluster secret values
-  create_spoke_cluster_secret_values
 
   # Update backstage default values now that both domains are available
   update_backstage_defaults
