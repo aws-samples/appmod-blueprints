@@ -13,7 +13,8 @@ spec:
         	apiVersion: "dynamodb.aws.upbound.io/v1beta1"
         	kind:       "Table"
         	metadata: name: parameter.tableName
-        	spec: forProvider: {
+        	spec: {
+        		forProvider: {
         		attribute: [
         			{
         				name: parameter.partitionKeyName
@@ -31,6 +32,8 @@ spec:
         		region:       parameter.region
         		tags: Environment: parameter.environment
         		writeCapacity: parameter.writeCapacity
+        		}
+        		providerConfigRef: name: "provider-aws-config"
         	}
         }
 
