@@ -708,3 +708,28 @@ resource "aws_eks_pod_identity_association" "kargo_controller" {
   service_account = local.kargo.service_account
   role_arn        = aws_iam_role.kargo_controller_role.arn
 }
+
+################################################################################
+# Crossplane Provider AWS EKS Access
+################################################################################
+module "crossplane_provider_aws_pod_identity" {
+  for_each = { for k, v in var.clusters : k => v if try(v.addons.enable_crossplane, false) }
+  source   = "terraform-aws-modules/eks-pod-identity/aws"
+  version  = "~> 1.11.0"
+
+  name = "crossplane-provider-aws-${each.key}"
+
+  additional_policy_arns = {
+    AdministratorAccess = "arn:aws:iam::aws:policy/AdministratorAccess"
+  }
+
+  associations = {
+    addon = {
+      cluster_name    = each.value.name
+      namespace       = "crossplane-system"
+      service_account = "provider-aws"
+    }
+  }
+
+  tags = local.tags
+}
