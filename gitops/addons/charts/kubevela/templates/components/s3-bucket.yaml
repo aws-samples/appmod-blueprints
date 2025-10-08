@@ -13,7 +13,10 @@ spec:
         	apiVersion: "s3.aws.upbound.io/v1beta1"
         	kind:       "Bucket"
         	metadata: name: "\(parameter.name)"
-        	spec: forProvider: region: "\(parameter.region)"
+        	spec: {
+        		forProvider: region: "\(parameter.region)"
+        		providerConfigRef: name: "provider-aws-config"
+        	}
         }
         parameter: {
         	name:   string
