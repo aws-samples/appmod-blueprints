@@ -4,14 +4,6 @@ set -e
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
-# Source environment variables if available
-if [ -d /home/ec2-user/.bashrc.d ]; then
-    for file in /home/ec2-user/.bashrc.d/*.sh; do
-        if [ -f "$file" ]; then
-            source "$file"
-        fi
-    done
-fi
 
 # Use a single variable for app name, repository, service, and cluster
 APP_NAME="${RESOURCE_PREFIX}-backstage"

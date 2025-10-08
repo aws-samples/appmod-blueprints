@@ -3,7 +3,6 @@
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
-source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
 
 # Source environment variables
 if [ -d /home/ec2-user/.bashrc.d ]; then
@@ -99,6 +98,3 @@ update_workshop_var "KEYCLOAKADMINPASSWORD" "$KEYCLOAK_ADMIN_PASSWORD"
 update_workshop_var "USER_PASSWORD" "$USER_PASSWORD"
 update_workshop_var "GITLAB_DOMAIN" "$(echo $GITLAB_URL | sed 's|https://||')"
 update_workshop_var "ARGOCD_DOMAIN" "$DOMAIN_NAME"
-
-# Update Backstage catalog-info.yaml with actual values
-# update_backstage_defaults
