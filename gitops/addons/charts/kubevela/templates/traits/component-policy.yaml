@@ -28,7 +28,9 @@ spec:
         			apiVersion: "iam.aws.upbound.io/v1beta1"
         			kind:       "Policy"
         			metadata: name: "\(context.appName)-\(context.name)-iam-policy"
-        			spec: forProvider: policy: {"""
+        			spec: {
+        				providerConfigRef: name: "provider-aws-config"
+        				forProvider: policy: {"""
                       {
                         "Version": "2012-10-17",
                         "Statement": [
@@ -42,6 +44,7 @@ spec:
                         ]
                       }
                     """}
+        			}
         		}
         	}
 
@@ -51,6 +54,7 @@ spec:
         			kind:       "Policy"
         			metadata: name: "\(context.appName)-\(context.name)-iam-policy"
         			spec: {
+        				providerConfigRef: name: "provider-aws-config"
         				name: "\(context.appName)-\(context.name)-iam-policy"
         				forProvider: policy: "\(policy)"
         			}
