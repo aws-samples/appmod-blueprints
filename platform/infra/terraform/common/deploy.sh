@@ -68,6 +68,10 @@ main() {
     fi
   fi
 
+  # Get gitlab cloudfront domain from gitlab infra stack
+  export GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
+  GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
+
   # Initialize Terraform with S3 backend
   initialize_terraform "bootstrap" "$DEPLOY_SCRIPTDIR"
   
@@ -99,8 +103,6 @@ main() {
     fi
   fi
 
-  export GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
-  GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
   # Get ArgoCD domain from Terraform output
   export ARGOCD_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
 
