@@ -44,6 +44,8 @@ clusters:
       enable_kro_manifests: true
       enable_mutli_acct: true
       enable_kubevela: true
+      enable_ack_s3: true
+      enable_ack_dynamodb: true 
       enable_aws_efs_csi_driver: false
       enable_aws_for_fluentbit: false
       enable_cni_metrics_helper: false
@@ -76,6 +78,7 @@ clusters:
       enable_flux: true
       enable_metrics_server: true
       enable_kro: false
+      enable_ack_efs: false
       enable_aws_efs_csi_driver: false
       enable_aws_for_fluentbit: false
       enable_cert_manager: true
@@ -123,6 +126,7 @@ clusters:
       enable_flux: true
       enable_metrics_server: true
       enable_kro: false
+      enable_ack_efs: false
       enable_aws_efs_csi_driver: false
       enable_aws_for_fluentbit: false
       enable_cert_manager: true
