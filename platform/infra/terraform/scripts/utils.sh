@@ -44,7 +44,7 @@ if [[ "$WORKSHOP_CLUSTERS" == "true" ]]; then
   TEMP_CONFIG_FILE="$(mktemp).yaml"
   cp "$CONFIG_FILE" "$TEMP_CONFIG_FILE"
 
-  #yq eval '.clusters |= with_entries(.value.name = env(RESOURCE_PREFIX) + "-" + .value.name)' -i "$TEMP_CONFIG_FILE"
+  yq eval '.clusters |= with_entries(.value.name = env(RESOURCE_PREFIX) + "-" + .value.name)' -i "$TEMP_CONFIG_FILE"
   yq eval '.clusters[].region = env(AWS_REGION)' -i "$TEMP_CONFIG_FILE"
   export CONFIG_FILE="$TEMP_CONFIG_FILE"
 fi
@@ -301,8 +301,8 @@ gitlab_repository_setup(){
     log_warning "Failed to pull with rebase from GitLab"
   fi
   
-  if ! git push --set-upstream gitlab HEAD:main --force; then
-    if ! git push gitlab HEAD:main --force; then 
+  if ! git push --set-upstream gitlab "${WORKSHOP_GIT_BRANCH}":main --force; then
+    if ! git push gitlab "${WORKSHOP_GIT_BRANCH}":main --force; then 
       log_error "Failed to push repository to GitLab"
       exit 1
     fi
