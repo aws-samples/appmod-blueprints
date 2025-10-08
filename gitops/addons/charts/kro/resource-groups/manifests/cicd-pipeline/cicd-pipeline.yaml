@@ -1120,7 +1120,10 @@ spec:
                      echo "Updating image to: $IMAGE_URI"
 
                      # Update various deployment file formats
-                     find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image:.*${schema.spec.application.name}.*|image: $IMAGE_URI|g"
+                     find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "/image_name: ${schema.spec.application.name}/,/image:/ s|image:.*|image: $IMAGE_URI|"
+
+                     # Show what changed
+                     git diff
 
                      # Commit and push changes
                      git add .
