@@ -108,12 +108,12 @@ main() {
 
   # Create spoke cluster secret values
   create_spoke_cluster_secret_values
+
+  # Update backstage default values now that both domains are available
+  update_backstage_defaults
   
   # Push repo to Gitlab
   gitlab_repository_setup
-  
-  # Update backstage default values now that both domains are available
-  update_backstage_defaults
   
   log_success "Bootstrap stack deployment completed successfully"
 }
