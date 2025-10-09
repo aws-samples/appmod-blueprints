@@ -824,17 +824,41 @@ spec:
                        fi
                      else
                        echo "GitLab webhook already exists with ID: $$webhook_exists"
-                       echo "Updating existing webhook configuration"
-                       curl -k -X 'PUT' "$$api_url/$$webhook_exists" \
+                       echo "Verifying existing webhook configuration matches expected settings"
+                       
+                       # Get existing webhook details to verify configuration
+                       existing_webhook_details=$$(curl -k -X 'GET' "$$api_url/$$webhook_exists" \
                          -H "accept: application/json" \
-                         -H "Authorization: token $$gitlab_token" \
-                         -H "Content-Type: application/json" \
-                         -d '{
-                           "url": "'$$webhook_url'",
-                           "push_events": true,
-                           "enable_ssl_verification": false,
-                           "push_events_branch_filter": "main"
-                         }' 2>/dev/null || echo "Warning: Failed to update existing webhook"
+                         -H "Authorization: Bearer $$gitlab_token" \
+                         -H "Content-Type: application/json" -s)
+                       
+                       existing_url=$$(echo "$$existing_webhook_details" | jq -r '.url' 2>/dev/null || echo "")
+                       
+                       if [ "$$existing_url" = "$$webhook_url" ]; then
+                         echo "Existing webhook URL matches expected URL: $$webhook_url"
+                         echo "No update needed - webhook is correctly configured"
+                       else
+                         echo "Existing webhook URL ($$existing_url) differs from expected ($$webhook_url)"
+                         echo "Updating existing webhook configuration"
+                         update_response=$$(curl -k -X 'PUT' "$$api_url/$$webhook_exists" \
+                           -H "accept: application/json" \
+                           -H "Authorization: Bearer $$gitlab_token" \
+                           -H "Content-Type: application/json" \
+                           -d '{
+                             "url": "'$$webhook_url'",
+                             "push_events": true,
+                             "enable_ssl_verification": false,
+                             "push_events_branch_filter": "main"
+                           }' -s -w "\nHTTP_CODE:%{http_code}")
+                         
+                         update_http_code=$$(echo "$$update_response" | tail -1 | sed 's/HTTP_CODE://')
+                         
+                         if [ "$$update_http_code" = "200" ]; then
+                           echo "Successfully updated existing webhook"
+                         else
+                           echo "Warning: Failed to update existing webhook. HTTP Code: $$update_http_code"
+                         fi
+                       fi
                      fi
 
                      echo "GitLab webhook configuration completed"
