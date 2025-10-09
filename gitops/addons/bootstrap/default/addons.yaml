@@ -538,6 +538,12 @@ kyverno-policies:
     podSecurityStandard: restricted
     validationFailureAction: Audit
     skipBackgroundRequests: true
+  ignoreDifferences:
+    - group: kyverno.io
+      kind: ClusterPolicy
+      jqPathExpressions:
+        - '.spec.rules[].validate.allowExistingViolations'
+        - '.spec.rules[].validate.foreach[].allowExistingViolations'
 
 cni-metrics-helper:
   enabled: false
