@@ -1,4 +1,9 @@
+resource "aws_securityhub_account" "main" {
+  enable_default_standards = true
+}
+
 resource "aws_securityhub_insight" "kyverno" {
+  depends_on = [aws_securityhub_account.main]
   group_by_attribute = "ProductName"
   name               = "${var.resource_prefix}-kyverno-findings"
   filters {
@@ -22,6 +27,7 @@ resource "aws_securityhub_insight" "kyverno" {
 }
 
 resource "aws_securityhub_insight" "kyverno_disallow_privileged" {
+  depends_on = [aws_securityhub_account.main]
   group_by_attribute = "ProductName"
   name               = "${var.resource_prefix}-kyverno-disallow-privilege-escalation"
   filters {
@@ -50,6 +56,7 @@ resource "aws_securityhub_insight" "kyverno_disallow_privileged" {
 }
 
 resource "aws_securityhub_insight" "kyverno_restrict-image-registries" {
+  depends_on = [aws_securityhub_account.main]
   group_by_attribute = "ProductName"
   name               = "${var.resource_prefix}-kyverno-restrict-image-registries"
   filters {
@@ -78,6 +85,7 @@ resource "aws_securityhub_insight" "kyverno_restrict-image-registries" {
 }
 
 resource "aws_securityhub_insight" "kyverno_require-run-as-nonroot" {
+  depends_on = [aws_securityhub_account.main]
   group_by_attribute = "ProductName"
   name               = "${var.resource_prefix}-kyverno-require-run-as-nonroot"
   filters {
