@@ -293,19 +293,14 @@ gitlab_repository_setup(){
   if ! git diff --quiet || ! git diff --cached --quiet; then
     git add .
     git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files " || true
+    if ! git push --set-upstream gitlab HEAD:main --force-with-lease; then
+      if ! git push gitlab HEAD:main --force-with-lease; then
+        log_error "Failed to push repository to GitLab"
+        exit 1
+      fi
+    fi
   else
     print_info "No changes to commit"
-  fi
-
-  if ! git pull --rebase gitlab main; then
-    log_warning "Failed to pull with rebase from GitLab"
-  fi
-  
-  if ! git push --set-upstream gitlab HEAD:main --force; then
-    if ! git push gitlab HEAD:main --force; then
-      log_error "Failed to push repository to GitLab"
-      exit 1
-    fi
   fi
 
   cd -
