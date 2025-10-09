@@ -1,6 +1,7 @@
 # Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
 # Initialization code that may require console input (password prompts, [y/n]
 # confirmations, etc.) must go above this block; everything else may go below.
+typeset -g POWERLEVEL9K_INSTANT_PROMPT=quiet
 if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 fi
@@ -92,61 +93,6 @@ alias wkgn='watch kubectl get nodes -L beta.kubernetes.io/arch -L eks.amazonaws.
 
 alias kgall='kubectl api-resources --verbs=list --namespaced -o name | xargs -n 1 kubectl get --show-kind --ignore-not-found'
 
-export CLUSTER_NAME=${HUB_CLUSTER_NAME:-fleet-hub-cluster}
-asg() {
-  echo "cluster_name=${CLUSTER_NAME} / aws_region=${AWS_REGION}"; \
-  aws autoscaling \
-    describe-auto-scaling-groups \
-    --query "AutoScalingGroups[? Tags[? (Key=='eks:cluster-name') && Value=='${CLUSTER_NAME}']].[AutoScalingGroupName, MinSize, MaxSize,DesiredCapacity]" \
-    --output table \
-    --region ${AWS_REGION}
-}
-
-ecs-instances() {
-    aws ecs describe-container-instances --cluster $CLUSTER_NAME  \
-                --container-instances $(aws ecs list-container-instances \
-                                        --cluster $CLUSTER_NAME \
-                                        --query 'containerInstanceArns[]' \
-                                        --output text) \
-                --query 'containerInstances[].{InstanceId: ec2InstanceId, 
-                                                CapacityProvider: capacityProviderName, 
-                                                RunningTasks: runningTasksCount,
-                                                Status: status}' \
-                --output table
-}
-
-ecs-tasks() {
-    aws ecs describe-tasks --cluster $CLUSTER_NAME \
-                       --tasks \
-                         $(aws ecs list-tasks --cluster $CLUSTER_NAME --query 'taskArns[]' --output text) \
-                       --query 'sort_by(tasks,&capacityProviderName)[].{ 
-                                          Id: taskArn, 
-                                          AZ: availabilityZone, 
-                                          CapacityProvider: capacityProviderName, 
-                                          LastStatus: lastStatus, 
-                                          DesiredStatus: desiredStatus}' \
-                        --output table
-}
-
-function ecs_exec_service() {
-  CLUSTER=$1
-  SERVICE=$2
-  CONTAINER=$3
-  TASK=$(aws ecs list-tasks --service-name $SERVICE --cluster $CLUSTER --query 'taskArns[0]' --output text)
-  ecs_exec_task $CLUSTER $TASK $CONTAINER
-}
-
-# ecs_exec_task CLUSTER TASK CONTAINER
-function ecs_exec_task() {
-  echo "connect to task $2"
-  aws ecs execute-command  \
-      --cluster $1 \
-      --task $2 \
-      --container $3 \
-      --command "/bin/bash" \
-      --interactive
-}
-
 function assume_aws_role() {
   # Read role ARN from the file
   PLATFORM_ROLE_ARN=$1
@@ -165,14 +111,7 @@ function assume_aws_role() {
 }
 
 alias list-vpc="aws ec2 --output text --query 'Vpcs[*].{VpcId:VpcId,Name:Tags[?Key==\`Name\`].Value|[0],CidrBlock:CidrBlock}' describe-vpcs"
-#https://github.com/isovalent/aws-delete-vpc
-#aws-delete-vpc -vpc-id=$VPC_ID
-#brew install yq
-#sudo curl --silent --location -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.24.5/yq_linux_amd64
-#sudo chmod +x /usr/local/bin/yq
-#yq() {
-#  docker run --rm -i -v "${PWD}":/workdir mikefarah/yq "$@"
-#}
+
 function lolbanner {
   figlet -c -f ~/.local/share/fonts/figlet-fonts/3d.flf $@ | lolcat
 }
