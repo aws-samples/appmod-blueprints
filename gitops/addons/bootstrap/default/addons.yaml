@@ -542,8 +542,7 @@ kyverno-policies:
     - group: kyverno.io
       kind: ClusterPolicy
       jqPathExpressions:
-        - '.spec.rules[].validate.allowExistingViolations'
-        - '.spec.rules[].validate.foreach[].allowExistingViolations'
+        - '.spec.rules | .. | .allowExistingViolations?'
 
 cni-metrics-helper:
   enabled: false
