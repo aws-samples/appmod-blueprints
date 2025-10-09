@@ -14,10 +14,10 @@ module "eks" {
 
   enable_cluster_creator_admin_permissions = true
 
-  access_entries = var.workshop_participant_role_arn != "" ? {
+  access_entries = local.workshop_participant_iam_role_arn != "" ? {
     # This is the role that will be used by workshop participant
     participant = {
-      principal_arn = var.workshop_participant_role_arn
+      principal_arn = local.workshop_participant_iam_role_arn
 
       policy_associations = {
         admin = {

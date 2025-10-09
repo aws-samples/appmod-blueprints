@@ -833,14 +833,14 @@ kargo:
         data:
           - secretKey: KARGO_ADMIN_PASSWORD_HASH
             remoteRef:
-              key: '{{.metadata.annotations.resource_prefix}}-{{.metadata.annotations.aws_cluster_name}}/secrets'
+              key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
               property: user_password_hash
               conversionStrategy: Default
               decodingStrategy: None
               metadataPolicy: None
           - secretKey: KARGO_ADMIN_PASSWORD_KEY
             remoteRef:
-              key: '{{.metadata.annotations.resource_prefix}}-{{.metadata.annotations.aws_cluster_name}}/secrets'
+              key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
               property: user_password_key
               conversionStrategy: Default
               decodingStrategy: None
@@ -1005,6 +1005,7 @@ grafana:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

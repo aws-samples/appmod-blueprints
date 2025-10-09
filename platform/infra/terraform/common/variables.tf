@@ -5,7 +5,7 @@ variable "resource_prefix" {
 }
 
 variable "git_password" {
-  description = "Password to login on the Gitea instance"
+  description = "Password to login on the Git instance"
   type        = string
   sensitive   = true
   default     = ""
@@ -45,13 +45,13 @@ variable "repo" {
   type = object({
     url      = string
     revision = string
-    path= string
+    path     = string
     basepath = string
   })
   default = {
     url      = "https://github.com/aws-samples/appmod-blueprints"
     revision = "main"
-    path = "bootstrap"
+    path     = "bootstrap"
     basepath = "gitops/fleet/"
   }
 }
@@ -60,37 +60,37 @@ variable "repo" {
 variable "clusters" {
   description = "Cluster configuration"
   type = map(object({
-    name = string
-    region = string
+    name               = string
+    region             = string
     kubernetes_version = string
-    environment = string
-    auto_mode = bool
-    addons = map(bool)
+    environment        = string
+    auto_mode          = bool
+    addons             = map(bool)
   }))
   default = {
     hub = {
-      name = "hub"
-      region = "us-west-2"
-      kubernetes_version= "1.32"
-      environment = "control-plane"
-      auto_mode = true
-      addons = {}
+      name               = "hub"
+      region             = "us-west-2"
+      kubernetes_version = "1.32"
+      environment        = "control-plane"
+      auto_mode          = true
+      addons             = {}
     }
     spoke1 = {
-      name = "spoke-dev"
-      region = "us-west-2"
-      kubernetes_version= "1.32"
-      environment = "dev"
-      auto_mode = true
-      addons = {}
+      name               = "spoke-dev"
+      region             = "us-west-2"
+      kubernetes_version = "1.32"
+      environment        = "dev"
+      auto_mode          = true
+      addons             = {}
     }
     spoke2 = {
-      name = "spoke-prod"
-      region = "us-west-2"
-      kubernetes_version= "1.32"
-      environment = "prod"
-      auto_mode = true
-      addons = {}
+      name               = "spoke-prod"
+      region             = "us-west-2"
+      kubernetes_version = "1.32"
+      environment        = "prod"
+      auto_mode          = true
+      addons             = {}
     }
   }
 }
@@ -185,7 +185,7 @@ variable "gitops_platform_repo_revision" {
 variable "backstage_image" {
   description = "backstage image for workshop"
   type        = string
-  default = ""
+  default     = ""
 }
 
 variable "working_repo" {

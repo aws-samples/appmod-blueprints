@@ -1,17 +1,8 @@
 #!/bin/bash
 
-# Source environment variables first
-if [ -d /home/ec2-user/.bashrc.d ]; then
-    for file in /home/ec2-user/.bashrc.d/*.sh; do
-        if [ -f "$file" ]; then
-            source "$file"
-        fi
-    done
-fi
 
 # Source the colors script
 GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
-source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 

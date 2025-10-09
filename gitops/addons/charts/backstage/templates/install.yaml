@@ -623,14 +623,14 @@ spec:
       remoteRef:
         conversionStrategy: Default
         decodingStrategy: None
-        key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.global.aws_cluster_name }}/keycloak-clients
+        key: {{ .Values.global.aws_cluster_name }}/keycloak-clients
         metadataPolicy: None
         property: ARGOCD_SESSION_TOKEN
     - secretKey: BACKSTAGE_CLIENT_SECRET
       remoteRef:
         conversionStrategy: Default
         decodingStrategy: None
-        key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.global.aws_cluster_name }}/keycloak-clients
+        key: {{ .Values.global.aws_cluster_name }}/keycloak-clients
         metadataPolicy: None
         property: BACKSTAGE_CLIENT_SECRET
 ---
@@ -656,7 +656,7 @@ spec:
       remoteRef:
         conversionStrategy: Default
         decodingStrategy: None
-        key: {{ .Values.global.resourcePrefix | default "peeks" }}-{{ .Values.global.aws_cluster_name }}/secrets
+        key: {{ .Values.global.aws_cluster_name }}/secrets
         metadataPolicy: None
         property: backstage_postgres_password
 ---

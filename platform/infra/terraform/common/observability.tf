@@ -64,7 +64,7 @@ module "managed_grafana" {
   saml_org_assertion           = "org"
   saml_role_assertion          = "role"
   saml_login_validity_duration = 120
-  saml_idp_metadata_url = local.keycloak_saml_url
+  saml_idp_metadata_url        = local.keycloak_saml_url
 
   tags = local.tags
 }
@@ -77,7 +77,7 @@ module "managed_grafana" {
 # Wait for Flux CRD to be available
 resource "null_resource" "spoke_dev_flux_crd_wait" {
   depends_on = [module.gitops_bridge_bootstrap]
-  
+
   provisioner "local-exec" {
     command = <<-EOT
       while ! kubectl --context ${local.spoke_clusters["spoke1"].name} get crd kustomizations.kustomize.toolkit.fluxcd.io >/dev/null 2>&1; do
@@ -92,14 +92,14 @@ module "eks_monitoring_spoke_dev" {
   depends_on = [
     module.gitops_bridge_bootstrap,
     null_resource.spoke_dev_flux_crd_wait,
-    ]
-    
-  source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
-  eks_cluster_id         = data.aws_eks_cluster.clusters["spoke1"].id
-  
+  ]
+
+  source         = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
+  eks_cluster_id = data.aws_eks_cluster.clusters["spoke1"].id
+
   providers = {
-    kubectl = kubectl.spoke1
-    helm = helm.spoke1
+    kubectl    = kubectl.spoke1
+    helm       = helm.spoke1
     kubernetes = kubernetes.spoke1
   }
 
@@ -149,7 +149,7 @@ module "eks_monitoring_spoke_dev" {
 # This is needed for Grafana Operator to work correctly
 # As ESO is not deployed through terraform-aws-observability-accelerator
 resource "kubectl_manifest" "spoke_dev_grafana_secret" {
-  provider = kubectl.spoke1
+  provider   = kubectl.spoke1
   yaml_body  = <<YAML
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -166,7 +166,7 @@ spec:
   data:
   - secretKey: GF_SECURITY_ADMIN_APIKEY
     remoteRef:
-      key: "${local.context_prefix}-${data.aws_eks_cluster.clusters["spoke1"].id}/secrets"
+      key: "${data.aws_eks_cluster.clusters["spoke1"].id}/secrets"
       property: grafana_api_key
       conversionStrategy: Default
       decodingStrategy: None
@@ -180,7 +180,7 @@ YAML
 # Wait for Flux CRD to be available
 resource "null_resource" "spoke_prod_flux_crd_wait" {
   depends_on = [module.gitops_bridge_bootstrap]
-  
+
   provisioner "local-exec" {
     command = <<-EOT
       while ! kubectl --context ${local.spoke_clusters["spoke2"].name} get crd kustomizations.kustomize.toolkit.fluxcd.io >/dev/null 2>&1; do
@@ -194,14 +194,14 @@ module "eks_monitoring_spoke_prod" {
   depends_on = [
     module.gitops_bridge_bootstrap,
     null_resource.spoke_prod_flux_crd_wait,
-   ]
+  ]
 
-  source                 = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
-  eks_cluster_id         = data.aws_eks_cluster.clusters["spoke2"].id
-  
+  source         = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
+  eks_cluster_id = data.aws_eks_cluster.clusters["spoke2"].id
+
   providers = {
-    kubectl = kubectl.spoke2
-    helm = helm.spoke2
+    kubectl    = kubectl.spoke2
+    helm       = helm.spoke2
     kubernetes = kubernetes.spoke2
   }
 
@@ -252,7 +252,7 @@ module "eks_monitoring_spoke_prod" {
 # This is needed for Grafana Operator to work correctly
 # As ESO is not deployed through terraform-aws-observability-accelerator
 resource "kubectl_manifest" "spoke_prod_grafana_secret" {
-  provider = kubectl.spoke2
+  provider   = kubectl.spoke2
   yaml_body  = <<YAML
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -269,7 +269,7 @@ spec:
   data:
   - secretKey: GF_SECURITY_ADMIN_APIKEY
     remoteRef:
-      key: "${local.context_prefix}-${data.aws_eks_cluster.clusters["spoke2"].id}/secrets"
+      key: "${data.aws_eks_cluster.clusters["spoke2"].id}/secrets"
       property: grafana_api_key
       conversionStrategy: Default
       decodingStrategy: None
@@ -278,23 +278,23 @@ YAML
   depends_on = [module.eks_monitoring_spoke_prod]
 }
 
-locals{
-    scrape_interval = "30s"
-    scrape_timeout  = "10s"
+locals {
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
 }
 
 resource "aws_prometheus_scraper" "peeks-scraper" {
   for_each = { for k, v in local.spoke_clusters : k => v if try(v.addons.enable_prometheus_scraper, false) }
   source {
     eks {
-      cluster_arn = each.value.name
-      subnet_ids  = data.aws_eks_cluster.clusters[each.key].vpc_config[0].subnet_ids
+      cluster_arn        = each.value.name
+      subnet_ids         = data.aws_eks_cluster.clusters[each.key].vpc_config[0].subnet_ids
       security_group_ids = [data.aws_eks_cluster.clusters[each.key].vpc_config[0].cluster_security_group_id, data.aws_eks_cluster.clusters[each.key].vpc_config[0].security_group_ids]
     }
   }
   destination {
     amp {
-       workspace_arn = module.managed_service_prometheus.workspace_arn
+      workspace_arn = module.managed_service_prometheus.workspace_arn
     }
   }
   alias = "peeks-hub"
