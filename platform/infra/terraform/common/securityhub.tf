@@ -1,5 +1,9 @@
 resource "aws_securityhub_account" "main" {
   enable_default_standards = true
+  
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "aws_securityhub_insight" "kyverno" {
