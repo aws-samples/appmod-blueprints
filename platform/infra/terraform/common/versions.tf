@@ -6,19 +6,27 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 4.67.0, < 6.0.0"
     }
-    github = {
-      source  = "integrations/github"
-      version = "~> 6.0"
+    helm = {
+      source  = "hashicorp/helm"
+      version = ">= 2.10.1, < 3.0.0"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.1"
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.36.0, < 3.0.0"
+    }
+    kubectl = {
+      source  = "alekc/kubectl"
+      version = ">= 2.1.3"
+    }
+    gitlab = {
+      source = "gitlabhq/gitlab"
+      version = "18.3.0"
     }
   }
-
   # Backend configuration provided via CLI parameters
   backend "s3" {
-    # bucket and dynamodb_table provided via -backend-config
+    # bucket provided via -backend-config
     key = "common/terraform.tfstate"
+    use_lockfile = true
   }
 }

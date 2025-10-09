@@ -91,24 +91,28 @@ data:
     }
   realm-payload.json: |
     {"realm":"${REALM_NAME}","enabled":true,"ssoSessionIdleTimeout":36000}
-  user-password.json: |
-    {
-        "temporary": false,
-        "type": "password",
-        "value": "${USER1_PASSWORD}"
-    }
   user-user1.json: |
     {
         "username": "user1",
         "email": "user1@example.com",
         "firstName": "user",
         "lastName": "one",
+        "realmRoles": [
+            "grafana-admin"
+        ],
         "requiredActions": [],
         "emailVerified": true,
         "groups": [
           "/admin"
         ],
-        "enabled": true
+        "enabled": true,
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
     }
   user-user2.json: |
     {
@@ -121,7 +125,71 @@ data:
         "groups": [
           "/base-user"
         ],
-        "enabled": true
+        "enabled": true,
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  user-grafana-admin.json: |
+    {
+        "username": "monitor-admin",
+        "email": "admin@keycloak",
+        "enabled": true,
+        "firstName": "Admin",
+        "lastName": "Grafana",
+        "requiredActions": [],
+        "realmRoles": [
+            "grafana-admin"
+        ],
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  user-grafana-editor.json: |
+    {
+        "username": "monitor-editor",
+        "email": "editor@keycloak",
+        "enabled": true,
+        "firstName": "Editor",
+        "lastName": "Grafana",
+        "requiredActions": [],
+        "realmRoles": [
+          "grafana-editor"
+        ],
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  user-grafana-viewer.json: |
+    {
+        "username": "monitor-viewer",
+        "email": "viewer@keycloak",
+        "enabled": true,
+        "firstName": "Viewer",
+        "lastName": "Grafana",
+        "requiredActions": [],
+        "realmRoles": [
+          "grafana-viewer"
+        ],
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
     }
   argo-workflows-client-payload.json: |
     {
@@ -243,7 +311,7 @@ data:
       "clientId": "argocd",
       "name": "ArgoCD Client",
       "description": "Used for ArgoCD SSO",
-      "publicClient": false,
+      "publicClient": true,
       "authorizationServicesEnabled": false,
       "serviceAccountsEnabled": false,
       "implicitFlowEnabled": false,
@@ -259,10 +327,66 @@ data:
       "rootUrl": "https://${DOMAIN_NAME}/argocd",
       "baseUrl": "",
       "redirectUris": [
-        "https://${DOMAIN_NAME}/argocd/auth/callback"
+        "https://${DOMAIN_NAME}/argocd/auth/callback",
+        "https://${DOMAIN_NAME}/argocd/pkce/verify"
       ],
+      "adminUrl": "https://${DOMAIN_NAME}/argocd",
       "webOrigins": [
-        "/*"
+        "https://${DOMAIN_NAME}/argocd"
+      ]
+    }
+  grafana-client-payload.json: |
+    {
+      "clientId": "https://${GRAFANAURL}/saml/metadata",
+      "name": "amazon-managed-grafana",
+      "enabled": true,
+      "protocol": "saml",
+      "adminUrl": "https://${GRAFANAURL}/login/saml",
+      "redirectUris": [
+        "https://${GRAFANAURL}/saml/acs"
+      ],
+      "attributes": {
+        "saml.authnstatement": "true",
+        "saml.server.signature": "true",
+        "saml_name_id_format": "email",
+        "saml_force_name_id_format": "true",
+        "saml.assertion.signature": "true",
+        "saml.client.signature": "false"
+      },
+      "defaultClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "name",
+          "protocol": "saml",
+          "protocolMapper": "saml-user-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "attribute.nameformat": "Unspecified",
+            "user.attribute": "firstName",
+            "attribute.name": "displayName"
+          }
+        },
+        {
+          "name": "email",
+          "protocol": "saml",
+          "protocolMapper": "saml-user-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "attribute.nameformat": "Unspecified",
+            "user.attribute": "email",
+            "attribute.name": "mail"
+          }
+        },
+        {
+          "name": "role list",
+          "protocol": "saml",
+          "protocolMapper": "saml-role-list-mapper",
+          "config": {
+            "single": "true",
+            "attribute.nameformat": "Unspecified",
+            "attribute.name": "role"
+          }
+        }
       ]
     }
 ---
@@ -276,6 +400,9 @@ metadata:
     argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
+  completions: 1
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
   template:
     metadata:
       generateName: config
@@ -310,257 +437,198 @@ spec:
               export DEBIAN_FRONTEND=noninteractive
               export TZ=UTC
 
-              apt -qq update && apt -qq install curl jq -y
+              apt -qq update && apt -qq install curl jq gettext-base -y
 
-              ADMIN_PASSWORD=$(cat /var/secrets/KC_BOOTSTRAP_ADMIN_PASSWORD)
-              USER1_PASSWORD=$(cat /var/secrets/USER_PASSWORD)
+              # Helper functions
+              keycloak_post() {
+                local endpoint=$1
+                local payload=$2
+                local resource_name=$3
 
-              curl -sS -LO "https://s3.us-west-2.amazonaws.com/amazon-eks/1.32.0/2024-12-20/bin/linux/amd64/kubectl"
-              chmod +x kubectl
+                envsubst < ${payload} > /tmp/payload-env.json
+                
+                HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -H "Content-Type: application/json" \
+                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                  -X POST --data @/tmp/payload-env.json \
+                  ${KEYCLOAK_URL}${endpoint})
+                
+                if [ "$HTTP_STATUS" -eq 409 ]; then
+                  echo "${resource_name} already exists, continuing..."
+                elif [ "$HTTP_STATUS" -ne 201 ] && [ "$HTTP_STATUS" -ne 200 ]; then
+                  echo "Error creating ${resource_name}: HTTP status $HTTP_STATUS"
+                  cat /tmp/response.txt
+                fi
+              }
+              
+              keycloak_put() {
+                local endpoint=$1
+                local resource_name=$2
+                
+                HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -H "Content-Type: application/json" \
+                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                  -X PUT ${KEYCLOAK_URL}${endpoint})
+                
+                if [ "$HTTP_STATUS" -ne 204 ] && [ "$HTTP_STATUS" -ne 200 ]; then
+                  echo "Error updating ${resource_name}: HTTP status $HTTP_STATUS"
+                  cat /tmp/response.txt
+                fi
+              }
+              
+              keycloak_get() {
+                local endpoint=$1
+                local jq_filter=$2
+                
+                curl -sS -H "Content-Type: application/json" \
+                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                  -X GET ${KEYCLOAK_URL}${endpoint} | jq -e -r "${jq_filter}"
+              }
 
-              DOMAIN_NAME=$(./kubectl get secret {{ .Values.global.resourcePrefix | default "peeks" }}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}')
+              # Create users function
+              create_user() {
+                local user_num=$1
+                local password=$2
+                local payload_file=$3
+                
+                echo "creating user ${user_num}"
+                jq --arg pwd "$password" '.credentials[0].value = $pwd' ${payload_file} > user${user_num}-payload-with-password.json
+                keycloak_post "/admin/realms/${REALM_NAME}/users" "user${user_num}-payload-with-password.json" "User ${user_num}"
+              }
 
-              KEYCLOAK_URL=http://keycloak.keycloak.svc.cluster.local:8080/keycloak
+              # Create role function
+              create_role() {
+                local role_name=$1
+                
+                echo "creating role ${role_name}"
+                echo "{\"name\":\"${role_name}\"}" > role-${role_name}-payload.json
+                keycloak_post "/admin/realms/${REALM_NAME}/roles" "role-${role_name}-payload.json" "Role ${role_name}"
+              }
 
-              KEYCLOAK_TOKEN=$(curl -sS  --fail-with-body -X POST -H "Content-Type: application/x-www-form-urlencoded" \
+              # Create client function
+              create_client() {
+                local client_name=$1
+                local payload_file=$2
+                
+                echo "creating ${client_name} client"
+                keycloak_post "/admin/realms/${REALM_NAME}/clients" "${payload_file}" "${client_name} client"
+              }
+
+              # Add client scope function
+              add_client_scope() {
+                local client_id_name=$1
+                local client_name=$2
+                
+                CLIENT_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id")
+                CLIENT_SCOPE_GROUPS_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/client-scopes" '.[] | select(.name == "groups") | .id')
+                keycloak_put "/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}" "${client_name} client scope"
+              }
+
+              # Add realm role to user function
+              add_realm_role_to_user() {
+                local username=$1
+                local role_name=$2
+                
+                echo "adding role ${role_name} to user ${username}"
+                USER_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/users" ".[] | select(.username == \"${username}\") | .id")
+                ROLE_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/roles" ".[] | select(.name == \"${role_name}\") | .id")
+                ROLE_NAME=$(keycloak_get "/admin/realms/${REALM_NAME}/roles" ".[] | select(.name == \"${role_name}\") | .name")
+                
+                echo "[{\"id\":\"${ROLE_ID}\",\"name\":\"${ROLE_NAME}\"}]" > /tmp/role-assignment.json
+                keycloak_post "/admin/realms/${REALM_NAME}/users/${USER_ID}/role-mappings/realm" "/tmp/role-assignment.json" "Role assignment"
+              }
+
+              # Get client secret function
+              get_client_secret() {
+                local client_id_name=$1
+                local var_name=$2
+                
+                CLIENT_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id")
+                local secret=$(keycloak_get "/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}" ".secret")
+                eval "${var_name}=${secret}"
+              }
+              
+              # Get Keycloak token for initial Admin user
+              export DOMAIN_NAME={{ .Values.global.ingress_domain_name }}
+              export GRAFANAURL={{ .Values.aws.grafana_url }}
+              export KEYCLOAK_URL=http://keycloak.keycloak.svc.cluster.local:8080/keycloak
+              export REALM_NAME=platform
+              export ADMIN_PASSWORD=$(cat /var/secrets/KC_BOOTSTRAP_ADMIN_PASSWORD)
+              export USER1_PASSWORD=$(cat /var/secrets/USER_PASSWORD)
+              export ARGOCD_PASSWORD=$USER1_PASSWORD
+              HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -X POST -H "Content-Type: application/x-www-form-urlencoded" \
                 --data-urlencode "username=admin" \
                 --data-urlencode "password=${ADMIN_PASSWORD}" \
                 --data-urlencode "grant_type=password" \
                 --data-urlencode "client_id=admin-cli" \
-                ${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token | jq -e -r '.access_token')
-
-              set +e
-
-              REALM_NAME=platform
-              curl --fail-with-body -H "Authorization: bearer ${KEYCLOAK_TOKEN}"  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}"  &> /dev/null
-              REALM_EXISTS=$?
-              set -e
-
-              if [ $REALM_EXISTS -ne 0 ]; then
-                echo "creating ${REALM_NAME} realm and groups"
-
-                jq -r --arg realm ${REALM_NAME}  '.realm = $realm' /var/config/realm-payload.json > /tmp/realm-payload.json
-
-                curl -sS -H "Content-Type: application/json" \
-                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                  -X POST --data @/tmp/realm-payload.json \
-                  ${KEYCLOAK_URL}/admin/realms
-              else
-                echo "Realm ${REALM_NAME} already exists, continuing with client configuration..."
-              fi
-
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X POST --data @/var/config/client-scope-groups-payload.json \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes
-
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X POST --data @/var/config/group-admin-payload.json \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups
-
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X POST --data @/var/config/group-base-user-payload.json \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups
-
-              # Create scope mapper
-                echo 'adding group claim to tokens'
-              CLIENT_SCOPE_GROUPS_ID=$(curl -sS -H "Content-Type: application/json" -H "Authorization: bearer ${KEYCLOAK_TOKEN}" -X GET  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes | jq -e -r  '.[] | select(.name == "groups") | .id')
-
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X POST --data @/var/config/group-mapper-payload.json \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes/${CLIENT_SCOPE_GROUPS_ID}/protocol-mappers/models
-
-              echo "creating test users"
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X POST --data @/var/config/user-user1.json \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users
-
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X POST --data @/var/config/user-user2.json \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users
-
-              USER1ID=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users?lastName=one" | jq -r '.[0].id')
-              USER2ID=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users?lastName=two" | jq -r '.[0].id')
-
-              echo "setting user passwords"
-              jq -r --arg pass ${USER1_PASSWORD}  '.value = $pass' /var/config/user-password.json > /tmp/user-password-to-be-applied.json
-
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X PUT --data @/tmp/user-password-to-be-applied.json \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users/${USER1ID}/reset-password
-
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X PUT --data @/tmp/user-password-to-be-applied.json \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users/${USER2ID}/reset-password
-
-              # Get pre-existing OIDC client secrets from AWS Secrets Manager
-              echo "Retrieving pre-existing OIDC client secrets from AWS Secrets Manager..."
-              
-              # Install AWS CLI v2 for retrieving secrets (supports EKS Pod Identity)
-              echo "Installing AWS CLI v2..."
-              curl -sS "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-              apt -qq install unzip -y
-              unzip -q awscliv2.zip
-              ./aws/install
-              # Ensure aws command uses the new installation
-              export PATH="/usr/local/bin:$PATH"
-              
-              # Retrieve secrets from AWS Secrets Manager
-              PROJECT_PREFIX="{{ .Values.global.resourcePrefix | default "peeks" }}"
-              
-              BACKSTAGE_SECRETS=$(aws secretsmanager get-secret-value --region ${AWS_REGION} --secret-id "${PROJECT_PREFIX}-backstage-oidc-credentials" --query SecretString --output text)
-              ARGO_WORKFLOWS_SECRETS=$(aws secretsmanager get-secret-value --region ${AWS_REGION} --secret-id "${PROJECT_PREFIX}-argo-workflows-oidc-credentials" --query SecretString --output text)
-              ARGOCD_SECRETS=$(aws secretsmanager get-secret-value --region ${AWS_REGION} --secret-id "${PROJECT_PREFIX}-argocd-oidc-credentials" --query SecretString --output text)
-              
-              # Parse JSON secrets
-              BACKSTAGE_CLIENT_SECRET=$(echo "$BACKSTAGE_SECRETS" | jq -r '.BACKSTAGE_CLIENT_SECRET')
-              ARGO_WORKFLOWS_CLIENT_SECRET=$(echo "$ARGO_WORKFLOWS_SECRETS" | jq -r '.ARGO_WORKFLOWS_CLIENT_SECRET')
-              ARGOCD_CLIENT_SECRET=$(echo "$ARGOCD_SECRETS" | jq -r '.ARGOCD_CLIENT_SECRET')
-              ARGOCD_SESSION_TOKEN=$(echo "$BACKSTAGE_SECRETS" | jq -r '.ARGOCD_SESSION_TOKEN // "bootstrap-token"')
-              
-              if [ -z "$ARGO_WORKFLOWS_CLIENT_SECRET" ] || [ -z "$BACKSTAGE_CLIENT_SECRET" ] || [ -z "$ARGOCD_CLIENT_SECRET" ]; then
-                echo "ERROR: Pre-existing OIDC client secrets not found in AWS Secrets Manager. Bootstrap script should have created them."
+                ${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token)
+              if [ "$HTTP_STATUS" -ne 200 ]; then
+                echo "Error getting Keycloak token: HTTP status $HTTP_STATUS"
+                cat /tmp/response.txt
                 exit 1
               fi
+              export KEYCLOAK_TOKEN=$(cat /tmp/response.txt | jq -e -r '.access_token')
               
-              echo "✓ Retrieved pre-existing OIDC client secrets from AWS Secrets Manager successfully"
-
-              echo "creating Argo Workflows client"
-              sed "s|\${DOMAIN_NAME}|$DOMAIN_NAME|g" /var/config/argo-workflows-client-payload.json > /tmp/argo-workflows-client-payload.json
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                  -X POST --data @/tmp/argo-workflows-client-payload.json \
-                  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients
-
-              CLIENT_ID=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X GET ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients | jq -e -r  '.[] | select(.clientId == "argo-workflows") | .id')
-              CLIENT_SCOPE_GROUPS_ID=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X GET  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes | jq -e -r  '.[] | select(.name == "groups") | .id')
-
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X PUT  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}
-
-              echo "creating Argo Workflows client with pre-existing secret"
-              sed "s|\${DOMAIN_NAME}|$DOMAIN_NAME|g" /var/config/argo-workflows-client-payload.json > /tmp/argo-workflows-client-payload.json
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                  -X POST --data @/tmp/argo-workflows-client-payload.json \
-                  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients
-
-              CLIENT_ID=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X GET ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients | jq -e -r  '.[] | select(.clientId == "argo-workflows") | .id')
-              CLIENT_SCOPE_GROUPS_ID=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X GET  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes | jq -e -r  '.[] | select(.name == "groups") | .id')
-
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X PUT  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}
-
-              # Set the pre-existing client secret
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X PUT --data "{\"secret\":\"${ARGO_WORKFLOWS_CLIENT_SECRET}\"}" \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}
-
-              echo "creating Backstage client with pre-existing secret"
-              sed "s|\${DOMAIN_NAME}|$DOMAIN_NAME|g" /var/config/backstage-client-payload.json > /tmp/backstage-client-payload.json
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X POST --data @/tmp/backstage-client-payload.json \
-                  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients
-
-              CLIENT_ID=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X GET ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients | jq -e -r  '.[] | select(.clientId == "backstage") | .id')
-
-              CLIENT_SCOPE_GROUPS_ID=$(curl -sS -H "Content-Type: application/json" -H "Authorization: bearer ${KEYCLOAK_TOKEN}" -X GET  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes | jq -e -r  '.[] | select(.name == "groups") | .id')
-              curl -sS -H "Content-Type: application/json" -H "Authorization: bearer ${KEYCLOAK_TOKEN}" -X PUT  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}
-
-              # Set the pre-existing client secret
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X PUT --data "{\"secret\":\"${BACKSTAGE_CLIENT_SECRET}\"}" \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}
-
-              echo "creating ArgoCD client with pre-existing secret"
-              sed "s|\${DOMAIN_NAME}|$DOMAIN_NAME|g" /var/config/argocd-client-payload.json > /tmp/argocd-client-payload.json
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X POST --data @/tmp/argocd-client-payload.json \
-                  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients
-
-              CLIENT_ID=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X GET ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients | jq -e -r  '.[] | select(.clientId == "argocd") | .id')
-
-              CLIENT_SCOPE_GROUPS_ID=$(curl -sS -H "Content-Type: application/json" -H "Authorization: bearer ${KEYCLOAK_TOKEN}" -X GET  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes | jq -e -r  '.[] | select(.name == "groups") | .id')
-              curl -sS -H "Content-Type: application/json" -H "Authorization: bearer ${KEYCLOAK_TOKEN}" -X PUT  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}
-
-              # Set the pre-existing client secret
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X PUT --data "{\"secret\":\"${ARGOCD_CLIENT_SECRET}\"}" \
-                ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}
-
-              echo "creating Kargo client"
-              sed "s|\${DOMAIN_NAME}|$DOMAIN_NAME|g" /var/config/kargo-client-payload.json > /tmp/kargo-client-payload.json
-              curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X POST --data @/tmp/kargo-client-payload.json \
-                  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients
-
-              CLIENT_ID=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X GET ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients | jq -e -r  '.[] | select(.clientId == "kargo") | .id')
-
-              CLIENT_SCOPE_GROUPS_ID=$(curl -sS -H "Content-Type: application/json" -H "Authorization: bearer ${KEYCLOAK_TOKEN}" -X GET  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes | jq -e -r  '.[] | select(.name == "groups") | .id')
-              curl -sS -H "Content-Type: application/json" -H "Authorization: bearer ${KEYCLOAK_TOKEN}" -X PUT  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}
-
-              # Kargo uses PKCE, so secret is not required
-              # KARGO_CLIENT_SECRET=$(curl -sS -H "Content-Type: application/json" \
-              #   -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-              #   -X GET ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_ID} | jq -e -r '.secret')
-
-              echo "creating Account Console client for platform realm"
-              sed "s|\${DOMAIN_NAME}|$DOMAIN_NAME|g" /var/config/account-console-client-payload.json > /tmp/account-console-client-payload.json
-              
-              # Check if account-console client already exists
-              set +e
-              EXISTING_ACCOUNT_CONSOLE_CLIENT=$(curl -sS -H "Content-Type: application/json" \
-                -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                -X GET ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients | jq -e -r '.[] | select(.clientId == "account-console") | .id')
-              CLIENT_EXISTS=$?
-              set -e
-              
-              if [ $CLIENT_EXISTS -eq 0 ]; then
-                echo "Account console client exists, updating configuration..."
-                curl -sS -H "Content-Type: application/json" \
-                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                  -X PUT --data @/tmp/account-console-client-payload.json \
-                  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${EXISTING_ACCOUNT_CONSOLE_CLIENT}
-              else
-                echo "Creating new account console client..."
-                curl -sS -H "Content-Type: application/json" \
-                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                  -X POST --data @/tmp/account-console-client-payload.json \
-                  ${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients
+              HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -H "Authorization: bearer ${KEYCLOAK_TOKEN}" "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}")
+              if [ "$HTTP_STATUS" -ne 200 ]; then
+                echo "creating ${REALM_NAME} realm"
+                keycloak_post "/admin/realms" "/var/config/realm-payload.json" "${REALM_NAME} realm"
               fi
 
-              ARGOCD_PASSWORD=$(./kubectl -n argocd get secret ide-password -o jsonpath="{.data.password}" | base64 -d)
+              # Download kubectl
+              curl -sS -LO "https://s3.us-west-2.amazonaws.com/amazon-eks/1.32.0/2024-12-20/bin/linux/amd64/kubectl"
+              chmod +x kubectl
+
+
+              echo "creating client scopes"
+              keycloak_post "/admin/realms/${REALM_NAME}/client-scopes" "/var/config/client-scope-groups-payload.json" "Client scope"
+              
+              echo "creating admin group"
+              keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-admin-payload.json" "Admin group"
+
+              echo "creating base-user group"
+              keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-base-user-payload.json" "Base-user group"
+
+              echo "adding group claim to tokens"
+              CLIENT_SCOPE_GROUPS_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/client-scopes" '.[] | select(.name == "groups") | .id')
+
+              keycloak_post "/admin/realms/${REALM_NAME}/client-scopes/${CLIENT_SCOPE_GROUPS_ID}/protocol-mappers/models" \
+                "/var/config/group-mapper-payload.json" "Protocol mapper"
+
+              echo "creating roles for grafana"
+              create_role "grafana-admin"
+              create_role "grafana-editor"
+              create_role "grafana-viewer"
+
+              echo "creating users"
+              create_user "1" "${USER1_PASSWORD}" "/var/config/user-user1.json"
+              create_user "2" "${USER1_PASSWORD}" "/var/config/user-user2.json"
+              create_user "grafana-admin" "${USER1_PASSWORD}" "/var/config/user-grafana-admin.json"
+              create_user "grafana-editor" "${USER1_PASSWORD}" "/var/config/user-grafana-editor.json"
+              create_user "grafana-viewer" "${USER1_PASSWORD}" "/var/config/user-grafana-viewer.json"
+
+              echo "adding realm-roles to users"
+              add_realm_role_to_user "user1" "grafana-admin"
+              add_realm_role_to_user "monitor-admin" "grafana-admin"
+              add_realm_role_to_user "monitor-editor" "grafana-editor"
+              add_realm_role_to_user "monitor-viewer" "grafana-viewer"
+
+              echo "creating clients"
+              create_client "Argo Workflows" "/var/config/argo-workflows-client-payload.json"
+              create_client "Backstage" "/var/config/backstage-client-payload.json"
+              create_client "Kargo" "/var/config/kargo-client-payload.json"
+              create_client "Argo CD" "/var/config/argocd-client-payload.json"
+              create_client "Account Console" "/var/config/account-console-client-payload.json"
+              create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
+
+              echo "adding client scopes to clients"
+              add_client_scope "argo-workflows" "Argo Workflows"
+              add_client_scope "backstage" "Backstage"
+              add_client_scope "kargo" "Kargo"
+              add_client_scope "argocd" "Argo CD"
+              add_client_scope "account-console" "Account Console"
+
+              echo "getting client secrets"
+              get_client_secret "backstage" "BACKSTAGE_CLIENT_SECRET"
+              get_client_secret "argo-workflows" "ARGO_WORKFLOWS_CLIENT_SECRET"
 
               ARGOCD_SESSION_TOKEN=$(curl -k -sS http://argocd-server.argocd.svc.cluster.local/argocd/api/v1/session -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_PASSWORD}\"}" | jq -r .token)
 
@@ -588,56 +656,62 @@ spec:
                 ARGOCD_SESSION_TOKEN: ${ARGOCD_SESSION_TOKEN}
                 BACKSTAGE_CLIENT_SECRET: ${BACKSTAGE_CLIENT_SECRET}
                 BACKSTAGE_CLIENT_ID: backstage
-                ARGOCD_CLIENT_SECRET: ${ARGOCD_CLIENT_SECRET}
                 ARGOCD_CLIENT_ID: argocd
               " > /tmp/secret.yaml
 
               ./kubectl apply -f /tmp/secret.yaml
               echo "✓ Kubernetes secret created and available for applications"
-
-              # Get ArgoCD session token and update AWS secrets
-              ARGOCD_PASSWORD=$(./kubectl -n argocd get secret ide-password -o jsonpath="{.data.password}" | base64 -d)
-              ARGOCD_SESSION_TOKEN=$(curl -k -sS http://argocd-server.argocd.svc.cluster.local/argocd/api/v1/session -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_PASSWORD}\"}" | jq -r .token)
-
-              # Update AWS Secrets Manager with the real ArgoCD session token
-              echo "Updating AWS Secrets Manager with real ArgoCD session token..."
-              
-              # Function to update secrets with proper error handling
-              update_aws_secret() {
-                local secret_name="$1"
-                local secret_value="$2"
-                
-                echo "Updating AWS secret: $secret_name"
-                
-                if aws secretsmanager put-secret-value \
-                  --region ${AWS_REGION} \
-                  --secret-id "$secret_name" \
-                  --secret-string "$secret_value" >/dev/null 2>&1; then
-                  echo "✓ Updated AWS secret: $secret_name"
-                else
-                  echo "✗ Failed to update AWS secret: $secret_name"
-                  return 1
-                fi
-              }
-              
-              # Update secrets with real ArgoCD session token
-              update_aws_secret \
-                "${PROJECT_PREFIX}-backstage-oidc-credentials" \
-                "{\"BACKSTAGE_CLIENT_ID\":\"backstage\",\"BACKSTAGE_CLIENT_SECRET\":\"${BACKSTAGE_CLIENT_SECRET}\",\"ARGOCD_SESSION_TOKEN\":\"${ARGOCD_SESSION_TOKEN}\"}"
-              
-              update_aws_secret \
-                "${PROJECT_PREFIX}-argo-workflows-oidc-credentials" \
-                "{\"ARGO_WORKFLOWS_CLIENT_ID\":\"argo-workflows\",\"ARGO_WORKFLOWS_CLIENT_SECRET\":\"${ARGO_WORKFLOWS_CLIENT_SECRET}\"}"
-              
-              update_aws_secret \
-                "${PROJECT_PREFIX}-argocd-oidc-credentials" \
-                "{\"ARGOCD_CLIENT_ID\":\"argocd\",\"ARGOCD_CLIENT_SECRET\":\"${ARGOCD_CLIENT_SECRET}\",\"ARGOCD_SESSION_TOKEN\":\"${ARGOCD_SESSION_TOKEN}\"}"
-
-              echo "✓ AWS Secrets Manager updated with all OIDC client secrets and ArgoCD session token"
-
-              # Update ArgoCD oidc client secret
-              ./kubectl -n argocd patch secret argocd-secret --patch='{"stringData": { "oidc.keycloak.clientSecret": "'"${ARGOCD_CLIENT_SECRET}"'" }}'
-
               echo "✓ Keycloak configuration completed successfully!"
               echo "✓ OIDC secrets available in both AWS Secrets Manager and Kubernetes"
               echo "✓ Applications can now use External Secrets to consume from AWS Secrets Manager"
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: keycloak-clients
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "11" # Sync after config job
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookFailed
+spec:
+  updatePolicy: Replace
+  deletionPolicy: Delete
+  refreshInterval: 30s
+  secretStoreRefs:
+    - name: aws-secrets-manager
+      kind: ClusterSecretStore
+  selector:
+    secret:
+      name: keycloak-clients # Source Kubernetes secret to be pushed
+  template:
+    data:
+      ARGO_WORKFLOWS_CLIENT_SECRET: "{{ `{{.ARGO_WORKFLOWS_CLIENT_SECRET}}` }}"
+      ARGO_WORKFLOWS_CLIENT_ID: "{{ `{{.ARGO_WORKFLOWS_CLIENT_ID}}` }}"
+      BACKSTAGE_CLIENT_SECRET: "{{ `{{.BACKSTAGE_CLIENT_SECRET}}` }}"
+      ARGOCD_SESSION_TOKEN: "{{ `{{.ARGOCD_SESSION_TOKEN}}` }}"
+  data:
+    - conversionStrategy: None
+      match:
+        secretKey: ARGO_WORKFLOWS_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: ARGO_WORKFLOWS_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: ARGO_WORKFLOWS_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: ARGO_WORKFLOWS_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: BACKSTAGE_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: BACKSTAGE_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: ARGOCD_SESSION_TOKEN
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: ARGOCD_SESSION_TOKEN

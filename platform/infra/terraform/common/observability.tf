@@ -6,44 +6,18 @@ module "managed_service_prometheus" {
   workspace_alias = "${var.resource_prefix}-observability-amp"
 }
 
-locals {
-  name        = "${var.resource_prefix}-observability"
-  description = "Amazon Managed Grafana workspace for ${local.name}"
-}
-
-# Create the secret
-resource "aws_secretsmanager_secret" "argorollouts_secret" {
-  name = "${var.resource_prefix}-argo-rollouts"
-  recovery_window_in_days = 0
-
-  lifecycle {
-    ignore_changes = [name]
-  }
-
-  tags = local.tags
-}
-
-# Create the secret version with key-value pairs
-resource "aws_secretsmanager_secret_version" "argorollouts_secret_version" {
-  secret_id = aws_secretsmanager_secret.argorollouts_secret.id
-  secret_string = jsonencode({
-    amp-region    = data.aws_region.current.name
-    amp-workspace = module.managed_service_prometheus.workspace_prometheus_endpoint
-  })
-}
-
 module "managed_grafana" {
   source = "terraform-aws-modules/managed-service-grafana/aws"
 
-  name                      = local.name
+  name                      = "${var.resource_prefix}-observability"
   associate_license         = false
-  description               = local.description
+  description               = "Amazon Managed Grafana workspace for ${var.resource_prefix}-observability"
   account_access_type       = "CURRENT_ACCOUNT"
   authentication_providers  = ["SAML"]
   permission_type           = "SERVICE_MANAGED"
   data_sources              = ["CLOUDWATCH", "PROMETHEUS", "XRAY"]
   notification_destinations = ["SNS"]
-  stack_set_name            = local.name
+  stack_set_name            = "${var.resource_prefix}-observability"
 
   configuration = jsonencode({
     unifiedAlerting = {
@@ -73,6 +47,11 @@ module "managed_grafana" {
       key_role        = "ADMIN"
       seconds_to_live = 3600
     }
+    operator = { # For terraform-aws-observability-accelerator module
+      key_name        = "grafana-operator"
+      key_role        = "ADMIN"
+      seconds_to_live = 432000
+    }
   }
 
   # Workspace SAML configuration
@@ -85,25 +64,259 @@ module "managed_grafana" {
   saml_org_assertion           = "org"
   saml_role_assertion          = "role"
   saml_login_validity_duration = 120
-  # Dummy values for SAML configuration to setup will be updated after keycloak integration
-  saml_idp_metadata_url = var.grafana_keycloak_idp_url
+  saml_idp_metadata_url        = local.keycloak_saml_url
 
   tags = local.tags
 }
 
-# Create SSM parameters for Prometheus workspace information
-resource "aws_ssm_parameter" "amp_endpoint" {
-  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-endpoint"
-  type      = "String"
-  value     = module.managed_service_prometheus.workspace_prometheus_endpoint
-  overwrite = true
-  tags      = local.tags
+################################################################################
+# EKS Monitoring with Terraform Observability Accelerator
+################################################################################
+# For spoek-dev cluster
+
+# Wait for Flux CRD to be available
+resource "null_resource" "spoke_dev_flux_crd_wait" {
+  depends_on = [module.gitops_bridge_bootstrap]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      while ! kubectl --context ${local.spoke_clusters["spoke1"].name} get crd kustomizations.kustomize.toolkit.fluxcd.io >/dev/null 2>&1; do
+        sleep 10
+      done
+      kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=Established crd/kustomizations.kustomize.toolkit.fluxcd.io --timeout=600s >/dev/null
+    EOT
+  }
 }
 
-resource "aws_ssm_parameter" "amp_arn" {
-  name      = "${local.context_prefix}-${var.amazon_managed_prometheus_suffix}-arn"
-  type      = "String"
-  value     = module.managed_service_prometheus.workspace_arn
-  overwrite = true
-  tags      = local.tags
+module "eks_monitoring_spoke_dev" {
+  depends_on = [
+    module.gitops_bridge_bootstrap,
+    null_resource.spoke_dev_flux_crd_wait,
+  ]
+
+  source         = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
+  eks_cluster_id = data.aws_eks_cluster.clusters["spoke1"].id
+
+  providers = {
+    kubectl    = kubectl.spoke1
+    helm       = helm.spoke1
+    kubernetes = kubernetes.spoke1
+  }
+
+  enable_amazon_eks_adot = true
+  enable_cert_manager    = false
+  enable_java            = true
+  enable_nginx           = true
+  enable_custom_metrics  = true
+
+  enable_dashboards       = true
+  enable_external_secrets = false
+  enable_fluxcd           = false
+  enable_alerting_rules   = true
+  enable_recording_rules  = true
+
+  enable_apiserver_monitoring  = true
+  enable_adotcollector_metrics = true
+
+  grafana_api_key = module.managed_grafana.workspace_api_keys["operator"].key
+  grafana_url     = "https://${module.managed_grafana.workspace_endpoint}"
+
+  # prevents the module to create a workspace
+  enable_managed_prometheus = false
+
+  managed_prometheus_workspace_id       = module.managed_service_prometheus.workspace_id
+  managed_prometheus_workspace_endpoint = module.managed_service_prometheus.workspace_prometheus_endpoint
+  managed_prometheus_workspace_region   = local.hub_cluster.region
+
+  prometheus_config = {
+    global_scrape_interval = "60s"
+    global_scrape_timeout  = "15s"
+    scrape_sample_limit    = 2000
+  }
+
+  custom_metrics_config = {
+    polyglot_app_config = {
+      enableBasicAuth       = false
+      path                  = "/metrics"
+      basicAuthUsername     = "username"
+      basicAuthPassword     = "password"
+      ports                 = ".*:(8080)$"
+      droppedSeriesPrefixes = "(unspecified.*)$"
+    }
+  }
+}
+
+# This is needed for Grafana Operator to work correctly
+# As ESO is not deployed through terraform-aws-observability-accelerator
+resource "kubectl_manifest" "spoke_dev_grafana_secret" {
+  provider   = kubectl.spoke1
+  yaml_body  = <<YAML
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: grafana-admin-credentials
+  namespace: grafana-operator
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: grafana-admin-credentials
+  data:
+  - secretKey: GF_SECURITY_ADMIN_APIKEY
+    remoteRef:
+      key: "${data.aws_eks_cluster.clusters["spoke1"].id}/secrets"
+      property: grafana_api_key
+      conversionStrategy: Default
+      decodingStrategy: None
+      metadataPolicy: None
+YAML
+  depends_on = [module.eks_monitoring_spoke_dev]
+}
+
+# For spoek-prod cluster
+
+# Wait for Flux CRD to be available
+resource "null_resource" "spoke_prod_flux_crd_wait" {
+  depends_on = [module.gitops_bridge_bootstrap]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      while ! kubectl --context ${local.spoke_clusters["spoke2"].name} get crd kustomizations.kustomize.toolkit.fluxcd.io >/dev/null 2>&1; do
+        sleep 10
+      done
+      kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=Established crd/kustomizations.kustomize.toolkit.fluxcd.io --timeout=600s >/dev/null
+    EOT
+  }
+}
+module "eks_monitoring_spoke_prod" {
+  depends_on = [
+    module.gitops_bridge_bootstrap,
+    null_resource.spoke_prod_flux_crd_wait,
+  ]
+
+  source         = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
+  eks_cluster_id = data.aws_eks_cluster.clusters["spoke2"].id
+
+  providers = {
+    kubectl    = kubectl.spoke2
+    helm       = helm.spoke2
+    kubernetes = kubernetes.spoke2
+  }
+
+  enable_amazon_eks_adot = true
+  enable_cert_manager    = false
+  enable_java            = true
+  enable_nginx           = true
+  enable_custom_metrics  = true
+
+  # Since the following were enabled in conjunction with the set up of the
+  # spoke-dev EKS cluster, we will skip them with the spoke-prod EKS cluster
+  enable_dashboards       = false
+  enable_external_secrets = false
+  enable_fluxcd           = false
+  enable_alerting_rules   = false
+  enable_recording_rules  = false
+
+  enable_apiserver_monitoring  = false
+  enable_adotcollector_metrics = false
+
+  # grafana_api_key = module.managed_grafana.workspace_api_keys["operator"].key
+  # grafana_url     = module.managed_grafana.workspace_endpoint
+
+  enable_managed_prometheus = false
+
+  managed_prometheus_workspace_id       = module.managed_service_prometheus.workspace_id
+  managed_prometheus_workspace_endpoint = module.managed_service_prometheus.workspace_prometheus_endpoint
+  managed_prometheus_workspace_region   = local.hub_cluster.region
+
+  prometheus_config = {
+    global_scrape_interval = "60s"
+    global_scrape_timeout  = "15s"
+    scrape_sample_limit    = 2000
+  }
+
+  custom_metrics_config = {
+    polyglot_app_config = {
+      enableBasicAuth       = false
+      path                  = "/metrics"
+      basicAuthUsername     = "username"
+      basicAuthPassword     = "password"
+      ports                 = ".*:(8080)$"
+      droppedSeriesPrefixes = "(unspecified.*)$"
+    }
+  }
+}
+
+# This is needed for Grafana Operator to work correctly
+# As ESO is not deployed through terraform-aws-observability-accelerator
+resource "kubectl_manifest" "spoke_prod_grafana_secret" {
+  provider   = kubectl.spoke2
+  yaml_body  = <<YAML
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: grafana-admin-credentials
+  namespace: grafana-operator
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: grafana-admin-credentials
+  data:
+  - secretKey: GF_SECURITY_ADMIN_APIKEY
+    remoteRef:
+      key: "${data.aws_eks_cluster.clusters["spoke2"].id}/secrets"
+      property: grafana_api_key
+      conversionStrategy: Default
+      decodingStrategy: None
+      metadataPolicy: None
+YAML
+  depends_on = [module.eks_monitoring_spoke_prod]
+}
+
+locals {
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+}
+
+resource "aws_prometheus_scraper" "peeks-scraper" {
+  for_each = { for k, v in local.spoke_clusters : k => v if try(v.addons.enable_prometheus_scraper, false) }
+  source {
+    eks {
+      cluster_arn        = each.value.name
+      subnet_ids         = data.aws_eks_cluster.clusters[each.key].vpc_config[0].subnet_ids
+      security_group_ids = [data.aws_eks_cluster.clusters[each.key].vpc_config[0].cluster_security_group_id, data.aws_eks_cluster.clusters[each.key].vpc_config[0].security_group_ids]
+    }
+  }
+  destination {
+    amp {
+      workspace_arn = module.managed_service_prometheus.workspace_arn
+    }
+  }
+  alias = "peeks-hub"
+  scrape_configuration = replace(
+    replace(
+      replace(
+        replace(
+          replace(
+            file("${path.module}/manifests/scraper-config.yaml"),
+            "{scrape_interval}",
+            local.scrape_interval
+          ),
+          "{scrape_timeout}",
+          local.scrape_timeout
+        ),
+        "{cluster}",
+        each.value.name
+      ),
+      "{region}",
+      each.value.region
+    ),
+    "{account_id}",
+    data.aws_caller_identity.current.account_id
+  )
 }

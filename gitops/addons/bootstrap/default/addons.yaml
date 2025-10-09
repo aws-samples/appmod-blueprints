@@ -54,7 +54,7 @@ argocd:
           name: Keycloak
           issuer: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
           clientID: argocd
-          clientSecret: $oidc.keycloak.clientSecret
+          enablePKCEAuthentication: true
           requestedScopes: ["openid", "profile", "email", "groups"]
 
 ack-iam:
@@ -129,7 +129,7 @@ ack-eks:
         - kube-controller-manager
 
 ack-s3:
-  enabled: true
+  enabled: false
   enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
@@ -163,7 +163,7 @@ ack-s3:
         - kube-controller-manager
 
 ack-dynamodb:
-  enabled: true
+  enabled: false
   enableACK: false
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
@@ -269,8 +269,8 @@ external-secrets:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after KRO RGD
   namespace: external-secrets
   chartName: external-secrets
-  defaultVersion: '0.10.3'
-  chartRepository: 'https://charts.external-secrets.io'
+  defaultVersion: "0.19.2"
+  chartRepository: "https://charts.external-secrets.io"
   selector:
     matchExpressions:
       - key: enable_external_secrets
@@ -537,7 +537,7 @@ kyverno-policies:
   values:
     podSecurityStandard: restricted
     validationFailureAction: Audit
-    skipBackgroundRequests: false
+    skipBackgroundRequests: true
 
 cni-metrics-helper:
   enabled: false
@@ -728,9 +728,11 @@ keycloak:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
-    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     aws:
+      cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       region: '{{.metadata.annotations.aws_region}}'
+      grafana_url: '{{.metadata.annotations.aws_grafana_url}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -765,6 +767,8 @@ argo-workflows:
         values: ['true']
   valuesObject:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
+    resource_prefix: '{{.metadata.annotations.resource_prefix}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -787,7 +791,7 @@ kargo:
   namespace: kargo
   chartName: kargo
   chartRepository: ghcr.io/akuity/kargo-charts
-  defaultVersion: '1.5.3'
+  defaultVersion: "1.7.5"
   selector:
     matchExpressions:
       - key: enable_kargo
@@ -801,10 +805,46 @@ kargo:
           - https://{{.metadata.annotations.ingress_domain_name}}/argocd
       oidc:
         issuerURL: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
-      adminAccount:
-        # $IDE_PASSWORD
-        passwordHash: '{{.metadata.annotations.ide_password_hash}}'
-        tokenSigningKey: '{{.metadata.annotations.ide_password_key}}'
+      secret:
+        name: kargo-admin-credentials
+    extraObjects:
+    - apiVersion: external-secrets.io/v1
+      kind: ExternalSecret # For Kargo Admin Credentials
+      metadata:
+        name: kargo-admin-credentials
+        namespace: kargo
+        annotations:
+          argocd.argoproj.io/sync-wave: "-1"
+      spec:
+        refreshInterval: "30s"
+        secretStoreRef:
+          name: aws-secrets-manager
+          kind: ClusterSecretStore
+        target:
+          name: kargo-admin-credentials
+          creationPolicy: Owner
+          deletionPolicy: Retain   
+          template:
+            engineVersion: v2
+            mergePolicy: Replace
+            data:
+              ADMIN_ACCOUNT_PASSWORD_HASH: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_HASH }}` }}" }}'
+              ADMIN_ACCOUNT_TOKEN_SIGNING_KEY: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_KEY }}` }}" }}'
+        data:
+          - secretKey: KARGO_ADMIN_PASSWORD_HASH
+            remoteRef:
+              key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
+              property: user_password_hash
+              conversionStrategy: Default
+              decodingStrategy: None
+              metadataPolicy: None
+          - secretKey: KARGO_ADMIN_PASSWORD_KEY
+            remoteRef:
+              key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
+              property: user_password_key
+              conversionStrategy: Default
+              decodingStrategy: None
+              metadataPolicy: None
 
 kubevela:
   enabled: false
@@ -965,6 +1005,7 @@ grafana:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -1010,7 +1051,8 @@ flux:
         operator: In
         values: ['true']
   valuesObject:
-    clusterName: '{{.metadata.annotations.cluster_name}}'
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    git_username: '{{.metadata.annotations.git_username}}'
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     aws:
@@ -1025,9 +1067,6 @@ flux:
       path: '{{.metadata.annotations.addons_repo_basepath}}addons'
     workloads:
       path: '{{.metadata.annotations.workload_repo_basepath}}apps'
-    secrets:
-      gitCredentials:
-        secretName: '{{.metadata.annotations.resource_prefix}}-gitlab-pat'
   ignoreDifferences:
     - group: rbac.authorization.k8s.io
       kind: ClusterRole
@@ -1078,9 +1117,12 @@ backstage:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
     gitlab_domain_name: '{{.metadata.annotations.gitlab_domain_name}}'
+    git_username: '{{.metadata.annotations.git_username}}'
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     backstage_image: '{{.metadata.annotations.backstage_image}}'
+    working_repo: '{{.metadata.annotations.working_repo}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

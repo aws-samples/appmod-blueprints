@@ -136,6 +136,12 @@ data:
       echo "Repository $WORKING_REPO already exists, skipping creation."
     fi
 
+    # Make main branch unprotected
+    echo "Making main branch unprotected..."
+    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '.[0].id')
+    curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches/main" \
+      -H "PRIVATE-TOKEN: $IDE_PASSWORD" || echo "Main branch was not protected or already unprotected"
+
     echo "GitLab initialization completed successfully."
 ---
 # Initialization Job

@@ -9,84 +9,106 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
-# Logging functions
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-}
-
-log_error() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >&2
-}
-
-log_success() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"
-}
-
-# Validate required environment variables
-validate_backend_config() {
-  log "Validating S3 backend configuration..."
-  
-  if [[ -z "${TFSTATE_BUCKET_NAME:-}" ]]; then
-    log_error "TFSTATE_BUCKET_NAME environment variable is required"
-    exit 1
-  fi
-  
-  if [[ -z "${TFSTATE_LOCK_TABLE:-}" ]]; then
-    log_error "TFSTATE_LOCK_TABLE environment variable is required"
-    exit 1
-  fi
-  
-  local region="${AWS_REGION:-us-east-1}"
-  
-  # Check if S3 bucket exists and is accessible
-  if ! aws s3api head-bucket --bucket "${TFSTATE_BUCKET_NAME}" 2>/dev/null; then
-    log_error "S3 bucket '${TFSTATE_BUCKET_NAME}' does not exist or is not accessible"
-    exit 1
-  fi
-  
-  # Check if DynamoDB table exists
-  if ! aws dynamodb describe-table --table-name "${TFSTATE_LOCK_TABLE}" --region "${region}" >/dev/null 2>&1; then
-    log_error "DynamoDB table '${TFSTATE_LOCK_TABLE}' does not exist or is not accessible in region '${region}'"
-    exit 1
-  fi
-  
-  log_success "Backend configuration validated"
-  log "S3 Bucket: ${TFSTATE_BUCKET_NAME}"
-  log "DynamoDB Table: ${TFSTATE_LOCK_TABLE}"
-  log "Region: ${region}"
-}
+# Save the current script directory before sourcing utils.sh
+DEPLOY_SCRIPTDIR="$SCRIPTDIR"
+source $SCRIPTDIR/../scripts/utils.sh
 
 # Main destroy function
 main() {
-  log "Starting common stack destruction..."
   
+  if [[ -z "${USER1_PASSWORD:-}" ]]; then
+    log_error "USER1_PASSWORD environment variable is required"
+    exit 1
+  fi
+
+  # Remove ArgoCD resources from all clusters
+  for cluster in "${CLUSTER_NAMES[@]}"; do
+      if ! cleanup_kubernetes_resources_with_fallback "$cluster"; then
+        log_warning "Failed to cleanup Kubernetes resources for cluster: $cluster"
+        exit 1
+      fi
+  done
+
+  log "Starting boostrap stack destruction..."
+
   # Validate backend configuration
   validate_backend_config
+
+  # Delete backstage ecr repo
+  delete_backstage_ecr_repo
   
+  export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
+  yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
+
+  if ! $SKIP_GITLAB ; then
+    initialize_terraform "gitlab infra" "$DEPLOY_SCRIPTDIR/gitlab_infra" # required to fetch values from gitlab_infra
+    GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
+    GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
+  fi
+
+
   # Initialize Terraform with S3 backend
-  log "Initializing Terraform with S3 backend..."
-  if ! terraform -chdir=$SCRIPTDIR init --upgrade \
-    -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
-    -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}" \
-    -backend-config="region=${AWS_REGION:-us-east-1}"; then
-    log_error "Terraform initialization failed"
-    exit 1
+  initialize_terraform "boostrap" "$DEPLOY_SCRIPTDIR"
+
+  cd "$DEPLOY_SCRIPTDIR" # Get into common stack directory
+  # Remove GitLab resources from state, if they exist
+  if ! terraform state rm gitlab_personal_access_token.workshop || ! terraform state rm data.gitlab_user.workshop; then
+    log_warning "GitLab resources not found in state"
   fi
-  
+  cd - # Go back
+
   # Destroy Terraform resources
-  log "Destroying AWS git and IAM resources..."
-  if ! terraform -chdir=$SCRIPTDIR destroy \
-    -var="resource_prefix=${RESOURCE_PREFIX:-peeks}" \
-    -var="ide_password=${IDE_PASSWORD}" \
+  log "Destroying bootstrap resources..."
+  if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
+    -var-file="${GENERATED_TFVAR_FILE}" \
+    -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
+    -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
+    -var="ide_password=${USER1_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
+    -var="git_password=${USER1_PASSWORD}" \
     -var="working_repo=${WORKING_REPO}" \
-    -var="git_password=${GIT_PASSWORD}" \
-    -auto-approve; then
-    log_error "Common stack destroy failed"
-    exit 1
+    -auto-approve -refresh=false; then
+    log_warning "Bootstrap stack destroy failed, trying again"
+    if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
+      -var-file="${GENERATED_TFVAR_FILE}" \
+      -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
+      -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
+      -var="ide_password=${USER1_PASSWORD}" \
+      -var="git_username=${GIT_USERNAME}" \
+      -var="git_password=${USER1_PASSWORD}" \
+      -var="working_repo=${WORKING_REPO}" \
+      -auto-approve -refresh=false; then
+      log_error "Bootstrap stack destroy failed again, exiting"
+      exit 1
+    fi
   fi
-  
-  log_success "Common stack destroy completed successfully"
+
+  if ! $SKIP_GITLAB ; then
+    
+    initialize_terraform "gitlab infra" "$DEPLOY_SCRIPTDIR/gitlab_infra"
+
+    # Destroy Terraform resources
+    log "Destroying gitlab infra resources..."
+    if ! terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra destroy \
+      -var-file="${GENERATED_TFVAR_FILE}" \
+      -var="git_username=${GIT_USERNAME}" \
+      -var="git_password=${IDE_PASSWORD}" \
+      -var="working_repo=${WORKING_REPO}" \
+      -auto-approve; then
+      log_warning "Gitlab infra stack destroy failed, trying one more time"
+      if ! terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra destroy \
+        -var-file="${GENERATED_TFVAR_FILE}" \
+        -var="git_username=${GIT_USERNAME}" \
+        -var="git_password=${IDE_PASSWORD}" \
+        -var="working_repo=${WORKING_REPO}" \
+        -auto-approve; then
+        log_error "Gitlab infra stack destroy failed again, exiting"
+        exit 1
+      fi
+    fi
+  fi
+
+  log_success "Bootstrap stack destroy completed successfully"
 }
 
 # Run main function

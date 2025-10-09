@@ -48,6 +48,21 @@ if [ -n "$GRAFANA_WORKSPACE_ID" ] && [ "$GRAFANA_WORKSPACE_ID" != "None" ] && [ 
 else
     GRAFANA_URL="Grafana workspace not found"
 fi
+GITLAB_URL=https://$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName | [0]" --output text)
+
+# Get Grafana URL
+print_info "Retrieving Grafana URL..."
+GRAFANA_WORKSPACE_ID=$(aws grafana list-workspaces --region $AWS_REGION --query "workspaces[?contains(name, '${RESOURCE_PREFIX:-peeks}')].id | [0]" --output text 2>/dev/null || echo "")
+if [ -n "$GRAFANA_WORKSPACE_ID" ] && [ "$GRAFANA_WORKSPACE_ID" != "None" ] && [ "$GRAFANA_WORKSPACE_ID" != "null" ]; then
+    GRAFANA_URL=$(aws grafana describe-workspace --workspace-id "$GRAFANA_WORKSPACE_ID" --region $AWS_REGION --query "workspace.endpoint" --output text 2>/dev/null || echo "")
+    if [ -n "$GRAFANA_URL" ]; then
+        GRAFANA_URL="https://$GRAFANA_URL"
+    else
+        GRAFANA_URL="Grafana workspace not accessible"
+    fi
+else
+    GRAFANA_URL="Grafana workspace not found"
+fi
 
 # Get credentials
 print_info "Retrieving credentials..."
@@ -64,9 +79,13 @@ if [ -z "$USER_PASSWORD" ]; then
 fi
 set -x
 update_workshop_var "USER_PASSWORD" "$USER_PASSWORD"
+update_workshop_var "GITLAB_DOMAIN" "$GITLAB_DOMAIN"
+update_workshop_var "ARGOCD_DOMAIN" "$ARGOCD_DOMAIN"
 set +x
 # Define fixed column widths (increased URL column for Grafana)
 TOOL_COL=14
+URL_COL=65
+CRED_COL=40
 URL_COL=65
 CRED_COL=40
 
@@ -91,7 +110,9 @@ print_header "EKS Cluster Management Tools"
 
 # Print table header with ASCII characters
 echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
+echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 echo -e "${BOLD}| ${CYAN}$(pad_string "Tool" $TOOL_COL)${NC}${BOLD} | ${CYAN}$(pad_string "URL" $URL_COL)${NC}${BOLD} | ${CYAN}$(pad_string "Credentials / Password" $CRED_COL)${NC}${BOLD} |${NC}"
+echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 
 # Print table rows with exact character counts
@@ -103,9 +124,20 @@ echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Kargo" $TOOL_COL)${NC}${BOLD} |${NC
 echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Argo-Workflows" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$WORKFLOWS_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "user1 / $USER_PASSWORD" $CRED_COL)${BOLD} |${NC}"
 echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
+echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
+echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Backstage" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$BACKSTAGE_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "user1 / $USER_PASSWORD" $CRED_COL)${BOLD} |${NC}"
+echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
+echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Kargo" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$KARGO_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "user1 / $USER_PASSWORD" $CRED_COL)${BOLD} |${NC}"
+echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
+echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Argo-Workflows" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$WORKFLOWS_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "user1 / $USER_PASSWORD" $CRED_COL)${BOLD} |${NC}"
+echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Keycloak Admin" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$KEYCLOAK_ADMIN_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "admin / $KEYCLOAK_ADMIN_PASSWORD" $CRED_COL)${BOLD} |${NC}"
 echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
+echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Gitlab" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$GITLAB_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "user1 / $IDE_PASSWORD" $CRED_COL)${BOLD} |${NC}"
+echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
+echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Grafana" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$GRAFANA_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "user1 / $IDE_PASSWORD" $CRED_COL)${BOLD} |${NC}"
+echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Grafana" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$GRAFANA_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "user1 / $IDE_PASSWORD" $CRED_COL)${BOLD} |${NC}"
 echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"

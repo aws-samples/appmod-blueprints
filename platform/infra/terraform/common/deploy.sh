@@ -9,88 +9,116 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
-# Logging functions
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-}
+# Save the current script directory before sourcing utils.sh
+DEPLOY_SCRIPTDIR="$SCRIPTDIR"
+source $SCRIPTDIR/../scripts/utils.sh
 
-log_error() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >&2
-}
-
-log_success() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"
-}
-
-# Validate required environment variables
-validate_backend_config() {
-  log "Validating S3 backend configuration..."
-  
-  if [[ -z "${TFSTATE_BUCKET_NAME:-}" ]]; then
-    log_error "TFSTATE_BUCKET_NAME environment variable is required"
-    exit 1
-  fi
-  
-  if [[ -z "${TFSTATE_LOCK_TABLE:-}" ]]; then
-    log_error "TFSTATE_LOCK_TABLE environment variable is required"
-    exit 1
-  fi
-  
-  local region="${AWS_REGION:-us-east-1}"
-  
-  # Check if S3 bucket exists and is accessible
-  if ! aws s3api head-bucket --bucket "${TFSTATE_BUCKET_NAME}" 2>/dev/null; then
-    log_error "S3 bucket '${TFSTATE_BUCKET_NAME}' does not exist or is not accessible"
-    exit 1
-  fi
-  
-  # Check if DynamoDB table exists
-  if ! aws dynamodb describe-table --table-name "${TFSTATE_LOCK_TABLE}" --region "${region}" >/dev/null 2>&1; then
-    log_error "DynamoDB table '${TFSTATE_LOCK_TABLE}' does not exist or is not accessible in region '${region}'"
-    exit 1
-  fi
-  
-  log_success "Backend configuration validated"
-  log "S3 Bucket: ${TFSTATE_BUCKET_NAME}"
-  log "DynamoDB Table: ${TFSTATE_LOCK_TABLE}"
-  log "Region: ${region}"
-}
+# Check if clusters are created through Workshop
+export WORKSHOP_CLUSTERS=${WORKSHOP_CLUSTERS:-false}
 
 # Main deployment function
 main() {
-  log "Starting common stack deployment..."
+  log "Starting bootstrap stack deployment..."
+
+  if [[ -z "${USER1_PASSWORD:-${USER_PASSWORD:-}}" ]]; then
+    log_error "USER1_PASSWORD environment variable is required"
+    exit 1
+  fi
+
+    # Configure kubectl access to use kubectl in terraform external resources
+  for cluster in "${CLUSTER_NAMES[@]}"; do
+    if ! kubectl get nodes --request-timeout=10s --context $cluster &>/dev/null; then
+      log_warning "kubectl cannot connect to cluster, setting up kubectl access"
+      configure_kubectl_with_fallback "$cluster" || {
+        log_error "kubectl configuration failed, cannot proceed with bootstrap"
+        exit 1
+      }
+    fi
+    log_success "kubectl is working for $cluster, proceeding..."
+  done
   
   # Validate backend configuration
   validate_backend_config
+
+  export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
+  yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
+
+  if ! $SKIP_GITLAB ; then
+    # Initialize Terraform with S3 backend
+    initialize_terraform "gitlab infra" "$DEPLOY_SCRIPTDIR/gitlab_infra"
+    
+    # Apply Terraform configuration
+    log "Applying gitlab infra resources..."
+    if ! terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra apply \
+      -var-file="${GENERATED_TFVAR_FILE}" \
+      -var="git_username=${GIT_USERNAME}" \
+      -var="git_password=${USER1_PASSWORD}" \
+      -var="working_repo=${WORKING_REPO}" \
+      -parallelism=3 -auto-approve; then
+      log_warning "Terraform apply failed for gitlab infra stack, trying again..."
+      if ! terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra apply \
+        -var-file="${GENERATED_TFVAR_FILE}" \
+        -var="git_username=${GIT_USERNAME}" \
+        -var="git_password=${USER1_PASSWORD}" \
+        -var="working_repo=${WORKING_REPO}" \
+        -parallelism=3 -auto-approve; then
+        log_error "Terraform apply failed for gitlab infra stack again, exiting"
+        exit 1
+      fi
+    fi
+  fi
+
+  # Get gitlab cloudfront domain from gitlab infra stack
+  export GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
+  GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
+
+  # Create spoke cluster secret values
+  create_spoke_cluster_secret_values
+
+  # Push repo to Gitlab
+  gitlab_repository_setup
   
   # Initialize Terraform with S3 backend
-  log "Initializing Terraform with S3 backend..."
-  if ! terraform -chdir=$SCRIPTDIR init --upgrade \
-    -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
-    -backend-config="dynamodb_table=${TFSTATE_LOCK_TABLE}" \
-    -backend-config="region=${AWS_REGION:-us-east-1}"; then
-    log_error "Terraform initialization failed"
-    exit 1
-  fi
+  initialize_terraform "bootstrap" "$DEPLOY_SCRIPTDIR"
   
   # Apply Terraform configuration
-  log "Applying git resources..."
-  if ! terraform -chdir=$SCRIPTDIR apply \
-    -var="resource_prefix=${RESOURCE_PREFIX:-peeks}" \
-    -var="ide_password=${IDE_PASSWORD}" \
+  log "Applying bootstrap resources..."
+  if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
+    -var-file="${GENERATED_TFVAR_FILE}" \
+    -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
+    -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
+    -var="ide_password=${USER1_PASSWORD}" \
     -var="git_username=${GIT_USERNAME}" \
+    -var="git_password=${USER1_PASSWORD}" \
+    -var="resource_prefix=${RESOURCE_PREFIX}" \
     -var="working_repo=${WORKING_REPO}" \
-    -var="git_password=${GIT_PASSWORD:-$IDE_PASSWORD}" \
     -parallelism=3 -auto-approve; then
-    log_error "Terraform apply failed"
-    exit 1
+    log_warning "Terraform apply failed for bootstrap stack, trying again..."
+    if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
+      -var-file="${GENERATED_TFVAR_FILE}" \
+      -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
+      -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
+      -var="ide_password=${USER1_PASSWORD}" \
+      -var="git_username=${GIT_USERNAME}" \
+      -var="git_password=${USER1_PASSWORD}" \
+      -var="resource_prefix=${RESOURCE_PREFIX}" \
+      -var="working_repo=${WORKING_REPO}" \
+      -parallelism=3 -auto-approve; then
+      log_error "Terraform apply failed for bootstrap stack again, exiting"
+      exit 1
+    fi
   fi
+
+  # Get ArgoCD domain from Terraform output
+  export ARGOCD_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
+
+  # Update backstage default values now that both domains are available
+  update_backstage_defaults
   
-  # Wait for SSH access
-  log "Waiting for SSH access to be configured..."
-  sleep 10
+  # Push repo to Gitlab
+  gitlab_repository_setup
   
-  log_success "Common stack deployment completed successfully"
+  log_success "Bootstrap stack deployment completed successfully"
 }
 
 # Run main function

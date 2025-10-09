@@ -161,7 +161,7 @@ template: {
             }
         },
 		"amp-workspace-secrets": {
-			apiVersion: "external-secrets.io/v1beta1"
+			apiVersion: "external-secrets.io/v1"
 			kind:       "ExternalSecret"
 			metadata: {
 				name:      "amp-workspace-secrets-\(context.name)"
@@ -180,7 +180,7 @@ template: {
 					{
 						secretKey: "amp-workspace-url"
 						remoteRef: {
-							key: "/platform/amp"
+							key: "peeks/platform/amp"
               property: "amp-workspace"
 						}
 					},

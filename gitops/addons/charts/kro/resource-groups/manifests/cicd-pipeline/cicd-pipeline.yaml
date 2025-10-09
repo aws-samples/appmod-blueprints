@@ -450,7 +450,7 @@ spec:
       readyWhen:
        - ${gitlabexternalsecret.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
       template:
-       apiVersion: external-secrets.io/v1beta1
+       apiVersion: external-secrets.io/v1
        kind: ExternalSecret
        metadata:
           name: gitlab-credentials
@@ -475,15 +475,15 @@ spec:
           target:
               name: gitlab-credentials
               creationPolicy: Owner
+              template:
+                data:
+                  GITLAB_USERNAME: ${schema.spec.gitlab.username}
+                  GITLAB_TOKEN: '{{ .GITLAB_TOKEN }}'
           data:
-             - secretKey: GITLAB_USERNAME
-               remoteRef:
-                 key: ${schema.spec.aws.resourcePrefix}-gitlab-pat
-                 property: username
              - secretKey: GITLAB_TOKEN
                remoteRef:
-                 key: ${schema.spec.aws.resourcePrefix}-gitlab-pat
-                 property: token
+                 key: ${schema.spec.aws.resourcePrefix}-hub/secrets
+                 property: git_token
 
     # Docker registry secret for ECR authentication - properly scoped to namespace
     - id: dockersecret
@@ -1121,7 +1121,13 @@ spec:
                      echo "Updating image to: $IMAGE_URI"
 
                      # Update various deployment file formats
-                     find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image:.*${schema.spec.application.name}.*|image: $IMAGE_URI|g"
+                     echo "Debug: Application name is: ${schema.spec.application.name}"
+                     # Replace placeholder and existing ECR images
+                     find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: <image>|image: $IMAGE_URI|g"
+                     find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g"
+
+                     # Show what changed
+                     git diff
 
                      # Commit and push changes
                      git add .
