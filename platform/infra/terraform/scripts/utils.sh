@@ -44,7 +44,13 @@ if [[ "$WORKSHOP_CLUSTERS" == "true" && -z "${CLUSTER_NAMES:-}" ]]; then
   TEMP_CONFIG_FILE="$(mktemp).yaml"
   cp "$CONFIG_FILE" "$TEMP_CONFIG_FILE"
 
-  yq eval '.clusters |= with_entries(.value.name = env(RESOURCE_PREFIX) + "-" + .value.name)' -i "$TEMP_CONFIG_FILE"
+  # Check if clusters already have prefix
+  FIRST_CLUSTER_NAME=$(yq eval '.clusters | keys | .[0]' "$TEMP_CONFIG_FILE")
+  FIRST_CLUSTER_VALUE=$(yq eval ".clusters.$FIRST_CLUSTER_NAME.name" "$TEMP_CONFIG_FILE")
+  
+  if [[ ! "$FIRST_CLUSTER_VALUE" =~ ^${RESOURCE_PREFIX}- ]]; then
+    yq eval '.clusters |= with_entries(.value.name = env(RESOURCE_PREFIX) + "-" + .value.name)' -i "$TEMP_CONFIG_FILE"
+  fi
   yq eval '.clusters[].region = env(AWS_REGION)' -i "$TEMP_CONFIG_FILE"
   export CONFIG_FILE="$TEMP_CONFIG_FILE"
 fi

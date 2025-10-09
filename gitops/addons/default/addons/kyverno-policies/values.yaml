@@ -1,0 +1,7 @@
+podSecurityStandard: restricted
+validationFailureAction: Audit
+skipBackgroundRequests: true
+background: true
+
+# Custom setting to enable allowExistingViolations
+allowExistingViolations: true
