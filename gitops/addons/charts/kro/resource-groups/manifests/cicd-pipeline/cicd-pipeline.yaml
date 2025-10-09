@@ -1378,6 +1378,12 @@ spec:
                      type: string
                      value:
                        - 'refs/heads/main'
+                   # Filter out commits from CI/CD pipeline to prevent circular dependency
+                   - path: body.commits.0.author.name
+                     type: string
+                     value:
+                       - 'CI/CD Pipeline'
+                     comparator: '!='
           triggers:
              - template:
                  name: gitlab-workflow-trigger
