@@ -127,8 +127,8 @@ resource "aws_cloudfront_distribution" "gitlab" {
 
     vpc_origin_config {
       vpc_origin_id = aws_cloudfront_vpc_origin.gitlab.id
-      origin_read_timeout    = 300
-      origin_keepalive_timeout = 300
+      origin_read_timeout    = 180
+      origin_keepalive_timeout = 60
     }
 
     custom_header {
