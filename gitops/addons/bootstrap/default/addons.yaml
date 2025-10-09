@@ -465,7 +465,7 @@ kyverno:
   namespace: '{{ default "kyverno" (index .metadata.annotations "kyverno_namespace")}}'
   chartName: kyverno
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.4'
+  defaultVersion: '3.3.6'
   selector:
     matchExpressions:
       - key: enable_kyverno
@@ -485,7 +485,7 @@ kyverno-policy-reporter:
   namespace: '{{ default "kyverno" (index .metadata.annotations "kyverno_namespace")}}'
   chartName: policy-reporter
   chartRepository: https://kyverno.github.io/policy-reporter
-  defaultVersion: '3.0.0'
+  defaultVersion: '3.1.0'
   selector:
     matchExpressions:
       - key: enable_kyverno_policy_reporter
@@ -528,7 +528,7 @@ kyverno-policies:
   namespace: '{{ default "kyverno" (index .metadata.annotations "kyverno_namespace")}}'
   chartName: kyverno-policies
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.2.5'
+  defaultVersion: '3.3.6'
   selector:
     matchExpressions:
       - key: enable_kyverno_policies
