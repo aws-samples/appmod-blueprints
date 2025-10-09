@@ -244,7 +244,7 @@ cleanup_kubernetes_resources_with_fallback() {
   delete_argocd_apps "kyverno" "delete" "false"
 
   #TODO: Remove this once we have a better way to handle webhook deletion
-  kubectl delete mutatingwebhookconfigurations.admissionregistration.k8s.io kyverno-resource-mutating-webhook-cfg || true
+  kubectl delete mutatiupdatengwebhookconfigurations.admissionregistration.k8s.io kyverno-resource-mutating-webhook-cfg || true
   kubectl delete mutatingwebhookconfigurations.admissionregistration.k8s.io kyverno-verify-mutating-webhook-cfg || true
   kubectl delete mutatingwebhookconfigurations.admissionregistration.k8s.io kyverno-policy-mutating-webhook-cfg || true
   kubectl delete mutatingwebhookconfigurations.admissionregistration.k8s.io kargo || true
