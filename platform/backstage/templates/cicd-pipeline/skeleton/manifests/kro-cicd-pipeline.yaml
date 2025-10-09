@@ -17,9 +17,8 @@ metadata:
     cicd.kro.run/cluster-name: ${{values.cluster_name}}
     # ArgoCD sync wave to ensure proper ordering
     argocd.argoproj.io/sync-wave: "1"
-    # ArgoCD hook for lifecycle management
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # Prevent resource replacement during sync
+    argocd.argoproj.io/sync-options: Replace=false
 spec:
   name: ${{values.appname}}-cicd
   namespace: ${{values.namespace}}
