@@ -6,6 +6,7 @@ metadata:
   name: cicdpipeline.kro.run
   annotations:
     argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Replace=false
 spec:
   schema:
     apiVersion: v1alpha1
