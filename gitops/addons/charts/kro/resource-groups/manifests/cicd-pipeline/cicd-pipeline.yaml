@@ -785,12 +785,18 @@ spec:
                        echo "Searching for webhook with URL: $$webhook_url"
                        echo "Existing webhook URLs:"
                        echo "$$response_body" | jq -r '.[].url' 2>/dev/null || echo "Failed to parse webhook URLs"
-                       webhook_exists=$$(echo "$$response_body" | jq -r --arg url "$$webhook_url" '.[] | select(.url == $$arg) | .id' 2>/dev/null)
-                       echo "jq result: '$$webhook_exists'"
-                       # Handle empty or null results
-                       if [ -z "$$webhook_exists" ] || [ "$$webhook_exists" = "null" ]; then
-                         webhook_exists=""
-                       fi
+                       
+                       # More robust webhook ID extraction
+                       webhook_exists=""
+                       for webhook_id in $$(echo "$$response_body" | jq -r '.[].id' 2>/dev/null); do
+                         webhook_url_check=$$(echo "$$response_body" | jq -r --arg id "$$webhook_id" '.[] | select(.id == ($$id | tonumber)) | .url' 2>/dev/null)
+                         if [ "$$webhook_url_check" = "$$webhook_url" ]; then
+                           webhook_exists="$$webhook_id"
+                           break
+                         fi
+                       done
+                       
+                       echo "Webhook ID found: '$$webhook_exists'"
                      else
                        echo "Failed to get existing webhooks, HTTP code: $$http_code"
                        webhook_exists=""
