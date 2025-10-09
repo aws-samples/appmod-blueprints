@@ -38,8 +38,8 @@ log_success() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"
 }
 
-# Update config file cluster regions if WORKSHOP_CLUSTERS
-if [[ "$WORKSHOP_CLUSTERS" == "true" ]]; then
+# Update config file cluster regions if WORKSHOP_CLUSTERS & not already changed
+if [[ "$WORKSHOP_CLUSTERS" == "true" && -z "${CLUSTER_NAMES:-}" ]]; then
   log "Updating config file for workshop..."
   TEMP_CONFIG_FILE="$(mktemp).yaml"
   cp "$CONFIG_FILE" "$TEMP_CONFIG_FILE"
