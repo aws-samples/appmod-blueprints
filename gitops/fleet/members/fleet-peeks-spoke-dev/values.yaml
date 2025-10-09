@@ -1,7 +1,0 @@
-externalSecret:
-  enabled: true
-  clusterName: peeks-spoke-dev
-  secretStoreRefKind: ClusterSecretStore
-  secretStoreRefName: aws-secrets-manager
-  secretManagerSecretNamePrefix: peeks
-  server: remote
