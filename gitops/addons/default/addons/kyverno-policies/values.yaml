@@ -1,4 +1,4 @@
 podSecurityStandard: restricted
 validationFailureAction: Audit
 skipBackgroundRequests: true
-allowExistingViolations: true
+background: true
