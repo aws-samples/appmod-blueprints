@@ -782,7 +782,15 @@ spec:
                      echo "Response: $$response_body"
                      
                      if [ "$$http_code" = "200" ]; then
-                       webhook_exists=$$(echo "$$response_body" | jq -r --arg url "$$webhook_url" '.[] | select(.url == $$arg) | .id' 2>/dev/null || echo "")
+                       echo "Searching for webhook with URL: $$webhook_url"
+                       echo "Existing webhook URLs:"
+                       echo "$$response_body" | jq -r '.[].url' 2>/dev/null || echo "Failed to parse webhook URLs"
+                       webhook_exists=$$(echo "$$response_body" | jq -r --arg url "$$webhook_url" '.[] | select(.url == $$arg) | .id' 2>/dev/null)
+                       echo "jq result: '$$webhook_exists'"
+                       # Handle empty or null results
+                       if [ -z "$$webhook_exists" ] || [ "$$webhook_exists" = "null" ]; then
+                         webhook_exists=""
+                       fi
                      else
                        echo "Failed to get existing webhooks, HTTP code: $$http_code"
                        webhook_exists=""
