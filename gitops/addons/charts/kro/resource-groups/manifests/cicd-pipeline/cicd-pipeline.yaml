@@ -1614,7 +1614,7 @@ spec:
             app.kubernetes.io/component: cicd-pipeline
             app.kubernetes.io/managed-by: kro
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}            
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             nginx.ingress.kubernetes.io/proxy-body-size: 512m
             nginx.ingress.kubernetes.io/use-regex: "true"
             nginx.ingress.kubernetes.io/rewrite-target: /webhook
