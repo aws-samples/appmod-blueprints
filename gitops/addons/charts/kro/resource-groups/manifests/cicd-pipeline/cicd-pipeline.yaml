@@ -6,6 +6,7 @@ metadata:
   name: cicdpipeline.kro.run
   annotations:
     argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Replace=false
 spec:
   schema:
     apiVersion: v1alpha1
@@ -410,6 +411,15 @@ spec:
        kind: ConfigMap
        metadata:
           name: ${schema.spec.name}-config
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -494,11 +504,19 @@ spec:
        kind: Secret
        metadata:
           name: ${schema.spec.name}-docker-config
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
              app.kubernetes.io/managed-by: kro
           annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}           
              # Reference to ECR repositories for credential management
              ecr.aws/main-repository: ${ecrmainrepo.status.repositoryURI}
              ecr.aws/cache-repository: ${ecrcacherepo.status.repositoryURI}
@@ -524,11 +542,19 @@ spec:
        kind: CronJob
        metadata:
           name: ${schema.spec.name}-ecr-refresh
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false          
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
              app.kubernetes.io/managed-by: kro
           annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
              # Namespace scoping
              cicd.kro.run/namespace-scoped: 'true'
              cicd.kro.run/application: ${schema.spec.application.name}
@@ -617,6 +643,15 @@ spec:
        kind: WorkflowTemplate
        metadata:
           name: ${schema.spec.name}-provisioning-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -781,7 +816,21 @@ spec:
                      echo "Response: $$response_body"
                      
                      if [ "$$http_code" = "200" ]; then
-                       webhook_exists=$$(echo "$$response_body" | jq -r --arg url "$$webhook_url" '.[] | select(.url == $$arg) | .id' 2>/dev/null || echo "")
+                       echo "Searching for webhook with URL: $$webhook_url"
+                       echo "Existing webhook URLs:"
+                       echo "$$response_body" | jq -r '.[].url' 2>/dev/null || echo "Failed to parse webhook URLs"
+                       
+                       # More robust webhook ID extraction
+                       webhook_exists=""
+                       for webhook_id in $$(echo "$$response_body" | jq -r '.[].id' 2>/dev/null); do
+                         webhook_url_check=$$(echo "$$response_body" | jq -r --arg id "$$webhook_id" '.[] | select(.id == ($$id | tonumber)) | .url' 2>/dev/null)
+                         if [ "$$webhook_url_check" = "$$webhook_url" ]; then
+                           webhook_exists="$$webhook_id"
+                           break
+                         fi
+                       done
+                       
+                       echo "Webhook ID found: '$$webhook_exists'"
                      else
                        echo "Failed to get existing webhooks, HTTP code: $$http_code"
                        webhook_exists=""
@@ -824,17 +873,41 @@ spec:
                        fi
                      else
                        echo "GitLab webhook already exists with ID: $$webhook_exists"
-                       echo "Updating existing webhook configuration"
-                       curl -k -X 'PUT' "$$api_url/$$webhook_exists" \
+                       echo "Verifying existing webhook configuration matches expected settings"
+                       
+                       # Get existing webhook details to verify configuration
+                       existing_webhook_details=$$(curl -k -X 'GET' "$$api_url/$$webhook_exists" \
                          -H "accept: application/json" \
-                         -H "Authorization: token $$gitlab_token" \
-                         -H "Content-Type: application/json" \
-                         -d '{
-                           "url": "'$$webhook_url'",
-                           "push_events": true,
-                           "enable_ssl_verification": false,
-                           "push_events_branch_filter": "main"
-                         }' 2>/dev/null || echo "Warning: Failed to update existing webhook"
+                         -H "Authorization: Bearer $$gitlab_token" \
+                         -H "Content-Type: application/json" -s)
+                       
+                       existing_url=$$(echo "$$existing_webhook_details" | jq -r '.url' 2>/dev/null || echo "")
+                       
+                       if [ "$$existing_url" = "$$webhook_url" ]; then
+                         echo "Existing webhook URL matches expected URL: $$webhook_url"
+                         echo "No update needed - webhook is correctly configured"
+                       else
+                         echo "Existing webhook URL ($$existing_url) differs from expected ($$webhook_url)"
+                         echo "Updating existing webhook configuration"
+                         update_response=$$(curl -k -X 'PUT' "$$api_url/$$webhook_exists" \
+                           -H "accept: application/json" \
+                           -H "Authorization: Bearer $$gitlab_token" \
+                           -H "Content-Type: application/json" \
+                           -d '{
+                             "url": "'$$webhook_url'",
+                             "push_events": true,
+                             "enable_ssl_verification": false,
+                             "push_events_branch_filter": "main"
+                           }' -s -w "\nHTTP_CODE:%{http_code}")
+                         
+                         update_http_code=$$(echo "$$update_response" | tail -1 | sed 's/HTTP_CODE://')
+                         
+                         if [ "$$update_http_code" = "200" ]; then
+                           echo "Successfully updated existing webhook"
+                         else
+                           echo "Warning: Failed to update existing webhook. HTTP Code: $$update_http_code"
+                         fi
+                       fi
                      fi
 
                      echo "GitLab webhook configuration completed"
@@ -888,6 +961,15 @@ spec:
        kind: WorkflowTemplate
        metadata:
           name: ${schema.spec.name}-cache-warmup-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -956,6 +1038,15 @@ spec:
        kind: WorkflowTemplate
        metadata:
           name: ${schema.spec.name}-cicd-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -1179,6 +1270,15 @@ spec:
        kind: ConfigMap
        metadata:
           name: ${schema.spec.name}-cache-dockerfile
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -1213,11 +1313,19 @@ spec:
        kind: Job
        metadata:
           name: ${schema.spec.name}-initial-ecr-setup
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false   
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
              app.kubernetes.io/managed-by: kro
           annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
              # Namespace scoping
              cicd.kro.run/namespace-scoped: 'true'
              cicd.kro.run/application: ${schema.spec.application.name}
@@ -1313,6 +1421,15 @@ spec:
        kind: Workflow
        metadata:
           name: ${schema.spec.name}-setup-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-setup
@@ -1334,6 +1451,15 @@ spec:
        kind: EventSource
        metadata:
           name: ${schema.spec.name}-gitlab-eventsource
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -1357,6 +1483,15 @@ spec:
        kind: Sensor
        metadata:
           name: ${schema.spec.name}-gitlab-sensor
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -1378,6 +1513,12 @@ spec:
                      type: string
                      value:
                        - 'refs/heads/main'
+                   # Filter out commits from CI/CD pipeline to prevent circular dependency
+                   - path: body.commits.0.author.name
+                     type: string
+                     value:
+                       - 'CI/CD Pipeline'
+                     comparator: '!='
           triggers:
              - template:
                  name: gitlab-workflow-trigger
@@ -1431,12 +1572,14 @@ spec:
         metadata:
           name: ${schema.spec.name}-webhook-service
           ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: CICDPipeline
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -1471,6 +1614,7 @@ spec:
             app.kubernetes.io/component: cicd-pipeline
             app.kubernetes.io/managed-by: kro
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
             nginx.ingress.kubernetes.io/proxy-body-size: 512m
             nginx.ingress.kubernetes.io/use-regex: "true"
             nginx.ingress.kubernetes.io/rewrite-target: /webhook
