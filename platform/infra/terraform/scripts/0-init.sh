@@ -56,11 +56,23 @@ main() {
             api_ready=true
         fi
         
-        if [ "$argocd_pods_ready" -gt 0 ] && [ "$argocd_repo_ready" -gt 0 ] && [ "$api_ready" = true ]; then
-            print_status "SUCCESS" "ArgoCD is ready (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: responding)"
+        # Check if ArgoCD domain is available (this was the missing piece!)
+        local domain_available=false
+        local domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
+        if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
+            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null)
+        fi
+        
+        if [ -n "$domain_name" ] && [ "$domain_name" != "None" ] && [ "$domain_name" != "null" ]; then
+            domain_available=true
+            print_status "INFO" "ArgoCD domain found: $domain_name"
+        fi
+        
+        if [ "$argocd_pods_ready" -gt 0 ] && [ "$argocd_repo_ready" -gt 0 ] && [ "$api_ready" = true ] && [ "$domain_available" = true ]; then
+            print_status "SUCCESS" "ArgoCD is ready (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: responding, domain: $domain_name)"
             argocd_ready=true
         else
-            print_status "INFO" "ArgoCD not ready yet (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: $api_ready), waiting..."
+            print_status "INFO" "ArgoCD not ready yet (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: $api_ready, domain: $domain_available), waiting..."
             sleep 30
             argocd_wait_time=$((argocd_wait_time + 30))
         fi
