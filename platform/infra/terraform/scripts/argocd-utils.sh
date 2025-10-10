@@ -15,11 +15,51 @@ export BOOTSTRAP_APPS=(
     "fleet-secrets"
 )
 
+# Function to authenticate ArgoCD CLI
+authenticate_argocd() {
+    if command -v argocd >/dev/null 2>&1; then
+        local argocd_server=""
+        
+        # Try to use existing ARGOCD_URL environment variable first
+        if [ -n "$ARGOCD_URL" ]; then
+            # Extract hostname from URL (remove https:// and /argocd)
+            argocd_server=$(echo "$ARGOCD_URL" | sed 's|https://||' | sed 's|/argocd||')
+        else
+            # Calculate domain the same way as 1-tools-urls.sh
+            local domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
+            if [ -z "$domain_name" ]; then
+                domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text)
+            fi
+            argocd_server="$domain_name"
+        fi
+        
+        if [ -n "$argocd_server" ]; then
+            export ARGOCD_SERVER="$argocd_server"
+            # Login using admin credentials
+            argocd login --username admin --password "${IDE_PASSWORD}" --grpc-web-root-path /argocd "$argocd_server"
+            return $?
+        fi
+    fi
+    return 1
+}
+
 # Function to terminate ArgoCD application operations
 terminate_argocd_operation() {
     local app_name=$1
     
-    kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":null}' 2>/dev/null || true
+    # Try ArgoCD CLI first if available and authenticated
+    if authenticate_argocd; then
+        print_info "Using ArgoCD CLI to terminate operation for $app_name"
+        argocd app terminate-op "$app_name" || {
+            print_warning "ArgoCD CLI terminate failed, using direct kubectl approach"
+            # Remove the operationState entirely - this is more effective
+            kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+        }
+    else
+        print_warning "ArgoCD CLI authentication failed, using direct kubectl approach"
+        # Remove the operationState entirely - this is more effective than setting operation to null
+        kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+    fi
 }
 
 # Function to refresh ArgoCD application
@@ -37,30 +77,77 @@ refresh_argocd_app() {
 sync_argocd_app() {
     local app_name=$1
     
-    kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+    # Try ArgoCD CLI first if available and authenticated
+    if authenticate_argocd; then
+        print_info "Using ArgoCD CLI to sync $app_name"
+        argocd app sync "$app_name" --timeout 200 || {
+            print_warning "ArgoCD CLI sync failed, falling back to kubectl"
+            kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+        }
+    else
+        print_warning "ArgoCD CLI authentication failed, using kubectl"
+        kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+    fi
 }
 
-# Handle stuck operations (terminate if running > 5 mins)
+# Handle stuck operations (terminate if running > 3 mins)
 handle_stuck_operations() {
-    local stuck_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+    # Get stuck operations using both methods for better detection
+    local stuck_apps_jq=$(kubectl get applications -n argocd -o json 2>/dev/null | \
         jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '.items[] | select(.status.operationState?.phase == "Running" and (.status.operationState.startedAt | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)) | .metadata.name' 2>/dev/null || echo "")
+        '.items[] | select(.status.operationState?.phase == "Running" and (.status.operationState.startedAt | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 180)) | .metadata.name' 2>/dev/null || echo "")
     
-    if [ -n "$stuck_apps" ]; then
-        echo "$stuck_apps" | while read -r app; do
-            [ -n "$app" ] && terminate_argocd_operation "$app" && refresh_argocd_app "$app"
+    # Also check with simpler method for very old operations
+    local stuck_apps_simple=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.operationState.phase}{" "}{.status.operationState.startedAt}{"\n"}{end}' 2>/dev/null | \
+        awk -v now=$(date +%s) '$2=="Running" && (now - mktime(gensub(/[-T:Z]/, " ", "g", $3))) > 180 {print $1}')
+    
+    # Combine both results
+    local all_stuck_apps=$(echo -e "$stuck_apps_jq\n$stuck_apps_simple" | sort -u | grep -v '^$')
+    
+    if [ -n "$all_stuck_apps" ]; then
+        echo "$all_stuck_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                print_warning "Terminating stuck operation for $app (running > 3 minutes)"
+                terminate_argocd_operation "$app"
+                sleep 2
+                refresh_argocd_app "$app"
+            fi
         done
     fi
 }
 
-# Handle revision conflicts
-handle_revision_conflicts() {
-    local error_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
-        jq -r '.items[] | select(.status.conditions[]? | select(.type == "ComparisonError" and (.message | contains("cannot reference a different revision")))) | .metadata.name' 2>/dev/null || echo "")
+# Handle sync issues (revision conflicts and OutOfSync applications)
+handle_sync_issues() {
+    # Get apps with revision conflicts OR OutOfSync/Missing status (often related issues)
+    local problem_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(
+            (.status.conditions[]? | select(.type == "ComparisonError" and (.message | contains("cannot reference a different revision")))) or
+            (.status.sync.status == "OutOfSync" and .status.health.status == "Missing")
+        ) | .metadata.name' 2>/dev/null || echo "")
     
-    if [ -n "$error_apps" ]; then
-        echo "$error_apps" | while read -r app; do
-            [ -n "$app" ] && terminate_argocd_operation "$app" && refresh_argocd_app "$app"
+    if [ -n "$problem_apps" ]; then
+        echo "$problem_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                print_info "Fixing revision/sync issues for $app"
+                terminate_argocd_operation "$app"
+                sleep 2
+                refresh_argocd_app "$app"
+                sync_argocd_app "$app"
+            fi
+        done
+    fi
+    
+    # Handle OutOfSync/Healthy apps (just need refresh and sync)
+    local outofsync_healthy=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Healthy") | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$outofsync_healthy" ]; then
+        echo "$outofsync_healthy" | while read -r app; do
+            if [ -n "$app" ]; then
+                print_info "Syncing OutOfSync/Healthy application: $app"
+                refresh_argocd_app "$app"
+                sync_argocd_app "$app"
+            fi
         done
     fi
 }
@@ -110,15 +197,17 @@ wait_for_argocd_apps_health() {
 
         print_info "ArgoCD status: $healthy_apps/$total_apps healthy ($health_pct%), $synced_apps/$total_apps synced"
         
+        # Handle issues before checking success criteria
+        handle_stuck_operations
+        sleep 2
+        handle_sync_issues
+        
         # Accept 80% healthy as success
         if [ $health_pct -ge 80 ] && [ $synced_apps -ge $((total_apps * 70 / 100)) ]; then
             print_success "ArgoCD applications sufficiently healthy ($health_pct% healthy)"
             return 0
         fi
         
-        handle_stuck_operations
-        sleep 2
-        handle_revision_conflicts
         sleep $check_interval
     done
     
