@@ -66,6 +66,7 @@ variable "clusters" {
     environment        = string
     auto_mode          = bool
     addons             = map(bool)
+    tenant             = string
   }))
   default = {
     hub = {
@@ -75,6 +76,7 @@ variable "clusters" {
       environment        = "control-plane"
       auto_mode          = true
       addons             = {}
+      tenant             = "default"
     }
     spoke1 = {
       name               = "spoke-dev"
@@ -83,6 +85,7 @@ variable "clusters" {
       environment        = "dev"
       auto_mode          = true
       addons             = {}
+      tenant             = "default"
     }
     spoke2 = {
       name               = "spoke-prod"
@@ -91,6 +94,7 @@ variable "clusters" {
       environment        = "prod"
       auto_mode          = true
       addons             = {}
+      tenant             = "default"
     }
   }
 }
