@@ -36,7 +36,7 @@ authenticate_argocd() {
         if [ -n "$argocd_server" ] && [ "$argocd_server" != "None" ] && [ "$argocd_server" != "null" ]; then
             export ARGOCD_SERVER="$argocd_server"
             # Login using admin credentials with timeout
-            if timeout 30 argocd login --username admin --password "${IDE_PASSWORD:-admin}" --grpc-web-root-path /argocd "$argocd_server" --insecure 2>/dev/null; then
+            if timeout 30 argocd login --username admin --password "${IDE_PASSWORD}" --grpc-web-root-path /argocd "$argocd_server" --insecure 2>/dev/null; then
                 return 0
             fi
         fi
