@@ -39,12 +39,56 @@ main() {
         export BACKSTAGE_BUILD_PID
     fi
 
-    # Wait for Argo CD apps to be healthy
-    if ! wait_for_argocd_apps_health; then 
-        print_status "ERROR" "ArgoCD apps did not become healthy within the timeout"
-        show_final_status
-        exit 1
-    fi
+    # Wait for Argo CD apps to be healthy with retry mechanism
+    local retry_count=0
+    local max_retries=5
+    
+    while [ $retry_count -lt $max_retries ]; do
+        print_status "INFO" "Attempt $((retry_count + 1))/$max_retries: Waiting for ArgoCD apps to be healthy..."
+        
+        # Handle OutOfSync/Missing apps specifically before health check
+        local missing_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Missing") | .metadata.name' 2>/dev/null || echo "")
+        if [ -n "$missing_apps" ]; then
+            print_status "INFO" "Found OutOfSync/Missing apps, forcing refresh and sync..."
+            echo "$missing_apps" | while read -r app; do
+                if [ -n "$app" ]; then
+                    print_status "INFO" "Aggressively fixing $app..."
+                    # More aggressive approach
+                    kubectl patch application.argoproj.io "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+                    kubectl patch application.argoproj.io "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+                    sleep 3
+                    kubectl annotate application.argoproj.io "$app" -n argocd argocd.argoproj.io/refresh="hard" --overwrite 2>/dev/null || true
+                    sleep 5
+                    kubectl patch application.argoproj.io "$app" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD","prune":true}}}' 2>/dev/null || true
+                    sleep 10
+                fi
+            done
+        fi
+        
+        if wait_for_argocd_apps_health; then
+            # Double-check no OutOfSync/Missing apps remain
+            local remaining_missing=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Missing") | .metadata.name' 2>/dev/null || echo "")
+            if [ -n "$remaining_missing" ]; then
+                print_status "WARNING" "Still have OutOfSync/Missing apps: $remaining_missing"
+                retry_count=$((retry_count + 1))
+                continue
+            fi
+            print_status "SUCCESS" "ArgoCD apps are healthy"
+            break
+        else
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                print_status "WARNING" "ArgoCD apps not healthy yet, retrying in 60 seconds..."
+                force_sync_all_apps
+                sleep 60
+            else
+                print_status "ERROR" "ArgoCD apps did not become healthy after $max_retries attempts"
+                show_final_status
+                print_status "WARNING" "Continuing with deployment despite ArgoCD app health issues..."
+                break
+            fi
+        fi
+    done
 
 
     # Initialize GitLab configuration

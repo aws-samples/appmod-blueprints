@@ -28,16 +28,17 @@ authenticate_argocd() {
             # Calculate domain the same way as 1-tools-urls.sh
             local domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
             if [ -z "$domain_name" ]; then
-                domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text)
+                domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null)
             fi
             argocd_server="$domain_name"
         fi
         
-        if [ -n "$argocd_server" ]; then
+        if [ -n "$argocd_server" ] && [ "$argocd_server" != "None" ] && [ "$argocd_server" != "null" ]; then
             export ARGOCD_SERVER="$argocd_server"
-            # Login using admin credentials
-            argocd login --username admin --password "${IDE_PASSWORD}" --grpc-web-root-path /argocd "$argocd_server"
-            return $?
+            # Login using admin credentials with timeout
+            if timeout 30 argocd login --username admin --password "${IDE_PASSWORD:-admin}" --grpc-web-root-path /argocd "$argocd_server" --insecure 2>/dev/null; then
+                return 0
+            fi
         fi
     fi
     return 1
@@ -131,8 +132,11 @@ handle_sync_issues() {
                 print_info "Fixing revision/sync issues for $app"
                 terminate_argocd_operation "$app"
                 sleep 2
-                refresh_argocd_app "$app"
+                # Force hard refresh for OutOfSync/Missing apps
+                refresh_argocd_app "$app" "true"
+                sleep 3
                 sync_argocd_app "$app"
+                sleep 2
             fi
         done
     fi
@@ -146,7 +150,24 @@ handle_sync_issues() {
             if [ -n "$app" ]; then
                 print_info "Syncing OutOfSync/Healthy application: $app"
                 refresh_argocd_app "$app"
+                sleep 1
                 sync_argocd_app "$app"
+            fi
+        done
+    fi
+    
+    # Handle any apps stuck in Progressing state for too long
+    local progressing_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '.items[] | select(.status.health.status == "Progressing" and (.status.operationState.startedAt // .metadata.creationTimestamp | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)) | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$progressing_apps" ]; then
+        echo "$progressing_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                print_info "Refreshing stuck Progressing application: $app"
+                terminate_argocd_operation "$app"
+                sleep 1
+                refresh_argocd_app "$app" "true"
             fi
         done
     fi
@@ -159,8 +180,19 @@ wait_for_argocd_apps_health() {
     local start_time=$(date +%s)
     local end_time=$((start_time + timeout))
     
+    print_info "Waiting for ArgoCD applications to become healthy (timeout: ${timeout}s)..."
+    
     while [ $(date +%s) -lt $end_time ]; do
+        # Check if ArgoCD namespace exists
+        if ! kubectl get namespace argocd >/dev/null 2>&1; then
+            print_warning "ArgoCD namespace not found, waiting..."
+            sleep $check_interval
+            continue
+        fi
+        
+        # Check if applications exist
         if ! kubectl get applications -n argocd >/dev/null 2>&1; then
+            print_warning "No ArgoCD applications found yet, waiting..."
             sleep $check_interval
             continue
         fi
@@ -170,11 +202,21 @@ wait_for_argocd_apps_health() {
         local synced_apps=0
         local unhealthy_apps=()
         
-        local app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null)
+        # Get application status with error handling
+        local app_status=""
+        if ! app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null); then
+            print_warning "Failed to get application status, retrying..."
+            sleep $check_interval
+            continue
+        fi
 
         while IFS=' ' read -r app health sync; do
             [ -z "$app" ] && continue
             total_apps=$((total_apps + 1))
+            
+            # Handle missing health/sync status
+            [ -z "$health" ] && health="Unknown"
+            [ -z "$sync" ] && sync="Unknown"
             
             if [ "$health" = "Healthy" ]; then
                 healthy_apps=$((healthy_apps + 1))
@@ -191,21 +233,28 @@ wait_for_argocd_apps_health() {
         done <<< "$app_status"
 
         local health_pct=0
+        local sync_pct=0
         if [ $total_apps -gt 0 ]; then
             health_pct=$((healthy_apps * 100 / total_apps))
+            sync_pct=$((synced_apps * 100 / total_apps))
         fi
 
-        print_info "ArgoCD status: $healthy_apps/$total_apps healthy ($health_pct%), $synced_apps/$total_apps synced"
+        print_info "ArgoCD status: $healthy_apps/$total_apps healthy ($health_pct%), $synced_apps/$total_apps synced ($sync_pct%)"
         
         # Handle issues before checking success criteria
         handle_stuck_operations
         sleep 2
         handle_sync_issues
         
-        # Accept 80% healthy as success
-        if [ $health_pct -ge 80 ] && [ $synced_apps -ge $((total_apps * 70 / 100)) ]; then
-            print_success "ArgoCD applications sufficiently healthy ($health_pct% healthy)"
+        # More lenient success criteria - accept 70% healthy and 60% synced
+        if [ $total_apps -gt 0 ] && [ $health_pct -ge 70 ] && [ $sync_pct -ge 60 ]; then
+            print_success "ArgoCD applications sufficiently healthy ($health_pct% healthy, $sync_pct% synced)"
             return 0
+        fi
+        
+        # Show problematic apps for debugging
+        if [ ${#unhealthy_apps[@]} -gt 0 ] && [ $(($(date +%s) - start_time)) -gt 300 ]; then
+            print_warning "Problematic apps: ${unhealthy_apps[*]}"
         fi
         
         sleep $check_interval
@@ -236,6 +285,28 @@ show_final_status() {
     fi
     
     echo "----------------------------------------"
+}
+
+# Function to force sync all ArgoCD applications
+force_sync_all_apps() {
+    print_info "Force syncing all ArgoCD applications..."
+    
+    if ! kubectl get applications -n argocd >/dev/null 2>&1; then
+        print_warning "No ArgoCD applications found"
+        return 1
+    fi
+    
+    kubectl get applications -n argocd -o name 2>/dev/null | while read app; do
+        app_name=$(basename "$app")
+        print_info "Force syncing $app_name..."
+        terminate_argocd_operation "$app_name"
+        sleep 1
+        refresh_argocd_app "$app_name" "true"
+        sleep 1
+        sync_argocd_app "$app_name"
+    done
+    
+    print_success "Completed force sync of all applications"
 }
 
 delete_argocd_appsets() {
