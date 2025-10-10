@@ -13,6 +13,7 @@ clusters:
     region: us-west-2 # replaced by deploy.sh
     kubernetes_version: 1.32
     environment: control-plane
+    tenant: control-plane
     auto_mode: true
     addons:
       enable_ingress_class_alb: true
@@ -57,6 +58,7 @@ clusters:
     region: us-west-2 # replaced by deploy.sh
     kubernetes_version: 1.32
     environment: dev
+    tenant: tenant1
     auto_mode: true
     addons:
       enable_argocd: false
@@ -104,6 +106,7 @@ clusters:
     region: us-west-2 # replaced by deploy.sh
     kubernetes_version: 1.32
     environment: prod
+    tenant: tenant1
     auto_mode: true
     addons:
       enable_argocd: false
