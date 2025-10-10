@@ -39,6 +39,38 @@ main() {
         export BACKSTAGE_BUILD_PID
     fi
 
+    # Wait for ArgoCD to be fully ready first
+    print_status "INFO" "Waiting for ArgoCD to be fully ready..."
+    local argocd_ready=false
+    local argocd_wait_time=0
+    local argocd_max_wait=600  # 10 minutes
+    
+    while [ $argocd_wait_time -lt $argocd_max_wait ] && [ "$argocd_ready" = false ]; do
+        # Check if ArgoCD pods are ready
+        local argocd_pods_ready=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | awk '{print $2}' | grep -c "1/1" || echo "0")
+        local argocd_repo_ready=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-repo-server --no-headers 2>/dev/null | awk '{print $2}' | grep -c "1/1" || echo "0")
+        
+        # Check if ArgoCD API is responding
+        local api_ready=false
+        if kubectl get applications -n argocd >/dev/null 2>&1; then
+            api_ready=true
+        fi
+        
+        if [ "$argocd_pods_ready" -gt 0 ] && [ "$argocd_repo_ready" -gt 0 ] && [ "$api_ready" = true ]; then
+            print_status "SUCCESS" "ArgoCD is ready (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: responding)"
+            argocd_ready=true
+        else
+            print_status "INFO" "ArgoCD not ready yet (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: $api_ready), waiting..."
+            sleep 30
+            argocd_wait_time=$((argocd_wait_time + 30))
+        fi
+    done
+    
+    if [ "$argocd_ready" = false ]; then
+        print_status "ERROR" "ArgoCD did not become ready within $argocd_max_wait seconds"
+        exit 1
+    fi
+
     # Wait for Argo CD apps to be healthy with retry mechanism
     local retry_count=0
     local max_retries=5

@@ -190,6 +190,13 @@ wait_for_argocd_apps_health() {
             continue
         fi
         
+        # Check if ArgoCD server is responding
+        if ! kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | grep -q "1/1"; then
+            print_warning "ArgoCD server not ready, waiting..."
+            sleep $check_interval
+            continue
+        fi
+        
         # Check if applications exist
         if ! kubectl get applications -n argocd >/dev/null 2>&1; then
             print_warning "No ArgoCD applications found yet, waiting..."
@@ -202,10 +209,21 @@ wait_for_argocd_apps_health() {
         local synced_apps=0
         local unhealthy_apps=()
         
-        # Get application status with error handling
+        # Get application status with error handling and retries
         local app_status=""
-        if ! app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null); then
-            print_warning "Failed to get application status, retrying..."
+        local retry_count=0
+        while [ $retry_count -lt 3 ]; do
+            if app_status=$(kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.health.status}{" "}{.status.sync.status}{"\n"}{end}' 2>/dev/null); then
+                break
+            else
+                print_warning "Failed to get application status (attempt $((retry_count + 1))/3), retrying..."
+                sleep 10
+                retry_count=$((retry_count + 1))
+            fi
+        done
+        
+        if [ $retry_count -eq 3 ]; then
+            print_warning "Could not get application status after 3 attempts, continuing..."
             sleep $check_interval
             continue
         fi
