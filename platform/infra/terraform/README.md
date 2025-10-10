@@ -53,11 +53,11 @@ cd /appmod-blueprints/platform/infra/terraform
 
 The script `setup-environments-local.sh` does the following
 
-- Creates an IAM user named `modern-engg-local-test`
+- Creates an IAM user named `peeks-local-test`
 - Creates an IAM role named `developer-env-VSCodeInstanceRole`
 - Allows codebuild, ec2, codecommit, ssm, and the new IAM user to assume the role
 - Attaches the `AdministratorAccess` policy, a cdk assume policy, and a codewhisperer policy
-- Logs into the `modern-engg-local-test` user, then assumes the `developer-env-VSCodeInstanceRole` to give enough assumed time to run the full script
+- Logs into the `peeks-local-test` user, then assumes the `developer-env-VSCodeInstanceRole` to give enough assumed time to run the full script
 - Runs the `setup-environments.sh` script as the `developer-env-VSCodeInstanceRole`
 
 ### Cluster Access

@@ -114,7 +114,7 @@ locals {
       local.oss_addons[k],
       { aws_cluster_name = v.name },
       { fleet_member = v.environment },
-      { tenant = v.environment },
+      { tenant = v.tenant },
       { environment = v.environment },
     )
   }

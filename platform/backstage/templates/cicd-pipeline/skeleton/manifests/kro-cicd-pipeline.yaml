@@ -21,7 +21,6 @@ metadata:
     argocd.argoproj.io/sync-options: Replace=false
     # ArgoCD hook for lifecycle management
     argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   name: ${{values.appname}}-cicd
   namespace: ${{values.namespace}}

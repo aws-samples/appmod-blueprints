@@ -4,10 +4,10 @@ metadata:
   name: northwind
 spec:
   components:
-    - name: modern-engg-sqlserver
+    - name: peeks-sqlserver
       type: external-database-secret
       properties:
-        secret_name: modern-engg-sqlserver
+        secret_name: peeks-sqlserver
     - name: northwind-ux 
       type: appmod-service
       properties:
@@ -17,7 +17,7 @@ spec:
         targetPort: 80
         replicas: 1
       dependsOn:
-        - modern-engg-sqlserver
+        - peeks-sqlserver
       traits: 
         - type: path-based-ingress
           properties:
@@ -28,5 +28,5 @@ spec:
         - type: storage
           properties:
             secret:
-              - name: modern-engg-sqlserver
+              - name: peeks-sqlserver
                 mountPath: /opt/secret-volume

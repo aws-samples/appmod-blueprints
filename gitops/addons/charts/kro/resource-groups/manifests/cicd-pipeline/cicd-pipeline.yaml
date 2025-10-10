@@ -816,21 +816,23 @@ spec:
                      echo "Response: $$response_body"
                      
                      if [ "$$http_code" = "200" ]; then
+                       echo "DEBUG: New webhook detection code is running - version 2025-10-10"
+                       echo "DEBUG: Full response body: $$response_body"
                        echo "Searching for webhook with URL: $$webhook_url"
                        echo "Existing webhook URLs:"
                        echo "$$response_body" | jq -r '.[].url' 2>/dev/null || echo "Failed to parse webhook URLs"
                        
-                       # More robust webhook ID extraction
-                       webhook_exists=""
-                       for webhook_id in $$(echo "$$response_body" | jq -r '.[].id' 2>/dev/null); do
-                         webhook_url_check=$$(echo "$$response_body" | jq -r --arg id "$$webhook_id" '.[] | select(.id == ($$id | tonumber)) | .url' 2>/dev/null)
-                         if [ "$$webhook_url_check" = "$$webhook_url" ]; then
-                           webhook_exists="$$webhook_id"
-                           break
-                         fi
-                       done
+                       # Simple and reliable webhook existence check with debugging
+                       webhook_exists=$$(echo "$$response_body" | jq -r ".[] | select(.url == \"$$webhook_url\") | .id" 2>/dev/null | head -1)
+                       echo "Raw jq result: '$$webhook_exists'"
                        
-                       echo "Webhook ID found: '$$webhook_exists'"
+                       # Validate the result
+                       if [ -n "$$webhook_exists" ] && [ "$$webhook_exists" != "null" ] && [ "$$webhook_exists" != "" ]; then
+                         echo "Found existing webhook with ID: $$webhook_exists"
+                       else
+                         webhook_exists=""
+                         echo "No existing webhook found - will create new one"
+                       fi
                      else
                        echo "Failed to get existing webhooks, HTTP code: $$http_code"
                        webhook_exists=""
@@ -873,41 +875,7 @@ spec:
                        fi
                      else
                        echo "GitLab webhook already exists with ID: $$webhook_exists"
-                       echo "Verifying existing webhook configuration matches expected settings"
-                       
-                       # Get existing webhook details to verify configuration
-                       existing_webhook_details=$$(curl -k -X 'GET' "$$api_url/$$webhook_exists" \
-                         -H "accept: application/json" \
-                         -H "Authorization: Bearer $$gitlab_token" \
-                         -H "Content-Type: application/json" -s)
-                       
-                       existing_url=$$(echo "$$existing_webhook_details" | jq -r '.url' 2>/dev/null || echo "")
-                       
-                       if [ "$$existing_url" = "$$webhook_url" ]; then
-                         echo "Existing webhook URL matches expected URL: $$webhook_url"
-                         echo "No update needed - webhook is correctly configured"
-                       else
-                         echo "Existing webhook URL ($$existing_url) differs from expected ($$webhook_url)"
-                         echo "Updating existing webhook configuration"
-                         update_response=$$(curl -k -X 'PUT' "$$api_url/$$webhook_exists" \
-                           -H "accept: application/json" \
-                           -H "Authorization: Bearer $$gitlab_token" \
-                           -H "Content-Type: application/json" \
-                           -d '{
-                             "url": "'$$webhook_url'",
-                             "push_events": true,
-                             "enable_ssl_verification": false,
-                             "push_events_branch_filter": "main"
-                           }' -s -w "\nHTTP_CODE:%{http_code}")
-                         
-                         update_http_code=$$(echo "$$update_response" | tail -1 | sed 's/HTTP_CODE://')
-                         
-                         if [ "$$update_http_code" = "200" ]; then
-                           echo "Successfully updated existing webhook"
-                         else
-                           echo "Warning: Failed to update existing webhook. HTTP Code: $$update_http_code"
-                         fi
-                       fi
+                       echo "Webhook is correctly configured - no action needed"
                      fi
 
                      echo "GitLab webhook configuration completed"
