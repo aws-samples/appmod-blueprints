@@ -5,6 +5,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-options: Replace=false
 spec:
   schema:
     apiVersion: v1alpha1
@@ -107,7 +108,8 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-            argocd.argoproj.io/tracking-id: clusters:kro.run/Vpc:${schema.spec.name}/${schema.spec.name}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+            argocd.argoproj.io/sync-options: Prune=false
       spec:
         name: ${schema.spec.name}
         region: ${schema.spec.region}
@@ -136,7 +138,8 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-            argocd.argoproj.io/tracking-id: clusters:kro.run/EksCluster:${schema.spec.name}/${schema.spec.name}                     
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+            argocd.argoproj.io/sync-options: Prune=false
       spec:
           name: ${schema.spec.name}
           tenant: ${schema.spec.tenant}
