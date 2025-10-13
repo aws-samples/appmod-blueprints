@@ -64,7 +64,7 @@ main() {
           -var="git_username=${GIT_USERNAME}" \
           -var="git_password=${USER1_PASSWORD}" \
           -var="working_repo=${WORKING_REPO}" \
-          -parallelism=1 -auto-approve; then
+          -parallelism=3 -auto-approve; then
           log_success "Terraform apply succeeded on attempt $attempt"
           return 0
         fi
