@@ -94,19 +94,38 @@ main() {
         local missing_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Missing") | .metadata.name' 2>/dev/null || echo "")
         if [ -n "$missing_apps" ]; then
             print_status "INFO" "Found OutOfSync/Missing apps, forcing refresh and sync..."
+            print_status "INFO" "Missing apps list: $missing_apps"
+            
+            # Process all apps concurrently
+            local pids=()
             echo "$missing_apps" | while read -r app; do
                 if [ -n "$app" ]; then
-                    print_status "INFO" "Aggressively fixing $app..."
-                    # More aggressive approach
-                    kubectl patch application.argoproj.io "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
-                    kubectl patch application.argoproj.io "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
-                    sleep 3
-                    kubectl annotate application.argoproj.io "$app" -n argocd argocd.argoproj.io/refresh="hard" --overwrite 2>/dev/null || true
-                    sleep 5
-                    kubectl patch application.argoproj.io "$app" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD","prune":true}}}' 2>/dev/null || true
-                    sleep 10
+                    {
+                        print_status "INFO" "[$app] TERMINATE-OP: Using terminate_argocd_operation"
+                        terminate_argocd_operation "$app"
+                        sleep 5
+                        
+                        print_status "INFO" "[$app] REFRESH: Using refresh_argocd_app with hard refresh"
+                        refresh_argocd_app "$app" "true"
+                        sleep 10
+                        
+                        print_status "INFO" "[$app] SYNC: Using sync_argocd_app"
+                        sync_argocd_app "$app"
+                        print_status "INFO" "[$app] Sync operation completed"
+                    } &
+                    pids+=($!)
                 fi
             done
+            
+            # Wait for all background processes to complete
+            print_status "INFO" "Waiting for all sync operations to complete..."
+            for pid in "${pids[@]}"; do
+                wait "$pid"
+            done
+            
+            # Additional wait after processing all apps to allow Git revision sync
+            print_status "INFO" "Waiting for Git revision synchronization..."
+            sleep 30
         fi
         
         if wait_for_argocd_apps_health; then
