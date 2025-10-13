@@ -4,6 +4,7 @@ apiVersion: kro.run/v1alpha1
 kind: EksclusterWithVpc
 metadata:
   name: {{ $name }}
+  namespace: {{ $name }}
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "1"
@@ -15,6 +16,7 @@ spec:
   k8sVersion: {{ $cluster.k8sVersion | default "1.32" | quote }}
   accountId: {{ $cluster.accountId | quote }}
   managementAccountId: {{ $cluster.managementAccountId | quote }}
+  argoCdHubRoleArn: {{ $.Values.global.argoCdHubRoleArn | default "" | quote }}
   adminRoleName: {{ $cluster.adminRoleName | default "Admin" | quote }}
   fleetSecretManagerSecretNameSuffix: {{ $cluster.fleetSecretManagerSecretNameSuffix | default "argocd-secret" | quote }}
   domainName: {{ $cluster.domainName | default "" | quote }}

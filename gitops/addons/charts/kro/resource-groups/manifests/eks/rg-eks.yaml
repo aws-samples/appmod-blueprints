@@ -18,6 +18,7 @@ spec:
       region: string
       accountId: string
       managementAccountId: string
+      argoCdHubRoleArn: string
       k8sVersion: string
       adminRoleName: string
       fleetSecretManagerSecretNameSuffix: string
@@ -294,7 +295,7 @@ spec:
                 {
                   "Effect": "Allow",
                   "Principal": {
-                    "AWS": "arn:aws:iam::${schema.spec.managementAccountId}:role/argocd-hub-mgmt"
+                    "AWS": "${schema.spec.argoCdHubRoleArn}"
                   },
                   "Action": [
                     "sts:TagSession",

@@ -37,6 +37,9 @@ spec:
           valueFiles:
             - '$values/{{.metadata.annotations.fleet_repo_basepath}}kro-values/default/kro-clusters/values.yaml'
             - '$values/{{.metadata.annotations.fleet_repo_basepath}}kro-values/tenants/{{.metadata.labels.tenant}}/kro-clusters/values.yaml'
+          values: |
+            global:
+              argoCdHubRoleArn: '{{.metadata.annotations.argocd_hub_role_arn}}'
       destination:
         namespace: argocd
         name: '{{.name}}'

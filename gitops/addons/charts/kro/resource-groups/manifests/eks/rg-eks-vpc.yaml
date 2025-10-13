@@ -18,6 +18,7 @@ spec:
       k8sVersion: string | default="1.32"
       accountId: string
       managementAccountId: string
+      argoCdHubRoleArn: string
       adminRoleName: string | default="Admin"
       fleetSecretManagerSecretNameSuffix: string | default="argocd-secret"
       domainName: string | default="cluster.example.com"
@@ -147,6 +148,7 @@ spec:
           region: ${schema.spec.region}
           accountId: ${schema.spec.accountId}
           managementAccountId: ${schema.spec.managementAccountId}
+          argoCdHubRoleArn: ${schema.spec.argoCdHubRoleArn}
           k8sVersion: ${schema.spec.k8sVersion}
           adminRoleName: ${schema.spec.adminRoleName}
           fleetSecretManagerSecretNameSuffix: ${schema.spec.fleetSecretManagerSecretNameSuffix}

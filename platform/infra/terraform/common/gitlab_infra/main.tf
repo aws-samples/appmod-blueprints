@@ -46,6 +46,10 @@ resource "kubernetes_namespace" "gitlab" {
 resource "kubernetes_service" "gitlab_nlb" {
   depends_on = [kubernetes_namespace.gitlab]
 
+  timeouts {
+    create = "15m"
+  }
+
   metadata {
     name      = "gitlab"
     namespace = "gitlab"
