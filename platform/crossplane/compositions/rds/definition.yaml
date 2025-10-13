@@ -27,6 +27,8 @@ spec:
           properties:
             spec:
               properties:
+                deploy:
+                  type: string
                 databaseName:
                   type: string
                 dbSubnetGroupName:
@@ -90,12 +92,11 @@ spec:
                         type: object
                       type: array
                   required:
-                  - providerConfigName
-                  - region
                   - tags
                   type: object
               required:
               - resourceConfig
+              - deploy
               type: object
             status:
               properties:

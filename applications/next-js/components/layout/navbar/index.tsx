@@ -18,7 +18,7 @@ export default async function Navbar() {
     <nav className="relative flex items-center justify-between p-4 lg:px-6">
       <div className="block flex-none md:hidden">
         <Suspense fallback={null}>
-          <MobileMenu menu={menu} />
+          <MobileMenu menu={menu instanceof Error ? [] : menu} />
         </Suspense>
       </div>
       <div className="flex w-full items-center">
@@ -32,7 +32,7 @@ export default async function Navbar() {
               {SITE_NAME}
             </div>
           </Link>
-          {menu.length ? (
+          {menu instanceof Error ? null : menu.length ? (
             <ul className="hidden gap-6 text-sm md:flex md:items-center">
               {menu.map((item: Menu) => (
                 <li key={item.title}>

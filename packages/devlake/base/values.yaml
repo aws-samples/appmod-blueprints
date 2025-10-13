@@ -1,0 +1,82 @@
+# dependency chart values
+grafana:
+  enabled: false
+  external:
+    url: "http://localhost:4000" # Set to AMG Endpoint in setup-environments - doesn't work - need some sort of ingress maybe?
+
+mysql:
+  useExternal: true
+  externalServer: "devlake-mysql-service"
+  externalPort: "3306"
+
+option:
+  database: mysql
+  connectionSecretName: "devlake-mysql-auth"
+  autoCreateSecret: false
+
+
+lake:
+  image:
+    repository: devlake.docker.scarf.sh/apache/devlake
+    pullPolicy: Always
+    tag: v1.0.3-beta1
+  # storage for config
+  encryptionSecret:
+    # The name of secret which contains keys named ENCRYPTION_SECRET
+    secretName: devlake-encryption-secret
+    autoCreateSecret: false
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1010    
+    runAsGroup: 1010   
+    fsGroup: 1010      
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
+
+
+alpine:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
+
+ui:
+  image:
+    repository: devlake.docker.scarf.sh/apache/devlake-config-ui
+    pullPolicy: Always
+    tag: v1.0.3-beta1
+
+  securityContext:
+    runAsNonRoot: true
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Look into adding an auth proxy like here: https://github.com/oauth2-proxy/oauth2-proxy/blob/master/contrib/local-environment/docker-compose-keycloak.yaml
+
+service:
+  # service type: NodePort/ClusterIP
+  type: ClusterIP
+
+ingress:
+  enabled: false

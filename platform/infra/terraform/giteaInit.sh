@@ -186,7 +186,7 @@ create_repo_content_platform() {
     cp -r ${REPO_ROOT}/deployment/addons/kubevela ${REPO_ROOT}/applications/gitea/$repo_name/
     cp -r ${REPO_ROOT}/platform/backstage ${REPO_ROOT}/applications/gitea/$repo_name/
     # Replacing hostname in backstage catalog file
-    sed -i "s/HOSTNAME/${DOMAIN_NAME}/g" ${REPO_ROOT}/applications/gitea/$repo_name/backstage/templates/catalog-info.yaml
+    sed -e "s#HOSTNAME#${DOMAIN_NAME}#g" ${REPO_ROOT}/platform/backstage/templates/catalog-info.yaml > ${REPO_ROOT}/applications/gitea/$repo_name/backstage/templates/catalog-info.yaml
 
     git add .
     git -c http.sslVerify=false commit -m "first commit"

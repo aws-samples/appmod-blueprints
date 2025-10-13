@@ -6,7 +6,7 @@ import FilterList from "./filter";
 
 async function CollectionList() {
   const collections = await getCategories();
-  return <FilterList list={collections} title="Collections" />;
+  return <FilterList list={collections instanceof Error ? [] : collections} title="Collections" />;
 }
 
 const skeleton = "mb-3 h-4 w-5/6 animate-pulse rounded";
