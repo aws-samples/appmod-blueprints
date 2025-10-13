@@ -47,24 +47,42 @@ main() {
     # Initialize Terraform with S3 backend
     initialize_terraform "gitlab infra" "$DEPLOY_SCRIPTDIR/gitlab_infra"
     
-    # Apply Terraform configuration
+    # Apply Terraform configuration with retry logic
     log "Applying gitlab infra resources..."
-    if ! terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra apply \
-      -var-file="${GENERATED_TFVAR_FILE}" \
-      -var="git_username=${GIT_USERNAME}" \
-      -var="git_password=${USER1_PASSWORD}" \
-      -var="working_repo=${WORKING_REPO}" \
-      -parallelism=3 -auto-approve; then
-      log_warning "Terraform apply failed for gitlab infra stack, trying again..."
-      if ! terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra apply \
-        -var-file="${GENERATED_TFVAR_FILE}" \
-        -var="git_username=${GIT_USERNAME}" \
-        -var="git_password=${USER1_PASSWORD}" \
-        -var="working_repo=${WORKING_REPO}" \
-        -parallelism=3 -auto-approve; then
-        log_error "Terraform apply failed for gitlab infra stack again, exiting"
-        exit 1
-      fi
+    
+    # Retry function with exponential backoff
+    retry_terraform_apply() {
+      local max_attempts=3
+      local attempt=1
+      local delay=30
+      
+      while [ $attempt -le $max_attempts ]; do
+        log "Attempt $attempt of $max_attempts for gitlab infra stack..."
+        
+        if terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra apply \
+          -var-file="${GENERATED_TFVAR_FILE}" \
+          -var="git_username=${GIT_USERNAME}" \
+          -var="git_password=${USER1_PASSWORD}" \
+          -var="working_repo=${WORKING_REPO}" \
+          -parallelism=3 -auto-approve; then
+          log_success "Terraform apply succeeded on attempt $attempt"
+          return 0
+        fi
+        
+        if [ $attempt -eq $max_attempts ]; then
+          log_error "Terraform apply failed after $max_attempts attempts"
+          return 1
+        fi
+        
+        log_warning "Attempt $attempt failed, waiting ${delay}s before retry..."
+        sleep $delay
+        delay=$((delay * 2))  # Exponential backoff
+        attempt=$((attempt + 1))
+      done
+    }
+    
+    if ! retry_terraform_apply; then
+      exit 1
     fi
   fi
 
