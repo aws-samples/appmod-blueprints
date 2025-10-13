@@ -48,8 +48,6 @@ resource "kubernetes_service" "gitlab_nlb" {
 
   timeouts {
     create = "15m"
-    update = "15m"
-    delete = "15m"
   }
 
   metadata {
