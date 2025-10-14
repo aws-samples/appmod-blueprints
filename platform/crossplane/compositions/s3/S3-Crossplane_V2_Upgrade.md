@@ -130,8 +130,33 @@ transforms:
 - **Enhanced Observability:** Can monitor and troubleshoot each S3 feature independently
 - **Future-Proof:** Aligned with Crossplane v2 architecture and Upbound provider ecosystem
 
-## Validation
-- ✅ All 4 S3 managed resources create successfully
-- ✅ Bucket accessible with proper security settings
-- ✅ Connection details published correctly
-- ✅ Original functionality preserved
+## Validation Results
+- ✅ **Status**: `SYNCED: True, READY: True`
+- ✅ **Managed Resources**: All 4 S3 resources create successfully
+  - ✅ **Bucket**: Core S3 bucket created
+  - ✅ **PublicAccessBlock**: Security settings applied
+  - ✅ **OwnershipControls**: Object ownership configured
+  - ✅ **ServerSideEncryption**: Encryption enabled
+- ✅ **AWS Resource**: S3 bucket accessible with proper security settings
+- ✅ **Connection Details**: Published correctly
+- ✅ **Function Integration**: `function-patch-and-transform` working
+- ✅ **Region Configuration**: All resources properly configured with region
+- ✅ **Field Format**: Array vs object validation passing
+- ✅ **Original Functionality**: All features preserved
+
+## Testing Commands
+```bash
+# Check composition status
+kubectl get objectstorages
+kubectl describe objectstorage test-s3-composition
+
+# Verify all 4 managed resources
+kubectl get buckets.s3.aws.upbound.io
+kubectl get bucketpublicaccessblocks.s3.aws.upbound.io
+kubectl get bucketownershipcontrols.s3.aws.upbound.io
+kubectl get bucketserversideencryptionconfigurations.s3.aws.upbound.io
+
+# Verify AWS resource
+aws s3 ls | grep crossplane-v2-test-bucket
+aws s3api get-bucket-encryption --bucket crossplane-v2-test-bucket
+```

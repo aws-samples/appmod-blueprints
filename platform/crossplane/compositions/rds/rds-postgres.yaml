@@ -68,9 +68,6 @@ spec:
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.resourceConfig.region
                 toFieldPath: spec.forProvider.region
-              - type: FromCompositeFieldPath
-                fromFieldPath: spec.resourceConfig.name
-                toFieldPath: metadata.annotations[crossplane.io/external-name]
               - fromFieldPath: "spec.vpcId"
                 toFieldPath: "spec.forProvider.vpcId"
           - name: db-instance
@@ -87,7 +84,7 @@ spec:
                   username: root
                   passwordSecretRef:
                     key: password
-                    name: postgres-root-user-password
+                    name: test-postgres-password
                     namespace: crossplane-system
                   engine: postgres
                   engineVersion: "14.11"

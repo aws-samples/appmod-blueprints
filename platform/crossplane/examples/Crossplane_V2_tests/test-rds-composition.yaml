@@ -23,20 +23,20 @@ spec:
   resourceConfig:
     providerConfigName: default
     region: us-west-2
-    name: crossplane-v2-test-db
+    name: crossplane-v2-test-postgres-db
     tags:
       - key: Environment
         value: test
       - key: Purpose
         value: crossplane-v2-composition-test
   databaseName: testdb
-  engineVersion: "14.11"
+  engineVersion: "14.12"
   storageGB: 20
-  # UPDATE THESE VALUES FOR YOUR ACCOUNT:
+  # Updated with actual VPC and subnet IDs:
   subnetIds:
-    - subnet-XXXXXXXXX  # Replace with your private subnet ID
-    - subnet-YYYYYYYYY  # Replace with your private subnet ID
-  vpcId: vpc-ZZZZZZZZZ   # Replace with your VPC ID
+    - subnet-0f216c24df56e1c92  # us-west-2a
+    - subnet-062280eca155dcc7e  # us-west-2b
+  vpcId: vpc-0f4eea40d618e532a   # Main VPC
   IngressRules:
     - ipProtocol: tcp
       fromPort: 5432

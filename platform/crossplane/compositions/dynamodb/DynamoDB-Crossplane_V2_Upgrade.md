@@ -91,6 +91,22 @@ patches:
 - ✅ **Connection Details:** Published correctly
 - ✅ **Application Integration:** Rust e-commerce app connects successfully
 - ✅ **Performance:** Read/write operations working as expected
+- ✅ **Function Integration:** `function-patch-and-transform` working
+- ✅ **Upbound Provider:** `dynamodb.aws.upbound.io/v1beta2` stable
+
+## Testing Commands
+```bash
+# Check composition status
+kubectl get dynamodbtables
+kubectl describe dynamodbtable rust-service-table-test
+
+# Verify managed resource
+kubectl get tables.dynamodb.aws.upbound.io
+
+# Verify AWS resource
+aws dynamodb describe-table --table-name rust-service-table-test
+aws dynamodb scan --table-name rust-service-table-test --max-items 5
+```
 
 ## Benefits
 - **Zero Downtime:** No migration disruption
