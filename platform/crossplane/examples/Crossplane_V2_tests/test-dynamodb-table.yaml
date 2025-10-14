@@ -1,0 +1,31 @@
+apiVersion: awsblueprints.io/v1alpha1
+kind: DynamoDBTable
+metadata:
+  name: rust-service-table-test
+  namespace: default
+spec:
+  compositionSelector:
+    matchLabels:
+      awsblueprints.io/provider: aws
+      awsblueprints.io/environment: dev
+  writeConnectionSecretToRef:
+    name: rust-service-table-connection
+  dynamoConfig:
+    attribute:
+      - name: partition_key
+        type: S
+      - name: sort_key
+        type: S
+    hashKey: partition_key
+    rangeKey: sort_key
+    billingMode: PROVISIONED
+    readCapacity: 20
+    writeCapacity: 20
+  resourceConfig:
+    providerConfigName: default
+    region: us-west-2
+    name: rust-service-table-test
+    tags:
+      Environment: dev
+      Application: rust-ecommerce
+      CreatedBy: crossplane-test
