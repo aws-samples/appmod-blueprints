@@ -147,8 +147,8 @@ spec:
       name: Register
       action: catalog:register
       input:
-        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
-        catalogInfoPath: 'catalog-info.yaml'
+        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.table_name}}/-/blob/main
+        catalogInfoPath: "/catalog-info.yaml"
     - id: template-output
       name: Template Output
       action: debug:log
