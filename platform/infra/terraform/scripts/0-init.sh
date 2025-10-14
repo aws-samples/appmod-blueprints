@@ -43,12 +43,12 @@ main() {
     print_status "INFO" "Waiting for ArgoCD to be fully ready..."
     local argocd_ready=false
     local argocd_wait_time=0
-    local argocd_max_wait=600  # 10 minutes
+    local argocd_max_wait=900  # 15 minutes
     
     while [ $argocd_wait_time -lt $argocd_max_wait ] && [ "$argocd_ready" = false ]; do
-        # Check if ArgoCD pods are ready
-        local argocd_pods_ready=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | awk '{print $2}' | grep -c "1/1" || echo "0")
-        local argocd_repo_ready=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-repo-server --no-headers 2>/dev/null | awk '{print $2}' | grep -c "1/1" || echo "0")
+        # Check if ArgoCD deployments are ready
+        local argocd_pods_ready=$(kubectl get deployment -n argocd argocd-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null | head -1 || echo "0")
+        local argocd_repo_ready=$(kubectl get deployment -n argocd argocd-repo-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null | head -1 || echo "0")
         
         # Check if ArgoCD API is responding
         local api_ready=false
