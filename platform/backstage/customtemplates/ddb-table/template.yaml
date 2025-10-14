@@ -76,6 +76,8 @@ spec:
       input:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.table_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
+        gitTimeout: 120
+        useCustomGit: true
     - id: create-argocd-app
       name: Create ArgoCD App
       action: argocd:create-app
