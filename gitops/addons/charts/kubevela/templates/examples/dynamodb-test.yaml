@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: sample-ddb-table
+spec:
+  components:
+    - name: my-table
+      type: ddb-table
+      properties:
+        name: sample-ddb-table
+        region: us-west-2
+        attributeName: id
+        attributeType: S
