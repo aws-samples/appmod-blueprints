@@ -57,22 +57,74 @@ spec:
       input:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.repoName}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
+    - id: create-argocd-project
+      name: Create ArgoCD Project
+      action: kube:apply
+      input:
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: AppProject
+          metadata:
+            name: ${{parameters.appName}}-project
+            namespace: argocd
+          spec:
+            description: Project for ${{parameters.appName}} application
+            sourceRepos:
+            - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}.git
+            destinations:
+            - namespace: ${{parameters.appNamespace}}
+              server: https://kubernetes.default.svc
+            clusterResourceWhitelist:
+            - group: '*'
+              kind: '*'
+            namespaceResourceWhitelist:
+            - group: '*'
+              kind: '*'
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: argocd:create-app
+      action: kube:apply
       input:
-        appName: ${{parameters.appName}}
-        appNamespace: ${{parameters.appNamespace}}
-        argoInstance: ${{parameters.environment}}
-        projectName: default
-        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}
-        path: "manifests"
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{parameters.appName}}
+            namespace: argocd
+            labels:
+              backstage-name: ${{parameters.appName}}
+            finalizers:
+            - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: ${{parameters.appName}}-project
+            destination:
+              namespace: ${{parameters.appNamespace}}
+              server: https://kubernetes.default.svc
+            source:
+              repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}.git
+              targetRevision: HEAD
+              path: manifests
+            syncPolicy:
+              automated:
+                allowEmpty: true
+                prune: false
+                selfHeal: true
+              retry:
+                backoff:
+                  duration: 5s
+                  factor: 2
+                  maxDuration: 5m
+                limit: 10
+              syncOptions:
+              - CreateNamespace=false
+              - FailOnSharedResource=true
     - id: register
       name: Register
       action: catalog:register
       input:
-        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
-        catalogInfoPath: 'catalog-info.yaml'
+        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}/-/blob/main
+        catalogInfoPath: "/catalog-info.yaml"
     - id: template-output
       name: Template Output
       action: debug:log
