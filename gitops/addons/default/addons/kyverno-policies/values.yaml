@@ -5,3 +5,22 @@ background: true
 
 # Custom setting to enable allowExistingViolations
 allowExistingViolations: true
+
+# Kyverno Helm values to fix kubectl image issue
+# Override the cleanup jobs kubectl image to use a working version
+
+# Fix for policy reports cleanup job (kyverno-clean-reports)
+policyReportsCleanup:
+  image:
+    registry: registry.k8s.io
+    repository: kubectl
+    tag: "v1.30.2"
+    pullPolicy: IfNotPresent
+
+# Fix for webhooks cleanup job
+webhooksCleanup:
+  image:
+    registry: registry.k8s.io
+    repository: kubectl
+    tag: "v1.30.2"
+    pullPolicy: IfNotPresent
