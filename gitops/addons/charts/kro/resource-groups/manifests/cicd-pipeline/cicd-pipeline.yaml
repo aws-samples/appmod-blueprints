@@ -1412,6 +1412,48 @@ spec:
                  value: ${schema.spec.application.name}
                - name: aws-region
                  value: ${schema.spec.aws.region}
+    # Initial Build Workflow - triggers first build automatically after setup
+    - id: initialbuildworkflow
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: Workflow
+       metadata:
+          name: ${schema.spec.name}-initial-build-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-initial-build
+             app.kubernetes.io/managed-by: kro
+             triggered-by: initial-setup
+       spec:
+          serviceAccountName: ${schema.spec.name}-sa
+          workflowTemplateRef:
+              name: ${schema.spec.name}-cicd-workflow
+          arguments:
+             parameters:
+               - name: git-url
+                 value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}.git'
+               - name: git-revision
+                 value: 'main'
+               - name: git-username
+                 value: ${schema.spec.gitlab.username}
+               - name: git-token
+                 value: 'placeholder-will-use-env-var'
+               - name: repo-name
+                 value: '${schema.spec.application.name}'
+               - name: dockerfile-path
+                 value: ${schema.spec.application.dockerfilePath}
+               - name: deployment-path
+                 value: ${schema.spec.application.deploymentPath}
+
     # Argo Events EventSource for GitLab webhooks
     - id: eventsource
       template:
