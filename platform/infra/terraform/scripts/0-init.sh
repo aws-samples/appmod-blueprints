@@ -46,20 +46,21 @@ main() {
     local argocd_wait_time=0
     local argocd_max_wait=900  # 15 minutes
     
+    echo "Current kubectl context: $(kubectl config current-context 2>/dev/null || echo 'none')"
     while [ $argocd_wait_time -lt $argocd_max_wait ] && [ "$argocd_ready" = false ]; do
         # Check if ArgoCD deployments are ready
-        local argocd_pods_ready=$(kubectl get deployment -n argocd argocd-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null | head -1 || echo "0")
-        local argocd_repo_ready=$(kubectl get deployment -n argocd argocd-repo-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null | head -1 || echo "0")
+        local argocd_pods_ready=$(kubectl --context=peeks-hub get deployment -n argocd argocd-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null | head -1 || echo "0")
+        local argocd_repo_ready=$(kubectl --context=peeks-hub get deployment -n argocd argocd-repo-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null | head -1 || echo "0")
         
         # Check if ArgoCD API is responding
         local api_ready=false
-        if kubectl get applications -n argocd >/dev/null 2>&1; then
+        if kubectl --context=peeks-hub get applications -n argocd >/dev/null 2>&1; then
             api_ready=true
         fi
         
         # Check if ArgoCD domain is available (this was the missing piece!)
         local domain_available=false
-        local domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
+        local domain_name=$(kubectl --context=peeks-hub get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
         if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
             domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null)
         fi
@@ -92,7 +93,7 @@ main() {
         print_status "INFO" "Attempt $((retry_count + 1))/$max_retries: Waiting for ArgoCD apps to be healthy..."
         
         # Handle OutOfSync/Missing apps specifically before health check
-        local missing_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Missing") | .metadata.name' 2>/dev/null || echo "")
+        local missing_apps=$(kubectl --context=peeks-hub get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Missing") | .metadata.name' 2>/dev/null || echo "")
         if [ -n "$missing_apps" ]; then
             print_status "INFO" "Found OutOfSync/Missing apps, forcing refresh and sync..."
             print_status "INFO" "Missing apps list: $missing_apps"
@@ -131,7 +132,7 @@ main() {
         
         if wait_for_argocd_apps_health; then
             # Double-check no OutOfSync/Missing apps remain
-            local remaining_missing=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Missing") | .metadata.name' 2>/dev/null || echo "")
+            local remaining_missing=$(kubectl --context=peeks-hub get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Missing") | .metadata.name' 2>/dev/null || echo "")
             if [ -n "$remaining_missing" ]; then
                 print_status "WARNING" "Still have OutOfSync/Missing apps: $remaining_missing"
                 retry_count=$((retry_count + 1))
