@@ -7,6 +7,7 @@ source /etc/profile.d/workshop.sh
 echo "=== DEBUG: Contents of /home/ec2-user/.bashrc.d/platform.sh at script start ==="
 if [ -f "/home/ec2-user/.bashrc.d/platform.sh" ]; then
     cat /home/ec2-user/.bashrc.d/platform.sh
+    source /home/ec2-user/.bashrc.d/platform.sh
 else
     echo "ERROR: /home/ec2-user/.bashrc.d/platform.sh does not exist!"
 fi
