@@ -122,6 +122,9 @@ spec:
         				ports: [{
         					containerPort: parameter.targetPort
         				}]
+        				if parameter.env != _|_ {
+        					env: parameter.env
+        				}
         			}]
         			spec: serviceAccountName: parameter.serviceAccount
         		}
@@ -323,6 +326,7 @@ spec:
         	port:             *80 | int
         	targetPort:       *8080 | int
         	serviceAccount:   *"default" | string
+        	env?:             [...{name: string, value: string}]
         	functionalGate?:  #QualityGate
         	performanceGate?: #QualityGate
         	metrics?:         #MetricGate

@@ -1,6 +1,6 @@
 FROM gradle:7.3.1-jdk17-alpine AS BUILD
 WORKDIR /usr/app/
-COPY . .
+COPY src/ .
 RUN gradle build
 
 FROM public.ecr.aws/docker/library/openjdk:11.0.16-jdk
