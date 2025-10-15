@@ -758,6 +758,68 @@ keycloak:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
         - '.spec.versions[].schema.openAPIV3Schema | .. | .volumeClaimTemplates?'
 
+jupyterhub:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after Keycloak
+  namespace: jupyterhub
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/jupyterhub'
+  selector:
+    matchExpressions:
+      - key: enable_jupyterhub
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields
+
+kubeflow:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after Keycloak
+  namespace: kubeflow
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kubeflow'
+  selector:
+    matchExpressions:
+      - key: enable_kubeflow
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields
+    - group: batch
+      kind: Job
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+
 argo-workflows:
   enabled: false
   annotationsAppSet:
@@ -1167,6 +1229,91 @@ backstage:
         - /roleRef
         - /metadata/labels
         - /metadata/annotations
+
+mlflow:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after Keycloak
+  namespace: mlflow
+  chartName: mlflow
+  chartRepository: https://community-charts.github.io/helm-charts
+  defaultVersion: '0.7.19'
+  selector:
+    matchExpressions:
+      - key: enable_mlflow
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields
+
+spark-operator:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after Keycloak
+  namespace: spark-operator
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/spark-operator'
+  selector:
+    matchExpressions:
+      - key: enable_spark_operator
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields
+
+airflow:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after Keycloak
+  namespace: airflow
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/airflow'
+  selector:
+    matchExpressions:
+      - key: enable_airflow
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields
 
 platform-manifests:
   enabled: false

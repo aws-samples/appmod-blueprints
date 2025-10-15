@@ -1,0 +1,9 @@
+apiVersion: v2
+name: jupyterhub
+description: A Helm chart for JupyterHub with OIDC authentication
+type: application
+version: 0.1.0
+dependencies:
+  - name: jupyterhub
+    version: '3.3.8'
+    repository: https://hub.jupyter.org/helm-chart/

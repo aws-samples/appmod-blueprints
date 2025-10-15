@@ -1,0 +1,36 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oidc-authservice-parameters
+  namespace: kubeflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+data:
+  CLIENT_ID: {{ .Values.kubeflow.centralDashboard.oidc.clientId }}
+  CLIENT_SECRET: # Will be injected from External Secret
+  OIDC_PROVIDER: {{ .Values.kubeflow.centralDashboard.oidc.issuer }}
+  OIDC_AUTH_URL: {{ .Values.kubeflow.centralDashboard.oidc.authUrl }}
+  OIDC_SCOPES: {{ .Values.kubeflow.centralDashboard.oidc.scopes | quote }}
+  REDIRECT_URL: https://{{ .Values.global.ingress_domain_name }}/kubeflow/login/oidc
+  SKIP_AUTH_URI: "/kubeflow/pipeline"
+  USERID_HEADER: kubeflow-userid
+  USERID_PREFIX: ""
+  USERID_CLAIM: {{ .Values.kubeflow.centralDashboard.oidc.usernameKey }}
+  GROUPS_CLAIM: {{ .Values.kubeflow.centralDashboard.oidc.groupsKey }}
+  STORE_PATH: "/var/lib/authservice/data.db"
+  MAX_STATE_COOKIE_SIZE: "4093"
+  STATIC_DESTINATION_SERVICE_HOST: ""
+  STATIC_DESTINATION_SERVICE_PORT: ""
+  APPLICATION_ROOT: "/kubeflow"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oidc-authservice-client
+  namespace: kubeflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+type: Opaque
+data:
+  client_secret: # Will be populated by External Secrets Operator

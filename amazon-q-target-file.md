@@ -1,170 +1,1010 @@
 # AppMod Blueprints - Platform Architecture
 
-## Bootstrap Script Improvements (2025-09-02)
+## GitOps Addon Management System
 
-### Enhanced ArgoCD Health Monitoring
-The `scripts/0-bootstrap.sh` script has been improved with comprehensive health monitoring and waiting mechanisms:
+### Overview
 
-#### New Features
-- **ArgoCD Health Monitoring**: `wait_for_argocd_health()` monitors all applications for health status
-- **Application Sync & Wait**: `sync_and_wait_app()` manages individual application synchronization
-- **Intelligent Waiting**: After ArgoCD setup, waits for critical applications to be healthy
-- **Status Reporting**: Real-time status display during deployment with color-coded indicators
-- **Timeout Management**: Configurable timeouts (10min overall, 5min per app)
-- **Graceful Degradation**: Continues deployment even if some apps are still syncing
+The platform uses a sophisticated GitOps-based addon management system that provides declarative configuration, automated deployment, and multi-cluster orchestration for platform services. This modern approach eliminates the need for manual bootstrap scripts by leveraging ArgoCD ApplicationSets, cluster-specific configurations, and automated secret management through External Secrets Operator.
 
-#### Configuration
-```bash
-ARGOCD_WAIT_TIMEOUT=600      # 10 minutes overall timeout
-ARGOCD_CHECK_INTERVAL=30     # 30 seconds between checks
-```
+### Architecture Components
 
-#### Deployment Flow
-1. **1-argocd-gitlab-setup.sh** - Sets up ArgoCD and GitLab integration
-2. **Wait 30s** - Initial deployment stabilization
-3. **Sync bootstrap app** - Forces sync of bootstrap ApplicationSet (5min timeout)
-4. **Sync cluster-addons app** - Forces sync of cluster-addons ApplicationSet (5min timeout)  
-5. **Monitor all apps** - Waits for all ArgoCD applications to be healthy (10min timeout)
-6. **Final status report** - Shows ✓/⚠/✗ status for all applications
-7. **2-bootstrap-accounts.sh** - Account setup (only after ArgoCD is healthy)
-8. **6-tools-urls.sh** - Generate access URLs
+The GitOps addon management system consists of three main configuration layers:
 
-### GitOps Configuration Fixes
+1. **Addon Definitions** (`gitops/addons/bootstrap/default/addons.yaml`) - Central registry of all available platform addons
+2. **Environment Configuration** (`gitops/addons/environments/control-plane/addons.yaml`) - Environment-specific addon enablement
+3. **Cluster Configuration** (`platform/infra/terraform/hub-config.yaml`) - Per-cluster addon activation via labels
 
-#### Fleet-Secrets ApplicationSet Fix
-**Issue**: The `fleet-secrets` ApplicationSet was using incorrect GitLab URL causing authentication failures.
+### Addon Definition Structure
 
-**Solution**: Updated `gitops/fleet/bootstrap/fleet-secrets.yaml` to use correct GitLab URL:
+Each addon in `addons.yaml` follows a standardized configuration pattern:
+
 ```yaml
-# Fixed URL from d1vvjck0a1cre3.cloudfront.net to d3lsxhpwx29bst.cloudfront.net
-repoURL: https://d3lsxhpwx29bst.cloudfront.net/user1/platform-on-eks-workshop.git
+addon-name:
+  enabled: false                          # Default state (disabled)
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'    # Deployment order
+  namespace: addon-namespace              # Target Kubernetes namespace
+  chartName: helm-chart-name             # Helm chart name
+  chartRepository: https://helm-repo-url  # Helm repository URL
+  defaultVersion: 'chart-version'        # Default chart version
+  selector:
+    matchExpressions:
+      - key: enable_addon_name            # Cluster label selector
+        operator: In
+        values: ['true']
+  valuesObject:                          # Helm values configuration
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    # Addon-specific configuration
 ```
 
-#### Ingress Name Annotation Fix
-**Issue**: The `ingress-nginx` ApplicationSet template expected `{{.metadata.annotations.ingress_name}}` but this annotation was missing from the hub cluster secret.
+### Cluster Secret Annotations
 
-**Solution**: 
-1. **Immediate fix**: Added annotation to cluster secret:
+ArgoCD ApplicationSets use cluster secrets with annotations to template addon configurations:
+
+**Key Annotations:**
+- `{{.metadata.annotations.resource_prefix}}` - Resource naming prefix (e.g., "peeks")
+- `{{.metadata.annotations.ingress_domain_name}}` - Platform domain name
+- `{{.metadata.annotations.aws_region}}` - AWS region
+- `{{.metadata.annotations.aws_cluster_name}}` - EKS cluster name
+- `{{.metadata.annotations.addons_repo_basepath}}` - GitOps repository base path
+
+**Key Labels:**
+- `{{.metadata.labels.environment}}` - Environment (control-plane, dev, prod)
+- `{{.metadata.labels.tenant}}` - Tenant identifier
+- `enable_addon_name: "true"` - Individual addon enablement flags
+
+### How Addons Are Defined, Configured, and Deployed
+
+The GitOps addon management system operates through a sophisticated multi-layer configuration approach:
+
+#### 1. Addon Definition Layer (`gitops/addons/bootstrap/default/addons.yaml`)
+
+This is the central registry where all platform addons are defined with their configuration templates:
+
+```yaml
+jupyterhub:
+  enabled: false                          # Default disabled state
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'    # Deploy after Keycloak (wave 3)
+  namespace: jupyterhub                   # Target namespace
+  chartName: jupyterhub                   # Helm chart name
+  chartRepository: https://hub.jupyter.org/helm-chart/
+  defaultVersion: '3.3.7'               # Chart version
+  selector:
+    matchExpressions:
+      - key: enable_jupyterhub            # Cluster label selector
+        operator: In
+        values: ['true']
+  valuesObject:                          # Helm values template
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    hub:
+      config:
+        GenericOAuthenticator:
+          client_id: jupyterhub
+          oauth_callback_url: https://{{.metadata.annotations.ingress_domain_name}}/jupyterhub/hub/oauth_callback
+```
+
+#### 2. Environment Enablement Layer (`gitops/addons/environments/control-plane/addons.yaml`)
+
+Environment-specific addon activation:
+
+```yaml
+jupyterhub:
+  enabled: true    # Enables ApplicationSet generation for this environment
+kubeflow:
+  enabled: true
+mlflow:
+  enabled: true
+```
+
+#### 3. Cluster Configuration Layer (`platform/infra/terraform/hub-config.yaml`)
+
+Per-cluster addon activation via Terraform:
+
+```yaml
+clusters:
+  hub:
+    addons:
+      enable_jupyterhub: true     # Creates cluster label for addon selection
+      enable_kubeflow: true
+      enable_mlflow: true
+```
+
+#### 4. Secret Management Integration
+
+Addons requiring authentication integrate with Keycloak and External Secrets:
+
+**Keycloak OIDC Client Creation**:
+```yaml
+# Automatic client creation via keycloak-config job
+{
+  "clientId": "jupyterhub",
+  "protocol": "openid-connect",
+  "redirectUris": ["https://{{domain}}/jupyterhub/hub/oauth_callback"],
+  "webOrigins": ["/*"]
+}
+```
+
+**External Secrets Configuration**:
+```yaml
+# Client secrets retrieved from AWS Secrets Manager
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: jupyterhub-oidc-secret
+spec:
+  secretStoreRef:
+    name: aws-secrets-manager
+  data:
+    - secretKey: CLIENT_SECRET
+      remoteRef:
+        key: '{{cluster_name}}/secrets'
+        property: jupyterhub_client_secret
+```
+
+### Deployment Flow
+
+The GitOps addon deployment follows this automated sequence:
+
+```mermaid
+graph TD
+    A[Terraform Deployment] --> B[Cluster Secret Creation]
+    B --> C[ArgoCD ApplicationSet Detection]
+    C --> D[Addon Selection via Labels]
+    D --> E[Helm Chart Deployment]
+    E --> F[OIDC Client Creation]
+    F --> G[Secret Retrieval]
+    G --> H[Service Configuration]
+    H --> I[Health Monitoring]
+```
+
+1. **Terraform Infrastructure**: Creates EKS cluster and registers it with ArgoCD
+2. **Cluster Secret**: Contains metadata annotations and addon enablement labels
+3. **ApplicationSet Processing**: ArgoCD detects cluster and generates Applications
+4. **Addon Deployment**: Helm charts deployed based on cluster labels and sync waves
+5. **OIDC Integration**: Keycloak automatically creates required OIDC clients
+6. **Secret Management**: External Secrets Operator retrieves client secrets from AWS Secrets Manager
+7. **Configuration Templating**: Cluster annotations populate addon configurations
+8. **Health Validation**: ArgoCD monitors addon health and sync status
+
+### Sync Wave Orchestration
+
+Addons use ArgoCD sync waves to ensure proper deployment ordering:
+
+- **Wave -5**: Multi-account setup and foundational resources
+- **Wave -3**: Kro (Kubernetes Resource Orchestrator)
+- **Wave -2**: Kro manifests and resource definitions
+- **Wave -1**: AWS Controllers for Kubernetes (ACK)
+- **Wave 0**: Core infrastructure (ArgoCD, metrics-server, ingress classes)
+- **Wave 1**: Ingress controllers and networking
+- **Wave 2**: Certificate management and GitLab
+- **Wave 3**: Identity management (Keycloak) and monitoring
+- **Wave 4**: Policy enforcement and reporting
+- **Wave 5**: Application deployment tools
+- **Wave 6**: Developer tools requiring authentication (Backstage, Argo Workflows)
+
+### SSO Integration Pattern
+
+Platform addons integrate with Keycloak for centralized authentication:
+
+```yaml
+# Example: ArgoCD OIDC Configuration
+argocd:
+  valuesObject:
+    configs:
+      cm:
+        url: https://{{.metadata.annotations.ingress_domain_name}}/argocd
+        oidc.config: |
+          name: Keycloak
+          issuer: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
+          clientID: argocd
+          enablePKCEAuthentication: true
+          requestedScopes: ["openid", "profile", "email", "groups"]
+```
+
+### External Secrets Integration
+
+Addons use External Secrets Operator for secure credential management:
+
+```yaml
+# Example: External Secret for OIDC Client
+- apiVersion: external-secrets.io/v1
+  kind: ExternalSecret
+  metadata:
+    name: addon-oidc-secret
+  spec:
+    secretStoreRef:
+      name: aws-secrets-manager
+      kind: ClusterSecretStore
+    target:
+      name: addon-credentials
+    data:
+      - secretKey: CLIENT_SECRET
+        remoteRef:
+          key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
+          property: addon_client_secret
+```
+
+## Step-by-Step Guide: Adding New Addons to the Platform
+
+### Prerequisites
+
+Before adding a new addon, ensure you have:
+- Access to the GitOps repository with write permissions
+- Understanding of the addon's Helm chart requirements and dependencies
+- Knowledge of the addon's SSO integration requirements
+- Familiarity with ArgoCD sync waves and deployment ordering
+- Understanding of External Secrets Operator for credential management
+
+### Step 1: Define the Addon in addons.yaml
+
+Add your addon definition to `gitops/addons/bootstrap/default/addons.yaml`:
+
+```yaml
+my-new-addon:
+  enabled: false                          # Always start disabled
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'    # Choose appropriate sync wave
+  namespace: my-addon-namespace           # Target namespace
+  chartName: my-addon-chart              # Helm chart name
+  chartRepository: https://my-helm-repo   # Helm repository URL
+  defaultVersion: '1.0.0'               # Chart version
+  selector:
+    matchExpressions:
+      - key: enable_my_new_addon         # Cluster label selector
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    # Add addon-specific configuration here
+    service:
+      type: ClusterIP
+    ingress:
+      enabled: true
+      host: '{{.metadata.annotations.ingress_domain_name}}'
+      path: /my-addon
+```
+
+### Step 2: Create Custom Helm Chart (if needed)
+
+If the addon requires custom configuration or doesn't have a suitable public Helm chart:
+
+1. **Create chart directory**: `gitops/addons/charts/my-new-addon/`
+2. **Add Chart.yaml**:
+   ```yaml
+   apiVersion: v2
+   name: my-new-addon
+   description: Custom chart for My New Addon
+   version: 0.1.0
+   dependencies:
+     - name: upstream-chart
+       version: "1.0.0"
+       repository: https://upstream-helm-repo
+   ```
+3. **Create values.yaml** with default configurations
+4. **Add templates/** directory with any custom Kubernetes manifests
+5. **Run helm dependency build** if using chart dependencies
+
+### Step 3: Configure Environment Enablement
+
+Enable the addon in the appropriate environment file:
+
+**For control-plane environment** (`gitops/addons/environments/control-plane/addons.yaml`):
+```yaml
+my-new-addon:
+  enabled: true
+```
+
+**For other environments**, create or update the respective environment files.
+
+### Step 4: Update Cluster Configuration
+
+Add the addon enablement flag to cluster configurations in `platform/infra/terraform/hub-config.yaml`:
+
+```yaml
+clusters:
+  hub:
+    addons:
+      enable_my_new_addon: true
+      # ... other addon flags
+  spoke1:
+    addons:
+      enable_my_new_addon: false  # Enable per environment as needed
+```
+
+### Step 5: Configure SSO Integration (if applicable)
+
+If your addon requires Keycloak SSO integration, follow this comprehensive setup:
+
+#### 5.1 Add OIDC Client Configuration to Keycloak
+
+Create the client payload file in the Keycloak ConfigMap:
+
+```json
+// Add to keycloak-config ConfigMap
+{
+  "protocol": "openid-connect",
+  "clientId": "my-new-addon",
+  "name": "My New Addon",
+  "description": "Used for My New Addon SSO",
+  "publicClient": false,
+  "standardFlowEnabled": true,
+  "directAccessGrantsEnabled": true,
+  "rootUrl": "https://{{domain}}/my-addon",
+  "redirectUris": [
+    "https://{{domain}}/my-addon/oauth2/callback",
+    "https://{{domain}}/my-addon/auth/callback"
+  ],
+  "webOrigins": ["/*"]
+}
+```
+
+#### 5.2 Update Keycloak Configuration Job
+
+Add client creation logic to the keycloak-config job script:
+
+```bash
+# Add to keycloak config job
+create_oidc_client "my-new-addon" "/tmp/my-new-addon-client-payload.json"
+```
+
+#### 5.3 Configure External Secrets for Client Credentials
+
+Add the client secret to External Secrets configuration:
+
+```yaml
+# Add to External Secrets template
+- secretKey: MY_NEW_ADDON_CLIENT_SECRET
+  remoteRef:
+    key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
+    property: my_new_addon_client_secret
+```
+
+#### 5.4 Update Addon Values for OIDC Integration
+
+Configure the addon to use OIDC authentication:
+
+```yaml
+my-new-addon:
+  valuesObject:
+    auth:
+      oidc:
+        enabled: true
+        issuerUrl: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
+        clientId: my-new-addon
+        clientSecret:
+          secretName: keycloak-clients
+          secretKey: MY_NEW_ADDON_CLIENT_SECRET
+        redirectUrl: https://{{.metadata.annotations.ingress_domain_name}}/my-addon/oauth2/callback
+        scopes: ["openid", "profile", "email", "groups"]
+```
+
+### Step 6: Handle Dependencies and Sync Waves
+
+Choose the appropriate sync wave based on dependencies:
+
+- **Wave -5 to -1**: Infrastructure and foundational services
+- **Wave 0-2**: Core platform services
+- **Wave 3**: Services requiring Keycloak (after Keycloak deploys)
+- **Wave 4+**: Application-level services
+
+Update the `annotationsAppSet.argocd.argoproj.io/sync-wave` value accordingly.
+
+### Step 7: Add Ignore Differences (if needed)
+
+For addons with resources that change frequently or have known drift:
+
+```yaml
+my-new-addon:
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /metadata/managedFields
+        - /status
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+```
+
+### Step 8: Deploy and Validate
+
+1. **Commit changes** to the GitOps repository
+2. **Apply Terraform changes** (if hub-config.yaml was modified):
    ```bash
-   kubectl annotate secret peeks-hub-cluster -n argocd ingress_name="peeks-hub-ingress-nginx"
+   cd platform/infra/terraform/hub
+   ./deploy.sh
    ```
-
-2. **Permanent fix**: Updated `platform/infra/terraform/hub/locals.tf`:
-   ```terraform
-   addons_metadata = merge(
-     # ... other metadata ...
-     {
-       ingress_name = var.ingress_name  # Added this line
-       ingress_domain_name = local.ingress_domain_name
-       # ... rest of config ...
-     }
-   )
+3. **Monitor ArgoCD** for ApplicationSet generation and Application sync
+4. **Verify addon deployment**:
+   ```bash
+   kubectl get applications -n argocd | grep my-new-addon
+   kubectl get pods -n my-addon-namespace
    ```
+5. **Test functionality** including SSO integration if configured
 
-#### Staging to Dev Rename
-**Issue**: Fleet configuration still referenced "staging" environment after cluster rename.
+### Step 9: Documentation and Maintenance
 
-**Solution**: Renamed and updated fleet member configuration:
+1. **Update platform documentation** with addon-specific information
+2. **Add monitoring and alerting** if required
+3. **Create runbooks** for common operational tasks
+4. **Plan upgrade procedures** for future chart version updates
+
+### Common Patterns and Best Practices
+
+#### Resource Naming Convention
+Use the resource prefix for consistent naming:
+```yaml
+valuesObject:
+  nameOverride: '{{.metadata.annotations.resource_prefix}}-my-addon'
+  fullnameOverride: '{{.metadata.annotations.resource_prefix}}-my-addon'
+```
+
+#### Ingress Configuration
+Follow the platform ingress pattern:
+```yaml
+valuesObject:
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+    hosts:
+      - host: '{{.metadata.annotations.ingress_domain_name}}'
+        paths:
+          - path: /my-addon(/|$)(.*)
+            pathType: ImplementationSpecific
+```
+
+#### Service Account and RBAC
+Use consistent service account naming:
+```yaml
+valuesObject:
+  serviceAccount:
+    create: true
+    name: '{{.metadata.annotations.resource_prefix}}-my-addon-sa'
+    annotations:
+      eks.amazonaws.com/role-arn: '{{.metadata.annotations.my_addon_iam_role_arn}}'
+```
+
+#### Health Checks and Monitoring
+Configure appropriate health checks:
+```yaml
+valuesObject:
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    initialDelaySeconds: 5
+```
+
+### Troubleshooting Common Issues
+
+#### ApplicationSet Not Generating Applications
+- Verify cluster secret has the correct `enable_addon_name: "true"` label
+- Check selector matchExpressions in addon definition
+- Ensure environment addon enablement is set to `enabled: true`
+
+#### Addon Stuck in Sync
+- Check sync wave dependencies and ordering
+- Verify Helm chart repository accessibility
+- Review ArgoCD Application events and logs
+
+#### SSO Integration Failures
+- Confirm Keycloak OIDC client exists and is properly configured
+- Verify External Secrets are retrieving client credentials
+- Check redirect URLs and issuer configuration
+
+#### Resource Conflicts
+- Ensure unique namespaces and resource names
+- Check for conflicting ingress paths or service ports
+- Review RBAC permissions and service account configurations
+
+This comprehensive guide ensures consistent, reliable addon integration following established platform patterns and best practices.
+
+### ML/AI Addons Integration Examples
+
+The platform supports advanced ML/AI addons that follow the same GitOps patterns with enhanced SSO integration:
+
+#### JupyterHub Integration Example
+
+**Addon Definition** (`gitops/addons/bootstrap/default/addons.yaml`):
+```yaml
+jupyterhub:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'    # After Keycloak
+  namespace: jupyterhub
+  chartName: jupyterhub
+  chartRepository: https://hub.jupyter.org/helm-chart/
+  defaultVersion: '3.3.7'
+  selector:
+    matchExpressions:
+      - key: enable_jupyterhub
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    hub:
+      config:
+        GenericOAuthenticator:
+          client_id: jupyterhub
+          client_secret: # Retrieved via External Secrets
+          oauth_callback_url: https://{{.metadata.annotations.ingress_domain_name}}/jupyterhub/hub/oauth_callback
+          authorize_url: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/auth
+          token_url: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/token
+          userdata_url: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/userinfo
+```
+
+**Environment Enablement** (`gitops/addons/environments/control-plane/addons.yaml`):
+```yaml
+jupyterhub:
+  enabled: true
+```
+
+**Cluster Configuration** (`platform/infra/terraform/hub-config.yaml`):
+```yaml
+clusters:
+  hub:
+    addons:
+      enable_jupyterhub: true
+```
+
+**Keycloak OIDC Client** (automatically created):
+```json
+{
+  "clientId": "jupyterhub",
+  "protocol": "openid-connect",
+  "redirectUris": ["https://{{domain}}/jupyterhub/hub/oauth_callback"],
+  "webOrigins": ["/*"]
+}
+```
+
+#### Kubeflow Integration Example
+
+**Custom Helm Chart** (`gitops/addons/charts/kubeflow/`):
+```yaml
+# Chart.yaml
+apiVersion: v2
+name: kubeflow
+description: Kubeflow ML Platform
+version: 0.1.0
+
+# values.yaml
+global:
+  domain: ""
+  resourcePrefix: ""
+
+kubeflow:
+  centralDashboard:
+    oidc:
+      issuer: ""
+      clientId: "kubeflow"
+      clientSecret: ""
+```
+
+**Addon Definition**:
+```yaml
+kubeflow:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  namespace: kubeflow
+  chartName: kubeflow
+  chartPath: gitops/addons/charts/kubeflow  # Custom chart path
+  selector:
+    matchExpressions:
+      - key: enable_kubeflow
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      domain: '{{.metadata.annotations.ingress_domain_name}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    kubeflow:
+      centralDashboard:
+        oidc:
+          issuer: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
+          clientId: kubeflow
+          clientSecret: # Retrieved via External Secrets
+```
+
+### Advanced Configuration Patterns
+
+#### Multi-Environment Addon Management
+
+Different environments can have different addon configurations:
+
+```yaml
+# gitops/addons/environments/development/addons.yaml
+jupyterhub:
+  enabled: true
+kubeflow:
+  enabled: false  # Disabled in development
+
+# gitops/addons/environments/production/addons.yaml
+jupyterhub:
+  enabled: true
+kubeflow:
+  enabled: true   # Enabled in production
+mlflow:
+  enabled: true
+```
+
+#### Conditional Addon Deployment
+
+Use cluster labels for fine-grained control:
+
+```yaml
+# Hub cluster - full ML/AI stack
+clusters:
+  hub:
+    addons:
+      enable_jupyterhub: true
+      enable_kubeflow: true
+      enable_mlflow: true
+      enable_spark_operator: true
+      enable_airflow: true
+
+# Spoke cluster - limited addons
+clusters:
+  spoke-dev:
+    addons:
+      enable_jupyterhub: true
+      enable_kubeflow: false  # Too resource intensive for dev
+```
+
+#### Resource Management for ML/AI Addons
+
+Configure appropriate resource limits:
+
+```yaml
+jupyterhub:
+  valuesObject:
+    hub:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 2
+          memory: 2Gi
+    singleuser:
+      defaultUrl: "/lab"
+      memory:
+        limit: 2G
+        guarantee: 1G
+      cpu:
+        limit: 2
+        guarantee: 0.5
+```
+
+This advanced configuration approach ensures ML/AI addons integrate seamlessly with the platform's GitOps architecture while providing the flexibility needed for different environments and use cases.
+
+## Configuration Relationship: hub-config.yaml, addons.yaml, and Cluster Secrets
+
+### Configuration Flow Overview
+
+The platform uses a three-tier configuration system that flows from high-level cluster definitions to runtime ArgoCD templating:
+
+```mermaid
+graph LR
+    A[hub-config.yaml] --> B[Terraform]
+    B --> C[Cluster Secrets]
+    C --> D[ArgoCD ApplicationSets]
+    D --> E[Addon Applications]
+    E --> F[Helm Charts]
+    
+    G[addons.yaml] --> D
+    H[environment/addons.yaml] --> D
+```
+
+### 1. hub-config.yaml (Source of Truth)
+
+**Location**: `platform/infra/terraform/hub-config.yaml`
+
+**Purpose**: Defines cluster configurations and addon enablement flags
+
+**Structure**:
+```yaml
+clusters:
+  hub:
+    name: hub
+    region: us-west-2
+    environment: control-plane
+    tenant: control-plane
+    addons:
+      enable_argocd: true
+      enable_keycloak: true
+      enable_backstage: true
+      # ... other addon flags
+```
+
+**Key Responsibilities**:
+- Cluster metadata (name, region, environment, tenant)
+- Addon enablement per cluster (`enable_addon_name: true/false`)
+- Infrastructure-level configuration
+- Multi-cluster orchestration settings
+
+### 2. Terraform Processing
+
+**Process**: Terraform reads `hub-config.yaml` and creates Kubernetes cluster secrets
+
+**Transformation**:
+```hcl
+# In Terraform locals.tf
+locals {
+  addons_metadata = merge(
+    var.addons_metadata,
+    {
+      resource_prefix = var.resource_prefix
+      ingress_domain_name = local.ingress_domain_name
+      aws_region = var.region
+      aws_cluster_name = local.cluster_info.cluster_name
+      # ... other metadata
+    }
+  )
+}
+
+# Creates cluster secret with annotations and labels
+resource "kubernetes_secret" "cluster_secret" {
+  metadata {
+    name      = "${var.resource_prefix}-${var.cluster_name}-cluster"
+    namespace = "argocd"
+    
+    annotations = local.addons_metadata
+    
+    labels = merge(
+      var.cluster_config.addons,  # enable_addon_name flags
+      {
+        environment = var.cluster_config.environment
+        tenant      = var.cluster_config.tenant
+        # ... other labels
+      }
+    )
+  }
+}
+```
+
+### 3. Cluster Secrets (Runtime Configuration)
+
+**Location**: Kubernetes secrets in `argocd` namespace
+
+**Purpose**: Provide runtime configuration data to ArgoCD ApplicationSets
+
+**Structure**:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: peeks-hub-cluster
+  namespace: argocd
+  annotations:
+    resource_prefix: "peeks"
+    ingress_domain_name: "example.com"
+    aws_region: "us-west-2"
+    aws_cluster_name: "peeks-hub"
+    addons_repo_basepath: "gitops/addons/"
+    # ... other metadata
+  labels:
+    environment: "control-plane"
+    tenant: "control-plane"
+    enable_argocd: "true"
+    enable_keycloak: "true"
+    enable_backstage: "true"
+    # ... other addon flags
+type: Opaque
+```
+
+**Key Components**:
+- **Annotations**: Metadata for templating addon configurations
+- **Labels**: Addon enablement flags and cluster classification
+- **Data**: Cluster connection information (kubeconfig, server URL)
+
+### 4. addons.yaml (Addon Definitions)
+
+**Location**: `gitops/addons/bootstrap/default/addons.yaml`
+
+**Purpose**: Central registry of all available platform addons
+
+**Relationship to Cluster Secrets**:
+```yaml
+argocd:
+  enabled: false  # Default state
+  selector:
+    matchExpressions:
+      - key: enable_argocd        # Matches cluster secret label
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      domain: '{{.metadata.annotations.ingress_domain_name}}'  # From cluster secret annotation
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+```
+
+### 5. Environment Configuration
+
+**Location**: `gitops/addons/environments/{environment}/addons.yaml`
+
+**Purpose**: Environment-specific addon enablement and overrides
+
+**Example**:
+```yaml
+# gitops/addons/environments/control-plane/addons.yaml
+argocd:
+  enabled: true    # Enables ApplicationSet generation
+keycloak:
+  enabled: true
+backstage:
+  enabled: true
+```
+
+### 6. ArgoCD ApplicationSet Processing
+
+**Process**: ArgoCD ApplicationSets use cluster secrets to generate Applications
+
+**Template Resolution**:
+```yaml
+# ApplicationSet template
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+spec:
+  generators:
+  - clusters:
+      selector:
+        matchLabels:
+          enable_argocd: "true"  # Matches cluster secret label
+  template:
+    spec:
+      source:
+        helm:
+          values: |
+            global:
+              domain: {{.metadata.annotations.ingress_domain_name}}
+              resourcePrefix: {{.metadata.annotations.resource_prefix}}
+```
+
+### Configuration Precedence and Overrides
+
+The configuration system follows this precedence order (highest to lowest):
+
+1. **Cluster-specific overrides** (if implemented)
+2. **Environment configuration** (`environments/{env}/addons.yaml`)
+3. **Default addon configuration** (`bootstrap/default/addons.yaml`)
+4. **Helm chart defaults**
+
+### Data Flow Example: Enabling a New Addon
+
+Let's trace how enabling JupyterHub flows through the system:
+
+#### Step 1: Update hub-config.yaml
+```yaml
+clusters:
+  hub:
+    addons:
+      enable_jupyterhub: true  # Add this flag
+```
+
+#### Step 2: Terraform Apply
 ```bash
-# Renamed directory
-mv gitops/fleet/members/fleet-spoke-staging gitops/fleet/members/fleet-spoke-dev
-
-# Updated values.yaml
-clusterName: peeks-spoke-dev
-environment: dev
-fleet_member: dev
-secretManagerSecretName: peeks-hub-cluster/peeks-spoke-dev
-```
-
-### Deployment Dependencies
-The bootstrap process now has proper dependency management:
-
-```
-1-argocd-gitlab-setup.sh
-├── ArgoCD installation
-├── GitLab integration  
-├── Repository secrets setup
-└── Wait for ArgoCD health ✓
-    ├── bootstrap ApplicationSet (Synced/Healthy)
-    ├── cluster-addons ApplicationSet (Synced/Healthy)  
-    ├── fleet-secrets ApplicationSet (Synced/Healthy)
-    └── All other applications (Monitored)
-        ↓
-2-bootstrap-accounts.sh (Only runs after ArgoCD is healthy)
-        ↓  
-6-tools-urls.sh (Generates access URLs)
-```
-
-### Status Indicators
-The improved script provides clear status feedback:
-- ✅ **Green ✓**: Application is Synced and Healthy
-- ⚠️ **Yellow ⚠**: Application is Healthy but OutOfSync  
-- ❌ **Red ✗**: Application is Degraded or Failed
-
-### Error Handling
-- **Retry Logic**: Each script retries up to 3 times with 30s delays
-- **Timeout Management**: Prevents infinite waiting with configurable timeouts
-- **Graceful Degradation**: Continues deployment even if some applications need more time
-- **Detailed Logging**: Color-coded status messages with timestamps
-
-## ArgoCD IAM Role Configuration Fix
-
-### Issue
-ArgoCD in the hub cluster was using the wrong IAM role (`argocd-hub-mgmt`) instead of the common role (`{resource_prefix}-argocd-hub...`) that spoke clusters trust for cross-cluster access.
-
-### Root Cause
-- **Common terraform** creates `aws_iam_role.argocd_central` role for cross-cluster access
-- **Hub terraform** was creating its own `argocd-hub-mgmt` role via `argocd_hub_pod_identity` module
-- **Spoke clusters** trust the common role, but hub ArgoCD was using the hub-specific role
-- This caused ArgoCD to fail connecting to spoke clusters with authentication errors
-
-### Solution
-Modified `/home/ec2-user/environment/platform-on-eks-workshop/platform/infra/terraform/hub/pod-identity.tf`:
-
-1. **Removed the module approach** and replaced with direct EKS Pod Identity associations
-2. **Added data source** to fetch the common ArgoCD role from SSM parameter
-3. **Created direct associations** for all ArgoCD service accounts using the common role
-
-```terraform
-# Added data source for common ArgoCD role
-data "aws_ssm_parameter" "argocd_hub_role" {
-  name = "{resource_prefix}-argocd-central-role"
-}
-
-# Replaced module with direct associations
-resource "aws_eks_pod_identity_association" "argocd_controller" {
-  cluster_name    = local.cluster_info.cluster_name
-  namespace       = "argocd"
-  service_account = "argocd-application-controller"
-  role_arn        = data.aws_ssm_parameter.argocd_hub_role.value
-}
-
-resource "aws_eks_pod_identity_association" "argocd_server" {
-  cluster_name    = local.cluster_info.cluster_name
-  namespace       = "argocd"
-  service_account = "argocd-server"
-  role_arn        = data.aws_ssm_parameter.argocd_hub_role.value
-}
-
-resource "aws_eks_pod_identity_association" "argocd_repo_server" {
-  cluster_name    = local.cluster_info.cluster_name
-  namespace       = "argocd"
-  service_account = "argocd-repo-server"
-  role_arn        = data.aws_ssm_parameter.argocd_hub_role.value
-}
-```
-
-4. **Updated references** in `argocd.tf` and `locals.tf` to use the common role ARN
-
-### Deployment
-Use the deploy script to apply changes:
-```bash
-cd /home/ec2-user/environment/platform-on-eks-workshop/platform/infra/terraform/hub
+cd platform/infra/terraform/hub
 ./deploy.sh
 ```
 
-### Verification
-After deployment, ArgoCD should be able to connect to spoke clusters and sync applications successfully.
+This updates the cluster secret with the new label:
+```yaml
+metadata:
+  labels:
+    enable_jupyterhub: "true"  # New label added
+```
+
+#### Step 3: ApplicationSet Detection
+ArgoCD ApplicationSet detects the cluster now matches the JupyterHub selector:
+```yaml
+jupyterhub:
+  selector:
+    matchExpressions:
+      - key: enable_jupyterhub
+        operator: In
+        values: ['true']  # Cluster secret now matches
+```
+
+#### Step 4: Application Generation
+ArgoCD generates a JupyterHub Application with templated values:
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: jupyterhub-peeks-hub
+spec:
+  source:
+    helm:
+      values: |
+        global:
+          resourcePrefix: peeks  # From cluster secret annotation
+          ingress_domain_name: example.com  # From cluster secret annotation
+```
+
+#### Step 5: Helm Deployment
+The Application deploys JupyterHub with the resolved configuration.
+
+### Troubleshooting Configuration Issues
+
+#### Addon Not Deploying
+1. **Check cluster secret labels**:
+   ```bash
+   kubectl get secret peeks-hub-cluster -n argocd -o yaml
+   ```
+2. **Verify addon selector** in `addons.yaml`
+3. **Confirm environment enablement** in `environments/{env}/addons.yaml`
+
+#### Template Resolution Failures
+1. **Check cluster secret annotations** for required metadata
+2. **Verify ApplicationSet template syntax**
+3. **Review ArgoCD ApplicationSet controller logs**
+
+#### Configuration Drift
+1. **Re-apply Terraform** to sync cluster secrets with hub-config.yaml
+2. **Check for manual cluster secret modifications**
+3. **Verify git repository synchronization**
+
+### Best Practices for Configuration Management
+
+#### Cluster Configuration
+- Always use Terraform deployment scripts, never modify cluster secrets manually
+- Keep hub-config.yaml as the single source of truth for cluster addon enablement
+- Use consistent naming conventions for addon enablement flags
+
+#### Addon Development
+- Design addons to be configurable via cluster secret annotations
+- Use appropriate selectors to target specific cluster types or environments
+- Implement proper defaulting for optional configuration values
+
+#### Environment Management
+- Use environment-specific addon configurations sparingly
+- Prefer cluster-level configuration over environment overrides
+- Document any environment-specific customizations
+
+This configuration relationship ensures consistent, scalable addon management across multi-cluster environments while maintaining clear separation of concerns between infrastructure, platform, and application layers.
+
+### Modern GitOps Addon Architecture Benefits
+
+The current GitOps addon management system provides several key advantages over traditional bootstrap approaches:
+
+#### Declarative Configuration
+- **Infrastructure as Code**: All addon configurations are version-controlled and auditable
+- **Consistent Deployments**: Identical addon configurations across environments
+- **Rollback Capability**: Git-based rollback for configuration changes
+
+#### Automated Secret Management
+- **Keycloak Integration**: Automatic OIDC client creation for SSO-enabled addons
+- **External Secrets**: Secure credential retrieval from AWS Secrets Manager
+- **Secret Rotation**: Automated credential lifecycle management
+
+#### Multi-Cluster Orchestration
+- **Cluster Labels**: Fine-grained addon deployment control per cluster
+- **Environment Separation**: Different addon sets for different environments
+- **Sync Wave Management**: Proper dependency ordering for addon deployments
+
+#### Scalability and Maintenance
+- **Template-Based**: Reusable addon configurations across clusters
+- **Health Monitoring**: Automatic addon health validation and alerting
+- **Upgrade Management**: Controlled addon version updates through GitOps
 
 ## Project Overview
 This repository contains the **Modern Engineering on AWS** platform implementation that works with the bootstrap infrastructure created by the CloudFormation stack. It provides Terraform modules, GitOps configurations, and platform services for a complete EKS-based development platform.

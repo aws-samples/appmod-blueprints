@@ -1,0 +1,120 @@
+mlflow:
+  # MLFlow tracking server configuration
+  trackingServer:
+    image:
+      repository: python
+      tag: '3.11-slim'
+      pullPolicy: IfNotPresent
+
+    # OIDC Authentication configuration
+    auth:
+      enabled: true
+      type: oidc
+      oidc:
+        issuer: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform
+        clientId: mlflow
+        clientSecret: # Will be provided via External Secrets
+        authUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/auth
+        tokenUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/token
+        userinfoUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/userinfo
+        scopes: 'openid profile email groups'
+        usernameKey: preferred_username
+        groupsKey: groups
+
+    # Environment variables for OIDC
+    extraEnv:
+      - name: MLFLOW_AUTH_CONFIG_PATH
+        value: /etc/mlflow/auth.ini
+      - name: OAUTH_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-clients
+            key: MLFLOW_CLIENT_SECRET
+
+    # Resource configuration
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 200m
+        memory: 256Mi
+
+    # Persistent storage for MLFlow artifacts and metadata
+    persistence:
+      enabled: true
+      storageClass: gp3
+      size: 20Gi
+      accessMode: ReadWriteOnce
+
+  # Database configuration (using SQLite for simplicity, can be upgraded to PostgreSQL)
+  database:
+    type: sqlite
+    path: /mlflow/mlflow.db
+
+  # Artifact store configuration
+  artifactStore:
+    type: filesystem
+    path: /mlflow/artifacts
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 5000
+    targetPort: 5000
+
+  # Ingress configuration
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+      nginx.ingress.kubernetes.io/use-regex: 'true'
+      nginx.ingress.kubernetes.io/proxy-body-size: '0'
+      nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
+      nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
+    host: '{{ .Values.global.ingress_domain_name }}'
+    path: /mlflow(/|$)(.*)
+    pathType: ImplementationSpecific
+
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+
+  # Pod security context
+  podSecurityContext:
+    fsGroup: 1000
+
+  # Node selector and tolerations
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Autoscaling (disabled by default for tracking server)
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+
+  # Monitoring and health checks
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 5000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 5000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3

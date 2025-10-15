@@ -85,3 +85,15 @@ grafana:
   enabled: false
 platform-manifests:
   enabled: true
+
+# ML/AI Platform Addons
+jupyterhub:
+  enabled: true
+kubeflow:
+  enabled: true
+mlflow:
+  enabled: true
+spark-operator:
+  enabled: true
+airflow:
+  enabled: true
