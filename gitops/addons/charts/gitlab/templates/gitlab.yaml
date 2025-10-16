@@ -66,7 +66,7 @@ spec:
         env:
         - name: GITLAB_OMNIBUS_CONFIG
           value: |
-            external_url 'http://{{ .Values.domain_name }}'
+            external_url 'https://{{ .Values.domain_name }}'
             gitlab_rails['gitlab_shell_ssh_port'] = 22
             gitlab_rails['gitlab_shell_git_timeout'] = 800
             gitlab_rails['enabled_git_access_protocol'] = 'ssh'
