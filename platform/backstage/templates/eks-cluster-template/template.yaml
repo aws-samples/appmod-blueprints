@@ -3,7 +3,7 @@ kind: Template
 metadata:
   name: eks-cluster-template
   title: Setup EKS Environment
-  description: Creates a new EKS cluster. v1
+  description: Creates a new Amazon EKS AutoMode cluster and Environment
 spec:
   owner: user:guest
   type: service
