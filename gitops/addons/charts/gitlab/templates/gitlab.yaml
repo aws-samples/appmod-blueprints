@@ -115,8 +115,8 @@ spec:
             sidekiq['metrics_enabled'] = false
 
             # Puma
-            puma['worker_processes'] = 0
-            puma['per_worker_max_memory_mb'] = 1024
+            # puma['worker_processes'] = 0
+            # puma['per_worker_max_memory_mb'] = 1024
 
             # Reduce Redis resources
             redis['tcp_timeout'] = 60
