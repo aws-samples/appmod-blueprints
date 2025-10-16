@@ -1,0 +1,97 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kubeflow-installer
+  namespace: kubeflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  template:
+    spec:
+      serviceAccountName: kubeflow-installer
+      restartPolicy: OnFailure
+      containers:
+      - name: installer
+        image: kubeflownotebookswg/kustomize:v3.2.0
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "Installing Kubeflow {{ .Values.kubeflow.version }}..."
+          
+          # Clone Kubeflow manifests
+          git clone --branch {{ .Values.kubeflow.version }} https://github.com/kubeflow/manifests.git /tmp/manifests
+          cd /tmp/manifests
+          
+          # Apply common components
+          kubectl apply -k common/cert-manager/cert-manager/base
+          kubectl apply -k common/cert-manager/kubeflow-issuer/base
+          kubectl apply -k common/istio-1-17/istio-crds/base
+          kubectl apply -k common/istio-1-17/istio-namespace/base
+          kubectl apply -k common/istio-1-17/istio-install/base
+          
+          # Wait for Istio to be ready
+          kubectl wait --for=condition=ready pod -l app=istiod -n istio-system --timeout=300s
+          
+          # Apply Kubeflow components
+          kubectl apply -k apps/centraldashboard/upstream/overlays/kserve
+          kubectl apply -k apps/admission-webhook/upstream/overlays/cert-manager
+          kubectl apply -k apps/jupyter/notebook-controller/upstream/overlays/kubeflow
+          kubectl apply -k apps/profiles/upstream/overlays/kubeflow
+          kubectl apply -k apps/volumes-web-app/upstream/overlays/istio
+          kubectl apply -k apps/tensorboard/tensorboard-controller/upstream/overlays/kubeflow
+          
+          {{- if .Values.kubeflow.components.pipelines.enabled }}
+          kubectl apply -k apps/pipeline/upstream/env/cert-manager/platform-agnostic-multi-user
+          {{- end }}
+          
+          {{- if .Values.kubeflow.components.katib.enabled }}
+          kubectl apply -k apps/katib/upstream/installs/katib-with-kubeflow
+          {{- end }}
+          
+          {{- if .Values.kubeflow.components.trainingOperator.enabled }}
+          kubectl apply -k apps/training-operator/upstream/overlays/kubeflow
+          {{- end }}
+          
+          echo "Kubeflow installation completed successfully"
+        env:
+        - name: KUBECONFIG
+          value: /var/run/secrets/kubernetes.io/serviceaccount/token
+        volumeMounts:
+        - name: kubeconfig
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+      volumes:
+      - name: kubeconfig
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 3600
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeflow-installer
+  namespace: kubeflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeflow-installer
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+subjects:
+- kind: ServiceAccount
+  name: kubeflow-installer
+  namespace: kubeflow
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io

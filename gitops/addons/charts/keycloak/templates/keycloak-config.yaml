@@ -335,6 +335,146 @@ data:
         "https://${DOMAIN_NAME}/argocd"
       ]
     }
+  jupyterhub-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "jupyterhub",
+      "name": "JupyterHub Client",
+      "description": "Used for JupyterHub SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/jupyterhub",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/jupyterhub/hub/oauth_callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  kubeflow-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "kubeflow",
+      "name": "Kubeflow Client",
+      "description": "Used for Kubeflow Central Dashboard SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/kubeflow",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/kubeflow/login/oidc"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  mlflow-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "mlflow",
+      "name": "MLFlow Client",
+      "description": "Used for MLFlow UI SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/mlflow",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/mlflow/oauth2/callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  spark-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "spark",
+      "name": "Spark Client",
+      "description": "Used for Spark History Server UI SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/spark",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/spark/oauth2/callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  airflow-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "airflow",
+      "name": "Airflow Client",
+      "description": "Used for Apache Airflow webserver SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/airflow",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/airflow/oauth2/callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
   grafana-client-payload.json: |
     {
       "clientId": "https://${GRAFANAURL}/saml/metadata",
@@ -614,6 +754,11 @@ spec:
               echo "creating clients"
               create_client "Argo Workflows" "/var/config/argo-workflows-client-payload.json"
               create_client "Backstage" "/var/config/backstage-client-payload.json"
+              create_client "JupyterHub" "/var/config/jupyterhub-client-payload.json"
+              create_client "Kubeflow" "/var/config/kubeflow-client-payload.json"
+              create_client "MLFlow" "/var/config/mlflow-client-payload.json"
+              create_client "Spark" "/var/config/spark-client-payload.json"
+              create_client "Airflow" "/var/config/airflow-client-payload.json"
               create_client "Kargo" "/var/config/kargo-client-payload.json"
               create_client "Argo CD" "/var/config/argocd-client-payload.json"
               create_client "Account Console" "/var/config/account-console-client-payload.json"
@@ -622,12 +767,22 @@ spec:
               echo "adding client scopes to clients"
               add_client_scope "argo-workflows" "Argo Workflows"
               add_client_scope "backstage" "Backstage"
+              add_client_scope "jupyterhub" "JupyterHub"
+              add_client_scope "kubeflow" "Kubeflow"
+              add_client_scope "mlflow" "MLFlow"
+              add_client_scope "spark" "Spark"
+              add_client_scope "airflow" "Airflow"
               add_client_scope "kargo" "Kargo"
               add_client_scope "argocd" "Argo CD"
               add_client_scope "account-console" "Account Console"
 
               echo "getting client secrets"
               get_client_secret "backstage" "BACKSTAGE_CLIENT_SECRET"
+              get_client_secret "jupyterhub" "JUPYTERHUB_CLIENT_SECRET"
+              get_client_secret "kubeflow" "KUBEFLOW_CLIENT_SECRET"
+              get_client_secret "mlflow" "MLFLOW_CLIENT_SECRET"
+              get_client_secret "spark" "SPARK_CLIENT_SECRET"
+              get_client_secret "airflow" "AIRFLOW_CLIENT_SECRET"
               get_client_secret "argo-workflows" "ARGO_WORKFLOWS_CLIENT_SECRET"
 
               ARGOCD_SESSION_TOKEN=$(curl -k -sS http://argocd-server.argocd.svc.cluster.local/argocd/api/v1/session -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_PASSWORD}\"}" | jq -r .token)
@@ -656,6 +811,16 @@ spec:
                 ARGOCD_SESSION_TOKEN: ${ARGOCD_SESSION_TOKEN}
                 BACKSTAGE_CLIENT_SECRET: ${BACKSTAGE_CLIENT_SECRET}
                 BACKSTAGE_CLIENT_ID: backstage
+                JUPYTERHUB_CLIENT_SECRET: ${JUPYTERHUB_CLIENT_SECRET}
+                JUPYTERHUB_CLIENT_ID: jupyterhub
+                KUBEFLOW_CLIENT_SECRET: ${KUBEFLOW_CLIENT_SECRET}
+                KUBEFLOW_CLIENT_ID: kubeflow
+                MLFLOW_CLIENT_SECRET: ${MLFLOW_CLIENT_SECRET}
+                MLFLOW_CLIENT_ID: mlflow
+                SPARK_CLIENT_SECRET: ${SPARK_CLIENT_SECRET}
+                SPARK_CLIENT_ID: spark
+                AIRFLOW_CLIENT_SECRET: ${AIRFLOW_CLIENT_SECRET}
+                AIRFLOW_CLIENT_ID: airflow
                 ARGOCD_CLIENT_ID: argocd
               " > /tmp/secret.yaml
 
@@ -689,6 +854,16 @@ spec:
       ARGO_WORKFLOWS_CLIENT_SECRET: "{{ `{{.ARGO_WORKFLOWS_CLIENT_SECRET}}` }}"
       ARGO_WORKFLOWS_CLIENT_ID: "{{ `{{.ARGO_WORKFLOWS_CLIENT_ID}}` }}"
       BACKSTAGE_CLIENT_SECRET: "{{ `{{.BACKSTAGE_CLIENT_SECRET}}` }}"
+      JUPYTERHUB_CLIENT_SECRET: "{{ `{{.JUPYTERHUB_CLIENT_SECRET}}` }}"
+      JUPYTERHUB_CLIENT_ID: "{{ `{{.JUPYTERHUB_CLIENT_ID}}` }}"
+      KUBEFLOW_CLIENT_SECRET: "{{ `{{.KUBEFLOW_CLIENT_SECRET}}` }}"
+      KUBEFLOW_CLIENT_ID: "{{ `{{.KUBEFLOW_CLIENT_ID}}` }}"
+      MLFLOW_CLIENT_SECRET: "{{ `{{.MLFLOW_CLIENT_SECRET}}` }}"
+      MLFLOW_CLIENT_ID: "{{ `{{.MLFLOW_CLIENT_ID}}` }}"
+      SPARK_CLIENT_SECRET: "{{ `{{.SPARK_CLIENT_SECRET}}` }}"
+      SPARK_CLIENT_ID: "{{ `{{.SPARK_CLIENT_ID}}` }}"
+      AIRFLOW_CLIENT_SECRET: "{{ `{{.AIRFLOW_CLIENT_SECRET}}` }}"
+      AIRFLOW_CLIENT_ID: "{{ `{{.AIRFLOW_CLIENT_ID}}` }}"
       ARGOCD_SESSION_TOKEN: "{{ `{{.ARGOCD_SESSION_TOKEN}}` }}"
   data:
     - conversionStrategy: None
@@ -709,6 +884,66 @@ spec:
         remoteRef:
           remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
           property: BACKSTAGE_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: JUPYTERHUB_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: JUPYTERHUB_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: JUPYTERHUB_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: JUPYTERHUB_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: KUBEFLOW_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: KUBEFLOW_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: KUBEFLOW_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: KUBEFLOW_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: MLFLOW_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: MLFLOW_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: MLFLOW_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: MLFLOW_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: SPARK_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: SPARK_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: SPARK_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: SPARK_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: AIRFLOW_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: AIRFLOW_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: AIRFLOW_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: AIRFLOW_CLIENT_ID
     - conversionStrategy: None
       match:
         secretKey: ARGOCD_SESSION_TOKEN

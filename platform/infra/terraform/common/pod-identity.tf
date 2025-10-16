@@ -570,7 +570,13 @@ locals {
             "eks:AssociateAccessPolicy",
             "eks:DisassociateAccessPolicy",
             "eks:ListAssociatedAccessPolicies",
-            "iam:PassRole"
+            "eks:CreatePodIdentityAssociation",
+            "eks:DeletePodIdentityAssociation",
+            "eks:DescribePodIdentityAssociation",
+            "eks:ListPodIdentityAssociations",
+            "eks:UpdatePodIdentityAssociation",
+            "iam:PassRole",
+            "iam:GetRole"
           ]
           Resource = "*"
         }
