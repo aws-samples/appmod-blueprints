@@ -50,7 +50,8 @@ clusters:
       enable_mlflow: true
       enable_spark_operator: true
       enable_airflow: true
-      enable_grafana: true
+      enable_grafana: false
+      enable_grafana_operator: true
       enable_aws_efs_csi_driver: false
       enable_aws_for_fluentbit: false
       enable_cni_metrics_helper: false

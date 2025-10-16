@@ -1105,6 +1105,21 @@ grafana:
   healthCheck:
     enabled: true
 
+grafana-operator:
+  enabled: false
+  releaseName: grafana-operator
+  chartName: grafana-operator
+  chartRepository: 'ghcr.io/grafana/helm-charts'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4' # Needs to be after external-secrets and ingress-nginx
+  namespace: grafana-operator
+  defaultVersion: 'v5.19.0'
+  selector:
+    matchExpressions:
+      - key: enable_grafana_operator
+        operator: In
+        values: ['true']
+
 flux:
   enabled: false
   annotationsAppSet:
