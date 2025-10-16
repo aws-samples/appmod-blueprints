@@ -82,7 +82,7 @@ crossplane-aws:
 flux:
   enabled: true
 grafana:
-  enabled: false
+  enabled: true
 platform-manifests:
   enabled: true
 
