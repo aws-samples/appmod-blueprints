@@ -420,7 +420,7 @@ my-new-addon:
 1. **Commit changes** to the GitOps repository
 2. **Apply Terraform changes** (if hub-config.yaml was modified):
    ```bash
-   cd platform/infra/terraform/hub
+   cd platform/infra/terraform/common
    ./deploy.sh
    ```
 3. **Monitor ArgoCD** for ApplicationSet generation and Application sync
@@ -514,6 +514,452 @@ valuesObject:
 - Review RBAC permissions and service account configurations
 
 This comprehensive guide ensures consistent, reliable addon integration following established platform patterns and best practices.
+
+## Adding ACK (AWS Controllers for Kubernetes) Addons
+
+### Overview
+ACK addons require special configuration for multi-account role management and IAM permissions. When adding new ACK controllers, you must update the addon definition, multi-account role mapping, and create appropriate IAM roles. The approach differs depending on whether your cluster is created with Terraform or using the Kro EKS cluster template.
+
+### Step 1: Add ACK Addon Definition
+Add the ACK controller to `gitops/addons/bootstrap/default/addons.yaml`:
+
+```yaml
+ack-rds:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'    # ACK controllers deploy early
+  namespace: ack-system
+  chartName: rds-chart
+  chartRepository: oci://public.ecr.aws/aws-controllers-k8s
+  defaultVersion: '1.0.0'
+  selector:
+    matchExpressions:
+      - key: enable_ack_rds
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: '{{.metadata.annotations.ack_rds_iam_role_arn}}'
+```
+
+### Step 2: Update Multi-Account ConfigMap
+Update `platform-on-eks-workshop/gitops/addons/charts/multi-acct/templates/configmap.yaml` to include the new ACK service:
+
+```yaml
+data:
+  {{- range $key, $value := .Values.clusters }}
+  ec2.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-ec2"
+  eks.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-eks"
+  iam.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-iam"
+  ecr.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-ecr"
+  s3.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-s3"
+  dynamodb.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-dynamodb"
+  rds.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-rds"
+  {{- end }}
+```
+
+### Step 3: Create IAM Roles (Choose Your Approach)
+
+#### Option A: Terraform-Created Clusters
+
+If your cluster is created with Terraform, update the Terraform configuration in `platform/infra/terraform/common/pod-identity.tf`:
+
+**Add to policy URLs:**
+```hcl
+variable "policy_arn_urls" {
+  type = map(string)
+  default = {
+    iam      = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-policy-arn"
+    ec2      = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-policy-arn"
+    eks      = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-policy-arn"
+    ecr      = "https://raw.githubusercontent.com/aws-controllers-k8s/ecr-controller/main/config/iam/recommended-policy-arn"
+    s3       = "https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/main/config/iam/recommended-policy-arn"
+    dynamodb = "https://raw.githubusercontent.com/aws-controllers-k8s/dynamodb-controller/main/config/iam/recommended-policy-arn"
+    rds      = "https://raw.githubusercontent.com/aws-controllers-k8s/rds-controller/main/config/iam/recommended-policy-arn"
+  }
+}
+```
+
+**Add to inline policies:**
+```hcl
+variable "inline_policy_urls" {
+  type = map(string)
+  default = {
+    iam      = "https://raw.githubusercontent.com/aws-controllers-k8s/iam-controller/main/config/iam/recommended-inline-policy"
+    ec2      = "https://raw.githubusercontent.com/aws-controllers-k8s/ec2-controller/main/config/iam/recommended-inline-policy"
+    eks      = "https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/main/config/iam/recommended-inline-policy"
+    ecr      = "https://raw.githubusercontent.com/aws-controllers-k8s/ecr-controller/main/config/iam/recommended-inline-policy"
+    s3       = "https://raw.githubusercontent.com/aws-controllers-k8s/s3-controller/main/config/iam/recommended-inline-policy"
+    dynamodb = "https://raw.githubusercontent.com/aws-controllers-k8s/dynamodb-controller/main/config/iam/recommended-inline-policy"
+    rds      = "https://raw.githubusercontent.com/aws-controllers-k8s/rds-controller/main/config/iam/recommended-inline-policy"
+  }
+}
+```
+
+**Update managed policies for workload roles:**
+```hcl
+locals {
+  ack_managed_policies = {
+    iam = ["arn:aws:iam::aws:policy/IAMFullAccess"]
+    ec2 = [
+      "arn:aws:iam::aws:policy/AmazonEC2FullAccess",
+      "arn:aws:iam::aws:policy/AmazonVPCFullAccess"
+    ]
+    eks = [
+      "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+      "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+      "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+      "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+    ]
+    ecr = [
+      "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
+    ]
+    s3 = [
+      "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    ]
+    dynamodb = [
+      "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+    ]
+    rds = [
+      "arn:aws:iam::aws:policy/AmazonRDSFullAccess"
+    ]
+  }
+}
+```
+
+#### Option B: Kro EKS Cluster Template
+
+If your cluster is created using the Kro EKS cluster template, add the ACK role resources to `gitops/addons/charts/kro/resource-groups/manifests/eks/rg-eks.yaml`:
+
+**Add RDS ACK Policy:**
+```yaml
+- id: ackRdsPolicy
+  template:
+    apiVersion: iam.services.k8s.aws/v1alpha1
+    kind: Policy
+    metadata:
+      namespace: "${schema.spec.name}"
+      name: "${schema.spec.name}-ack-rds-policy"
+      ownerReferences:
+        - apiVersion: kro.run/v1alpha1
+          kind: EksCluster
+          name: ${schema.metadata.name}
+          uid: ${schema.metadata.uid}
+          blockOwnerDeletion: true
+          controller: false
+      annotations:
+        argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+        services.k8s.aws/region: ${schema.spec.region}
+    spec:
+      name: "${schema.spec.name}-ack-rds-policy"
+      policyDocument: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "rds:*",
+                "ec2:DescribeAccountAttributes",
+                "ec2:DescribeAvailabilityZones",
+                "ec2:DescribeInternetGateways",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeVpcAttribute",
+                "ec2:DescribeVpcs"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+```
+
+**Add RDS ACK Role:**
+```yaml
+- id: ackRdsRole
+  template:
+    apiVersion: iam.services.k8s.aws/v1alpha1
+    kind: Role
+    metadata:
+      namespace: "${schema.spec.name}"
+      name: "${schema.spec.name}-ack-rds-role"
+      ownerReferences:
+        - apiVersion: kro.run/v1alpha1
+          kind: EksCluster
+          name: ${schema.metadata.name}
+          uid: ${schema.metadata.uid}
+          blockOwnerDeletion: true
+          controller: false
+      annotations:
+        argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+        policy: "${ackRdsPolicy.status.ackResourceMetadata.arn}"
+        services.k8s.aws/region: ${schema.spec.region}
+    spec:
+      name: "${schema.spec.name}-ack-rds-role"
+      policyRefs:
+        - from:
+            name: "${schema.spec.name}-ack-rds-policy"
+      assumeRolePolicyDocument: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "pods.eks.amazonaws.com"
+              },
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession"
+              ]
+            }
+          ]
+        }
+```
+
+**Add RDS Pod Identity Association:**
+```yaml
+- id: ackRdsPodIdentity
+  readyWhen:
+  - ${ackRdsPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+  template:
+    apiVersion: eks.services.k8s.aws/v1alpha1
+    kind: PodIdentityAssociation
+    metadata:
+      namespace: "${schema.spec.name}"
+      name: "${schema.spec.name}-ack-rds"
+      ownerReferences:
+        - apiVersion: kro.run/v1alpha1
+          kind: EksCluster
+          name: ${schema.metadata.name}
+          uid: ${schema.metadata.uid}
+          blockOwnerDeletion: true
+          controller: false
+      annotations:
+        argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+        services.k8s.aws/region: ${schema.spec.region}
+    spec:
+      clusterName: "${schema.spec.name}"
+      namespace: ack-system
+      roleARN: "${ackRdsRole.status.ackResourceMetadata.arn}"
+      serviceAccount: ack-rds-controller
+```
+
+**Update EKS Cluster Schema:**
+Add the new addon flag to the schema section:
+```yaml
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: EksCluster
+    spec:
+      addons:
+        enable_ack_rds: string
+        # ... other existing addons
+```
+
+**Update ArgoCD Secret Labels:**
+Add the new addon label to the argocdSecret resource:
+```yaml
+- id: argocdSecret
+  template:
+    metadata:
+      labels:
+        enable_ack_rds: "${schema.spec.addons.enable_ack_rds}"
+        # ... other existing labels
+```
+
+### Step 4: Enable ACK Addon in Cluster Configuration
+
+#### For Terraform Clusters:
+Add the enablement flag to `platform/infra/terraform/hub-config.yaml`:
+
+```yaml
+clusters:
+  hub:
+    addons:
+      enable_ack_rds: true
+```
+
+#### For Kro EKS Clusters:
+Add the enablement flag when creating the EksCluster resource:
+
+```yaml
+apiVersion: kro.run/v1alpha1
+kind: EksCluster
+metadata:
+  name: my-cluster
+  namespace: my-cluster
+spec:
+  addons:
+    enable_ack_rds: "true"
+    # ... other addon flags
+```
+
+### Step 5: Deploy Changes
+
+#### For Terraform Clusters:
+1. **Commit GitOps changes**:
+   ```bash
+   git add gitops/addons/
+   git commit -m "Add ACK RDS controller support"
+   git push
+   ```
+
+2. **Apply Terraform changes**:
+   ```bash
+   cd platform/infra/terraform/common
+   ./deploy.sh
+   ```
+
+#### For Kro EKS Clusters:
+1. **Commit Kro template changes**:
+   ```bash
+   git add gitops/addons/charts/kro/
+   git commit -m "Add ACK RDS support to Kro EKS template"
+   git push
+   ```
+
+2. **Apply or update EksCluster resource**:
+   ```bash
+   kubectl apply -f my-ekscluster.yaml
+   ```
+
+### ACK-Specific Considerations
+
+#### Role Naming Patterns
+
+**Terraform Approach:**
+- Controller Role: `{resource_prefix}-ack-{service}-controller-role-{cluster_key}`
+- Workload Role: `{resource_prefix}-cluster-mgmt-{cluster_key}-{service}`
+
+**Kro Approach:**
+- Controller Role: `{cluster_name}-ack-{service}-role`
+- Policy: `{cluster_name}-ack-{service}-policy`
+
+#### Multi-Account Support
+The ConfigMap supports multiple clusters/accounts:
+```yaml
+clusters:
+  hub: "123456789012"
+  spoke-staging: "123456789013"
+  spoke-prod: "123456789014"
+```
+
+#### Sync Wave Ordering
+ACK controllers use sync wave `-1` to deploy before other addons that might depend on AWS resources.
+
+#### Service-Specific Permissions
+
+**Common ACK Services and Their Required Permissions:**
+
+**RDS Controller:**
+- `rds:*` - Full RDS management
+- `ec2:DescribeSubnets`, `ec2:DescribeVpcs` - Network discovery
+- `ec2:DescribeSecurityGroups` - Security group management
+
+**S3 Controller:**
+- `s3:*` - Full S3 management
+- `s3:GetBucketLocation` - Cross-region operations
+
+**DynamoDB Controller:**
+- `dynamodb:*` - Full DynamoDB management
+- `application-autoscaling:*` - Auto-scaling support
+
+**ECR Controller:**
+- `ecr:*` - Full ECR management
+- `iam:CreateServiceLinkedRole` - Service-linked role creation
+
+### Troubleshooting ACK Addons
+
+#### Common Issues and Solutions
+
+**1. Role Not Found Error:**
+```bash
+# Check if role exists
+aws iam get-role --role-name peeks-cluster-mgmt-hub-rds
+
+# Verify role mapping in ConfigMap
+kubectl get configmap ack-role-team-map -n ack-system -o yaml
+```
+
+**2. Permission Denied:**
+```bash
+# Check ACK controller logs
+kubectl logs -n ack-system deployment/rds-chart --tail=50
+
+# Verify Pod Identity Association
+kubectl get podidentityassociation -A
+```
+
+**3. Policy Attachment Issues:**
+```bash
+# For Terraform: Check policy URLs are accessible
+curl -s https://raw.githubusercontent.com/aws-controllers-k8s/rds-controller/main/config/iam/recommended-policy-arn
+
+# For Kro: Check policy creation
+kubectl get policy -A | grep rds
+```
+
+**4. Cross-Account Role Assumption:**
+```bash
+# Test role assumption
+aws sts assume-role --role-arn arn:aws:iam::ACCOUNT:role/ROLE-NAME --role-session-name test-session
+```
+
+#### Monitoring and Validation
+
+**Check ACK Controller Status:**
+```bash
+# Verify controller deployment
+kubectl get deployment -n ack-system
+
+# Check controller logs
+kubectl logs -n ack-system deployment/rds-chart
+
+# Verify service account annotations
+kubectl get sa -n ack-system ack-rds-controller -o yaml
+```
+
+**Validate Role Configuration:**
+```bash
+# Check Pod Identity Association
+kubectl describe podidentityassociation -A | grep rds
+
+# Verify role trust policy
+aws iam get-role --role-name ROLE-NAME --query 'Role.AssumeRolePolicyDocument'
+```
+
+This comprehensive approach ensures ACK controllers have the proper IAM permissions for multi-account AWS resource management, whether deployed via Terraform or Kro EKS cluster templates.
+
+### Troubleshooting: JupyterHub Application Not Created
+
+If JupyterHub application is not being created in the hub cluster, check:
+
+1. **Cluster secret labels**: Verify the hub cluster secret has `enable_jupyterhub=true`
+   ```bash
+   kubectl get secret peeks-hub -n argocd --show-labels | grep jupyterhub
+   ```
+
+2. **If label is missing**: Re-apply Terraform to update cluster secret
+   ```bash
+   cd platform/infra/terraform/common
+   ./deploy.sh
+   ```
+
+3. **Verify addon definition**: Check JupyterHub is enabled in environment config
+   ```bash
+   grep -A 2 jupyterhub /home/ec2-user/environment/platform-on-eks-workshop/gitops/addons/environments/control-plane/addons.yaml
+   ```
+
+4. **Check ApplicationSet**: Verify ArgoCD ApplicationSet can find matching clusters
+   ```bash
+   kubectl get applicationsets -n argocd
+   kubectl describe applicationset addons -n argocd
+   ```
 
 ### ML/AI Addons Integration Examples
 
@@ -902,7 +1348,7 @@ clusters:
 
 #### Step 2: Terraform Apply
 ```bash
-cd platform/infra/terraform/hub
+cd platform/infra/terraform/common
 ./deploy.sh
 ```
 
@@ -1062,59 +1508,53 @@ appmod-blueprints/
 
 ## Terraform Module Architecture
 
-### Common Module (`platform/infra/terraform/common/`)
-**Purpose**: Foundational infrastructure shared across all environments
+### Cluster Module (`platform/infra/terraform/cluster/`)
+**Purpose**: Creates EKS clusters for hub and spoke environments
 
 **Key Resources**:
-- **VPC Configuration**: Multi-AZ networking with public/private subnets
-- **EKS Cluster**: Managed Kubernetes cluster with auto-scaling node groups
-- **S3 Backend**: Terraform state storage with DynamoDB locking
-- **IAM Configuration**: Cluster access roles and service account policies
-- **Core Addons**: AWS Load Balancer Controller, EBS CSI Driver
-- **Security Groups**: Network access control for cluster components
+- **Hub Cluster**: Control-plane environment with platform services
+- **Dev Spoke Cluster**: Development workload environment  
+- **Prod Spoke Cluster**: Production workload environment
+- **VPC Configuration**: Multi-AZ networking with public/private subnets per cluster
+- **EKS Configuration**: Managed Kubernetes clusters with auto-scaling node groups
+- **Basic Networking**: Security groups and cluster access configuration
+
+**Key Files**:
+```
+cluster/
+├── main.tf                    # Multi-cluster EKS resources
+├── variables.tf               # Input variables and configuration
+├── locals.tf                  # Local values and cluster definitions
+├── providers.tf               # AWS provider configuration
+├── deploy.sh                  # Deployment script
+└── destroy.sh                 # Cleanup script
+```
+
+### Common Module (`platform/infra/terraform/common/`)
+**Purpose**: Platform addons and services deployed across all clusters
+
+**Key Resources**:
+- **ArgoCD GitOps Controller**: Continuous deployment management (hub cluster)
+- **Backstage Developer Portal**: Service catalog and software templates (hub cluster)
+- **Keycloak Identity Provider**: SSO and OIDC authentication (hub cluster)
+- **External Secrets Operator**: AWS Secrets Manager integration (all clusters)
+- **ACK Controllers**: AWS resource management from Kubernetes (all clusters)
+- **Pod Identity Associations**: IAM roles for service accounts (all clusters)
+- **Ingress Controllers**: Traffic routing and SSL termination (all clusters)
 
 **Key Files**:
 ```
 common/
-├── main.tf                    # Main infrastructure resources
-├── variables.tf               # Input variables and configuration
-├── outputs.tf                 # Output values for other modules
-├── versions.tf                # Provider version constraints
-├── github.tf                  # GitHub integration (optional)
-└── backend.tf                 # S3 backend configuration
-```
-
-### Hub Module (`platform/infra/terraform/hub/`)
-**Purpose**: Central platform services and GitOps control plane
-
-**Key Resources**:
-- **Backstage Developer Portal**: Service catalog and software templates
-- **ArgoCD GitOps Controller**: Continuous deployment management
-- **Keycloak Identity Provider**: SSO and OIDC authentication
-- **External Secrets Operator**: AWS Secrets Manager integration
-- **Ingress Controllers**: Traffic routing and SSL termination
-- **Monitoring Stack**: CloudWatch integration and observability
-
-**Key Files**:
-```
-hub/
-├── main.tf                    # Hub cluster configuration
-├── backstage.tf               # Backstage setup and configuration
+├── main.tf                    # Main addon resources
 ├── argocd.tf                  # ArgoCD installation and setup
-├── keycloak.tf                # Identity management configuration
-├── external-secrets.tf       # Secret management setup
-└── ingress.tf                 # Load balancer and routing
+├── pod-identity.tf            # ACK controllers and IAM roles
+├── iam.tf                     # Cross-cluster IAM configuration
+├── secrets.tf                 # External Secrets setup
+├── variables.tf               # Input variables
+├── locals.tf                  # Shared configuration
+├── deploy.sh                  # Deployment script
+└── destroy.sh                 # Cleanup script
 ```
-
-### Spokes Module (`platform/infra/terraform/spokes/`)
-**Purpose**: Application workload environments (staging, production)
-
-**Key Resources**:
-- **Separate EKS Clusters**: Isolated environments for applications
-- **ArgoCD Registration**: Connection to hub cluster GitOps
-- **Environment-Specific Networking**: Workload-appropriate configurations
-- **Application Monitoring**: Environment-specific observability
-- **Workload Security**: RBAC and network policies
 
 ## GitOps Architecture
 
@@ -1270,23 +1710,24 @@ AWS Secrets Manager → External Secrets Operator → Kubernetes Secrets → App
 
 > **⚠️ IMPORTANT: Always use deployment scripts, never run terraform commands directly**
 >
-> Each Terraform stack (common, hub, spokes) has dedicated `deploy.sh` and `destroy.sh` scripts that handle:
+> Each Terraform stack (cluster, common) has dedicated `deploy.sh` and `destroy.sh` scripts that handle:
 > - Proper environment variable setup
 > - Backend configuration and initialization  
 > - State management and locking
 > - Error handling and cleanup
-> - Workspace management for spokes
+> - Workspace management for multi-cluster deployments
 >
 > **✅ Correct usage:**
 > ```bash
-> # Deploy hub cluster
-> cd platform/infra/terraform/hub && ./deploy.sh
+> # Deploy clusters (hub, dev, prod)
+> cd platform/infra/terraform/cluster && ./deploy.sh
 > 
-> # Deploy spoke cluster  
-> cd platform/infra/terraform/spokes && ./deploy.sh dev
+> # Deploy addons to all clusters
+> cd platform/infra/terraform/common && ./deploy.sh
 > 
 > # Destroy resources
-> cd platform/infra/terraform/hub && ./destroy.sh
+> cd platform/infra/terraform/common && ./destroy.sh
+> cd platform/infra/terraform/cluster && ./destroy.sh
 > ```
 >
 > **❌ Never use direct terraform commands:**
@@ -1296,8 +1737,24 @@ AWS Secrets Manager → External Secrets Operator → Kubernetes Secrets → App
 > terraform apply
 > ```
 
-### Phase 1: Common Infrastructure
-Executed by CodeBuild from bootstrap infrastructure:
+### Phase 1: Cluster Infrastructure
+Creates EKS clusters for hub and spoke environments:
+
+```bash
+# Use the deployment script (handles init, plan, apply)
+cd platform/infra/terraform/cluster
+./deploy.sh
+```
+
+**Creates**:
+- Hub cluster (control-plane environment)
+- Dev spoke cluster 
+- Prod spoke cluster
+- VPC and networking for each cluster
+- Basic EKS configuration and node groups
+
+### Phase 2: Platform Addons
+Deploys platform services and addons to all clusters:
 
 ```bash
 # Use the deployment script (handles init, plan, apply)
@@ -1306,43 +1763,14 @@ cd platform/infra/terraform/common
 ```
 
 **Creates**:
-- VPC with multi-AZ subnets
-- EKS cluster with managed node groups
-- S3 backend for state management
-- IAM roles and policies
-- Core Kubernetes addons
+- ArgoCD GitOps controller (hub cluster)
+- Backstage developer portal (hub cluster)
+- Keycloak identity provider (hub cluster)
+- External Secrets Operator (all clusters)
+- ACK controllers and IAM roles (all clusters)
+- Ingress and networking addons (all clusters)
 
-### Phase 2: Hub Cluster Services
-Deploys platform services to the hub cluster:
-
-```bash
-# Use the deployment script (handles init, plan, apply)
-cd platform/infra/terraform/hub
-./deploy.sh
-```
-
-**Creates**:
-- ArgoCD GitOps controller
-- Backstage developer portal
-- Keycloak identity provider
-- External Secrets Operator
-- Ingress and networking
-
-### Phase 3: Spoke Clusters (Optional)
-Deploys application environments:
-
-```bash
-# Use the deployment script with environment parameter
-cd platform/infra/terraform/spokes
-./deploy.sh dev
-```
-
-**Creates**:
-- Separate EKS clusters for staging/production
-- ArgoCD registration with hub cluster
-- Environment-specific configurations
-
-### Phase 4: GitOps Applications
+### Phase 3: GitOps Applications
 ArgoCD automatically deploys applications based on Git configurations:
 
 ```
@@ -1514,11 +1942,11 @@ This architecture provides a production-ready platform engineering solution that
 
 ### Key Commands
 ```bash
-# Deploy hub cluster
-cd platform/infra/terraform/hub && ./deploy.sh
+# Deploy clusters
+cd platform/infra/terraform/cluster && ./deploy.sh
 
-# Deploy spoke staging
-cd platform/infra/terraform/spokes && TFSTATE_BUCKET_NAME=tcat-{resource_prefix}-test--tfstatebackendbucketf0fc-8s2mpevyblwi ./deploy.sh staging
+# Deploy addons
+cd platform/infra/terraform/common && ./deploy.sh
 
 # Git push to both remotes
 git push origin cdk-fleet:main
@@ -1718,18 +2146,119 @@ The platform uses AWS Controllers for Kubernetes (ACK) to manage AWS resources f
 The hub cluster runs ACK controllers that manage resources across multiple AWS accounts and clusters:
 
 **Pod Identity Associations**:
-- `ack-eks-controller` → `peeks-ack-eks-controller-role-mgmt`
-- `ack-ec2-controller` → `peeks-ack-ec2-controller-role-mgmt`  
-- `ack-iam-controller` → `peeks-ack-iam-controller-role-mgmt`
-- `ack-ecr-controller` → `peeks-ack-ecr-controller-role-mgmt`
-- `ack-s3-controller` → `peeks-ack-s3-controller-role-mgmt`
-- `ack-dynamodb-controller` → `peeks-ack-dynamodb-controller-role-mgmt`
+- `ack-eks-controller` → `peeks-ack-eks-controller-role-hub`
+- `ack-ec2-controller` → `peeks-ack-ec2-controller-role-hub`  
+- `ack-iam-controller` → `peeks-ack-iam-controller-role-hub`
+- `ack-ecr-controller` → `peeks-ack-ecr-controller-role-hub`
+- `ack-s3-controller` → `peeks-ack-s3-controller-role-hub`
+- `ack-dynamodb-controller` → `peeks-ack-dynamodb-controller-role-hub`
 
-#### Cross-Account Role Assumption
-ACK controllers use a **role chaining pattern** for cross-account access:
+#### Cross-Cluster Role Assumption
+ACK controllers use a **role chaining pattern** for cross-cluster resource management:
 
-1. **Pod Identity Role** (e.g., `peeks-ack-eks-controller-role-mgmt`) - Base role with EKS Pod Identity trust
-2. **Management Role** (e.g., `peeks-hub-cluster-cluster-mgmt-eks`) - Target role with actual AWS permissions
+1. **Pod Identity Role** (e.g., `peeks-ack-eks-controller-role-hub`) - Base role with EKS Pod Identity trust
+2. **Workload Role** (e.g., `peeks-cluster-mgmt-peeks-spoke-staging-eks`) - Target role with actual AWS permissions
+
+### ACK Workload Roles in Kro EKS Template
+
+#### Problem: Missing Workload Roles
+When creating EKS clusters using the Kro template, ACK controllers from the hub cluster need to assume workload roles in the target cluster's account. These roles were missing from the original Kro template, causing errors like:
+
+```
+AccessDenied: User: arn:aws:sts::012345678910:assumed-role/peeks-ack-eks-controller-role-hub/eks-peeks-hub-eks-chart--12b046f1-c070-47d9-bed8-569d085a5782 is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::012345678910:role/peeks-cluster-mgmt-peeks-spoke-staging-eks
+```
+
+#### Solution: Added ACK Workload Roles to Kro Template
+The Kro EKS template (`gitops/addons/charts/kro/resource-groups/manifests/eks/rg-eks.yaml`) now includes workload roles for all ACK services:
+
+**Added Workload Roles**:
+- `peeks-cluster-mgmt-${cluster-name}-eks` - EKS cluster management
+- `peeks-cluster-mgmt-${cluster-name}-iam` - IAM role and policy management
+- `peeks-cluster-mgmt-${cluster-name}-ec2` - EC2 resource management
+- `peeks-cluster-mgmt-${cluster-name}-ecr` - ECR repository management
+- `peeks-cluster-mgmt-${cluster-name}-s3` - S3 bucket management
+- `peeks-cluster-mgmt-${cluster-name}-dynamodb` - DynamoDB table management
+
+#### Workload Role Configuration Example
+```yaml
+- id: ackEksWorkloadRole
+  template:
+    apiVersion: iam.services.k8s.aws/v1alpha1
+    kind: Role
+    metadata:
+      namespace: "${schema.spec.name}"
+      name: "peeks-cluster-mgmt-${schema.spec.name}-eks"
+    spec:
+      name: "peeks-cluster-mgmt-${schema.spec.name}-eks"
+      policies:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+      assumeRolePolicyDocument: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "arn:aws:iam::${schema.spec.accountId}:role/peeks-ack-eks-controller-role-hub"
+              },
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession"
+              ]
+            }
+          ]
+        }
+```
+
+#### Trust Policy Pattern
+Each workload role trusts the corresponding hub ACK controller role:
+- **EKS Workload Role** trusts `peeks-ack-eks-controller-role-hub`
+- **IAM Workload Role** trusts `peeks-ack-iam-controller-role-hub`
+- **EC2 Workload Role** trusts `peeks-ack-ec2-controller-role-hub`
+- etc.
+
+### Comparison: Terraform vs Kro Approach
+
+#### Terraform-Created Clusters
+For clusters created with Terraform, workload roles are created in `platform/infra/terraform/common/pod-identity.tf`:
+
+```hcl
+# Workload roles for ACK controllers
+resource "aws_iam_role" "ack_workload_roles" {
+  for_each = local.ack_services
+  
+  name = "${var.resource_prefix}-cluster-mgmt-${var.cluster_key}-${each.key}"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.resource_prefix}-ack-${each.key}-controller-role-hub"
+        }
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+      }
+    ]
+  })
+}
+```
+
+#### Kro EKS Template Approach
+For clusters created with Kro, workload roles are now created as part of the EKS cluster resource definition:
+
+```yaml
+# Workload roles created by Kro RGD
+resources:
+  - id: ackEksWorkloadRole
+    template:
+      apiVersion: iam.services.k8s.aws/v1alpha1
+      kind: Role
+      # ... role definition
+```
 
 ### ACK Role Team Map Configuration
 
@@ -1744,7 +2273,7 @@ metadata:
   namespace: ack-system
 data:
   # Format: namespace-name: "target-role-arn"
-  peeks-spoke-staging: "arn:aws:iam::665742499430:role/peeks-hub-cluster-cluster-mgmt-eks"
+  peeks-spoke-staging: "arn:aws:iam::012345678910:role/peeks-cluster-mgmt-peeks-spoke-staging-eks"
 ```
 
 #### Multi-Account Template
@@ -1758,9 +2287,12 @@ metadata:
   namespace: ack-system
 data:
   {{- range $key, $value := .Values.clusters }}
-  ec2.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-ec2"
-  eks.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-eks"
-  iam.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-iam"
+  ec2.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-ec2"
+  eks.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-eks"
+  iam.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-iam"
+  ecr.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-ecr"
+  s3.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-s3"
+  dynamodb.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-{{ $key }}-dynamodb"
   {{- end }}
 ```
 
@@ -1769,7 +2301,7 @@ Clusters are defined in `/gitops/addons/tenants/tenant1/default/addons/multi-acc
 
 ```yaml
 clusters:
-  peeks-spoke-staging: "<account-id>"
+  peeks-spoke-staging: "012345678910"
   # Add more clusters as needed
 ```
 
@@ -1796,12 +2328,19 @@ ACK controller roles must trust the EKS Pod Identity service:
 }
 ```
 
-#### Cross-Account Role Chain
-1. **EKS Pod Identity** assumes `peeks-ack-eks-controller-role-mgmt`
-2. **ACK Controller** assumes `peeks-hub-cluster-cluster-mgmt-eks` (via role mapping)
-3. **Management Role** has permissions to create/manage AWS resources
+#### Cross-Cluster Role Chain
+1. **EKS Pod Identity** assumes `peeks-ack-eks-controller-role-hub`
+2. **ACK Controller** assumes `peeks-cluster-mgmt-peeks-spoke-staging-eks` (via role mapping)
+3. **Workload Role** has permissions to create/manage AWS resources
 
 ### Troubleshooting Common Issues
+
+#### Issue: "User is not authorized to perform: sts:AssumeRole"
+**Cause**: Missing workload role or incorrect trust policy
+**Solution**: 
+1. For Kro clusters: Ensure workload roles are added to the RGD template
+2. For Terraform clusters: Verify workload roles exist in pod-identity.tf
+3. Check trust policy allows the hub ACK controller role to assume the workload role
 
 #### Issue: "User is not authorized to perform: sts:TagSession"
 **Cause**: Role trust policy missing `sts:TagSession` permission
@@ -1835,10 +2374,10 @@ kubectl patch configmap ack-role-team-map -n ack-system ...
 ```
 
 #### 2. Consistent Role Naming
-Follow the established naming pattern for management roles:
-- `{resource-prefix}-cluster-mgmt-eks` for EKS permissions
-- `{resource-prefix}-cluster-mgmt-ec2` for EC2 permissions  
-- `{resource-prefix}-cluster-mgmt-iam` for IAM permissions
+Follow the established naming pattern for workload roles:
+- `{resource-prefix}-cluster-mgmt-{cluster-name}-eks` for EKS permissions
+- `{resource-prefix}-cluster-mgmt-{cluster-name}-ec2` for EC2 permissions  
+- `{resource-prefix}-cluster-mgmt-{cluster-name}-iam` for IAM permissions
 
 #### 3. Namespace-Based Isolation
 Use Kubernetes namespaces to isolate resources by environment/cluster:
@@ -1870,20 +2409,20 @@ metadata:
 #### Role Mapping Flow
 1. **Kro** creates ACK resources in namespace `peeks-spoke-staging`
 2. **ACK Controller** looks up `peeks-spoke-staging` in `ack-role-team-map`
-3. **ACK Controller** assumes role `peeks-hub-cluster-cluster-mgmt-eks`
-4. **Management Role** creates AWS resources (EKS cluster, VPC, etc.)
+3. **ACK Controller** assumes role `peeks-cluster-mgmt-peeks-spoke-staging-eks`
+4. **Workload Role** creates AWS resources (EKS cluster, VPC, etc.)
 
 ### Security Considerations
 
 #### Least Privilege Access
-Management roles should have minimal permissions for their specific service:
-- EKS management role: Only EKS, EC2 (for nodes), IAM (for service roles)
-- ECR management role: Only ECR repository management
-- S3 management role: Only S3 bucket operations
+Workload roles should have minimal permissions for their specific service:
+- EKS workload role: Only EKS, EC2 (for nodes), IAM (for service roles)
+- ECR workload role: Only ECR repository management
+- S3 workload role: Only S3 bucket operations
 
 #### Cross-Account Boundaries
 When managing resources across AWS accounts:
-1. Create management roles in each target account
+1. Create workload roles in each target account
 2. Update role mappings to point to correct account ARNs
 3. Ensure hub cluster ACK roles can assume cross-account roles
 
@@ -1891,5 +2430,14 @@ When managing resources across AWS accounts:
 - Enable CloudTrail for role assumption events
 - Monitor ACK controller metrics and logs
 - Set up alerts for failed role assumptions
+
+### Summary of Changes
+
+The addition of ACK workload roles to the Kro EKS template ensures that:
+
+1. **Terraform and Kro approaches are consistent** - Both create the necessary workload roles
+2. **ACK controllers can manage cross-cluster resources** - Hub controllers can assume roles in spoke clusters
+3. **Security is maintained** - Each service has dedicated roles with appropriate permissions
+4. **GitOps patterns are preserved** - All configuration is managed through Git and ArgoCD
 
 This architecture provides secure, scalable multi-cluster resource management while maintaining clear separation of concerns and following AWS security best practices.
