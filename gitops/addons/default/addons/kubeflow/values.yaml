@@ -1,75 +1,36 @@
-kubeflow:
-  # Kubeflow version to deploy
-  version: 'v1.8.0'
+global:
+  ingress_domain_name: ""  # Will be set dynamically
 
-  # Central Dashboard configuration
+kubeflow:
+  components:
+    pipelines:
+      enabled: true
+    notebooks:
+      enabled: true
+    katib:
+      enabled: true
+    trainingOperator:
+      enabled: true
+    serving:
+      enabled: true
+    centralDashboard:
+      enabled: true
+  
   centralDashboard:
     oidc:
-      issuer: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform
       clientId: kubeflow
-      clientSecret: # Will be provided via External Secrets
-      authUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/auth
-      tokenUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/token
-      userinfoUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/userinfo
-      scopes: 'profile email groups'
-      usernameKey: preferred_username
-      groupsKey: groups
-
-  # Ingress configuration
+      clientSecret: ""  # Will be provided via External Secrets
+      issuer: ""  # Will be set dynamically
+      authUrl: ""  # Will be set dynamically
+      tokenUrl: ""  # Will be set dynamically
+      userinfoUrl: ""  # Will be set dynamically
+      
   ingress:
     enabled: true
     className: nginx
-    annotations:
-      kubernetes.io/ingress.class: nginx
-      nginx.ingress.kubernetes.io/rewrite-target: /$2
-      nginx.ingress.kubernetes.io/use-regex: 'true'
-      nginx.ingress.kubernetes.io/proxy-body-size: '0'
-      nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
-      nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
-    host: '{{ .Values.global.ingress_domain_name }}'
+    host: ""  # Will be set dynamically
     path: /kubeflow(/|$)(.*)
     pathType: ImplementationSpecific
-
-  # Components configuration
-  components:
-    # Kubeflow Pipelines
-    pipelines:
-      enabled: true
-
-    # Katib for hyperparameter tuning
-    katib:
-      enabled: true
-
-    # Training Operator
-    trainingOperator:
-      enabled: true
-
-    # Notebook Controller
-    notebookController:
-      enabled: true
-
-    # Volumes Web App
-    volumesWebApp:
-      enabled: true
-
-    # Tensorboard Controller
-    tensorboardController:
-      enabled: true
-
-  # Resource configuration
-  resources:
-    centralDashboard:
-      limits:
-        cpu: 500m
-        memory: 512Mi
-      requests:
-        cpu: 100m
-        memory: 128Mi
-
-    pipelines:
-      limits:
-        cpu: 1000m
-        memory: 1Gi
-      requests:
-        cpu: 200m
-        memory: 256Mi
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+      nginx.ingress.kubernetes.io/use-regex: "true"

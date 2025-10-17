@@ -15,7 +15,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: installer
-        image: kubeflownotebookswg/kustomize:v3.2.0
+        image: registry.k8s.io/kustomize/kustomize:v5.0.4-distroless
         command:
         - /bin/bash
         - -c

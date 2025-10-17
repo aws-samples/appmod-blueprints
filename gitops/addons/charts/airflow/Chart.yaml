@@ -5,5 +5,5 @@ type: application
 version: 0.1.0
 dependencies:
   - name: airflow
-    version: '1.15.0'
+    version: '1.18.0'
     repository: https://airflow.apache.org

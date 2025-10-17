@@ -1,70 +1,16 @@
 airflow:
   # Airflow configuration
-  images:
-    airflow:
-      repository: apache/airflow
-      tag: '2.10.2'
-      pullPolicy: IfNotPresent
+  image:
+    repository: apache/airflow
+    tag: '2.10.2'
+    pullPolicy: IfNotPresent
 
   # Executor configuration (using KubernetesExecutor for scalability)
   executor: KubernetesExecutor
 
-  # Webserver configuration with OIDC authentication
+  # Webserver configuration
   webserver:
     replicas: 1
-
-    # OIDC Authentication configuration
-    config: |
-      from airflow.configuration import conf
-      from flask_appbuilder.security.manager import AUTH_OAUTH
-
-      # Enable OAuth authentication
-      AUTH_TYPE = AUTH_OAUTH
-      AUTH_USER_REGISTRATION = True
-      AUTH_USER_REGISTRATION_ROLE = "Viewer"
-
-      # OIDC Configuration
-      OAUTH_PROVIDERS = [
-          {
-              'name': 'keycloak',
-              'token_key': 'access_token',
-              'icon': 'fa-key',
-              'remote_app': {
-                  'client_id': 'airflow',
-                  'client_secret': '{{ .Values.global.airflow_client_secret }}',
-                  'server_metadata_url': 'https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/.well-known/openid_connect_configuration',
-                  'client_kwargs': {
-                      'scope': 'openid profile email groups'
-                  }
-              }
-          }
-      ]
-
-      # Role mapping based on groups
-      AUTH_ROLES_MAPPING = {
-          "airflow-admin": ["Admin"],
-          "airflow-op": ["Op"],
-          "airflow-viewer": ["Viewer"],
-          "airflow-user": ["User"]
-      }
-
-      # Auto-assign roles based on groups
-      AUTH_ROLES_SYNC_AT_LOGIN = True
-      PERMANENT_SESSION_LIFETIME = 1800
-
-    # Environment variables for OIDC
-    env:
-      - name: AIRFLOW__WEBSERVER__AUTHENTICATE
-        value: 'True'
-      - name: AIRFLOW__WEBSERVER__AUTH_BACKEND
-        value: 'airflow.contrib.auth.backends.oidc_auth'
-      - name: AIRFLOW_CLIENT_SECRET
-        valueFrom:
-          secretKeyRef:
-            name: keycloak-clients
-            key: AIRFLOW_CLIENT_SECRET
-
-    # Resource configuration
     resources:
       limits:
         cpu: 1000m
@@ -72,28 +18,8 @@ airflow:
       requests:
         cpu: 200m
         memory: 512Mi
-
-    # Service configuration
     service:
       type: ClusterIP
-      port: 8080
-
-    # Ingress configuration
-    ingress:
-      enabled: true
-      web:
-        annotations:
-          kubernetes.io/ingress.class: nginx
-          nginx.ingress.kubernetes.io/rewrite-target: /$2
-          nginx.ingress.kubernetes.io/use-regex: 'true'
-          nginx.ingress.kubernetes.io/proxy-body-size: '0'
-          nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
-          nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
-        host: '{{ .Values.global.ingress_domain_name }}'
-        path: /airflow(/|$)(.*)
-        pathType: ImplementationSpecific
-        tls:
-          enabled: false
 
   # Scheduler configuration
   scheduler:
@@ -105,18 +31,6 @@ airflow:
       requests:
         cpu: 200m
         memory: 512Mi
-
-    # DAG processing configuration
-    dagProcessor:
-      enabled: true
-      replicas: 1
-      resources:
-        limits:
-          cpu: 500m
-          memory: 512Mi
-        requests:
-          cpu: 100m
-          memory: 256Mi
 
   # Triggerer configuration (for deferrable operators)
   triggerer:
@@ -130,11 +44,11 @@ airflow:
         cpu: 100m
         memory: 256Mi
 
-  # Worker configuration (for CeleryExecutor, disabled for KubernetesExecutor)
+  # Worker configuration (disabled for KubernetesExecutor)
   workers:
-    enabled: false
+    replicas: 0
 
-  # Flower configuration (for CeleryExecutor monitoring, disabled for KubernetesExecutor)
+  # Flower configuration (disabled for KubernetesExecutor)
   flower:
     enabled: false
 
@@ -166,56 +80,73 @@ airflow:
 
   # DAGs configuration
   dags:
-    # Git sync for DAGs (can be configured later)
     gitSync:
       enabled: false
-
-    # Persistent volume for DAGs
     persistence:
       enabled: true
       storageClassName: gp3
       size: 10Gi
-      accessMode: ReadWriteMany
 
-  # Logs configuration
+  # Logs configuration - disabled due to RWX requirement incompatible with EBS
   logs:
     persistence:
+      enabled: false
+
+  # Ingress configuration
+  ingress:
+    web:
       enabled: true
-      storageClassName: gp3
-      size: 20Gi
-      accessMode: ReadWriteOnce
+      annotations:
+        kubernetes.io/ingress.class: nginx
+        nginx.ingress.kubernetes.io/rewrite-target: /$2
+        nginx.ingress.kubernetes.io/use-regex: 'true'
+        nginx.ingress.kubernetes.io/proxy-body-size: '0'
+        nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
+        nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
+      pathType: ImplementationSpecific
+      tls:
+        enabled: false
 
-  # Configuration for Airflow
+  # Configuration for Airflow - using proper object structure
   config:
-    # Core configuration
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '16'
-    AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: '16'
-    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: '30'
-    AIRFLOW__CORE__KILLED_TASK_CLEANUP_TIME: '60'
-
-    # Webserver configuration
-    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
-    AIRFLOW__WEBSERVER__RBAC: 'true'
-    AIRFLOW__WEBSERVER__BASE_URL: 'https://{{ .Values.global.ingress_domain_name }}/airflow'
-
-    # Scheduler configuration
-    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: '300'
-    AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT: 'false'
-    AIRFLOW__SCHEDULER__MAX_TIS_PER_QUERY: '512'
-
-    # Kubernetes executor configuration
-    AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE: 'airflow'
-    AIRFLOW__KUBERNETES_EXECUTOR__WORKER_CONTAINER_REPOSITORY: 'apache/airflow'
-    AIRFLOW__KUBERNETES_EXECUTOR__WORKER_CONTAINER_TAG: '2.10.2'
-    AIRFLOW__KUBERNETES_EXECUTOR__DELETE_WORKER_PODS: 'true'
-    AIRFLOW__KUBERNETES_EXECUTOR__DELETE_WORKER_PODS_ON_FAILURE: 'false'
-
-    # Logging configuration
-    AIRFLOW__LOGGING__LOGGING_LEVEL: 'INFO'
-    AIRFLOW__LOGGING__FAB_LOGGING_LEVEL: 'WARN'
-    AIRFLOW__LOGGING__COLORED_CONSOLE_LOG: 'false'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION:
+      value: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES:
+      value: "false"
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG:
+      value: "16"
+    AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG:
+      value: "16"
+    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT:
+      value: "30"
+    AIRFLOW__CORE__KILLED_TASK_CLEANUP_TIME:
+      value: "60"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG:
+      value: "true"
+    AIRFLOW__WEBSERVER__RBAC:
+      value: "true"
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL:
+      value: "300"
+    AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT:
+      value: "false"
+    AIRFLOW__SCHEDULER__MAX_TIS_PER_QUERY:
+      value: "512"
+    AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE:
+      value: "airflow"
+    AIRFLOW__KUBERNETES_EXECUTOR__WORKER_CONTAINER_REPOSITORY:
+      value: "apache/airflow"
+    AIRFLOW__KUBERNETES_EXECUTOR__WORKER_CONTAINER_TAG:
+      value: "2.10.2"
+    AIRFLOW__KUBERNETES_EXECUTOR__DELETE_WORKER_PODS:
+      value: "true"
+    AIRFLOW__KUBERNETES_EXECUTOR__DELETE_WORKER_PODS_ON_FAILURE:
+      value: "false"
+    AIRFLOW__LOGGING__LOGGING_LEVEL:
+      value: "INFO"
+    AIRFLOW__LOGGING__FAB_LOGGING_LEVEL:
+      value: "WARN"
+    AIRFLOW__LOGGING__COLORED_CONSOLE_LOG:
+      value: "false"
 
   # Service accounts
   serviceAccount:
@@ -226,7 +157,6 @@ airflow:
   # RBAC configuration
   rbac:
     create: true
-    createSCCRoleBinding: false
 
   # Security context
   securityContext:
@@ -255,18 +185,19 @@ airflow:
   cleanup:
     enabled: true
     schedule: '0 1 * * *'
-    command: |
-      airflow db clean --clean-before-timestamp {{ ds }}
+    command:
+      - airflow
+      - db
+      - clean
+      - --clean-before-timestamp
+      - '$(date -d "7 days ago" +%Y-%m-%d)'
 
   # Monitoring and metrics
   statsd:
     enabled: false
 
-  # Extra pip packages (can be used to install additional dependencies)
-  extraPipPackages: []
-
   # Extra environment variables
-  extraEnv: []
+  extraEnv: null
 
   # Extra volumes and volume mounts
   extraVolumes: []
@@ -277,9 +208,3 @@ airflow:
 
   # Sidecar containers
   extraContainers: []
-
-# Global values (inherited from parent chart)
-global:
-  resourcePrefix: ''
-  ingress_domain_name: ''
-  airflow_client_secret: ''
