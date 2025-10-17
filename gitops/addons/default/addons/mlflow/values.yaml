@@ -11,12 +11,7 @@ mlflow:
       enabled: true
       type: oidc
       oidc:
-        issuer: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform
         clientId: mlflow
-        clientSecret: # Will be provided via External Secrets
-        authUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/auth
-        tokenUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/token
-        userinfoUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/userinfo
         scopes: 'openid profile email groups'
         usernameKey: preferred_username
         groupsKey: groups
@@ -74,8 +69,6 @@ mlflow:
       nginx.ingress.kubernetes.io/proxy-body-size: '0'
       nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
       nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
-    host: '{{ .Values.global.ingress_domain_name }}'
-    path: /mlflow(/|$)(.*)
     pathType: ImplementationSpecific
 
   # Security context

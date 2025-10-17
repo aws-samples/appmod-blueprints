@@ -5,13 +5,10 @@ jupyterhub:
         authenticator_class: generic-oauth
       GenericOAuthenticator:
         client_id: jupyterhub
-        client_secret: # Will be provided via External Secrets
-        oauth_callback_url: https://{{ .Values.global.ingress_domain_name }}/jupyterhub/hub/oauth_callback
-        authorize_url: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/auth
-        token_url: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/token
-        userdata_url: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/userinfo
-        username_key: preferred_username
-        claim_groups_key: groups
+        username_claim: preferred_username
+        auth_state_groups_key: groups
+        manage_groups: true
+        allow_all: true
         scope:
           - openid
           - profile
@@ -35,11 +32,6 @@ jupyterhub:
       kubernetes.io/ingress.class: nginx
       nginx.ingress.kubernetes.io/rewrite-target: /$2
       nginx.ingress.kubernetes.io/use-regex: 'true'
-    hosts:
-      - host: '{{ .Values.global.ingress_domain_name }}'
-        paths:
-          - path: /jupyterhub(/|$)(.*)
-            pathType: ImplementationSpecific
 
   singleuser:
     defaultUrl: '/lab'

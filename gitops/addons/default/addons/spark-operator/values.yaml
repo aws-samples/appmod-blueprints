@@ -1,7 +1,7 @@
 spark-operator:
   # Spark Operator configuration
   image:
-    repository: kubeflow/spark-operator
+    repository: gcr.io/spark-operator/spark-operator
     tag: v1beta2-1.6.0-3.5.0
     pullPolicy: IfNotPresent
 
@@ -55,12 +55,7 @@ spark-operator:
       enabled: true
       type: oidc
       oidc:
-        issuer: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform
         clientId: spark
-        clientSecret: # Will be provided via External Secrets
-        authUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/auth
-        tokenUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/token
-        userinfoUrl: https://{{ .Values.global.ingress_domain_name }}/keycloak/realms/platform/protocol/openid-connect/userinfo
         scopes: 'openid profile email groups'
         usernameKey: preferred_username
         groupsKey: groups
@@ -109,8 +104,6 @@ spark-operator:
         nginx.ingress.kubernetes.io/proxy-body-size: '0'
         nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
         nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
-      host: '{{ .Values.global.ingress_domain_name }}'
-      path: /spark(/|$)(.*)
       pathType: ImplementationSpecific
 
     # Security context

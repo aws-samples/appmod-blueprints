@@ -771,9 +771,33 @@ jupyterhub:
         operator: In
         values: ['true']
   valuesObject:
-    global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
-      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    jupyterhub:
+      hub:
+        config:
+          JupyterHub:
+            authenticator_class: oauthenticator.generic.GenericOAuthenticator
+            base_url: /jupyterhub/
+          ConfigurableHTTPProxy:
+            api_url: http://proxy-api:8001
+          GenericOAuthenticator:
+            client_id: jupyterhub
+            oauth_callback_url: 'https://{{.metadata.annotations.ingress_domain_name}}/jupyterhub/hub/oauth_callback'
+            authorize_url: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/auth'
+            token_url: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/token'
+            userdata_url: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/userinfo'
+            scope: ["openid", "profile", "email", "groups"]
+            username_claim: preferred_username
+            auth_state_groups_key: groups
+            manage_groups: true
+            auto_login: true
+        extraEnv:
+          OAUTH_CLIENT_SECRET:
+            valueFrom:
+              secretKeyRef:
+                name: keycloak-clients
+                key: JUPYTERHUB_CLIENT_SECRET
+      ingress:
+        enabled: false
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -800,8 +824,17 @@ kubeflow:
         values: ['true']
   valuesObject:
     global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    kubeflow:
+      centralDashboard:
+        oidc:
+          clientId: kubeflow
+          issuer: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform'
+          authUrl: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/auth'
+          tokenUrl: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/token'
+          userinfoUrl: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/userinfo'
+      ingress:
+        host: '{{.metadata.annotations.ingress_domain_name}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -1237,16 +1270,13 @@ mlflow:
   namespace: mlflow
   chartName: mlflow
   chartRepository: https://community-charts.github.io/helm-charts
-  defaultVersion: '0.7.19'
+  defaultVersion: '1.7.2'
   selector:
     matchExpressions:
       - key: enable_mlflow
         operator: In
         values: ['true']
-  valuesObject:
-    global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
-      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+  valuesObject: {}
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -1300,9 +1330,14 @@ airflow:
         operator: In
         values: ['true']
   valuesObject:
-    global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
-      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    airflow:
+      ingress:
+        web:
+          host: '{{.metadata.annotations.ingress_domain_name}}'
+          path: /airflow(/|$)(.*)
+      config:
+        AIRFLOW__WEBSERVER__BASE_URL:
+          value: 'https://{{.metadata.annotations.ingress_domain_name}}/airflow'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

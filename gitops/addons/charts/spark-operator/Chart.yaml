@@ -5,5 +5,5 @@ type: application
 version: 0.1.0
 dependencies:
   - name: spark-operator
-    version: '2.0.2'
+    version: '2.2.1'
     repository: https://kubeflow.github.io/spark-operator

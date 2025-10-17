@@ -284,10 +284,13 @@ data "http" "inline_policy" {
 
 # Create locals for ACK cluster-service combinations
 locals {
+  # Centralized list of ACK services
+  ack_services = ["iam", "ec2", "eks", "ecr", "s3", "dynamodb"]
+  
   ack_combinations = {
     for combination in flatten([
       for cluster_key, cluster_value in var.clusters : [
-        for service in ["iam", "ec2", "eks", "ecr", "s3", "dynamodb"] : {
+        for service in local.ack_services : {
           key           = "${cluster_key}-${service}"
           cluster_key   = cluster_key
           cluster_value = cluster_value
@@ -364,7 +367,7 @@ data "aws_iam_policy_document" "ack_controller_cross_account_policy" {
     effect  = "Allow"
     actions = ["sts:AssumeRole", "sts:TagSession"]
     resources = [
-      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-cluster-mgmt-${each.key}"
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-cluster-mgmt-${each.value.service}"
     ]
   }
 }
@@ -414,12 +417,12 @@ locals {
     ]
   }
 
-  # Combined structure for roles and policy attachments
+  # Create account-based workload resources (one per service, not per cluster)
   ack_workload_resources = {
-    for k, v in local.ack_combinations : k => {
-      combination   = v
-      policies      = lookup(local.ack_managed_policies, v.service, [])
-      inline_policy = lookup(local.ack_inline_policies, v.service, null)
+    for service in local.ack_services : service => {
+      service       = service
+      policies      = lookup(local.ack_managed_policies, service, [])
+      inline_policy = lookup(local.ack_inline_policies, service, null)
     }
   }
 }
@@ -435,7 +438,10 @@ resource "aws_iam_role" "ack_workload_role" {
       {
         Effect = "Allow"
         Principal = {
-          AWS = aws_iam_role.ack_controller[each.key].arn
+          AWS = [
+            for cluster_key, cluster_value in var.clusters :
+            aws_iam_role.ack_controller["${cluster_key}-${each.key}"].arn
+          ]
         }
         Action = ["sts:AssumeRole", "sts:TagSession"]
       }
@@ -452,15 +458,15 @@ resource "aws_iam_role_policy_attachment" "ack_workload_managed_policies" {
     for combo in flatten([
       for k, v in local.ack_workload_resources : [
         for policy in v.policies : {
-          combination_key = k
-          policy          = policy
-          key             = "${k}-${replace(policy, "/[^a-zA-Z0-9]/", "-")}"
+          service_key = k
+          policy      = policy
+          key         = "${k}-${replace(policy, "/[^a-zA-Z0-9]/", "-")}"
         }
       ]
     ]) : combo.key => combo
   }
 
-  role       = aws_iam_role.ack_workload_role[each.value.combination_key].name
+  role       = aws_iam_role.ack_workload_role[each.value.service_key].name
   policy_arn = each.value.policy
 }
 
@@ -471,7 +477,7 @@ resource "aws_iam_role_policy" "ack_workload_inline_policies" {
     if v.inline_policy != null
   }
 
-  name   = "ack-${each.value.combination.service}-workload-policy"
+  name   = "ack-${each.value.service}-workload-policy"
   role   = aws_iam_role.ack_workload_role[each.key].name
   policy = jsonencode(each.value.inline_policy)
 }
