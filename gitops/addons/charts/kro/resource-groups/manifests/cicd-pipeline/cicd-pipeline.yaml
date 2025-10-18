@@ -1523,12 +1523,45 @@ spec:
                      type: string
                      value:
                        - 'refs/heads/main'
-                   # Filter out commits from CI/CD pipeline to prevent circular dependency
-                   - path: body.commits.0.author.name
-                     type: string
-                     value:
-                       - 'CI/CD Pipeline'
-                     comparator: '!='
+                 # Filter out commits with changes for deployment folder
+                 # This will filter updates by CICD Pipeline and user changes to deployment as well
+                 script: |
+                  local commits = event.body.commits
+                  
+                  if commits == nil or #commits == 0 then
+                    return false
+                  end
+                  
+                  for i, commit in ipairs(commits) do
+                    -- Check added files
+                    if commit.added ~= nil then
+                      for j, file in ipairs(commit.added) do
+                        if not string.match(file, "^deployment/") then
+                          return true
+                        end
+                      end
+                    end
+                    
+                    -- Check modified files
+                    if commit.modified ~= nil then
+                      for j, file in ipairs(commit.modified) do
+                        if not string.match(file, "^deployment/") then
+                          return true
+                        end
+                      end
+                    end
+                    
+                    -- Check removed files
+                    if commit.removed ~= nil then
+                      for j, file in ipairs(commit.removed) do
+                        if not string.match(file, "^deployment/") then
+                          return true
+                        end
+                      end
+                    end
+                  end
+                  
+                  return false
           triggers:
              - template:
                  name: gitlab-workflow-trigger

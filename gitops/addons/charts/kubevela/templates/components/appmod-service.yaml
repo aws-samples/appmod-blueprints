@@ -253,10 +253,10 @@ spec:
         								{
         									name:  "test"
         									image: parameter.functionalGate.image
+        									command: ["sh"]
         									args: [
-        										"\(previewService):\(parameter.port)",
-        										"\(parameter.functionalGate.extraArgs)",
-
+        										"-c",
+        										"wget -qO- http://\(previewService):\(parameter.port)\(parameter.appPath)/ | grep -q '\(parameter.functionalGate.extraArgs)'"
         									]
         								},
         							]
@@ -282,10 +282,10 @@ spec:
         								{
         									name:  "test"
         									image: parameter.performanceGate.image
+        									command: ["sh"]
         									args: [
-        										"\(previewService):\(parameter.port)",
-        										"\(parameter.performanceGate.extraArgs)",
-
+        										"-c",
+        										"RESULT=$(ab -n 1000 -c 10 http://\(previewService):\(parameter.port)\(parameter.appPath)/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt \(parameter.performanceGate.extraArgs) ] && exit 0 || exit 1"
         									]
         								},
         							]
@@ -300,9 +300,9 @@ spec:
         }
 
         #QualityGate: {
-        	image:     string
-        	pause:     string
-        	extraArgs: *"" | string
+        	image:            string
+        	pause:            string
+        	extraArgs:        *"" | string
         }
 
         #MetricGate: {
@@ -326,6 +326,7 @@ spec:
         	port:             *80 | int
         	targetPort:       *8080 | int
         	serviceAccount:   *"default" | string
+        	appPath:          *"/" | string
         	env?:             [...{name: string, value: string}]
         	functionalGate?:  #QualityGate
         	performanceGate?: #QualityGate
