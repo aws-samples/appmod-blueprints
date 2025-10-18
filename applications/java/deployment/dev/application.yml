@@ -7,16 +7,21 @@ spec:
     - name: java-webservice
       type: appmod-service
       properties:
-        image: <image>
+        image: 667076712805.dkr.ecr.us-west-2.amazonaws.com/peeks/java:20251015-3c79499c-4861-49e9-acce-52aa81757ce7
         image_name: java-app
         port: 8080
+        targetPort: 8080
+        appPath: "/java-app"
+        env:
+          - name: APP_ENV
+            value: "DEV"
         # functionalGate:
         #   pause: "10s"
-        #   image: "public.ecr.aws/i8e1q7x5/appmod-javafunctest:latest"
+        #   image: "httpd:alpine"
         #   extraArgs: "red"
         # performanceGate:
         #   pause: "10s"
-        #   image: "public.ecr.aws/i8e1q7x5/javaperftest:latest"
+        #   image: "httpd:alpine"
         #   extraArgs: "160"
       traits:
         - type: path-based-ingress
@@ -25,4 +30,3 @@ spec:
             rewritePath: true
             http:
               /java-app: 8080
-        
