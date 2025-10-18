@@ -7,7 +7,7 @@ spec:
     - name: java-webservice
       type: appmod-service
       properties:
-        image: 667076712805.dkr.ecr.us-west-2.amazonaws.com/peeks/java:20251015-3c79499c-4861-49e9-acce-52aa81757ce7
+        image: <image>
         image_name: java-app
         port: 8080
         targetPort: 8080
