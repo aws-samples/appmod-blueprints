@@ -303,7 +303,6 @@ spec:
         	image:            string
         	pause:            string
         	extraArgs:        *"" | string
-        	successCondition?: string
         }
 
         #MetricGate: {
