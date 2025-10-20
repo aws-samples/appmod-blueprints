@@ -94,7 +94,7 @@ spec:
           title: Enable Ingress Class ALB
           type: boolean
           description: Enable Ingress Class ALB addon
-          default: true
+          default: false
         enableArgoRollouts:
           title: Enable Argo Rollouts
           type: boolean
@@ -109,12 +109,12 @@ spec:
           title: Enable External Secrets
           type: boolean
           description: Enable External Secrets addon
-          default: false
+          default: true
         enableKyverno:
           title: Enable Kyverno
           type: boolean
           description: Enable Kyverno addon
-          default: false
+          default: true
         enableKyvernoPolicies:
           title: Enable Kyverno Policies
           type: boolean
@@ -129,12 +129,12 @@ spec:
           title: Enable ACK IAM
           type: boolean
           description: Enable ACK IAM addon
-          default: false
+          default: true
         enableAckEks:
           title: Enable ACK EKS
           type: boolean
           description: Enable ACK EKS addon
-          default: false
+          default: true
         enableAckEfs:
           title: Enable ACK EFS
           type: boolean
@@ -145,6 +145,61 @@ spec:
           type: boolean
           description: Enable AWS EFS CSI Driver addon
           default: false
+        enableAckEc2:
+          title: Enable ACK EC2
+          type: boolean
+          description: Enable ACK EC2 addon
+          default: true
+        enableAckEcr:
+          title: Enable ACK ECR
+          type: boolean
+          description: Enable ACK ECR addon
+          default: true
+        enableAckS3:
+          title: Enable ACK S3
+          type: boolean
+          description: Enable ACK S3 addon
+          default: true
+        enableAckDynamodb:
+          title: Enable ACK DynamoDB
+          type: boolean
+          description: Enable ACK DynamoDB addon
+          default: true
+        enableCrossplane:
+          title: Enable Crossplane
+          type: boolean
+          description: Enable Crossplane addon
+          default: true
+        enableCrossplaneAws:
+          title: Enable Crossplane AWS
+          type: boolean
+          description: Enable Crossplane AWS addon
+          default: true
+        enableFlux:
+          title: Enable Flux
+          type: boolean
+          description: Enable Flux addon
+          default: true
+        enableIngressNginx:
+          title: Enable Ingress Nginx
+          type: boolean
+          description: Enable Ingress Nginx addon
+          default: true
+        enablePlatformManifests:
+          title: Enable Platform Manifests
+          type: boolean
+          description: Enable Platform Manifests addon
+          default: true
+        enableKubevela:
+          title: Enable KubeVela
+          type: boolean
+          description: Enable KubeVela addon
+          default: true
+        enableCertManager:
+          title: Enable Cert Manager
+          type: boolean
+          description: Enable Cert Manager addon
+          default: true
   steps:
     - id: fetchSystem
       name: Fetch System

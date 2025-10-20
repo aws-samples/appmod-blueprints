@@ -69,8 +69,18 @@ spec:
         enable_cert_manager: string | default="false"
         enable_ack_iam: string | default="true"
         enable_ack_eks: string | default="true"
+        enable_ack_ec2: string | default="false"
+        enable_ack_ecr: string | default="false"
+        enable_ack_s3: string | default="false"
+        enable_ack_dynamodb: string | default="false"
         enable_ack_efs: string | default="true"
         enable_aws_efs_csi_driver: string | default="true"
+        enable_crossplane: string | default="false"
+        enable_crossplane_aws: string | default="false"
+        enable_flux: string | default="false"
+        enable_ingress_nginx: string | default="false"
+        enable_platform_manifests: string | default="false"
+        enable_kubevela: string | default="false"
 
         adot_collector_namespace: string | default="adot-collector-kubeprometheus"
         adot_collector_service_account: string | default="adot-collector-kubeprometheus"
@@ -198,8 +208,18 @@ spec:
             enable_cert_manager: ${schema.spec.addons.enable_cert_manager}
             enable_ack_iam: ${schema.spec.addons.enable_ack_iam}
             enable_ack_eks: ${schema.spec.addons.enable_ack_eks}
+            enable_ack_ec2: ${schema.spec.addons.enable_ack_ec2}
+            enable_ack_ecr: ${schema.spec.addons.enable_ack_ecr}
+            enable_ack_s3: ${schema.spec.addons.enable_ack_s3}
+            enable_ack_dynamodb: ${schema.spec.addons.enable_ack_dynamodb}
             enable_ack_efs: ${schema.spec.addons.enable_ack_efs}
             enable_aws_efs_csi_driver: ${schema.spec.addons.enable_aws_efs_csi_driver}
+            enable_crossplane: ${schema.spec.addons.enable_crossplane}
+            enable_crossplane_aws: ${schema.spec.addons.enable_crossplane_aws}
+            enable_flux: ${schema.spec.addons.enable_flux}
+            enable_ingress_nginx: ${schema.spec.addons.enable_ingress_nginx}
+            enable_platform_manifests: ${schema.spec.addons.enable_platform_manifests}
+            enable_kubevela: ${schema.spec.addons.enable_kubevela}
 
             adot_collector_namespace: ${schema.spec.addons.adot_collector_namespace}
             adot_collector_service_account: ${schema.spec.addons.adot_collector_service_account}
