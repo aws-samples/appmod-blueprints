@@ -23,6 +23,8 @@ spec:
       adminRoleName: string
       fleetSecretManagerSecretNameSuffix: string
       domainName: string
+      resourcePrefix: string | default="peeks"
+      git_username: string | default="user1"
       aws_partition: string | default="aws"
       aws_dns_suffix: string | default="amazonaws.com"
       network:
@@ -103,6 +105,91 @@ spec:
 
 
   resources:
+
+    ###########################################################
+    # Security Groups for Ingress
+    ###########################################################
+    - id: ingressHttpSecurityGroup
+      template:
+        apiVersion: ec2.services.k8s.aws/v1alpha1
+        kind: SecurityGroup
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-ingress-http"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-ingress-http"
+          description: "HTTP from anywhere"
+          vpcID: ${schema.spec.network.vpcID}
+          ingressRules:
+            - fromPort: 80
+              toPort: 80
+              ipProtocol: tcp
+              ipRanges:
+                - cidrIP: "0.0.0.0/0"
+          egressRules:
+            - fromPort: 0
+              toPort: 0
+              ipProtocol: "-1"
+              ipRanges:
+                - cidrIP: "0.0.0.0/0"
+          tags:
+            - key: Name
+              value: "${schema.spec.name}-ingress-http"
+            - key: tenant
+              value: ${schema.spec.tenant}
+            - key: environment
+              value: ${schema.spec.environment}
+
+    - id: ingressHttpsSecurityGroup
+      template:
+        apiVersion: ec2.services.k8s.aws/v1alpha1
+        kind: SecurityGroup
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-ingress-https"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-ingress-https"
+          description: "HTTPS from anywhere"
+          vpcID: ${schema.spec.network.vpcID}
+          ingressRules:
+            - fromPort: 443
+              toPort: 443
+              ipProtocol: tcp
+              ipRanges:
+                - cidrIP: "0.0.0.0/0"
+          egressRules:
+            - fromPort: 0
+              toPort: 0
+              ipProtocol: "-1"
+              ipRanges:
+                - cidrIP: "0.0.0.0/0"
+          tags:
+            - key: Name
+              value: "${schema.spec.name}-ingress-https"
+            - key: tenant
+              value: ${schema.spec.tenant}
+            - key: environment
+              value: ${schema.spec.environment}
 
     ###########################################################
     # EKS Cluster
@@ -412,7 +499,9 @@ spec:
 
             fleet_secret_manager_secret_name: "${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}"
             ingress_name: "${schema.spec.name}-ingress"
-
+            ingress_security_groups: "${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}"
+            resource_prefix: "${schema.spec.resourcePrefix}"
+            git_username: "${schema.spec.git_username}"
             # karpenter_namespace: "${schema.spec.addons.karpenter_namespace}"
             # karpenter_node_iam_role_name: "${nodeRole.metadata.name}"
             # karpenter_service_account: "${schema.spec.addons.karpenter_service_account}"

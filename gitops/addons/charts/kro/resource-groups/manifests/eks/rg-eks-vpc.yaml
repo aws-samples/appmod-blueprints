@@ -22,6 +22,8 @@ spec:
       adminRoleName: string | default="Admin"
       fleetSecretManagerSecretNameSuffix: string | default="argocd-secret"
       domainName: string | default="cluster.example.com"
+      resourcePrefix: string | default="peeks"
+      git_username: string | default="user1"
       cidr:
         vpcCidr: string | default="10.0.0.0/16"
         publicSubnet1Cidr: string | default="10.0.1.0/24"
@@ -163,6 +165,8 @@ spec:
           adminRoleName: ${schema.spec.adminRoleName}
           fleetSecretManagerSecretNameSuffix: ${schema.spec.fleetSecretManagerSecretNameSuffix}
           domainName: ${schema.spec.domainName}
+          resourcePrefix: ${schema.spec.resourcePrefix}
+          git_username: ${schema.spec.git_username}
           network:
             vpcID: ${vpc.status.vpcID}
             subnets:
