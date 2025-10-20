@@ -1149,6 +1149,12 @@ spec:
                  envFrom:
                    - configMapRef:
                        name: ${schema.spec.name}-config
+                 resources:
+                   requests:
+                     memory: "4Gi"
+                     cpu: "1000m"
+                   limits:
+                     memory: "8Gi"
                  volumeMounts:
                    - name: docker-config
                      mountPath: /kaniko/.docker
@@ -1384,6 +1390,9 @@ spec:
 
     # Setup Workflow for initial configuration
     - id: setupworkflow
+      readyWhen:
+       - ${setupworkflow.metadata.name != ""}
+       #- ${setupworkflow.status.conditions.exists(x, x.type == 'Completed' && x.status == "True")}
       template:
        apiVersion: argoproj.io/v1alpha1
        kind: Workflow
@@ -1397,7 +1406,9 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+             # Implicit dependency on WorkflowTemplate
+             workflowtemplate-ref: ${provisioningworkflow.metadata.name}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-setup
@@ -1406,6 +1417,7 @@ spec:
           serviceAccountName: ${schema.spec.name}-sa
           workflowTemplateRef:
               name: ${schema.spec.name}-provisioning-workflow
+              namespace: ${schema.metadata.namespace}
           arguments:
              parameters:
                - name: application-name
@@ -1414,6 +1426,10 @@ spec:
                  value: ${schema.spec.aws.region}
     # Initial Build Workflow - triggers first build automatically after setup
     - id: initialbuildworkflow
+      readyWhen:
+       - ${initialbuildworkflow.metadata.name != ""}
+       #- ${initialbuildworkflow.status.?phase == "Succeeded"}
+       #- ${initialbuildworkflow.status.conditions.exists(x, x.?type == 'Completed' && x.status == "True")}
       template:
        apiVersion: argoproj.io/v1alpha1
        kind: Workflow
@@ -1427,7 +1443,9 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+             # Explicit dependency - reference setup workflow to create implicit dependency
+             kro.run/depends-on: ${setupworkflow.metadata.name}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-initial-build
@@ -1437,6 +1455,7 @@ spec:
           serviceAccountName: ${schema.spec.name}-sa
           workflowTemplateRef:
               name: ${schema.spec.name}-cicd-workflow
+              namespace: ${schema.metadata.namespace}
           arguments:
              parameters:
                - name: git-url
