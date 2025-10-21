@@ -15,13 +15,24 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: installer
-        image: registry.k8s.io/kustomize/kustomize:v5.0.4-distroless
+        image: ubuntu:22.04
         command:
         - /bin/bash
         - -c
         - |
           set -e
           echo "Installing Kubeflow {{ .Values.kubeflow.version }}..."
+          
+          # Install required tools
+          apt-get update && apt-get install -y curl git
+          
+          # Install kubectl
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && mv kubectl /usr/local/bin/
+          
+          # Install kustomize
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          mv kustomize /usr/local/bin/
           
           # Clone Kubeflow manifests
           git clone --branch {{ .Values.kubeflow.version }} https://github.com/kubeflow/manifests.git /tmp/manifests

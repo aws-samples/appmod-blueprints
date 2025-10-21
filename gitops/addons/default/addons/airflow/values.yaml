@@ -5,6 +5,14 @@ airflow:
     tag: '2.10.2'
     pullPolicy: IfNotPresent
 
+  # Fernet key for encryption
+  fernetKey: "Fernet.generate()"
+  createUserJob:
+    useHelmHooks: false
+  migrateDatabaseJob:
+    enabled: true
+    useHelmHooks: false
+
   # Executor configuration (using KubernetesExecutor for scalability)
   executor: KubernetesExecutor
 
@@ -59,24 +67,37 @@ airflow:
   # PostgreSQL database configuration
   postgresql:
     enabled: true
+    image:
+      registry: public.ecr.aws
+      repository: bitnami/postgresql
+      tag: "16.1.0"
     auth:
-      enablePostgresUser: true
-      postgresPassword: airflow
+      enablePostgresUser: false
       username: airflow
       password: airflow
       database: airflow
-    primary:
-      persistence:
-        enabled: true
-        storageClass: gp3
-        size: 20Gi
-      resources:
-        limits:
-          cpu: 1000m
-          memory: 1Gi
-        requests:
-          cpu: 200m
-          memory: 256Mi
+
+  # Database connection configuration
+  data:
+    metadataConnection:
+      user: airflow
+      pass: airflow
+      protocol: postgresql
+      host: ~
+      port: 5432
+      db: airflow
+      sslmode: disable
+  
+  # Airflow database connection
+  data:
+    metadataConnection:
+      user: airflow
+      pass: airflow
+      protocol: postgresql
+      host: ~
+      port: 5432
+      db: airflow
+      sslmode: disable
 
   # DAGs configuration
   dags:
@@ -95,6 +116,18 @@ airflow:
   # Ingress configuration
   ingress:
     web:
+      enabled: true
+      annotations:
+        kubernetes.io/ingress.class: nginx
+        nginx.ingress.kubernetes.io/rewrite-target: /$2
+        nginx.ingress.kubernetes.io/use-regex: 'true'
+        nginx.ingress.kubernetes.io/proxy-body-size: '0'
+        nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
+        nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
+      pathType: ImplementationSpecific
+      tls:
+        enabled: false
+    apiServer:
       enabled: true
       annotations:
         kubernetes.io/ingress.class: nginx

@@ -1542,8 +1542,7 @@ spec:
                      type: string
                      value:
                        - 'refs/heads/main'
-                 # Filter out commits with changes for deployment folder
-                 # This will filter updates by CICD Pipeline and user changes to deployment as well
+                 # Filter out commits from CI/CD pipeline and deployment-only changes
                  script: |
                   local commits = event.body.commits
                   
@@ -1552,31 +1551,49 @@ spec:
                   end
                   
                   for i, commit in ipairs(commits) do
+                    -- Block commits from CI/CD Pipeline (check commit message and author)
+                    if commit.message and string.match(commit.message, "^chore: update .* image to .*") then
+                      return false
+                    end
+                    if commit.author and commit.author.name == "CI/CD Pipeline" then
+                      return false
+                    end
+                    
+                    -- Check if commit has changes outside deployment folder
+                    local has_non_deployment_changes = false
+                    
                     -- Check added files
                     if commit.added ~= nil then
                       for j, file in ipairs(commit.added) do
                         if not string.match(file, "^deployment/") then
-                          return true
+                          has_non_deployment_changes = true
+                          break
                         end
                       end
                     end
                     
                     -- Check modified files
-                    if commit.modified ~= nil then
+                    if not has_non_deployment_changes and commit.modified ~= nil then
                       for j, file in ipairs(commit.modified) do
                         if not string.match(file, "^deployment/") then
-                          return true
+                          has_non_deployment_changes = true
+                          break
                         end
                       end
                     end
                     
                     -- Check removed files
-                    if commit.removed ~= nil then
+                    if not has_non_deployment_changes and commit.removed ~= nil then
                       for j, file in ipairs(commit.removed) do
                         if not string.match(file, "^deployment/") then
-                          return true
+                          has_non_deployment_changes = true
+                          break
                         end
                       end
+                    end
+                    
+                    if has_non_deployment_changes then
+                      return true
                     end
                   end
                   

@@ -32,22 +32,22 @@ spec:
         privateSubnet2Cidr: string | default="10.0.12.0/24"
       workloads: string | default="false" # Define if we want to deploy workloads application
       gitops:
-        addonsRepoBasePath: string | default="addons/"
+        addonsRepoBasePath: string | default="gitops/addons/"
         addonsRepoPath: string | default="bootstrap"
         addonsRepoRevision: string | default="main"
         addonsRepoUrl: string | default="https://github.com/allamand/eks-cluster-mgmt"
 
-        fleetRepoBasePath: string | default="fleet/"
+        fleetRepoBasePath: string | default="gitops/fleet/"
         fleetRepoPath: string | default="bootstrap"
         fleetRepoRevision: string | default="main"
         fleetRepoUrl: string | default="https://github.com/allamand/eks-cluster-mgmt"
 
-        platformRepoBasePath: string | default="platform/"
+        platformRepoBasePath: string | default="gitops/platform/"
         platformRepoPath: string | default="bootstrap"
         platformRepoRevision: string | default="main"
         platformRepoUrl: string | default="https://github.com/allamand/eks-cluster-mgmt"
 
-        workloadRepoBasePath: string | default="apps/"
+        workloadRepoBasePath: string | default="gitops/apps/"
         workloadRepoPath: string | default=""
         workloadRepoRevision: string | default="main"
         workloadRepoUrl: string | default="https://github.com/allamand/eks-cluster-mgmt"

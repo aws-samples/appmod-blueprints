@@ -56,6 +56,64 @@ tasks:
           --set repoURLGitBasePath="gitops/addons/"
         #grep -A 50 -B 5 "name: crossplane-aws"
 
+  test-airflow-chart:
+    desc: Test airflow helm chart for bitnami images and validate template rendering
+    cmds:
+      - echo "🔍 Testing airflow helm chart..."
+      - echo "Adding Apache Airflow repository..."
+      - helm repo add apache-airflow https://airflow.apache.org || true
+      - helm repo update
+      - echo "Building dependencies for airflow chart..."
+      - cd ./gitops/addons/charts/airflow && helm dependency build
+      - echo "Testing helm template rendering..."
+      - |
+        cd ./gitops/addons/charts/airflow && \
+        helm template airflow . \
+          -f ../../default/addons/airflow/values.yaml \
+          --set global.resourcePrefix=peeks \
+          --dry-run > /tmp/airflow-test.yaml
+      - echo "✅ Template rendering successful"
+      - echo "🔍 Checking for problematic bitnami images from docker.io..."
+      - |
+        if grep -E "image:.*docker\.io/bitnami|repository:.*docker\.io/bitnami" /tmp/airflow-test.yaml; then
+          echo "❌ Found problematic bitnami images from docker.io in airflow chart!"
+          exit 1
+        else
+          echo "✅ No problematic docker.io bitnami images found"
+        fi
+      - echo "📋 Images used in airflow chart:"
+      - grep -i "image:" /tmp/airflow-test.yaml | grep -v "imagePullPolicy" | sort | uniq
+      - rm -f /tmp/airflow-test.yaml
+  test-kubeflow-chart:
+    desc: Test kubeflow helm chart for bitnami images and validate template rendering
+    cmds:
+      - echo "🔍 Testing kubeflow helm chart..."
+      - echo "Testing helm template rendering..."
+      - |
+        cd ./gitops/addons/charts/kubeflow && \
+        helm template kubeflow . \
+          -f ../../default/addons/kubeflow/values.yaml \
+          --set global.resourcePrefix=peeks \
+          --set global.ingress_domain_name=example.com \
+          --dry-run > /tmp/kubeflow-test.yaml
+      - echo "✅ Template rendering successful"
+      - echo "🔍 Checking for bitnami images..."
+      - |
+        if grep -E "image:.*bitnami|repository:.*bitnami" /tmp/kubeflow-test.yaml; then
+          echo "❌ Found bitnami images in kubeflow chart!"
+          exit 1
+        else
+          echo "✅ No bitnami images found"
+        fi
+      - echo "📋 Images used in kubeflow chart:"
+      - grep -i "image:" /tmp/kubeflow-test.yaml | grep -v "imagePullPolicy" | sort | uniq
+      - rm -f /tmp/kubeflow-test.yaml
+    summary: |
+      Tests the kubeflow helm chart to ensure:
+      - Template renders without errors
+      - No bitnami images are used
+      - Lists all images used in the chart
+
   backstage-validate:
     desc: Validate Backstage configuration and check compilation
     dir: ./backstage
