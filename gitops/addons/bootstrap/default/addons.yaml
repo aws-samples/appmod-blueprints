@@ -771,6 +771,8 @@ jupyterhub:
         operator: In
         values: ['true']
   valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     jupyterhub:
       hub:
         config:
@@ -825,6 +827,7 @@ kubeflow:
   valuesObject:
     global:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     kubeflow:
       centralDashboard:
         oidc:
@@ -1291,7 +1294,9 @@ mlflow:
       - key: enable_mlflow
         operator: In
         values: ['true']
-  valuesObject: {}
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -1345,9 +1350,12 @@ airflow:
         operator: In
         values: ['true']
   valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     airflow:
       ingress:
-        web:
+        apiServer:
+          enabled: true
           host: '{{.metadata.annotations.ingress_domain_name}}'
           path: /airflow(/|$)(.*)
       config:

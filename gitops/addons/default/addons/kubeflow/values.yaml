@@ -1,7 +1,9 @@
 global:
   ingress_domain_name: ""  # Will be set dynamically
+  resourcePrefix: "{{.metadata.annotations.resource_prefix}}"
 
 kubeflow:
+  version: "v1.8.0"  # Kubeflow version to install
   components:
     pipelines:
       enabled: true
