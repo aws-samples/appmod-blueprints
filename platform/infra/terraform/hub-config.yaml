@@ -42,6 +42,7 @@ clusters:
       enable_crossplane: true
       enable_crossplane_aws: true
       enable_kro: true
+      enable_grafana_dashboards: true
       enable_kro_manifests: true
       enable_mutli_acct: true
       enable_kubevela: true

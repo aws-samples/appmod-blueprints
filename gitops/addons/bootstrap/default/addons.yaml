@@ -1043,6 +1043,18 @@ grafana:
   healthCheck:
     enabled: true
 
+grafana_dashboards:
+  enabled: false
+  namespace: grafana-operator
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/grafana-dashboards'
+  selector:
+    matchExpressions:
+      - key: enable_grafana_dashboards
+        operator: In
+        values: ['true']
+
+
 flux:
   enabled: false
   annotationsAppSet:
