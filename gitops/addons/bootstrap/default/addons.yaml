@@ -1143,6 +1143,8 @@ grafana:
 
 grafana-dashboards:
   enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after grafana-operator
   namespace: grafana-operator
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/grafana-dashboards'
