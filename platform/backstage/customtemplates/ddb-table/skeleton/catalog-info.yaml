@@ -1,0 +1,37 @@
+# skeleton/catalog-info.yaml
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{values.table_name}}
+  annotations:
+    github.com/project-slug: ${{values.table_name}}
+    argocd/app-name: ${{values.table_name}}
+    backstage.io/techdocs-ref: dir:.
+spec:
+  type: service
+  lifecycle: experimental
+  owner: guest
+  system: dynamodb-tables
+  providesApis:
+    - ${{values.table_name}}
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: ${{values.table_name}}
+  description: DynamoDB Table API
+spec:
+  type: dynamodb
+  lifecycle: experimental
+  owner: guest
+  system: dynamodb-tables
+  definition: |
+    {
+      "tableName": "${{values.table_name}}",
+      "partitionKey": {
+        "name": "${{values.partitionKeyName}}",
+        "type": "${{values.partitionKeyType}}"
+      },
+      "region": "${{values.region}}",
+      "environment": "${{values.environment}}"
+    }
