@@ -34,5 +34,9 @@ envsubst < promotiontask.yaml | kubectl apply -f -
 echo "Creating Kargo stages..."
 envsubst < stages.yaml | kubectl apply -f -
 
+# Deploy the git secrets
+echo "Creating Kargo stages..."
+envsubst < git-secret.yaml | kubectl apply -f -
+
 echo "Kargo configuration deployed successfully!"
 echo "You can now access the Kargo UI to monitor promotions."

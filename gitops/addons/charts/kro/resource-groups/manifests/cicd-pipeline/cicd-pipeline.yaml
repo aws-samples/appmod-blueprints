@@ -1135,7 +1135,6 @@ spec:
                    - --dockerfile={{workflow.parameters.dockerfile-path}}/Dockerfile
                    - --context=/workdir/source
                    - --destination=${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}
-                   - --destination=${ecrmainrepo.status.repositoryURI}:latest
                    - --cache=true
                    - --cache-repo=${ecrcacherepo.status.repositoryURI}
                    - --cache-ttl=24h
@@ -1187,9 +1186,17 @@ spec:
 
                      # Update various deployment file formats
                      echo "Debug: Application name is: ${schema.spec.application.name}"
-                     # Replace placeholder and existing ECR images
-                     find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: <image>|image: $IMAGE_URI|g"
-                     find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g"
+                     # Update image only for java applications in deployment/dev/application.yaml
+                     if [ "${schema.spec.application.name}" = "java" ]; then
+                       if [ -f "deployment/dev/application.yaml" ]; then
+                         sed -i "s|image: <image>|image: $IMAGE_URI|g" /tmp/repo/{{workflow.parameters.deployment-path}}/deployment/dev/application.yml
+                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" /tmp/repo/{{workflow.parameters.deployment-path}}/deployment/dev/application.yml
+                       fi
+                     else
+                       # Replace placeholder and existing ECR images for non-java applications
+                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: <image>|image: $IMAGE_URI|g"
+                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g"
+                     fi
 
                      # Show what changed
                      git diff

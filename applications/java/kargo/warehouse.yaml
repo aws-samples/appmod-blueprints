@@ -8,8 +8,4 @@ spec:
   subscriptions:
   - image:
       repoURL: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/peeks/java
-      imageSelectionStrategy: Lexical
-      allowTags: ^([a-f0-9]{40}|latest|v\d+\.\d+\.\d+.*)$
-  - git:
-      repoURL: ${GITLAB_URL}/${GIT_USERNAME}/java.git
-      branch: main
+      imageSelectionStrategy: NewestBuild
