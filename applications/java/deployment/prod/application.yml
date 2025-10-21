@@ -10,6 +10,11 @@ spec:
         image: <image>
         image_name: java-app
         port: 8080
+        targetPort: 8080
+        appPath: "/java-app"
+        env:
+          - name: APP_ENV
+            value: "PROD"
         functionalGate:
           pause: "10s"
           image: "httpd:alpine"
