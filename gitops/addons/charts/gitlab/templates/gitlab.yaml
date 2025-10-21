@@ -66,7 +66,7 @@ spec:
         env:
         - name: GITLAB_OMNIBUS_CONFIG
           value: |
-            external_url 'http://{{ .Values.domain_name }}'
+            external_url 'https://{{ .Values.domain_name }}'
             gitlab_rails['gitlab_shell_ssh_port'] = 22
             gitlab_rails['gitlab_shell_git_timeout'] = 800
             gitlab_rails['enabled_git_access_protocol'] = 'ssh'
@@ -79,6 +79,7 @@ spec:
             nginx['ssl_certificate_key'] = nil
             nginx['redirect_http_to_https'] = false
             nginx['listen_https'] = false
+            nginx['listen_port'] = 80
 
             # Disable Prometheus monitoring
             prometheus_monitoring['enable'] = false
@@ -115,8 +116,8 @@ spec:
             sidekiq['metrics_enabled'] = false
 
             # Puma
-            puma['worker_processes'] = 0
-            puma['per_worker_max_memory_mb'] = 1024
+            # puma['worker_processes'] = 0
+            # puma['per_worker_max_memory_mb'] = 1024
 
             # Reduce Redis resources
             redis['tcp_timeout'] = 60

@@ -4,6 +4,13 @@ controller:
     compute-full-forwarded-for: "true"
     use-proxy-protocol: "false"
     server-tokens: "false"
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  priorityClassName: system-cluster-critical
   service:
     type: LoadBalancer
     annotations:

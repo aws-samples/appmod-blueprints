@@ -113,7 +113,7 @@ data:
             "targets": [
               {
                 "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
-                "legendFormat": "{{instance}}"
+                "legendFormat": "{{ `{{instance}}` }}"
               }
             ],
             "fieldConfig": {
@@ -132,7 +132,7 @@ data:
             "targets": [
               {
                 "expr": "100 * (1 - ((node_memory_MemFree_bytes + node_memory_Cached_bytes + node_memory_Buffers_bytes) / node_memory_MemTotal_bytes))",
-                "legendFormat": "{{instance}}"
+                "legendFormat": "{{ `{{instance}}` }}"
               }
             ],
             "fieldConfig": {
@@ -339,7 +339,7 @@ data:
               "includeNullMetadata": true,
               "instant": false,
               "interval": "",
-              "legendFormat": "{{endpoint}}",
+              "legendFormat": "{{ `{{endpoint}}` }}",
               "range": true,
               "refId": "A",
               "useBackend": false

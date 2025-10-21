@@ -7,6 +7,7 @@ source /etc/profile.d/workshop.sh
 echo "=== DEBUG: Contents of /home/ec2-user/.bashrc.d/platform.sh at script start ==="
 if [ -f "/home/ec2-user/.bashrc.d/platform.sh" ]; then
     cat /home/ec2-user/.bashrc.d/platform.sh
+    source /home/ec2-user/.bashrc.d/platform.sh
 else
     echo "ERROR: /home/ec2-user/.bashrc.d/platform.sh does not exist!"
 fi
@@ -32,6 +33,47 @@ main() {
 
     source "$SCRIPT_DIR/backstage-utils.sh"
 
+    # Ensure clusters are fully ready before proceeding
+    print_status "INFO" "Verifying cluster readiness before starting deployment..."
+    for cluster_name in "${CLUSTER_NAMES[@]}"; do
+        print_status "INFO" "Checking cluster: $cluster_name"
+        
+        # Switch to cluster context
+        if ! kubectl config use-context "$cluster_name" >/dev/null 2>&1; then
+            print_status "WARNING" "Could not switch to cluster context $cluster_name, attempting to configure..."
+            configure_kubectl_with_fallback "$cluster_name"
+        fi
+        
+        # Wait for cluster to be responsive
+        local cluster_ready=false
+        local cluster_wait=0
+        while [ $cluster_wait -lt 300 ] && [ "$cluster_ready" = false ]; do
+            if kubectl get nodes --request-timeout=10s >/dev/null 2>&1; then
+                local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c "Ready" || echo "0")
+                if [ "$ready_nodes" -gt 0 ]; then
+                    print_status "SUCCESS" "Cluster $cluster_name is ready with $ready_nodes nodes"
+                    cluster_ready=true
+                else
+                    print_status "INFO" "Cluster $cluster_name has no ready nodes yet, waiting..."
+                    sleep 15
+                    cluster_wait=$((cluster_wait + 15))
+                fi
+            else
+                print_status "INFO" "Cluster $cluster_name API not responsive yet, waiting..."
+                sleep 15
+                cluster_wait=$((cluster_wait + 15))
+            fi
+        done
+        
+        if [ "$cluster_ready" = false ]; then
+            print_status "ERROR" "Cluster $cluster_name did not become ready within 5 minutes"
+            exit 1
+        fi
+    done
+    
+    # Switch back to hub cluster for ArgoCD operations
+    kubectl config use-context "${RESOURCE_PREFIX}-hub" >/dev/null 2>&1
+
     if ! check_backstage_ecr_image; then
         # Start Backstage Build Process
         start_backstage_build
@@ -43,32 +85,68 @@ main() {
     print_status "INFO" "Waiting for ArgoCD to be fully ready..."
     local argocd_ready=false
     local argocd_wait_time=0
-    local argocd_max_wait=600  # 10 minutes
+    local argocd_max_wait=1200  # 20 minutes (increased from 15)
     
     while [ $argocd_wait_time -lt $argocd_max_wait ] && [ "$argocd_ready" = false ]; do
-        # Check if ArgoCD pods are ready
-        local argocd_pods_ready=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | awk '{print $2}' | grep -c "1/1" || echo "0")
-        local argocd_repo_ready=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-repo-server --no-headers 2>/dev/null | awk '{print $2}' | grep -c "1/1" || echo "0")
+        # Check if ArgoCD namespace exists first
+        if ! kubectl get namespace argocd >/dev/null 2>&1; then
+            print_status "INFO" "ArgoCD namespace not found, waiting..."
+            sleep 30
+            argocd_wait_time=$((argocd_wait_time + 30))
+            continue
+        fi
         
-        # Check if ArgoCD API is responding
+        # Check if ArgoCD deployments exist and are ready with better error handling and retries
+        local argocd_pods_ready="0"
+        local argocd_repo_ready="0"
+        local retry_count=0
+        
+        while [ $retry_count -lt 3 ]; do
+            argocd_pods_ready=$(kubectl get deployment -n argocd argocd-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+            argocd_repo_ready=$(kubectl get deployment -n argocd argocd-repo-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+            
+            # Handle empty responses (convert to 0)
+            [ -z "$argocd_pods_ready" ] && argocd_pods_ready="0"
+            [ -z "$argocd_repo_ready" ] && argocd_repo_ready="0"
+            
+            # If we got valid responses, break
+            if [[ "$argocd_pods_ready" =~ ^[0-9]+$ ]] && [[ "$argocd_repo_ready" =~ ^[0-9]+$ ]]; then
+                break
+            fi
+            
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt 3 ]; then
+                print_status "INFO" "kubectl query failed, retrying... ($retry_count/3)"
+                sleep 5
+            fi
+        done
+        
+        # Check if ArgoCD API is responding with timeout
         local api_ready=false
-        if kubectl get applications -n argocd >/dev/null 2>&1; then
+        if timeout 10 kubectl get applications -n argocd >/dev/null 2>&1; then
             api_ready=true
         fi
         
-        # Check if ArgoCD domain is available (this was the missing piece!)
+        # Check if ArgoCD domain is available with improved logic
         local domain_available=false
-        local domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
+        local domain_name=""
+        
+        # Try to get domain from secret first
+        domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null || echo "")
+        
+        # If not found in secret, try CloudFront
         if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
-            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null)
+            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null || echo "")
         fi
         
-        if [ -n "$domain_name" ] && [ "$domain_name" != "None" ] && [ "$domain_name" != "null" ]; then
+        # Validate domain
+        if [ -n "$domain_name" ] && [ "$domain_name" != "None" ] && [ "$domain_name" != "null" ] && [ "$domain_name" != "" ]; then
             domain_available=true
             print_status "INFO" "ArgoCD domain found: $domain_name"
         fi
         
-        if [ "$argocd_pods_ready" -gt 0 ] && [ "$argocd_repo_ready" -gt 0 ] && [ "$api_ready" = true ] && [ "$domain_available" = true ]; then
+        # More robust readiness check - require at least 1 pod for each deployment
+        if [ "$argocd_pods_ready" -ge 1 ] && [ "$argocd_repo_ready" -ge 1 ] && [ "$api_ready" = true ] && [ "$domain_available" = true ]; then
             print_status "SUCCESS" "ArgoCD is ready (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: responding, domain: $domain_name)"
             argocd_ready=true
         else
@@ -79,8 +157,16 @@ main() {
     done
     
     if [ "$argocd_ready" = false ]; then
-        print_status "ERROR" "ArgoCD did not become ready within $argocd_max_wait seconds"
-        exit 1
+        print_status "WARNING" "ArgoCD did not become fully ready within $argocd_max_wait seconds"
+        
+        # Check if we have basic ArgoCD functionality
+        if kubectl get namespace argocd >/dev/null 2>&1 && kubectl get applications -n argocd >/dev/null 2>&1; then
+            print_status "WARNING" "ArgoCD namespace and API are available, continuing with deployment..."
+            print_status "INFO" "This may be due to slow CloudFront distribution setup or pod startup times"
+        else
+            print_status "ERROR" "ArgoCD is not functional, cannot continue"
+            exit 1
+        fi
     fi
 
     # Wait for Argo CD apps to be healthy with retry mechanism

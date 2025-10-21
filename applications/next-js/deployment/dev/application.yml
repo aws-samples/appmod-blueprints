@@ -11,6 +11,9 @@ spec:
         image_name: next-js-app
         port: 8080
         replicas: 1
+        env:
+          - name: API_BASE_URL
+            value: "http://rust-backend.team-rust.svc.cluster.local:80"
       traits:
         - type: path-based-ingress
           properties:

@@ -123,6 +123,19 @@ check_and_create_repo() {
   fi
 }
 
+set_gitlab_remote_for_peeks() {
+  rm -rf ~/environment/$WORKING_REPO
+  mkdir -p ~/environment/$WORKING_REPO
+  pushd ~/environment/$WORKING_REPO
+  
+  git config user.email "participants@workshops.aws"
+  git config user.name "Workshop Participant"
+  git clone https://$USERNAME:$GITLAB_TOKEN@$GITLAB_HOSTNAME/$USERNAME/$WORKING_REPO.git .
+  
+  popd
+  echo "GitLab remote set for ~/environment/$WORKING_REPO"
+}
+
 # Main execution
 echo "Starting GitLab application repositories initialization..."
 wait_for_gitlab
@@ -134,5 +147,5 @@ check_and_create_repo "golang"
 check_and_create_repo "java"
 check_and_create_repo "rust"
 check_and_create_repo "next-js"
-
-echo "All GitLab repositories created and checked out to ~/environment/applications/"
+set_gitlab_remote_for_peeks
+echo "All GitLab repositories created and checked out"

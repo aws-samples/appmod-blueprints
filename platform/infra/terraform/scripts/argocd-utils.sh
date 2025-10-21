@@ -194,26 +194,43 @@ wait_for_argocd_apps_health() {
             continue
         fi
         
-        # Check if ArgoCD server is responding
-        local argocd_server_ready=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | grep -c "1/1" || echo "0")
-        if [ "$argocd_server_ready" -eq 0 ]; then
-            print_warning "ArgoCD server not ready, waiting..."
+        # Check if ArgoCD server is responding with comprehensive pod check
+        local argocd_server_ready=0
+        local argocd_pods_running=0
+        
+        # Check deployment ready replicas
+        argocd_server_ready=$(kubectl get deployment -n argocd argocd-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+        [ -z "$argocd_server_ready" ] && argocd_server_ready="0"
+        
+        # Also check actual pod status
+        argocd_pods_running=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | grep -c "1/1.*Running" || echo "0")
+        
+        if [ "$argocd_server_ready" -eq 0 ] || [ "$argocd_pods_running" -eq 0 ]; then
+            print_warning "ArgoCD server not ready (deployment: $argocd_server_ready, running pods: $argocd_pods_running), waiting..."
             sleep $check_interval
             continue
         fi
         
-        # Check if ArgoCD domain is available (recalculate each time)
-        local domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
-        if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
-            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null)
+        # Check if ArgoCD domain is available (recalculate each time with improved error handling)
+        local domain_name=""
+        local domain_available=false
+        
+        # Try to get domain from secret first
+        domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null || echo "")
+        
+        # If not found in secret or empty, try CloudFront with timeout
+        if [ -z "$domain_name" ] || [ "$domain_name" = "null" ] || [ "$domain_name" = "" ]; then
+            domain_name=$(timeout 30 aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null || echo "")
         fi
         
-        if [ -z "$domain_name" ] || [ "$domain_name" = "None" ] || [ "$domain_name" = "null" ]; then
+        # Validate domain name
+        if [ -n "$domain_name" ] && [ "$domain_name" != "None" ] && [ "$domain_name" != "null" ] && [ "$domain_name" != "" ]; then
+            domain_available=true
+            print_info "ArgoCD domain found: $domain_name"
+        else
             print_warning "ArgoCD domain not available yet, waiting..."
             sleep $check_interval
             continue
-        else
-            print_info "ArgoCD domain found: $domain_name"
         fi
         
         # Check if applications exist

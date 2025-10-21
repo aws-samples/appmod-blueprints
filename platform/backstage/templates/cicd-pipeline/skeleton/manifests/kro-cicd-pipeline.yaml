@@ -19,8 +19,6 @@ metadata:
     argocd.argoproj.io/sync-wave: "1"
     # Prevent resource replacement during sync
     argocd.argoproj.io/sync-options: Replace=false
-    # ArgoCD hook for lifecycle management
-    argocd.argoproj.io/hook: Sync
 spec:
   name: ${{values.appname}}-cicd
   namespace: ${{values.namespace}}

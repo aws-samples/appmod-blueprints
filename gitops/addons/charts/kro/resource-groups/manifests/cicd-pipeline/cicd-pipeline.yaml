@@ -1135,7 +1135,6 @@ spec:
                    - --dockerfile={{workflow.parameters.dockerfile-path}}/Dockerfile
                    - --context=/workdir/source
                    - --destination=${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}
-                   - --destination=${ecrmainrepo.status.repositoryURI}:latest
                    - --cache=true
                    - --cache-repo=${ecrcacherepo.status.repositoryURI}
                    - --cache-ttl=24h
@@ -1149,6 +1148,12 @@ spec:
                  envFrom:
                    - configMapRef:
                        name: ${schema.spec.name}-config
+                 resources:
+                   requests:
+                     memory: "4Gi"
+                     cpu: "1000m"
+                   limits:
+                     memory: "8Gi"
                  volumeMounts:
                    - name: docker-config
                      mountPath: /kaniko/.docker
@@ -1181,9 +1186,17 @@ spec:
 
                      # Update various deployment file formats
                      echo "Debug: Application name is: ${schema.spec.application.name}"
-                     # Replace placeholder and existing ECR images
-                     find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: <image>|image: $IMAGE_URI|g"
-                     find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g"
+                     # Update image only for java applications in deployment/dev/application.yaml
+                     if [ "${schema.spec.application.name}" = "java" ]; then
+                       if [ -f "deployment/dev/application.yaml" ]; then
+                         sed -i "s|image: <image>|image: $IMAGE_URI|g" /tmp/repo/{{workflow.parameters.deployment-path}}/deployment/dev/application.yml
+                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" /tmp/repo/{{workflow.parameters.deployment-path}}/deployment/dev/application.yml
+                       fi
+                     else
+                       # Replace placeholder and existing ECR images for non-java applications
+                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: <image>|image: $IMAGE_URI|g"
+                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g"
+                     fi
 
                      # Show what changed
                      git diff
@@ -1384,6 +1397,9 @@ spec:
 
     # Setup Workflow for initial configuration
     - id: setupworkflow
+      readyWhen:
+       - ${setupworkflow.metadata.name != ""}
+       #- ${setupworkflow.status.conditions.exists(x, x.type == 'Completed' && x.status == "True")}
       template:
        apiVersion: argoproj.io/v1alpha1
        kind: Workflow
@@ -1397,7 +1413,9 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+             # Implicit dependency on WorkflowTemplate
+             workflowtemplate-ref: ${provisioningworkflow.metadata.name}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-setup
@@ -1406,12 +1424,62 @@ spec:
           serviceAccountName: ${schema.spec.name}-sa
           workflowTemplateRef:
               name: ${schema.spec.name}-provisioning-workflow
+              namespace: ${schema.metadata.namespace}
           arguments:
              parameters:
                - name: application-name
                  value: ${schema.spec.application.name}
                - name: aws-region
                  value: ${schema.spec.aws.region}
+    # Initial Build Workflow - triggers first build automatically after setup
+    - id: initialbuildworkflow
+      readyWhen:
+       - ${initialbuildworkflow.metadata.name != ""}
+       #- ${initialbuildworkflow.status.?phase == "Succeeded"}
+       #- ${initialbuildworkflow.status.conditions.exists(x, x.?type == 'Completed' && x.status == "True")}
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: Workflow
+       metadata:
+          name: ${schema.spec.name}-initial-build-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+             # Explicit dependency - reference setup workflow to create implicit dependency
+             kro.run/depends-on: ${setupworkflow.metadata.name}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-initial-build
+             app.kubernetes.io/managed-by: kro
+             triggered-by: initial-setup
+       spec:
+          serviceAccountName: ${schema.spec.name}-sa
+          workflowTemplateRef:
+              name: ${schema.spec.name}-cicd-workflow
+              namespace: ${schema.metadata.namespace}
+          arguments:
+             parameters:
+               - name: git-url
+                 value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}.git'
+               - name: git-revision
+                 value: 'main'
+               - name: git-username
+                 value: ${schema.spec.gitlab.username}
+               - name: git-token
+                 value: 'placeholder-will-use-env-var'
+               - name: repo-name
+                 value: '${schema.spec.application.name}'
+               - name: dockerfile-path
+                 value: ${schema.spec.application.dockerfilePath}
+               - name: deployment-path
+                 value: ${schema.spec.application.deploymentPath}
+
     # Argo Events EventSource for GitLab webhooks
     - id: eventsource
       template:
@@ -1481,12 +1549,62 @@ spec:
                      type: string
                      value:
                        - 'refs/heads/main'
-                   # Filter out commits from CI/CD pipeline to prevent circular dependency
-                   - path: body.commits.0.author.name
-                     type: string
-                     value:
-                       - 'CI/CD Pipeline'
-                     comparator: '!='
+                 # Filter out commits from CI/CD pipeline and deployment-only changes
+                 script: |
+                  local commits = event.body.commits
+                  
+                  if commits == nil or #commits == 0 then
+                    return false
+                  end
+                  
+                  for i, commit in ipairs(commits) do
+                    -- Block commits from CI/CD Pipeline (check commit message and author)
+                    if commit.message and string.match(commit.message, "^chore: update .* image to .*") then
+                      return false
+                    end
+                    if commit.author and commit.author.name == "CI/CD Pipeline" then
+                      return false
+                    end
+                    
+                    -- Check if commit has changes outside deployment folder
+                    local has_non_deployment_changes = false
+                    
+                    -- Check added files
+                    if commit.added ~= nil then
+                      for j, file in ipairs(commit.added) do
+                        if not string.match(file, "^deployment/") then
+                          has_non_deployment_changes = true
+                          break
+                        end
+                      end
+                    end
+                    
+                    -- Check modified files
+                    if not has_non_deployment_changes and commit.modified ~= nil then
+                      for j, file in ipairs(commit.modified) do
+                        if not string.match(file, "^deployment/") then
+                          has_non_deployment_changes = true
+                          break
+                        end
+                      end
+                    end
+                    
+                    -- Check removed files
+                    if not has_non_deployment_changes and commit.removed ~= nil then
+                      for j, file in ipairs(commit.removed) do
+                        if not string.match(file, "^deployment/") then
+                          has_non_deployment_changes = true
+                          break
+                        end
+                      end
+                    end
+                    
+                    if has_non_deployment_changes then
+                      return true
+                    end
+                  end
+                  
+                  return false
           triggers:
              - template:
                  name: gitlab-workflow-trigger
