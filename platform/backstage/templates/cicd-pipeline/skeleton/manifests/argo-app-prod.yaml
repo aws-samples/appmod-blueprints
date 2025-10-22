@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/component: argocd-application
     app.kubernetes.io/managed-by: backstage
     backstage.io/template-name: cicd-pipeline
-    kargo.akuity.io/authorized-stage: ${{values.appname}}-app-kargo-prod
+    kargo.akuity.io/authorized-stage: ${{values.appname}}-app-kargo:prod
   annotations:
     backstage.io/created-by: backstage-template
     cicd.kro.run/application-name: ${{values.appname}}
