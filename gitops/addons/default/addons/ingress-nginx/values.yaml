@@ -12,11 +12,15 @@ controller:
     limits:
       memory: 1Gi
   priorityClassName: system-cluster-critical
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
   topologySpreadConstraints:
     - maxSkew: 1
-      minDomains: 2
+      minDomains: 1
       topologyKey: topology.kubernetes.io/zone
-      whenUnsatisfiable: DoNotSchedule
+      whenUnsatisfiable: ScheduleAnyway
       labelSelector:
         matchLabels:
           app.kubernetes.io/name: ingress-nginx
