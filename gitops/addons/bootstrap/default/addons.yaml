@@ -1310,6 +1310,12 @@ mlflow:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    ingress:
+      hosts:
+        - host: '{{.metadata.annotations.ingress_domain_name}}'
+          paths:
+            - path: /mlflow(/|$)(.*)
+              pathType: ImplementationSpecific
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
