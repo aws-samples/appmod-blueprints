@@ -1,10 +1,9 @@
-# template.yaml
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: ddb-table-template-crossplane
-  title: DynamoDB Table Template Crossplane
-  description: Create DynamoDB table using OAM and CrossPlane
+  name: ddb-table-template
+  title: DynamoDB Table Template
+  description: Create DynamoDB table using OAM and ACK
 spec:
   owner: guest
   type: service
@@ -25,21 +24,12 @@ spec:
           title: Environment
           type: string
           description: The environment (e.g., dev, prod)
-          enum: ["dev", "prod"]
-        provider:
-          title: Provider
-          type: string
-          description: Provider Configuration
-          default: default
+          enum: ['dev', 'prod']
         region:
           title: Region
           type: string
           description: AWS region for the DynamoDB table
           default: us-west-2
-        namespace:
-          default: default
-          title: Existing namespace to create this resource
-          type: string
         attribute_name:
           title: Primary Key Attribute Name
           type: string
@@ -49,8 +39,12 @@ spec:
           title: Primary Key Attribute Type
           type: string
           description: Type of the primary key attribute
-          enum: ["S", "N", "B"]
+          enum: ['S', 'N', 'B']
           default: S
+        namespace:
+          default: default
+          title: Existing namespace to create this resource
+          type: string
   steps:
     - id: fetchSystem
       name: Fetch System
@@ -63,7 +57,6 @@ spec:
       input:
         url: ./skeleton
         values:
-          provider: ${{ parameters.provider }}
           table_name: ${{ parameters.table_name }}
           namespace: ${{ parameters.namespace }}
           environment: ${{ parameters.environment }}
@@ -77,22 +70,79 @@ spec:
       input:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.table_name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
+        gitTimeout: 120
+        useCustomGit: true
+    - id: create-argocd-project
+      name: Create ArgoCD Project
+      action: kube:apply
+      input:
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: AppProject
+          metadata:
+            name: ${{parameters.table_name}}-project
+            namespace: argocd
+          spec:
+            description: Project for ${{parameters.table_name}} DynamoDB table
+            sourceRepos:
+            - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.table_name}}.git
+            destinations:
+            - namespace: ${{parameters.namespace}}
+              server: https://kubernetes.default.svc
+            clusterResourceWhitelist:
+            - group: '*'
+              kind: '*'
+            namespaceResourceWhitelist:
+            - group: '*'
+              kind: '*'
+            orphanedResources:
+              ignore:
+              - kind: Table
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: argocd:create-app
+      action: kube:apply
       input:
-        appName: ${{parameters.table_name}}
-        appNamespace: default
-        argoInstance: in-cluster
-        projectName: default
-        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.table_name}}
-        path: "manifests"
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{parameters.table_name}}
+            namespace: argocd
+            labels:
+              backstage-name: ${{parameters.table_name}}
+            finalizers:
+            - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: ${{parameters.table_name}}-project
+            destination:
+              namespace: ${{parameters.namespace}}
+              server: https://kubernetes.default.svc
+            source:
+              repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.table_name}}.git
+              targetRevision: HEAD
+              path: manifests
+            syncPolicy:
+              automated:
+                allowEmpty: true
+                prune: false
+                selfHeal: true
+              retry:
+                backoff:
+                  duration: 5s
+                  factor: 2
+                  maxDuration: 5m
+                limit: 10
+              syncOptions:
+              - CreateNamespace=false
+              - FailOnSharedResource=true
     - id: register
       name: Register
       action: catalog:register
       input:
-        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
-        catalogInfoPath: "catalog-info.yaml"
+        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.table_name}}/-/blob/main
+        catalogInfoPath: "/catalog-info.yaml"
     - id: template-output
       name: Template Output
       action: debug:log

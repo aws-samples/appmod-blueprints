@@ -18,7 +18,7 @@ spec:
         path: ./src
   - uses: yaml-update
     config:
-      path: ./src/deployment/${{ ctx.stage }}/application.yml
+      path: ./src/deployment/${{ ctx.stage }}/application.yaml
       updates:
       - key: spec.components.0.properties.image
         value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}

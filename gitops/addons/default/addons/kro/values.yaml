@@ -8,6 +8,6 @@ deployment:
     kubernetes.io/os: linux
     karpenter.sh/nodepool: system
 
-image:
-  repository: public.ecr.aws/seb-demo/kro
-  tag: v0.5.0
+#image:
+#  repository: public.ecr.aws/seb-demo/kro
+#  tag: v0.5.0
