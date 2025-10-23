@@ -316,7 +316,10 @@ gitlab_repository_setup(){
     git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files " || true
     
     # Try to pull latest changes first to avoid stale info
-    git pull gitlab main --rebase || true
+    if ! git pull gitlab main --rebase; then
+      log_warning "Failed to pull and rebase, trying without rebase"
+      git pull gitlab main || log_warning "Pull failed, proceeding with push"
+    fi
     
     if ! git push --set-upstream gitlab HEAD:main --force-with-lease; then
       if ! git push gitlab HEAD:main --force-with-lease; then
@@ -342,11 +345,15 @@ update_backstage_defaults() {
   # Define catalog-info.yaml path
   CATALOG_INFO_PATH="${GIT_ROOT_PATH}/platform/backstage/templates/catalog-info.yaml"
 
+  # Get admin role name from current AWS context
+  ADMIN_ROLE_NAME=$(aws sts get-caller-identity --query 'Arn' --output text | sed 's|.*assumed-role/||' | sed 's|/.*||')
+
   print_info "Using the following values for catalog-info.yaml update:"
   echo "  Account ID: $AWS_ACCOUNT_ID"
   echo "  AWS Region: $AWS_REGION"
   echo "  GitLab Domain: $GITLAB_DOMAIN"
   echo "  Git Username: $GIT_USERNAME"
+  echo "  Admin Role Name: $ADMIN_ROLE_NAME"
 
   print_step "Updating catalog-info.yaml with environment-specific values"
 
@@ -355,7 +362,8 @@ update_backstage_defaults() {
     (select(.metadata.name == "system-info").spec.argocd_hostname) = "'$ARGOCD_DOMAIN'" |
     (select(.metadata.name == "system-info").spec.gituser) = "'$GIT_USERNAME'" |
     (select(.metadata.name == "system-info").spec.aws_region) = "'$AWS_REGION'" |
-    (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'"
+    (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'" |
+    (select(.metadata.name == "system-info").spec.admin_role_name) = "'$ADMIN_ROLE_NAME'"
   ' "$CATALOG_INFO_PATH"
 
   print_success "Updated catalog-info.yaml with environment values"
@@ -373,6 +381,7 @@ update_backstage_defaults() {
   echo "  ✓ Git User: \${{ steps['fetchSystem'].output.entity.spec.gituser }}"
   echo "  ✓ AWS Region: \${{ steps['fetchSystem'].output.entity.spec.aws_region }}"
   echo "  ✓ AWS Account ID: \${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}"
+  echo "  ✓ Admin Role Name: \${{ steps['fetchSystem'].output.entity.spec.admin_role_name }}"
 
   print_info "Other templates should use the fetchSystem step to retrieve configuration from catalog-info.yaml"
 
