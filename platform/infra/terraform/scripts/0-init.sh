@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Enable alias expansion in non-interactive shell
+if [[ -n "$ZSH_VERSION" ]]; then
+  setopt aliases
+else
+  shopt -s expand_aliases
+fi
+
 #be sure we source env var
 source /etc/profile.d/workshop.sh
 
