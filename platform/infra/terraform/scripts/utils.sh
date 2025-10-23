@@ -314,10 +314,17 @@ gitlab_repository_setup(){
   if ! git diff --quiet || ! git diff --cached --quiet; then
     git add .
     git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files " || true
+    
+    # Try to pull latest changes first to avoid stale info
+    git pull gitlab main --rebase || true
+    
     if ! git push --set-upstream gitlab HEAD:main --force-with-lease; then
       if ! git push gitlab HEAD:main --force-with-lease; then
-        log_error "Failed to push repository to GitLab"
-        exit 1
+        # If force-with-lease still fails, try regular push
+        if ! git push gitlab HEAD:main; then
+          log_error "Failed to push repository to GitLab"
+          exit 1
+        fi
       fi
     fi
   else
