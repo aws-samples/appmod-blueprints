@@ -202,17 +202,32 @@ validate_backend_config() {
 initialize_terraform() {
   local module_name=$1
   local script_dir=$2
+  local max_attempts=3
+  local attempt=1
+  local delay=30
 
   log "Initializing Terraform with S3 backend for $module_name..."
   
-  if ! terraform -chdir=$script_dir init --upgrade \
-    -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
-    -backend-config="region=${AWS_REGION}"; then
-    log_error "Terraform initialization failed"
-    exit 1
-  fi
-  
-  log_success "Terraform initialized successfully"
+  while [ $attempt -le $max_attempts ]; do
+    log "Attempt $attempt of $max_attempts for terraform init..."
+    
+    if terraform -chdir=$script_dir init --upgrade \
+      -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
+      -backend-config="region=${AWS_REGION}"; then
+      log_success "Terraform initialized successfully on attempt $attempt"
+      return 0
+    fi
+    
+    if [ $attempt -eq $max_attempts ]; then
+      log_error "Terraform initialization failed after $max_attempts attempts"
+      exit 1
+    fi
+    
+    log_warning "Attempt $attempt failed, waiting ${delay}s before retry..."
+    sleep $delay
+    delay=$((delay * 2))  # Exponential backoff
+    attempt=$((attempt + 1))
+  done
 }
 
 # Cleanup Kubernetes resources with fallback
@@ -299,10 +314,20 @@ gitlab_repository_setup(){
   if ! git diff --quiet || ! git diff --cached --quiet; then
     git add .
     git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files " || true
+    
+    # Try to pull latest changes first to avoid stale info
+    if ! git pull gitlab main --rebase; then
+      log_warning "Failed to pull and rebase, trying without rebase"
+      git pull gitlab main || log_warning "Pull failed, proceeding with push"
+    fi
+    
     if ! git push --set-upstream gitlab HEAD:main --force-with-lease; then
       if ! git push gitlab HEAD:main --force-with-lease; then
-        log_error "Failed to push repository to GitLab"
-        exit 1
+        # If force-with-lease still fails, try regular push
+        if ! git push gitlab HEAD:main; then
+          log_error "Failed to push repository to GitLab"
+          exit 1
+        fi
       fi
     fi
   else
@@ -320,11 +345,15 @@ update_backstage_defaults() {
   # Define catalog-info.yaml path
   CATALOG_INFO_PATH="${GIT_ROOT_PATH}/platform/backstage/templates/catalog-info.yaml"
 
+  # Get admin role name from current AWS context
+  ADMIN_ROLE_NAME=$(aws sts get-caller-identity --query 'Arn' --output text | sed 's|.*assumed-role/||' | sed 's|/.*||')
+
   print_info "Using the following values for catalog-info.yaml update:"
   echo "  Account ID: $AWS_ACCOUNT_ID"
   echo "  AWS Region: $AWS_REGION"
   echo "  GitLab Domain: $GITLAB_DOMAIN"
   echo "  Git Username: $GIT_USERNAME"
+  echo "  Admin Role Name: $ADMIN_ROLE_NAME"
 
   print_step "Updating catalog-info.yaml with environment-specific values"
 
@@ -333,7 +362,8 @@ update_backstage_defaults() {
     (select(.metadata.name == "system-info").spec.argocd_hostname) = "'$ARGOCD_DOMAIN'" |
     (select(.metadata.name == "system-info").spec.gituser) = "'$GIT_USERNAME'" |
     (select(.metadata.name == "system-info").spec.aws_region) = "'$AWS_REGION'" |
-    (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'"
+    (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'" |
+    (select(.metadata.name == "system-info").spec.admin_role_name) = "'$ADMIN_ROLE_NAME'"
   ' "$CATALOG_INFO_PATH"
 
   print_success "Updated catalog-info.yaml with environment values"
@@ -351,6 +381,7 @@ update_backstage_defaults() {
   echo "  ✓ Git User: \${{ steps['fetchSystem'].output.entity.spec.gituser }}"
   echo "  ✓ AWS Region: \${{ steps['fetchSystem'].output.entity.spec.aws_region }}"
   echo "  ✓ AWS Account ID: \${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}"
+  echo "  ✓ Admin Role Name: \${{ steps['fetchSystem'].output.entity.spec.admin_role_name }}"
 
   print_info "Other templates should use the fetchSystem step to retrieve configuration from catalog-info.yaml"
 

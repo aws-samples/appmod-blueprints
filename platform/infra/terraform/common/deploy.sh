@@ -99,32 +99,47 @@ main() {
   # Initialize Terraform with S3 backend
   initialize_terraform "bootstrap" "$DEPLOY_SCRIPTDIR"
   
-  # Apply Terraform configuration
+  # Apply Terraform configuration with retry mechanism
+  deploy_bootstrap_stack() {
+    local max_attempts=3
+    local delay=30
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+      log "Attempt $attempt of $max_attempts for bootstrap stack..."
+      
+      if terraform -chdir=$DEPLOY_SCRIPTDIR apply \
+        -var-file="${GENERATED_TFVAR_FILE}" \
+        -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
+        -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
+        -var="ide_password=${USER1_PASSWORD}" \
+        -var="git_username=${GIT_USERNAME}" \
+        -var="git_password=${USER1_PASSWORD}" \
+        -var="resource_prefix=${RESOURCE_PREFIX}" \
+        -var="working_repo=${WORKING_REPO}" \
+        -parallelism=3 -auto-approve; then
+        log_success "Bootstrap stack deployment succeeded on attempt $attempt"
+        return 0
+      fi
+      
+      if [ $attempt -eq $max_attempts ]; then
+        log_error "Bootstrap stack deployment failed after $max_attempts attempts"
+        return 1
+      fi
+      
+      log_warning "Attempt $attempt failed, waiting ${delay}s before retry..."
+      log_info "Restarting Kyverno admission controller to fix potential webhook issues..."
+      kubectl rollout restart deployment kyverno-admission-controller -n kyverno 2>/dev/null || true
+      sleep $delay
+      delay=$((delay * 2))  # Exponential backoff
+      attempt=$((attempt + 1))
+    done
+  }
+
   log "Applying bootstrap resources..."
-  if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
-    -var-file="${GENERATED_TFVAR_FILE}" \
-    -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
-    -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
-    -var="ide_password=${USER1_PASSWORD}" \
-    -var="git_username=${GIT_USERNAME}" \
-    -var="git_password=${USER1_PASSWORD}" \
-    -var="resource_prefix=${RESOURCE_PREFIX}" \
-    -var="working_repo=${WORKING_REPO}" \
-    -parallelism=3 -auto-approve; then
-    log_warning "Terraform apply failed for bootstrap stack, trying again..."
-    if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
-      -var-file="${GENERATED_TFVAR_FILE}" \
-      -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
-      -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
-      -var="ide_password=${USER1_PASSWORD}" \
-      -var="git_username=${GIT_USERNAME}" \
-      -var="git_password=${USER1_PASSWORD}" \
-      -var="resource_prefix=${RESOURCE_PREFIX}" \
-      -var="working_repo=${WORKING_REPO}" \
-      -parallelism=3 -auto-approve; then
-      log_error "Terraform apply failed for bootstrap stack again, exiting"
-      exit 1
-    fi
+  if ! deploy_bootstrap_stack; then
+    log_error "Bootstrap stack deployment failed after all retry attempts, exiting"
+    exit 1
   fi
 
   # Get ArgoCD domain from Terraform output

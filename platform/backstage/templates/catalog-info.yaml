@@ -35,8 +35,10 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
+  # values dynamically replaced by platform/infra/terraform/common/deploy.sh on bootstrap
   gitlab_hostname: '{{ values.gitlabDomain }}'
   argocd_hostname: '{{ values.argocdDomain }}'
   gituser: '{{ values.gitUsername }}'
   aws_region: '{{ values.awsRegion }}'
   aws_account_id: '{{ values.awsAccountId }}'
+  admin_role_name: '{{ values.adminRoleName }}'

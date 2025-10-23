@@ -1,6 +1,6 @@
 echo Logging in to Amazon ECR...
 AWS_REGION=us-west-2
-AWS_ACCOUNT_ID=929819487611
+AWS_ACCOUNT_ID=012345678910
 ECR_REPOSITORY_NAME=moderneng/northwind
 aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY_NAME
