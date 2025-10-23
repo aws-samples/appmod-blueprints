@@ -62,7 +62,7 @@ resource "aws_eks_access_entry" "spoke" {
 resource "aws_eks_access_policy_association" "spoke" {
   for_each = local.spoke_clusters
   depends_on = [
-    aws_eks_access_entry.spoke[each.key]
+    aws_eks_access_entry.spoke
   ]
   cluster_name  = each.value.name
   policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
