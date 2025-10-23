@@ -18,9 +18,17 @@ if [[ -z "$AWS_ACCOUNT_ID" || -z "$AWS_REGION" || -z "$GITLAB_URL" || -z "$GIT_U
     exit 1
 fi
 
+
 # Deploy the project (creates namespace)
 echo "Creating Kargo project..."
 envsubst < project.yaml | kubectl apply -f -
+
+# Deploy the git secrets
+echo "Creating Kargo stages..."
+envsubst < git-secret.yaml | kubectl apply -f -
+
+# sleep for secret to be created first
+sleep 10
 
 # Deploy the warehouse
 echo "Creating Kargo warehouse..."
@@ -33,10 +41,6 @@ envsubst < promotiontask.yaml | kubectl apply -f -
 # Deploy the stages
 echo "Creating Kargo stages..."
 envsubst < stages.yaml | kubectl apply -f -
-
-# Deploy the git secrets
-echo "Creating Kargo stages..."
-envsubst < git-secret.yaml | kubectl apply -f -
 
 echo "Kargo configuration deployed successfully!"
 echo "You can now access the Kargo UI to monitor promotions."
