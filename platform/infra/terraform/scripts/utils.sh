@@ -202,17 +202,32 @@ validate_backend_config() {
 initialize_terraform() {
   local module_name=$1
   local script_dir=$2
+  local max_attempts=3
+  local attempt=1
+  local delay=30
 
   log "Initializing Terraform with S3 backend for $module_name..."
   
-  if ! terraform -chdir=$script_dir init --upgrade \
-    -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
-    -backend-config="region=${AWS_REGION}"; then
-    log_error "Terraform initialization failed"
-    exit 1
-  fi
-  
-  log_success "Terraform initialized successfully"
+  while [ $attempt -le $max_attempts ]; do
+    log "Attempt $attempt of $max_attempts for terraform init..."
+    
+    if terraform -chdir=$script_dir init --upgrade \
+      -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
+      -backend-config="region=${AWS_REGION}"; then
+      log_success "Terraform initialized successfully on attempt $attempt"
+      return 0
+    fi
+    
+    if [ $attempt -eq $max_attempts ]; then
+      log_error "Terraform initialization failed after $max_attempts attempts"
+      exit 1
+    fi
+    
+    log_warning "Attempt $attempt failed, waiting ${delay}s before retry..."
+    sleep $delay
+    delay=$((delay * 2))  # Exponential backoff
+    attempt=$((attempt + 1))
+  done
 }
 
 # Cleanup Kubernetes resources with fallback
