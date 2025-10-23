@@ -8,7 +8,7 @@ controller:
   resources:
     requests:
       cpu: 200m
-      memory: 256Mi
+      memory: 1Gi
     limits:
       memory: 1Gi
   priorityClassName: system-cluster-critical
@@ -18,9 +18,9 @@ controller:
       effect: "NoSchedule"
   topologySpreadConstraints:
     - maxSkew: 1
-      minDomains: 1
+      minDomains: 2
       topologyKey: topology.kubernetes.io/zone
-      whenUnsatisfiable: ScheduleAnyway
+      whenUnsatisfiable: DoNotSchedule
       labelSelector:
         matchLabels:
           app.kubernetes.io/name: ingress-nginx
