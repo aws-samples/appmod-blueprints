@@ -1153,6 +1153,9 @@ grafana-dashboards:
       - key: enable_grafana_dashboards
         operator: In
         values: ['true']
+  valuesObject:
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    grafana_url: '{{.metadata.annotations.aws_grafana_url}}'
         
 grafana-operator:
   enabled: false

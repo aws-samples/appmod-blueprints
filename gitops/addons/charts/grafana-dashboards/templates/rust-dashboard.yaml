@@ -2,7 +2,7 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
   name: rust-metrics-dashboard
-  namespace: grafana-operator
+  namespace: {{ .Values.namespace | default "grafana-operator" }}
 spec:
   folder: "Observability Accelerator Dashboards"
   instanceSelector:
@@ -113,7 +113,7 @@ spec:
                 "uid": "$datasource"
               },
               "expr": "increase(rocket_http_requests_total{endpoint!=\"/metrics\"}[1h]) / (60 * 60)",
-              "legendFormat": "{{endpoint}}",
+              "legendFormat": "{{ `{{endpoint}}` }}",
               "refId": "A"
             }
           ],
@@ -167,7 +167,7 @@ spec:
                 "uid": "$datasource"
               },
               "expr": "sum(increase(rocket_http_requests_total{endpoint!=\"/metrics\"}[2m])) by (endpoint)",
-              "legendFormat": "{{endpoint}}",
+              "legendFormat": "{{ `{{endpoint}}` }}",
               "refId": "A"
             }
           ],
@@ -198,7 +198,7 @@ spec:
                 "uid": "$datasource"
               },
               "expr": "histogram_quantile(0.5, rate(rocket_http_requests_duration_seconds_bucket{endpoint!=\"/metrics\"}[$__range])) * 10000",
-              "legendFormat": "{{endpoint}}",
+              "legendFormat": "{{ `{{endpoint}}` }}",
               "refId": "A"
             }
           ],
