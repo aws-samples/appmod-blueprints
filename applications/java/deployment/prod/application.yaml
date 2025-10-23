@@ -18,7 +18,7 @@ spec:
         functionalGate:
           pause: "10s"
           image: "httpd:alpine"
-          extraArgs: "red"
+          extraArgs: "orange"
         # Skip performance gate in production to avoid affecting real user traffic
         # performanceGate:
         #   pause: "10s"
