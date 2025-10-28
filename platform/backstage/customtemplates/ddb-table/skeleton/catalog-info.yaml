@@ -29,8 +29,8 @@ spec:
     {
       "tableName": "${{values.table_name}}",
       "partitionKey": {
-        "name": "${{values.partitionKeyName}}",
-        "type": "${{values.partitionKeyType}}"
+        "name": "${{values.attribute_name}}",
+        "type": "${{values.attribute_type}}"
       },
       "region": "${{values.region}}",
       "environment": "${{values.environment}}"

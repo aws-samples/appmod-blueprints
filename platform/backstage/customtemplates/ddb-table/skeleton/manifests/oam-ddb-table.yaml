@@ -13,5 +13,5 @@ spec:
         environment: ${{values.environment}}
         configuration: ${{values.configuration}}
         region: ${{values.region}}
-        attributeName: ${{values.partitionKeyName}}
-        attributeType: ${{values.partitionKeyType}}
+        attributeName: ${{values.attribute_name}}
+        attributeType: ${{values.attribute_type}}

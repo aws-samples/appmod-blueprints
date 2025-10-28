@@ -1,8 +1,9 @@
+# template.yaml
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: ddb-table-template
-  title: DynamoDB Table Template
+  name: ddb-table-template-ack
+  title: DynamoDB Table Template ACK
   description: Create DynamoDB table using OAM and ACK
 spec:
   owner: guest
@@ -25,11 +26,20 @@ spec:
           type: string
           description: The environment (e.g., dev, prod)
           enum: ['dev', 'prod']
+        provider:
+          title: Provider
+          type: string
+          description: Provider Configuration
+          default: default
         region:
           title: Region
           type: string
           description: AWS region for the DynamoDB table
           default: us-west-2
+        namespace:
+          default: default
+          title: Existing namespace to create this resource
+          type: string
         attribute_name:
           title: Primary Key Attribute Name
           type: string
@@ -41,10 +51,6 @@ spec:
           description: Type of the primary key attribute
           enum: ['S', 'N', 'B']
           default: S
-        namespace:
-          default: default
-          title: Existing namespace to create this resource
-          type: string
   steps:
     - id: fetchSystem
       name: Fetch System
@@ -57,6 +63,7 @@ spec:
       input:
         url: ./skeleton
         values:
+          provider: ${{ parameters.provider }}
           table_name: ${{ parameters.table_name }}
           namespace: ${{ parameters.namespace }}
           environment: ${{ parameters.environment }}
