@@ -638,7 +638,7 @@ spec:
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
-          namespace: argocd
+          namespace: external-secrets
           roleARN: "${externalSecretsRole.status.ackResourceMetadata.arn}"
           serviceAccount: external-secrets-sa
           tags:

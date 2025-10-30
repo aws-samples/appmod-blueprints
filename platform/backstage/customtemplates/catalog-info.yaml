@@ -1,0 +1,8 @@
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: peeks-custom-templates
+  description: Platform Engineering on Amazon EKS Backstage Custom Templates
+spec:
+  targets:
+    - ./ddb-table/template.yaml

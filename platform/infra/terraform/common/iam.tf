@@ -36,8 +36,8 @@ resource "aws_iam_role_policy" "argocd_central" {
 }
 
 resource "aws_iam_role" "spoke" {
-  for_each = local.spoke_clusters
-  name_prefix =  "${each.value.name}-argocd-spoke"
+  for_each           = local.spoke_clusters
+  name_prefix        = "${each.value.name}-argocd-spoke"
   assume_role_policy = data.aws_iam_policy_document.assume_role_policy[each.key].json
 }
 
@@ -53,20 +53,23 @@ data "aws_iam_policy_document" "assume_role_policy" {
 }
 
 resource "aws_eks_access_entry" "spoke" {
-  for_each = local.spoke_clusters
-  cluster_name      = each.value.name
-  principal_arn     = aws_iam_role.spoke[each.key].arn
-  type              = "STANDARD"
+  for_each      = local.spoke_clusters
+  cluster_name  = each.value.name
+  principal_arn = aws_iam_role.spoke[each.key].arn
+  type          = "STANDARD"
 }
 
 resource "aws_eks_access_policy_association" "spoke" {
   for_each = local.spoke_clusters
+  depends_on = [
+    aws_eks_access_entry.spoke
+  ]
   cluster_name  = each.value.name
   policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
   principal_arn = aws_iam_role.spoke[each.key].arn
 
   access_scope {
-    type       = "cluster"
+    type = "cluster"
   }
 }
 
@@ -75,8 +78,8 @@ resource "aws_eks_access_policy_association" "spoke" {
 # # Team Roles Backend
 # ################################################################################
 resource "aws_iam_role" "backend_team" {
-  for_each = local.spoke_clusters
-  name_prefix =  "${each.value.name}-backend-team-view-"
+  for_each    = local.spoke_clusters
+  name_prefix = "${each.value.name}-backend-team-view-"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     "Statement" : [
@@ -93,7 +96,7 @@ resource "aws_iam_role" "backend_team" {
 }
 
 resource "aws_eks_access_entry" "backend_team" {
-  for_each = local.spoke_clusters
+  for_each          = local.spoke_clusters
   cluster_name      = each.value.name
   principal_arn     = aws_iam_role.backend_team[each.key].arn
   kubernetes_groups = ["backend-team-view"]
@@ -104,8 +107,8 @@ resource "aws_eks_access_entry" "backend_team" {
 # Team Roles Frontend
 ################################################################################
 resource "aws_iam_role" "frontend_team" {
-  for_each = local.spoke_clusters
-  name_prefix =  "${each.value.name}-frontend-team-view-"
+  for_each    = local.spoke_clusters
+  name_prefix = "${each.value.name}-frontend-team-view-"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     "Statement" : [
@@ -122,7 +125,7 @@ resource "aws_iam_role" "frontend_team" {
 }
 
 resource "aws_eks_access_entry" "frontend_team" {
-  for_each = local.spoke_clusters
+  for_each          = local.spoke_clusters
   cluster_name      = each.value.name
   principal_arn     = aws_iam_role.frontend_team[each.key].arn
   kubernetes_groups = ["frontend-team-view"]

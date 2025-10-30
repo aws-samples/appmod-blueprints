@@ -299,10 +299,10 @@ kro:
   namespace: kro-system
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-3' # Needs to be before resources that needs PodIdentity
-  defaultVersion: '0.4.1'
+  defaultVersion: '0.5.0'
   chartName: kro
-  chartNamespace: kro-run/kro
-  chartRepository: ghcr.io
+  chartNamespace: kro/charts
+  chartRepository: registry.k8s.io
   selector:
     matchExpressions:
       - key: enable_kro
@@ -1385,6 +1385,12 @@ mlflow:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    ingress:
+      hosts:
+        - host: '{{.metadata.annotations.ingress_domain_name}}'
+          paths:
+            - path: /mlflow(/|$)(.*)
+              pathType: ImplementationSpecific
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

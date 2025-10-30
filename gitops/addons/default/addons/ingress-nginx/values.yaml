@@ -1,4 +1,5 @@
 controller:
+  replicaCount: 2
   config:
     use-forwarded-headers: "true"
     compute-full-forwarded-for: "true"
@@ -7,10 +8,24 @@ controller:
   resources:
     requests:
       cpu: 200m
-      memory: 256Mi
+      memory: 1Gi
     limits:
       memory: 1Gi
   priorityClassName: system-cluster-critical
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  topologySpreadConstraints:
+    - maxSkew: 1
+      minDomains: 2
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/instance: ingress-nginx
+          app.kubernetes.io/component: controller
   service:
     type: LoadBalancer
     annotations:

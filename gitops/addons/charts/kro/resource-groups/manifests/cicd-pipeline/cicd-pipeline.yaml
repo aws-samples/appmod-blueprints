@@ -1150,7 +1150,7 @@ spec:
                        name: ${schema.spec.name}-config
                  resources:
                    requests:
-                     memory: "4Gi"
+                     memory: "8Gi"
                      cpu: "1000m"
                    limits:
                      memory: "8Gi"
@@ -1174,6 +1174,8 @@ spec:
                  args:
                    - |
                      echo "Updating deployment manifests with new image tag"
+                     #activate debugging
+                     set -x
 
                      # Clone the repository
                      REPO_URL="https://{{workflow.parameters.git-username}}:$GITLAB_TOKEN@${schema.spec.gitlab.hostname}/{{workflow.parameters.git-username}}/{{workflow.parameters.repo-name}}.git"
@@ -1188,9 +1190,9 @@ spec:
                      echo "Debug: Application name is: ${schema.spec.application.name}"
                      # Update image only for java applications in deployment/dev/application.yaml
                      if [ "${schema.spec.application.name}" = "java" ]; then
-                       if [ -f "deployment/dev/application.yaml" ]; then
-                         sed -i "s|image: <image>|image: $IMAGE_URI|g" /tmp/repo/{{workflow.parameters.deployment-path}}/deployment/dev/application.yml
-                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" /tmp/repo/{{workflow.parameters.deployment-path}}/deployment/dev/application.yml
+                       if [ -f "dev/application.yaml" ]; then
+                         sed -i "s|image: <image>|image: $IMAGE_URI|g" dev/application.yaml
+                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" dev/application.yaml
                        fi
                      else
                        # Replace placeholder and existing ECR images for non-java applications
