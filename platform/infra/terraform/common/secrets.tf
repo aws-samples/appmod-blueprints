@@ -74,8 +74,8 @@ locals {
   backstage_postgres_password = random_password.backstage_postgres.result
   password_key                = random_string.password_key.result
   devlake_encryption_secret   = random_string.devlake_encryption_secret.result
-  devlake_mysql_password      = random_password.devlake_mysql_password.result
-  grafana_mysql_password      = random_password.devlake_mysql_password.result
+  devlake_mysql_password      = random_password.devlake_mysql.result
+  grafana_mysql_password      = random_password.grafana_mysql.result
 }
 
 # AWS Secrets Manager resources for the platform
