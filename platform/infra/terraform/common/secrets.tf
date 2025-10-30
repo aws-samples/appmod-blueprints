@@ -73,7 +73,7 @@ locals {
   keycloak_postgres_password  = random_password.keycloak_postgres.result
   backstage_postgres_password = random_password.backstage_postgres.result
   password_key                = random_string.password_key.result
-  devlake_encryption_secret   = random_string.devlake_encryption_secret.result
+  devlake_encryption_secret   = random_password.devlake_encryption_secret.result
   devlake_mysql_password      = random_password.devlake_mysql.result
   grafana_mysql_password      = random_password.grafana_mysql.result
 }
