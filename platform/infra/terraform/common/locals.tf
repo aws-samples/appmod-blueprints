@@ -10,32 +10,32 @@ locals {
 }
 
 locals {
-  azs                       = slice(data.aws_availability_zones.available.names, 0, 2)
-  region                    = data.aws_region.current.id
-  fleet_member              = "control-plane"
-  tenant                    = var.tenant
-  hub_cluster_key           = [for k, v in var.clusters : k if v.environment == "control-plane"][0]
-  hub_cluster               = [for k, v in var.clusters : v if v.environment == "control-plane"][0]
-  hub_vpc_cidr              = data.aws_vpc.hub_cluster_vpc.cidr_block
-  hub_subnet_ids            = data.aws_eks_cluster.clusters[local.hub_cluster_key].vpc_config[0].subnet_ids
-  spoke_clusters            = { for k, v in var.clusters : k => v if v.environment != "control-plane" }
-  cluster_vpc_ids           = { for k, v in var.clusters : v.name => data.aws_eks_cluster.clusters[k].vpc_config[0].vpc_id }
-  argocd_namespace          = "argocd"
-  ingress_name              = { for k, v in var.clusters : v.name => "${v.name}-ingress" }
-  ingress_security_groups   = { for k, v in var.clusters : v.name => "${aws_security_group.ingress_http[k].id},${aws_security_group.ingress_https[k].id}" }
-  gitlab_security_groups    = var.gitlab_security_groups
-  ingress_nlb_domain_name   = "${data.aws_lb.ingress_nginx.dns_name}"
-  ingress_domain_name       = aws_cloudfront_distribution.ingress.domain_name
-  gitlab_domain_name        = var.gitlab_domain_name
-  git_username              = var.git_username
-  keycloak_realm            = "platform"
-  keycloak_saml_url         = "http://${local.ingress_domain_name}/keycloak/realms/${local.keycloak_realm}/protocol/saml/descriptor"
+  azs                     = slice(data.aws_availability_zones.available.names, 0, 2)
+  region                  = data.aws_region.current.id
+  fleet_member            = "control-plane"
+  tenant                  = var.tenant
+  hub_cluster_key         = [for k, v in var.clusters : k if v.environment == "control-plane"][0]
+  hub_cluster             = [for k, v in var.clusters : v if v.environment == "control-plane"][0]
+  hub_vpc_cidr            = data.aws_vpc.hub_cluster_vpc.cidr_block
+  hub_subnet_ids          = data.aws_eks_cluster.clusters[locals.hub_cluster_key].vpc_config[0].subnet_ids
+  spoke_clusters          = { for k, v in var.clusters : k => v if v.environment != "control-plane" }
+  cluster_vpc_ids         = { for k, v in var.clusters : v.name => data.aws_eks_cluster.clusters[k].vpc_config[0].vpc_id }
+  argocd_namespace        = "argocd"
+  ingress_name            = { for k, v in var.clusters : v.name => "${v.name}-ingress" }
+  ingress_security_groups = { for k, v in var.clusters : v.name => "${aws_security_group.ingress_http[k].id},${aws_security_group.ingress_https[k].id}" }
+  gitlab_security_groups  = var.gitlab_security_groups
+  ingress_nlb_domain_name = data.aws_lb.ingress_nginx.dns_name
+  ingress_domain_name     = aws_cloudfront_distribution.ingress.domain_name
+  gitlab_domain_name      = var.gitlab_domain_name
+  git_username            = var.git_username
+  keycloak_realm          = "platform"
+  keycloak_saml_url       = "http://${local.ingress_domain_name}/keycloak/realms/${local.keycloak_realm}/protocol/saml/descriptor"
   # git_hostname              = var.repo == "" ? "${local.gitlab_domain_name}" : var.git_hostname
-  backstage_image           = var.backstage_image == "" ? "${data.aws_caller_identity.current.account_id}.dkr.ecr.${local.region}.amazonaws.com/${var.resource_prefix}-backstage:latest" : var.backstage_image
-  gitops_addons_repo_url    = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
-  gitops_fleet_repo_url       = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
-  gitops_workload_repo_url  = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
-  gitops_platform_repo_url  = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
+  backstage_image          = var.backstage_image == "" ? "${data.aws_caller_identity.current.account_id}.dkr.ecr.${local.region}.amazonaws.com/${var.resource_prefix}-backstage:latest" : var.backstage_image
+  gitops_addons_repo_url   = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
+  gitops_fleet_repo_url    = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
+  gitops_workload_repo_url = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
+  gitops_platform_repo_url = local.gitlab_domain_name != "" ? "https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git" : var.repo.url
 
   external_secrets = {
     namespace       = "external-secrets"
@@ -99,7 +99,7 @@ locals {
   }
 
   adot_collector = {
-    namespace = "adot-collector-kubeprometheus"
+    namespace       = "adot-collector-kubeprometheus"
     service_account = "adot-collector-kubeprometheus"
   }
 
@@ -109,7 +109,7 @@ locals {
   oss_addons = {
     for k, v in var.clusters : k => v.addons
   }
-  
+
   addons = {
     for k, v in var.clusters : k => merge(
       local.aws_addons[k],
@@ -134,7 +134,7 @@ locals {
       {
         argocd_namespace        = local.argocd_namespace,
         create_argocd_namespace = false,
-        argocd_hub_role_arn = aws_iam_role.argocd_central.arn
+        argocd_hub_role_arn     = aws_iam_role.argocd_central.arn
       },
       {
         addons_repo_url      = local.gitops_addons_repo_url
@@ -178,14 +178,14 @@ locals {
       },
       {
         ingress_security_groups = local.ingress_security_groups[v.name]
-        ingress_domain_name = local.ingress_domain_name
-        ingress_name = local.ingress_name[v.name]
-        gitlab_security_groups = local.gitlab_security_groups
-        gitlab_domain_name = local.gitlab_domain_name
-        git_username = var.git_username
-        working_repo = var.working_repo
-        ide_password = var.ide_password # TODO: remove this and use External Secret instead
-        backstage_image = local.backstage_image
+        ingress_domain_name     = local.ingress_domain_name
+        ingress_name            = local.ingress_name[v.name]
+        gitlab_security_groups  = local.gitlab_security_groups
+        gitlab_domain_name      = local.gitlab_domain_name
+        git_username            = var.git_username
+        working_repo            = var.working_repo
+        ide_password            = var.ide_password # TODO: remove this and use External Secret instead
+        backstage_image         = local.backstage_image
       },
     )
   }

@@ -22,7 +22,7 @@ data "aws_eks_cluster" "clusters" {
 }
 
 data "aws_vpc" "hub_cluster_vpc" {
-  id = local.cluster_vpc_ids[local.hub_cluster_key].vpc_id
+  id = local.cluster_vpc_ids[local.hub_cluster.name]
 }
 
 # Reference the managed policies by name instead of ID
