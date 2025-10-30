@@ -11,6 +11,7 @@ providers:
     dynamodbVersion: "v1.13.1"
     apigatewayv2Version: "v1.13.1"
     eksVersion: "v1.13.1"
+    ec2Version: "v1.13.1"
     iamVersion: "v1.13.1"
     lambdaVersion: "v1.13.0"
     rdsVersion: "v1.13.1"

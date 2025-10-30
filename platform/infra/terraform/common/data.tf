@@ -21,6 +21,10 @@ data "aws_eks_cluster" "clusters" {
   name     = each.value.name
 }
 
+data "aws_vpc" "hub_cluster_vpc" {
+  id = local.cluster_vpc_ids[local.hub_cluster_key].vpc_id
+}
+
 # Reference the managed policies by name instead of ID
 data "aws_cloudfront_cache_policy" "use_origin_cache_control_headers_query_strings" {
   name = "UseOriginCacheControlHeaders-QueryStrings"

@@ -47,6 +47,7 @@ clusters:
       enable_mutli_acct: true
       enable_kubevela: true
       enable_jupyterhub: true
+      enable_devlake: true
       enable_kubeflow: true
       enable_mlflow: true
       enable_spark_operator: true

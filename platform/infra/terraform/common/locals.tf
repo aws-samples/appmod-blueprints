@@ -16,6 +16,8 @@ locals {
   tenant                    = var.tenant
   hub_cluster_key           = [for k, v in var.clusters : k if v.environment == "control-plane"][0]
   hub_cluster               = [for k, v in var.clusters : v if v.environment == "control-plane"][0]
+  hub_vpc_cidr              = data.aws_vpc.hub_cluster_vpc.cidr_block
+  hub_subnet_ids            = data.aws_eks_cluster.clusters[local.hub_cluster_key].vpc_config[0].subnet_ids
   spoke_clusters            = { for k, v in var.clusters : k => v if v.environment != "control-plane" }
   cluster_vpc_ids           = { for k, v in var.clusters : v.name => data.aws_eks_cluster.clusters[k].vpc_config[0].vpc_id }
   argocd_namespace          = "argocd"

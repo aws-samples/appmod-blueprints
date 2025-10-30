@@ -1,0 +1,35 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: devlake-rds-mysql
+  namespace: {{ .Values.namespace | default "devlake" }}
+spec:
+  components:
+    - name: devlake-mysql-db
+      type: rds-cluster-mysql
+      properties:
+        deploy: mgmt
+      traits:
+        - type: component-iam-policy
+          properties:
+            service: rds-db
+            policy: |
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "rds-db:connect"
+                    ],
+                    "Resource": "*"
+                  }
+                ]
+              }
+    - name: devlake-mysql-access
+      type: dp-service-account
+      properties:
+        clusterName: modern-engineering
+        clusterRegion: us-west-2
+        componentNamesForAccess:
+          - devlake-mysql-db

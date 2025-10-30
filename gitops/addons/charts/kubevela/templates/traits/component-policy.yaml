@@ -56,7 +56,7 @@ spec:
         			spec: {
         				providerConfigRef: name: "provider-aws-config"
         				name: "\(context.appName)-\(context.name)-iam-policy"
-        				forProvider: policy: "\(policy)"
+        				forProvider: policy: "\(parameter.policy)"
         			}
         		}
         	}

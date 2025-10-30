@@ -812,6 +812,78 @@ jupyterhub:
       jsonPointers:
         - /metadata/managedFields
 
+devlake:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after Keycloak
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/devlake'
+  defaultVersion: '0.1.0'
+  selector:
+    matchExpressions:
+      - key: enable_devlake
+        operator: In
+        values: ['true']
+  valuesObject:
+    devlake:
+      grafana:
+        enabled: false
+        external:
+          url: "{{.metadata.annotations.aws_grafana_url}}"
+      mysql:
+        useExternal: true
+        externalServer: "devlake-mysql-service"
+        externalPort: "3306"
+      option:
+        database: mysql
+        connectionSecretName: "devlake-mysql-auth"
+        autoCreateSecret: false
+      lake:
+        image:
+          tag: v1.0.3-beta7
+        encryptionSecret:
+          secretName: devlake-encryption-secret
+          autoCreateSecret: false
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1010    
+          runAsGroup: 1010   
+          fsGroup: 1010      
+        containerSecurityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+      alpine:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+        containerSecurityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+      ui:
+        image:
+          tag: v1.0.3-beta7
+        securityContext:
+          runAsNonRoot: true
+        containerSecurityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+      service:
+        type: ClusterIP
+      ingress:
+        enabled: false
+
 kubeflow:
   enabled: false
   annotationsAppSet:

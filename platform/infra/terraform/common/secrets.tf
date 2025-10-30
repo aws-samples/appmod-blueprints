@@ -35,6 +35,33 @@ resource "random_password" "keycloak_admin" {
   }
 }
 
+resource "random_password" "devlake_encryption_secret" {
+  length  = 128
+  special = false
+  lower   = false
+  upper   = true
+  numeric = false
+}
+
+resource "random_password" "devlake_mysql" {
+  length           = 32
+  override_special = "!-+"
+  min_special      = 1
+  min_numeric      = 1
+  min_upper        = 1
+  min_lower        = 1
+}
+
+resource "random_password" "grafana_mysql" {
+  length           = 32
+  override_special = "!-+"
+  min_special      = 1
+  min_numeric      = 1
+  min_upper        = 1
+  min_lower        = 1
+
+}
+
 # Store both hash and key in a single file to avoid regenerating on each run
 locals {
   # Update password_expiry for password and key rotation
@@ -46,6 +73,9 @@ locals {
   keycloak_postgres_password  = random_password.keycloak_postgres.result
   backstage_postgres_password = random_password.backstage_postgres.result
   password_key                = random_string.password_key.result
+  devlake_encryption_secret   = random_string.devlake_encryption_secret.result
+  devlake_mysql_password      = random_password.devlake_mysql_password.result
+  grafana_mysql_password      = random_password.devlake_mysql_password.result
 }
 
 # AWS Secrets Manager resources for the platform
@@ -106,12 +136,15 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
       admin_password    = local.keycloak_admin_password
       postgres_password = local.keycloak_postgres_password
     }
-    user_password      = var.ide_password
-    user_password_hash = local.user_password_hash
-    user_password_key  = local.password_key
-    git_token          = local.gitlab_token
-    git_username       = var.git_username
-    grafana_api_key    = module.managed_grafana.workspace_api_keys["operator"].key
+    user_password             = var.ide_password
+    user_password_hash        = local.user_password_hash
+    user_password_key         = local.password_key
+    git_token                 = local.gitlab_token
+    git_username              = var.git_username
+    grafana_api_key           = module.managed_grafana.workspace_api_keys["operator"].key
+    devlake_encryption_secret = local.devlake_encryption_secret
+    devlake_mysql_password    = local.devlake_mysql_password
+    grafana_mysql_password    = local.grafana_mysql_password
   })
 }
 
