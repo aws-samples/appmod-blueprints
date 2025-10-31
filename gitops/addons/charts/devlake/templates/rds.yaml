@@ -8,7 +8,7 @@ spec:
     - name: devlake-mysql-db
       type: rds-cluster-mysql
       properties:
-        deploy: mgmt
+        deploy: {{ .Values.clusterName }}
       traits:
         - type: component-iam-policy
           properties:
@@ -29,7 +29,7 @@ spec:
     - name: devlake-mysql-access
       type: dp-service-account
       properties:
-        clusterName: modern-engineering
-        clusterRegion: us-west-2
+        clusterName: {{ .Values.clusterName }}
+        clusterRegion: {{ .Values.clusterRegion }}
         componentNamesForAccess:
           - devlake-mysql-db

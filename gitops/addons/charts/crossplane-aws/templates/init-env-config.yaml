@@ -1,0 +1,73 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane-config-creator
+rules:
+- apiGroups: ["apiextensions.crossplane.io"]
+  resources: ["environmentconfigs"]
+  verbs: ["create", "update", "patch"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crossplane-config-creator
+  namespace: {{ .Values.namespace | default "crossplane-system" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crossplane-config-creator-binding
+subjects:
+- kind: ServiceAccount
+  name: crossplane-config-creator
+  namespace: {{ .Values.namespace | default "crossplane-system" }}
+roleRef:
+  kind: ClusterRole
+  name: crossplane-config-creator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-vpc-environment-config
+  namespace: {{ .Values.namespace | default "crossplane-system" }}
+spec:
+  template:
+    spec:
+      serviceAccountName: crossplane-config-creator
+      containers:
+      - name: config-creator
+        image: alpine/k8s:1.32.8
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          SECRET_DATA=$(cat /secrets/vpc_data)
+        
+          # Parse nested JSON
+          VPC_ID=$(echo "$SECRET_DATA" | jq -r '.vpc.id')
+          SUBNET_1=$(echo "$SECRET_DATA" | jq -r '.vpc.subnet_ids[0]')
+        
+          # Create EnvironmentConfig
+          cat <<EOF | kubectl apply -f -
+          apiVersion: apiextensions.crossplane.io/v1alpha1
+          kind: EnvironmentConfig
+          metadata:
+            name: vpc-config
+            labels:
+              env: {{ .Values.global.clusterName }}
+          spec:
+            data:
+              region: {{ .Values.aws.region }}
+              vpcId: "${VPC_ID}"
+              privateSubnetIds:
+                - "${SUBNET_1}"
+          EOF
+        volumeMounts:
+        - name: {{ .Values.global.clusterName }}-vpc-secret
+          mountPath: /secrets
+          readOnly: true
+      volumes:
+      - name: {{ .Values.global.clusterName }}-vpc-secret
+        secret:
+          secretName: {{ .Values.global.clusterName }}-vpc-secret
+      restartPolicy: OnFailure

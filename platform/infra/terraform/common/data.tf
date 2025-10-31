@@ -21,6 +21,17 @@ data "aws_eks_cluster" "clusters" {
   name     = each.value.name
 }
 
+data "aws_subnets" "private_subnets" {
+  for_each = var.clusters
+  filter {
+    name   = "vpc-id"
+    values = data.aws_eks_cluster.clusters[each.key].vpc_config[0].vpc_id
+  }
+  tags = {
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+}
+
 data "aws_vpc" "hub_cluster_vpc" {
   id = local.cluster_vpc_ids[local.hub_cluster.name]
 }

@@ -1309,7 +1309,7 @@ spec:
     
             - name: get-cluster-secret
               container:
-                image: bitnami/kubectl:latest
+                image: alpine/k8s:1.32.8
                 command: [/bin/bash, -c]
                 args:
                 - |
@@ -1381,7 +1381,7 @@ spec:
                   factor: 1
                   maxDuration: "10s"
               container:
-                image: bitnami/kubectl:latest
+                image: alpine/k8s:1.32.8
                 command: [/bin/bash, -c]
                 args:
                 - |
@@ -1752,7 +1752,7 @@ spec:
               parameters:
               - name: token-and-id
             container: 
-              image: alpine/k8s:latest
+              image: alpine/k8s:1.32.8
               command: ["/bin/bash", "-c"]
               args:
               - |

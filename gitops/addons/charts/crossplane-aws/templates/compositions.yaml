@@ -337,7 +337,7 @@ spec:
           fromFieldPath: spec.resourceConfig.deletionPolicy
           toFieldPath: spec.deletionPolicy
         - type: FromEnvironmentFieldPath
-          fromFieldPath: locations.us
+          fromFieldPath: region
           toFieldPath: spec.forProvider.region
     - name: connection-secret
       patches:
@@ -360,7 +360,7 @@ spec:
         - type: PatchSet
           patchSetName: common-fields
         - type: FromEnvironmentFieldPath
-          fromFieldPath: "dbSubnetIds"
+          fromFieldPath: "privateSubnetIds"
           toFieldPath: spec.forProvider.subnetIds
     - base:
         apiVersion: ec2.aws.upbound.io/v1beta1
