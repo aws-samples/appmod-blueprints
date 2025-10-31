@@ -3,8 +3,28 @@ global:
   - key: "CriticalAddonsOnly"
     operator: "Exists"
     effect: "NoSchedule"
+  nodeSelector:
+    eks.amazonaws.com/compute-type: auto
+    kubernetes.io/os: linux
+    karpenter.sh/nodepool: system
   domain: ${DOMAIN_NAME}
+  resourcePrefix: ${RESOURCE_PREFIX}
 server:
+  autoscaling:
+    enabled: true
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+  resources:
+    requests:
+      cpu: '2'
+      memory: '4Gi'
+    limits:
+      memory: '6Gi'
+  metrics:
+    enabled: true
+    service:
+      annotations:
+        prometheus.io/scrape: true
   ingress:
     enabled: true
     ingressClassName: nginx
@@ -18,9 +38,204 @@ server:
     - --insecure
   service:
     type: ClusterIP
+  extensions:
+    enabled: true
+    extensionList:
+      - name: rollout-extension
+        env:
+          - name: EXTENSION_URL
+            value: https://github.com/argoproj-labs/rollout-extension/releases/download/v0.3.7/extension.tar
 configs:
+  rbac:
+    policy.csv: |
+      g, admin, role:admin
   cm:
     url: https://${DOMAIN_NAME}/argocd
+    oidc.config: |
+      name: Keycloak
+      issuer: https://${DOMAIN_NAME}/keycloak/realms/platform
+      clientID: argocd
+      enablePKCEAuthentication: true
+      requestedScopes: ["openid", "profile", "email", "groups"]
+    oidc.tls.insecure.skip.verify: "true"
+    controller.self.heal.timeout.seconds: "600"
+    controller.resource.health.persist: "false"
+    ui.bannerpermanent: "false"
+    controller.auto-sync: "true"
+    application.orphanedResourceMonitoring: "true"
+    application.resourceTrackingMethod: "annotation"
+    resource.exclusions: |
+      - kinds:
+          - ProviderConfigUsage
+        apiGroups:
+          - "*"
+    resource.customizations: |
+      services.k8s.aws/AdoptedResource:
+        health.lua: |
+          hs = {}
+          if obj.status ~= nil then
+            if obj.status.conditions ~= nil then
+              for i, condition in ipairs(obj.status.conditions) do
+                if condition.type == "ACK.Adopted" and condition.status == "False" then
+                  hs.status = "Degraded"
+                  hs.message = condition.message
+                  return hs
+                end
+                if condition.type == "ACK.Adopted" and condition.status == "True" then
+                  hs.status = "Healthy"
+                  hs.message = condition.message
+                  return hs
+                end
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "Waiting for Status conditions"
+          return hs
+      "*.services.k8s.aws/*":
+        health.lua.useOpenLibs: true
+        health.lua: |
+          hs = {}
+          if obj.status and obj.status.conditions then
+              for i, condition in ipairs(obj.status.conditions) do
+                  if condition.status == "Unknown" then
+                      hs.status = "Degraded"
+                      hs.message = condition.reason
+                      return hs
+                  elseif condition.type == "ACK.Recoverable" and condition.status == "True" then
+                      hs.status = "Degraded"
+                      hs.message = condition.message
+                      return hs
+                  elseif condition.type == "ACK.Terminal" and condition.status == "True" then
+                      hs.status = "Degraded"
+                      hs.message = condition.message
+                      return hs
+                  elseif condition.type == "ACK.ResourceSynced" then
+                      if condition.status == "True" then
+                          hs.status = "Healthy"
+                          hs.message = condition.message
+                          return hs
+                      elseif condition.status == "False" then
+                          hs.status = "Progressing"
+                          hs.message = condition.reason
+                          return hs
+                      end
+                  end
+              end
+          end
+          hs.status = "Progressing"
+          hs.message = "Waiting for Status conditions"
+          return hs
+      "awsblueprints.io/*":
+          health.lua: |
+            health_status = {
+              status = "Progressing",
+              message = "Provisioning ..."
+            }
+            if obj.status == nil or obj.status.conditions == nil then
+              return health_status
+            end
+            for i, condition in ipairs(obj.status.conditions) do
+              if condition.type == "Ready" then
+                if condition.status == "True" then
+                  health_status.status = "Healthy"
+                  health_status.message = "Resource is up-to-date."
+                  return health_status
+                end
+              end
+              if condition.type == "LastAsyncOperation" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+              if condition.type == "Synced" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+            end
+            return health_status
+      "*.aws.upbound.io/*":
+          health.lua: |
+            health_status = {
+              status = "Progressing",
+              message = "Provisioning ..."
+            }
+            if obj.status == nil or obj.status.conditions == nil then
+              return health_status
+            end
+            for i, condition in ipairs(obj.status.conditions) do
+              if condition.type == "Ready" then
+                if condition.status == "True" then
+                  health_status.status = "Healthy"
+                  health_status.message = "Resource is up-to-date."
+                  return health_status
+                end
+              end
+              if condition.type == "LastAsyncOperation" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+              if condition.type == "Synced" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+            end
+            return health_status
+      "*.aws.crossplane.io/*":
+          health.lua: |
+            health_status = {
+              status = "Progressing",
+              message = "Provisioning ..."
+            }
+            if obj.status == nil or obj.status.conditions == nil then
+              return health_status
+            end
+            for i, condition in ipairs(obj.status.conditions) do
+              if condition.type == "Ready" then
+                if condition.status == "True" then
+                  health_status.status = "Healthy"
+                  health_status.message = "Resource is up-to-date."
+                  return health_status
+                end
+              end
+              if condition.type == "LastAsyncOperation" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+              if condition.type == "Synced" then
+                if condition.status == "False" then
+                  health_status.status = "Degraded"
+                  health_status.message = condition.message
+                  return health_status
+                end
+              end
+            end
+            return health_status
+  repositories:
+    aws-public-ecr:
+      name: aws-public-ecr
+      type: helm
+      url: public.ecr.aws
+      enableOCI: 'true'
+    ghcr.io:
+      name: ghcr.io
+      type: helm
+      url: ghcr.io
+      enableOCI: 'true'
   secret:
     argocdServerAdminPassword: ${ADMIN_PASSWORD}
 
