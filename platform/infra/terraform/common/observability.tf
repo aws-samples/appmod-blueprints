@@ -94,7 +94,7 @@ module "managed_grafana" {
   }
 
   vpc_configuration = {
-    subnet_ids = tolist(locals.hub_subnet_ids)
+    subnet_ids = tolist(local.hub_subnet_ids)
   }
 
   tags = local.tags
