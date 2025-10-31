@@ -119,8 +119,8 @@ spec:
                 if parameter.functionalGate != _|_ {
         					annotations: {
                     color: parameter.functionalGate.extraArgs
-									}
-        				}
+                  }
+                }
               }
         			spec: containers: [{
         				image:           parameter.image
