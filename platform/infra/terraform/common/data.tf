@@ -25,7 +25,7 @@ data "aws_subnets" "private_subnets" {
   for_each = var.clusters
   filter {
     name   = "vpc-id"
-    values = data.aws_eks_cluster.clusters[each.key].vpc_config[0].vpc_id
+    values = [data.aws_eks_cluster.clusters[each.key].vpc_config[0].vpc_id]
   }
   tags = {
     "kubernetes.io/role/internal-elb" = "1"
