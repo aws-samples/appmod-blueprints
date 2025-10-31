@@ -70,31 +70,31 @@ module "managed_grafana" {
   security_group_rules = {
     egress_mysql = {
       description = "Allow egress to MySQL"
-      from_port = 3306
-      to_port = 3306
-      protocol = "tcp"
+      from_port   = 3306
+      to_port     = 3306
+      protocol    = "tcp"
       cidr_blocks = [local.hub_vpc_cidr]
     }
 
     egress_http = {
       description = "Allow egress to http"
-      from_port = 80
-      to_port = 80
-      protocol = "tcp"
-      cidr_blocks= ["0.0.0.0/0"]
+      from_port   = 80
+      to_port     = 80
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
     }
 
     egress_https = {
       description = "Allow egress to https"
-      from_port = 443
-      to_port = 443
-      protocol = "tcp"
-      cidr_blocks= ["0.0.0.0/0"]
+      from_port   = 443
+      to_port     = 443
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
     }
   }
 
   vpc_configuration = {
-    subnet_ids = local.hub_subnet_ids
+    subnet_ids = tolist(locals.hub_subnet_ids)
   }
 
   tags = local.tags
