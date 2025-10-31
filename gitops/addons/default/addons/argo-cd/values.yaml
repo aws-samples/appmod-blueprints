@@ -14,10 +14,10 @@ server:
     targetMemoryUtilizationPercentage: 80
   resources: # Adjust based on your specific use case (required for HPA)
     requests:
-      cpu: '500m'
-      memory: '512Mi'
+      cpu: '2'
+      memory: '4Gi'
     limits:
-      memory: '1Gi'
+      memory: '6Gi'
   metrics:
     enabled: true
     service:

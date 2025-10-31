@@ -20,13 +20,14 @@ module "gitops_bridge_bootstrap" {
 
   apps = local.argocd_apps
   argocd = {
-    name             = "argocd"
-    namespace        = kubernetes_namespace.argocd.metadata[0].name
-    chart_version    = "7.9.1"
-    values           = [
+    name          = "argocd"
+    namespace     = kubernetes_namespace.argocd.metadata[0].name
+    chart_version = "7.9.1"
+    values = [
       templatefile("${path.module}/manifests/argocd-initial-values.yaml", {
-        DOMAIN_NAME = local.ingress_domain_name
-        ADMIN_PASSWORD = local.user_password_hash
+        DOMAIN_NAME     = local.ingress_domain_name
+        ADMIN_PASSWORD  = local.user_password_hash
+        RESOURCE_PREFIX = var.resource_prefix
       })
     ]
     timeout          = 600
@@ -39,19 +40,19 @@ resource "kubernetes_secret" "git_secrets" {
   depends_on = [
     module.gitops_bridge_bootstrap,
     gitlab_personal_access_token.workshop
-    ]
+  ]
   for_each = {
     git-repo-creds = {
-      secret-type= "repo-creds"
-      url= "https://${local.gitlab_domain_name}/${local.git_username}"
-      type= "git"
-      username= "not-used"
-      password= local.gitlab_token
+      secret-type = "repo-creds"
+      url         = "https://${local.gitlab_domain_name}/${local.git_username}"
+      type        = "git"
+      username    = "not-used"
+      password    = local.gitlab_token
     }
     git-repository = {
-      secret-type= "repository"
-      url= "https://${local.gitlab_domain_name}/${local.git_username}/${var.working_repo}.git"
-      type= "git"
+      secret-type = "repository"
+      url         = "https://${local.gitlab_domain_name}/${local.git_username}/${var.working_repo}.git"
+      type        = "git"
     }
     # git-addons = {
     #   type                    = "git"
