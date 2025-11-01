@@ -114,7 +114,14 @@ spec:
         			]
         		}
         		template: {
-        			metadata: labels: app: context.name
+        			metadata: { 
+        				labels: app: context.name
+        				if parameter.functionalGate != _|_ {
+        					annotations: {
+        						color: parameter.functionalGate.extraArgs
+        					}
+        				}
+        			}
         			spec: containers: [{
         				image:           parameter.image
         				imagePullPolicy: "Always"
