@@ -31,6 +31,9 @@ kind: Job
 metadata:
   name: create-vpc-environment-config
   namespace: {{ .Values.namespace | default "crossplane-system" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "26"
+
 spec:
   template:
     spec:
