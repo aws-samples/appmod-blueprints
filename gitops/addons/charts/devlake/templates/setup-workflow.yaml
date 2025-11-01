@@ -23,6 +23,9 @@ kind: Workflow
 metadata:
   name: mysql-setup-workflow
   namespace: {{ .Values.namespace | default "devlake" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   serviceAccountName: devlake-mysql-setup-sa
   entrypoint: mysql-setup
@@ -62,7 +65,7 @@ spec:
       command: ["/bin/sh", "-c"]
       args:
       - |
-        SECRET_NAME=$(kubectl get secrets -n {{`inputs.parameters.connection-secret-namespace`}} -o name | grep "devlake-mysql.*cluster-mysql-connection$" | head -1 | cut -d'/' -f2)
+        SECRET_NAME=$(kubectl get secrets -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o name | grep "devlake-mysql.*cluster-mysql-connection$" | head -1 | cut -d'/' -f2)
         
         if [ -z "$SECRET_NAME" ]; then
           echo "Secret not found yet"
@@ -70,7 +73,7 @@ spec:
         fi
         
         # Check if password is available in the secret
-        password=$(kubectl get secret ${SECRET_NAME} -n {{`inputs.parameters.connection-secret-namespace`}} -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null | base64 --decode 2>/dev/null || true)
+        password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null | base64 --decode 2>/dev/null || true)
         
         if [ -z "$password" ]; then
           echo "Secret found but password not available yet"
@@ -89,7 +92,7 @@ spec:
     volumes:
     - name: connection-secret
       secret:
-        secretName: "{{`tasks.find-secret.outputs.parameters.secret-name`}}"
+        secretName: {{`{{tasks.find-secret.outputs.parameters.secret-name}}`}}
         optional: false
     - name: external-passwords
       secret:
