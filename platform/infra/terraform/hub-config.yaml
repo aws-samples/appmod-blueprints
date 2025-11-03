@@ -46,6 +46,7 @@ clusters:
       enable_kro_manifests: true
       enable_mutli_acct: true
       enable_kubevela: true
+      enable_devlake: true
       enable_jupyterhub: false
       enable_kubeflow: false
       enable_mlflow: false

@@ -812,6 +812,27 @@ jupyterhub:
       jsonPointers:
         - /metadata/managedFields
 
+devlake:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '7' # Needs to be after crossplane-aws
+  namespace: devlake
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/devlake'
+  defaultVersion: '0.1.0'
+  selector:
+    matchExpressions:
+      - key: enable_devlake
+        operator: In
+        values: ['true']
+  valuesObject:
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    clusterRegion: '{{.metadata.annotations.aws_region}}'
+    devlake:
+      grafana:
+        enabled: false
+        external:
+          url: "{{.metadata.annotations.aws_grafana_url}}"
+
 kubeflow:
   enabled: false
   annotationsAppSet:
@@ -1043,6 +1064,7 @@ crossplane:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
+    args: ["--enable-environment-configs"]
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition

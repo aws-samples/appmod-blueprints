@@ -371,6 +371,10 @@ spec:
             resources: ['services']
             verbs: ['get', 'list']
             resourceNames: ['${schema.spec.name}-webhook-service']
+          # Permissions for devlake configuration
+          - apiGroups: ['']
+            resources: ['secrets', 'configmaps']
+            verbs: ['delete', 'create']
 
     # RBAC Role Binding - follows principle of least privilege
     - id: rolebinding
@@ -847,8 +851,8 @@ spec:
                          -d '{
                            "url": "'$$webhook_url'",
                            "push_events": true,
-                           "issues_events": false,
-                           "merge_requests_events": false,
+                           "issues_events": true,
+                           "merge_requests_events": true,
                            "tag_push_events": false,
                            "note_events": false,
                            "job_events": false,
@@ -1244,6 +1248,341 @@ spec:
                    - configMapRef:
                        name: ${schema.spec.name}-config
 
+    - id: doradeploy
+      readyWhen:
+       - ${doradeploy.metadata.name != ""}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata:
+          name: ${schema.spec.name}-dora-deployment-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             workflow.kro.run/type: cicd
+        spec:
+          entrypoint: handle-rollout-check-and-process-deploy
+          arguments:
+            parameters:
+              - name: body
+              - name: appname
+                value: ${schema.spec.application.name}
+              - name: secretname
+                value: fleet-secret-fleet-peeks-spoke-dev
+          templates:
+            - name: handle-rollout-check-and-process-deploy
+              steps:
+                - - name: get-cluster-secret
+                    template: get-cluster-secret
+                - - name: setup-kubeconfig
+                    template: setup-kubeconfig
+                    arguments:
+                      artifacts:
+                        - name: cluster-secret
+                          from: "{{steps.get-cluster-secret.outputs.artifacts.cluster-secret}}"
+                - - name: check-rollout
+                    template: check-rollout-status
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: team-"{{workflow.parameters.appname}}"
+                        - name: body
+                          value: "{{workflow.parameters.body}}"
+                      artifacts:
+                        - name: kubeconfig
+                          from: "{{steps.setup-kubeconfig.outputs.artifacts.kubeconfig}}"
+                - - name: process-and-send-deployment
+                    template: process-deployment
+                    arguments:
+                      parameters:
+                        - name: status
+                          value: "{{steps.check-rollout.outputs.result}}"
+                        - name: body
+                          value: "{{workflow.parameters.body}}"
+                        - name: url
+                          value: devlake-ui.devlake.svc.cluster.local:4000
+    
+            - name: get-cluster-secret
+              container:
+                image: alpine/k8s:1.32.8
+                command: [/bin/bash, -c]
+                args:
+                - |
+                  mkdir -p /tmp/cluster-secret
+                  kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.server}' | base64 -d > /tmp/cluster-secret/server
+                  kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.name}' | base64 -d > /tmp/cluster-secret/name
+                  kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.config}' | base64 -d > /tmp/cluster-secret/config
+              outputs:
+                artifacts:
+                - name: cluster-secret
+                  path: /tmp/cluster-secret
+    
+            - name: setup-kubeconfig
+              inputs:
+                artifacts:
+                - name: cluster-secret
+                  path: /tmp/argocd-cluster
+              container:
+                image: alpine:latest
+                command: [/bin/bash, -c]
+                args:
+                - |
+                  mkdir -p ~/.kube
+                  
+                  SERVER=$(cat /tmp/argocd-cluster/server)
+                  CLUSTER_NAME=$(cat /tmp/argocd-cluster/name)
+                  TOKEN=$(cat /tmp/argocd-cluster/config | jq -r .bearerToken)
+                  CA_DATA=$(cat /tmp/argocd-cluster/config | jq -r .tlsClientConfig.caData)
+    
+                  cat > ~/.kube/config <<EOF
+                  apiVersion: v1
+                  kind: Config
+                  clusters:
+                  - name: $CLUSTER_NAME
+                    cluster:
+                      certificate-authority-data: $CA_DATA
+                      server: $SERVER
+                  users:
+                  - name: $CLUSTER_NAME-user
+                    user:
+                      token: $TOKEN
+                  contexts:
+                  - name: $CLUSTER_NAME-context
+                    context:
+                      cluster: $CLUSTER_NAME 
+                      user: $CLUSTER_NAME-user
+                  current-context: $CLUSTER_NAME-context
+                  EOF
+                  
+                  cp ~/.kube/config /tmp/kubeconfig
+              outputs:
+                artifacts:
+                - name: kubeconfig
+                  path: /tmp/kubeconfig
+    
+            - name: check-rollout-status
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: body
+                artifacts:
+                - name: kubeconfig
+                  path: /tmp/kubeconfig
+              retryStrategy:
+                limit: 60
+                retryPolicy: "Always"
+                backoff:
+                  duration: "10s"
+                  factor: 1
+                  maxDuration: "10s"
+              container:
+                image: alpine/k8s:1.32.8
+                command: [/bin/bash, -c]
+                args:
+                - |
+                  mkdir -p ~/.kube
+                  cp /tmp/kubeconfig ~/.kube/config
+                  
+                  SA="system:serviceaccount:kube-system:dev-argocd-manager"
+                  SEARCH_WORD="{{workflow.parameters.appname}}"
+                  COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after | .[0:7]')
+    
+                  ROLLOUT_NAME=$(kubectl --as=$SA get rollout -n "{{inputs.parameters.namespace}}" -o json | \
+                    jq -r --arg WORD "$SEARCH_WORD" '.items[] | select(.metadata.name | contains($WORD)) | .metadata.name')
+    
+                  if [ -z "$ROLLOUT_NAME" ]; then
+                    echo "No rollout found containing word: $SEARCH_WORD"
+                    exit 1
+                  fi
+    
+                  CURRENT_IMAGE=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
+                  CURRENT_TAG=$(echo $CURRENT_IMAGE | awk -F ":" '{print $2}')
+    
+                  if [[ "$CURRENT_TAG" == *"$COMMIT_HASH"* ]]; then
+                    phase=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
+                    
+                    if [ "$phase" = "Healthy" ]; then
+                      echo "SUCCESS"
+                      exit 0
+                    elif [ "$phase" = "Degraded" ]; then
+                      echo "FAILURE"
+                      exit 0
+                    fi
+                  fi
+    
+                  echo "Still waiting for rollout to complete..."
+                  exit 1
+    
+            - name: process-deployment
+              inputs:
+                parameters:
+                  - name: body
+                  - name: url
+                  - name: status
+              script:
+                image: alpine
+                command: [sh]
+                envFrom:
+                  - secretRef:
+                      name: devlake-webhook-secret
+                  - configMapRef:
+                      name: devlake-webhook-id
+                source: |
+                  apk add --no-cache jq curl
+                  RESULT="{{inputs.parameters.status}}"
+                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/deployments          
+                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
+                  . as $root |
+                  {
+                    id: ("deployment-" + (.after | .[0:7])),
+                    createdDate: (.commits | first | .timestamp),
+                    startedDate: (.commits | first | .timestamp),
+                    finishedDate: (.commits | last | .timestamp),
+                    environment: "PRODUCTION",
+                    result: $result,
+                    name: ("deployment-" + (.after | .[0:7])),
+                    deploymentCommits: [
+                      .commits[] | {
+                        repoUrl: $root.repository.clone_url,
+                        refName: $root.ref,
+                        startedDate: .timestamp,
+                        finishedDate: .timestamp,
+                        commitSha: .id,
+                        commitMsg: .message,
+                        result: $result,
+                      }
+                    ]
+                  }')
+                  echo "====Transformed Payload===="
+                  echo "$PAYLOAD" | jq '.'
+                  curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
+
+    - id: doraincident
+      readyWhen:
+       - ${doraincident.metadata.name != ""}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata:
+          name: ${schema.spec.name}-dora-incident-workflow
+        spec:
+          arguments:
+            parameters:
+              - name: body
+              - name: url
+                value: devlake-ui.devlake.svc.cluster.local:4000
+          templates:
+            - name: process-incident
+              inputs:
+                parameters:
+                  - name: body
+                  - name: url
+              script:
+                image: alpine
+                command: [sh]
+                envFrom:
+                  - secretRef:
+                      name: devlake-webhook-secret
+                  - configMapRef:
+                      name: devlake-webhook-id
+                source: |
+                  apk add --no-cache jq curl
+                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/issues
+                  echo '{{inputs.parameters.body}}'
+                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+                  {
+                    issueKey: (.repository.name + "-" + (.object_attributes.id | tostring)),
+                    title: .object_attributes.title,
+                    description: .object_attributes.description,
+                    url: .object_attributes.url,
+                    type: "INCIDENT",
+                    status: (if .object_attributes.state == "opened" then "TODO" else "DONE" end),
+                    originalStatus: "TODO",
+                    createdDate: .object_attributes.created_at,
+                    updatedDate: .object_attributes.updated_at,
+                    resolutionDate: (if .object_attributes.state == "closed" then .object_attributes.closed_at else null end),
+                    priority: "",
+                    severity: .object_attributes.severity,
+                    creatorId: .user.id,
+                    creatorName: (.user.name // .user.username),
+                    assigneeId: (.object_attributes.assignee_id // ""),
+                    assigneeName: ""
+                  }')
+                  echo "====Transformed Payload===="
+                  echo "$PAYLOAD" | jq '.'
+                  curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
+
+    - id: dorapullrequest
+      readyWhen:
+       - ${dorapullrequest.metadata.name != ""}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata:
+          name: ${schema.spec.name}-dora-pull-request-workflow
+        spec:
+          arguments:
+            parameters:
+              - name: body
+              - name: url
+                value: devlake-ui.devlake.svc.cluster.local:4000
+          templates:
+            - name: process-pull-request
+              inputs:
+                parameters:
+                  - name: body
+                  - name: url
+              script:
+                image: alpine
+                command: [sh]
+                envFrom:
+                  - secretRef:
+                      name: devlake-webhook-secret
+                  - configMapRef:
+                      name: devlake-webhook-id
+                source: |
+                  apk add --no-cache jq curl
+                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/pull_requests
+                  echo '{{inputs.parameters.body}}'
+                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+                  {
+                    id: (.repository.name + "-" + (.object_attributes.id | tostring)),
+                    pullRequestKey: (.object_attributes.id | tostring),
+                    displayTitle: .object_attributes.title,
+                    description: .object_attributes.description,
+                    status: (if .object_attributes.state == "opened" then "OPEN" elif .object_attributes.state == "merged" then "MERGED" else "CLOSED" end),
+                    createdDate: .object_attributes.created_at,
+                    updatedDate: .object_attributes.updated_at,
+                    closedDate: (if .object_attributes.state == "closed" then .object_attributes.updated_at),
+                    mergedDate: (if .object_attributes.state == "merged" then .object_attributes.updated_at),
+                    type: "PR",
+                    url: .object_attributes.url,
+                    authorId: .user.id,
+                    authorName: (.user.name // .user.username),
+                    reviewers: [],
+                    comments: 0,
+                    commits: 0,
+                    additions: 0,
+                    deletions: 0,
+                    changedFiles: 0,
+                    baseBranch: .object_attributes.source_branch,
+                    headBranch: .object_attributes.target_branch,
+                    repoId: .project.id,
+                    repoName: .repository.name
+                  }')
+                  echo "====Transformed Payload===="
+                  echo "$PAYLOAD" | jq '.'
+                  curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
+    
     # ConfigMap for cache warmup Dockerfiles
     - id: cachedockerfile
       readyWhen:
@@ -1286,6 +1625,379 @@ spec:
 
              # This is a cache warming image - no specific application code
              CMD ["echo", "Cache warming image ready"]
+
+    - id: dorasetuptemplate
+      readyWhen:
+       - ${dorasetuptemplate.metadata.name != ""}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata:
+          name: dora-setup-template
+        spec:
+          arguments:
+            parameters:
+            - name: appname
+              value: ${schema.spec.application.name}
+            - name: namespace
+              value: ${schema.metadata.namespace}
+            - name: url
+              value: http://devlake-lake.devlake.svc.cluster.local:8080
+          templates:
+          - name: dora-provisioner
+            dag:
+              tasks:
+                - name: devlake-init
+                  template: devlake-init
+                  arguments:
+                    parameters:
+                      - name: appname
+                        value: "{{workflow.parameters.appname}}"
+                      - name: url
+                        value: http://devlake-lake.devlake.svc.cluster.local:8080
+        
+                - name: create-devlake-webhook-secret-and-cm
+                  template: create-devlake-webhook-secret-and-cm
+                  arguments:
+                    parameters:
+                    - name: token-and-id
+                      value: "{{tasks.devlake-init.outputs.result}}"
+                  depends: "devlake-init"
+        
+                - name: devlake-generate-data
+                  template: devlake-generate-data
+                  depends: "create-devlake-webhook-secret-and-cm"
+        
+          - name: devlake-init
+            inputs:
+              parameters:
+              - name: appname
+              - name: url
+            container: 
+              image: alpine:3.20
+              command: ["/bin/sh", "-c"]
+              args:
+              - |
+                apk add curl jq >/dev/null 2>&1
+                BASE_URL="{{inputs.parameters.url}}"
+                resp=$(curl -X GET $BASE_URL/proceed-db-migration)
+                
+                projectName="{{inputs.parameters.appname}}"
+                
+                projectCreateRequest=$(
+                  cat <<EOF
+                {
+                  "name": "$projectName",
+                  "description": "",
+                  "metrics": [
+                    {
+                      "pluginName": "dora",
+                      "pluginOption": {},
+                      "enable": true
+                    },
+                    {
+                      "pluginName": "issue_trace",
+                      "pluginOption": {},
+                      "enable": true
+                    }
+                  ]
+                }
+                EOF
+                )
+                projectCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/projects -d "$projectCreateRequest")
+                blueprintID=$(echo $projectCreateResponse | jq -r '.blueprint.id')
+                blueprintName=$(echo $projectCreateResponse | jq -r '.blueprint.name')
+                
+                webhookName="$projectName"_webhook
+                webhookCreateRequest=$(
+                  cat <<EOF
+                {
+                  "name": "$webhookName"
+                }
+                EOF
+                )
+                webhookCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/plugins/webhook/connections -d "$webhookCreateRequest")
+                webhookID=$(echo $webhookCreateResponse | jq -r '.id')
+                webhookApiKey=$(echo $webhookCreateResponse | jq -r '.apiKey.apiKey')
+                
+                blueprintPatchRequest=$(
+                  cat <<EOF
+                {
+                  "name": "$blueprintName",
+                  "projectName": "$projectName",
+                  "mode": "NORMAL",
+                  "plan": null,
+                  "enable": true,
+                  "cronConfig": "0 0 * * 1",
+                  "isManual": false,
+                  "beforePlan": null,
+                  "afterPlan": null,
+                  "labels": [],
+                  "connections": [
+                    {
+                      "pluginName": "webhook",
+                      "connectionId": $webhookID
+                    }
+                  ],
+                  "skipOnFail": false,
+                  "timeAfter": "2024-09-21T00:00:00Z",
+                  "skipCollectors": false,
+                  "fullSync": false,
+                  "id": $blueprintID
+                }
+                EOF
+                )
+                
+                resp=$(curl -X PATCH -H "Content-Type: application/json" $BASE_URL/blueprints/$blueprintID -d "$blueprintPatchRequest")
+                
+                
+                echo "$webhookApiKey|$webhookID|$blueprintID"
+          - name: create-devlake-webhook-secret-and-cm
+            inputs:
+              parameters:
+              - name: token-and-id
+            container: 
+              image: alpine/k8s:1.32.8
+              command: ["/bin/bash", "-c"]
+              args:
+              - |
+                TOKEN=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f1)
+                HOOK_ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f2)
+                BP_ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f3)
+                kubectl delete secret devlake-webhook-secret --ignore-not-found -n "{{workflow.parameters.namespace}}" 
+                kubectl create secret generic devlake-webhook-secret -n "{{workflow.parameters.namespace}}" \
+                  --from-literal=DEVLAKE_TOKEN="$TOKEN"
+                kubectl delete configmap devlake-webhook-id --ignore-not-found -n "{{workflow.parameters.namespace}}" 
+                kubectl create configmap devlake-webhook-id -n "{{workflow.parameters.namespace}}" \
+                  --from-literal=DEVLAKE_HOOK_ID="$HOOK_ID" --from-literal=DEVLAKE_BP_ID="$BP_ID"
+        
+          - name: devlake-generate-data
+            container:
+              image: debian:12
+              command: [/bin/bash, -c]
+              envFrom:
+                - secretRef:
+                    name: devlake-webhook-secret
+                - configMapRef:
+                    name: devlake-webhook-id
+              args:
+              - |
+                apt update
+                apt install -y curl openssl coreutils
+                BASE_URL="http://devlake-ui.devlake.svc.cluster.local:4000"
+                TRIGGER_URL="http://devlake-lake.devlake.svc.cluster.local:8080"
+                API_KEY="$DEVLAKE_TOKEN"
+                CONNECTION_ID="$DEVLAKE_HOOK_ID"
+                BLUEPRINT_ID="$DEVLAKE_BP_ID"
+                
+                
+                rand() {
+                    od -N 4 -t uL -An /dev/urandom | tr -d " "
+                }
+                
+                # Portable date functions
+                get_start_ts() {
+                    date -d "180 days ago" +%s
+                }
+                
+                date_format() {
+                    date -d "@$1" "+%Y-%m-%dT%H:%M:%S%z"
+                }
+                
+                create_pr() {
+                    local pr_id=$1
+                    local created_date=$2
+                    local merged_date=$3
+                    local merge_commit_sha=$4
+                    
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/pull_requests" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
+                         -H 'Content-Type: application/json' \
+                         -d '{
+                      "id": "PR-'"$pr_id"'",
+                      "headRepoId": "repo-'"$(($(rand) % 1000))"'",
+                      "status": "MERGED",
+                      "originalStatus": "OPEN",
+                      "displayTitle": "Feature: Add new functionality '"$pr_id"'",
+                      "description": "This PR adds new features",
+                      "url": "https://github.com/org/repo/pull/'"$pr_id"'",
+                      "pullRequestKey": '"$pr_id"',
+                      "createdDate": "'"$created_date"'",
+                      "mergedDate": "'"$merged_date"'",
+                      "closedDate": null,
+                      "mergeCommitSha": "'"$merge_commit_sha"'",
+                      "headRef": "feature-branch-'"$pr_id"'",
+                      "baseRef": "main",
+                      "baseCommitSha": "'"$(openssl rand -hex 20)"'",
+                      "headCommitSha": "'"$(openssl rand -hex 20)"'",
+                      "isDraft": false
+                    }') 
+                }
+                
+                create_deployment() {
+                    local deploy_id=$1
+                    local start_date=$2
+                    local commit_sha=$3
+                    local finish_date=$4
+                    
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/deployments" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
+                         -d "{
+                      \"id\": \"DEPLOY-$deploy_id\",
+                      \"startedDate\": \"$start_date\",
+                      \"finishedDate\": \"$finish_date\",
+                      \"result\": \"SUCCESS\",
+                      \"url\": \"https://deploy.example.com/$deploy_id\",
+                      \"deploymentCommits\":[
+                        {
+                          \"repoUrl\": \"https://github.com/org/repo\",
+                          \"refName\": \"main\",
+                          \"startedDate\": \"$start_date\",
+                          \"finishedDate\": \"$finish_date\",
+                          \"commitSha\": \"$commit_sha\",
+                          \"commitMsg\": \"Deployment $deploy_id\"
+                        }
+                      ]
+                    }")
+                    
+                    echo "$finish_date"
+                }
+                
+                create_incident() {
+                    local incident_id=$1
+                    local created_date=$2
+                    
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
+                         -d "{
+                      \"issueKey\":\"INC-$incident_id\",
+                      \"title\":\"Incident $incident_id\",
+                      \"type\":\"INCIDENT\",
+                      \"originalStatus\":\"TODO\",
+                      \"status\":\"TODO\",
+                      \"createdDate\":\"$created_date\",
+                      \"updatedDate\":\"$created_date\"
+                    }")
+                }
+                
+                update_incident_status() {
+                    local incident_id=$1
+                    local created_date=$2
+                    local updated_date=$3
+                    
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
+                         -d "{
+                      \"issueKey\":\"INC-$incident_id\",
+                      \"title\":\"Incident $incident_id\",
+                      \"type\":\"INCIDENT\",
+                      \"originalStatus\":\"TODO\",
+                      \"status\":\"DONE\",
+                      \"createdDate\":\"$created_date\",
+                      \"updatedDate\":\"$updated_date\",
+                      \"resolutionDate\":\"$updated_date\"
+                    }")
+                }
+                
+                cap_timestamp() {
+                    local ts=$1
+                    local current_ts=$(date +%s)
+                    if [ "$ts" -gt "$current_ts" ]; then
+                        echo "$current_ts"
+                    else
+                        echo "$ts"
+                    fi
+                }
+                
+                ONE_HOUR=3600
+                ONE_DAY=$((24*ONE_HOUR))
+                ONE_WEEK=$((ONE_DAY * 7))
+                
+                end_ts=$(date +%s)
+                start_ts=$(get_start_ts)
+                current_ts=$start_ts
+                pr_id=1
+                deploy_id=1
+                incident_id=1
+                
+                # Main loop to generate data for the last six months
+                while [ "$current_ts" -lt "$end_ts" ]; do
+                    created_date=$(date_format "$current_ts")
+                    
+                    merged_ts=$(cap_timestamp $((current_ts + ONE_HOUR + $(rand) % ONE_WEEK)))
+                    merged_date=$(date_format "$merged_ts")
+                    merge_commit_sha=$(openssl rand -hex 20)
+                    
+                    create_pr "$pr_id" "$created_date" "$merged_date" "$merge_commit_sha"
+                    
+                    deploy_finish_ts=$(cap_timestamp $((merged_ts + ONE_HOUR + $(rand) % (2*ONE_HOUR))))
+                    deploy_finish_date=$(date_format "$deploy_finish_ts")
+                    create_deployment "$deploy_id" "$merged_date" "$merge_commit_sha" "$deploy_finish_date"
+                    
+                    current_ts=$deploy_finish_ts
+                    
+                    if [ $(($(rand) % 10)) -eq 0 ]; then
+                        incident_ts=$(cap_timestamp $((deploy_finish_ts + $(rand) % ONE_DAY)))
+                        incident_date=$(date_format "$incident_ts")
+                        create_incident "$incident_id" "$incident_date"
+                        
+                        fix_pr_merge_ts=$(cap_timestamp $((incident_ts + ONE_HOUR + $(rand) % (3*ONE_DAY))))
+                        fix_pr_merge_date=$(date_format "$fix_pr_merge_ts")
+                        fix_merge_commit_sha=$(openssl rand -hex 20)
+                        pr_id=$((pr_id+1))
+                        create_pr "$pr_id" "$incident_date" "$fix_pr_merge_date" "$fix_merge_commit_sha"
+                        
+                        fix_deploy_finish_ts=$(cap_timestamp $((fix_pr_merge_ts + ONE_HOUR + $(rand) % (2*ONE_HOUR))))
+                        fix_deploy_finish_date=$(date_format "$fix_deploy_finish_ts")
+                        deploy_id=$((deploy_id+1))
+                        create_deployment "$deploy_id" "$fix_pr_merge_date" "$fix_merge_commit_sha" "$fix_deploy_finish_date"
+                        
+                        update_incident_status "$incident_id" "$incident_date" "$fix_deploy_finish_date"
+                        incident_id=$((incident_id+1))
+                
+                        current_ts=$fix_deploy_finish_ts
+                    fi
+                    current_ts=$((current_ts + $(rand) % 2*ONE_DAY))
+                    pr_id=$((pr_id + 1))
+                    deploy_id=$((deploy_id + 1))
+                done
+                
+                echo "Data generation complete. Created $((pr_id - 1)) pull requests, $((deploy_id - 1)) deployments, and $((incident_id - 1)) incidents."
+                sleep 10
+                
+                echo "Triggering DORA Metrics Collection"
+                resp=$(curl -s -X POST -H "Content-Type: application/json" "$TRIGGER_URL/blueprints/$BLUEPRINT_ID/trigger" -d '{"skipCollectors":false,"fullSync":false}')
+
+    - id: dorasetupworkflow
+      readyWhen:
+       - ${dorasetupworkflow.metadata.name != ""}
+       #- ${dorasetupworkflow.status.conditions.exists(x, x.type == 'Completed' && x.status == "True")}
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: Workflow
+       metadata:
+          name: ${schema.spec.name}-dora-setup-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+             # Implicit dependency on WorkflowTemplate
+             workflowtemplate-ref: ${dorasetuptemplate.metadata.name}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-setup
+             app.kubernetes.io/managed-by: kro
+       spec:
+          serviceAccountName: ${schema.spec.name}-sa
+          entrypoint: dora-provisioner
+          workflowTemplateRef:
+              name: dora-setup-template
+              namespace: ${schema.metadata.namespace}
 
     # Initial ECR credential setup Job - runs once during deployment
     - id: initialecrcredsetup
@@ -1538,6 +2250,32 @@ spec:
           template:
              serviceAccountName: ${schema.spec.name}-sa
           dependencies:
+             - name: incident-webhook
+               eventSourceName: ${schema.spec.name}-gitlab-eventsource
+               eventName: gitlab-webhook
+               filters:
+                 data:
+                   - path: body.object_kind
+                     type: string
+                     value:
+                       - 'issue'
+             - name: pull-request-webhook
+               eventSourceName: ${schema.spec.name}-gitlab-eventsource
+               eventName: gitlab-webhook
+               filters:
+                 data:
+                   - path: body.object_kind
+                     type: string
+                     value:
+                       - 'merge_request'
+                   - path: body.object_attributes.target_branch
+                     type: string
+                     value:
+                       - 'main'
+                   - path: body.object_attributes.target_branch
+                     type: bool
+                     value:
+                       - 'false'
              - name: gitlab-webhook
                eventSourceName: ${schema.spec.name}-gitlab-eventsource
                eventName: gitlab-webhook
@@ -1610,6 +2348,7 @@ spec:
           triggers:
              - template:
                  name: gitlab-workflow-trigger
+                 conditions: "gitlab-webhook"
                  argoWorkflow:
                    operation: submit
                    source:
@@ -1649,6 +2388,93 @@ spec:
                          dataKey: body.ref
                        dest: spec.arguments.parameters.1.value
                        operation: overwrite
+             - template:
+                 name: gitlab-dora-trigger
+                 conditions: "gitlab-webhook"
+                 argoWorkflow:
+                   operation: submit
+                   source:
+                     resource:
+                       apiVersion: argoproj.io/v1alpha1
+                       kind: Workflow
+                       metadata:
+                         generateName: ${schema.spec.name}-dora-deploy
+                         namespace: ${schema.metadata.namespace}
+                         labels:
+                           app.kubernetes.io/name: ${schema.spec.application.name}
+                           app.kubernetes.io/component: cicd-pipeline
+                           triggered-by: gitlab-webhook
+                       spec:
+                         serviceAccountName: ${schema.spec.name}-sa
+                         workflowTemplateRef:
+                           name: ${schema.spec.name}-dora-deployment-workflow
+                         arguments:
+                           parameters:
+                             - name: body
+                               value: 'replace'
+                   parameters:
+                     - src:
+                         dependencyName: gitlab-webhook
+                         dataKey: body
+                       dest: spec.arguments.parameters.0.value
+             - template:
+                 name: dora-incident-trigger
+                 conditions: "incident-webhook"
+                 argoWorkflow:
+                   operation: submit
+                   source:
+                     resource:
+                       apiVersion: argoproj.io/v1alpha1
+                       kind: Workflow
+                       metadata:
+                         generateName: ${schema.spec.name}-dora-incident
+                         namespace: ${schema.metadata.namespace}
+                         labels:
+                           app.kubernetes.io/name: ${schema.spec.application.name}
+                           app.kubernetes.io/component: cicd-pipeline
+                           triggered-by: incident-webhook
+                       spec:
+                         serviceAccountName: ${schema.spec.name}-sa
+                         workflowTemplateRef:
+                           name: ${schema.spec.name}-dora-incident-workflow
+                         arguments:
+                           parameters:
+                             - name: body
+                               value: 'replace'
+                   parameters:
+                     - src:
+                         dependencyName: incident-webhook
+                         dataKey: body
+                       dest: spec.arguments.parameters.0.value
+             - template:
+                 name: dora-pull-request-trigger
+                 conditions: "pull-request-webhook"
+                 argoWorkflow:
+                   operation: submit
+                   source:
+                     resource:
+                       apiVersion: argoproj.io/v1alpha1
+                       kind: Workflow
+                       metadata:
+                         generateName: ${schema.spec.name}-dora-pull-request
+                         namespace: ${schema.metadata.namespace}
+                         labels:
+                           app.kubernetes.io/name: ${schema.spec.application.name}
+                           app.kubernetes.io/component: cicd-pipeline
+                           triggered-by: pull-request-webhook
+                       spec:
+                         serviceAccountName: ${schema.spec.name}-sa
+                         workflowTemplateRef:
+                           name: ${schema.spec.name}-dora-incident-workflow
+                         arguments:
+                           parameters:
+                             - name: body
+                               value: 'replace'
+                   parameters:
+                     - src:
+                         dependencyName: pull-request-webhook
+                         dataKey: body
+                       dest: spec.arguments.parameters.0.value
 
     # Service for exposing the EventSource webhook endpoint
     - id: webhookservice

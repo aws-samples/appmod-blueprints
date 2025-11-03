@@ -1,0 +1,218 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: devlake-mysql-setup-sa
+  namespace: {{ .Values.namespace | default "devlake" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: devlake-mysql-setup-access-binding
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+subjects:
+- kind: ServiceAccount
+  name: devlake-mysql-setup-sa
+  namespace: {{ .Values.namespace | default "devlake" }}
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: mysql-setup-workflow
+  namespace: {{ .Values.namespace | default "devlake" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  serviceAccountName: devlake-mysql-setup-sa
+  entrypoint: mysql-setup
+  templates:
+  - name: mysql-setup
+    dag:
+      tasks:
+      - name: find-secret
+        template: find-secret
+        arguments:
+          parameters:
+          - name: connection-secret-namespace
+            value: "crossplane-system"
+      - name: create-secrets
+        template: create-secrets
+        arguments:
+          parameters:
+          - name: endpoint
+            value: "{{`{{tasks.find-secret.outputs.parameters.endpoint}}`}}"
+          - name: root-password
+            value: "{{`{{tasks.find-secret.outputs.parameters.root-password}}`}}"
+        dependencies: [find-secret]
+      - name: wait-for-mysql
+        template: wait-for-mysql
+        dependencies: [create-secrets]
+      - name: create-users
+        template: create-users
+        dependencies: [wait-for-mysql]
+
+  - name: find-secret
+    inputs:
+      parameters:
+      - name: connection-secret-namespace
+    retryStrategy:
+      limit: 50 
+      retryPolicy: "Always"
+      backoff:
+        duration: "30s"
+    container:
+      image: alpine/k8s:1.32.8
+      command: ["/bin/sh", "-c"]
+      args:
+      - |
+        SECRET_NAME=$(kubectl get secrets -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o name | grep "devlake-mysql.*cluster-mysql-connection$" | head -1 | cut -d'/' -f2)
+        
+        if [ -z "$SECRET_NAME" ]; then
+          echo "Secret not found yet"
+          exit 1
+        fi
+        
+        # Check if password is available in the secret
+        endpoint=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+        if [ -z "$password" ] || [ -z "$endpoint" ]; then
+          echo "Secret found but values not available yet"
+          exit 1
+        fi
+        
+        echo "Secret ready with password"
+        mkdir -p /tmp
+        echo $endpoint > /tmp/endpoint
+        echo $password > /tmp/root-password
+    outputs:
+      parameters:
+      - name: endpoint
+        valueFrom:
+          path: /tmp/endpoint
+      - name: root-password
+        valueFrom:
+          path: /tmp/root-password
+
+  - name: create-secrets
+    inputs:
+      parameters:
+      - name: endpoint
+      - name: root-password
+    volumes:
+    - name: external-passwords
+      secret:
+        secretName: mysql-passwords
+        optional: false
+    container:
+      image: alpine/k8s:1.32.8
+      volumeMounts:
+      - name: external-passwords
+        mountPath: /passwords
+        readOnly: true
+      command: ["/bin/sh", "-c"]
+      args:
+      - |
+        endpoint="{{`{{inputs.parameters.endpoint}}`}}"
+        root_password="{{`{{inputs.parameters.root-password}}`}}"
+
+        # Read external passwords secret
+        merico_password=$(kubectl get secret mysql-passwords -n devlake -o jsonpath='{.data.DEVLAKE_MYSQL_PASSWORD}' | base64 -d)
+        grafana_password=$(kubectl get secret mysql-passwords -n devlake -o jsonpath='{.data.GRAFANA_MYSQL_PASSWORD}' | base64 -d)
+        
+        # Create service pointing to the RDS endpoint
+        kubectl delete service devlake-mysql-service -n devlake --ignore-not-found
+        kubectl create service externalname devlake-mysql-service --external-name="${endpoint}" -n devlake --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Create auth secret with credentials
+        kubectl delete secret devlake-mysql-auth -n devlake --ignore-not-found
+        kubectl create secret generic devlake-mysql-auth -n devlake \
+          --from-literal=MYSQL_USER=merico \
+          --from-literal=MYSQL_PASSWORD="$merico_password" \
+          --from-literal=MYSQL_DATABASE=lake \
+          --from-literal=MYSQL_ROOT_PASSWORD="$root_password" \
+          --from-literal=DB_URL="mysql://merico:"$merico_password"@devlake-mysql-service:3306/lake?charset=utf8mb4&parseTime=True" \
+          --from-literal=EXTERNAL_URL="$endpoint" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+  - name: wait-for-mysql
+    retryStrategy:
+      limit: 40
+      retryPolicy: "Always"
+      backoff:
+        duration: "10s"
+        factor: 2
+        maxDuration: "300s"
+    container:
+      image: mysql:8
+      command: ["/bin/bash", "-c"]
+      args:
+      - |
+        echo "Waiting for MySQL to be fully initialized..."
+        sleep 60
+        
+        if mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; then
+          echo "MySQL is ready!"
+          exit 0
+        else
+          echo "MySQL not ready yet, will retry..."
+          exit 1
+        fi
+      env:
+      - name: MYSQL_ROOT_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: devlake-mysql-auth
+            key: MYSQL_ROOT_PASSWORD
+
+  - name: create-users
+    container:
+      image: mysql:8
+      command: ["/bin/bash", "-c"]
+      args:
+      - |
+        echo "Creating lake database..."
+        mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+        CREATE DATABASE IF NOT EXISTS lake;
+        "
+        
+        echo "Creating devlake user..."
+        mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+        CREATE USER IF NOT EXISTS 'merico' IDENTIFIED BY '${MERICO_PASSWORD}';
+        GRANT ALL PRIVILEGES ON lake.* TO 'merico';
+        FLUSH PRIVILEGES;
+        "
+      
+        echo "Creating Grafana user..."
+        mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+        CREATE USER IF NOT EXISTS 'grafanaReader' IDENTIFIED BY '${GRAFANA_PASSWORD}';
+        GRANT SELECT ON lake.* TO 'grafanaReader';
+        FLUSH PRIVILEGES;
+        "
+        echo "User creation completed."
+      env:
+      - name: MYSQL_ROOT_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: devlake-mysql-auth
+            key: MYSQL_ROOT_PASSWORD
+      - name: MERICO_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: devlake-mysql-auth
+            key: MYSQL_PASSWORD
+      - name: GRAFANA_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: mysql-passwords
+            key: GRAFANA_MYSQL_PASSWORD

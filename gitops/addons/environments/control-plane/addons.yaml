@@ -101,3 +101,7 @@ spark-operator:
   enabled: true
 airflow:
   enabled: true
+
+# DORA Metrics
+devlake:
+  enabled: true

@@ -10,7 +10,7 @@ resource "gitlab_personal_access_token" "workshop" {
   name       = "Workshop Personal access token for ${var.git_username}"
   expires_at = "2025-12-31"
 
-  scopes = ["api", "read_repository", "write_repository"]
+  scopes = ["api", "read_api","read_repository", "write_repository"]
 }
 
 locals {
