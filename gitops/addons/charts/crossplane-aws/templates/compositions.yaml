@@ -356,6 +356,8 @@ spec:
         spec:
           forProvider:
             description: "rds-mysql"
+          providerConfigRef:
+            name: provider-aws-config
       patches:
         - type: PatchSet
           patchSetName: common-fields
@@ -368,6 +370,8 @@ spec:
         spec:
           forProvider:
             description: "rds-mysql-sg"
+          providerConfigRef:
+            name: provider-aws-config
       patches:
         - type: PatchSet
           patchSetName: common-fields
@@ -397,6 +401,8 @@ spec:
             cidrIpv4: "10.0.0.0/8"
             securityGroupIdSelector:
               matchControllerRef: true
+          providerConfigRef:
+            name: provider-aws-config
       patches:
         - type: PatchSet
           patchSetName: common-fields
@@ -424,6 +430,8 @@ spec:
               matchControllerRef: true
             vpcSecurityGroupIdSelector:
               matchControllerRef: true
+          providerConfigRef:
+            name: provider-aws-config
       patches:
         - type: PatchSet
           patchSetName: common-fields
@@ -467,6 +475,8 @@ spec:
               matchControllerRef: true
             instanceClass: db.r5.xlarge
             engine: aurora-mysql
+          providerConfigRef:
+            name: provider-aws-config
       patches:
         - type: PatchSet
           patchSetName: common-fields

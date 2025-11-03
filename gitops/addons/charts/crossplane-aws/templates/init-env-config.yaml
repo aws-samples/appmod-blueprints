@@ -5,7 +5,7 @@ metadata:
 rules:
 - apiGroups: ["apiextensions.crossplane.io"]
   resources: ["environmentconfigs"]
-  verbs: ["create", "update", "patch"]
+  verbs: ["get", "create", "update", "patch"]
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -40,14 +40,24 @@ spec:
       containers:
       - name: config-creator
         image: alpine/k8s:1.32.8
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65534
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
         command: ["/bin/sh", "-c"]
         args:
         - |
           SECRET_DATA=$(cat /secrets/vpc_data)
         
           # Parse nested JSON
-          VPC_ID=$(echo "$SECRET_DATA" | jq -r '.vpc.id')
-          SUBNET_1=$(echo "$SECRET_DATA" | jq -r '.vpc.subnet_ids[0]')
+          VPC_ID=$(echo "$SECRET_DATA" | jq -r '.id')
+          SUBNET_1=$(echo "$SECRET_DATA" | jq -r '.subnet_ids[0]')
+          SUBNET_2=$(echo "$SECRET_DATA" | jq -r '.subnet_ids[1]')
         
           # Create EnvironmentConfig
           cat <<EOF | kubectl apply -f -
@@ -57,12 +67,12 @@ spec:
             name: vpc-config
             labels:
               env: {{ .Values.global.clusterName }}
-          spec:
-            data:
-              region: {{ .Values.aws.region }}
-              vpcId: "${VPC_ID}"
-              privateSubnetIds:
-                - "${SUBNET_1}"
+          data:
+            region: {{ .Values.aws.region }}
+            vpcId: "${VPC_ID}"
+            privateSubnetIds:
+              - "${SUBNET_1}"
+              - "${SUBNET_2}"
           EOF
         volumeMounts:
         - name: {{ .Values.global.clusterName }}-vpc-secret

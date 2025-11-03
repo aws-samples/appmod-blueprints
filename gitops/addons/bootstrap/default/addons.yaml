@@ -1064,6 +1064,7 @@ crossplane:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
+    args: ["--enable-environment-configs"]
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition

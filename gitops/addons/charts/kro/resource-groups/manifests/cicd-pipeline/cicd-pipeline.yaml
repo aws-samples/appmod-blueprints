@@ -371,6 +371,10 @@ spec:
             resources: ['services']
             verbs: ['get', 'list']
             resourceNames: ['${schema.spec.name}-webhook-service']
+          # Permissions for devlake configuration
+          - apiGroups: ['']
+            resources: ['secrets', 'configmaps']
+            verbs: ['delete', 'create']
 
     # RBAC Role Binding - follows principle of least privilege
     - id: rolebinding
@@ -1335,7 +1339,7 @@ spec:
                   mkdir -p ~/.kube
                   
                   SERVER=$(cat /tmp/argocd-cluster/server)
-                  NAME=$(cat /tmp/argocd-cluster/name)
+                  CLUSTER_NAME=$(cat /tmp/argocd-cluster/name)
                   TOKEN=$(cat /tmp/argocd-cluster/config | jq -r .bearerToken)
                   CA_DATA=$(cat /tmp/argocd-cluster/config | jq -r .tlsClientConfig.caData)
     
@@ -1343,20 +1347,20 @@ spec:
                   apiVersion: v1
                   kind: Config
                   clusters:
-                  - name: ${NAME}
+                  - name: $CLUSTER_NAME
                     cluster:
-                      certificate-authority-data: ${CA_DATA}
-                      server: ${SERVER}
+                      certificate-authority-data: $CA_DATA
+                      server: $SERVER
                   users:
-                  - name: ${NAME}-user
+                  - name: $CLUSTER_NAME-user
                     user:
-                      token: ${TOKEN}
+                      token: $TOKEN
                   contexts:
-                  - name: ${NAME}-context
+                  - name: $CLUSTER_NAME-context
                     context:
-                      cluster: ${NAME} 
-                      user: ${NAME}-user
-                  current-context: ${NAME}-context
+                      cluster: $CLUSTER_NAME 
+                      user: $CLUSTER_NAME-user
+                  current-context: $CLUSTER_NAME-context
                   EOF
                   
                   cp ~/.kube/config /tmp/kubeconfig
@@ -1435,7 +1439,7 @@ spec:
                 source: |
                   apk add --no-cache jq curl
                   RESULT="{{inputs.parameters.status}}"
-                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/${DEVLAKE_HOOK_ID}/deployments          
+                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/deployments          
                   PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
                   . as $root |
                   {
@@ -1492,7 +1496,7 @@ spec:
                       name: devlake-webhook-id
                 source: |
                   apk add --no-cache jq curl
-                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/${DEVLAKE_HOOK_ID}/issues
+                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/issues
                   echo '{{inputs.parameters.body}}'
                   PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
                   {
@@ -1547,7 +1551,7 @@ spec:
                       name: devlake-webhook-id
                 source: |
                   apk add --no-cache jq curl
-                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/${DEVLAKE_HOOK_ID}/pull_requests
+                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/pull_requests
                   echo '{{inputs.parameters.body}}'
                   PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
                   {
@@ -1636,7 +1640,7 @@ spec:
             - name: appname
               value: ${schema.spec.application.name}
             - name: namespace
-              value: devlake
+              namespace: ${schema.metadata.namespace}
             - name: url
               value: http://devlake-lake.devlake.svc.cluster.local:8080
           templates:
@@ -1676,7 +1680,7 @@ spec:
               - |
                 apk add curl jq >/dev/null 2>&1
                 BASE_URL="{{inputs.parameters.url}}"
-                resp=$(curl -X GET ${BASE_URL}/proceed-db-migration)
+                resp=$(curl -X GET $BASE_URL/proceed-db-migration)
                 
                 projectName="{{inputs.parameters.appname}}"
                 
@@ -1700,18 +1704,19 @@ spec:
                 }
                 EOF
                 )
-                projectCreateResponse=$(curl -X POST -H "Content-Type: application/json" ${BASE_URL}/projects -d "$projectCreateRequest")
+                projectCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/projects -d "$projectCreateRequest")
                 blueprintID=$(echo $projectCreateResponse | jq -r '.blueprint.id')
                 blueprintName=$(echo $projectCreateResponse | jq -r '.blueprint.name')
                 
+                webhookName="$projectName"_webhook
                 webhookCreateRequest=$(
                   cat <<EOF
                 {
-                  "name": "${projectName}_webhook"
+                  "name": "$webhookName"
                 }
                 EOF
                 )
-                webhookCreateResponse=$(curl -X POST -H "Content-Type: application/json" ${BASE_URL}/plugins/webhook/connections -d "$webhookCreateRequest")
+                webhookCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/plugins/webhook/connections -d "$webhookCreateRequest")
                 webhookID=$(echo $webhookCreateResponse | jq -r '.id')
                 webhookApiKey=$(echo $webhookCreateResponse | jq -r '.apiKey.apiKey')
                 
@@ -1743,7 +1748,7 @@ spec:
                 EOF
                 )
                 
-                resp=$(curl -X PATCH -H "Content-Type: application/json" ${BASE_URL}/blueprints/$blueprintID -d "$blueprintPatchRequest")
+                resp=$(curl -X PATCH -H "Content-Type: application/json" $BASE_URL/blueprints/$blueprintID -d "$blueprintPatchRequest")
                 
                 
                 echo "$webhookApiKey|$webhookID|$blueprintID"
@@ -1805,8 +1810,8 @@ spec:
                     local merged_date=$3
                     local merge_commit_sha=$4
                     
-                    response=$(curl -s "${BASE_URL}/api/rest/plugins/webhook/connections/${CONNECTION_ID}/pull_requests" -X 'POST' \
-                         -H "Authorization: Bearer ${API_KEY}" \
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/pull_requests" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
                          -H 'Content-Type: application/json' \
                          -d '{
                       "id": "PR-'"$pr_id"'",
@@ -1835,8 +1840,8 @@ spec:
                     local commit_sha=$3
                     local finish_date=$4
                     
-                    response=$(curl -s "${BASE_URL}/api/rest/plugins/webhook/connections/${CONNECTION_ID}/deployments" -X 'POST' \
-                         -H "Authorization: Bearer ${API_KEY}" \
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/deployments" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
                          -d "{
                       \"id\": \"DEPLOY-$deploy_id\",
                       \"startedDate\": \"$start_date\",
@@ -1862,8 +1867,8 @@ spec:
                     local incident_id=$1
                     local created_date=$2
                     
-                    response=$(curl -s "${BASE_URL}/api/rest/plugins/webhook/connections/${CONNECTION_ID}/issues" -X 'POST' \
-                         -H "Authorization: Bearer ${API_KEY}" \
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
                          -d "{
                       \"issueKey\":\"INC-$incident_id\",
                       \"title\":\"Incident $incident_id\",
@@ -1880,8 +1885,8 @@ spec:
                     local created_date=$2
                     local updated_date=$3
                     
-                    response=$(curl -s "${BASE_URL}/api/rest/plugins/webhook/connections/${CONNECTION_ID}/issues" -X 'POST' \
-                         -H "Authorization: Bearer ${API_KEY}" \
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
                          -d "{
                       \"issueKey\":\"INC-$incident_id\",
                       \"title\":\"Incident $incident_id\",
@@ -1961,7 +1966,7 @@ spec:
                 sleep 10
                 
                 echo "Triggering DORA Metrics Collection"
-                resp=$(curl -s -X POST -H "Content-Type: application/json" "${TRIGGER_URL}/blueprints/${BLUEPRINT_ID}/trigger" -d '{"skipCollectors":false,"fullSync":false}')
+                resp=$(curl -s -X POST -H "Content-Type: application/json" "$TRIGGER_URL/blueprints/$BLUEPRINT_ID/trigger" -d '{"skipCollectors":false,"fullSync":false}')
 
     - id: dorasetupworkflow
       readyWhen:
@@ -1989,6 +1994,7 @@ spec:
              app.kubernetes.io/managed-by: kro
        spec:
           serviceAccountName: ${schema.spec.name}-sa
+          entrypoint: dora-provisioner
           workflowTemplateRef:
               name: dora-setup-template
               namespace: ${schema.metadata.namespace}

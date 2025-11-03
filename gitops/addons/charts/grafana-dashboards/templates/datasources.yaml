@@ -22,7 +22,7 @@ spec:
   datasource:
     name: mysql
     type: mysql
-    url: ${MYSQL_ENDPOINT}
+    url: ${GRAFANA_MYSQL_URL}
     access: proxy
     user: grafanaReader
     secureJsonData:

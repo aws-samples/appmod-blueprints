@@ -4,11 +4,17 @@ kind: ServiceAccount
 metadata:
   name: devlake-mysql-setup-sa
   namespace: {{ .Values.namespace | default "devlake" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: devlake-mysql-setup-access-binding
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 subjects:
 - kind: ServiceAccount
   name: devlake-mysql-setup-sa
@@ -24,7 +30,7 @@ metadata:
   name: mysql-setup-workflow
   namespace: {{ .Values.namespace | default "devlake" }}
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "-2"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   serviceAccountName: devlake-mysql-setup-sa
@@ -41,6 +47,12 @@ spec:
             value: "crossplane-system"
       - name: create-secrets
         template: create-secrets
+        arguments:
+          parameters:
+          - name: endpoint
+            value: "{{`{{tasks.find-secret.outputs.parameters.endpoint}}`}}"
+          - name: root-password
+            value: "{{`{{tasks.find-secret.outputs.parameters.root-password}}`}}"
         dependencies: [find-secret]
       - name: wait-for-mysql
         template: wait-for-mysql
@@ -58,8 +70,6 @@ spec:
       retryPolicy: "Always"
       backoff:
         duration: "30s"
-        factor: 1
-        maxDuration: "30s"
     container:
       image: alpine/k8s:1.32.8
       command: ["/bin/sh", "-c"]
@@ -73,27 +83,33 @@ spec:
         fi
         
         # Check if password is available in the secret
-        password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null | base64 --decode 2>/dev/null || true)
-        
-        if [ -z "$password" ]; then
-          echo "Secret found but password not available yet"
+        endpoint=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+        if [ -z "$password" ] || [ -z "$endpoint" ]; then
+          echo "Secret found but values not available yet"
           exit 1
         fi
         
         echo "Secret ready with password"
-        echo $SECRET_NAME > /tmp/secret-name
+        mkdir -p /tmp
+        echo $endpoint > /tmp/endpoint
+        echo $password > /tmp/root-password
     outputs:
       parameters:
-      - name: secret-name
+      - name: endpoint
         valueFrom:
-          path: /tmp/secret-name
+          path: /tmp/endpoint
+      - name: root-password
+        valueFrom:
+          path: /tmp/root-password
 
   - name: create-secrets
+    inputs:
+      parameters:
+      - name: endpoint
+      - name: root-password
     volumes:
-    - name: connection-secret
-      secret:
-        secretName: {{`{{tasks.find-secret.outputs.parameters.secret-name}}`}}
-        optional: false
     - name: external-passwords
       secret:
         secretName: mysql-passwords
@@ -101,30 +117,32 @@ spec:
     container:
       image: alpine/k8s:1.32.8
       volumeMounts:
-      - name: connection-secret
-        mountPath: /secrets
-        readOnly: true
       - name: external-passwords
         mountPath: /passwords
         readOnly: true
       command: ["/bin/sh", "-c"]
       args:
       - |
-        endpoint=$(cat /secrets/endpoint)
-        root_password=$(cat /secrets/attribute.master_password)
-        merico_password=$(cat /passwords/DEVLAKE_MYSQL_PASSWORD)
-        grafana_password=$(cat /passwords/GRAFANA_MYSQL_PASSWORD)
+        endpoint="{{`{{inputs.parameters.endpoint}}`}}"
+        root_password="{{`{{inputs.parameters.root-password}}`}}"
+
+        # Read external passwords secret
+        merico_password=$(kubectl get secret mysql-passwords -n devlake -o jsonpath='{.data.DEVLAKE_MYSQL_PASSWORD}' | base64 -d)
+        grafana_password=$(kubectl get secret mysql-passwords -n devlake -o jsonpath='{.data.GRAFANA_MYSQL_PASSWORD}' | base64 -d)
         
         # Create service pointing to the RDS endpoint
-        kubectl create service externalname devlake-mysql-service --external-name=${endpoint} -n devlake --dry-run=client -o yaml | kubectl apply -f -
+        kubectl delete service devlake-mysql-service -n devlake --ignore-not-found
+        kubectl create service externalname devlake-mysql-service --external-name="${endpoint}" -n devlake --dry-run=client -o yaml | kubectl apply -f -
         
         # Create auth secret with credentials
+        kubectl delete secret devlake-mysql-auth -n devlake --ignore-not-found
         kubectl create secret generic devlake-mysql-auth -n devlake \
           --from-literal=MYSQL_USER=merico \
-          --from-literal=MYSQL_PASSWORD=$merico_password \
+          --from-literal=MYSQL_PASSWORD="$merico_password" \
           --from-literal=MYSQL_DATABASE=lake \
-          --from-literal=MYSQL_ROOT_PASSWORD=$root_password \
-          --from-literal=DB_URL="mysql://merico:$merico_password@devlake-mysql-service:3306/lake?charset=utf8mb4&parseTime=True" \
+          --from-literal=MYSQL_ROOT_PASSWORD="$root_password" \
+          --from-literal=DB_URL="mysql://merico:"$merico_password"@devlake-mysql-service:3306/lake?charset=utf8mb4&parseTime=True" \
+          --from-literal=EXTERNAL_URL="$endpoint" \
           --dry-run=client -o yaml | kubectl apply -f -
 
   - name: wait-for-mysql
