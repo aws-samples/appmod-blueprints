@@ -1640,7 +1640,7 @@ spec:
             - name: appname
               value: ${schema.spec.application.name}
             - name: namespace
-              namespace: ${schema.metadata.namespace}
+              value: ${schema.metadata.namespace}
             - name: url
               value: http://devlake-lake.devlake.svc.cluster.local:8080
           templates:

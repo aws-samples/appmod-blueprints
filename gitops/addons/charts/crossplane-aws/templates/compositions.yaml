@@ -322,8 +322,10 @@ spec:
     - type: Selector
       selector:
         mode: Single
+        sortByFieldPath: metadata.name
         matchLabels:
-        - key: env
+        - fromFieldPathPolicy: Required
+          key: env
           type: FromCompositeFieldPath
           valueFromFieldPath: spec.deploy
   writeConnectionSecretsToNamespace: crossplane-system
@@ -347,8 +349,11 @@ spec:
             - type: string
               string:
                 fmt: "%s-mysql"
+                type: Format
+          type: FromCompositeFieldPath
         - fromFieldPath: "spec.writeConnectionSecretToRef.namespace"
           toFieldPath: "spec.writeConnectionSecretToRef.namespace"
+          type: FromCompositeFieldPath
   resources:
     - base:
         apiVersion: rds.aws.upbound.io/v1beta1
@@ -364,6 +369,11 @@ spec:
         - type: FromEnvironmentFieldPath
           fromFieldPath: "privateSubnetIds"
           toFieldPath: spec.forProvider.subnetIds
+      readinessChecks:
+        - matchCondition:
+            status: 'True'
+            type: Ready
+          type: MatchCondition
     - base:
         apiVersion: ec2.aws.upbound.io/v1beta1
         kind: SecurityGroup
@@ -387,9 +397,16 @@ spec:
             - type: string
               string:
                 fmt: "rds-mysql-sg-%s"
+                type: Format
+          type: FromCompositeFieldPath
         - type: FromEnvironmentFieldPath
           fromFieldPath: "vpcId"
           toFieldPath: "spec.forProvider.vpcId"
+      readinessChecks:
+        - matchCondition:
+            status: 'True'
+            type: Ready
+          type: MatchCondition
     - base:
         apiVersion: ec2.aws.upbound.io/v1beta1
         kind: SecurityGroupIngressRule
@@ -406,7 +423,11 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common-fields
-
+      readinessChecks:
+        - matchCondition:
+            status: 'True'
+            type: Ready
+          type: MatchCondition
     - base:
         apiVersion: rds.aws.upbound.io/v1beta2
         kind: Cluster
@@ -437,28 +458,42 @@ spec:
           patchSetName: common-fields
         - fromFieldPath: spec.writeConnectionSecretToRef.namespace
           toFieldPath: spec.writeConnectionSecretToRef.namespace
+          type: FromCompositeFieldPath
         - fromFieldPath: "metadata.name"
           toFieldPath: "spec.forProvider.masterPasswordSecretRef.name"
           transforms:
             - type: string
               string:
                 fmt: "%s-cluster-mysql-master-password"
+                type: Format
+          type: FromCompositeFieldPath
         - fromFieldPath: "metadata.name"
           toFieldPath: "spec.writeConnectionSecretToRef.name"
           transforms:
             - type: string
               string:
                 fmt: "%s-cluster-mysql-connection"
+                type: Format
+          type: FromCompositeFieldPath
         - fromFieldPath: "metadata.name"
           toFieldPath: "spec.forProvider.finalDBSnapshotIdentifier"
           transforms:
             - type: string
               string:
                 fmt: "%s-final-snapshot"
+                type: Format
+          type: FromCompositeFieldPath
         - fromFieldPath: "spec.engineVersion"
           toFieldPath: "spec.forProvider.engineVersion"
+          type: FromCompositeFieldPath
         - fromFieldPath: "spec.databaseName"
           toFieldPath: "spec.forProvider.databaseName"
+          type: FromCompositeFieldPath
+      readinessChecks:
+        - matchCondition:
+            status: 'True'
+            type: Ready
+          type: MatchCondition
       connectionDetails:
         - fromConnectionSecretKey: username
         - fromConnectionSecretKey: password
@@ -480,4 +515,9 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common-fields
+      readinessChecks:
+        - matchCondition:
+            status: 'True'
+            type: Ready
+          type: MatchCondition
 {{- end }}
