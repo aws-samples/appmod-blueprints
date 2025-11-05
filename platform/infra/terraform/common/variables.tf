@@ -199,7 +199,7 @@ variable "gitops_platform_repo_revision" {
 variable "backstage_image" {
   description = "backstage image for workshop"
   type        = string
-  default     = ""
+  default     = "public.ecr.aws/seb-demo/backstage:latest"
 }
 
 variable "working_repo" {

@@ -11,36 +11,33 @@ spec:
     cue:
       template: |
         output: {
-          apiVersion: "dynamodb.services.k8s.aws/v1alpha1"
-          kind:       "Table"
-          metadata: {
+        	apiVersion: "dynamodb.services.k8s.aws/v1alpha1"
+        	kind:       "Table"
+        	metadata: {
             name: "\(parameter.name)"
-            annotations: "services.k8s.aws/region": "\(parameter.region)"
+            annotations: {
+              "services.k8s.aws/region": "\(parameter.region)"
+              "argocd.argoproj.io/sync-options": "Ignore=true,SkipDryRunOnMissingResource=true"
+            }
           }
-          spec: {
+        	spec: {
             tableName: "\(parameter.name)"
-            attributeDefinitions: [
-              {
-                attributeName: "\(parameter.attributeName)"
-                attributeType: "\(parameter.attributeType)"
-              }
-            ]
-            keySchema: [
-              {
-                attributeName: "\(parameter.attributeName)"
-                keyType:      "HASH"
-              }
-            ]
             billingMode: "PAY_PER_REQUEST"
+            attributeDefinitions: [{
+              attributeName: "\(parameter.attributeName)"
+              attributeType: "\(parameter.attributeType)"
+            }]
+            keySchema: [{
+              attributeName: "\(parameter.attributeName)"
+              keyType: "HASH"
+            }]
           }
         }
         parameter: {
-          name:          string
-          region:        string
-          attributeName: string
-          attributeType: string
+        	name:          string
+        	region:        string
+        	attributeName: string
+        	attributeType: string
         }
   workload:
-    definition:
-      apiVersion: apps/v1
-      kind: Deployment
+    type: autodetects.core.oam.dev

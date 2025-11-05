@@ -1,5 +1,8 @@
 controller:
   replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
   config:
     use-forwarded-headers: "true"
     compute-full-forwarded-for: "true"
