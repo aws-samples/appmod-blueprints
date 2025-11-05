@@ -197,7 +197,7 @@ resource "kubectl_manifest" "spoke_dev_cluster_secret_store" {
   depends_on = [null_resource.wait_for_external_secrets_spoke_dev]
   
   yaml_body = <<YAML
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: aws-secrets-manager
@@ -224,7 +224,7 @@ resource "kubectl_manifest" "spoke_dev_grafana_secret" {
   ]
   
   yaml_body  = <<YAML
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: grafana-admin-credentials
@@ -339,7 +339,7 @@ resource "kubectl_manifest" "spoke_prod_cluster_secret_store" {
   depends_on = [null_resource.wait_for_external_secrets_spoke_prod]
   
   yaml_body = <<YAML
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: aws-secrets-manager
@@ -366,7 +366,7 @@ resource "kubectl_manifest" "spoke_prod_grafana_secret" {
   ]
   
   yaml_body  = <<YAML
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: grafana-admin-credentials

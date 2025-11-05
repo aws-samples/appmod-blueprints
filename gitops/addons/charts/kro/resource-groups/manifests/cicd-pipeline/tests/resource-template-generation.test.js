@@ -394,7 +394,7 @@ describe('Resource Template Generation and Substitution', () => {
 
       const template = templateEngine.substituteObject(gitlabExternalSecret.template);
 
-      expect(template.apiVersion).toBe('external-secrets.io/v1beta1');
+      expect(template.apiVersion).toBe('external-secrets.io/v1');
       expect(template.kind).toBe('ExternalSecret');
       expect(template.metadata.name).toBe('gitlab-credentials');
       expect(template.metadata.namespace).toBe('test-namespace');
