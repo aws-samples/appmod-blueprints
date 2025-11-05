@@ -128,8 +128,15 @@ main() {
       fi
       
       log_warning "Attempt $attempt failed, waiting ${delay}s before retry..."
-      log_info "Restarting Kyverno admission controller to fix potential webhook issues..."
+      log_info "Restarting webhook controllers to fix potential webhook issues..."
       kubectl rollout restart deployment kyverno-admission-controller -n kyverno 2>/dev/null || true
+      kubectl rollout restart deployment external-secrets-webhook -n external-secrets 2>/dev/null || true
+      kubectl rollout restart deployment external-secrets -n external-secrets 2>/dev/null || true
+      
+      # Wait for webhooks to be ready
+      log_info "Waiting for webhooks to be ready..."
+      kubectl wait --for=condition=available deployment/external-secrets-webhook -n external-secrets --timeout=60s 2>/dev/null || true
+      
       sleep $delay
       delay=$((delay * 2))  # Exponential backoff
       attempt=$((attempt + 1))

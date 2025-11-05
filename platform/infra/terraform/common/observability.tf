@@ -177,12 +177,54 @@ module "eks_monitoring_spoke_dev" {
   }
 }
 
+# Wait for external-secrets-operator to be ready
+resource "null_resource" "wait_for_external_secrets_spoke_dev" {
+  depends_on = [module.eks_monitoring_spoke_dev]
+  
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Waiting for external-secrets-operator to be ready..."
+      kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=available deployment/external-secrets -n external-secrets --timeout=300s || true
+      kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=available deployment/external-secrets-webhook -n external-secrets --timeout=300s || true
+      sleep 30
+    EOT
+  }
+}
+
+# Create ClusterSecretStore for AWS Secrets Manager
+resource "kubectl_manifest" "spoke_dev_cluster_secret_store" {
+  provider   = kubectl.spoke1
+  depends_on = [null_resource.wait_for_external_secrets_spoke_dev]
+  
+  yaml_body = <<YAML
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: aws-secrets-manager
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: ${local.region}
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: external-secrets-sa
+            namespace: external-secrets
+YAML
+}
+
 # This is needed for Grafana Operator to work correctly
 # As ESO is not deployed through terraform-aws-observability-accelerator
 resource "kubectl_manifest" "spoke_dev_grafana_secret" {
   provider   = kubectl.spoke1
+  depends_on = [
+    kubectl_manifest.spoke_dev_cluster_secret_store,
+    null_resource.wait_for_external_secrets_spoke_dev
+  ]
+  
   yaml_body  = <<YAML
-apiVersion: external-secrets.io/v1
+apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:
   name: grafana-admin-credentials
@@ -194,16 +236,13 @@ spec:
     kind: ClusterSecretStore
   target:
     name: grafana-admin-credentials
+    type: Opaque
   data:
   - secretKey: GF_SECURITY_ADMIN_APIKEY
     remoteRef:
       key: "${data.aws_eks_cluster.clusters["spoke1"].id}/secrets"
       property: grafana_api_key
-      conversionStrategy: Default
-      decodingStrategy: None
-      metadataPolicy: None
 YAML
-  depends_on = [module.eks_monitoring_spoke_dev]
 }
 
 # For spoek-prod cluster
@@ -280,12 +319,54 @@ module "eks_monitoring_spoke_prod" {
   }
 }
 
+# Wait for external-secrets-operator to be ready on prod cluster
+resource "null_resource" "wait_for_external_secrets_spoke_prod" {
+  depends_on = [module.eks_monitoring_spoke_prod]
+  
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Waiting for external-secrets-operator to be ready on prod cluster..."
+      kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=available deployment/external-secrets -n external-secrets --timeout=300s || true
+      kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=available deployment/external-secrets-webhook -n external-secrets --timeout=300s || true
+      sleep 30
+    EOT
+  }
+}
+
+# Create ClusterSecretStore for AWS Secrets Manager on prod cluster
+resource "kubectl_manifest" "spoke_prod_cluster_secret_store" {
+  provider   = kubectl.spoke2
+  depends_on = [null_resource.wait_for_external_secrets_spoke_prod]
+  
+  yaml_body = <<YAML
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: aws-secrets-manager
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: ${local.region}
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: external-secrets-sa
+            namespace: external-secrets
+YAML
+}
+
 # This is needed for Grafana Operator to work correctly
 # As ESO is not deployed through terraform-aws-observability-accelerator
 resource "kubectl_manifest" "spoke_prod_grafana_secret" {
   provider   = kubectl.spoke2
+  depends_on = [
+    kubectl_manifest.spoke_prod_cluster_secret_store,
+    null_resource.wait_for_external_secrets_spoke_prod
+  ]
+  
   yaml_body  = <<YAML
-apiVersion: external-secrets.io/v1
+apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:
   name: grafana-admin-credentials
@@ -297,16 +378,13 @@ spec:
     kind: ClusterSecretStore
   target:
     name: grafana-admin-credentials
+    type: Opaque
   data:
   - secretKey: GF_SECURITY_ADMIN_APIKEY
     remoteRef:
       key: "${data.aws_eks_cluster.clusters["spoke2"].id}/secrets"
       property: grafana_api_key
-      conversionStrategy: Default
-      decodingStrategy: None
-      metadataPolicy: None
 YAML
-  depends_on = [module.eks_monitoring_spoke_prod]
 }
 
 locals {
