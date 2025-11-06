@@ -6,6 +6,19 @@ background: true
 # Custom setting to enable allowExistingViolations
 allowExistingViolations: true
 
+# Exclude critical system namespaces from policy validation
+excludeNamespaces:
+  - kube-system
+  - kube-public
+  - kube-node-lease
+  - kyverno
+  - argocd
+  - crossplane-system
+  - argo-events
+  - cert-manager
+  - external-secrets
+  - ingress-nginx
+
 # Kyverno Helm values to fix kubectl image issue
 # Override the cleanup jobs kubectl image to use a working version
 
