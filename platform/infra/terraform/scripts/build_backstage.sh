@@ -26,7 +26,7 @@ else
     echo "Using default Dockerfile at $DOCKERFILE_PATH"
 fi
 
-echo "Building and pushing Docker image to ECR in region $AWS_REGION"
+echo "Building and pushing multi-arch Docker image to ECR in region $AWS_REGION"
 
 # Create ECR repository if it doesn't exist
 if ! aws ecr describe-repositories --repository-names $APP_NAME --region $AWS_REGION >/dev/null 2>&1; then
@@ -39,13 +39,22 @@ fi
 # Login to ECR
 aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
-# Build the Docker image
-docker build -t $APP_NAME -f "$DOCKERFILE_PATH" "$BUILD_CONTEXT"
+# Create buildx builder if it doesn't exist
+if ! docker buildx ls | grep -q multiarch; then
+    echo "Creating multi-arch builder"
+    docker buildx create --name multiarch --use --bootstrap
+else
+    echo "Using existing multi-arch builder"
+    docker buildx use multiarch
+fi
 
-# Tag the image
-docker tag $APP_NAME:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$APP_NAME:latest
+# Build and push multi-arch image (amd64 and arm64)
+docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    -t $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$APP_NAME:latest \
+    -f "$DOCKERFILE_PATH" \
+    "$BUILD_CONTEXT" \
+    --push
 
-# Push the image to ECR
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$APP_NAME:latest
-
-echo "Image successfully pushed to $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$APP_NAME:latest"
+echo "Multi-arch image successfully pushed to $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$APP_NAME:latest"
+echo "Supported architectures: linux/amd64, linux/arm64"

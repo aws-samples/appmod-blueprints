@@ -46,6 +46,12 @@ spec:
       labels:
         app: gitlab
     spec:
+      nodeSelector:
+        karpenter.sh/nodepool: system
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
       volumes:
       - name: gitlab-data
         persistentVolumeClaim:
@@ -141,9 +147,9 @@ spec:
         resources:
           requests:
             memory: "8Gi"
-            cpu: "4"
+            cpu: "6"
           limits:
-            memory: "12Gi"
+            memory: "16Gi"
         securityContext:
           privileged: false
           runAsUser: 0
@@ -194,3 +200,14 @@ spec:
     targetPort: 22
   selector:
     app: gitlab
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gitlab-pdb
+  namespace: gitlab
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: gitlab

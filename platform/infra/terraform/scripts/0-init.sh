@@ -81,12 +81,14 @@ main() {
     # Switch back to hub cluster for ArgoCD operations
     kubectl config use-context "${RESOURCE_PREFIX}-hub" >/dev/null 2>&1
 
-    if ! check_backstage_ecr_image; then
-        # Start Backstage Build Process
-        start_backstage_build
-        # Ensure BACKSTAGE_BUILD_PID is available in this scope
-        export BACKSTAGE_BUILD_PID
-    fi
+    #We do not build backstage as we are using public ECR
+    #uncomment this if you want to build image from local
+    #if ! check_backstage_ecr_image; then
+    #    # Start Backstage Build Process
+    #    start_backstage_build
+    #    # Ensure BACKSTAGE_BUILD_PID is available in this scope
+    #    export BACKSTAGE_BUILD_PID
+    #fi
 
     # Wait for ArgoCD to be fully ready first
     print_status "INFO" "Waiting for ArgoCD to be fully ready..."
@@ -251,38 +253,38 @@ main() {
     bash "$SCRIPT_DIR/2-gitlab-init.sh"
     
     # Wait for Backstage build to complete if it has started
-    if [[ -n $BACKSTAGE_BUILD_PID ]]; then
-        print_status "INFO" "Waiting for Backstage build to complete..."
+    # Uncomment this if you want to build backstage locally
+    # if [[ -n $BACKSTAGE_BUILD_PID ]]; then
+    #     print_status "INFO" "Waiting for Backstage build to complete..."
         
-        # Check if the process is still running
-        if kill -0 $BACKSTAGE_BUILD_PID 2>/dev/null; then
-            print_status "INFO" "Backstage build is still running, waiting for completion..."
-            if wait $BACKSTAGE_BUILD_PID; then
-                print_status "SUCCESS" "Backstage image build completed successfully"
-            else
-                print_status "ERROR" "Backstage image build failed"
-                if [ -f "$BACKSTAGE_LOG" ]; then
-                    print_status "ERROR" "Build log (last 20 lines):"
-                    tail -n 20 "$BACKSTAGE_LOG" | sed 's/^/  /'
-                fi
-                exit 1
-            fi
-        else
-            # Process already finished, check exit status
-            if wait $BACKSTAGE_BUILD_PID 2>/dev/null; then
-                print_status "SUCCESS" "Backstage image build already completed successfully"
-            else
-                print_status "ERROR" "Backstage image build failed"
-                if [ -f "$BACKSTAGE_LOG" ]; then
-                    print_status "ERROR" "Build log (last 20 lines):"
-                    tail -n 20 "$BACKSTAGE_LOG" | sed 's/^/  /'
-                fi
-                exit 1
-            fi
-        fi
-    fi
-
-    print_status "SUCCESS" "Bootstrap deployment process completed successfully!"
+    #     # Check if the process is still running
+    #     if kill -0 $BACKSTAGE_BUILD_PID 2>/dev/null; then
+    #         print_status "INFO" "Backstage build is still running, waiting for completion..."
+    #         if wait $BACKSTAGE_BUILD_PID; then
+    #             print_status "SUCCESS" "Backstage image build completed successfully"
+    #         else
+    #             print_status "ERROR" "Backstage image build failed"
+    #             if [ -f "$BACKSTAGE_LOG" ]; then
+    #                 print_status "ERROR" "Build log (last 20 lines):"
+    #                 tail -n 20 "$BACKSTAGE_LOG" | sed 's/^/  /'
+    #             fi
+    #             exit 1
+    #         fi
+    #     else
+    #         # Process already finished, check exit status
+    #         if wait $BACKSTAGE_BUILD_PID 2>/dev/null; then
+    #             print_status "SUCCESS" "Backstage image build already completed successfully"
+    #         else
+    #             print_status "ERROR" "Backstage image build failed"
+    #             if [ -f "$BACKSTAGE_LOG" ]; then
+    #                 print_status "ERROR" "Build log (last 20 lines):"
+    #                 tail -n 20 "$BACKSTAGE_LOG" | sed 's/^/  /'
+    #             fi
+    #             exit 1
+    #         fi
+    #     fi
+    # fi
+    # print_status "SUCCESS" "Bootstrap deployment process completed successfully!"
 
     # Set up Secrets and URLs for workshop.
     bash "$SCRIPT_DIR/1-tools-urls.sh"

@@ -414,7 +414,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "15"
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: backstage
@@ -423,6 +423,19 @@ spec:
       labels:
         app: backstage
     spec:
+      nodeSelector:
+        karpenter.sh/nodepool: system
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: backstage
       initContainers:
         - name: wait-for-secrets
           image: busybox:1.35
@@ -550,6 +563,12 @@ spec:
       labels:
         app: postgresql
     spec:
+      nodeSelector:
+        karpenter.sh/nodepool: system
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
       containers:
         - env:
             - name: PGDATA
@@ -681,6 +700,17 @@ stringData:
   ARGO_WORKFLOWS_URL: https://{{ .Values.ingress_domain_name }}/argo-workflows
   KEYCLOAK_NAME_METADATA: https://{{ .Values.ingress_domain_name }}/keycloak/realms/platform/.well-known/openid-configuration
   ARGO_CD_URL: 'https://argocd-server.argocd.svc.cluster.local/api/v1/'
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backstage-pdb
+  namespace: backstage
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: backstage
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

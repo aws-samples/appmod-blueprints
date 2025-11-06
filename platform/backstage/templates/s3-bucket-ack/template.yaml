@@ -148,6 +148,9 @@ spec:
         url: ${{ steps.publish.output.remoteUrl }}
       - title: View catalog-info.yaml
         url: ${{ steps.publish.output.remoteUrl }}/-/blob/main/catalog-info.yaml
+      - title: ArgoCD Application
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.bucket_name }}?view=tree&resource=
+        icon: web
     text:
       - title: Manual Catalog Registration
         content: |

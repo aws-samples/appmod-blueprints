@@ -1,30 +1,28 @@
-crds:
-  enabled: true
-global:
-  leaderElection:
-    namespace: cert-manager
-
-# Cert-Manager Controller HA
+# External Secrets HA Configuration
 replicaCount: 2
+
 nodeSelector:
   karpenter.sh/nodepool: system
+
 tolerations:
 - key: "CriticalAddonsOnly"
   operator: "Exists"
   effect: "NoSchedule"
+
 topologySpreadConstraints:
 - maxSkew: 1
   topologyKey: topology.kubernetes.io/zone
   whenUnsatisfiable: DoNotSchedule
   labelSelector:
     matchLabels:
-      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/name: external-secrets
+
 podDisruptionBudget:
   enabled: true
   maxUnavailable: 1
 
-# CA Injector HA
-cainjector:
+# Cert Controller HA
+certController:
   replicaCount: 2
   nodeSelector:
     karpenter.sh/nodepool: system
@@ -38,7 +36,7 @@ cainjector:
     whenUnsatisfiable: DoNotSchedule
     labelSelector:
       matchLabels:
-        app.kubernetes.io/name: cainjector
+        app.kubernetes.io/name: external-secrets-cert-controller
   podDisruptionBudget:
     enabled: true
     maxUnavailable: 1
@@ -58,7 +56,7 @@ webhook:
     whenUnsatisfiable: DoNotSchedule
     labelSelector:
       matchLabels:
-        app.kubernetes.io/name: webhook
+        app.kubernetes.io/name: external-secrets-webhook
   podDisruptionBudget:
     enabled: true
     maxUnavailable: 1

@@ -242,7 +242,7 @@ spec:
             name: ${{ parameters.clusterName }}
             description: EKS Cluster deployed by kro
             links:
-              - url: https://${{ parameters.ingressDomainName }}/argocd/applications/argocd/clusters
+              - url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/clusters
                 title: ArgoCD App URL
                 icon: externalLink
               - url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.repoName }}/-/blob/main/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
@@ -277,11 +277,17 @@ spec:
       action: publish:gitlab:merge-request
       input:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{ parameters.repoName }}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
-        title: Add new EKS cluster
-        description: Add new EKS cluster to the platform
+        title: Add new EKS cluster ${{ parameters.clusterName }}
+        description: |
+          Add new EKS cluster ${{ parameters.clusterName }} to the platform
+          
+          Changes:
+          - Added cluster configuration to multi-acct values
+          - Added KRO cluster configuration  
+          - Added Backstage component definition
         sourcePath: ./repo
         targetPath: .
-        branchName: new-cluster
+        branchName: cluster-${{ parameters.clusterName }}-${{ parameters.environment }}
         removeSourceBranch: true
         commitAction: auto
     - id: register

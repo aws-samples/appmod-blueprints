@@ -162,3 +162,6 @@ spec:
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps.register.output.entityRef }}
+      - title: ArgoCD Application
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.table_name }}?view=tree&resource=
+        icon: web
