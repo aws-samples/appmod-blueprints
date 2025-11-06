@@ -1,11 +1,21 @@
-# values for the addon
+# Activating cross-account feature only for control-plane
+featureGates:
+  ServiceLevelCARM: true
+  TeamLevelCARM: true
+
 deployment:
-  tolerations:
-    - key: CriticalAddonsOnly
-      operator: Exists
   nodeSelector:
-    eks.amazonaws.com/compute-type: auto
-    kubernetes.io/os: linux
     karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
 reconcile:
   defaultResyncPeriod: 1800

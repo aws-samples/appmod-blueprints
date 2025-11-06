@@ -39,13 +39,22 @@ fi
 # Login to ECR
 aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
-# Create buildx builder if it doesn't exist
+# Create buildx builder if it doesn't exist or fix if missing ARM64
 if ! docker buildx ls | grep -q multiarch; then
     echo "Creating multi-arch builder"
-    docker buildx create --name multiarch --use --bootstrap
+    docker run --privileged --rm tonistiigi/binfmt --install all
+    docker buildx create --name multiarch --driver docker-container --platform linux/amd64,linux/arm64 --use --bootstrap
 else
-    echo "Using existing multi-arch builder"
-    docker buildx use multiarch
+    echo "Checking existing multi-arch builder"
+    if ! docker buildx inspect multiarch | grep -q "linux/arm64"; then
+        echo "Fixing multi-arch builder - missing ARM64 support"
+        docker buildx rm multiarch
+        docker run --privileged --rm tonistiigi/binfmt --install all
+        docker buildx create --name multiarch --driver docker-container --platform linux/amd64,linux/arm64 --use --bootstrap
+    else
+        echo "Using existing multi-arch builder"
+        docker buildx use multiarch
+    fi
 fi
 
 # Build and push multi-arch image (amd64 and arm64)

@@ -14,6 +14,10 @@ controller:
       memory: 1Gi
     limits:
       memory: 1Gi
+  livenessProbe:
+    timeoutSeconds: 5
+  readinessProbe:
+    timeoutSeconds: 5
   priorityClassName: system-cluster-critical
   tolerations:
     - key: "CriticalAddonsOnly"

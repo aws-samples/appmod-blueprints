@@ -6,7 +6,6 @@ metadata:
   name: default
   namespace: ${{values.namespace}}
 spec:
-  nats:
-    native:
-      replicas: 3
-      auth: token
+  jetstream:
+    version: latest
+    replicas: 3
