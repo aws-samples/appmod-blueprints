@@ -19,9 +19,8 @@ server:
   pdb:
     enabled: true
     maxUnavailable: 1
-server:
   autoscaling:
-    enabled: true
+    enabled: false  # Disable HPA when using fixed replicas
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
   resources: # Adjust based on your specific use case (required for HPA)
