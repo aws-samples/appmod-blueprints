@@ -9,6 +9,12 @@ configs:
 
 # Override NATS clustering configuration to use full DNS names
 controller:
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
   config:
     eventBus:
       nats:

@@ -51,10 +51,10 @@ else
         docker buildx rm multiarch
         docker run --privileged --rm tonistiigi/binfmt --install all
         docker buildx create --name multiarch --driver docker-container --platform linux/amd64,linux/arm64 --use --bootstrap
-else
-    echo "Using existing multi-arch builder"
-    docker buildx use multiarch
-fi
+    else
+        echo "Using existing multi-arch builder"
+        docker buildx use multiarch
+    fi
 fi
 
 # Build and push multi-arch image (amd64 and arm64)
