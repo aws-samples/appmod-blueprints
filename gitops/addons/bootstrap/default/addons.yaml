@@ -72,11 +72,6 @@ ack-iam:
       - key: enable_ack_iam
         operator: In
         values: ['true']
-  valuesObject:
-    aws:
-      region: '{{.metadata.annotations.aws_region}}'
-    serviceAccount:
-      name: '{{default "ack-eks-controller" (index .metadata.annotations "ack_eks_service_account")}}'
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition

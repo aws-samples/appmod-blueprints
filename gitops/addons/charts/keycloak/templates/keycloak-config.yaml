@@ -90,7 +90,7 @@ data:
         }
     }
   realm-payload.json: |
-    {"realm":"${REALM_NAME}","enabled":true,"ssoSessionIdleTimeout":36000}
+    {"realm":"${REALM_NAME}","enabled":true,"ssoSessionIdleTimeout":36000,"accessTokenLifespan":3600,"accessTokenLifespanForImplicitFlow":3600}
   user-user1.json: |
     {
         "username": "user1",
