@@ -134,6 +134,10 @@ module "eks_monitoring_spoke_dev" {
     kubernetes = kubernetes.spoke1
   }
 
+  helm_config = {
+    timeout = 1800
+  }
+
   enable_amazon_eks_adot = true
   enable_cert_manager    = false
   enable_java            = true
@@ -234,6 +238,10 @@ module "eks_monitoring_spoke_prod" {
     kubectl    = kubectl.spoke2
     helm       = helm.spoke2
     kubernetes = kubernetes.spoke2
+  }
+
+  helm_config = {
+    timeout = 1800
   }
 
   enable_amazon_eks_adot = true
