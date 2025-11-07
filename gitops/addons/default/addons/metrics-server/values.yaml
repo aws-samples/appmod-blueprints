@@ -1,13 +1,20 @@
 # values for the addon
+replicas: 2
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
 tolerations:
 - key: "CriticalAddonsOnly"
   operator: "Exists"
 
+# Best practice: memory limits = requests, CPU requests only
 resources:
   requests:
     cpu: 100m
     memory: 200Mi
   limits:
-    memory: 500Mi
+    memory: 200Mi
 
 priorityClassName: system-cluster-critical

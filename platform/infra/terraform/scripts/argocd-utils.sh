@@ -81,11 +81,18 @@ refresh_argocd_app() {
 # Function to sync ArgoCD application
 sync_argocd_app() {
     local app_name=$1
+    local force_flag=""
+    
+    # Force sync for keycloak to ensure PostSync hooks execute
+    if [[ "$app_name" == *"keycloak"* ]]; then
+        force_flag="--force"
+        print_info "Using force sync for $app_name to execute PostSync hooks"
+    fi
     
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
         print_info "Using ArgoCD CLI to sync $app_name"
-        argocd app sync "$app_name" --timeout 200 || {
+        argocd app sync "$app_name" $force_flag --timeout 200 || {
             print_warning "ArgoCD CLI sync failed, falling back to kubectl"
             kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
         }
