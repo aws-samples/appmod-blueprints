@@ -1,4 +1,8 @@
 controller:
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
   nodeSelector:
     karpenter.sh/nodepool: system
   tolerations:
@@ -14,6 +18,10 @@ controller:
   priorityClassName: system-cluster-critical
 
 server:
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
   nodeSelector:
     karpenter.sh/nodepool: system
   tolerations:

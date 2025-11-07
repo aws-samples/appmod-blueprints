@@ -1,0 +1,49 @@
+keycloak:
+  # Enable production mode with clustering
+  args:
+    - start
+    - --optimized
+  
+  # Resource limits to prevent memory pressure
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2
+      memory: 1Gi
+  
+  # Clustering environment variables
+  extraEnv: |
+    - name: KC_CACHE
+      value: "ispn"
+    - name: KC_CACHE_STACK
+      value: "kubernetes"
+    - name: JAVA_OPTS_APPEND
+      value: "-Djgroups.dns.query=keycloak-headless.keycloak.svc.cluster.local"
+  
+  # Service account for Kubernetes API access (required for clustering)
+  serviceAccount:
+    create: true
+    annotations:
+      eks.amazonaws.com/role-arn: ""
+  
+  # Headless service for clustering discovery
+  service:
+    headless:
+      enabled: true
+  
+  # RBAC for Kubernetes API access
+  rbac:
+    create: true
+    rules:
+      - apiGroups: [""]
+        resources: ["pods"]
+        verbs: ["get", "list"]
+      - apiGroups: [""]
+        resources: ["endpoints"]
+        verbs: ["get", "list"]
+
+# Enable headless service for JGroups discovery
+headlessService:
+  enabled: true

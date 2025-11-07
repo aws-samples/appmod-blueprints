@@ -2441,3 +2441,199 @@ The addition of ACK workload roles to the Kro EKS template ensures that:
 4. **GitOps patterns are preserved** - All configuration is managed through Git and ArgoCD
 
 This architecture provides secure, scalable multi-cluster resource management while maintaining clear separation of concerns and following AWS security best practices.
+
+## High Availability Configuration for Critical Platform Addons
+
+### GitOps-Managed HA Architecture
+
+The platform's GitOps configuration ensures high availability for critical system components through standardized patterns applied across all essential addons.
+
+#### Resource Management Best Practices
+
+**Critical System Components** use memory-protected resource configuration:
+
+```yaml
+# Example: External Secrets Controller
+resources:
+  requests:
+    cpu: 100m        # CPU requests only (allows bursting)
+    memory: 128Mi    # Memory requests for scheduling
+  limits:
+    memory: 128Mi    # Memory limits = requests (prevents OOM kills)
+    # No CPU limits (prevents throttling)
+```
+
+**Key Benefits:**
+- **Memory Protection**: Prevents OOM kills with guaranteed memory allocation
+- **CPU Flexibility**: Allows bursting when CPU is available, prevents throttling
+- **Performance**: No artificial CPU constraints on critical components
+- **QoS Class**: Burstable with memory guarantees
+
+#### Multi-Replica Deployment Pattern
+
+All critical addons are configured with multiple replicas and Pod Disruption Budgets:
+
+```yaml
+# ArgoCD HA Configuration
+controller:
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+
+repoServer:
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+
+server:
+  replicas: 2
+```
+
+```yaml
+# External Secrets HA Configuration
+replicaCount: 2
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+certController:
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+
+webhook:
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+```
+
+#### System Nodepool and EKS Auto Mode Integration
+
+Critical components are scheduled on dedicated system nodes with proper tolerations:
+
+```yaml
+nodeSelector:
+  karpenter.sh/nodepool: system
+
+tolerations:
+- key: "CriticalAddonsOnly"
+  operator: "Exists"
+  effect: "NoSchedule"
+
+priorityClassName: system-cluster-critical
+```
+
+**EKS Auto Mode Benefits:**
+- **Automatic Node Management**: Karpenter handles node provisioning and scaling
+- **Multi-AZ Distribution**: Nodes spread across availability zones
+- **Cost Optimization**: Right-sized instances based on workload requirements
+- **Security**: Managed node groups with latest AMIs and patches
+
+#### Topology Spread Constraints
+
+Ensures replicas are distributed across availability zones for maximum availability:
+
+```yaml
+topologySpreadConstraints:
+- maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: DoNotSchedule
+  labelSelector:
+    matchLabels:
+      app.kubernetes.io/name: external-secrets
+```
+
+#### Session Sharing and State Management
+
+**Keycloak Clustering Configuration:**
+```yaml
+keycloak:
+  args:
+    - start
+    - --optimized
+  
+  extraEnv: |
+    - name: KC_CACHE
+      value: "ispn"
+    - name: KC_CACHE_STACK
+      value: "kubernetes"
+    - name: JAVA_OPTS_APPEND
+      value: "-Djgroups.dns.query=keycloak-headless.keycloak.svc.cluster.local"
+  
+  service:
+    headless:
+      enabled: true
+```
+
+**ArgoCD Redis HA Configuration:**
+```yaml
+redis-ha:
+  enabled: true
+  haproxy:
+    enabled: true
+    replicas: 3
+  redis:
+    masterGroupName: argocd
+    config:
+      save: '""'
+  sentinel:
+    replicas: 3
+redis:
+  enabled: false  # Disable single Redis instance
+```
+
+**Ingress Sticky Sessions:**
+```yaml
+server:
+  ingress:
+    annotations:
+      nginx.ingress.kubernetes.io/affinity: "cookie"
+      nginx.ingress.kubernetes.io/session-cookie-name: "argocd-server"
+      nginx.ingress.kubernetes.io/session-cookie-expires: "86400"
+      nginx.ingress.kubernetes.io/session-cookie-path: "/argocd"
+```
+
+#### Critical Addon HA Status
+
+**✅ Fully HA-Configured Components:**
+
+| Component | Replicas | PDB | Redis HA | Session Sharing |
+|-----------|----------|-----|----------|-----------------|
+| **ArgoCD** | 2 (server, controller, repo) | ✅ | ✅ | ✅ (sticky sessions) |
+| **Keycloak** | 2 | ✅ | N/A | ✅ (Infinispan clustering) |
+| **External Secrets** | 2 (all components) | ✅ | N/A | N/A |
+| **Cert-Manager** | 2 (all components) | ✅ | N/A | N/A |
+| **Ingress NGINX** | 2 | ✅ | N/A | ✅ (sticky sessions) |
+| **ACK Controllers** | 1 (singleton pattern) | N/A | N/A | N/A |
+
+**✅ Singleton by Design (Correct):**
+- **Metrics Server**: Single replica (Kubernetes design limitation)
+- **ACK Controllers**: Single replica per service (controller pattern)
+- **Kro**: Single controller (operator pattern)
+- **VelaCore**: Single controller (operator pattern)
+
+#### Resilience Features
+
+**Automatic Recovery:**
+- **Pod Restart**: Kubernetes automatically restarts failed pods
+- **Node Replacement**: Karpenter replaces unhealthy nodes
+- **Service Discovery**: DNS handles pod IP changes seamlessly
+- **Health Checks**: Liveness and readiness probes ensure service health
+
+**State Management:**
+- **GitOps State**: All configuration stored in Git repositories
+- **External Secrets**: Credentials synced from AWS Secrets Manager
+- **Database Persistence**: PostgreSQL with persistent volumes
+- **Session Persistence**: Redis HA and Infinispan clustering
+
+**Network Resilience:**
+- **Multi-AZ Load Balancing**: ALB distributes traffic across zones
+- **Ingress Redundancy**: Multiple ingress controller replicas
+- **Service Mesh Ready**: Compatible with Istio for advanced traffic management
+- **DNS Failover**: Route 53 health checks and failover
+
+This comprehensive HA configuration ensures that critical platform services maintain availability during node failures, rolling updates, and maintenance operations while following Kubernetes and cloud-native best practices.
