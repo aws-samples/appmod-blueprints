@@ -83,6 +83,28 @@ sync_argocd_app() {
     local app_name=$1
     local force_flag=""
     
+    # Check if app is already healthy and synced - skip if so
+    local app_status=$(kubectl get application "$app_name" -n argocd -o json 2>/dev/null)
+    if [ -n "$app_status" ]; then
+        local health=$(echo "$app_status" | jq -r '.status.health.status // "Unknown"')
+        local sync=$(echo "$app_status" | jq -r '.status.sync.status // "Unknown"')
+        local operation_phase=$(echo "$app_status" | jq -r '.status.operationState.phase // "None"')
+        
+        # Skip if already healthy and synced with no running operations
+        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ]; then
+            print_info "App $app_name already healthy and synced, skipping sync"
+            return 0
+        fi
+        
+        # Skip if currently syncing
+        if [ "$operation_phase" = "Running" ]; then
+            print_info "App $app_name is currently syncing, skipping"
+            return 0
+        fi
+        
+        print_info "App $app_name needs sync (health: $health, sync: $sync, operation: $operation_phase)"
+    fi
+    
     # Force sync for keycloak to ensure PostSync hooks execute
     if [[ "$app_name" == *"keycloak"* ]]; then
         force_flag="--force"
@@ -370,7 +392,8 @@ wait_for_sync_wave_completion() {
             jq -r --arg max_wave "$max_wave" \
             '.items[] | select(
                 ((.metadata.annotations."argocd.argoproj.io/sync-wave" // "0") | tonumber) <= ($max_wave | tonumber) and
-                (.status.sync.status != "Synced" or (.status.health.status != "Healthy" and .status.health.status != "Progressing"))
+                ((.status.sync.status != "Synced" or .status.health.status != "Healthy") and
+                 (.status.operationState.phase // "None") != "Running")
             ) | .metadata.name' 2>/dev/null)
         
         # Filter out best effort apps from blocking
@@ -472,6 +495,45 @@ wait_for_remaining_apps_health() {
 }
 
 show_final_status() {
+    print_info "Waiting for any ongoing sync operations to complete..."
+    
+    # Wait for any running sync operations to finish
+    local max_wait=300  # 5 minutes
+    local wait_time=0
+    
+    while [ $wait_time -lt $max_wait ]; do
+        local running_syncs=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r '.items[] | select(.status.operationState.phase == "Running") | .metadata.name' 2>/dev/null || echo "")
+        
+        # Filter out best effort apps from blocking wait
+        local blocking_running_syncs=""
+        for app in $running_syncs; do
+            local is_best_effort=false
+            for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                if [[ "$app" == "$best_effort_app" ]]; then
+                    is_best_effort=true
+                    break
+                fi
+            done
+            if [[ "$is_best_effort" == false ]]; then
+                blocking_running_syncs="$blocking_running_syncs $app"
+            fi
+        done
+        
+        if [ -z "$blocking_running_syncs" ]; then
+            print_info "All blocking sync operations completed"
+            break
+        fi
+        
+        print_info "Waiting for sync operations: $(echo $blocking_running_syncs | tr '\n' ' ')"
+        sleep 10
+        wait_time=$((wait_time + 10))
+    done
+    
+    if [ $wait_time -ge $max_wait ]; then
+        print_warning "Timeout waiting for sync operations, showing current status..."
+    fi
+    
     print_info "Final ArgoCD Applications Status:"
     echo "----------------------------------------"
     
