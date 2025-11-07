@@ -575,6 +575,8 @@ spec:
                    labels:
                      app.kubernetes.io/name: ${schema.spec.application.name}
                      app.kubernetes.io/component: ecr-credential-refresh
+                   annotations:
+                     karpenter.sh/do-not-disrupt: "true"
                  spec:
                    serviceAccountName: ${schema.spec.name}-sa
                    restartPolicy: OnFailure
@@ -686,6 +688,9 @@ spec:
                      dependencies: [setup-secrets]
 
              - name: validate-aws-resources
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: amazon/aws-cli:latest
                  command: [sh, -c]
@@ -709,6 +714,9 @@ spec:
                        name: ${schema.spec.name}-config
 
              - name: setup-docker-secrets
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: amazon/aws-cli:latest
                  command: [sh, -c]
@@ -778,6 +786,9 @@ spec:
                        name: ${schema.spec.name}-config
 
              - name: setup-gitlab-webhook
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: alpine:3.20
                  command: ['/bin/sh', '-c']
@@ -885,6 +896,9 @@ spec:
                      echo "GitLab webhook configuration completed"
 
              - name: cache-warmup
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: gcr.io/kaniko-project/executor:latest
                  args:
@@ -1069,6 +1083,9 @@ spec:
                      dependencies: [update-deployment]
 
              - name: git-checkout
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: alpine/git:latest
                  command: [sh, -c]
@@ -1104,6 +1121,9 @@ spec:
                      secretName: gitlab-credentials
 
              - name: run-unit-tests
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: node:18-alpine
                  command: [sh, -c]
@@ -1133,6 +1153,9 @@ spec:
                      mountPath: /workdir
 
              - name: kaniko-build
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: gcr.io/kaniko-project/executor:latest
                  args:
@@ -1172,6 +1195,9 @@ spec:
                      defaultMode: 0644
 
              - name: update-git-repo
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: alpine/git:latest
                  command: [sh, -c]
@@ -2034,6 +2060,8 @@ spec:
                labels:
                  app.kubernetes.io/name: ${schema.spec.application.name}
                  app.kubernetes.io/component: initial-ecr-setup
+               annotations:
+                 karpenter.sh/do-not-disrupt: "true"
              spec:
                serviceAccountName: ${schema.spec.name}-sa
                restartPolicy: OnFailure
