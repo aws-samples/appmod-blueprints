@@ -240,11 +240,6 @@ YAML
   depends_on = [
     module.eks_monitoring_spoke_dev
   ]
-
-  timeouts {
-    create = "10m"
-    update = "10m"
-  }
 }
 
 # For spoek-prod cluster
@@ -385,11 +380,6 @@ YAML
   depends_on = [
     module.eks_monitoring_spoke_prod
   ]
-
-  timeouts {
-    create = "10m"
-    update = "10m"
-  }
 }
 
 locals {
