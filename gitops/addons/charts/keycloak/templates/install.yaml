@@ -18,6 +18,25 @@ spec:
       targetPort: 8080
   selector:
     app: keycloak
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-headless
+  namespace: keycloak
+  labels:
+    app: keycloak
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: jgroups
+      port: 7600
+      targetPort: 7600
+  selector:
+    app: keycloak
   type: ClusterIP
 ---
 apiVersion: apps/v1
@@ -54,10 +73,14 @@ spec:
             app: keycloak
       containers:
         - args:
-            - start-dev
+            - start
           env:
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               value: "admin"
+            - name: KC_CACHE
+              value: "ispn"
+            - name: JAVA_OPTS_APPEND
+              value: "-Djgroups.dns.query=keycloak-headless.keycloak.svc.cluster.local"
             # - name: KC_HOSTNAME
             #   valueFrom:
             #     configMapKeyRef:
