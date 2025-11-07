@@ -325,7 +325,152 @@ wait_for_argocd_apps_health() {
     return 1
 }
 
-# Function to show final status
+# Dependency-aware ArgoCD app synchronization
+wait_for_argocd_apps_with_dependencies() {
+    print_info "Starting dependency-aware ArgoCD app synchronization..."
+    
+    # Phase 1: Wait for hub cluster core infrastructure (sync waves 0-30)
+    kubectl config use-context "${RESOURCE_PREFIX}-hub"
+    wait_for_sync_wave_completion "hub" 30
+    
+    # Phase 2: Verify hub Crossplane providers are healthy
+    wait_for_hub_crossplane_ready
+    
+    # Phase 3: Wait for spoke clusters basic infrastructure (waves 0-20)
+    for cluster_name in "${CLUSTER_NAMES[@]}"; do
+        if [[ "$cluster_name" != *"hub"* ]]; then
+            kubectl config use-context "$cluster_name"
+            wait_for_sync_wave_completion "$cluster_name" 20
+        fi
+    done
+    
+    # Phase 4: Wait for spoke Crossplane providers (wave 25-30)
+    for cluster_name in "${CLUSTER_NAMES[@]}"; do
+        if [[ "$cluster_name" != *"hub"* ]]; then
+            kubectl config use-context "$cluster_name"
+            wait_for_sync_wave_completion "$cluster_name" 30
+        fi
+    done
+    
+    # Phase 5: Final health check for all remaining apps
+    kubectl config use-context "${RESOURCE_PREFIX}-hub"
+    wait_for_remaining_apps_health
+}
+
+wait_for_sync_wave_completion() {
+    local cluster=$1
+    local max_wave=$2
+    local timeout=900  # 15 minutes per phase
+    
+    print_info "[$cluster] Waiting for sync waves 0-$max_wave to complete..."
+    
+    local start_time=$(date +%s)
+    while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+        local pending_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r --arg max_wave "$max_wave" \
+            '.items[] | select(
+                ((.metadata.annotations."argocd.argoproj.io/sync-wave" // "0") | tonumber) <= ($max_wave | tonumber) and
+                (.status.sync.status != "Synced" or (.status.health.status != "Healthy" and .status.health.status != "Progressing"))
+            ) | .metadata.name' 2>/dev/null)
+        
+        # Filter out best effort apps from blocking
+        local blocking_apps=""
+        for app in $pending_apps; do
+            local is_best_effort=false
+            for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                if [[ "$app" == "$best_effort_app" ]]; then
+                    is_best_effort=true
+                    print_info "[$cluster] Syncing best effort app: $app (non-blocking)"
+                    sync_argocd_app "$app" || true
+                    break
+                fi
+            done
+            if [[ "$is_best_effort" == false ]]; then
+                blocking_apps="$blocking_apps $app"
+            fi
+        done
+        
+        if [ -z "$blocking_apps" ]; then
+            print_success "[$cluster] Sync waves 0-$max_wave completed (ignoring best effort apps)"
+            return 0
+        fi
+        
+        # Try to sync remaining problematic apps
+        for app in $blocking_apps; do
+            if [ -n "$app" ]; then
+                print_info "[$cluster] Syncing blocking app: $app"
+                sync_argocd_app "$app" || true
+            fi
+        done
+        
+        print_info "[$cluster] Waiting for: $blocking_apps"
+        sleep 30
+    done
+    
+    print_warning "[$cluster] Timeout waiting for sync waves 0-$max_wave"
+    return 1
+}
+
+wait_for_hub_crossplane_ready() {
+    print_info "[hub] Verifying Crossplane providers are healthy..."
+    
+    local timeout=600  # 10 minutes
+    local start_time=$(date +%s)
+    
+    while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+        local unhealthy_providers=$(kubectl get providers -n crossplane-system --no-headers 2>/dev/null | \
+            grep -v "True.*True" | wc -l)
+        
+        if [ "$unhealthy_providers" -eq 0 ]; then
+            print_success "[hub] All Crossplane providers are healthy"
+            return 0
+        fi
+        
+        print_info "[hub] $unhealthy_providers Crossplane providers still unhealthy"
+        sleep 30
+    done
+    
+    print_warning "[hub] Timeout waiting for Crossplane providers"
+    return 1
+}
+
+wait_for_remaining_apps_health() {
+    print_info "Final cleanup: syncing remaining unhealthy applications..."
+    
+    # Get apps that are not healthy (excluding best effort apps)
+    local unhealthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(
+            .status.health.status != "Healthy"
+        ) | .metadata.name' 2>/dev/null)
+    
+    if [ -n "$unhealthy_apps" ]; then
+        print_info "Found unhealthy apps, attempting final sync..."
+        echo "$unhealthy_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                local is_best_effort=false
+                for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                    if [[ "$app" == "$best_effort_app" ]]; then
+                        is_best_effort=true
+                        break
+                    fi
+                done
+                
+                if [[ "$is_best_effort" == false ]]; then
+                    print_info "Final sync attempt for unhealthy app: $app"
+                    sync_argocd_app "$app" || true
+                    sleep 10
+                fi
+            fi
+        done
+        
+        print_info "Waiting for final sync operations to complete..."
+        sleep 60
+    fi
+    
+    print_success "Final cleanup completed"
+    return 0
+}
+
 show_final_status() {
     print_info "Final ArgoCD Applications Status:"
     echo "----------------------------------------"
