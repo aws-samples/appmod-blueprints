@@ -119,10 +119,39 @@ resource "null_resource" "spoke_dev_flux_crd_wait" {
   }
 }
 
+# Wait for cert-manager to be ready
+resource "null_resource" "spoke_dev_cert_manager_wait" {
+  depends_on = [
+    module.gitops_bridge_bootstrap,
+    null_resource.spoke_dev_flux_crd_wait
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Waiting for cert-manager CRDs to be available..."
+      for i in {1..60}; do
+        if kubectl --context ${local.spoke_clusters["spoke1"].name} get crd certificates.cert-manager.io >/dev/null 2>&1; then
+          echo "cert-manager CRDs found, waiting for readiness..."
+          kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=Established crd/certificates.cert-manager.io --timeout=300s
+          break
+        fi
+        echo "Waiting for cert-manager CRDs... ($i/60)"
+        sleep 10
+      done
+      
+      echo "Waiting for cert-manager deployment to be ready..."
+      kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=available --timeout=600s deployment/cert-manager -n cert-manager || true
+      kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=available --timeout=600s deployment/cert-manager-webhook -n cert-manager || true
+      kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=available --timeout=600s deployment/cert-manager-cainjector -n cert-manager || true
+    EOT
+  }
+}
+
 module "eks_monitoring_spoke_dev" {
   depends_on = [
     module.gitops_bridge_bootstrap,
     null_resource.spoke_dev_flux_crd_wait,
+    null_resource.spoke_dev_cert_manager_wait,
   ]
 
   source         = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
@@ -136,6 +165,7 @@ module "eks_monitoring_spoke_dev" {
 
   helm_config = {
     timeout = 1800
+    wait    = true
   }
 
   enable_amazon_eks_adot = true
@@ -184,8 +214,8 @@ module "eks_monitoring_spoke_dev" {
 # This is needed for Grafana Operator to work correctly
 # As ESO is not deployed through terraform-aws-observability-accelerator
 resource "kubectl_manifest" "spoke_dev_grafana_secret" {
-  provider   = kubectl.spoke1
-  yaml_body  = <<YAML
+  provider = kubectl.spoke1
+  yaml_body = <<YAML
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -207,7 +237,14 @@ spec:
       decodingStrategy: None
       metadataPolicy: None
 YAML
-  depends_on = [module.eks_monitoring_spoke_dev]
+  depends_on = [
+    module.eks_monitoring_spoke_dev
+  ]
+
+  timeouts {
+    create = "10m"
+    update = "10m"
+  }
 }
 
 # For spoek-prod cluster
@@ -225,10 +262,40 @@ resource "null_resource" "spoke_prod_flux_crd_wait" {
     EOT
   }
 }
+
+# Wait for cert-manager to be ready
+resource "null_resource" "spoke_prod_cert_manager_wait" {
+  depends_on = [
+    module.gitops_bridge_bootstrap,
+    null_resource.spoke_prod_flux_crd_wait
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Waiting for cert-manager CRDs to be available..."
+      for i in {1..60}; do
+        if kubectl --context ${local.spoke_clusters["spoke2"].name} get crd certificates.cert-manager.io >/dev/null 2>&1; then
+          echo "cert-manager CRDs found, waiting for readiness..."
+          kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=Established crd/certificates.cert-manager.io --timeout=300s
+          break
+        fi
+        echo "Waiting for cert-manager CRDs... ($i/60)"
+        sleep 10
+      done
+      
+      echo "Waiting for cert-manager deployment to be ready..."
+      kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=available --timeout=600s deployment/cert-manager -n cert-manager || true
+      kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=available --timeout=600s deployment/cert-manager-webhook -n cert-manager || true
+      kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=available --timeout=600s deployment/cert-manager-cainjector -n cert-manager || true
+    EOT
+  }
+}
+
 module "eks_monitoring_spoke_prod" {
   depends_on = [
     module.gitops_bridge_bootstrap,
     null_resource.spoke_prod_flux_crd_wait,
+    null_resource.spoke_prod_cert_manager_wait,
   ]
 
   source         = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
@@ -242,6 +309,7 @@ module "eks_monitoring_spoke_prod" {
 
   helm_config = {
     timeout = 1800
+    wait    = true
   }
 
   enable_amazon_eks_adot = true
@@ -291,8 +359,8 @@ module "eks_monitoring_spoke_prod" {
 # This is needed for Grafana Operator to work correctly
 # As ESO is not deployed through terraform-aws-observability-accelerator
 resource "kubectl_manifest" "spoke_prod_grafana_secret" {
-  provider   = kubectl.spoke2
-  yaml_body  = <<YAML
+  provider = kubectl.spoke2
+  yaml_body = <<YAML
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -314,7 +382,14 @@ spec:
       decodingStrategy: None
       metadataPolicy: None
 YAML
-  depends_on = [module.eks_monitoring_spoke_prod]
+  depends_on = [
+    module.eks_monitoring_spoke_prod
+  ]
+
+  timeouts {
+    create = "10m"
+    update = "10m"
+  }
 }
 
 locals {
