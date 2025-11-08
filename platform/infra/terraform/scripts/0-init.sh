@@ -33,7 +33,7 @@ source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
 
 # Configuration
 SCRIPT_DIR="$(dirname "$0")"
-WAIT_TIMEOUT=1800  #(30 minutes)
+WAIT_TIMEOUT=3600  #(60 minutes)
 CHECK_INTERVAL=30 # 30 seconds
 
 

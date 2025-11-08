@@ -90,14 +90,26 @@ sync_argocd_app() {
         local sync=$(echo "$app_status" | jq -r '.status.sync.status // "Unknown"')
         local operation_phase=$(echo "$app_status" | jq -r '.status.operationState.phase // "None"')
         
-        # Skip if already healthy and synced with no running operations
-        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ]; then
+        # Check for revision mismatch errors in operation state
+        local operation_message=$(echo "$app_status" | jq -r '.status.operationState.message // ""')
+        local revision_mismatch=false
+        if [[ "$operation_message" == *"cannot reference a different revision"* ]] || [[ "$operation_message" == *"ComparisonError"* ]]; then
+            print_info "Detected revision mismatch in $app_name, applying complete fix..."
+            terminate_argocd_operation "$app_name"
+            sleep 2
+            refresh_argocd_app "$app_name" "true"
+            sleep 5
+            revision_mismatch=true
+        fi
+        
+        # Skip if already healthy and synced with no running operations (unless we just fixed revision mismatch)
+        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ] && [ "$revision_mismatch" = false ]; then
             print_info "App $app_name already healthy and synced, skipping sync"
             return 0
         fi
         
-        # Skip if currently syncing
-        if [ "$operation_phase" = "Running" ]; then
+        # Skip if currently syncing (unless we just fixed revision mismatch)
+        if [ "$operation_phase" = "Running" ] && [ "$revision_mismatch" = false ]; then
             print_info "App $app_name is currently syncing, skipping"
             return 0
         fi
@@ -206,9 +218,9 @@ handle_sync_issues() {
     fi
 }
 
-# Wait for ArgoCD applications health (30min default timeout)
+# Wait for ArgoCD applications health (60min default timeout)
 wait_for_argocd_apps_health() {
-    local timeout=${1:-1800}
+    local timeout=${1:-3600}
     local check_interval=${2:-30}
     local start_time=$(date +%s)
     local end_time=$((start_time + timeout))
