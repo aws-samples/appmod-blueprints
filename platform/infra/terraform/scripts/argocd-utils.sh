@@ -416,7 +416,7 @@ wait_for_sync_wave_completion() {
                 if [[ "$app" == "$best_effort_app" ]]; then
                     is_best_effort=true
                     print_info "[$cluster] Syncing best effort app: $app (non-blocking)"
-                    sync_argocd_app "$app" || true
+                    sync_argocd_app_in_background "$app"
                     break
                 fi
             done
@@ -508,6 +508,28 @@ wait_for_remaining_apps_health() {
 
 show_final_status() {
     print_info "Waiting for any ongoing sync operations to complete..."
+    
+    # First, immediately handle any apps with ComparisonError
+    local comparison_error_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(
+            (.status.operationState.phase == "Running") and
+            ((.status.operationState.message // "") | contains("ComparisonError") or contains("cannot reference a different revision"))
+        ) | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$comparison_error_apps" ]; then
+        print_warning "Found apps with ComparisonError that will never recover, terminating immediately..."
+        echo "$comparison_error_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                print_warning "Terminating ComparisonError operation for $app"
+                terminate_argocd_operation "$app"
+                sleep 10
+                refresh_argocd_app "$app" "true"
+                sleep 10
+                sync_argocd_app "$app"
+            fi
+        done
+        sleep 15  # Give time for sync operations to start properly
+    fi
     
     # Wait for any running sync operations to finish
     local max_wait=300  # 5 minutes
