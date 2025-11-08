@@ -78,6 +78,20 @@ refresh_argocd_app() {
     kubectl annotate application.argoproj.io "$app_name" -n argocd argocd.argoproj.io/refresh="$refresh_type" --overwrite 2>/dev/null || true
 }
 
+# Function to sync ArgoCD application in background (non-blocking)
+sync_argocd_app_in_background() {
+    local app_name=$1
+    
+    # Try ArgoCD CLI first if available and authenticated
+    if authenticate_argocd; then
+        print_info "Using ArgoCD CLI to sync $app_name (background)"
+        argocd app sync "$app_name" &
+    else
+        print_warning "ArgoCD CLI authentication failed, using kubectl approach (background)"
+        kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{}}}' &
+    fi
+}
+
 # Function to sync ArgoCD application
 sync_argocd_app() {
     local app_name=$1
@@ -416,7 +430,7 @@ wait_for_sync_wave_completion() {
                 if [[ "$app" == "$best_effort_app" ]]; then
                     is_best_effort=true
                     print_info "[$cluster] Syncing best effort app: $app (non-blocking)"
-                    sync_argocd_app "$app" || true
+                    sync_argocd_app_in_background "$app"
                     break
                 fi
             done
@@ -508,6 +522,42 @@ wait_for_remaining_apps_health() {
 
 show_final_status() {
     print_info "Waiting for any ongoing sync operations to complete..."
+    
+    # First, immediately handle any apps with ComparisonError
+    local comparison_error_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(
+            (.status.operationState.phase == "Running") and
+            ((.status.operationState.message // "") | contains("ComparisonError") or contains("cannot reference a different revision"))
+        ) | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$comparison_error_apps" ]; then
+        print_warning "Found apps with ComparisonError that will never recover, terminating immediately..."
+        echo "$comparison_error_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                # Check if it's a best effort app
+                local is_best_effort=false
+                for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                    if [[ "$app" == "$best_effort_app" ]]; then
+                        is_best_effort=true
+                        break
+                    fi
+                done
+                
+                print_warning "Terminating ComparisonError operation for $app"
+                terminate_argocd_operation "$app"
+                sleep 10
+                refresh_argocd_app "$app" "true"
+                sleep 10
+                
+                if [[ "$is_best_effort" == true ]]; then
+                    sync_argocd_app_in_background "$app"
+                else
+                    sync_argocd_app "$app"
+                fi
+            fi
+        done
+        sleep 15  # Give time for sync operations to start properly
+    fi
     
     # Wait for any running sync operations to finish
     local max_wait=300  # 5 minutes
