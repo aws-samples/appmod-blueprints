@@ -66,7 +66,7 @@ spec:
       parameters:
       - name: connection-secret-namespace
     retryStrategy:
-      limit: 50 
+      limit: 60
       retryPolicy: "Always"
       backoff:
         duration: "30s"
@@ -75,23 +75,42 @@ spec:
       command: ["/bin/sh", "-c"]
       args:
       - |
-        SECRET_NAME=$(kubectl get secrets -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o name | grep "devlake-mysql.*cluster-mysql-connection$" | head -1 | cut -d'/' -f2)
+        echo "Searching for devlake MySQL secret in {{`{{inputs.parameters.connection-secret-namespace}}`}}..."
+        
+        # List all secrets for debugging
+        echo "Available secrets:"
+        kubectl get secrets -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o name | grep -i mysql || echo "No MySQL secrets found"
+        
+        # Try multiple patterns to find the secret
+        SECRET_NAME=$(kubectl get secrets -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o name | grep -E "devlake.*mysql.*connection|mysql.*devlake.*connection" | head -1 | cut -d'/' -f2)
         
         if [ -z "$SECRET_NAME" ]; then
-          echo "Secret not found yet"
+          echo "Secret not found yet, will retry..."
           exit 1
         fi
         
-        # Check if password is available in the secret
+        echo "Found secret: $SECRET_NAME"
+        
+        # Check if password is available in the secret - try multiple possible field names
         endpoint=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        
+        # Try different password field names
         password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        if [ -z "$password" ]; then
+          password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        fi
+        if [ -z "$password" ]; then
+          password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.master_password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        fi
 
         if [ -z "$password" ] || [ -z "$endpoint" ]; then
-          echo "Secret found but values not available yet"
+          echo "Secret found but required values not available yet"
+          echo "Endpoint: ${endpoint:-MISSING}"
+          echo "Password: ${password:+PRESENT}"
           exit 1
         fi
         
-        echo "Secret ready with password"
+        echo "Secret ready with all required values"
         mkdir -p /tmp
         echo $endpoint > /tmp/endpoint
         echo $password > /tmp/root-password
@@ -147,11 +166,11 @@ spec:
 
   - name: wait-for-mysql
     retryStrategy:
-      limit: 40
+      limit: 60
       retryPolicy: "Always"
       backoff:
-        duration: "10s"
-        factor: 2
+        duration: "15s"
+        factor: 1.5
         maxDuration: "300s"
     container:
       image: mysql:8
@@ -159,13 +178,18 @@ spec:
       args:
       - |
         echo "Waiting for MySQL to be fully initialized..."
-        sleep 60
+        echo "Endpoint: devlake-mysql-service:3306"
         
-        if mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; then
+        # Initial wait for RDS to be ready
+        sleep 30
+        
+        # Test connection
+        if mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1" 2>&1; then
           echo "MySQL is ready!"
           exit 0
         else
           echo "MySQL not ready yet, will retry..."
+          echo "This is normal for RDS instances which can take several minutes to initialize"
           exit 1
         fi
       env:
