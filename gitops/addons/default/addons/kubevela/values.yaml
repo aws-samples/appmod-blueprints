@@ -5,6 +5,12 @@ vela-core:
     - key: "CriticalAddonsOnly"
       operator: "Exists"
       effect: "NoSchedule"
+  workflow:
+    backoff:
+      maxTime:
+        failedState: 180
+    step:
+      errorRetryTimes: 15
 
 cluster-gateway:
   nodeSelector:

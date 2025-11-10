@@ -1,6 +1,15 @@
 vela-core:
   multicluster:
     enabled: false
+
+  # Longer workflow timeouts
+  workflow:
+    backoff:
+      maxTime:
+        failedState: 180
+    step:
+      errorRetryTimes: 15
+
   
   # High Availability Configuration
   replicaCount: 2

@@ -30,7 +30,7 @@ metadata:
   name: mysql-setup-workflow
   namespace: {{ .Values.namespace | default "devlake" }}
   annotations:
-    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-wave: "-1"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   serviceAccountName: devlake-mysql-setup-sa
