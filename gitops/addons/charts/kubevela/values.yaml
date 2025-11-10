@@ -1,3 +1,61 @@
 vela-core:
   multicluster:
     enabled: false
+  
+  # High Availability Configuration
+  replicaCount: 2
+  
+  # Pod Disruption Budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  
+  # Node Selection for System Nodepool
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  
+  # Tolerations for system nodes
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+      effect: NoSchedule
+    - key: system
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+  
+  # Topology Spread Constraints
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/instance: vela-core
+          app.kubernetes.io/name: vela-core
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/instance: vela-core
+          app.kubernetes.io/name: vela-core
+  
+  # Rolling Update Strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  
+  # Resource requests/limits for stability
+  resources:
+    requests:
+      cpu: 50m
+      memory: 20Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  
+  # Priority Class for critical system components
+  priorityClassName: system-cluster-critical
