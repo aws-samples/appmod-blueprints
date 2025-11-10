@@ -810,7 +810,7 @@ jupyterhub:
 devlake:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '7' # Needs to be after crossplane-aws
+    argocd.argoproj.io/sync-wave: '10' # Needs to be after crossplane-aws
   namespace: devlake
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/devlake'
   defaultVersion: '0.1.0'
