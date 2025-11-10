@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: devlake-crd-waiter
+  namespace: {{ .Values.namespace | default "devlake" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: devlake-crd-reader
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+rules:
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: devlake-crd-waiter-binding
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: devlake-crd-reader
+subjects:
+- kind: ServiceAccount
+  name: devlake-crd-waiter
+  namespace: {{ .Values.namespace | default "devlake" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: devlake-wait-for-crds
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  template:
+    spec:
+      serviceAccountName: devlake-crd-waiter
+      restartPolicy: OnFailure
+      containers:
+      - name: devlake-wait-crds
+        image: alpine/k8s:1.32.8
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Waiting for CRDs to be available..."
+          
+          # List your required CRDs
+          CRDS="xrelationaldatabases.awsblueprints.io subnetgroups.rds.aws.upbound.io securitygroups.ec2.aws.upbound.io securitygroupingressrules.ec2.aws.upbound.io clusters.rds.aws.upbound.io clusterinstances.rds.aws.upbound.io policies.iam.aws.upbound.io podidentityassociations.eks.aws.upbound.io roles.iam.aws.upbound.io rolepolicyattachments.iam.aws.upbound.io"
+          
+          for crd in $CRDS; do
+            echo "Waiting for CRD: $crd"
+            until kubectl get crd $crd 2>/dev/null; do
+              echo "CRD $crd not ready, waiting..."
+              sleep 5
+            done
+            echo "CRD $crd is ready"
+          done
+          
+          echo "All CRDs are available!"
