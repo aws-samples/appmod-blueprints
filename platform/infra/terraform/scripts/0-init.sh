@@ -7,6 +7,12 @@ else
   shopt -s expand_aliases
 fi
 
+# Best effort applications - sync but don't wait for them to be healthy
+BEST_EFFORT_APPS=(
+    "devlake-peeks-hub"
+    "grafana-dashboards-peeks-hub"
+)
+
 #be sure we source env var
 source /etc/profile.d/workshop.sh
 
@@ -27,7 +33,7 @@ source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
 
 # Configuration
 SCRIPT_DIR="$(dirname "$0")"
-WAIT_TIMEOUT=1800  #(30 minutes)
+WAIT_TIMEOUT=3600  #(60 minutes)
 CHECK_INTERVAL=30 # 30 seconds
 
 
@@ -178,75 +184,8 @@ main() {
         fi
     fi
 
-    # Wait for Argo CD apps to be healthy with retry mechanism
-    local retry_count=0
-    local max_retries=5
-    
-    while [ $retry_count -lt $max_retries ]; do
-        print_status "INFO" "Attempt $((retry_count + 1))/$max_retries: Waiting for ArgoCD apps to be healthy..."
-        
-        # Handle OutOfSync/Missing apps specifically before health check
-        local missing_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Missing") | .metadata.name' 2>/dev/null || echo "")
-        if [ -n "$missing_apps" ]; then
-            print_status "INFO" "Found OutOfSync/Missing apps, forcing refresh and sync..."
-            print_status "INFO" "Missing apps list: $missing_apps"
-            
-            # Process all apps concurrently
-            local pids=()
-            echo "$missing_apps" | while read -r app; do
-                if [ -n "$app" ]; then
-                    {
-                        print_status "INFO" "[$app] TERMINATE-OP: Using terminate_argocd_operation"
-                        terminate_argocd_operation "$app"
-                        sleep 5
-                        
-                        print_status "INFO" "[$app] REFRESH: Using refresh_argocd_app with hard refresh"
-                        refresh_argocd_app "$app" "true"
-                        sleep 10
-                        
-                        print_status "INFO" "[$app] SYNC: Using sync_argocd_app"
-                        sync_argocd_app "$app"
-                        print_status "INFO" "[$app] Sync operation completed"
-                    } &
-                    pids+=($!)
-                fi
-            done
-            
-            # Wait for all background processes to complete
-            print_status "INFO" "Waiting for all sync operations to complete..."
-            for pid in "${pids[@]}"; do
-                wait "$pid"
-            done
-            
-            # Additional wait after processing all apps to allow Git revision sync
-            print_status "INFO" "Waiting for Git revision synchronization..."
-            sleep 30
-        fi
-        
-        if wait_for_argocd_apps_health; then
-            # Double-check no OutOfSync/Missing apps remain
-            local remaining_missing=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Missing") | .metadata.name' 2>/dev/null || echo "")
-            if [ -n "$remaining_missing" ]; then
-                print_status "WARNING" "Still have OutOfSync/Missing apps: $remaining_missing"
-                retry_count=$((retry_count + 1))
-                continue
-            fi
-            print_status "SUCCESS" "ArgoCD apps are healthy"
-            break
-        else
-            retry_count=$((retry_count + 1))
-            if [ $retry_count -lt $max_retries ]; then
-                print_status "WARNING" "ArgoCD apps not healthy yet, retrying in 60 seconds..."
-                force_sync_all_apps
-                sleep 60
-            else
-                print_status "ERROR" "ArgoCD apps did not become healthy after $max_retries attempts"
-                show_final_status
-                print_status "WARNING" "Continuing with deployment despite ArgoCD app health issues..."
-                break
-            fi
-        fi
-    done
+    # Dependency-aware ArgoCD app synchronization
+    wait_for_argocd_apps_with_dependencies
 
 
     # Initialize GitLab configuration

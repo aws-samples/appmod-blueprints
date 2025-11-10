@@ -1,6 +1,14 @@
 # External Secrets HA Configuration
 replicaCount: 2
 
+# Best practice: memory limits = requests, CPU requests only
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 128Mi
+
 nodeSelector:
   karpenter.sh/nodepool: system
 
@@ -24,6 +32,12 @@ podDisruptionBudget:
 # Cert Controller HA
 certController:
   replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 64Mi
   nodeSelector:
     karpenter.sh/nodepool: system
   tolerations:
@@ -44,6 +58,12 @@ certController:
 # Webhook HA
 webhook:
   replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 64Mi
   nodeSelector:
     karpenter.sh/nodepool: system
   tolerations:

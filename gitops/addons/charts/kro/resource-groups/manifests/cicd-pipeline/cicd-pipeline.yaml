@@ -406,6 +406,61 @@ spec:
           name: ${schema.spec.name}-role
           apiGroup: rbac.authorization.k8s.io
 
+    # ClusterRole for accessing ArgoCD fleet secrets (DORA metrics)
+    - id: clusterrole
+      template:
+       apiVersion: rbac.authorization.k8s.io/v1
+       kind: ClusterRole
+       metadata:
+          name: ${schema.spec.name}-argocd-access
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+       rules:
+          - apiGroups: [""]
+            resources: ["secrets"]
+            resourceNames: ["fleet-secret-fleet-${schema.spec.aws.clusterName}"]
+            verbs: ["get", "list"]
+
+    # ClusterRoleBinding for ArgoCD access
+    - id: clusterrolebinding
+      readyWhen:
+       - ${clusterrolebinding.metadata.name != ""}
+      template:
+       apiVersion: rbac.authorization.k8s.io/v1
+       kind: ClusterRoleBinding
+       metadata:
+          name: ${schema.spec.name}-argocd-access
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: CICDPipeline
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+       subjects:
+          - kind: ServiceAccount
+            name: ${schema.spec.name}-sa
+            namespace: ${schema.metadata.namespace}
+       roleRef:
+          kind: ClusterRole
+          name: ${schema.spec.name}-argocd-access
+          apiGroup: rbac.authorization.k8s.io
+
     # ConfigMap for ECR repository information and CI/CD configuration
     - id: configmap
       readyWhen:
@@ -575,6 +630,8 @@ spec:
                    labels:
                      app.kubernetes.io/name: ${schema.spec.application.name}
                      app.kubernetes.io/component: ecr-credential-refresh
+                   annotations:
+                     karpenter.sh/do-not-disrupt: "true"
                  spec:
                    serviceAccountName: ${schema.spec.name}-sa
                    restartPolicy: OnFailure
@@ -686,6 +743,9 @@ spec:
                      dependencies: [setup-secrets]
 
              - name: validate-aws-resources
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: amazon/aws-cli:latest
                  command: [sh, -c]
@@ -709,6 +769,9 @@ spec:
                        name: ${schema.spec.name}-config
 
              - name: setup-docker-secrets
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: amazon/aws-cli:latest
                  command: [sh, -c]
@@ -778,6 +841,9 @@ spec:
                        name: ${schema.spec.name}-config
 
              - name: setup-gitlab-webhook
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: alpine:3.20
                  command: ['/bin/sh', '-c']
@@ -885,6 +951,9 @@ spec:
                      echo "GitLab webhook configuration completed"
 
              - name: cache-warmup
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: gcr.io/kaniko-project/executor:latest
                  args:
@@ -1069,6 +1138,9 @@ spec:
                      dependencies: [update-deployment]
 
              - name: git-checkout
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: alpine/git:latest
                  command: [sh, -c]
@@ -1104,6 +1176,9 @@ spec:
                      secretName: gitlab-credentials
 
              - name: run-unit-tests
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: node:18-alpine
                  command: [sh, -c]
@@ -1133,6 +1208,9 @@ spec:
                      mountPath: /workdir
 
              - name: kaniko-build
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: gcr.io/kaniko-project/executor:latest
                  args:
@@ -1172,6 +1250,9 @@ spec:
                      defaultMode: 0644
 
              - name: update-git-repo
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
                container:
                  image: alpine/git:latest
                  command: [sh, -c]
@@ -2034,6 +2115,8 @@ spec:
                labels:
                  app.kubernetes.io/name: ${schema.spec.application.name}
                  app.kubernetes.io/component: initial-ecr-setup
+               annotations:
+                 karpenter.sh/do-not-disrupt: "true"
              spec:
                serviceAccountName: ${schema.spec.name}-sa
                restartPolicy: OnFailure

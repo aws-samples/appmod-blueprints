@@ -78,14 +78,69 @@ refresh_argocd_app() {
     kubectl annotate application.argoproj.io "$app_name" -n argocd argocd.argoproj.io/refresh="$refresh_type" --overwrite 2>/dev/null || true
 }
 
-# Function to sync ArgoCD application
-sync_argocd_app() {
+# Function to sync ArgoCD application in background (non-blocking)
+sync_argocd_app_in_background() {
     local app_name=$1
     
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
+        print_info "Using ArgoCD CLI to sync $app_name (background)"
+        argocd app sync "$app_name" &
+    else
+        print_warning "ArgoCD CLI authentication failed, using kubectl approach (background)"
+        kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{}}}' &
+    fi
+}
+
+# Function to sync ArgoCD application
+sync_argocd_app() {
+    local app_name=$1
+    local force_flag=""
+    
+    # Check if app is already healthy and synced - skip if so
+    local app_status=$(kubectl get application "$app_name" -n argocd -o json 2>/dev/null)
+    if [ -n "$app_status" ]; then
+        local health=$(echo "$app_status" | jq -r '.status.health.status // "Unknown"')
+        local sync=$(echo "$app_status" | jq -r '.status.sync.status // "Unknown"')
+        local operation_phase=$(echo "$app_status" | jq -r '.status.operationState.phase // "None"')
+        
+        # Check for revision mismatch errors in operation state
+        local operation_message=$(echo "$app_status" | jq -r '.status.operationState.message // ""')
+        local revision_mismatch=false
+        if [[ "$operation_message" == *"cannot reference a different revision"* ]] || [[ "$operation_message" == *"ComparisonError"* ]]; then
+            print_info "Detected revision mismatch in $app_name, applying complete fix..."
+            terminate_argocd_operation "$app_name"
+            sleep 2
+            refresh_argocd_app "$app_name" "true"
+            sleep 5
+            revision_mismatch=true
+        fi
+        
+        # Skip if already healthy and synced with no running operations (unless we just fixed revision mismatch)
+        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ] && [ "$revision_mismatch" = false ]; then
+            print_info "App $app_name already healthy and synced, skipping sync"
+            return 0
+        fi
+        
+        # Skip if currently syncing (unless we just fixed revision mismatch)
+        if [ "$operation_phase" = "Running" ] && [ "$revision_mismatch" = false ]; then
+            print_info "App $app_name is currently syncing, skipping"
+            return 0
+        fi
+        
+        print_info "App $app_name needs sync (health: $health, sync: $sync, operation: $operation_phase)"
+    fi
+    
+    # Force sync for keycloak to ensure PostSync hooks execute
+    if [[ "$app_name" == *"keycloak"* ]]; then
+        force_flag="--force"
+        print_info "Using force sync for $app_name to execute PostSync hooks"
+    fi
+    
+    # Try ArgoCD CLI first if available and authenticated
+    if authenticate_argocd; then
         print_info "Using ArgoCD CLI to sync $app_name"
-        argocd app sync "$app_name" --timeout 200 || {
+        argocd app sync "$app_name" $force_flag --timeout 200 || {
             print_warning "ArgoCD CLI sync failed, falling back to kubectl"
             kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
         }
@@ -177,9 +232,9 @@ handle_sync_issues() {
     fi
 }
 
-# Wait for ArgoCD applications health (30min default timeout)
+# Wait for ArgoCD applications health (60min default timeout)
 wait_for_argocd_apps_health() {
-    local timeout=${1:-1800}
+    local timeout=${1:-3600}
     local check_interval=${2:-30}
     local start_time=$(date +%s)
     local end_time=$((start_time + timeout))
@@ -318,8 +373,229 @@ wait_for_argocd_apps_health() {
     return 1
 }
 
-# Function to show final status
+# Dependency-aware ArgoCD app synchronization
+wait_for_argocd_apps_with_dependencies() {
+    print_info "Starting dependency-aware ArgoCD app synchronization..."
+    
+    # Phase 1: Wait for hub cluster core infrastructure (sync waves 0-30)
+    kubectl config use-context "${RESOURCE_PREFIX}-hub"
+    wait_for_sync_wave_completion "hub" 30
+    
+    # Phase 2: Verify hub Crossplane providers are healthy
+    wait_for_hub_crossplane_ready
+    
+    # Phase 3: Wait for spoke clusters basic infrastructure (waves 0-20)
+    for cluster_name in "${CLUSTER_NAMES[@]}"; do
+        if [[ "$cluster_name" != *"hub"* ]]; then
+            kubectl config use-context "$cluster_name"
+            wait_for_sync_wave_completion "$cluster_name" 20
+        fi
+    done
+    
+    # Phase 4: Wait for spoke Crossplane providers (wave 25-30)
+    for cluster_name in "${CLUSTER_NAMES[@]}"; do
+        if [[ "$cluster_name" != *"hub"* ]]; then
+            kubectl config use-context "$cluster_name"
+            wait_for_sync_wave_completion "$cluster_name" 30
+        fi
+    done
+    
+    # Phase 5: Final health check for all remaining apps
+    kubectl config use-context "${RESOURCE_PREFIX}-hub"
+    wait_for_remaining_apps_health
+}
+
+wait_for_sync_wave_completion() {
+    local cluster=$1
+    local max_wave=$2
+    local timeout=900  # 15 minutes per phase
+    
+    print_info "[$cluster] Waiting for sync waves 0-$max_wave to complete..."
+    
+    local start_time=$(date +%s)
+    while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+        local pending_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r --arg max_wave "$max_wave" \
+            '.items[] | select(
+                ((.metadata.annotations."argocd.argoproj.io/sync-wave" // "0") | tonumber) <= ($max_wave | tonumber) and
+                ((.status.sync.status != "Synced" or .status.health.status != "Healthy") and
+                 (.status.operationState.phase // "None") != "Running")
+            ) | .metadata.name' 2>/dev/null)
+        
+        # Filter out best effort apps from blocking
+        local blocking_apps=""
+        for app in $pending_apps; do
+            local is_best_effort=false
+            for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                if [[ "$app" == "$best_effort_app" ]]; then
+                    is_best_effort=true
+                    print_info "[$cluster] Syncing best effort app: $app (non-blocking)"
+                    sync_argocd_app_in_background "$app"
+                    break
+                fi
+            done
+            if [[ "$is_best_effort" == false ]]; then
+                blocking_apps="$blocking_apps $app"
+            fi
+        done
+        
+        if [ -z "$blocking_apps" ]; then
+            print_success "[$cluster] Sync waves 0-$max_wave completed (ignoring best effort apps)"
+            return 0
+        fi
+        
+        # Try to sync remaining problematic apps
+        for app in $blocking_apps; do
+            if [ -n "$app" ]; then
+                print_info "[$cluster] Syncing blocking app: $app"
+                sync_argocd_app "$app" || true
+            fi
+        done
+        
+        print_info "[$cluster] Waiting for: $blocking_apps"
+        sleep 30
+    done
+    
+    print_warning "[$cluster] Timeout waiting for sync waves 0-$max_wave"
+    return 1
+}
+
+wait_for_hub_crossplane_ready() {
+    print_info "[hub] Verifying Crossplane providers are healthy..."
+    
+    local timeout=600  # 10 minutes
+    local start_time=$(date +%s)
+    
+    while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+        local unhealthy_providers=$(kubectl get providers -n crossplane-system --no-headers 2>/dev/null | \
+            grep -v "True.*True" | wc -l)
+        
+        if [ "$unhealthy_providers" -eq 0 ]; then
+            print_success "[hub] All Crossplane providers are healthy"
+            return 0
+        fi
+        
+        print_info "[hub] $unhealthy_providers Crossplane providers still unhealthy"
+        sleep 30
+    done
+    
+    print_warning "[hub] Timeout waiting for Crossplane providers"
+    return 1
+}
+
+wait_for_remaining_apps_health() {
+    print_info "Final cleanup: syncing remaining unhealthy applications..."
+    
+    # Get apps that are not healthy (excluding best effort apps)
+    local unhealthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(
+            .status.health.status != "Healthy"
+        ) | .metadata.name' 2>/dev/null)
+    
+    if [ -n "$unhealthy_apps" ]; then
+        print_info "Found unhealthy apps, attempting final sync..."
+        echo "$unhealthy_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                local is_best_effort=false
+                for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                    if [[ "$app" == "$best_effort_app" ]]; then
+                        is_best_effort=true
+                        break
+                    fi
+                done
+                
+                if [[ "$is_best_effort" == false ]]; then
+                    print_info "Final sync attempt for unhealthy app: $app"
+                    sync_argocd_app "$app" || true
+                    sleep 10
+                fi
+            fi
+        done
+        
+        print_info "Waiting for final sync operations to complete..."
+        sleep 60
+    fi
+    
+    print_success "Final cleanup completed"
+    return 0
+}
+
 show_final_status() {
+    print_info "Waiting for any ongoing sync operations to complete..."
+    
+    # First, immediately handle any apps with ComparisonError
+    local comparison_error_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(
+            (.status.operationState.phase == "Running") and
+            ((.status.operationState.message // "") | contains("ComparisonError") or contains("cannot reference a different revision"))
+        ) | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$comparison_error_apps" ]; then
+        print_warning "Found apps with ComparisonError that will never recover, terminating immediately..."
+        echo "$comparison_error_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                # Check if it's a best effort app
+                local is_best_effort=false
+                for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                    if [[ "$app" == "$best_effort_app" ]]; then
+                        is_best_effort=true
+                        break
+                    fi
+                done
+                
+                print_warning "Terminating ComparisonError operation for $app"
+                terminate_argocd_operation "$app"
+                sleep 10
+                refresh_argocd_app "$app" "true"
+                sleep 10
+                
+                if [[ "$is_best_effort" == true ]]; then
+                    sync_argocd_app_in_background "$app"
+                else
+                    sync_argocd_app "$app"
+                fi
+            fi
+        done
+        sleep 15  # Give time for sync operations to start properly
+    fi
+    
+    # Wait for any running sync operations to finish
+    local max_wait=300  # 5 minutes
+    local wait_time=0
+    
+    while [ $wait_time -lt $max_wait ]; do
+        local running_syncs=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r '.items[] | select(.status.operationState.phase == "Running") | .metadata.name' 2>/dev/null || echo "")
+        
+        # Filter out best effort apps from blocking wait
+        local blocking_running_syncs=""
+        for app in $running_syncs; do
+            local is_best_effort=false
+            for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                if [[ "$app" == "$best_effort_app" ]]; then
+                    is_best_effort=true
+                    break
+                fi
+            done
+            if [[ "$is_best_effort" == false ]]; then
+                blocking_running_syncs="$blocking_running_syncs $app"
+            fi
+        done
+        
+        if [ -z "$blocking_running_syncs" ]; then
+            print_info "All blocking sync operations completed"
+            break
+        fi
+        
+        print_info "Waiting for sync operations: $(echo $blocking_running_syncs | tr '\n' ' ')"
+        sleep 10
+        wait_time=$((wait_time + 10))
+    done
+    
+    if [ $wait_time -ge $max_wait ]; then
+        print_warning "Timeout waiting for sync operations, showing current status..."
+    fi
+    
     print_info "Final ArgoCD Applications Status:"
     echo "----------------------------------------"
     

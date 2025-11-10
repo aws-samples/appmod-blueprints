@@ -1,5 +1,8 @@
 controller:
   replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
   config:
     use-forwarded-headers: "true"
     compute-full-forwarded-for: "true"
@@ -11,6 +14,10 @@ controller:
       memory: 1Gi
     limits:
       memory: 1Gi
+  livenessProbe:
+    timeoutSeconds: 5
+  readinessProbe:
+    timeoutSeconds: 5
   priorityClassName: system-cluster-critical
   tolerations:
     - key: "CriticalAddonsOnly"

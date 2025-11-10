@@ -128,7 +128,7 @@ main() {
       fi
       
       log_warning "Attempt $attempt failed, waiting ${delay}s before retry..."
-      log_info "Restarting Kyverno admission controller to fix potential webhook issues..."
+      log_warning "Restarting Kyverno admission controller to fix potential webhook issues..."
       kubectl rollout restart deployment kyverno-admission-controller -n kyverno 2>/dev/null || true
       sleep $delay
       delay=$((delay * 2))  # Exponential backoff
