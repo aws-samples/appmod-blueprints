@@ -654,6 +654,41 @@ argo-rollouts:
   chartName: argo-rollouts
   chartRepository: https://argoproj.github.io/argo-helm
   defaultVersion: '2.39.5'
+  valuesObject:
+    serviceAccount:
+      annotations: # Using IRSA as Pod Identity is not supported
+        eks.amazonaws.com/role-arn: 'arn:aws:iam::{{.metadata.annotations.aws_account_id}}:role/{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
+    extraObjects:
+    - apiVersion: iam.services.k8s.aws/v1alpha1
+      kind: Role
+      metadata:
+        name: '{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
+        annotations:
+          argocd.argoproj.io/sync-wave: '-1' # Should be created before SA
+      spec:
+        name: '{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
+        description: "IRSA role for Argo Rollouts"
+        assumeRolePolicyDocument: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Federated": "arn:aws:iam::{{.metadata.annotations.aws_account_id}}:oidc-provider/{{.metadata.annotations.eks_oidc_issuer}}"
+                },
+                "Action": "sts:AssumeRoleWithWebIdentity",
+                "Condition": {
+                  "StringEquals": {
+                    "{{.metadata.annotations.eks_oidc_issuer}}:sub": "system:serviceaccount:argo-rollouts:argo-rollouts",
+                    "{{.metadata.annotations.eks_oidc_issuer}}:aud": "sts.amazonaws.com"
+                  }
+                }
+              }
+            ]
+          }
+        policies:
+          - arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess
   selector:
     matchExpressions:
       - key: enable_argo_rollouts
