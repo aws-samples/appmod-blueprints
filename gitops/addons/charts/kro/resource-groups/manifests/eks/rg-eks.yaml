@@ -461,6 +461,7 @@ spec:
             aws_region: "${schema.spec.region}"
             aws_central_region: "${schema.spec.region}"   # used in fleet-management gitops
             oidcProvider: "${ekscluster.status.identity.oidc.issuer}"
+            eks_oidc_issuer: "${ekscluster.status.identity.oidc.issuer}"
             aws_cluster_name: "${schema.spec.name}"
             aws_vpc_id: "${schema.spec.network.vpcID}"
             # GitOps Configuration
