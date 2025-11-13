@@ -1,0 +1,105 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: appmodservice.kro.run
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Replace=false
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: AppmodService
+    spec:
+      image: string
+      image_name: string
+      replicas: int | default=3
+      port: int | default=80
+      targetPort: int | default=8080
+      serviceAccount: string | default="default"
+      appPath: string | default="/"
+  resources:
+    - id: rollout
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: Rollout
+        metadata:
+          name: ${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: AppmodService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          replicas: ${schema.spec.replicas}
+          revisionHistoryLimit: 2
+          selector:
+            matchLabels:
+              app: ${schema.metadata.name}
+          strategy:
+            canary:
+              canaryService: ${schema.metadata.name}-preview
+              steps:
+                - setWeight: 20
+                - pause:
+                    duration: 5s
+                - setWeight: 40
+                - pause:
+                    duration: 5s
+                - setWeight: 60
+                - pause:
+                    duration: 5s
+                - setWeight: 80
+          template:
+            metadata:
+              labels:
+                app: ${schema.metadata.name}
+            spec:
+              serviceAccountName: ${schema.spec.serviceAccount}
+              containers:
+                - name: ${schema.spec.image_name}
+                  image: ${schema.spec.image}
+                  imagePullPolicy: Always
+                  ports:
+                    - containerPort: ${schema.spec.targetPort}
+
+    - id: service
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: AppmodService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          selector:
+            app: ${schema.metadata.name}
+          ports:
+            - port: ${schema.spec.port}
+              targetPort: ${schema.spec.targetPort}
+
+    - id: previewservice
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.metadata.name}-preview
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: AppmodService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          selector:
+            app: ${schema.metadata.name}
+          ports:
+            - port: ${schema.spec.port}
+              targetPort: ${schema.spec.targetPort}
