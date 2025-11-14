@@ -12,11 +12,21 @@ spec:
     spec:
       image: string
       image_name: string
-      replicas: int | default=3
-      port: int | default=80
-      targetPort: int | default=8080
+      replicas: integer | default=3
+      port: integer | default=80
+      targetPort: integer | default=8080
       serviceAccount: string | default="default"
       appPath: string | default="/"
+      envName: string | default="PRODUCTION"
+      domain: string | default="*.elb.us-west-2.amazonaws.com"
+      ingressEnabled: boolean | default=false
+      ingress: 'map[string]string | default={"enabled": "false"}'
+      functionalGateEnabled: boolean | default=false
+      functionalGate: 'map[string]string | default={"enabled": "false", "image": "httpd:alpine", "extraArgs": ""}'
+      performanceGateEnabled: boolean | default=false
+      performanceGate: 'map[string]string | default={"enabled": "false", "image": "httpd:alpine", "extraArgs": "160"}'
+      metricsEnabled: boolean | default=false
+      metrics: 'map[string]string | default={"enabled": "false"}'
   resources:
     - id: rollout
       template:
@@ -39,7 +49,8 @@ spec:
               app: ${schema.metadata.name}
           strategy:
             canary:
-              canaryService: ${schema.metadata.name}-preview
+              canaryService: ${previewservice.metadata.name}
+              stableService: ${service.metadata.name}
               steps:
                 - setWeight: 20
                 - pause:
@@ -55,6 +66,8 @@ spec:
             metadata:
               labels:
                 app: ${schema.metadata.name}
+              annotations:
+                replicas: "${string(schema.spec.replicas)}"
             spec:
               serviceAccountName: ${schema.spec.serviceAccount}
               containers:
@@ -63,6 +76,9 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
+                  env:
+                    - name: "APP_ENV"
+                      value: ${schema.spec.envName}
 
     - id: service
       template:
@@ -103,3 +119,206 @@ spec:
           ports:
             - port: ${schema.spec.port}
               targetPort: ${schema.spec.targetPort}
+
+    - id: ingress
+      includeWhen:
+        - ${schema.spec.ingressEnabled}
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: ${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: AppmodService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            nginx.ingress.kubernetes.io/rewrite-target: /$2
+            nginx.ingress.kubernetes.io/use-regex: "true"
+        spec:
+          ingressClassName: nginx
+          rules:
+            - http:
+                paths:
+                  - path: "${schema.spec.appPath + \"(/|$)(.*)\"}"
+                    pathType: ImplementationSpecific
+                    backend:
+                      service:
+                        name: ${service.metadata.name}
+                        port:
+                          number: ${schema.spec.port}
+
+    - id: ampsecrets
+      template:
+        apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: amp-workspace-secrets-${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: AppmodService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          secretStoreRef:
+            name: aws-secrets-manager
+            kind: ClusterSecretStore
+          target:
+            name: amp-workspace-${schema.metadata.name}
+            template:
+              type: Opaque
+          data:
+            - secretKey: amp-workspace-url
+              remoteRef:
+                key: peeks/platform/amp
+                property: amp-workspace
+            - secretKey: amp-workspace-region
+              remoteRef:
+                key: peeks/platform/amp
+                property: amp-region
+
+    - id: functionalanalysis
+      includeWhen:
+        - ${schema.spec.functionalGateEnabled}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: AnalysisTemplate
+        metadata:
+          name: functional-gate-${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: AppmodService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          args:
+            - name: service-name
+          metrics:
+            - name: ${schema.metadata.name}-metrics
+              provider:
+                job:
+                  spec:
+                    template:
+                      spec:
+                        containers:
+                          - name: test
+                            image: ${schema.spec.functionalGate.?image.orValue("httpd:alpine")}
+                            command: ["sh"]
+                            args:
+                              - "-c"
+                              - "wget -qO- http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ | grep -q '${schema.spec.functionalGate.?extraArgs.orValue(\"\")}'"
+                        restartPolicy: Never
+                    backoffLimit: 0
+
+    - id: performanceanalysis
+      includeWhen:
+        - ${schema.spec.performanceGateEnabled}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: AnalysisTemplate
+        metadata:
+          name: performance-gate-${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: AppmodService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          args:
+            - name: service-name
+          metrics:
+            - name: ${schema.metadata.name}-metrics
+              provider:
+                job:
+                  spec:
+                    template:
+                      spec:
+                        containers:
+                          - name: test
+                            image: ${schema.spec.performanceGate.?image.orValue("httpd:alpine")}
+                            command: ["sh"]
+                            args:
+                              - "-c"
+                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.?extraArgs.orValue(\"160\")} ] && exit 0 || exit 1"
+                        restartPolicy: Never
+                    backoffLimit: 0
+
+    - id: metricsanalysis
+      includeWhen:
+        - ${schema.spec.metricsEnabled}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: AnalysisTemplate
+        metadata:
+          name: metrics-${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: AppmodService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          args:
+            - name: service-name
+            - name: amp-workspace-url
+              valueFrom:
+                secretKeyRef:
+                  name: ${ampsecrets.spec.target.name}
+                  key: amp-workspace-url
+            - name: amp-workspace-region
+              valueFrom:
+                secretKeyRef:
+                  name: ${ampsecrets.spec.target.name}
+                  key: amp-workspace-region
+          metrics:
+            - name: metric0-${schema.metadata.name}
+              interval: 1s
+              count: 1
+              successCondition: "result[0] > 0"
+              provider:
+                prometheus:
+                  address: "{{args.amp-workspace-url}}"
+                  query: "up{k8s_container_name=\"${schema.spec.image_name}\", k8s_namespace_name=\"${schema.metadata.namespace}\"}"
+                  authentication:
+                    sigv4:
+                      region: "{{args.amp-workspace-region}}"
+
+    - id: benchmarkconfig
+      includeWhen:
+        - ${schema.spec.performanceGateEnabled}
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: benchmark-config-${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: AppmodService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        data:
+          benchmark.yaml: |
+            config:
+              target: "http://127.0.0.1:80"
+              phases:
+                - duration: 5
+                  arrivalRate: 1
+                  rampTo: 10
+                  name: Warm up
+            scenarios:
+              - name: "Navigate Menus"
+                flow:
+                  - get:
+                      url: "/collection/FRONT_PAGE"
