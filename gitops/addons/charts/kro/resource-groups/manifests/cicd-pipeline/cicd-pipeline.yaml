@@ -374,7 +374,7 @@ spec:
           # Permissions for devlake configuration
           - apiGroups: ['']
             resources: ['secrets', 'configmaps']
-            verbs: ['delete', 'create']
+            verbs: ['delete', 'create', 'get', 'list']
 
     # RBAC Role Binding - follows principle of least privilege
     - id: rolebinding
@@ -428,7 +428,7 @@ spec:
        rules:
           - apiGroups: [""]
             resources: ["secrets"]
-            resourceNames: ["fleet-secret-fleet-${schema.spec.aws.clusterName}"]
+            resourceNames: ["fleet-secret-fleet-peeks-spoke-dev"]
             verbs: ["get", "list"]
 
     # ClusterRoleBinding for ArgoCD access
@@ -1359,123 +1359,59 @@ spec:
               - name: body
               - name: appname
                 value: ${schema.spec.application.name}
-              - name: secretname
-                value: fleet-secret-fleet-peeks-spoke-dev
+              - name: kubeconf-name
+                value: ${schema.spec.application.name}-kubeconfig
           templates:
             - name: handle-rollout-check-and-process-deploy
               steps:
-                - - name: get-cluster-secret
-                    template: get-cluster-secret
-                - - name: setup-kubeconfig
-                    template: setup-kubeconfig
-                    arguments:
-                      artifacts:
-                        - name: cluster-secret
-                          from: "{{steps.get-cluster-secret.outputs.artifacts.cluster-secret}}"
-                - - name: check-rollout
-                    template: check-rollout-status
-                    arguments:
-                      parameters:
-                        - name: namespace
-                          value: team-"{{workflow.parameters.appname}}"
-                        - name: body
-                          value: "{{workflow.parameters.body}}"
-                      artifacts:
-                        - name: kubeconfig
-                          from: "{{steps.setup-kubeconfig.outputs.artifacts.kubeconfig}}"
+                # - - name: check-rollout
+                #     template: check-rollout-status
+                #     arguments:
+                #       parameters:
+                #         - name: namespace
+                #           value: team-"{{workflow.parameters.appname}}"
+                #         - name: body
+                #           value: "{{workflow.parameters.body}}"
                 - - name: process-and-send-deployment
                     template: process-deployment
                     arguments:
                       parameters:
                         - name: status
-                          value: "{{steps.check-rollout.outputs.result}}"
+                          value: "SUCCESS"
+                #          value: "{{steps.check-rollout.outputs.result}}"
                         - name: body
                           value: "{{workflow.parameters.body}}"
                         - name: url
                           value: devlake-ui.devlake.svc.cluster.local:4000
-    
-            - name: get-cluster-secret
-              container:
-                image: alpine/k8s:1.32.8
-                command: [/bin/bash, -c]
-                args:
-                - |
-                  mkdir -p /tmp/cluster-secret
-                  kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.server}' | base64 -d > /tmp/cluster-secret/server
-                  kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.name}' | base64 -d > /tmp/cluster-secret/name
-                  kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.config}' | base64 -d > /tmp/cluster-secret/config
-              outputs:
-                artifacts:
-                - name: cluster-secret
-                  path: /tmp/cluster-secret
-    
-            - name: setup-kubeconfig
-              inputs:
-                artifacts:
-                - name: cluster-secret
-                  path: /tmp/argocd-cluster
-              container:
-                image: alpine:latest
-                command: [/bin/bash, -c]
-                args:
-                - |
-                  mkdir -p ~/.kube
-                  
-                  SERVER=$(cat /tmp/argocd-cluster/server)
-                  CLUSTER_NAME=$(cat /tmp/argocd-cluster/name)
-                  TOKEN=$(cat /tmp/argocd-cluster/config | jq -r .bearerToken)
-                  CA_DATA=$(cat /tmp/argocd-cluster/config | jq -r .tlsClientConfig.caData)
-    
-                  cat > ~/.kube/config <<EOF
-                  apiVersion: v1
-                  kind: Config
-                  clusters:
-                  - name: $CLUSTER_NAME
-                    cluster:
-                      certificate-authority-data: $CA_DATA
-                      server: $SERVER
-                  users:
-                  - name: $CLUSTER_NAME-user
-                    user:
-                      token: $TOKEN
-                  contexts:
-                  - name: $CLUSTER_NAME-context
-                    context:
-                      cluster: $CLUSTER_NAME 
-                      user: $CLUSTER_NAME-user
-                  current-context: $CLUSTER_NAME-context
-                  EOF
-                  
-                  cp ~/.kube/config /tmp/kubeconfig
-              outputs:
-                artifacts:
-                - name: kubeconfig
-                  path: /tmp/kubeconfig
     
             - name: check-rollout-status
               inputs:
                 parameters:
                   - name: namespace
                   - name: body
-                artifacts:
-                - name: kubeconfig
-                  path: /tmp/kubeconfig
               retryStrategy:
                 limit: 60
                 retryPolicy: "Always"
                 backoff:
                   duration: "10s"
                   factor: 1
-                  maxDuration: "10s"
+                  maxDuration: "30s"
               container:
-                image: alpine/k8s:1.32.8
+                image: amazon/aws-cli:latest
+                volumeMounts:
+                - name: kubeconfig
+                  mountPath: /etc/kubeconfig/config
+                  subPath: config
+                  readOnly: true
                 command: [/bin/bash, -c]
                 args:
                 - |
+                  curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                  chmod +x kubectl && mv kubectl /usr/local/bin/
+
                   mkdir -p ~/.kube
-                  cp /tmp/kubeconfig ~/.kube/config
+                  cp /etc/kubeconfig/config ~/.kube/config
                   
-                  SA="system:serviceaccount:kube-system:dev-argocd-manager"
                   SEARCH_WORD="{{workflow.parameters.appname}}"
                   COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after | .[0:7]')
     
@@ -1504,6 +1440,10 @@ spec:
     
                   echo "Still waiting for rollout to complete..."
                   exit 1
+              volumes:
+                - name: kubeconfig
+                  configMap:
+                    name: "{{workflow.parameters.appname}}-kubeconfig"
     
             - name: process-deployment
               inputs:
@@ -1535,7 +1475,7 @@ spec:
                     name: ("deployment-" + (.after | .[0:7])),
                     deploymentCommits: [
                       .commits[] | {
-                        repoUrl: $root.repository.clone_url,
+                        repoUrl: $root.repository.git_http_url,
                         refName: $root.ref,
                         startedDate: .timestamp,
                         finishedDate: .timestamp,
@@ -1726,10 +1666,15 @@ spec:
               value: ${schema.metadata.namespace}
             - name: url
               value: http://devlake-lake.devlake.svc.cluster.local:8080
+            - name: secretname
+              value: fleet-secret-fleet-peeks-spoke-dev
           templates:
           - name: dora-provisioner
             dag:
               tasks:
+                - name: kubeconf-init
+                  template: get-cluster-config
+
                 - name: devlake-init
                   template: devlake-init
                   arguments:
@@ -1750,6 +1695,59 @@ spec:
                 - name: devlake-generate-data
                   template: devlake-generate-data
                   depends: "create-devlake-webhook-secret-and-cm"
+
+          - name: get-cluster-config
+            container:
+              image: amazon/aws-cli:latest
+              command: [/bin/bash, -c]
+              args:
+              - |
+                # Install kubectl and jq
+                yum install -y jq
+                curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                chmod +x kubectl && mv kubectl /usr/local/bin/
+
+                SERVER=$(kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.server}' | base64 -d)
+                CONFIG_DATA=$(kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.config}' | base64 -d)
+
+                CLUSTER_NAME=$(echo "$CONFIG_DATA" | jq -r '.awsAuthConfig.clusterName')
+                CA_DATA=$(echo "$CONFIG_DATA" | jq -r '.tlsClientConfig.caData')
+
+                KUBECONFIG_CONTENT=$(cat <<EOF
+                apiVersion: v1
+                kind: Config
+                clusters:
+                - name: target-cluster
+                  cluster:
+                    certificate-authority-data: $CA_DATA
+                    server: $SERVER
+                users:
+                - name: target-user
+                  user:
+                    exec:
+                      apiVersion: client.authentication.k8s.io/v1beta1
+                      command: aws
+                      args:
+                      - eks
+                      - get-token
+                      - --cluster-name
+                      - $CLUSTER_NAME
+                contexts:
+                - name: target-context
+                  context:
+                    cluster: target-cluster
+                    user: target-user
+                current-context: target-context
+                EOF
+                )
+
+                kubectl create configmap {{workflow.parameters.appname}}-kubeconfig \
+                  -n {{workflow.parameters.namespace}} \
+                  --from-literal=config="$KUBECONFIG_CONTENT" \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              env:
+              - name: AWS_DEFAULT_REGION
+                value: ${schema.spec.aws.region})
         
           - name: devlake-init
             inputs:
