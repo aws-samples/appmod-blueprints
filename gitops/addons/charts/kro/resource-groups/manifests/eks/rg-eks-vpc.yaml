@@ -121,7 +121,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             argocd.argoproj.io/sync-options: Prune=false
       spec:
         name: ${schema.spec.name}
@@ -151,7 +151,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             argocd.argoproj.io/sync-options: Prune=false
       spec:
           name: ${schema.spec.name}

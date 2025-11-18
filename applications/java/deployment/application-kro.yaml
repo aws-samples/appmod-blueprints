@@ -1,0 +1,26 @@
+# apiVersion: kro.run/v1alpha1
+# kind: AppmodService
+# metadata:
+#   name: java-application
+#   namespace: default
+# spec:
+#   image: 096337013420.dkr.ecr.us-west-2.amazonaws.com/peeks/java:20251114-3fedf668-d619-4ad0-910f-8add258e2372
+#   image_name: java-app
+#   port: 8080
+#   targetPort: 8080
+#   appPath: "/java-app"
+#   ingressEnabled: true
+#   envName: "DEV"
+#   ingress: {}
+#   functionalGateEnabled: true
+#   functionalGate:
+#     pause: "10s"
+#     image: "httpd:alpine"
+#     extraArgs: "red"
+#   performanceGateEnabled: true
+#   performanceGate:
+#     pause: "10s"
+#     image: "httpd:alpine"
+#     extraArgs: "160"
+#   metricsEnabled: true
+#   metrics: {}
