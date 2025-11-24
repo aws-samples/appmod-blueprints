@@ -1095,6 +1095,12 @@ spec:
        spec:
           serviceAccountName: ${schema.spec.name}-sa
           entrypoint: cicd-pipeline
+          ttlStrategy:
+            secondsAfterCompletion: 3600
+            secondsAfterSuccess: 3600
+            secondsAfterFailure: 7200
+          podGC:
+            strategy: OnPodCompletion
           volumeClaimTemplates:
             - metadata:
                 name: workdir
@@ -1219,8 +1225,11 @@ spec:
                    - --destination=${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}
                    - --cache=true
                    - --cache-repo=${ecrcacherepo.status.repositoryURI}
-                   - --cache-ttl=24h
+                   - --cache-ttl=168h
                    - --build-arg=BUILDKIT_INLINE_CACHE=1
+                   - --compressed-caching=false
+                   - --snapshot-mode=redo
+                   - --use-new-run
                    - --verbosity=info
                  env:
                    - name: AWS_REGION
@@ -1232,10 +1241,10 @@ spec:
                        name: ${schema.spec.name}-config
                  resources:
                    requests:
-                     memory: "8Gi"
-                     cpu: "1000m"
+                     memory: "6Gi"
+                     cpu: "4000m"
                    limits:
-                     memory: "8Gi"
+                     memory: "6Gi"
                  volumeMounts:
                    - name: docker-config
                      mountPath: /kaniko/.docker
@@ -2631,3 +2640,31 @@ spec:
                           number: 12000
                     path: /argo-events/${schema.spec.name}
                     pathType: Exact
+
+    # PodDisruptionBudget for eventbus to prevent Karpenter disruptions
+    - id: eventbuspdb
+      readyWhen:
+        - ${eventbuspdb.metadata.name != ""}
+      template:
+        apiVersion: policy/v1
+        kind: PodDisruptionBudget
+        metadata:
+          name: eventbus-pdb
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: CICDPipeline
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          labels:
+            app.kubernetes.io/name: ${schema.spec.application.name}
+            app.kubernetes.io/component: cicd-pipeline
+            app.kubernetes.io/managed-by: kro
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          maxUnavailable: 0
+          selector:
+            matchLabels:
+              controller: eventbus-controller
