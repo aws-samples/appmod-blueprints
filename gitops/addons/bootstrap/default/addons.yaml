@@ -294,7 +294,7 @@ kro:
   namespace: kro-system
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-3' # Needs to be before resources that needs PodIdentity
-  defaultVersion: '0.5.0'
+  defaultVersion: '0.6.1'
   chartName: kro
   chartNamespace: kro/charts
   chartRepository: registry.k8s.io
