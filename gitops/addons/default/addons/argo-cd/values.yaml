@@ -65,7 +65,6 @@ redis-ha:
     enabled: true
     replicas: 3
     podDisruptionBudget:
-      enabled: true
       maxUnavailable: 1
     resources:
       requests:
