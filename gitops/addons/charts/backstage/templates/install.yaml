@@ -414,7 +414,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "15"
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: backstage
@@ -513,6 +513,12 @@ spec:
           ports:
             - containerPort: 7007
               name: http
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              memory: 2Gi
           startupProbe:
             httpGet:
               path: /api/auth/keycloak-oidc/start?scope=openid%20profile%20email%20groups&flow=popup&env=development

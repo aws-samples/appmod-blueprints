@@ -408,7 +408,7 @@ wait_for_argocd_apps_with_dependencies() {
 wait_for_sync_wave_completion() {
     local cluster=$1
     local max_wave=$2
-    local timeout=900  # 15 minutes per phase
+    local timeout=1800  # 30 minutes per phase
     
     print_info "[$cluster] Waiting for sync waves 0-$max_wave to complete..."
     
@@ -442,6 +442,23 @@ wait_for_sync_wave_completion() {
         if [ -z "$blocking_apps" ]; then
             print_success "[$cluster] Sync waves 0-$max_wave completed (ignoring best effort apps)"
             return 0
+        fi
+        
+        # Check for stuck Progressing apps and recover
+        local progressing_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '.items[] | select(.status.health.status == "Progressing" and (.status.operationState.startedAt // .metadata.creationTimestamp | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)) | .metadata.name' 2>/dev/null || echo "")
+        
+        if [ -n "$progressing_apps" ]; then
+            echo "$progressing_apps" | while read -r app; do
+                if [ -n "$app" ]; then
+                    print_info "[$cluster] Recovering stuck Progressing app: $app"
+                    terminate_argocd_operation "$app"
+                    sleep 1
+                    refresh_argocd_app "$app" "true"
+                    sleep 2
+                fi
+            done
         fi
         
         # Try to sync remaining problematic apps
