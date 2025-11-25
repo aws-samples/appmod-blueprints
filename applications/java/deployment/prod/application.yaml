@@ -15,6 +15,13 @@ spec:
         env:
           - name: APP_ENV
             value: "PROD"
+        readinessProbe:
+          httpGet:
+            path: /java-app/
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
         functionalGate:
           pause: "30s"
           image: "httpd:alpine"
