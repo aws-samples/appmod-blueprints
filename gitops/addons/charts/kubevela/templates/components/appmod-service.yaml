@@ -123,6 +123,7 @@ spec:
                     color: parameter.functionalGate.extraArgs
                   }
                   replicas: "\(parameter.replicas)"
+                  "rollout.argoproj.io/revision": parameter.image
                 }
               }
         			spec: containers: [{
