@@ -126,21 +126,33 @@ spec:
                   "rollout.argoproj.io/revision": parameter.image
                 }
               }
-        			spec: containers: [{
-        				image:           parameter.image
-        				imagePullPolicy: "Always"
-        				name:            parameter.image_name
-        				ports: [{
-        					containerPort: parameter.targetPort
+        			spec: {
+        				containers: [{
+        					image:           parameter.image
+        					imagePullPolicy: "Always"
+        					name:            parameter.image_name
+        					ports: [{
+        						containerPort: parameter.targetPort
+        					}]
+        					if parameter.env != _|_ {
+        						env: parameter.env
+        					}
+        					if parameter.readinessProbe != _|_ {
+        						readinessProbe: parameter.readinessProbe
+        					}
+        					if parameter.resources != _|_ {
+        						resources: parameter.resources
+        					}
         				}]
-        				if parameter.env != _|_ {
-        					env: parameter.env
-        				}
-        				if parameter.readinessProbe != _|_ {
-        					readinessProbe: parameter.readinessProbe
-        				}
-        			}]
-        			spec: serviceAccountName: parameter.serviceAccount
+        				serviceAccountName: parameter.serviceAccount
+        				topologySpreadConstraints: [{
+        					maxSkew:           1
+        					minDomains:        2
+        					topologyKey:       "topology.kubernetes.io/zone"
+        					whenUnsatisfiable: "DoNotSchedule"
+        					labelSelector: matchLabels: app: context.name
+        				}]
+        			}
         		}
         	}
         }
@@ -385,6 +397,15 @@ spec:
         			}
         		}
         	}
+        	"appmod-service-pdb": {
+        		apiVersion: "policy/v1"
+        		kind:       "PodDisruptionBudget"
+        		metadata: name: context.name
+        		spec: {
+        			maxUnavailable: 1
+        			selector: matchLabels: app: context.name
+        		}
+        	}
         }
 
         #QualityGate: {
@@ -417,6 +438,16 @@ spec:
         	appPath:          *"/" | string
         	env?:             [...{name: string, value: string}]
         	readinessProbe?:  {...}
+        	resources?:       {
+        		requests?: {
+        			cpu?:    string
+        			memory?: string
+        		}
+        		limits?: {
+        			cpu?:    string
+        			memory?: string
+        		}
+        	}
         	functionalGate?:  #QualityGate
         	performanceGate?: #QualityGate
         	metrics?:         #MetricGate

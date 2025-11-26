@@ -32,7 +32,7 @@ COPY --from=build /usr/app/api .
 COPY --from=build /usr/app/src/api/res/products.csv .
 COPY --from=build /usr/app/src/api/res/variants.csv .
 
-# steal the CA certs from our builder in production
+# import the CA certs from our builder in production
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 USER 1000
