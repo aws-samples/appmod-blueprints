@@ -215,18 +215,24 @@ handle_sync_issues() {
         done
     fi
     
-    # Handle any apps stuck in Progressing state for too long
-    local progressing_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+    # Handle any apps stuck in operations or Progressing state for too long
+    local stuck_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
         jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '.items[] | select(.status.health.status == "Progressing" and (.status.operationState.startedAt // .metadata.creationTimestamp | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)) | .metadata.name' 2>/dev/null || echo "")
+        '.items[] | select(
+            ((.status.operationState.phase == "Running") or (.status.health.status == "Progressing")) and 
+            ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)
+        ) | .metadata.name' 2>/dev/null || echo "")
     
-    if [ -n "$progressing_apps" ]; then
-        echo "$progressing_apps" | while read -r app; do
+    if [ -n "$stuck_apps" ]; then
+        echo "$stuck_apps" | while read -r app; do
             if [ -n "$app" ]; then
-                print_info "Refreshing stuck Progressing application: $app"
+                print_info "Refreshing stuck application: $app"
                 terminate_argocd_operation "$app"
                 sleep 1
                 refresh_argocd_app "$app" "true"
+                sleep 2
+                sync_argocd_app "$app" || true
+                sleep 1
             fi
         done
     fi
@@ -444,19 +450,24 @@ wait_for_sync_wave_completion() {
             return 0
         fi
         
-        # Check for stuck Progressing apps and recover
-        local progressing_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        # Check for stuck apps and recover (both stuck operations and stuck Progressing)
+        local stuck_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
             jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '.items[] | select(.status.health.status == "Progressing" and (.status.operationState.startedAt // .metadata.creationTimestamp | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)) | .metadata.name' 2>/dev/null || echo "")
+            '.items[] | select(
+                ((.status.operationState.phase == "Running") or (.status.health.status == "Progressing")) and 
+                ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)
+            ) | .metadata.name' 2>/dev/null || echo "")
         
-        if [ -n "$progressing_apps" ]; then
-            echo "$progressing_apps" | while read -r app; do
+        if [ -n "$stuck_apps" ]; then
+            echo "$stuck_apps" | while read -r app; do
                 if [ -n "$app" ]; then
-                    print_info "[$cluster] Recovering stuck Progressing app: $app"
+                    print_info "[$cluster] Recovering stuck app: $app"
                     terminate_argocd_operation "$app"
                     sleep 1
                     refresh_argocd_app "$app" "true"
                     sleep 2
+                    sync_argocd_app "$app" || true
+                    sleep 1
                 fi
             done
         fi
