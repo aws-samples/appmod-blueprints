@@ -136,6 +136,9 @@ spec:
         				if parameter.env != _|_ {
         					env: parameter.env
         				}
+        				if parameter.readinessProbe != _|_ {
+        					readinessProbe: parameter.readinessProbe
+        				}
         			}]
         			spec: serviceAccountName: parameter.serviceAccount
         		}
@@ -413,6 +416,7 @@ spec:
         	serviceAccount:   *"default" | string
         	appPath:          *"/" | string
         	env?:             [...{name: string, value: string}]
+        	readinessProbe?:  {...}
         	functionalGate?:  #QualityGate
         	performanceGate?: #QualityGate
         	metrics?:         #MetricGate
