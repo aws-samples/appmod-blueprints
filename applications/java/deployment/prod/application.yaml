@@ -11,6 +11,7 @@ spec:
         image_name: java-app
         port: 8080
         targetPort: 8080
+        replicas: 2
         appPath: "/java-app"
         env:
           - name: APP_ENV
@@ -19,16 +20,22 @@ spec:
           httpGet:
             path: /java-app/
             port: 8080
-          initialDelaySeconds: 15
-          periodSeconds: 5
-          timeoutSeconds: 3
+          initialDelaySeconds: 45
+          periodSeconds: 10
+          timeoutSeconds: 10
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "256Mi"
+          limits:
+            memory: "512Mi"
         functionalGate:
-          pause: "30s"
+          pause: "10s"
           image: "httpd:alpine"
           extraArgs: "orange"
         # Skip performance gate in production to avoid affecting real user traffic
         # performanceGate:
-        #   pause: "30s"
+        #   pause: "10s"
         #   image: "httpd:alpine"
         #   extraArgs: "160"
       traits:
