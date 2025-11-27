@@ -3,7 +3,7 @@ kind: Template
 metadata:
   description: Deploy a Kro-based CI/CD Pipeline using GitOps with ArgoCD
   name: cicd-pipeline-gitops
-  title: Deploy CI/CD Pipeline With KRO (GitOps)
+  title: Deploy CI/CD Pipeline With kro (GitOps)
 spec:
   owner: guest
   type: service

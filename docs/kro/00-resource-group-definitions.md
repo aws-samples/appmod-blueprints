@@ -224,7 +224,7 @@ As part of processing the Resource Graph, the instance reconciler waits for the 
 
 ### Using Conditional CEL Expressions (`?`)
 
-KRO can make use of CEL Expressions (see [this proposal for details](https://github.com/google/cel-spec/wiki/proposal-246) or look at the [CEL Implementation Reference](https://pkg.go.dev/github.com/google/cel-go/cel#hdr-Syntax_Changes-OptionalTypes)) to define optional runtime conditions for resources based on the conditional operator `?`.
+kro can make use of CEL Expressions (see [this proposal for details](https://github.com/google/cel-spec/wiki/proposal-246) or look at the [CEL Implementation Reference](https://pkg.go.dev/github.com/google/cel-go/cel#hdr-Syntax_Changes-OptionalTypes)) to define optional runtime conditions for resources based on the conditional operator `?`.
 
 This allows you to optionally define values that have no predefined schema or are not hard dependencies in the Graph.
 
@@ -232,7 +232,7 @@ This allows you to optionally define values that have no predefined schema or ar
 
 You can use the `optional` operator to reference objects that do not have a predefined schema in the ResourceGraphDefinition. This is useful for referencing objects that may or may not exist at runtime.
 
-> :warning: `?` removes the ability of KRO to introspect the schema of the referenced object. Thus, it cannot wait for fields after the `?` to be present. It is recommended to use conditional expressions only for objects that are not critical to the ResourceGraphDefinition's operation or when the schema cannot be known at design time.
+> :warning: `?` removes the ability of kro to introspect the schema of the referenced object. Thus, it cannot wait for fields after the `?` to be present. It is recommended to use conditional expressions only for objects that are not critical to the ResourceGraphDefinition's operation or when the schema cannot be known at design time.
 
 A config map can be referenced like this:
 
@@ -261,7 +261,7 @@ With this reference, you can access the data in your schema:
 ${external.data.?VALUE}
 ```
 
-> :warning: KRO will only wait for the external reference to be present in the cluster, but it will not validate the schema of the referenced config. If the config map does not have the `VALUE` field, the expression will evaluate to `null` and might result in unexpected behavior in your application if not handled properly.
+> :warning: kro will only wait for the external reference to be present in the cluster, but it will not validate the schema of the referenced config. If the config map does not have the `VALUE` field, the expression will evaluate to `null` and might result in unexpected behavior in your application if not handled properly.
 
 
 _For a more detailed example, see the [Optional Values & External References](../../examples/basic/optionals.md) documentation._
@@ -280,7 +280,7 @@ When the `Ready` condition `status` is `True`, it indicates that the ResourceGra
 
 :::warning
 
-Try to only rely on the `Ready` condition, as other condition types may change frequently and are more technical in nature, can change their API over time and are generally more indicative of KRO's internal state.
+Try to only rely on the `Ready` condition, as other condition types may change frequently and are more technical in nature, can change their API over time and are generally more indicative of kro's internal state.
 
 :::
 
