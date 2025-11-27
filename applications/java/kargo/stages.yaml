@@ -32,9 +32,8 @@ spec:
       kind: Warehouse
       name: java-app
     sources:
-      direct: true
-      #stages:
-      #- dev
+      stages:
+      - dev
   promotionTemplate:
     spec:
       steps:
