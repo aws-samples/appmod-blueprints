@@ -142,7 +142,7 @@ argocd.argoproj.io/finalizer: resources-finalizer.argocd.argoproj.io
 
 ### Creating New CICDPipeline (GitOps)
 ```bash
-# User selects "Deploy CI/CD Pipeline With KRO (GitOps)" template
+# User selects "Deploy CI/CD Pipeline With kro (GitOps)" template
 # Backstage creates:
 # 1. GitLab repository with manifests
 # 2. ArgoCD project and application

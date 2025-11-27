@@ -1,4 +1,4 @@
-# EventBus for Argo Events - managed separately from KRO
+# EventBus for Argo Events - managed separately from kro
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: EventBus
