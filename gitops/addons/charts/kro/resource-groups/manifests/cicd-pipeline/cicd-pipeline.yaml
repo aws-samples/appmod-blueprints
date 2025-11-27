@@ -1100,7 +1100,8 @@ spec:
             secondsAfterSuccess: 3600
             secondsAfterFailure: 7200
           podGC:
-            strategy: OnPodCompletion
+            strategy: OnWorkflowCompletion
+            deleteDelayDuration: 1h
           volumeClaimTemplates:
             - metadata:
                 name: workdir
