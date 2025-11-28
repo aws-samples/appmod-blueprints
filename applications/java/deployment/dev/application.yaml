@@ -20,9 +20,9 @@ spec:
           httpGet:
             path: /java-app/
             port: 8080
-          initialDelaySeconds: 45
-          periodSeconds: 10
-          timeoutSeconds: 10
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
         resources:
           requests:
             cpu: "500m"
@@ -30,7 +30,7 @@ spec:
           limits:
             memory: "512Mi"
         # functionalGate:
-        #   pause: "10s"
+        #   pause: "20s"
         #   image: "httpd:alpine"
         #   extraArgs: "red"
         # performanceGate:
