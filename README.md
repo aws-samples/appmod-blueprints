@@ -76,6 +76,12 @@ The IDE should already be configured with lots of tools and extensions, and you 
 
 In addition, the code repositories that we will use in this workshop have been downloaded into the `~/environment/platform-on-eks-workshop/` folder, and the Python prerequisites have been installed.
 
+You can check all the addons deployed using the command:
+
+```bash
+argocd-sync
+```
+
 ## Contributing
 
 We welcome contributions to the Modern Engineering on AWS initiative. Please read our [CONTRIBUTING](CONTRIBUTING.md) guide for details on our code of conduct and the process for submitting pull requests.
