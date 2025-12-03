@@ -82,6 +82,12 @@ You can check all the addons deployed using the command:
 argocd-sync
 ```
 
+The following script will help you connect to the different tools using the SSO mechanism with keycloack:
+
+```bash
+./platform-on-eks-workshop/platform/infra/terraform/scripts/1-tools-urls.sh  
+```
+
 ## Contributing
 
 We welcome contributions to the Modern Engineering on AWS initiative. Please read our [CONTRIBUTING](CONTRIBUTING.md) guide for details on our code of conduct and the process for submitting pull requests.
