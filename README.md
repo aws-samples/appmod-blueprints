@@ -76,13 +76,17 @@ The IDE should already be configured with lots of tools and extensions, and you 
 
 In addition, the code repositories that we will use in this workshop have been downloaded into the `~/environment/platform-on-eks-workshop/` folder, and the Python prerequisites have been installed.
 
-### Prerequisites
+You can check all the addons deployed using the command:
 
-- AWS Account with appropriate permissions
-- AWS CLI configured
-- kubectl installed
-- Task (Taskfile) installed
-- Docker installed
+```bash
+argocd-sync
+```
+
+The following script will help you connect to the different tools using the SSO mechanism with keycloack:
+
+```bash
+./platform-on-eks-workshop/platform/infra/terraform/scripts/1-tools-urls.sh  
+```
 
 ## Contributing
 
