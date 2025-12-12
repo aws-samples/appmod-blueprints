@@ -26,6 +26,6 @@ spec:
           exclude: exclude/*
       destination:
         namespace: 'argocd'
-        name: '{{.name}}'
+        server: '{{.server}}'
       syncPolicy:
         automated: {}
