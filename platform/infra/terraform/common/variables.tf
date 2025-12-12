@@ -33,6 +33,13 @@ variable "git_username" {
   default     = "user1"
 }
 
+variable "argocd_auth_token" {
+  description = "ArgoCD authentication token for Backstage"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "gitlab_domain_name" {
   description = "Domain name"
   type        = string

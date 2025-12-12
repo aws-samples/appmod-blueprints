@@ -18,29 +18,13 @@ export BOOTSTRAP_APPS=(
 # Function to authenticate ArgoCD CLI
 authenticate_argocd() {
     if command -v argocd >/dev/null 2>&1; then
-        local argocd_server=""
-        
-        # Always recalculate the domain to handle cases where it becomes available later
-        # Calculate domain the same way as 1-tools-urls.sh
-        local domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
-        if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
-            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null)
-        fi
-        
-        # Fallback to ARGOCD_URL environment variable if domain calculation fails
-        if [ -z "$domain_name" ] || [ "$domain_name" = "None" ] || [ "$domain_name" = "null" ]; then
-            if [ -n "$ARGOCD_URL" ]; then
-                # Extract hostname from URL (remove https:// and /argocd)
-                domain_name=$(echo "$ARGOCD_URL" | sed 's|https://||' | sed 's|/argocd||')
-            fi
-        fi
-        
-        argocd_server="$domain_name"
-        
-        if [ -n "$argocd_server" ] && [ "$argocd_server" != "None" ] && [ "$argocd_server" != "null" ]; then
-            export ARGOCD_SERVER="$argocd_server"
-            # Login using admin credentials with timeout
-            if timeout 30 argocd login --username admin --password "${IDE_PASSWORD}" --grpc-web-root-path /argocd "$argocd_server" --insecure 2>/dev/null; then
+        # For EKS Marina managed ArgoCD, use environment variables (no login needed)
+        if [ -n "$ARGOCD_SERVER" ] && [ -n "$ARGOCD_AUTH_TOKEN" ]; then
+            export ARGOCD_SERVER
+            export ARGOCD_AUTH_TOKEN
+            export ARGOCD_OPTS="${ARGOCD_OPTS:---grpc-web}"
+            # Test if ArgoCD CLI is working
+            if argocd cluster list >/dev/null 2>&1; then
                 return 0
             fi
         fi

@@ -57,6 +57,9 @@ echo "$stuck_apps" | while IFS='|' read -r app health sync phase; do
         sleep 1
         refresh_argocd_app "$app" "true"
         sleep 2
+        echo "  → Syncing: $app"
+        sync_argocd_app "$app"
+        sleep 1
     fi
 done
 
