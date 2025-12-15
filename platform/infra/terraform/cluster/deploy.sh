@@ -14,9 +14,36 @@ DEPLOY_SCRIPTDIR="$SCRIPTDIR"
 source $SCRIPTDIR/../scripts/utils.sh
 
 
+# Check for Identity Center configuration
+check_identity_center() {
+  # Try to get outputs from identity-center module if env vars not set
+  if [[ -z "${TF_VAR_identity_center_instance_arn:-}" ]] && [[ -d "../identity-center" ]]; then
+    log "🔍 Checking for Identity Center outputs..."
+    cd ../identity-center
+    if terraform show -json > /dev/null 2>&1; then
+      export TF_VAR_identity_center_instance_arn=$(terraform output -raw instance_arn 2>/dev/null || echo "")
+      export TF_VAR_identity_center_admin_group_id=$(terraform output -raw admin_group_id 2>/dev/null || echo "")
+      export TF_VAR_identity_center_developer_group_id=$(terraform output -raw developer_group_id 2>/dev/null || echo "")
+      log "📥 Auto-loaded Identity Center configuration from terraform outputs"
+    fi
+    cd - > /dev/null
+  fi
+
+  if [[ -n "${TF_VAR_identity_center_instance_arn:-}" ]]; then
+    log "✅ Identity Center configuration detected"
+    log "   Instance ARN: ${TF_VAR_identity_center_instance_arn}"
+    log "   Admin Group: ${TF_VAR_identity_center_admin_group_id:-not set}"
+    log "   Developer Group: ${TF_VAR_identity_center_developer_group_id:-not set}"
+  else
+    log "⚠️  Identity Center not configured - EKS Capabilities will be created without SSO"
+    log "   To enable SSO, run: cd ../identity-center && ./deploy.sh"
+  fi
+}
+
 # Main deployment function
 main() {
   log "Starting clusters stack deployment..."
+  check_identity_center
 
   if [ -z "$HUB_VPC_ID" ] || [ -z "$HUB_SUBNET_IDS" ]; then
     log_error "HUB_VPC_ID and HUB_SUBNET_IDS environment variables should be set"
