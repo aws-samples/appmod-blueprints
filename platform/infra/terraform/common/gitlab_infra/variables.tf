@@ -34,13 +34,13 @@ variable "repo" {
   type = object({
     url      = string
     revision = string
-    path= string
+    path     = string
     basepath = string
   })
   default = {
     url      = "https://github.com/aws-samples/appmod-blueprints"
     revision = "main"
-    path = "bootstrap"
+    path     = "bootstrap"
     basepath = "gitops/fleet/"
   }
 }
@@ -49,33 +49,33 @@ variable "repo" {
 variable "clusters" {
   description = "Cluster configuration"
   type = map(object({
-    name = string
-    region = string
+    name        = string
+    region      = string
     environment = string
-    auto_mode = bool
-    addons = map(bool)
+    auto_mode   = bool
+    addons      = map(bool)
   }))
   default = {
     hub = {
-      name = "hub"
-      region = "us-west-2"
+      name        = "hub"
+      region      = "us-west-2"
       environment = "control-plane"
-      auto_mode = true
-      addons = {}
+      auto_mode   = true
+      addons      = {}
     }
     spoke1 = {
-      name = "spoke-dev"
-      region = "us-west-2"
+      name        = "spoke-dev"
+      region      = "us-west-2"
       environment = "dev"
-      auto_mode = true
-      addons = {}
+      auto_mode   = true
+      addons      = {}
     }
     spoke2 = {
-      name = "spoke-prod"
-      region = "us-west-2"
+      name        = "spoke-prod"
+      region      = "us-west-2"
       environment = "prod"
-      auto_mode = true
-      addons = {}
+      auto_mode   = true
+      addons      = {}
     }
   }
 }

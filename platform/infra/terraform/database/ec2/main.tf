@@ -87,14 +87,14 @@ resource "aws_secretsmanager_secret_version" "ec2_credentials" {
   secret_string = jsonencode({
     sa_username = "sa"
     sa_password = random_password.sa_password.result
-    username = "netappuser"
-    password = random_password.netappuser_password.result
-    host = aws_instance.sql_server_instance.private_ip
-    port = 1433
+    username    = "netappuser"
+    password    = random_password.netappuser_password.result
+    host        = aws_instance.sql_server_instance.private_ip
+    port        = 1433
   })
 
   lifecycle {
-    ignore_changes =  [secret_string]
+    ignore_changes = [secret_string]
   }
 }
 
@@ -160,51 +160,67 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 }
 
 resource "aws_vpc_endpoint" "ssm" {
-  vpc_id            = var.vpc_id
-  service_name      = "com.amazonaws.${var.region}.ssm"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = var.vpc_private_subnets
-  security_group_ids = [aws_security_group.vpc_endpoint_sg.id]
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.region}.ssm"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.vpc_private_subnets
+  security_group_ids  = [aws_security_group.vpc_endpoint_sg.id]
   private_dns_enabled = true
+
+  tags = {
+    Name = "${var.name_prefix}-ssm-vpc-endpoint"
+  }
 }
 resource "aws_vpc_endpoint" "ssmmessages" {
-  vpc_id            = var.vpc_id
-  service_name      = "com.amazonaws.${var.region}.ssmmessages"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = var.vpc_private_subnets
-  security_group_ids = [aws_security_group.vpc_endpoint_sg.id]
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.region}.ssmmessages"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.vpc_private_subnets
+  security_group_ids  = [aws_security_group.vpc_endpoint_sg.id]
   private_dns_enabled = true
+
+  tags = {
+    Name = "${var.name_prefix}-ssmmessages-vpc-endpoint"
+  }
 }
 resource "aws_vpc_endpoint" "ec2messages" {
-  vpc_id            = var.vpc_id
-  service_name      = "com.amazonaws.${var.region}.ec2messages"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = var.vpc_private_subnets
-  security_group_ids = [aws_security_group.vpc_endpoint_sg.id]
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.region}.ec2messages"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.vpc_private_subnets
+  security_group_ids  = [aws_security_group.vpc_endpoint_sg.id]
   private_dns_enabled = true
+
+  tags = {
+    Name = "${var.name_prefix}-ec2messages-vpc-endpoint"
+  }
 }
 
 resource "aws_security_group" "vpc_endpoint_sg" {
   name        = "${var.name_prefix}-vpc-endpoint-sg"
   description = "Security group for VPC endpoints"
   vpc_id      = var.vpc_id
+
+  tags = {
+    Name = "${var.name_prefix}-vpc-endpoint-sg"
+  }
 }
 
 resource "aws_security_group_rule" "vpc_endpoint_ingress" {
-  type        = "ingress"
-  from_port   = 443
-  to_port     = 443
-  protocol    = "tcp"
-  cidr_blocks = [var.vpc_cidr]
+  type              = "ingress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  cidr_blocks       = [var.vpc_cidr]
   security_group_id = aws_security_group.vpc_endpoint_sg.id
 }
 
 resource "aws_security_group_rule" "allow_ec2_instance_connect" {
-  type        = "ingress"
-  from_port   = 22
-  to_port     = 22
-  protocol    = "tcp"
-  cidr_blocks = ["18.206.107.24/29"]  # EC2 Instance Connect IP range
+  type              = "ingress"
+  from_port         = 22
+  to_port           = 22
+  protocol          = "tcp"
+  cidr_blocks       = ["18.206.107.24/29"] # EC2 Instance Connect IP range
   security_group_id = aws_security_group.ec2_sg.id
 }
 
@@ -237,11 +253,11 @@ resource "aws_ssm_document" "session_manager_prefs" {
 # Get latest SQL Server AMI
 data "aws_ami" "sql_server" {
   most_recent = true
-  owners      = ["amazon"]  # AWS-owned AMIs
+  owners      = ["amazon"] # AWS-owned AMIs
 
   filter {
     name   = "name"
-    values = ["Windows_Server-2022-English-Full-SQL_2019_Standard*"]  # Adjust version as needed
+    values = ["Windows_Server-2022-English-Full-SQL_2019_Standard*"] # Adjust version as needed
   }
 
   filter {
@@ -264,7 +280,7 @@ resource "aws_instance" "sql_server_instance" {
   ami           = data.aws_ami.sql_server.id
   instance_type = "t3a.2xlarge"
   #subnet_id     = var.vpc_private_subnets[0]
-  subnet_id     = length(var.vpc_private_subnets) > 0 ? var.vpc_private_subnets[0] : null
+  subnet_id = length(var.vpc_private_subnets) > 0 ? var.vpc_private_subnets[0] : null
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
 
@@ -281,8 +297,8 @@ resource "aws_instance" "sql_server_instance" {
     instance_metadata_tags      = "enabled"
   }
 
-  iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
-  key_name = var.key_name
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
+  key_name                    = var.key_name
   associate_public_ip_address = false
 
   user_data = <<-EOF
@@ -550,7 +566,7 @@ resource "aws_instance" "sql_server_instance" {
               </powershell>
               EOF
 
-    lifecycle {
+  lifecycle {
     ignore_changes = [
       ami,
       user_data,
@@ -558,11 +574,11 @@ resource "aws_instance" "sql_server_instance" {
     ]
   }
 
-tags = merge(
-  #var.common_tags,
-  {
-    Name = "${var.name_prefix}-sql_server_instance"
-  }
-)
+  tags = merge(
+    #var.common_tags,
+    {
+      Name = "${var.name_prefix}-sql_server_instance"
+    }
+  )
 
 }

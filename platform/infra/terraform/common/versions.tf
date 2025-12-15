@@ -27,6 +27,5 @@ terraform {
   backend "s3" {
     # bucket provided via -backend-config
     key = "common/terraform.tfstate"
-    use_lockfile = true
   }
 }

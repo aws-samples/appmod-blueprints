@@ -20,8 +20,8 @@ data "aws_ec2_managed_prefix_list" "cloudfront" {
 
 # Security group for HTTP access (port 80) from CloudFront
 resource "aws_security_group" "ingress_http" {
-  for_each = var.clusters
-  name        = "${each.value.name}-ingress-http"
+  for_each    = var.clusters
+  name        = "${var.resource_prefix}-${each.value.name}-ingress-http"
   description = "HTTP from anywhere"
   vpc_id      = local.cluster_vpc_ids[each.value.name]
 
@@ -30,7 +30,7 @@ resource "aws_security_group" "ingress_http" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description     = "HTTP from anywhere"
+    description = "HTTP from anywhere"
   }
 
   egress {
@@ -41,26 +41,26 @@ resource "aws_security_group" "ingress_http" {
   }
 
   tags = merge(local.tags, {
-    Name = "${each.value.name}-ingress-http"
+    Name = "${var.resource_prefix}-${each.value.name}-ingress-http"
   })
 }
 
 # Security group for HTTPS access (port 443) from CloudFront
 resource "aws_security_group" "ingress_https" {
   for_each = var.clusters
-  name        = "${each.value.name}-ingress-https"
+  name     = "${var.resource_prefix}-${each.value.name}-ingress-https"
   # description = "HTTPS only from CloudFront"
   description = "HTTPS from anywhere"
   vpc_id      = local.cluster_vpc_ids[each.value.name]
 
   ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
+    from_port = 443
+    to_port   = 443
+    protocol  = "tcp"
     # prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
     # description     = "HTTPS only from CloudFront"
     cidr_blocks = ["0.0.0.0/0"]
-    description     = "HTTPS from anywhere"
+    description = "HTTPS from anywhere"
   }
 
   egress {
@@ -71,7 +71,7 @@ resource "aws_security_group" "ingress_https" {
   }
 
   tags = merge(local.tags, {
-    Name = "${each.value.name}-ingress-https"
+    Name = "${var.resource_prefix}-${each.value.name}-ingress-https"
   })
 }
 
