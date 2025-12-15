@@ -1,61 +1,92 @@
-# Modern Engineering on AWS
+# Platform Engineering on Amazon EKS
 
-This repository is the main solution repository for the Modern Engineering on AWS initiative. It contains a comprehensive set of application modernization blueprints and patterns that cover various aspects of modern cloud-native development and operations on AWS.
+A comprehensive platform engineering solution that provides application modernization blueprints, GitOps patterns, and developer self-service capabilities on Amazon EKS.
+
+This code is used in associated Workshop: https://catalog.workshops.aws/platform-engineering-on-eks/en-US
 
 ## Overview
 
-Modern Engineering on AWS is an initiative aimed at providing developers and organizations with best practices, patterns, and blueprints for building and managing modern applications on the AWS cloud platform. This repository serves as a central resource for implementing cutting-edge engineering practices in cloud environments.
+This repository implements a complete platform engineering solution on Amazon EKS, enabling organizations to modernize applications and adopt cloud-native practices. It provides a production-ready platform with integrated developer portals, GitOps workflows, and progressive delivery capabilities.
 
-## Key Features
+## Architecture
 
-- **Platform Engineering**: Blueprints and patterns for setting up robust, scalable platform infrastructure on AWS.
-- **Application Deployment**: Best practices and tools for efficient and reliable application deployment processes.
-- **GitOps**: Implementations of GitOps principles for managing infrastructure and applications as code.
-- **KubeVela**: Integration patterns and examples using KubeVela for application delivery and management.
-- **Progressive Delivery**: Strategies and implementations for gradual rollouts and feature flagging.
+![Platform Engineering on EKS Architecture](docs/images/Peeks-Architecture.png)
 
-## Application Blueprints
-
-Our repository includes various application blueprints that demonstrate modern engineering practices. These blueprints cover:
-
-1. Microservices architectures
-2. Serverless applications
-3. Containerized applications
-4. Event-driven architectures
-5. CI/CD pipelines
-
-Each blueprint provides a detailed walkthrough of the architecture, implementation details, and best practices.
 
 ## Getting Started
 
-To get started with Modern Engineering on AWS:
+The easiest way is to use CloudFormation to bootstrap the workshop architecture with an IDE to work from, pre-configured to interact with the platform.
 
-1. Clone this repository
-2. Provision the platform that consists of the management cluster and two workloads clusters that represent dev and prod environments. The environments can be customized based on the customer needs.
-3. Navigate to the specific tech or pattern you're interested in, e.g platform/backstage, platform/crossplane, platform/components (or traits).
-4. Follow the README instructions in each subdirectory for detailed setup and usage guidelines
+Once you are logged into your AWS Console with the appropriate permissions, you can set up the environment to run the labs in your account. These instructions have been tested in the following AWS region and are not guaranteed to work in others without modification:
 
-## Helm Chart Dependencies
+- `us-west-2`
 
-This repository uses Taskfile to automate Helm chart dependency management. Available tasks:
+The first step is to create an IDE and run the cluster deployment script with the provided CloudFormation template. The easiest way to do this is using AWS CloudShell in the account where you will be running the lab exercises. Open CloudShell with the link below or by following [this documentation](https://docs.aws.amazon.com/cloudshell/latest/userguide/getting-started.html#launch-region-shell):
+
+[Click here to access CloudShell in US-WEST-2](https://console.aws.amazon.com/cloudshell/home?region=us-west-2#)
+
+Once CloudShell has loaded, run the following commands:
 
 ```bash
-# Check which charts have dependencies and their status
-task check-helm-dependencies
+curl https://ws-assets-prod-iad-r-pdx-f3b3f9f1a7d6a3d0.s3.us-west-2.amazonaws.com/95007d58-823f-4cc7-a259-78f05ac86cf8/peeks-workshop-team-stack-self.json --output peeks-workshop.yaml
 
-# Build all Helm chart dependencies automatically
-task build-helm-dependencies
+templateBucket=$(aws s3api create-bucket \
+    --bucket peeks-workshop-$(uuidgen | tr -d - | tr '[:upper:]' '[:lower:]') \
+    --region us-west-2 \
+    --create-bucket-configuration LocationConstraint=us-west-2 \
+    --query 'Location' \
+    --output text | sed 's|http://||' | sed 's|.s3.amazonaws.com/||')
 
-# Clean all generated dependency files
-task clean-helm-dependencies
+aws cloudformation deploy --stack-name peeks-workshop \
+    --template-file ./peeks-workshop.yaml \
+    --parameter-overrides \
+        ParticipantAssumedRoleArn=$(aws sts get-caller-identity --query Arn --output text) \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --s3-bucket $templateBucket
 ```
 
-**Note:** Run `task build-helm-dependencies` when:
-- Setting up the repository for the first time
-- Adding new charts with dependencies
-- Updating dependency versions in Chart.yaml files
+You will then see the following output as your CloudFormation template is being deployed:
 
-The task automatically handles adding required Helm repositories and building dependencies for flux, crossplane, and kubevela charts.
+```
+Waiting for changeset to be created..
+Waiting for stack create/update to complete
+Successfully created/updated stack - peeks-workshop
+```
+
+The CloudFormation stack will take roughly 90 minutes to deploy, and once completed you can retrieve the URL and password for the Visual Code Server IDE with the following command:
+
+```bash
+# Get IDE URL
+aws cloudformation describe-stacks --stack-name peeks-workshop \
+    --query 'Stacks[0].Outputs[?OutputKey==`IdeUrl`].OutputValue' --output text
+
+# Get IDE Password
+aws cloudformation describe-stacks --stack-name peeks-workshop \
+    --query 'Stacks[0].Outputs[?OutputKey==`IdePassword`].OutputValue' --output text
+```
+
+Which will provide an output similar to the following, which you can use to access the IDE in a web browser (we recommend opening a new tab):
+
+Example:
+```
+https://d1bti1yw27krdm.cloudfront.net/?folder=/home/ec2-user/environment
+```
+
+The IDE should already be configured with lots of tools and extensions, and you can start working on the exercises right away.
+
+In addition, the code repositories that we will use in this workshop have been downloaded into the `~/environment/platform-on-eks-workshop/` folder, and the Python prerequisites have been installed.
+
+You can check all the addons deployed using the command:
+
+```bash
+argocd-sync
+```
+
+The following script will help you connect to the different tools using the SSO mechanism with keycloack:
+
+```bash
+./platform-on-eks-workshop/platform/infra/terraform/scripts/1-tools-urls.sh  
+```
 
 ## Contributing
 
@@ -71,5 +102,5 @@ This library is licensed under the MIT-0 License. See the LICENSE file for detai
 
 ## Contact
 
-For any questions or feedback regarding Modern Engineering on AWS, please open an issue in this repository.
+For any questions or feedback regarding Platform Engineering on Amazon EKS, please open an issue in this repository.
 
