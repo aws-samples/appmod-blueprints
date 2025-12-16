@@ -17,6 +17,8 @@ if [[ "$IDC_INSTANCES" == "None" ]]; then
   sleep 10
 fi
 
+# Change to the identity-center directory
+cd "${SCRIPT_DIR}"
 
 # Initialize and apply
 terraform init -backend-config="bucket=${TFSTATE_BUCKET_NAME}" -backend-config="region=${AWS_REGION}"
