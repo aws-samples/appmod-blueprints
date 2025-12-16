@@ -107,6 +107,31 @@ resource "aws_eks_capability" "ack" {
   tags = local.tags
 }
 
+# Kro Capability Role (minimal permissions)
+resource "aws_iam_role" "eks_capability_kro" {
+  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  
+  name = "${local.context_prefix}-${each.value.name}-kro-capability-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "capabilities.eks.amazonaws.com"
+        }
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+      }
+    ]
+  })
+
+  tags = local.tags
+}
+
 # Kro Capability
 resource "aws_eks_capability" "kro" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
