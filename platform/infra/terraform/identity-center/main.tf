@@ -1,7 +1,7 @@
 # Data source to get existing IDC instance
 data "aws_ssoadmin_instances" "existing" {}
 
-# Use existing instance (IDC instances must be created via CLI/Console)
+# Use existing instance (IDC instances are typically pre-created at account level)
 locals {
   instance_arn      = length(data.aws_ssoadmin_instances.existing.arns) > 0 ? data.aws_ssoadmin_instances.existing.arns[0] : null
   identity_store_id = length(data.aws_ssoadmin_instances.existing.identity_store_ids) > 0 ? data.aws_ssoadmin_instances.existing.identity_store_ids[0] : null
