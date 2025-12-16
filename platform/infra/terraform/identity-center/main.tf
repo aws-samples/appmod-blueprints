@@ -1,10 +1,16 @@
 # Data source to get existing IDC instance
 data "aws_ssoadmin_instances" "existing" {}
 
-# Use existing instance (IDC instances are typically pre-created at account level)
+# Create IDC instance if none exists
+resource "aws_ssoadmin_instance" "main" {
+  count = length(data.aws_ssoadmin_instances.existing.arns) == 0 ? 1 : 0
+  name  = "PEEKS-WORKSHOP"
+}
+
+# Use existing instance or newly created one
 locals {
-  instance_arn      = length(data.aws_ssoadmin_instances.existing.arns) > 0 ? data.aws_ssoadmin_instances.existing.arns[0] : null
-  identity_store_id = length(data.aws_ssoadmin_instances.existing.identity_store_ids) > 0 ? data.aws_ssoadmin_instances.existing.identity_store_ids[0] : null
+  instance_arn      = length(data.aws_ssoadmin_instances.existing.arns) > 0 ? data.aws_ssoadmin_instances.existing.arns[0] : aws_ssoadmin_instance.main[0].arn
+  identity_store_id = length(data.aws_ssoadmin_instances.existing.identity_store_ids) > 0 ? data.aws_ssoadmin_instances.existing.identity_store_ids[0] : aws_ssoadmin_instance.main[0].identity_store_id
 }
 
 # Create admin group
