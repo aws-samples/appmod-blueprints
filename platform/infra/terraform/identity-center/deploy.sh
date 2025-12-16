@@ -7,6 +7,16 @@ source "${SCRIPT_DIR}/../common.sh"
 
 echo "🚀 Deploying Identity Center prerequisites..."
 
+# Check if IDC instance exists, create if needed
+echo "🔍 Checking for existing Identity Center instance..."
+IDC_INSTANCES=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text 2>/dev/null || echo "None")
+
+if [[ "$IDC_INSTANCES" == "None" ]]; then
+  echo "📝 No Identity Center instance found. Creating one..."
+  aws sso-admin create-instance --name "PEEKS-WORKSHOP" || echo "⚠️  Instance creation may be in progress or require manual setup"
+  sleep 10
+fi
+
 # Change to the identity-center directory
 cd "${SCRIPT_DIR}"
 
