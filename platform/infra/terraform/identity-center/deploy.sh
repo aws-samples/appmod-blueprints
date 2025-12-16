@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-# Source common functions
-source ../common.sh
+# Get the directory of this script and source common functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../common.sh"
 
 echo "🚀 Deploying Identity Center prerequisites..."
 
