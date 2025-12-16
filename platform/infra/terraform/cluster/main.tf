@@ -230,29 +230,19 @@ resource "aws_iam_role_policy" "eks_capability_argocd_codeconnections" {
   })
 }
 
-# Kro Capability Role (minimal permissions)
-resource "aws_iam_role" "eks_capability_kro" {
+# ArgoCD Capability EKS Access Policy Association
+resource "aws_eks_access_policy_association" "argocd" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
-  
-  name = "${local.context_prefix}-${each.value.name}-kro-capability-role"
+  depends_on = [
+    aws_eks_capability.argocd
+  ]
+  cluster_name  = module.eks[each.key].cluster_name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = aws_iam_role.eks_capability_argocd[each.key].arn
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          Service = "capabilities.eks.amazonaws.com"
-        }
-        Action = [
-          "sts:AssumeRole",
-          "sts:TagSession"
-        ]
-      }
-    ]
-  })
-
-  tags = local.tags
+  access_scope {
+    type = "cluster"
+  }
 }
 
 # Kro needs EKS cluster admin permissions to manage external-secrets CRDs

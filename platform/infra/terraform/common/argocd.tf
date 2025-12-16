@@ -16,7 +16,7 @@ module "gitops_bridge_bootstrap" {
   install = false  # Skip ArgoCD installation, only create cluster secret
   
   cluster = {
-    cluster_name = local.hub_cluster.name
+    cluster_name = "in-cluster"  # Use standard name for EKS-managed ArgoCD
     environment  = local.hub_cluster.environment
     metadata     = local.addons_metadata[local.hub_cluster_key]
     addons       = local.addons[local.hub_cluster_key]
