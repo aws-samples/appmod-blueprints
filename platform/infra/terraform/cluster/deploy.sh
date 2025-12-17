@@ -63,6 +63,16 @@ main() {
     exit 1
   fi
 
+  # Fix HUB_SUBNET_IDS format if it doesn't have single quotes
+  if [[ "$HUB_SUBNET_IDS" =~ ^\[subnet- ]] && [[ ! "$HUB_SUBNET_IDS" =~ \' ]]; then
+    log "Fixing HUB_SUBNET_IDS format..."
+    # Remove brackets, add quotes around each subnet, then add brackets back
+    SUBNETS=$(echo "$HUB_SUBNET_IDS" | sed 's/\[//g' | sed 's/\]//g' | sed "s/subnet-/\\'subnet-/g" | sed "s/,/\\',/g")
+    HUB_SUBNET_IDS="[${SUBNETS}']"
+    export HUB_SUBNET_IDS
+    log "Updated HUB_SUBNET_IDS: $HUB_SUBNET_IDS"
+  fi
+
   # Validate backend configuration
   validate_backend_config
 
