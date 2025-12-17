@@ -60,6 +60,16 @@ variable "domain_name" {
 
 variable "repo" {
   description = "Repository configuration"
-  type        = string
-  default     = ""
+  type = object({
+    url      = string
+    revision = string
+    path     = string
+    basepath = string
+  })
+  default = {
+    url      = ""
+    revision = ""
+    path     = ""
+    basepath = ""
+  }
 }

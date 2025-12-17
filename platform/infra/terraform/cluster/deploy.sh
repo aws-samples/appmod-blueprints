@@ -13,6 +13,7 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 DEPLOY_SCRIPTDIR="$SCRIPTDIR"
 source $SCRIPTDIR/../scripts/utils.sh
 
+cd $SCRIPTDIR
 
 # Check for Identity Center configuration
 check_identity_center() {
@@ -30,6 +31,11 @@ check_identity_center() {
       # Try to get group IDs from terraform outputs if identity-center module was deployed
       if [[ -d "../identity-center" ]]; then
         cd ../identity-center
+        # Initialize terraform with S3 backend if not already initialized
+        if [[ ! -d ".terraform" ]]; then
+          log "Initializing identity-center terraform state..."
+          initialize_terraform "identity-center" "$(pwd)"
+        fi
         if terraform show -json > /dev/null 2>&1; then
           export TF_VAR_identity_center_admin_group_id=$(terraform output -raw admin_group_id 2>/dev/null || echo "")
           export TF_VAR_identity_center_developer_group_id=$(terraform output -raw developer_group_id 2>/dev/null || echo "")
@@ -47,6 +53,14 @@ check_identity_center() {
     log "   Instance ARN: ${TF_VAR_identity_center_instance_arn}"
     log "   Admin Group: ${TF_VAR_identity_center_admin_group_id:-not set}"
     log "   Developer Group: ${TF_VAR_identity_center_developer_group_id:-not set}"
+    
+    # Validate that Identity Center groups are configured for ArgoCD capability
+    if [[ -z "${TF_VAR_identity_center_admin_group_id:-}" ]] || [[ -z "${TF_VAR_identity_center_developer_group_id:-}" ]]; then
+      log_error "Identity Center groups are required for EKS ArgoCD capability"
+      log_error "Please run the identity-center deployment first:"
+      log_error "  cd ../identity-center && ./deploy.sh"
+      exit 1
+    fi
   else
     log "⚠️  Identity Center not configured - EKS Capabilities will be created without SSO"
     log "   To enable SSO, run: cd ../identity-center && ./deploy.sh"
