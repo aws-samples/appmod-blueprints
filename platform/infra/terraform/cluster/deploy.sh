@@ -22,9 +22,9 @@ check_identity_center() {
     log "🔍 Checking for Identity Center instance..."
     
     # Get IDC instance ARN from AWS API
-    IDC_INSTANCE_ARN=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text 2>/dev/null | head -1 | tr -d '\n' || echo "None")
+    IDC_INSTANCE_ARN=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text 2>/dev/null | head -1 | tr -d '\n' || echo "")
     
-    if [[ "$IDC_INSTANCE_ARN" != "None" && -n "$IDC_INSTANCE_ARN" && "$IDC_INSTANCE_ARN" =~ ^arn:aws:sso ]]; then
+    if [[ -n "$IDC_INSTANCE_ARN" && "$IDC_INSTANCE_ARN" != "None" && "$IDC_INSTANCE_ARN" =~ ^arn:aws:sso ]]; then
       export TF_VAR_identity_center_instance_arn="$IDC_INSTANCE_ARN"
       log "📋 Found Identity Center instance: $IDC_INSTANCE_ARN"
       
