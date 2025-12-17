@@ -14,21 +14,38 @@ module "eks" {
 
   enable_cluster_creator_admin_permissions = true
 
-  access_entries = local.workshop_participant_iam_role_arn != "" ? {
-    # This is the role that will be used by workshop participant
-    participant = {
-      principal_arn = local.workshop_participant_iam_role_arn
+  access_entries = merge(
+    local.workshop_participant_iam_role_arn != "" ? {
+      # This is the role that will be used by workshop participant
+      participant = {
+        principal_arn = local.workshop_participant_iam_role_arn
 
-      policy_associations = {
-        admin = {
-          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-          access_scope = {
-            type = "cluster"
+        policy_associations = {
+          admin = {
+            policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+            access_scope = {
+              type = "cluster"
+            }
           }
         }
       }
-    }
-  } : {}
+    } : {},
+    # Add ArgoCD capability role access to spoke clusters
+    each.value.environment != "control-plane" ? {
+      argocd_capability = {
+        principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-${var.clusters[local.hub_cluster_key].name}-argocd-capability-role"
+
+        policy_associations = {
+          admin = {
+            policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+            access_scope = {
+              type = "cluster"
+            }
+          }
+        }
+      }
+    } : {}
+  )
 
   security_group_additional_rules = {
     ingress_hub_vpc = {
