@@ -274,6 +274,21 @@ resource "aws_eks_access_policy_association" "ack" {
   }
 }
 
+# Kro Capability EKS Access Policy Association
+resource "aws_eks_access_policy_association" "kro" {
+  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  depends_on = [
+    aws_eks_capability.kro
+  ]
+  cluster_name  = module.eks[each.key].cluster_name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = aws_iam_role.eks_capability_kro[each.key].arn
+
+  access_scope {
+    type = "cluster"
+  }
+}
+
 # Kro Capability Role (minimal permissions)
 resource "aws_iam_role" "eks_capability_kro" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
