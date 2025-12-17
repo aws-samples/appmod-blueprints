@@ -51,3 +51,15 @@ variable "identity_center_developer_group_id" {
   type        = string
   default     = ""
 }
+
+variable "domain_name" {
+  description = "Domain name for the cluster"
+  type        = string
+  default     = ""
+}
+
+variable "repo" {
+  description = "Repository configuration"
+  type        = string
+  default     = ""
+}
