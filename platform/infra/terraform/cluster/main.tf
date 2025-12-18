@@ -47,7 +47,6 @@ module "eks" {
     } : {}
   )
 
->>>>>>> refs/remotes/origin/feat/eks-capabilities
   security_group_additional_rules = {
     ingress_hub_vpc = {
       description = "Allow all traffic from IDE"
@@ -244,6 +243,7 @@ resource "aws_iam_role_policy" "eks_capability_argocd_codeconnections" {
     ]
   })
 }
+
 # ArgoCD Capability EKS Access Policy Association
 resource "aws_eks_access_policy_association" "argocd" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
@@ -287,7 +287,6 @@ resource "aws_eks_access_policy_association" "kro" {
   access_scope {
     type = "cluster"
   }
->>>>>>> refs/remotes/origin/feat/eks-capabilities
 }
 
 # Kro Capability Role (minimal permissions)

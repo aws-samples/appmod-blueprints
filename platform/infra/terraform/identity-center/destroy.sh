@@ -31,5 +31,4 @@ else
     echo "ℹ️  No IDC instances found to delete"
 fi
 
->>>>>>> refs/remotes/origin/feat/eks-capabilities
 echo "✅ Identity Center destroy completed"
