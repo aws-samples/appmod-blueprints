@@ -41,13 +41,11 @@ terminate_argocd_operation() {
         print_info "Using ArgoCD CLI to terminate operation for $app_name"
         argocd app terminate-op "$app_name" || {
             print_warning "ArgoCD CLI terminate failed, using direct kubectl approach"
-            # Remove the operationState entirely - this is more effective
-            kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+            kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
         }
     else
         print_warning "ArgoCD CLI authentication failed, using direct kubectl approach"
-        # Remove the operationState entirely - this is more effective than setting operation to null
-        kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+        kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":null}' 2>/dev/null || true
     fi
 }
 
@@ -126,11 +124,11 @@ sync_argocd_app() {
         print_info "Using ArgoCD CLI to sync $app_name"
         argocd app sync "$app_name" $force_flag --timeout 200 || {
             print_warning "ArgoCD CLI sync failed, falling back to kubectl"
-            kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+            kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
         }
     else
         print_warning "ArgoCD CLI authentication failed, using kubectl"
-        kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+        kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
     fi
 }
 

@@ -73,9 +73,12 @@ module "eks" {
 # EKS Capabilities (Hub cluster only)
 ################################################################################
 
-# ArgoCD Capability
+# ArgoCD Capability (Hub cluster only, conditional on Identity Center configuration)
 resource "aws_eks_capability" "argocd" {
-  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  for_each = { 
+    for k, v in var.clusters : k => v 
+    if v.environment == "control-plane" && var.identity_center_instance_arn != ""
+  }
   
   cluster_name              = module.eks[each.key].cluster_name
   capability_name           = "argocd"
@@ -107,9 +110,9 @@ resource "aws_eks_capability" "argocd" {
   }
 }
 
-# ACK Capability
+# ACK Capability (all clusters)
 resource "aws_eks_capability" "ack" {
-  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  for_each = var.clusters
   
   cluster_name              = module.eks[each.key].cluster_name
   capability_name           = "ack"
@@ -121,9 +124,9 @@ resource "aws_eks_capability" "ack" {
   tags = local.tags
 }
 
-# Kro Capability
+# Kro Capability (all clusters)
 resource "aws_eks_capability" "kro" {
-  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  for_each = var.clusters
   
   cluster_name              = module.eks[each.key].cluster_name
   capability_name           = "kro"
@@ -139,7 +142,7 @@ resource "aws_eks_capability" "kro" {
 # EKS Capabilities IAM Roles (Hub cluster only)
 ################################################################################
 
-# ArgoCD Capability Role
+# ArgoCD Capability Role (Hub cluster only, requires Identity Center)
 resource "aws_iam_role" "eks_capability_argocd" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
   
@@ -164,9 +167,9 @@ resource "aws_iam_role" "eks_capability_argocd" {
   tags = local.tags
 }
 
-# ACK Capability Role
+# ACK Capability Role (all clusters)
 resource "aws_iam_role" "eks_capability_ack" {
-  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  for_each = var.clusters
   
   name = "${local.context_prefix}-${each.value.name}-ack-capability-role"
 
@@ -189,7 +192,7 @@ resource "aws_iam_role" "eks_capability_ack" {
   tags = local.tags
 }
 
-# ACK Capability Role Policies
+# ACK Capability Role Policies (all clusters)
 resource "aws_iam_role_policy_attachment" "eks_capability_ack_policies" {
   for_each = { 
     for pair in flatten([
@@ -199,7 +202,7 @@ resource "aws_iam_role_policy_attachment" "eks_capability_ack_policies" {
           service = service
           cluster = v
         }
-      ] if v.environment == "control-plane"
+      ]
     ]) : "${pair.cluster_key}-${pair.service}" => pair
   }
 
@@ -207,7 +210,7 @@ resource "aws_iam_role_policy_attachment" "eks_capability_ack_policies" {
   policy_arn = local.ack_service_policies[each.value.service]
 }
 
-# ArgoCD Capability Role Policies
+# ArgoCD Capability Role Policies (requires Identity Center)
 resource "aws_iam_role_policy_attachment" "eks_capability_argocd_secrets" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
   
@@ -222,7 +225,7 @@ resource "aws_iam_role_policy_attachment" "eks_capability_argocd_codecommit" {
   policy_arn = "arn:aws:iam::aws:policy/AWSCodeCommitReadOnly"
 }
 
-# Custom policy for CodeConnections
+# Custom policy for CodeConnections (requires Identity Center)
 resource "aws_iam_role_policy" "eks_capability_argocd_codeconnections" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
   
@@ -244,7 +247,7 @@ resource "aws_iam_role_policy" "eks_capability_argocd_codeconnections" {
   })
 }
 
-# ArgoCD Capability EKS Access Policy Association
+# ArgoCD Capability EKS Access Policy Association (requires Identity Center)
 resource "aws_eks_access_policy_association" "argocd" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
   depends_on = [
@@ -259,9 +262,9 @@ resource "aws_eks_access_policy_association" "argocd" {
   }
 }
 
-# ACK Capability EKS Access Policy Association
+# ACK Capability EKS Access Policy Association (all clusters)
 resource "aws_eks_access_policy_association" "ack" {
-  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  for_each = var.clusters
   depends_on = [
     aws_eks_capability.ack
   ]
@@ -274,9 +277,9 @@ resource "aws_eks_access_policy_association" "ack" {
   }
 }
 
-# Kro Capability EKS Access Policy Association
+# Kro Capability EKS Access Policy Association (all clusters)
 resource "aws_eks_access_policy_association" "kro" {
-  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  for_each = var.clusters
   depends_on = [
     aws_eks_capability.kro
   ]
@@ -289,9 +292,9 @@ resource "aws_eks_access_policy_association" "kro" {
   }
 }
 
-# Kro Capability Role (minimal permissions)
+# Kro Capability Role (all clusters)
 resource "aws_iam_role" "eks_capability_kro" {
-  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  for_each = var.clusters
   
   name = "${local.context_prefix}-${each.value.name}-kro-capability-role"
 
@@ -314,9 +317,9 @@ resource "aws_iam_role" "eks_capability_kro" {
   tags = local.tags
 }
 
-# Kro needs EKS cluster admin permissions to manage external-secrets CRDs
+# Kro needs EKS cluster admin permissions to manage external-secrets CRDs (all clusters)
 resource "aws_iam_role_policy_attachment" "eks_capability_kro_cluster_admin" {
-  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  for_each = var.clusters
   
   role       = aws_iam_role.eks_capability_kro[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"

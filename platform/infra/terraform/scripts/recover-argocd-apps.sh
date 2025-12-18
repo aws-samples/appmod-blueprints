@@ -22,13 +22,20 @@ done
 echo "----------------------------------------"
 echo ""
 
-# Find stuck apps with their status
-stuck_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+# Find stuck apps with their status (including revision conflicts)
+stuck_apps_time=$(kubectl get applications -n argocd -o json 2>/dev/null | \
     jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '.items[] | select(
         ((.status.operationState.phase == "Running") or (.status.health.status == "Progressing")) and 
         ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)
     ) | "\(.metadata.name)|\(.status.health.status // "Unknown")|\(.status.sync.status // "Unknown")|\(.status.operationState.phase // "None")"' 2>/dev/null || echo "")
+
+stuck_apps_revision=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+    jq -r '.items[] | select(
+        (.status.operationState.message // "") | contains("ComparisonError") or contains("cannot reference a different revision")
+    ) | "\(.metadata.name)|\(.status.health.status // "Unknown")|\(.status.sync.status // "Unknown")|\(.status.operationState.phase // "None")"' 2>/dev/null || echo "")
+
+stuck_apps=$(echo -e "$stuck_apps_time\n$stuck_apps_revision" | grep -v '^$' | sort -u)
 
 total_apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
 healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(.status.health.status == "Healthy" and .status.sync.status == "Synced")] | length')
@@ -42,7 +49,7 @@ if [ -z "$stuck_apps" ]; then
     exit 0
 fi
 
-print_warning "Found stuck applications (>5min):"
+print_warning "Found stuck applications (>5min) or revision conflicts:"
 echo "$stuck_apps" | while IFS='|' read -r app health sync phase; do
     [ -n "$app" ] && echo "  - $app (health=$health, sync=$sync, phase=$phase)"
 done
@@ -54,8 +61,7 @@ echo "$stuck_apps" | while IFS='|' read -r app health sync phase; do
     if [ -n "$app" ]; then
         echo "  → Terminating operation for: $app"
         terminate_argocd_operation "$app"
-        sleep 1
-        refresh_argocd_app "$app" "true"
+        kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
         sleep 2
         echo "  → Syncing: $app"
         sync_argocd_app "$app"
