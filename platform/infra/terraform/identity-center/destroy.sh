@@ -18,4 +18,18 @@ else
     echo "ℹ️  No terraform state found, skipping destroy"
 fi
 
+# Delete IDC instance created by CLI
+echo "🔍 Checking for IDC instances to delete..."
+IDC_INSTANCES=$(aws sso-admin list-instances --query 'Instances[?Name==`PEEKS-WORKSHOP`].InstanceArn' --output text 2>/dev/null || echo "")
+
+if [[ -n "$IDC_INSTANCES" && "$IDC_INSTANCES" != "None" ]]; then
+    echo "🗑️  Deleting IDC instance..."
+    for instance_arn in $IDC_INSTANCES; do
+        aws sso-admin delete-instance --instance-arn "$instance_arn" || echo "⚠️  Could not delete IDC instance $instance_arn"
+    done
+else
+    echo "ℹ️  No IDC instances found to delete"
+fi
+
+>>>>>>> refs/remotes/origin/feat/eks-capabilities
 echo "✅ Identity Center destroy completed"

@@ -14,22 +14,40 @@ module "eks" {
 
   enable_cluster_creator_admin_permissions = true
 
-  access_entries = local.workshop_participant_iam_role_arn != "" ? {
-    # This is the role that will be used by workshop participant
-    participant = {
-      principal_arn = local.workshop_participant_iam_role_arn
+  access_entries = merge(
+    local.workshop_participant_iam_role_arn != "" ? {
+      # This is the role that will be used by workshop participant
+      participant = {
+        principal_arn = local.workshop_participant_iam_role_arn
 
-      policy_associations = {
-        admin = {
-          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-          access_scope = {
-            type = "cluster"
+        policy_associations = {
+          admin = {
+            policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+            access_scope = {
+              type = "cluster"
+            }
           }
         }
       }
-    }
-  } : {}
+    } : {},
+    # Add ArgoCD capability role access to spoke clusters
+    each.value.environment != "control-plane" ? {
+      argocd_capability = {
+        principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-${var.clusters[local.hub_cluster_key].name}-argocd-capability-role"
 
+        policy_associations = {
+          admin = {
+            policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+            access_scope = {
+              type = "cluster"
+            }
+          }
+        }
+      }
+    } : {}
+  )
+
+>>>>>>> refs/remotes/origin/feat/eks-capabilities
   security_group_additional_rules = {
     ingress_hub_vpc = {
       description = "Allow all traffic from IDE"
@@ -88,9 +106,6 @@ resource "aws_eks_capability" "argocd" {
       }
     }
   }
-
-  depends_on = [module.eks]
-  tags = local.tags
 }
 
 # ACK Capability
@@ -229,30 +244,50 @@ resource "aws_iam_role_policy" "eks_capability_argocd_codeconnections" {
     ]
   })
 }
-
-# Kro Capability Role (minimal permissions)
-resource "aws_iam_role" "eks_capability_kro" {
+# ArgoCD Capability EKS Access Policy Association
+resource "aws_eks_access_policy_association" "argocd" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
-  
-  name = "${local.context_prefix}-${each.value.name}-kro-capability-role"
+  depends_on = [
+    aws_eks_capability.argocd
+  ]
+  cluster_name  = module.eks[each.key].cluster_name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = aws_iam_role.eks_capability_argocd[each.key].arn
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          Service = "capabilities.eks.amazonaws.com"
-        }
-        Action = [
-          "sts:AssumeRole",
-          "sts:TagSession"
-        ]
-      }
-    ]
-  })
+  access_scope {
+    type = "cluster"
+  }
+}
 
-  tags = local.tags
+# ACK Capability EKS Access Policy Association
+resource "aws_eks_access_policy_association" "ack" {
+  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  depends_on = [
+    aws_eks_capability.ack
+  ]
+  cluster_name  = module.eks[each.key].cluster_name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = aws_iam_role.eks_capability_ack[each.key].arn
+
+  access_scope {
+    type = "cluster"
+  }
+}
+
+# Kro Capability EKS Access Policy Association
+resource "aws_eks_access_policy_association" "kro" {
+  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
+  depends_on = [
+    aws_eks_capability.kro
+  ]
+  cluster_name  = module.eks[each.key].cluster_name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = aws_iam_role.eks_capability_kro[each.key].arn
+
+  access_scope {
+    type = "cluster"
+  }
+>>>>>>> refs/remotes/origin/feat/eks-capabilities
 }
 
 # Kro Capability Role (minimal permissions)

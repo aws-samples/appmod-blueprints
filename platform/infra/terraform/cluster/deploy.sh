@@ -13,6 +13,59 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 DEPLOY_SCRIPTDIR="$SCRIPTDIR"
 source $SCRIPTDIR/../scripts/utils.sh
 
+cd $SCRIPTDIR
+
+# Check for Identity Center configuration
+check_identity_center() {
+  # Try to get IDC instance ARN from AWS API if env var not set
+  if [[ -z "${TF_VAR_identity_center_instance_arn:-}" ]]; then
+    log "🔍 Checking for Identity Center instance..."
+    
+    # Get IDC instance ARN from AWS API
+    IDC_INSTANCE_ARN=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text 2>/dev/null | head -1 | tr -d '\n' || echo "")
+    
+    if [[ -n "$IDC_INSTANCE_ARN" && "$IDC_INSTANCE_ARN" != "None" && "$IDC_INSTANCE_ARN" =~ ^arn:aws:sso ]]; then
+      export TF_VAR_identity_center_instance_arn="$IDC_INSTANCE_ARN"
+      log "📋 Found Identity Center instance: $IDC_INSTANCE_ARN"
+      
+      # Try to get group IDs from terraform outputs if identity-center module was deployed
+      if [[ -d "../identity-center" ]]; then
+        cd ../identity-center
+        # Initialize terraform with S3 backend if not already initialized
+        if [[ ! -d ".terraform" ]]; then
+          log "Initializing identity-center terraform state..."
+          initialize_terraform "identity-center" "$(pwd)"
+        fi
+        if terraform show -json > /dev/null 2>&1; then
+          export TF_VAR_identity_center_admin_group_id=$(terraform output -raw admin_group_id 2>/dev/null || echo "")
+          export TF_VAR_identity_center_developer_group_id=$(terraform output -raw developer_group_id 2>/dev/null || echo "")
+          log "📋 Retrieved Identity Center group IDs from terraform state"
+        fi
+        cd - > /dev/null
+      fi
+    else
+      log "ℹ️  No Identity Center instance found"
+    fi
+  fi
+
+  if [[ -n "${TF_VAR_identity_center_instance_arn:-}" ]]; then
+    log "✅ Identity Center configuration detected"
+    log "   Instance ARN: ${TF_VAR_identity_center_instance_arn}"
+    log "   Admin Group: ${TF_VAR_identity_center_admin_group_id:-not set}"
+    log "   Developer Group: ${TF_VAR_identity_center_developer_group_id:-not set}"
+    
+    # Validate that Identity Center groups are configured for ArgoCD capability
+    if [[ -z "${TF_VAR_identity_center_admin_group_id:-}" ]] || [[ -z "${TF_VAR_identity_center_developer_group_id:-}" ]]; then
+      log_error "Identity Center groups are required for EKS ArgoCD capability"
+      log_error "Please run the identity-center deployment first:"
+      log_error "  cd ../identity-center && ./deploy.sh"
+      exit 1
+    fi
+  else
+    log "⚠️  Identity Center not configured - EKS Capabilities will be created without SSO"
+    log "   To enable SSO, run: cd ../identity-center && ./deploy.sh"
+  fi
+}
 
 # Check for Identity Center configuration
 check_identity_center() {
@@ -48,6 +101,16 @@ main() {
   if [ -z "$HUB_VPC_ID" ] || [ -z "$HUB_SUBNET_IDS" ]; then
     log_error "HUB_VPC_ID and HUB_SUBNET_IDS environment variables should be set"
     exit 1
+  fi
+
+  # Fix HUB_SUBNET_IDS format if it doesn't have single quotes
+  if [[ "$HUB_SUBNET_IDS" =~ ^\[subnet- ]] && [[ ! "$HUB_SUBNET_IDS" =~ \' ]]; then
+    log "Fixing HUB_SUBNET_IDS format..."
+    # Remove brackets, add quotes around each subnet, then add brackets back
+    SUBNETS=$(echo "$HUB_SUBNET_IDS" | sed 's/\[//g' | sed 's/\]//g' | sed "s/subnet-/\\'subnet-/g" | sed "s/,/\\',/g")
+    HUB_SUBNET_IDS="[${SUBNETS}']"
+    export HUB_SUBNET_IDS
+    log "Updated HUB_SUBNET_IDS: $HUB_SUBNET_IDS"
   fi
 
   # Validate backend configuration
