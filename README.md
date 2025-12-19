@@ -28,21 +28,20 @@ The first step is to create an IDE and run the cluster deployment script with th
 Once CloudShell has loaded, run the following commands:
 
 ```bash
-curl https://ws-assets-prod-iad-r-pdx-f3b3f9f1a7d6a3d0.s3.us-west-2.amazonaws.com/95007d58-823f-4cc7-a259-78f05ac86cf8/peeks-workshop-team-stack-self.json --output peeks-workshop.yaml
+curl https://ws-assets-prod-iad-r-pdx-f3b3f9f1a7d6a3d0.s3.us-west-2.amazonaws.com/daa2a765-04db-4399-aaa7-fddc8d07e9e1/peeks-workshop-team-stack-self.json --output peeks-workshop.json
 
-templateBucket=$(aws s3api create-bucket \
-    --bucket peeks-workshop-$(uuidgen | tr -d - | tr '[:upper:]' '[:lower:]') \
+bucketName="peeks-workshop-$(uuidgen | tr -d - | tr '[:upper:]' '[:lower:]')"
+aws s3api create-bucket \
+    --bucket "$bucketName" \
     --region us-west-2 \
-    --create-bucket-configuration LocationConstraint=us-west-2 \
-    --query 'Location' \
-    --output text | sed 's|http://||' | sed 's|.s3.amazonaws.com/||')
+    --create-bucket-configuration LocationConstraint=us-west-2
 
 aws cloudformation deploy --stack-name peeks-workshop \
-    --template-file ./peeks-workshop.yaml \
+    --template-file ./peeks-workshop.json \
     --parameter-overrides \
         ParticipantAssumedRoleArn=$(aws sts get-caller-identity --query Arn --output text) \
     --capabilities CAPABILITY_NAMED_IAM \
-    --s3-bucket $templateBucket
+    --s3-bucket $bucketName
 ```
 
 You will then see the following output as your CloudFormation template is being deployed:
