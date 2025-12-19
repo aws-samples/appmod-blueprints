@@ -1,0 +1,344 @@
+enablePermissions: true
+
+app:
+  title: Internal Developer Platform
+  baseUrl: http://localhost:3000/backstage
+
+organization:
+  name: Internal Developer Platform
+
+backend:
+  # Used for enabling authentication, secret is shared by all backend plugins
+  # See https://backstage.io/docs/auth/service-to-service-auth for
+  # information on the format
+  # auth:
+  #   keys:
+  #     - secret: ${BACKEND_SECRET}
+  baseUrl: http://localhost:7007/backstage
+  listen:
+    port: 7007
+    # Uncomment the following host directive to bind to specific interfaces
+    # host: 127.0.0.1
+  csp:
+    connect-src: ["'self'", 'http:', 'https:']
+    # Content-Security-Policy directives follow the Helmet format: https://helmetjs.github.io/#reference
+    # Default Helmet Content-Security-Policy values can be removed by setting the key to false
+  cors:
+    origin: http://localhost:3000/backstage
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+  # This is for local development only, it is not recommended to use this in production
+  # The production database configuration is stored in app-config.production.yaml
+  database:
+    client: better-sqlite3
+    connection: ':memory:'
+  # workingDirectory: /tmp # Use this to configure a working directory for the scaffolder, defaults to the OS temp-dir
+
+integrations:
+  # Local file system integration for static files
+  local:
+    - host: localhost
+      # Allow reading local files
+      allowedHosts: ['localhost']
+  gitlab:
+    - token: ${GIT_PASSWORD}
+      apiBaseUrl: https://${GIT_HOSTNAME}/api/v4
+      baseUrl: https://${GIT_HOSTNAME}
+      host: ${GIT_HOSTNAME}
+  github:
+    - host: github.com
+      # This is a Personal Access Token or PAT from GitHub. You can find out how to generate this token, and more information
+      # about setting up the GitHub integration here: https://backstage.io/docs/integrations/github/locations#configuration
+      token: ${GITHUB_TOKEN}
+    ### Example for how to add your GitHub Enterprise instance using the API:
+    # - host: ghe.example.net
+    #   apiBaseUrl: https://ghe.example.net/api/v3
+    #   token: ${GHE_TOKEN}
+
+proxy:
+  ### Example for how to add a proxy endpoint for the frontend.
+  ### A typical reason to do this is to handle HTTPS and CORS for internal services.
+  # endpoints:
+  #   '/test':
+  #     target: 'https://example.com'
+  #     changeOrigin: true
+
+# Reference documentation http://backstage.io/docs/features/techdocs/configuration
+# Note: After experimenting with basic setup, use CI/CD to generate docs
+# and an external cloud storage when deploying TechDocs for production use-case.
+# https://backstage.io/docs/features/techdocs/how-to-guides#how-to-migrate-from-techdocs-basic-to-recommended-deployment-approach
+techdocs:
+  builder: 'local' # Alternatives - 'external'
+  generator:
+    runIn: 'docker' # Alternatives - 'local'
+  publisher:
+    type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
+
+auth:
+  environment: local
+  # see https://backstage.io/docs/auth/ to learn about auth providers
+  providers:
+    # See https://backstage.io/docs/auth/guest/provider
+    guest: {}
+
+scaffolder:
+  # see https://backstage.io/docs/features/software-templates/configuration for software template options
+  defaultTimeout: 300000 # 5 minutes in milliseconds
+  defaultCommitMessage: 'Initial commit from Backstage template'
+
+catalog:
+  # import:
+  #   entityFilename: catalog-info.yaml
+  #   pullRequestBranchName: backstage-integration
+  # rules:
+  #   - allow: [Component, System, API, Resource, Location, Template]
+  # locations:
+  #   # Templates from Gitlab.
+  #   - type: url
+  #     target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage-templates/catalog-info.yaml
+  #     rules:
+  #       - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
+  import:
+    entityFilename: catalog-info.yaml
+    pullRequestBranchName: backstage-integration
+  rules:
+    - allow: [Component, System, API, Resource, Location, Template]
+    # Allow Kro ResourceGroup entities (they appear as Components with type 'kro-resource-group')
+    - allow: [Component]
+      spec:
+        type: kro-resource-group
+  locations:
+    # GitLab-hosted catalog locations
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/entities.yaml
+      rules:
+        - allow: [Component, System, API, Resource, Location, User, Group]
+
+    # GitLab-hosted templates
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/template/template.yaml
+      rules:
+        - allow: [Template]
+
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/templates/kro-webapp/template.yaml
+      rules:
+        - allow: [Template]
+    
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/templates/kro-microservice/template.yaml
+      rules:
+        - allow: [Template]
+    
+    - type: url
+      target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/backstage/examples/templates/kro-job/template.yaml
+      rules:
+        - allow: [Template]
+
+    # Local example organizational data
+    - type: file
+      target: ../../examples/org.yaml
+      rules:
+        - allow: [User, Group]
+
+    # Kro ResourceGroup examples
+    - type: file
+      target: ../../examples/kro-resource-groups.yaml
+      rules:
+        - allow: [Component, System]
+
+    ## Uncomment these lines to add more example data
+    # - type: url
+    #   target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/all.yaml
+
+    ## Uncomment these lines to add an example org
+    # - type: url
+    #   target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/acme-corp.yaml
+    #   rules:
+    #     - allow: [User, Group]
+  # Experimental: Always use the search method in UrlReaderProcessor.
+  # New adopters are encouraged to enable it as this behavior will be the default in a future release.
+  useUrlReadersSearch: true
+
+kubernetes:
+  # see https://backstage.io/docs/features/kubernetes/configuration for kubernetes configuration options
+  serviceLocatorMethod:
+    type: 'multiTenant'
+  clusterLocatorMethods:
+    - type: 'config'
+      clusters:
+        - url: ${K8S_CLUSTER_URL}
+          name: ${K8S_CLUSTER_NAME}
+          authProvider: 'serviceAccount'
+          serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+          # Additional configuration for Kro resources
+          customResources:
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'resourcegraphdefinitions'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'cicdpipelines'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'eksclusters'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'eksclusterwithvpcs'
+            - group: 'kro.run'
+              apiVersion: 'v1alpha1'
+              plural: 'vpcs'
+
+kubernetesIngestor:
+  refreshInterval: 300 # 5 minutes in seconds
+  # Entity processing configuration for ResourceGroups
+  entityProcessing:
+    # Enable automatic catalog ingestion
+    enabled: true
+    # Transform Kro resources into catalog entities
+    transformKroResources: true
+    # Namespace filtering (empty means all namespaces)
+    namespaces: []
+    # Label selectors for resource filtering
+    labelSelectors: []
+  resources:
+    # Kro ResourceGraphDefinitions (templates for ResourceGroups)
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'ResourceGraphDefinition'
+      # Enable catalog ingestion for ResourceGraphDefinitions
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
+    # Kro instances (these will be discovered dynamically based on ResourceGraphDefinitions)
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'CICDPipeline'
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'EksCluster'
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'EksclusterWithVpc'
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
+    - apiVersion: 'kro.run/v1alpha1'
+      kind: 'Vpc'
+      catalogIngestion:
+        enabled: true
+        entityType: 'Component'
+        entitySubtype: 'kro-resource-group'
+    # Standard Kubernetes resources (for relationship mapping)
+    - apiVersion: 'apps/v1'
+      kind: 'Deployment'
+      catalogIngestion:
+        enabled: false # Don't ingest all deployments, only those managed by ResourceGroups
+    - apiVersion: 'v1'
+      kind: 'Service'
+      catalogIngestion:
+        enabled: false
+    - apiVersion: 'v1'
+      kind: 'ConfigMap'
+      catalogIngestion:
+        enabled: false
+    - apiVersion: 'v1'
+      kind: 'Secret'
+      catalogIngestion:
+        enabled: false
+  clusters:
+    - name: ${K8S_CLUSTER_NAME}
+      url: ${K8S_CLUSTER_URL}
+      authProvider: 'serviceAccount'
+      serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+      # Additional cluster configuration for ResourceGroup discovery
+      skipTLSVerify: false
+      caData: ${K8S_CLUSTER_CA_DATA}
+
+# Kro plugin configuration for ResourceGroup management
+kro:
+  enablePermissions: true
+  enableAuditLogging: true
+
+  # Security configuration
+  rbacValidation:
+    enabled: true
+    strictMode: false
+    cacheTimeout: 300 # 5 minutes
+
+  auditLogging:
+    enabled: true
+    logLevel: 'info'
+    includeSuccessEvents: true
+
+  errorHandling:
+    enableDetailedErrors: true
+    includeStackTrace: false
+
+  clusters:
+    - name: ${K8S_CLUSTER_NAME}
+      url: ${K8S_CLUSTER_URL}
+      authProvider: 'serviceAccount'
+      serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+      # Namespace configuration for ResourceGroup discovery
+      skipTLSVerify: false
+      caData: ${K8S_CLUSTER_CA_DATA}
+      # RBAC configuration for this cluster
+      rbac:
+        # Service account permissions required for Kro operations
+        requiredPermissions:
+          - apiGroups: ['kro.run']
+            resources: ['resourcegraphdefinitions']
+            verbs:
+              ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+          - apiGroups: ['kro.run']
+            resources:
+              ['cicdpipelines', 'eksclusters', 'eksclusterwithvpcs', 'vpcs']
+            verbs:
+              ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+          - apiGroups: ['']
+            resources: ['events']
+            verbs: ['get', 'list', 'watch']
+        # Minimum required permissions for read-only access
+        readOnlyPermissions:
+          - apiGroups: ['kro.run']
+            resources:
+              [
+                'resourcegraphdefinitions',
+                'cicdpipelines',
+                'eksclusters',
+                'eksclusterwithvpcs',
+                'vpcs',
+              ]
+            verbs: ['get', 'list', 'watch']
+
+  # ResourceGroup entity processing configuration
+  entityProcessing:
+    # Enable automatic catalog ingestion of ResourceGroups
+    enabled: true
+    # Refresh interval for ResourceGroup status updates
+    refreshInterval: 300
+    # Namespace filtering (empty means all namespaces)
+    namespaces: []
+    # Label selectors for ResourceGroup filtering
+    labelSelectors: []
+
+  # Integration with existing Kubernetes plugin
+  integration:
+    # Show ResourceGroups in Kubernetes plugin views
+    showInKubernetesViews: true
+    # Enable ResourceGroup relationship mapping
+    enableRelationshipMapping: true
+
+# see https://backstage.io/docs/permissions/getting-started for more on the permission framework
+permission:
+  # setting this to `false` will disable permissions
+  enabled: true
+  # Required for newer Backstage versions
+  enablePermissions: true

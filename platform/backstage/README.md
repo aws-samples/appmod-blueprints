@@ -22,7 +22,7 @@ This repo has following backstage templates which can be plugged in to your Inte
 - `spark-on-eks` backstage template enables you to deploy an EKS cluster with Spark operator to run Spark jobs.
 - `stepfunctions-bedrock-terraform` backstage template deploys a Step Functions Express workflow that invokes Amazon Bedrock Anthropic Claude Model v2.1 and returns generated content based on the provided prompt.
 
-Some of above patterns require you to install `crossplane`, `flux`, `tofu-controller`, `ray`, `spark` operators. If you have setup your backstage environment using our [AppMod Blueprints reference implementation on EKS](https://github.com/aws-samples/appmod-blueprints/tree/feature/modern-engg-integratedflow), you should be all set.
+Some of above patterns require you to install `crossplane`, `flux`, `tofu-controller`, `ray`, `spark` operators. If you have setup your backstage environment using our [AppMod Blueprints reference implementation on EKS](https://github.com/aws-samples/appmod-blueprints/tree/riv25), you should be all set.
 You can import these backstage templates manually via backstage console or you also use below config in `backstage-config` configmap.
 
 ```yaml

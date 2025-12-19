@@ -117,7 +117,7 @@ spec:
       properties:
         componentNamesForAccess:
           - dynamodb-table
-        clusterName: modernengg-dev
+        clusterName: peeks-spoke-dev
         clusterRegion: us-west-2
         dependsOn:
           - dynamodb-table

@@ -1,0 +1,391 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: rust-metrics-dashboard
+  namespace: {{ .Values.namespace | default "grafana-operator" }}
+spec:
+  folder: "Observability Accelerator Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "datasource",
+              "uid": "grafana"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "target": {
+              "limit": 100,
+              "matchAny": false,
+              "tags": [],
+              "type": "dashboard"
+            },
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "collapsed": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 14,
+          "panels": [],
+          "title": "Rust application metrics",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "continuous-YlBl"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 15,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never"
+              },
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            }
+          },
+          "gridPos": {
+            "h": 11,
+            "w": 24,
+            "x": 0,
+            "y": 1
+          },
+          "id": 1,
+          "interval": "5s",
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "$datasource"
+              },
+              "expr": "increase(rocket_http_requests_total{endpoint!=\"/metrics\"}[1h]) / (60 * 60)",
+              "legendFormat": "{{ `{{endpoint}}` }}",
+              "refId": "A"
+            }
+          ],
+          "title": "HTTP requests per second",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            }
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 9,
+            "x": 0,
+            "y": 12
+          },
+          "id": 18,
+          "options": {
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "$datasource"
+              },
+              "expr": "sum(increase(rocket_http_requests_total{endpoint!=\"/metrics\"}[2m])) by (endpoint)",
+              "legendFormat": "{{ `{{endpoint}}` }}",
+              "refId": "A"
+            }
+          ],
+          "title": "Requests number for the last minute",
+          "type": "gauge"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms"
+            }
+          },
+          "gridPos": {
+            "h": 12,
+            "w": 15,
+            "x": 9,
+            "y": 12
+          },
+          "id": 16,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "$datasource"
+              },
+              "expr": "histogram_quantile(0.5, rate(rocket_http_requests_duration_seconds_bucket{endpoint!=\"/metrics\"}[$__range])) * 10000",
+              "legendFormat": "{{ `{{endpoint}}` }}",
+              "refId": "A"
+            }
+          ],
+          "title": "Response Time Distribution",
+          "type": "histogram"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms"
+            }
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 9,
+            "x": 0,
+            "y": 18
+          },
+          "id": 3,
+          "interval": "5s",
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "$datasource"
+              },
+              "expr": "(sum(rocket_http_requests_duration_seconds_sum) / sum(rocket_http_requests_duration_seconds_count)) * 1000",
+              "refId": "A"
+            }
+          ],
+          "title": "Mean response time",
+          "type": "stat"
+        },
+        {
+          "collapsed": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 24
+          },
+          "id": 12,
+          "panels": [],
+          "title": "System metrics",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            }
+          },
+          "gridPos": {
+            "h": 11,
+            "w": 12,
+            "x": 0,
+            "y": 25
+          },
+          "id": 4,
+          "interval": "5s",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "$datasource"
+              },
+              "expr": "rate(process_cpu_seconds_total{k8s_container_name=\"rust-app\"}[1m])",
+              "legendFormat": "process",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "$datasource"
+              },
+              "expr": "sum(rate(container_cpu_usage_seconds_total{k8s_container_name=\"rust-app\"}[1m])) by (name)",
+              "legendFormat": "container",
+              "refId": "B"
+            }
+          ],
+          "title": "CPU usage",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "axisLabel": "MiB"
+              }
+            }
+          },
+          "gridPos": {
+            "h": 11,
+            "w": 12,
+            "x": 12,
+            "y": 25
+          },
+          "id": 5,
+          "interval": "5s",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "$datasource"
+              },
+              "expr": "process_resident_memory_bytes{k8s_container_name=\"rust-app\"} / 1024 / 1024",
+              "legendFormat": "process",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "$datasource"
+              },
+              "expr": "container_memory_usage_bytes{k8s_container_name=\"rust-app\"} / 1024 / 1024",
+              "legendFormat": "container",
+              "refId": "B"
+            }
+          ],
+          "title": "Memory usage",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "5s",
+      "schemaVersion": 39,
+      "tags": [],
+      "templating": {
+        "list": [
+          {
+            "current": {
+              "selected": false,
+              "text": "default",
+              "value": "default"
+            },
+            "hide": 0,
+            "includeAll": false,
+            "label": "Data Source",
+            "multi": false,
+            "name": "datasource",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "type": "datasource"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "timepicker": {
+        "refresh_intervals": [
+          "5s",
+          "10s",
+          "30s",
+          "1m",
+          "5m"
+        ]
+      },
+      "timezone": "",
+      "title": "Rust Metrics",
+      "uid": "rust-metrics",
+      "version": 1,
+      "weekStart": ""
+    }

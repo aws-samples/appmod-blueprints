@@ -1,0 +1,124 @@
+# RBAC configuration for Backstage to access Kro ResourceGroups
+# This file should be applied to all clusters where Kro is installed
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backstage-kro-service-account
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-integration
+  annotations:
+    backstage.io/description: 'Service account for Backstage Kro plugin integration'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-kro-reader
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-integration
+rules:
+  # Kro ResourceGraphDefinition permissions
+  - apiGroups: ['kro.run']
+    resources: ['resourcegraphdefinitions']
+    verbs: ['get', 'list', 'watch']
+  # Kro ResourceGraphDefinition status access
+  - apiGroups: ['kro.run']
+    resources: ['resourcegraphdefinitions/status']
+    verbs: ['get', 'list', 'watch']
+  # Kro instance permissions (for the actual resources created from ResourceGraphDefinitions)
+  - apiGroups: ['kro.run']
+    resources: ['*']
+    verbs: ['get', 'list', 'watch']
+  # Core Kubernetes resources that ResourceGroups may manage
+  - apiGroups: ['']
+    resources: ['pods', 'services', 'configmaps', 'secrets', 'namespaces']
+    verbs: ['get', 'list', 'watch']
+  # Apps resources that ResourceGroups may manage
+  - apiGroups: ['apps']
+    resources: ['deployments', 'replicasets', 'daemonsets', 'statefulsets']
+    verbs: ['get', 'list', 'watch']
+  # Networking resources that ResourceGroups may manage
+  - apiGroups: ['networking.k8s.io']
+    resources: ['ingresses', 'networkpolicies']
+    verbs: ['get', 'list', 'watch']
+  # Batch resources that ResourceGroups may manage
+  - apiGroups: ['batch']
+    resources: ['jobs', 'cronjobs']
+    verbs: ['get', 'list', 'watch']
+  # RBAC resources for viewing permissions
+  - apiGroups: ['rbac.authorization.k8s.io']
+    resources: ['roles', 'rolebindings', 'clusterroles', 'clusterrolebindings']
+    verbs: ['get', 'list', 'watch']
+  # AWS Controller for Kubernetes (ACK) resources that ResourceGroups may manage
+  - apiGroups:
+      ['ecr.services.k8s.aws', 'iam.services.k8s.aws', 'eks.services.k8s.aws']
+    resources: ['*']
+    verbs: ['get', 'list', 'watch']
+  # Argo Workflows resources that ResourceGroups may manage
+  - apiGroups: ['argoproj.io']
+    resources:
+      ['workflows', 'workflowtemplates', 'cronworkflows', 'workflowtaskresults']
+    verbs: ['get', 'list', 'watch']
+  # External Secrets resources that ResourceGroups may manage
+  - apiGroups: ['external-secrets.io']
+    resources: ['externalsecrets', 'secretstores', 'clustersecretstores']
+    verbs: ['get', 'list', 'watch']
+  # Events for monitoring and troubleshooting
+  - apiGroups: ['']
+    resources: ['events']
+    verbs: ['get', 'list', 'watch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-kro-reader-binding
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-integration
+subjects:
+  - kind: ServiceAccount
+    name: backstage-kro-service-account
+    namespace: backstage
+roleRef:
+  kind: ClusterRole
+  name: backstage-kro-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# Additional Role for namespace-scoped operations in backstage namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: backstage
+  name: backstage-kro-namespace-admin
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-integration
+rules:
+  # Full access to secrets in backstage namespace for token management
+  - apiGroups: ['']
+    resources: ['secrets']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  # ConfigMap access for plugin configuration
+  - apiGroups: ['']
+    resources: ['configmaps']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backstage-kro-namespace-admin-binding
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-integration
+subjects:
+  - kind: ServiceAccount
+    name: backstage-kro-service-account
+    namespace: backstage
+roleRef:
+  kind: Role
+  name: backstage-kro-namespace-admin
+  apiGroup: rbac.authorization.k8s.io

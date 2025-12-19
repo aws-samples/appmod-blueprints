@@ -1,0 +1,746 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backstage
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backstage
+  namespace: backstage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-argo-worfklows
+rules:
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - workflows
+      - applications
+    verbs:
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: read-all
+rules:
+  - apiGroups:
+      - '*'
+    resources:
+      - '*'
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-kro-reader
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-integration
+    app.kubernetes.io/part-of: platform
+rules:
+  # Kro ResourceGraphDefinition permissions
+  - apiGroups: ['kro.run']
+    resources: ['resourcegraphdefinitions']
+    verbs: ['get', 'list', 'watch']
+  # Kro ResourceGraphDefinition status access
+  - apiGroups: ['kro.run']
+    resources: ['resourcegraphdefinitions/status']
+    verbs: ['get', 'list', 'watch']
+  # Kro instance permissions (for the actual resources created from ResourceGraphDefinitions)
+  - apiGroups: ['kro.run']
+    resources: ['*']
+    verbs: ['get', 'list', 'watch']
+  # AWS Controller for Kubernetes (ACK) resources that ResourceGraphDefinitions may manage
+  - apiGroups: ['ecr.services.k8s.aws', 'iam.services.k8s.aws', 'eks.services.k8s.aws']
+    resources: ['*']
+    verbs: ['get', 'list', 'watch']
+  # Argo Workflows resources that ResourceGraphDefinitions may manage
+  - apiGroups: ['argoproj.io']
+    resources: ['workflows', 'workflowtemplates', 'cronworkflows', 'workflowtaskresults']
+    verbs: ['get', 'list', 'watch']
+  # External Secrets resources that ResourceGraphDefinitions may manage
+  - apiGroups: ['external-secrets.io']
+    resources: ['externalsecrets', 'secretstores', 'clustersecretstores']
+    verbs: ['get', 'list', 'watch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-argo-worfklows
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: backstage-argo-worfklows
+subjects:
+  - kind: ServiceAccount
+    name: backstage
+    namespace: backstage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-read-all
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: read-all
+subjects:
+  - kind: ServiceAccount
+    name: backstage
+    namespace: backstage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-kro-reader-binding
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-integration
+    app.kubernetes.io/part-of: platform
+subjects:
+- kind: ServiceAccount
+  name: backstage
+  namespace: backstage
+roleRef:
+  kind: ClusterRole
+  name: backstage-kro-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backstage-config
+  namespace: backstage
+data:
+  app-config.yaml: |
+    app:
+      title: Internal Developer Platform
+      baseUrl: https://{{ .Values.ingress_domain_name }}/backstage
+    organization:
+      name: Internal Developer Platform
+    backend:
+      # Used for enabling authentication, secret is shared by all backend plugins
+      # See https://backstage.io/docs/tutorials/backend-to-backend-auth for
+      # information on the format
+      # auth:
+      #   keys:
+      #     - secret: ${BACKEND_SECRET}
+      baseUrl: https://{{ .Values.ingress_domain_name }}/backstage
+      listen:
+        port: 7007
+        # Uncomment the following host directive to bind to specific interfaces
+        # host: 127.0.0.1
+      csp:
+        connect-src: ["'self'", 'http:', 'https:']
+        # Content-Security-Policy directives follow the Helmet format: https://helmetjs.github.io/#reference
+        # Default Helmet Content-Security-Policy values can be removed by setting the key to false
+      cors:
+        origin: https://{{ .Values.ingress_domain_name }}/backstage
+        methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+        credentials: true
+      database:
+        client: pg
+        connection:
+          host: ${POSTGRES_HOST}
+          port: ${POSTGRES_PORT}
+          user: ${POSTGRES_USER}
+          password: ${POSTGRES_PASSWORD}
+      cache:
+        store: memory
+      # workingDirectory: /tmp # Use this to configure a working directory for the scaffolder, defaults to the OS temp-dir
+
+    integrations:
+      gitlab:
+        - token: ${GIT_PASSWORD}
+          apiBaseUrl: https://${GIT_HOSTNAME}/api/v4
+          baseUrl: https://${GIT_HOSTNAME}
+          host: ${GIT_HOSTNAME}
+    #  gitea:
+    #   - baseUrl: https://cnoe.localtest.me:8443/gitea
+    #     host: cnoe.localtest.me:8443
+    #     username: ${GITEA_USERNAME}
+    #     password: ${GIT_PASSWORD}
+    #   - baseUrl: https://cnoe.localtest.me/gitea
+    #     host: cnoe.localtest.me
+    #     username: ${GITEA_USERNAME}
+    #     password: ${GIT_PASSWORD}
+    #  github:
+    #    - host: github.com
+    #      apps:
+    #        - $include: github-integration.yaml
+    #    - host: github.com
+    #      # This is a Personal Access Token or PAT from GitHub. You can find out how to generate this token, and more information
+    #      # about setting up the GitHub integration here: https://backstage.io/docs/getting-started/configuration#setting-up-a-github-integration
+    #      token: ${GITHUB_TOKEN}
+        ### Example for how to add your GitHub Enterprise instance using the API:
+        # - host: ghe.example.net
+        #   apiBaseUrl: https://ghe.example.net/api/v3
+        #   token: ${GHE_TOKEN}
+
+    proxy:
+      ### Example for how to add a proxy endpoint for the frontend.
+      ### A typical reason to do this is to handle HTTPS and CORS for internal services.
+      endpoints:
+        '/provisioner': https://${DOMAIN_NAME}/
+
+    # Reference documentation http://backstage.io/docs/features/techdocs/configuration
+    # Note: After experimenting with basic setup, use CI/CD to generate docs
+    # and an external cloud storage when deploying TechDocs for production use-case.
+    # https://backstage.io/docs/features/techdocs/how-to-guides#how-to-migrate-from-techdocs-basic-to-recommended-deployment-approach
+    techdocs:
+      builder: 'local' # Alternatives - 'external'
+      generator:
+        runIn: 'local'
+      publisher:
+        type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
+
+    auth:
+      environment: development
+      session:
+        secret: MW2sV-sIPngEl26vAzatV-6VqfsgAx4bPIz7PuE_2Lk=
+      providers:
+        keycloak-oidc:
+          development:
+            metadataUrl: ${KEYCLOAK_NAME_METADATA}
+            clientId: backstage
+            clientSecret: ${KEYCLOAK_CLIENT_SECRET}
+            prompt: auto
+
+    scaffolder:
+      # see https://backstage.io/docs/features/software-templates/configuration for software template options
+        defaultAuthor:
+          name: backstage-scaffolder
+          email: noreply
+        defaultCommitMessage: "backstage scaffolder"
+    catalog:
+      import:
+        entityFilename: catalog-info.yaml
+        pullRequestBranchName: backstage-integration
+      rules:
+        - allow: [Component, System, API, Resource, Location, Template]
+      locations:
+        # Templates from Gitlab.
+        - type: url
+          target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/platform/backstage/templates/catalog-info.yaml
+          rules:
+            - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
+    kubernetes:
+      serviceLocatorMethod:
+        type: 'multiTenant'
+      clusterLocatorMethods:
+        - $include: k8s-config.yaml
+    
+    # Kro plugin configuration for ResourceGraphDefinition management
+    kro:
+      enablePermissions: true
+      clusters:
+        - name: local
+          url: https://kubernetes.default.svc.cluster.local
+          authProvider: 'serviceAccount'
+          skipTLSVerify: true
+          serviceAccountToken:
+            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+          caData:
+            $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        - name: workshop
+          url: K8S_SERVER
+          authProvider: 'serviceAccount'
+          skipTLSVerify: true
+          serviceAccountToken: SA_TOKEN
+      # ResourceGraphDefinition entity processing configuration
+      entityProcessing:
+        # Enable automatic catalog ingestion of ResourceGraphDefinitions
+        enabled: true
+        # Refresh interval for ResourceGraphDefinition status updates
+        refreshInterval: 300
+        # Namespace filtering (empty means all namespaces)
+        namespaces: []
+        # Label selectors for ResourceGraphDefinition filtering
+        labelSelectors: []
+      # Integration with existing Kubernetes plugin
+      integration:
+        # Show ResourceGraphDefinitions in Kubernetes plugin views
+        showInKubernetesViews: true
+        # Enable ResourceGraphDefinition relationship mapping
+        enableRelationshipMapping: true
+    
+    # Kubernetes resource ingestion configuration with Kro support
+    kubernetesIngestor:
+      refreshInterval: 300 # 5 minutes in seconds
+      resources:
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'ResourceGraphDefinition'
+        # Kro instances (these will be discovered dynamically based on ResourceGraphDefinitions)
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'CICDPipeline'
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'EksCluster'
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'EksclusterWithVpc'
+        - apiVersion: 'kro.run/v1alpha1'
+          kind: 'Vpc'
+        - apiVersion: 'apps/v1'
+          kind: 'Deployment'
+        - apiVersion: 'v1'
+          kind: 'Service'
+        - apiVersion: 'v1'
+          kind: 'ConfigMap'
+        - apiVersion: 'v1'
+          kind: 'Secret'
+      clusters:
+        - name: local
+          url: https://kubernetes.default.svc.cluster.local
+          authProvider: 'serviceAccount'
+          skipTLSVerify: true
+          serviceAccountToken:
+            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        - name: workshop
+          url: K8S_SERVER
+          authProvider: 'serviceAccount'
+          skipTLSVerify: true
+          serviceAccountToken: SA_TOKEN
+    argocd:
+      username: admin
+      password: ${ARGOCD_ADMIN_PASSWORD}
+      appLocatorMethods:
+        - type: 'config'
+          instances:
+            - name: in-cluster
+              url: https://${DOMAIN_NAME}/argocd
+              username: admin
+              password: ${ARGOCD_ADMIN_PASSWORD}
+    argoWorkflows:
+        baseUrl: ${ARGO_WORKFLOWS_URL}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: k8s-config
+  namespace: backstage
+stringData:
+  k8s-config.yaml: |
+    type: 'config'
+    clusters:
+      - url: https://kubernetes.default.svc.cluster.local
+        name: local
+        authProvider: 'serviceAccount'
+        skipTLSVerify: true
+        skipMetricsLookup: true
+        serviceAccountToken: 
+          $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        caData: 
+          $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        # Additional configuration for Kro resources
+        customResources:
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'resourcegraphdefinitions'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'cicdpipelines'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'eksclusters'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'eksclusterwithvpcs'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'vpcs'
+      - url: K8S_SERVER
+        name: workshop
+        authProvider: 'serviceAccount'
+        skipTLSVerify: true
+        skipMetricsLookup: true
+        serviceAccountToken: SA_TOKEN
+        # Additional configuration for Kro resources
+        customResources:
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'resourcegraphdefinitions'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'cicdpipelines'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'eksclusters'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'eksclusterwithvpcs'
+          - group: 'kro.run'
+            apiVersion: 'v1alpha1'
+            plural: 'vpcs'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backstage
+  namespace: backstage
+spec:
+  ports:
+    - name: http
+      port: 7007
+      targetPort: http
+  selector:
+    app: backstage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: postgresql
+  name: postgresql
+  namespace: backstage
+spec:
+  clusterIP: None
+  ports:
+    - name: postgres
+      port: 5432
+  selector:
+    app: postgresql
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage
+  namespace: backstage
+  annotations:
+    argocd.argoproj.io/sync-wave: "15"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backstage
+  template:
+    metadata:
+      labels:
+        app: backstage
+    spec:
+      nodeSelector:
+        karpenter.sh/nodepool: system
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: backstage
+      initContainers:
+        - name: wait-for-secrets
+          image: busybox:1.35
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for backstage-oidc-vars secret to be ready..."
+              MAX_RETRIES=30
+              RETRY_COUNT=0
+              
+              while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                if [ -f /var/secrets/KEYCLOAK_CLIENT_SECRET ] && [ -s /var/secrets/KEYCLOAK_CLIENT_SECRET ]; then
+                  echo "Secret is ready!"
+                  CLIENT_SECRET=$(cat /var/secrets/KEYCLOAK_CLIENT_SECRET)
+                  if [ ${#CLIENT_SECRET} -gt 10 ]; then
+                    echo "Secret validation passed (length: ${#CLIENT_SECRET})"
+                    exit 0
+                  else
+                    echo "Secret exists but appears invalid (length: ${#CLIENT_SECRET})"
+                  fi
+                else
+                  echo "Secret not ready yet..."
+                fi
+                
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                echo "Attempt $RETRY_COUNT/$MAX_RETRIES - waiting 10 seconds..."
+                sleep 10
+              done
+              
+              echo "ERROR: Secret not ready after $MAX_RETRIES attempts"
+              exit 1
+          volumeMounts:
+            - name: backstage-oidc-vars
+              mountPath: /var/secrets
+              readOnly: true
+      containers:
+        - command:
+            - node
+            - packages/backend
+            - --config
+            - config/app-config.yaml
+          env:
+            - name: LOG_LEVEL
+              value: debug
+            - name: NODE_TLS_REJECT_UNAUTHORIZED
+              value: "0"
+            - name: NODE_EXTRA_CA_CERTS
+              value: "/app/config/ca.crt"
+            - name: DOMAIN_NAME
+              value: {{ .Values.ingress_domain_name }}
+            - name: NODE_ENV
+              value: development
+            - name: NODE_OPTIONS
+              value: --no-node-snapshot
+            - name: HTTP_TIMEOUT
+              value: "300000"
+            - name: REQUEST_TIMEOUT  
+              value: "300000"
+            - name: GITLAB_REQUEST_TIMEOUT
+              value: "300000"
+          envFrom:
+            - secretRef:
+                name: backstage-env-vars
+            - secretRef:
+                name: backstage-oidc-vars
+            - secretRef:
+                name: backstage-postgres-vars
+            - secretRef:
+                name: git-credentials
+            - secretRef:
+                name: argocd-credentials
+          image: {{ .Values.backstage_image }}
+          name: backstage
+          ports:
+            - containerPort: 7007
+              name: http
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              memory: 2Gi
+          startupProbe:
+            httpGet:
+              path: /api/auth/keycloak-oidc/start?scope=openid%20profile%20email%20groups&flow=popup&env=development
+              port: http
+          volumeMounts:
+            - mountPath: /app/config
+              name: backstage-config
+              readOnly: true
+      serviceAccountName: backstage
+      volumes:
+        - name: backstage-config
+          projected:
+            sources:
+              - configMap:
+                  items:
+                    - key: app-config.yaml
+                      path: app-config.yaml
+                  name: backstage-config
+              - secret:
+                  items:
+                    - key: k8s-config.yaml
+                      path: k8s-config.yaml
+                  name: k8s-config
+        - name: backstage-env-vars
+          secret:
+            secretName: backstage-env-vars
+        - name: backstage-oidc-vars
+          secret:
+            secretName: backstage-oidc-vars
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: postgresql
+  name: postgresql
+  namespace: backstage
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+  serviceName: service-postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      nodeSelector:
+        karpenter.sh/nodepool: system
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+        - env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: backstage-env-vars
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: backstage-env-vars
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: backstage-postgres-vars
+                  key: POSTGRES_PASSWORD
+          image: docker.io/library/postgres:17.4-alpine3.21
+          name: postgres
+          ports:
+            - containerPort: 5432
+              name: postgresdb
+          resources:
+            limits:
+              memory: 500Mi
+            requests:
+              cpu: 100m
+              memory: 300Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: "500Mi"
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: backstage-oidc
+  namespace: backstage
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  refreshInterval: "30s"
+  target:
+    name: backstage-oidc-vars
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      engineVersion: v2
+      mergePolicy: Replace
+      data:
+        KEYCLOAK_CLIENT_SECRET: "{{ `{{.BACKSTAGE_CLIENT_SECRET}}` }}"
+        ARGOCD_AUTH_TOKEN: "argocd.token={{ `{{.ARGOCD_SESSION_TOKEN}}` }}"
+  data:
+    - secretKey: ARGOCD_SESSION_TOKEN
+      remoteRef:
+        conversionStrategy: Default
+        decodingStrategy: None
+        key: {{ .Values.global.aws_cluster_name }}/keycloak-clients
+        metadataPolicy: None
+        property: ARGOCD_SESSION_TOKEN
+    - secretKey: BACKSTAGE_CLIENT_SECRET
+      remoteRef:
+        conversionStrategy: Default
+        decodingStrategy: None
+        key: {{ .Values.global.aws_cluster_name }}/keycloak-clients
+        metadataPolicy: None
+        property: BACKSTAGE_CLIENT_SECRET
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: backstage-postgres
+  namespace: backstage
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  refreshInterval: "30s"
+  target:
+    name: backstage-postgres-vars
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: POSTGRES_PASSWORD
+      remoteRef:
+        conversionStrategy: Default
+        decodingStrategy: None
+        key: {{ .Values.global.aws_cluster_name }}/secrets
+        metadataPolicy: None
+        property: backstage_postgres_password
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backstage-env-vars
+  namespace: backstage
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: config
+type: Opaque
+stringData:
+  BACKSTAGE_FRONTEND_URL: https://{{ .Values.ingress_domain_name }}/backstage
+  POSTGRES_HOST: postgresql.backstage.svc.cluster.local
+  POSTGRES_PORT: '5432'
+  POSTGRES_DB: backstage
+  POSTGRES_USER: backstage
+  ARGO_WORKFLOWS_URL: https://{{ .Values.ingress_domain_name }}/argo-workflows
+  KEYCLOAK_NAME_METADATA: https://{{ .Values.ingress_domain_name }}/keycloak/realms/platform/.well-known/openid-configuration
+  ARGO_CD_URL: 'https://argocd-server.argocd.svc.cluster.local/api/v1/'
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backstage-pdb
+  namespace: backstage
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: backstage
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backstage
+  namespace: backstage
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "backstage-server"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "86400"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "86400"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/backstage"
+spec:
+  ingressClassName: "nginx"
+  rules:
+    - host: {{ .Values.ingress_domain_name }}
+      http:
+        paths:
+          - path: /backstage(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: backstage
+                port:
+                  name: http

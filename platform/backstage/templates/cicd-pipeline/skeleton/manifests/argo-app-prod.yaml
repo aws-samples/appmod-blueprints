@@ -5,19 +5,37 @@ metadata:
   namespace: argocd
   labels:
     entity-id: ${{values.appname}}
+    app.kubernetes.io/name: ${{values.appname}}
+    app.kubernetes.io/component: argocd-application
+    app.kubernetes.io/managed-by: backstage
+    backstage.io/template-name: cicd-pipeline
+  annotations:
+    backstage.io/created-by: backstage-template
+    cicd.kro.run/application-name: ${{values.appname}}
+    cicd.kro.run/environment: prod
+    kargo.akuity.io/authorized-stage: ${{values.appname}}-app-kargo:prod
   finalizers:
   - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   destination:
     namespace: ${{values.namespace}}
-    name: prod-cluster
+    name: peeks-spoke-prod
   source:
-    repoURL: http://${{values.hostname}}/gitea/giteaAdmin/${{values.appname}}
+    repoURL: https://${{values.gitlab_hostname}}/${{values.git_username}}/${{values.appname}}.git
     targetRevision: main
-    path: deployment/prod
+    # Use the deployment path parameter from the template
+    path: ${{values.deployment_path}}/prod
   syncPolicy:
     automated:
       prune: true
+      selfHeal: true
     syncOptions:
     - CreateNamespace=true
+    - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

@@ -1,0 +1,130 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: ${{ values.name }}.kro.run
+  namespace: ${{ values.namespace }}
+  labels:
+    app.kubernetes.io/name: ${{ values.name }}
+    app.kubernetes.io/component: resourcegroup
+    app.kubernetes.io/part-of: ${{ values.name }}
+    environment: ${{ values.environment }}
+  annotations:
+    backstage.io/kubernetes-id: ${{ values.name }}
+    kro.run/description: "${{ values.description }}"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: JobDeployment
+    spec:
+      replicas: integer | default=${{ values.replicas }}
+      delayInSeconds: integer | default=${{ values.delayInSeconds }}
+      jobImage: string | default=${{ values.jobImage }}
+      deploymentImage: string | default=${{ values.deploymentImage }}
+      deploymentPort: integer | default=${{ values.deploymentPort }}
+      restartPolicy: string | default=${{ values.restartPolicy }}
+      ttlSecondsAfterFinished: integer | default=${{ values.ttlSecondsAfterFinished }}
+    status:
+      jobStatus: ${job.status}
+      jobCompletionTime: ${job.status.completionTime}
+      deploymentStatus: ${deployment.status}
+      availableReplicas: ${deployment.status.availableReplicas}
+
+  resources:
+  - id: job
+    readyWhen:
+      - ${job.status.completionTime != null}
+    template:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: ${schema.metadata.name}-job
+        namespace: ${schema.metadata.namespace}
+        labels:
+          app.kubernetes.io/name: ${schema.metadata.name}
+          app.kubernetes.io/component: job
+          app.kubernetes.io/part-of: ${schema.metadata.name}
+          environment: ${{ values.environment }}
+      spec:
+        {% if values.ttlSecondsAfterFinished > 0 -%}
+        ttlSecondsAfterFinished: ${schema.spec.ttlSecondsAfterFinished}
+        {% endif -%}
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: ${schema.metadata.name}
+              app.kubernetes.io/component: job
+              environment: ${{ values.environment }}
+          spec:
+            restartPolicy: ${schema.spec.restartPolicy}
+            containers:
+            - name: job-container
+              image: ${schema.spec.jobImage}
+              command: {{ values.jobCommand | dump }}
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "1"
+              env:
+              - name: ENVIRONMENT
+                value: "${{ values.environment }}"
+              - name: JOB_NAME
+                value: ${schema.metadata.name}
+
+  - id: deployment
+    template:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ${schema.metadata.name}
+        namespace: ${schema.metadata.namespace}
+        labels:
+          app.kubernetes.io/name: ${schema.metadata.name}
+          app.kubernetes.io/component: deployment
+          app.kubernetes.io/part-of: ${schema.metadata.name}
+          environment: ${{ values.environment }}
+      spec:
+        replicas: ${schema.spec.replicas}
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: ${schema.metadata.name}
+            app: ${schema.metadata.name}
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: ${schema.metadata.name}
+              app: ${schema.metadata.name}
+              environment: ${{ values.environment }}
+          spec:
+            containers:
+            - name: web
+              image: ${schema.spec.deploymentImage}
+              ports:
+              - containerPort: ${schema.spec.deploymentPort}
+                name: http
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+              env:
+              - name: ENVIRONMENT
+                value: "${{ values.environment }}"
+              - name: DEPLOYMENT_NAME
+                value: ${schema.metadata.name}
+              livenessProbe:
+                httpGet:
+                  path: /
+                  port: http
+                initialDelaySeconds: 30
+                periodSeconds: 10
+              readinessProbe:
+                httpGet:
+                  path: /
+                  port: http
+                initialDelaySeconds: 5
+                periodSeconds: 5

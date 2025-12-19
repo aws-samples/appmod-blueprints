@@ -1,0 +1,143 @@
+---
+# ServiceAccount for Backstage Kro plugin
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backstage-kro
+  namespace: backstage
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-plugin
+---
+# ClusterRole for Kro ResourceGroup operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-kro-admin
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-plugin
+rules:
+  # Kro ResourceGraphDefinitions (templates)
+  - apiGroups: ['kro.run']
+    resources: ['resourcegraphdefinitions']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  # Kro ResourceGroup instances
+  - apiGroups: ['kro.run']
+    resources: ['cicdpipelines', 'eksclusters', 'eksclusterwithvpcs', 'vpcs']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  # Status subresources
+  - apiGroups: ['kro.run']
+    resources:
+      [
+        'resourcegraphdefinitions/status',
+        'cicdpipelines/status',
+        'eksclusters/status',
+        'eksclusterwithvpcs/status',
+        'vpcs/status',
+      ]
+    verbs: ['get', 'list', 'watch']
+  # Events for monitoring ResourceGroup operations
+  - apiGroups: ['']
+    resources: ['events']
+    verbs: ['get', 'list', 'watch']
+  # Core resources that may be managed by ResourceGroups
+  - apiGroups: ['']
+    resources: ['configmaps', 'secrets', 'services']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['apps']
+    resources: ['deployments', 'replicasets']
+    verbs: ['get', 'list', 'watch']
+---
+# ClusterRole for read-only Kro access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-kro-reader
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-plugin
+rules:
+  # Read-only access to Kro resources
+  - apiGroups: ['kro.run']
+    resources:
+      [
+        'resourcegraphdefinitions',
+        'cicdpipelines',
+        'eksclusters',
+        'eksclusterwithvpcs',
+        'vpcs',
+      ]
+    verbs: ['get', 'list', 'watch']
+  # Status subresources
+  - apiGroups: ['kro.run']
+    resources:
+      [
+        'resourcegraphdefinitions/status',
+        'cicdpipelines/status',
+        'eksclusters/status',
+        'eksclusterwithvpcs/status',
+        'vpcs/status',
+      ]
+    verbs: ['get', 'list', 'watch']
+  # Events for monitoring
+  - apiGroups: ['']
+    resources: ['events']
+    verbs: ['get', 'list', 'watch']
+---
+# ClusterRoleBinding for Backstage service account (admin access)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-kro-admin
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-plugin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: backstage-kro-admin
+subjects:
+  - kind: ServiceAccount
+    name: backstage-kro
+    namespace: backstage
+---
+# Role for namespace-specific operations (if needed)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backstage-kro-namespace
+  namespace: default
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-plugin
+rules:
+  # Namespace-specific Kro operations
+  - apiGroups: ['kro.run']
+    resources: ['cicdpipelines', 'eksclusters', 'eksclusterwithvpcs', 'vpcs']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  # Core resources in this namespace
+  - apiGroups: ['']
+    resources: ['configmaps', 'secrets', 'services']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['apps']
+    resources: ['deployments', 'replicasets']
+    verbs: ['get', 'list', 'watch']
+---
+# RoleBinding for namespace-specific operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backstage-kro-namespace
+  namespace: default
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: kro-plugin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: backstage-kro-namespace
+subjects:
+  - kind: ServiceAccount
+    name: backstage-kro
+    namespace: backstage

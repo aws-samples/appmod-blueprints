@@ -1,0 +1,38 @@
+global:
+  ingress_domain_name: ""  # Will be set dynamically
+  resourcePrefix: "{{.metadata.annotations.resource_prefix}}"
+
+kubeflow:
+  version: "v1.8.0"  # Kubeflow version to install
+  components:
+    pipelines:
+      enabled: true
+    notebooks:
+      enabled: true
+    katib:
+      enabled: true
+    trainingOperator:
+      enabled: true
+    serving:
+      enabled: true
+    centralDashboard:
+      enabled: true
+  
+  centralDashboard:
+    oidc:
+      clientId: kubeflow
+      clientSecret: ""  # Will be provided via External Secrets
+      issuer: ""  # Will be set dynamically
+      authUrl: ""  # Will be set dynamically
+      tokenUrl: ""  # Will be set dynamically
+      userinfoUrl: ""  # Will be set dynamically
+      
+  ingress:
+    enabled: true
+    className: nginx
+    host: ""  # Will be set dynamically
+    path: /kubeflow(/|$)(.*)
+    pathType: ImplementationSpecific
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+      nginx.ingress.kubernetes.io/use-regex: "true"

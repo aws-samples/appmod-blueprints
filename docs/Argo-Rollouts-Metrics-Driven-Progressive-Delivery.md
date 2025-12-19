@@ -195,7 +195,7 @@ You can do analysis for different sections of the rollout, and call a variety of
                     query: | # This query returns something similar to: {"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1728922812,"11778"]}]}}
                         sum(
                             rocket_http_requests_total{
-                            cluster="modernengg-dev",
+                            cluster="peeks-spoke-dev",
                             endpoint="/metrics",
                             http_scheme="http",
                             k8s_container_name="rust-app",
@@ -254,7 +254,7 @@ prometheus:
     query: | # This query returns something similar to: {"status":"success","data":{"resultType":"vector","result":[{"metric":{"pod":"argo-rollouts-bdbddf5fb-xbkwr"},"value":[1722963891,"0.002951664136810593"]}]}}
         sum(
             rocket_http_requests_total{
-            cluster="modernengg-dev",
+            cluster="peeks-spoke-dev",
             endpoint="/metrics",
             http_scheme="http",
             k8s_container_name="rust-app",

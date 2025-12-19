@@ -1,0 +1,27 @@
+{
+  "name": "backstage-template-execution-tests",
+  "version": "1.0.0",
+  "description": "Template execution tests for Backstage CI/CD Pipeline template",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:template": "vitest run template-execution.test.js",
+    "test:parameters": "vitest run parameter-combinations.test.js",
+    "test:yaml": "vitest run yaml-manifest-validation.test.js",
+    "test:integration": "vitest run gitlab-argocd-integration.test.js",
+    "test:pipeline": "vitest run pipeline-creation.test.js",
+    "test:all": "npm test"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0",
+    "js-yaml": "^4.1.0",
+    "@types/js-yaml": "^4.0.5",
+    "ajv": "^8.12.0",
+    "ajv-formats": "^2.1.1",
+    "@kubernetes/client-node": "^0.20.0",
+    "mustache": "^4.2.0",
+    "lodash": "^4.17.21"
+  },
+  "type": "module"
+}

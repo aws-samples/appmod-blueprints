@@ -1,0 +1,952 @@
+# resources here are used to configure keycloak instance for SSO
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keycloak-config
+  namespace: keycloak
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: keycloak-config
+  namespace: keycloak
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: keycloak-config
+  namespace: keycloak
+subjects:
+  - kind: ServiceAccount
+    name: keycloak-config
+    namespace: keycloak
+roleRef:
+  kind: Role
+  name: keycloak-config
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: keycloak-config
+  namespace: argocd
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: keycloak-config
+  namespace: argocd
+subjects:
+  - kind: ServiceAccount
+    name: keycloak-config
+    namespace: keycloak
+roleRef:
+  kind: Role
+  name: keycloak-config
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-job
+  namespace: keycloak
+data:
+  client-scope-groups-payload.json: |
+    {
+      "name": "groups",
+      "description": "groups a user belongs to",
+      "attributes": {
+          "consent.screen.text": "Access to groups a user belongs to.",
+          "display.on.consent.screen": "true",
+          "include.in.token.scope": "true",
+          "gui.order": ""
+      },
+      "type": "default",
+      "protocol": "openid-connect"
+    }
+  group-admin-payload.json: |
+    {"name":"admin"}
+  group-base-user-payload.json: |
+    {"name":"base-user"}
+  group-mapper-payload.json: |
+    {
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-group-membership-mapper",
+        "name": "groups",
+        "config": {
+          "claim.name": "groups",
+          "full.path": "false",
+          "id.token.claim": "true",
+          "access.token.claim": "true",
+          "userinfo.token.claim": "true"
+        }
+    }
+  realm-payload.json: |
+    {"realm":"${REALM_NAME}","enabled":true,"ssoSessionIdleTimeout":36000,"accessTokenLifespan":3600,"accessTokenLifespanForImplicitFlow":3600,"actionTokenGeneratedByUserLifespan":600,"actionTokenGeneratedByAdminLifespan":43200,"accessCodeLifespan":600}
+  user-user1.json: |
+    {
+        "username": "user1",
+        "email": "user1@example.com",
+        "firstName": "user",
+        "lastName": "one",
+        "realmRoles": [
+            "grafana-admin"
+        ],
+        "requiredActions": [],
+        "emailVerified": true,
+        "groups": [
+          "/admin"
+        ],
+        "enabled": true,
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  user-user2.json: |
+    {
+        "username": "user2",
+        "email": "user2@example.com",
+        "firstName": "user",
+        "lastName": "two",
+        "requiredActions": [],
+        "emailVerified": true,
+        "groups": [
+          "/base-user"
+        ],
+        "enabled": true,
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  user-grafana-admin.json: |
+    {
+        "username": "monitor-admin",
+        "email": "admin@keycloak",
+        "enabled": true,
+        "firstName": "Admin",
+        "lastName": "Grafana",
+        "requiredActions": [],
+        "realmRoles": [
+            "grafana-admin"
+        ],
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  user-grafana-editor.json: |
+    {
+        "username": "monitor-editor",
+        "email": "editor@keycloak",
+        "enabled": true,
+        "firstName": "Editor",
+        "lastName": "Grafana",
+        "requiredActions": [],
+        "realmRoles": [
+          "grafana-editor"
+        ],
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  user-grafana-viewer.json: |
+    {
+        "username": "monitor-viewer",
+        "email": "viewer@keycloak",
+        "enabled": true,
+        "firstName": "Viewer",
+        "lastName": "Grafana",
+        "requiredActions": [],
+        "realmRoles": [
+          "grafana-viewer"
+        ],
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  argo-workflows-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "argo-workflows",
+      "name": "Argo Workflows Client",
+      "description": "Used for Argo Workflows SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/argo-workflows",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/argo-workflows/oauth2/callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  backstage-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "backstage",
+      "name": "Backstage Client",
+      "description": "Used for Backstage SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/backstage",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/backstage/api/auth/keycloak-oidc/handler/frame"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  kargo-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "kargo",
+      "name": "Kargo Client",
+      "description": "Used for Kargo SSO",
+      "publicClient": true,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/login",
+        "https://localhost/auth/callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  account-console-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "account-console",
+      "name": "Account Console",
+      "description": "Account Console Client for Platform Realm",
+      "publicClient": true,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": false,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false,
+        "post.logout.redirect.uris": "https://${DOMAIN_NAME}/keycloak/realms/platform/account/*"
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/keycloak/realms/platform/account/",
+      "baseUrl": "/realms/platform/account/",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/keycloak/realms/platform/account/*"
+      ],
+      "webOrigins": [
+        "https://${DOMAIN_NAME}"
+      ]
+    }
+  argocd-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "argocd",
+      "name": "ArgoCD Client",
+      "description": "Used for ArgoCD SSO",
+      "publicClient": true,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/argocd",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/argocd/auth/callback",
+        "https://${DOMAIN_NAME}/argocd/pkce/verify"
+      ],
+      "adminUrl": "https://${DOMAIN_NAME}/argocd",
+      "webOrigins": [
+        "https://${DOMAIN_NAME}/argocd"
+      ]
+    }
+  jupyterhub-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "jupyterhub",
+      "name": "JupyterHub Client",
+      "description": "Used for JupyterHub SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/jupyterhub",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/jupyterhub/hub/oauth_callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  kubeflow-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "kubeflow",
+      "name": "Kubeflow Client",
+      "description": "Used for Kubeflow Central Dashboard SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/kubeflow",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/kubeflow/login/oidc"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  mlflow-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "mlflow",
+      "name": "MLFlow Client",
+      "description": "Used for MLFlow UI SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/mlflow",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/mlflow/oauth2/callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  spark-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "spark",
+      "name": "Spark Client",
+      "description": "Used for Spark History Server UI SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/spark",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/spark/oauth2/callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  airflow-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "airflow",
+      "name": "Airflow Client",
+      "description": "Used for Apache Airflow webserver SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}/airflow",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/airflow/oauth2/callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
+  grafana-client-payload.json: |
+    {
+      "clientId": "https://${GRAFANAURL}/saml/metadata",
+      "name": "amazon-managed-grafana",
+      "enabled": true,
+      "protocol": "saml",
+      "adminUrl": "https://${GRAFANAURL}/login/saml",
+      "redirectUris": [
+        "https://${GRAFANAURL}/saml/acs"
+      ],
+      "attributes": {
+        "saml.authnstatement": "true",
+        "saml.server.signature": "true",
+        "saml_name_id_format": "email",
+        "saml_force_name_id_format": "true",
+        "saml.assertion.signature": "true",
+        "saml.client.signature": "false"
+      },
+      "defaultClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "name",
+          "protocol": "saml",
+          "protocolMapper": "saml-user-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "attribute.nameformat": "Unspecified",
+            "user.attribute": "firstName",
+            "attribute.name": "displayName"
+          }
+        },
+        {
+          "name": "email",
+          "protocol": "saml",
+          "protocolMapper": "saml-user-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "attribute.nameformat": "Unspecified",
+            "user.attribute": "email",
+            "attribute.name": "mail"
+          }
+        },
+        {
+          "name": "role list",
+          "protocol": "saml",
+          "protocolMapper": "saml-role-list-mapper",
+          "config": {
+            "single": "true",
+            "attribute.nameformat": "Unspecified",
+            "attribute.name": "role"
+          }
+        }
+      ]
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: config
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  completions: 1
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      generateName: config
+    spec:
+      serviceAccountName: keycloak-config
+      restartPolicy: Never
+      volumes:
+        - name: keycloak-config
+          secret:
+            secretName: keycloak-config
+        - name: config-payloads
+          configMap:
+            name: config-job
+      containers:
+        - name: kubectl
+          image: docker.io/library/ubuntu:22.04
+          volumeMounts:
+            - name: keycloak-config
+              readOnly: true
+              mountPath: "/var/secrets/"
+            - name: config-payloads
+              readOnly: true
+              mountPath: "/var/config/"
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              #! /bin/bash
+
+              set -ex -o pipefail
+
+              # Set non-interactive mode to avoid prompts during package installation
+              export DEBIAN_FRONTEND=noninteractive
+              export TZ=UTC
+
+              apt -qq update && apt -qq install curl jq gettext-base -y
+
+              # Helper functions
+              keycloak_post() {
+                local endpoint=$1
+                local payload=$2
+                local resource_name=$3
+
+                envsubst < ${payload} > /tmp/payload-env.json
+                
+                HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -H "Content-Type: application/json" \
+                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                  -X POST --data @/tmp/payload-env.json \
+                  ${KEYCLOAK_URL}${endpoint})
+                
+                if [ "$HTTP_STATUS" -eq 409 ]; then
+                  echo "${resource_name} already exists, continuing..."
+                elif [ "$HTTP_STATUS" -ne 201 ] && [ "$HTTP_STATUS" -ne 200 ]; then
+                  echo "Error creating ${resource_name}: HTTP status $HTTP_STATUS"
+                  cat /tmp/response.txt
+                fi
+              }
+              
+              keycloak_put() {
+                local endpoint=$1
+                local resource_name=$2
+                
+                HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -H "Content-Type: application/json" \
+                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                  -X PUT ${KEYCLOAK_URL}${endpoint})
+                
+                if [ "$HTTP_STATUS" -ne 204 ] && [ "$HTTP_STATUS" -ne 200 ]; then
+                  echo "Error updating ${resource_name}: HTTP status $HTTP_STATUS"
+                  cat /tmp/response.txt
+                fi
+              }
+              
+              keycloak_get() {
+                local endpoint=$1
+                local jq_filter=$2
+                
+                curl -sS -H "Content-Type: application/json" \
+                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                  -X GET ${KEYCLOAK_URL}${endpoint} | jq -e -r "${jq_filter}"
+              }
+
+              # Create users function
+              create_user() {
+                local user_num=$1
+                local password=$2
+                local payload_file=$3
+                
+                echo "creating user ${user_num}"
+                jq --arg pwd "$password" '.credentials[0].value = $pwd' ${payload_file} > user${user_num}-payload-with-password.json
+                keycloak_post "/admin/realms/${REALM_NAME}/users" "user${user_num}-payload-with-password.json" "User ${user_num}"
+              }
+
+              # Create role function
+              create_role() {
+                local role_name=$1
+                
+                echo "creating role ${role_name}"
+                echo "{\"name\":\"${role_name}\"}" > role-${role_name}-payload.json
+                keycloak_post "/admin/realms/${REALM_NAME}/roles" "role-${role_name}-payload.json" "Role ${role_name}"
+              }
+
+              # Create client function
+              create_client() {
+                local client_name=$1
+                local payload_file=$2
+                
+                echo "creating ${client_name} client"
+                keycloak_post "/admin/realms/${REALM_NAME}/clients" "${payload_file}" "${client_name} client"
+              }
+
+              # Add client scope function
+              add_client_scope() {
+                local client_id_name=$1
+                local client_name=$2
+                
+                CLIENT_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id")
+                CLIENT_SCOPE_GROUPS_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/client-scopes" '.[] | select(.name == "groups") | .id')
+                keycloak_put "/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}" "${client_name} client scope"
+              }
+
+              # Add realm role to user function
+              add_realm_role_to_user() {
+                local username=$1
+                local role_name=$2
+                
+                echo "adding role ${role_name} to user ${username}"
+                USER_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/users" ".[] | select(.username == \"${username}\") | .id")
+                ROLE_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/roles" ".[] | select(.name == \"${role_name}\") | .id")
+                ROLE_NAME=$(keycloak_get "/admin/realms/${REALM_NAME}/roles" ".[] | select(.name == \"${role_name}\") | .name")
+                
+                echo "[{\"id\":\"${ROLE_ID}\",\"name\":\"${ROLE_NAME}\"}]" > /tmp/role-assignment.json
+                keycloak_post "/admin/realms/${REALM_NAME}/users/${USER_ID}/role-mappings/realm" "/tmp/role-assignment.json" "Role assignment"
+              }
+
+              # Get client secret function
+              get_client_secret() {
+                local client_id_name=$1
+                local var_name=$2
+                
+                CLIENT_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id")
+                local secret=$(keycloak_get "/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}" ".secret")
+                eval "${var_name}=${secret}"
+              }
+              
+              # Get Keycloak token for initial Admin user
+              export DOMAIN_NAME={{ .Values.global.ingress_domain_name }}
+              export GRAFANAURL={{ .Values.aws.grafana_url }}
+              export KEYCLOAK_URL=http://keycloak.keycloak.svc.cluster.local:8080/keycloak
+              export REALM_NAME=platform
+              export ADMIN_PASSWORD=$(cat /var/secrets/KC_BOOTSTRAP_ADMIN_PASSWORD)
+              export USER1_PASSWORD=$(cat /var/secrets/USER_PASSWORD)
+              export ARGOCD_PASSWORD=$USER1_PASSWORD
+              HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -X POST -H "Content-Type: application/x-www-form-urlencoded" \
+                --data-urlencode "username=admin" \
+                --data-urlencode "password=${ADMIN_PASSWORD}" \
+                --data-urlencode "grant_type=password" \
+                --data-urlencode "client_id=admin-cli" \
+                ${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token)
+              if [ "$HTTP_STATUS" -ne 200 ]; then
+                echo "Error getting Keycloak token: HTTP status $HTTP_STATUS"
+                cat /tmp/response.txt
+                exit 1
+              fi
+              export KEYCLOAK_TOKEN=$(cat /tmp/response.txt | jq -e -r '.access_token')
+              
+              HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -H "Authorization: bearer ${KEYCLOAK_TOKEN}" "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}")
+              if [ "$HTTP_STATUS" -ne 200 ]; then
+                echo "creating ${REALM_NAME} realm"
+                keycloak_post "/admin/realms" "/var/config/realm-payload.json" "${REALM_NAME} realm"
+              fi
+
+              # Download kubectl
+              curl -sS -LO "https://s3.us-west-2.amazonaws.com/amazon-eks/1.32.0/2024-12-20/bin/linux/amd64/kubectl"
+              chmod +x kubectl
+
+
+              echo "creating client scopes"
+              keycloak_post "/admin/realms/${REALM_NAME}/client-scopes" "/var/config/client-scope-groups-payload.json" "Client scope"
+              
+              echo "creating admin group"
+              keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-admin-payload.json" "Admin group"
+
+              echo "creating base-user group"
+              keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-base-user-payload.json" "Base-user group"
+
+              echo "adding group claim to tokens"
+              CLIENT_SCOPE_GROUPS_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/client-scopes" '.[] | select(.name == "groups") | .id')
+
+              keycloak_post "/admin/realms/${REALM_NAME}/client-scopes/${CLIENT_SCOPE_GROUPS_ID}/protocol-mappers/models" \
+                "/var/config/group-mapper-payload.json" "Protocol mapper"
+
+              echo "creating roles for grafana"
+              create_role "grafana-admin"
+              create_role "grafana-editor"
+              create_role "grafana-viewer"
+
+              echo "creating users"
+              create_user "1" "${USER1_PASSWORD}" "/var/config/user-user1.json"
+              create_user "2" "${USER1_PASSWORD}" "/var/config/user-user2.json"
+              create_user "grafana-admin" "${USER1_PASSWORD}" "/var/config/user-grafana-admin.json"
+              create_user "grafana-editor" "${USER1_PASSWORD}" "/var/config/user-grafana-editor.json"
+              create_user "grafana-viewer" "${USER1_PASSWORD}" "/var/config/user-grafana-viewer.json"
+
+              echo "adding realm-roles to users"
+              add_realm_role_to_user "user1" "grafana-admin"
+              add_realm_role_to_user "monitor-admin" "grafana-admin"
+              add_realm_role_to_user "monitor-editor" "grafana-editor"
+              add_realm_role_to_user "monitor-viewer" "grafana-viewer"
+
+              echo "creating clients"
+              create_client "Argo Workflows" "/var/config/argo-workflows-client-payload.json"
+              create_client "Backstage" "/var/config/backstage-client-payload.json"
+              create_client "JupyterHub" "/var/config/jupyterhub-client-payload.json"
+              create_client "Kubeflow" "/var/config/kubeflow-client-payload.json"
+              create_client "MLFlow" "/var/config/mlflow-client-payload.json"
+              create_client "Spark" "/var/config/spark-client-payload.json"
+              create_client "Airflow" "/var/config/airflow-client-payload.json"
+              create_client "Kargo" "/var/config/kargo-client-payload.json"
+              create_client "Argo CD" "/var/config/argocd-client-payload.json"
+              create_client "Account Console" "/var/config/account-console-client-payload.json"
+              create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
+
+              echo "adding client scopes to clients"
+              add_client_scope "argo-workflows" "Argo Workflows"
+              add_client_scope "backstage" "Backstage"
+              add_client_scope "jupyterhub" "JupyterHub"
+              add_client_scope "kubeflow" "Kubeflow"
+              add_client_scope "mlflow" "MLFlow"
+              add_client_scope "spark" "Spark"
+              add_client_scope "airflow" "Airflow"
+              add_client_scope "kargo" "Kargo"
+              add_client_scope "argocd" "Argo CD"
+              add_client_scope "account-console" "Account Console"
+
+              echo "getting client secrets"
+              get_client_secret "backstage" "BACKSTAGE_CLIENT_SECRET"
+              get_client_secret "jupyterhub" "JUPYTERHUB_CLIENT_SECRET"
+              get_client_secret "kubeflow" "KUBEFLOW_CLIENT_SECRET"
+              get_client_secret "mlflow" "MLFLOW_CLIENT_SECRET"
+              get_client_secret "spark" "SPARK_CLIENT_SECRET"
+              get_client_secret "airflow" "AIRFLOW_CLIENT_SECRET"
+              get_client_secret "argo-workflows" "ARGO_WORKFLOWS_CLIENT_SECRET"
+
+              ARGOCD_SESSION_TOKEN=$(curl -k -sS http://argocd-server.argocd.svc.cluster.local/argocd/api/v1/session -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_PASSWORD}\"}" | jq -r .token)
+
+              # Create Kubernetes secret (currently required by applications)
+              echo "Creating Kubernetes secret for application consumption..."
+              echo \
+              "apiVersion: v1
+              kind: Secret
+              metadata:
+                name: keycloak-clients
+                namespace: keycloak
+                annotations:
+                  managed-by: keycloak-config-job
+                  aws-secrets-manager-backup: 'true'
+                  secret-source: 'keycloak-dynamic-generation'
+                  last-updated: '$(date -u +"%Y-%m-%dT%H:%M:%SZ")'
+                labels:
+                  app.kubernetes.io/managed-by: keycloak-config-job
+                  secret-type: oidc-client
+                  backup-location: aws-secrets-manager
+              type: Opaque
+              stringData:
+                ARGO_WORKFLOWS_CLIENT_SECRET: ${ARGO_WORKFLOWS_CLIENT_SECRET}
+                ARGO_WORKFLOWS_CLIENT_ID: argo-workflows
+                ARGOCD_SESSION_TOKEN: ${ARGOCD_SESSION_TOKEN}
+                BACKSTAGE_CLIENT_SECRET: ${BACKSTAGE_CLIENT_SECRET}
+                BACKSTAGE_CLIENT_ID: backstage
+                JUPYTERHUB_CLIENT_SECRET: ${JUPYTERHUB_CLIENT_SECRET}
+                JUPYTERHUB_CLIENT_ID: jupyterhub
+                KUBEFLOW_CLIENT_SECRET: ${KUBEFLOW_CLIENT_SECRET}
+                KUBEFLOW_CLIENT_ID: kubeflow
+                MLFLOW_CLIENT_SECRET: ${MLFLOW_CLIENT_SECRET}
+                MLFLOW_CLIENT_ID: mlflow
+                SPARK_CLIENT_SECRET: ${SPARK_CLIENT_SECRET}
+                SPARK_CLIENT_ID: spark
+                AIRFLOW_CLIENT_SECRET: ${AIRFLOW_CLIENT_SECRET}
+                AIRFLOW_CLIENT_ID: airflow
+                ARGOCD_CLIENT_ID: argocd
+              " > /tmp/secret.yaml
+
+              ./kubectl apply -f /tmp/secret.yaml
+              echo "✓ Kubernetes secret created and available for applications"
+              echo "✓ Keycloak configuration completed successfully!"
+              echo "✓ OIDC secrets available in both AWS Secrets Manager and Kubernetes"
+              echo "✓ Applications can now use External Secrets to consume from AWS Secrets Manager"
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: keycloak-clients
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "11" # Sync after config job
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookFailed
+spec:
+  updatePolicy: Replace
+  deletionPolicy: Delete
+  refreshInterval: 30s
+  secretStoreRefs:
+    - name: aws-secrets-manager
+      kind: ClusterSecretStore
+  selector:
+    secret:
+      name: keycloak-clients # Source Kubernetes secret to be pushed
+  template:
+    data:
+      ARGO_WORKFLOWS_CLIENT_SECRET: "{{ `{{.ARGO_WORKFLOWS_CLIENT_SECRET}}` }}"
+      ARGO_WORKFLOWS_CLIENT_ID: "{{ `{{.ARGO_WORKFLOWS_CLIENT_ID}}` }}"
+      BACKSTAGE_CLIENT_SECRET: "{{ `{{.BACKSTAGE_CLIENT_SECRET}}` }}"
+      JUPYTERHUB_CLIENT_SECRET: "{{ `{{.JUPYTERHUB_CLIENT_SECRET}}` }}"
+      JUPYTERHUB_CLIENT_ID: "{{ `{{.JUPYTERHUB_CLIENT_ID}}` }}"
+      KUBEFLOW_CLIENT_SECRET: "{{ `{{.KUBEFLOW_CLIENT_SECRET}}` }}"
+      KUBEFLOW_CLIENT_ID: "{{ `{{.KUBEFLOW_CLIENT_ID}}` }}"
+      MLFLOW_CLIENT_SECRET: "{{ `{{.MLFLOW_CLIENT_SECRET}}` }}"
+      MLFLOW_CLIENT_ID: "{{ `{{.MLFLOW_CLIENT_ID}}` }}"
+      SPARK_CLIENT_SECRET: "{{ `{{.SPARK_CLIENT_SECRET}}` }}"
+      SPARK_CLIENT_ID: "{{ `{{.SPARK_CLIENT_ID}}` }}"
+      AIRFLOW_CLIENT_SECRET: "{{ `{{.AIRFLOW_CLIENT_SECRET}}` }}"
+      AIRFLOW_CLIENT_ID: "{{ `{{.AIRFLOW_CLIENT_ID}}` }}"
+      ARGOCD_SESSION_TOKEN: "{{ `{{.ARGOCD_SESSION_TOKEN}}` }}"
+  data:
+    - conversionStrategy: None
+      match:
+        secretKey: ARGO_WORKFLOWS_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: ARGO_WORKFLOWS_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: ARGO_WORKFLOWS_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: ARGO_WORKFLOWS_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: BACKSTAGE_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: BACKSTAGE_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: JUPYTERHUB_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: JUPYTERHUB_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: JUPYTERHUB_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: JUPYTERHUB_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: KUBEFLOW_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: KUBEFLOW_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: KUBEFLOW_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: KUBEFLOW_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: MLFLOW_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: MLFLOW_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: MLFLOW_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: MLFLOW_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: SPARK_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: SPARK_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: SPARK_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: SPARK_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: AIRFLOW_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: AIRFLOW_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: AIRFLOW_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: AIRFLOW_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: ARGOCD_SESSION_TOKEN
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: ARGOCD_SESSION_TOKEN

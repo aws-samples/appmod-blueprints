@@ -1,3 +1,4 @@
+# EventBus for Argo Events - managed separately from kro
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: EventBus
@@ -5,7 +6,13 @@ metadata:
   name: default
   namespace: ${{values.namespace}}
 spec:
-  nats:
-    native:
-      replicas: 3
-      auth: token
+  jetstream:
+    version: latest
+    replicas: 3
+    containerTemplate:
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "256Mi"
+        limits:
+          memory: "512Mi"

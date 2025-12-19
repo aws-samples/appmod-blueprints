@@ -1,150 +1,205 @@
-# Terraform Setup
+# Terraform Deployment Guide
 
 ## Prerequisites
 
-- An existing EKS cluster version (1.30+)
 - AWS CLI (2.17+)
-- Kubectl CLI (1.30+)
-- jq
-- git
-- yq
-- curl
-- kustomize
-- envsubst
+- kubectl (1.30+)
+- Terraform (1.5+)
+- jq, git, yq, curl
 
-## Workshop Setup
+### Required Environment Variables
 
-To setup the environment goto the following path and run the script. The script works only from the root directory.
+Set these before running deployment scripts:
 
 ```bash
-cd /appmod-blueprints/platform/infra/terraform
-./setup-environments.sh
-
+export RESOURCE_PREFIX="peeks"           # Resource naming prefix
+export AWS_REGION="us-west-2"            # AWS region
+export TFSTATE_BUCKET_NAME="<bucket>"    # S3 backend bucket - update this to uniq bucket name
+export USER1_PASSWORD="your-password"    # User password (or IDE_PASSWORD from CloudFormation)
+export HUB_VPC_ID="vpc-xxxxx"           # Hub cluster VPC ID
+export HUB_SUBNET_IDS='["subnet-xxx"]'  # Hub cluster subnet IDs
 ```
 
-The script `setup-environments.sh` does the following:
+**Note:** When using CloudFormation bootstrap, `IDE_PASSWORD` is automatically set and used as `USER1_PASSWORD`. This password is used for:
+- ArgoCD admin access
+- Keycloak test users (user1, user2)
+- GitLab authentication
 
-- Create the EKS management cluster where IDP Builder will be deployed
-- Installs ArgoCD, Ingress-Nginx and its pre-requisites.
-- Deploys core tools needed on ArgoCD like Gitea, Backstage, Argo Workflows etc.,
-- Deploys the DEV and PROD EKS clusters with all tools including observability and integration with Amazon Managed Grafana.
-- Automatically add the DEV and PROD clusters to the ArgoCD integration.
-- Setup Codebuild project which can be integrated with backstage.
-- Other components that are deployed in all 3 clusters include crossplane, KubeVela.
+## Configuration
 
-Set Cluster and region using environment variables. Example below:
-export TF_VAR_cluster_name=dev-platform
-export TF_VAR_aws_region=us-west-2
+### Cluster Configuration
 
-Note: Setup takes up to 1-2 hours to complete. Ensure IAM role/token do not time out during the changes. If timed out,please re-run the script.
+Edit `platform/infra/terraform/hub-config.yaml` to configure clusters and addons before deployment:
 
-Outputs will provide the details of URLs that are needed to access the core services including Amazon Managed Grafana.
-
-## Testing Workshop Setup
-
-To setup the environment when testing locally, go to the following path and run the script
-
-```bash
-cd /appmod-blueprints/platform/infra/terraform
-./setup-environments-local.sh
+```yaml
+clusters:
+  hub:
+    name: hub
+    region: us-west-2
+    environment: control-plane
+    addons:
+      enable_argocd: true
+      enable_keycloak: true
+      enable_backstage: true
+      # Add more addon flags as needed
 ```
 
-### Setup Environments Local Script
+## Deployment Architecture
 
-The script `setup-environments-local.sh` does the following
+The platform uses a two-phase deployment approach:
 
-- Creates an IAM user named `modern-engg-local-test`
-- Creates an IAM role named `developer-env-VSCodeInstanceRole`
-- Allows codebuild, ec2, codecommit, ssm, and the new IAM user to assume the role
-- Attaches the `AdministratorAccess` policy, a cdk assume policy, and a codewhisperer policy
-- Logs into the `modern-engg-local-test` user, then assumes the `developer-env-VSCodeInstanceRole` to give enough assumed time to run the full script
-- Runs the `setup-environments.sh` script as the `developer-env-VSCodeInstanceRole`
+1. **Phase 1: Cluster Infrastructure** - Creates EKS clusters (hub, dev, prod)
+2. **Phase 2: Platform Addons** - Deploys GitOps controllers and platform services
 
-### Cluster Access
+> **⚠️ IMPORTANT: Always use deployment scripts, never run terraform commands directly**
+>
+> Each Terraform stack has dedicated `deploy.sh` and `destroy.sh` scripts that handle:
+> - Environment variable setup and validation
+> - Backend configuration and initialization
+> - State management and locking
+> - Error handling and cleanup
+> - Workspace management for multi-cluster deployments
 
-To access the clusters created by the setup script, you will need to run this bash code to assume the `developer-env-VSCodeInstanceRole`.  This will allow you to assume the role for 1 hour.
+## Quick Start
+
+### Step 1: Deploy Cluster Infrastructure
+
+Creates hub cluster (control-plane) and spoke clusters (dev, prod):
 
 ```bash
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-ROLE_NAME="developer-env-VSCodeInstanceRole"
-SESSION_NAME="workshop"
-
-ASSUME_ROLE_OUTPUT=$(aws sts assume-role --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/$ROLE_NAME --role-session-name $SESSION_NAME)
-export AWS_ACCESS_KEY_ID=$(echo $ASSUME_ROLE_OUTPUT | jq -r '.Credentials.AccessKeyId')
-export AWS_SECRET_ACCESS_KEY=$(echo $ASSUME_ROLE_OUTPUT | jq -r '.Credentials.SecretAccessKey')
-export AWS_SESSION_TOKEN=$(echo $ASSUME_ROLE_OUTPUT | jq -r '.Credentials.SessionToken')
+cd platform/infra/terraform/cluster
+./deploy.sh
 ```
 
-# Setup Application
+**What this creates:**
+- Hub cluster with control-plane environment
+- Dev spoke cluster for development workloads
+- Prod spoke cluster for production workloads
+- VPC and networking for each cluster
+- EKS node groups with auto-scaling
 
-To deploy sample app, refer to prod-public-apps.yaml to deploy applications. Ensure the destination is mapped to the correct target cluster (dev-cluster or prod-cluster).
+**Duration:** ~20-30 minutes
 
-Ensure the target cluster is mapped to the local management cluster and only the target cluster (Dev or Prod) is updated on the actual applications that will have the running applications. For Examples,refer to argo-examples folders to deploy applications or app-of-apps from public repo or integrated Gitea.
+### Step 2: Deploy Platform Addons
 
-## How to access the Components of the Platform?
-
-Once the setup is complete, use the URLs from the output to login to backstage, ArgoCD, Argo, KeyCloak, Argo Workflows and Gitea.
-
-#### ArgoCD
-
-Click on the ArgoCD URL to navigate to your browser to access the ArgoCD App. User is `Admin` and the password is available in the `argocd` namespace.
+Deploys GitOps controllers and platform services to all clusters:
 
 ```bash
-# Get the admin password 
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+cd platform/infra/terraform/common
+./deploy.sh
 ```
 
-### Argo Workflows:
+**What this creates:**
+- **Hub Cluster:** ArgoCD, Backstage, Keycloak, External Secrets, Ingress
+- **All Clusters:** ACK controllers, Pod Identity associations, External Secrets integration
 
-Click on the Argo Workflows URL to navigate to your browser to access the Argo Workflows App.  Two users are created during the installation process: `user1` and `user2`. Their passwords are available in the keycloak namespace.
+**Duration:** ~15-20 minutes
+
+### Step 3: Initialize Platform Services
+
+After addon deployment, initialize and sync ArgoCD applications:
 
 ```bash
-kubectl get secrets -n keycloak keycloak-user-config -o go-template='{{range $k,$v := .data}}{{printf "%s: " $k}}{{if not $v}}{{$v}}{{else}}{{$v | base64decode}}{{end}}{{"\n"}}{{end}}'
+cd platform/infra/terraform/scripts
+./0-init.sh
 ```
 
-### Backstage:
+This script:
+- Verifies cluster readiness
+- Syncs ArgoCD applications
+- Waits for platform services to become healthy
+- Configures Backstage integration
 
-Click on the Backstage URL to navigate to your browser to access the Backstage App.  Two users are created during the installation process: `user1` and `user2`. Their passwords are available in the keycloak namespace.
+**Duration:** ~10-15 minutes
+
+### Step 4: Access Platform Services
+
+Platform services are exposed via CloudFront. Get URLs and credentials:
 
 ```bash
-kubectl get secrets -n keycloak keycloak-user-config -o go-template='{{range $k,$v := .data}}{{printf "%s: " $k}}{{if not $v}}{{$v}}{{else}}{{$v | base64decode}}{{end}}{{"\n"}}{{end}}'
+cd platform/infra/terraform/scripts
+./1-tools-urls.sh
 ```
 
-### Gitea:
+This displays:
+- **ArgoCD:** `admin / $USER1_PASSWORD`
+- **Keycloak:** `admin / <keycloak-admin-password>`
+- **Backstage:** `user1 / $USER1_PASSWORD`
+- **Argo Workflows:** `user1 / $USER1_PASSWORD`
+- **Kargo:** `user1 / $USER1_PASSWORD`
+- **GitLab:** `user1 / $USER1_PASSWORD`
 
-Click on the Gitea URL to navigate to your browser to access the Gitea App.  Please use the below command to obtain the username and password of Gitea user.
+### Manual Password Retrieval
+
+If needed, retrieve passwords directly:
 
 ```bash
-kubectl get secrets -n gitea gitea-credential -o go-template='{{range $k,$v := .data}}{{printf "%s: " $k}}{{if not $v}}{{$v}}{{else}}{{$v | base64decode}}{{end}}{{"\n"}}{{end}}'
-````
-
-### KeyCloak:
-
-Click on the KeyCloak URL to navigate to your browser to access the Backstage App.  `modernengg-admin` is the user and their passwords are available in the keycloak namespace under the data `KEYCLOAK_ADMIN_PASSWORD`.
-
-```bash
-kubectl get secrets -n keycloak keycloak-config -o go-template='{{range $k,$v := .data}}{{printf "%s: " $k}}{{if not $v}}{{$v}}{{else}}{{$v | base64decode}}{{end}}{{"\n"}}{{end}}'
+# Keycloak admin password
+kubectl get secrets -n keycloak keycloak-config -o jsonpath='{.data.KEYCLOAK_ADMIN_PASSWORD}' | base64 -d
 ```
 
-### Grafana Access:
+## GitOps Workflow
 
-At the end of the automation you will see Amazon Managed Grafana URL getting displayed along with passwords for `admin` and `editor` users. Please use this to access the Amazon Managed Grafana instance to monitor your Infrastructure and workloads.
-
-# Terraform Destroy
-
-```bash
-cd /appmod-blueprints/platform/infra/terraform
-./destroy-environments.sh
+After deployment, ArgoCD automatically manages applications based on Git configurations:
 
 ```
-
-Execute the destroy-environments.sh to destroy all the components except the bootstrap components. This is to ensure the buckets and the lock table are not destroyed in case of any issues during deletion,so it can be re-run again. Once the script is ran successfully execute the terraform command below to remove the bootstrap components.
-
-```bash
-cd /appmod-blueprints/platform/infra/terraform
-terraform -chdir=bootstrap destroy -auto-approve
-
+Git Commit → ArgoCD Sync → Kubernetes Apply → Application Running
 ```
 
-The bucket is intentionally not cleaned or removed to preserve the state files.
-There will be error at the end of the script that S3 bucket deletion failed due to objects in the bucket. You can manually remove the terraform state files and destroy the bucket.
+**Key GitOps Directories:**
+- `gitops/addons/` - Platform services and addons
+- `gitops/workloads/` - Application deployments
+- `gitops/fleet/` - Multi-cluster management
+
+## Troubleshooting
+
+### Check Deployment Status
+
+```bash
+# View ArgoCD applications
+kubectl get applications -n argocd
+
+# Check addon sync status
+kubectl get applications -n argocd -l app.kubernetes.io/instance=addons
+
+# View pod status
+kubectl get pods -A
+```
+
+### Common Issues
+
+**ApplicationSet not generating Applications:**
+- Verify cluster secret labels: `kubectl get secret -n argocd -o yaml | grep enable_`
+- Check addon enablement in `hub-config.yaml`
+- Review ApplicationSet status: `kubectl describe applicationset addons -n argocd`
+
+**Addon stuck in sync:**
+- Check sync wave dependencies
+- Review Application events: `kubectl describe application <app-name> -n argocd`
+- View ArgoCD logs: `kubectl logs -n argocd deployment/argocd-application-controller`
+
+## Advanced Configuration
+
+### Adding New Addons
+
+See the comprehensive guide in the platform documentation for adding new addons to the GitOps system.
+
+### Multi-Cluster Management
+
+Add new clusters by updating `hub-config.yaml` and running both deployment scripts.
+
+## Cleanup
+
+Always destroy resources in reverse order:
+
+```bash
+# 1. Destroy platform addons
+cd platform/infra/terraform/common
+./destroy.sh
+
+# 2. Destroy clusters
+cd platform/infra/terraform/cluster
+./destroy.sh
+```
+
+**Note:** S3 state buckets are preserved to prevent accidental data loss. Manually delete if needed.

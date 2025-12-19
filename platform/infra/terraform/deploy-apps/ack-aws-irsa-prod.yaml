@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  annotations:
-    eks.amazonaws.com/role-arn: PROD_ACK_ROLE_ARN
-  name: controller-ack-sa
-  namespace: ack-system

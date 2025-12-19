@@ -1,0 +1,10 @@
+apiVersion: v2
+name: devlake
+description: DevLake addon helm chart
+type: application
+version: 0.1.0
+dependencies:
+  - name: devlake
+    version: '1.0.3-beta7'
+    repository: https://apache.github.io/incubator-devlake-helm-chart
+

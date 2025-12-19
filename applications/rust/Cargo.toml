@@ -35,7 +35,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 rocket = { version = "0.5.1", features = ["json"] }
 serde = { version= "1.0.209", features = ["derive"] }
 serde_dynamo = { version = "4.2.14", features = ["aws-sdk-dynamodb+1"] }
-#tokio = { version = "1.40.0", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1.40.0", features = ["macros", "rt", "rt-multi-thread"] }
 aws-config = { version = "1.5.5", features = ["behavior-version-latest"] }
 #opentelemetry-prometheus = "0.17.0"
 #opentelemetry-appender-log = "0.26.0"

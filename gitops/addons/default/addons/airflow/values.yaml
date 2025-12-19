@@ -1,0 +1,243 @@
+airflow:
+  # Airflow configuration
+  image:
+    repository: apache/airflow
+    tag: '2.10.2'
+    pullPolicy: IfNotPresent
+
+  # Fernet key for encryption
+  fernetKey: "Fernet.generate()"
+  createUserJob:
+    useHelmHooks: false
+  migrateDatabaseJob:
+    enabled: true
+    useHelmHooks: false
+
+  # Executor configuration (using KubernetesExecutor for scalability)
+  executor: KubernetesExecutor
+
+  # Webserver configuration
+  webserver:
+    replicas: 1
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 200m
+        memory: 512Mi
+    service:
+      type: ClusterIP
+
+  # Scheduler configuration
+  scheduler:
+    replicas: 1
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 200m
+        memory: 512Mi
+
+  # Triggerer configuration (for deferrable operators)
+  triggerer:
+    enabled: true
+    replicas: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+  # Worker configuration (disabled for KubernetesExecutor)
+  workers:
+    replicas: 0
+
+  # Flower configuration (disabled for KubernetesExecutor)
+  flower:
+    enabled: false
+
+  # Redis configuration (not needed for KubernetesExecutor)
+  redis:
+    enabled: false
+
+  # PostgreSQL database configuration
+  postgresql:
+    enabled: true
+    image:
+      registry: public.ecr.aws
+      repository: bitnami/postgresql
+      tag: "16.1.0"
+    auth:
+      enablePostgresUser: false
+      username: airflow
+      password: airflow
+      database: airflow
+
+  # Database connection configuration
+  data:
+    metadataConnection:
+      user: airflow
+      pass: airflow
+      protocol: postgresql
+      host: ~
+      port: 5432
+      db: airflow
+      sslmode: disable
+  
+  # Airflow database connection
+  data:
+    metadataConnection:
+      user: airflow
+      pass: airflow
+      protocol: postgresql
+      host: ~
+      port: 5432
+      db: airflow
+      sslmode: disable
+
+  # DAGs configuration
+  dags:
+    gitSync:
+      enabled: false
+    persistence:
+      enabled: true
+      storageClassName: gp3
+      size: 10Gi
+
+  # Logs configuration - disabled due to RWX requirement incompatible with EBS
+  logs:
+    persistence:
+      enabled: false
+
+  # Ingress configuration
+  ingress:
+    web:
+      enabled: true
+      annotations:
+        kubernetes.io/ingress.class: nginx
+        nginx.ingress.kubernetes.io/rewrite-target: /$2
+        nginx.ingress.kubernetes.io/use-regex: 'true'
+        nginx.ingress.kubernetes.io/proxy-body-size: '0'
+        nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
+        nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
+      pathType: ImplementationSpecific
+      tls:
+        enabled: false
+    apiServer:
+      enabled: true
+      annotations:
+        kubernetes.io/ingress.class: nginx
+        nginx.ingress.kubernetes.io/rewrite-target: /$2
+        nginx.ingress.kubernetes.io/use-regex: 'true'
+        nginx.ingress.kubernetes.io/proxy-body-size: '0'
+        nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
+        nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
+      pathType: ImplementationSpecific
+      tls:
+        enabled: false
+
+  # Configuration for Airflow - using proper object structure
+  config:
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION:
+      value: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES:
+      value: "false"
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG:
+      value: "16"
+    AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG:
+      value: "16"
+    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT:
+      value: "30"
+    AIRFLOW__CORE__KILLED_TASK_CLEANUP_TIME:
+      value: "60"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG:
+      value: "true"
+    AIRFLOW__WEBSERVER__RBAC:
+      value: "true"
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL:
+      value: "300"
+    AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT:
+      value: "false"
+    AIRFLOW__SCHEDULER__MAX_TIS_PER_QUERY:
+      value: "512"
+    AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE:
+      value: "airflow"
+    AIRFLOW__KUBERNETES_EXECUTOR__WORKER_CONTAINER_REPOSITORY:
+      value: "apache/airflow"
+    AIRFLOW__KUBERNETES_EXECUTOR__WORKER_CONTAINER_TAG:
+      value: "2.10.2"
+    AIRFLOW__KUBERNETES_EXECUTOR__DELETE_WORKER_PODS:
+      value: "true"
+    AIRFLOW__KUBERNETES_EXECUTOR__DELETE_WORKER_PODS_ON_FAILURE:
+      value: "false"
+    AIRFLOW__LOGGING__LOGGING_LEVEL:
+      value: "INFO"
+    AIRFLOW__LOGGING__FAB_LOGGING_LEVEL:
+      value: "WARN"
+    AIRFLOW__LOGGING__COLORED_CONSOLE_LOG:
+      value: "false"
+
+  # Service accounts
+  serviceAccount:
+    create: true
+    name: airflow
+    annotations: {}
+
+  # RBAC configuration
+  rbac:
+    create: true
+
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 50000
+    fsGroup: 0
+
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 50000
+    fsGroup: 0
+
+  # Node selector and tolerations
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false
+    config:
+      maxUnavailable: 1
+
+  # Cleanup configuration
+  cleanup:
+    enabled: true
+    schedule: '0 1 * * *'
+    command:
+      - airflow
+      - db
+      - clean
+      - --clean-before-timestamp
+      - '$(date -d "7 days ago" +%Y-%m-%d)'
+
+  # Monitoring and metrics
+  statsd:
+    enabled: false
+
+  # Extra environment variables
+  extraEnv: null
+
+  # Extra volumes and volume mounts
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  # Init containers
+  extraInitContainers: []
+
+  # Sidecar containers
+  extraContainers: []

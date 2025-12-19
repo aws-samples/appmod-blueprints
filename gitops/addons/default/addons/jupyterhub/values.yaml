@@ -1,0 +1,60 @@
+jupyterhub:
+  hub:
+    config:
+      JupyterHub:
+        authenticator_class: generic-oauth
+      GenericOAuthenticator:
+        client_id: jupyterhub
+        username_claim: preferred_username
+        auth_state_groups_key: groups
+        manage_groups: true
+        allow_all: true
+        scope:
+          - openid
+          - profile
+          - email
+          - groups
+        auto_login: true
+    extraEnv:
+      OAUTH_CLIENT_SECRET:
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-clients
+            key: JUPYTERHUB_CLIENT_SECRET
+
+  proxy:
+    service:
+      type: ClusterIP
+
+  ingress:
+    enabled: true
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+      nginx.ingress.kubernetes.io/use-regex: 'true'
+
+  singleuser:
+    defaultUrl: '/lab'
+    image:
+      name: jupyter/datascience-notebook
+      tag: 'latest'
+    cpu:
+      limit: 2
+      guarantee: 0.1
+    memory:
+      limit: 2G
+      guarantee: 512M
+    storage:
+      capacity: 10Gi
+      dynamic:
+        storageClass: gp3
+
+  scheduling:
+    userScheduler:
+      enabled: false
+
+  prePuller:
+    hook:
+      enabled: false
+    continuous:
+      enabled: false

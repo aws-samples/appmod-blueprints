@@ -4,6 +4,7 @@ use aws_sdk_dynamodb as ddb;
 use tracing::{info, instrument};
 use rocket::serde::json::Json;
 use rocket::{error, get, State};
+use tokio::time::{sleep, Duration};
 
 
 #[get("/menu/<menu_id>")]
@@ -161,6 +162,9 @@ pub async fn get_collection(
     db: &State<ddb::Client>,
     table_name: &State<String>,
 ) -> UIResponder<Vec<Product>> {
+    // Uncomment to demo metrics-driven rollback
+    // sleep(Duration::from_secs(3)).await;
+    
     let results = query_ddb(
         table_name.to_string(),
         db,

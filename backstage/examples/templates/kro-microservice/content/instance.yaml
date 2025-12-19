@@ -1,0 +1,47 @@
+apiVersion: kro.run/v1alpha1
+kind: Microservice
+metadata:
+  name: ${{ values.name }}
+  namespace: ${{ values.namespace }}
+  labels:
+    app.kubernetes.io/name: ${{ values.name }}
+    app.kubernetes.io/component: instance
+    app.kubernetes.io/part-of: ${{ values.name }}
+    environment: ${{ values.environment }}
+  annotations:
+    backstage.io/kubernetes-id: ${{ values.name }}
+    kro.run/description: "${{ values.description }}"
+spec:
+  name: ${{ values.name }}
+  namespace: ${{ values.namespace }}
+  image: ${{ values.image }}
+  port: ${{ values.port }}
+  replicas: ${{ values.replicas }}
+  serviceAccount: ${{ values.serviceAccount }}
+  resources:
+    requests:
+      cpu: ${{ values.cpuRequest }}
+      memory: ${{ values.memoryRequest }}
+    limits:
+      cpu: ${{ values.cpuLimit }}
+      memory: ${{ values.memoryLimit }}
+  service:
+    type: ${{ values.serviceType }}
+    port: ${{ values.servicePort }}
+  ingress:
+    enabled: ${{ values.ingressEnabled }}
+    class: ${{ values.ingressClass }}
+    {% if values.hostname -%}
+    hostname: ${{ values.hostname }}
+    {% endif -%}
+    pathPrefix: ${{ values.pathPrefix }}
+    tlsEnabled: ${{ values.tlsEnabled }}
+  config:
+    enabled: ${{ values.configMapEnabled }}
+  secrets:
+    enabled: ${{ values.secretEnabled }}
+  healthCheck:
+    path: ${{ values.healthCheckPath }}
+    readinessPath: ${{ values.readinessCheckPath }}
+    livenessInitialDelay: ${{ values.livenessInitialDelay }}
+    readinessInitialDelay: ${{ values.readinessInitialDelay }}

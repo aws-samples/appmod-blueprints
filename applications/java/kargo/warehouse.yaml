@@ -1,0 +1,11 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: java-app
+  namespace: java-app-kargo
+spec:
+  interval: 30s
+  subscriptions:
+  - image:
+      repoURL: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/peeks/java
+      imageSelectionStrategy: NewestBuild

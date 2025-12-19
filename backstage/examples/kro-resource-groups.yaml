@@ -1,0 +1,159 @@
+---
+# Example Kro ResourceGroup entity for CICD Pipeline
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: cicd-pipeline-rg
+  namespace: default
+  title: 'CICD Pipeline ResourceGroup'
+  description: 'Kro ResourceGroup for creating complete CICD pipelines with ArgoCD and GitLab integration'
+  annotations:
+    backstage.io/kubernetes-id: 'control-plane:default:cicd-pipeline-rg'
+    backstage.io/kubernetes-cluster: 'control-plane'
+    kro.run/resource-group: 'true'
+    kro.run/definition: |
+      {
+        "apiVersion": "kro.run/v1alpha1",
+        "kind": "ResourceGraphDefinition",
+        "spec": {
+          "schema": {
+            "apiVersion": "kro.run/v1alpha1",
+            "kind": "CICDPipeline",
+            "spec": {
+              "type": "object",
+              "properties": {
+                "appName": {"type": "string"},
+                "gitRepo": {"type": "string"},
+                "namespace": {"type": "string"}
+              }
+            }
+          },
+          "resources": [
+            {
+              "id": "argocd-application",
+              "template": {
+                "apiVersion": "argoproj.io/v1alpha1",
+                "kind": "Application",
+                "metadata": {
+                  "name": "{{ .spec.appName }}",
+                  "namespace": "argocd"
+                }
+              }
+            },
+            {
+              "id": "gitlab-project",
+              "template": {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {
+                  "name": "{{ .spec.appName }}-gitlab-secret",
+                  "namespace": "{{ .spec.namespace }}"
+                }
+              }
+            }
+          ]
+        }
+      }
+    backstage.io/source-location: 'url:https://github.com/awslabs/kro/tree/main/examples/cicd-pipeline'
+  labels:
+    backstage.io/kubernetes-cluster: 'control-plane'
+    kro.run/type: 'resource-group'
+    kro.run/version: 'v1alpha1'
+spec:
+  type: kro-resource-group
+  lifecycle: production
+  owner: platform-team
+  system: platform-infrastructure
+  providesApis: []
+  consumesApis: []
+status:
+  phase: 'Ready'
+  conditions:
+    - type: 'Ready'
+      status: 'True'
+      reason: 'ResourceGroupReady'
+      message: 'ResourceGroup is ready and operational'
+---
+# Example Kro ResourceGroup entity for EKS Cluster
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: eks-cluster-rg
+  namespace: default
+  title: 'EKS Cluster ResourceGroup'
+  description: 'Kro ResourceGroup for provisioning complete EKS clusters with VPC and networking'
+  annotations:
+    backstage.io/kubernetes-id: 'control-plane:default:eks-cluster-rg'
+    backstage.io/kubernetes-cluster: 'control-plane'
+    kro.run/resource-group: 'true'
+    kro.run/definition: |
+      {
+        "apiVersion": "kro.run/v1alpha1",
+        "kind": "ResourceGraphDefinition",
+        "spec": {
+          "schema": {
+            "apiVersion": "kro.run/v1alpha1",
+            "kind": "EksCluster",
+            "spec": {
+              "type": "object",
+              "properties": {
+                "clusterName": {"type": "string"},
+                "region": {"type": "string"},
+                "nodeGroupSize": {"type": "integer"}
+              }
+            }
+          },
+          "resources": [
+            {
+              "id": "vpc",
+              "template": {
+                "apiVersion": "ec2.aws.crossplane.io/v1beta1",
+                "kind": "VPC",
+                "metadata": {
+                  "name": "{{ .spec.clusterName }}-vpc"
+                }
+              }
+            },
+            {
+              "id": "eks-cluster",
+              "template": {
+                "apiVersion": "eks.aws.crossplane.io/v1beta1",
+                "kind": "Cluster",
+                "metadata": {
+                  "name": "{{ .spec.clusterName }}"
+                }
+              }
+            }
+          ]
+        }
+      }
+    backstage.io/source-location: 'url:https://github.com/awslabs/kro/tree/main/examples/eks-cluster'
+  labels:
+    backstage.io/kubernetes-cluster: 'control-plane'
+    kro.run/type: 'resource-group'
+    kro.run/version: 'v1alpha1'
+spec:
+  type: kro-resource-group
+  lifecycle: production
+  owner: platform-team
+  system: platform-infrastructure
+  providesApis: []
+  consumesApis: []
+status:
+  phase: 'Ready'
+  conditions:
+    - type: 'Ready'
+      status: 'True'
+      reason: 'ResourceGroupReady'
+      message: 'ResourceGroup is ready and operational'
+---
+# Platform Infrastructure System for ResourceGroups
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: platform-infrastructure
+  title: 'Platform Infrastructure System'
+  description: 'System containing all platform infrastructure components including Kro ResourceGroups'
+spec:
+  owner: platform-team
+  domain: platform

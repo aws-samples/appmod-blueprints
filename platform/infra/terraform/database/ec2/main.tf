@@ -3,7 +3,7 @@ data "aws_caller_identity" "current" {}
 
 # Create S3 bucket
 resource "aws_s3_bucket" "sql_scripts" {
-  bucket = "${data.aws_caller_identity.current.account_id}-sql-scripts"
+  bucket = "${data.aws_caller_identity.current.account_id}-${terraform.workspace}-sql-scripts"
 }
 
 # Upload SQL scripts to S3
@@ -55,7 +55,7 @@ resource "aws_security_group" "ec2_sg" {
 }
 
 resource "aws_secretsmanager_secret" "ec2_credentials" {
-  name = "modern-engg-sqlserver"
+  name = "${var.cluster_name_prefix}-${terraform.workspace}-sqlserver"
 
   lifecycle {
     ignore_changes = [name]
@@ -209,7 +209,7 @@ resource "aws_security_group_rule" "allow_ec2_instance_connect" {
 }
 
 resource "aws_ssm_document" "session_manager_prefs" {
-  name            = "SSM-SessionManagerRunShell"
+  name            = "${var.cluster_name_prefix}-${terraform.workspace}-SessionManager-SQLServer"
   document_type   = "Session"
   document_format = "JSON"
 

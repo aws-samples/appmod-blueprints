@@ -1,0 +1,42 @@
+# Kyverno configuration with namespace exclusions
+# Exclude system namespaces from policy validation to prevent webhook timeouts
+
+config:
+  # Exclude critical system namespaces from Kyverno validation
+  excludeNamespaces:
+    - kube-system
+    - kube-public
+    - kube-node-lease
+    - kyverno
+    - argocd
+    - crossplane-system
+    - argo-events
+    - cert-manager
+    - external-secrets
+    - ingress-nginx
+
+# Increase webhook timeout to handle slow validations
+webhookTimeout: 30
+
+# Resource filters to exclude specific resources
+resourceFilters:
+  - '[Event,*,*]'
+  - '[*,kube-system,*]'
+  - '[*,kube-public,*]'
+  - '[*,kube-node-lease,*]'
+  - '[*,crossplane-system,*]'
+  - '[Node,*,*]'
+  - '[APIService,*,*]'
+  - '[TokenReview,*,*]'
+  - '[SubjectAccessReview,*,*]'
+  - '[SelfSubjectAccessReview,*,*]'
+
+# Policy Reporter resource limits
+policyReporter:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi

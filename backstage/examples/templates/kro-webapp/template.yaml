@@ -1,0 +1,185 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: kro-webapp-template
+  title: Kro WebApp ResourceGroup Template
+  description: Create a Kro ResourceGroup for a web application with deployment, service, and optional ingress
+  tags:
+    - kro
+    - kubernetes
+    - webapp
+    - resourcegroup
+spec:
+  owner: platform-team
+  type: kro-resource-group
+
+  parameters:
+    - title: Basic Information
+      required:
+        - name
+        - namespace
+      properties:
+        name:
+          title: Application Name
+          type: string
+          description: Name of the web application
+          pattern: '^[a-z0-9-]+$'
+          ui:autofocus: true
+          ui:help: 'Must be lowercase alphanumeric with hyphens only'
+        namespace:
+          title: Kubernetes Namespace
+          type: string
+          description: Target namespace for the application
+          default: default
+          pattern: '^[a-z0-9-]+$'
+        description:
+          title: Description
+          type: string
+          description: Brief description of the application
+          ui:widget: textarea
+          ui:options:
+            rows: 3
+
+    - title: Application Configuration
+      properties:
+        image:
+          title: Container Image
+          type: string
+          description: Docker image for the application
+          default: nginx:latest
+        port:
+          title: Container Port
+          type: integer
+          description: Port the application listens on
+          default: 8080
+          minimum: 1
+          maximum: 65535
+        replicas:
+          title: Number of Replicas
+          type: integer
+          description: Number of pod replicas
+          default: 1
+          minimum: 1
+          maximum: 10
+        serviceAccount:
+          title: Service Account
+          type: string
+          description: Kubernetes service account name
+          default: default
+
+    - title: Service Configuration
+      properties:
+        serviceEnabled:
+          title: Enable Service
+          type: boolean
+          description: Create a Kubernetes service for the application
+          default: true
+        servicePort:
+          title: Service Port
+          type: integer
+          description: Port for the Kubernetes service
+          default: 80
+          minimum: 1
+          maximum: 65535
+
+    - title: Ingress Configuration
+      properties:
+        ingressEnabled:
+          title: Enable Ingress
+          type: boolean
+          description: Create an ingress for external access
+          default: false
+        ingressClass:
+          title: Ingress Class
+          type: string
+          description: Ingress class to use
+          default: alb
+          enum:
+            - alb
+            - nginx
+            - traefik
+        healthCheckPath:
+          title: Health Check Path
+          type: string
+          description: Path for health checks
+          default: /health
+
+    - title: Environment Configuration
+      properties:
+        environment:
+          title: Environment
+          type: string
+          description: Deployment environment
+          default: development
+          enum:
+            - development
+            - staging
+            - production
+        s3BucketName:
+          title: S3 Bucket Name (Optional)
+          type: string
+          description: S3 bucket name for the application
+          default: ""
+
+    - title: Repository Information
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+              - gitlab.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./content
+        values:
+          name: ${{ parameters.name }}
+          namespace: ${{ parameters.namespace }}
+          description: ${{ parameters.description }}
+          image: ${{ parameters.image }}
+          port: ${{ parameters.port }}
+          replicas: ${{ parameters.replicas }}
+          serviceAccount: ${{ parameters.serviceAccount }}
+          serviceEnabled: ${{ parameters.serviceEnabled }}
+          servicePort: ${{ parameters.servicePort }}
+          ingressEnabled: ${{ parameters.ingressEnabled }}
+          ingressClass: ${{ parameters.ingressClass }}
+          healthCheckPath: ${{ parameters.healthCheckPath }}
+          environment: ${{ parameters.environment }}
+          s3BucketName: ${{ parameters.s3BucketName }}
+
+    - id: publish
+      name: Publish to Repository
+      action: publish:github
+      input:
+        allowedHosts: ['github.com', 'gitlab.com']
+        description: 'Kro WebApp ResourceGroup: ${{ parameters.name }}'
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        gitCommitMessage: 'Initial commit for ${{ parameters.name }} Kro WebApp ResourceGroup'
+
+    - id: register
+      name: Register in Catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+      - title: View ResourceGroup
+        icon: dashboard
+        url: ${{ steps['publish'].output.remoteUrl }}/blob/main/resourcegroup.yaml

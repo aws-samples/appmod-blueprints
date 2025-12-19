@@ -1,0 +1,21 @@
+apiVersion: kro.run/v1alpha1
+kind: JobDeployment
+metadata:
+  name: ${{ values.name }}
+  namespace: ${{ values.namespace }}
+  labels:
+    app.kubernetes.io/name: ${{ values.name }}
+    app.kubernetes.io/component: instance
+    app.kubernetes.io/part-of: ${{ values.name }}
+    environment: ${{ values.environment }}
+  annotations:
+    backstage.io/kubernetes-id: ${{ values.name }}
+    kro.run/description: "${{ values.description }}"
+spec:
+  replicas: ${{ values.replicas }}
+  delayInSeconds: ${{ values.delayInSeconds }}
+  jobImage: ${{ values.jobImage }}
+  deploymentImage: ${{ values.deploymentImage }}
+  deploymentPort: ${{ values.deploymentPort }}
+  restartPolicy: ${{ values.restartPolicy }}
+  ttlSecondsAfterFinished: ${{ values.ttlSecondsAfterFinished }}

@@ -1,0 +1,40 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cluster-workloads
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: false # to be able to cleanup
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:
+  - clusters:
+      selector:
+        matchLabels:
+          fleet_member: control-plane
+  template:
+    metadata:
+      name: cluster-workloads
+    spec:
+      project: default
+      sources:
+      - repoURL: '{{.metadata.annotations.workload_repo_url}}'
+        path: 'gitops/workloads/'
+        targetRevision: '{{.metadata.annotations.workload_repo_revision}}'
+      destination:
+        namespace: argocd
+        name: '{{.name}}'
+      syncPolicy:
+        automated:
+          selfHeal: true
+          allowEmpty: true
+          prune: true
+        retry:
+          limit: 100
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true  # Big CRDs.

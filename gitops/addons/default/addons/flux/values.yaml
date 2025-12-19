@@ -1,0 +1,13 @@
+# Static values for flux chart
+sshRepository:
+  enabled: false
+
+# Dynamic values injected by ApplicationSet valuesObject:
+# - clusterName: from cluster_name annotation
+# - gitRepository.url: from addons_repo_url annotation  
+# - gitRepository.branch: from addons_repo_revision annotation
+# - workloadsRepository.url: from workload_repo_url annotation
+# - workloadsRepository.branch: from workload_repo_revision annotation
+# - platformAddons.path: from addons_repo_basepath annotation
+# - workloads.path: from workload_repo_basepath annotation
+# - secrets.gitCredentials.secretName: from resource_prefix annotation

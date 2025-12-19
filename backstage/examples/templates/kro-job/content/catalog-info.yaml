@@ -1,0 +1,25 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.name }}
+  description: ${{ values.description }}
+  annotations:
+    backstage.io/kubernetes-id: ${{ values.name }}
+    kro.run/resource-group: ${{ values.name }}
+    backstage.io/source-location: url:${{ values.repoUrl }}
+  labels:
+    backstage.io/kubernetes-cluster: default
+    kro.run/version: v1alpha1
+  tags:
+    - kro
+    - job
+    - batch
+    - kubernetes
+    - ${{ values.environment }}
+spec:
+  type: kro-resource-group
+  lifecycle: ${{ values.environment }}
+  owner: platform-team
+  system: kro-platform
+  providesApis: []
+  consumesApis: []
