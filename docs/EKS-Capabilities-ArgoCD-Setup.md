@@ -1,10 +1,10 @@
-# Marina ArgoCD Capability Setup
+# EKS Capabilities ArgoCD Setup
 
-This document describes the configuration changes needed when using AWS EKS Marina (managed ArgoCD capability) instead of self-hosted ArgoCD.
+This document describes the configuration changes needed when using AWS EKS Capabilities (managed ArgoCD capability) instead of self-hosted ArgoCD.
 
 ## Overview
 
-When using Marina, ArgoCD runs as a managed service outside the cluster. The cluster needs to be properly configured to allow Marina's ArgoCD instance to manage resources.
+When using EKS Capabilities, ArgoCD runs as a managed service outside the cluster. The cluster needs to be properly configured to allow the managed ArgoCD instance to manage resources.
 
 ## Required Changes
 
@@ -18,7 +18,7 @@ module "gitops_bridge_bootstrap" {
   version = "0.1.0"
   
   create  = true
-  install = false  # Skip ArgoCD installation since Marina provides it
+  install = false  # Skip ArgoCD installation since EKS Capabilities provides it
   
   cluster = {
     cluster_name = local.hub_cluster.name
@@ -38,7 +38,7 @@ module "gitops_bridge_bootstrap" {
 
 ### 2. EKS Access Policy
 
-The Marina ArgoCD role needs cluster admin permissions. Associate the cluster admin policy:
+The EKS Capabilities ArgoCD role needs cluster admin permissions. Associate the cluster admin policy:
 
 ```bash
 aws eks associate-access-policy \
