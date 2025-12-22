@@ -18,6 +18,13 @@ Ensures proper understanding and usage of the platform's GitOps-based addon mana
 - **Environment Configuration**: Located in `gitops/addons/environments/{environment}/addons.yaml` - environment-specific addon enablement (ID: GITOPS_ENV_CONFIG)
 - **Cluster Configuration**: Located in `platform/infra/terraform/hub-config.yaml` - per-cluster addon activation via labels (ID: GITOPS_CLUSTER_CONFIG)
 
+### Hub Config File Role
+
+- `hub-config.yaml` defines cluster metadata (name, region, environment, tenant) and addon enablement flags (ID: GITOPS_HUB_CONFIG_ROLE)
+- Terraform reads this file to create cluster secrets with proper labels like `enable_addon_name: "true"` (ID: GITOPS_HUB_CONFIG_LABELS)
+- ArgoCD ApplicationSets use these cluster secret labels to determine which addons to deploy to which clusters (ID: GITOPS_HUB_CONFIG_SELECTION)
+- This file is the single source of truth for cluster-level addon configuration (ID: GITOPS_HUB_CONFIG_SOURCE_TRUTH)
+
 ### Cluster Secret Annotations and Labels
 
 - Cluster secrets contain metadata annotations used for templating: `resource_prefix`, `ingress_domain_name`, `aws_region`, `aws_cluster_name` (ID: GITOPS_CLUSTER_ANNOTATIONS)
@@ -34,8 +41,8 @@ Ensures proper understanding and usage of the platform's GitOps-based addon mana
 
 - Step 1: Define addon in `gitops/addons/bootstrap/default/addons.yaml` with proper selector and valuesObject (ID: GITOPS_ADD_DEFINITION)
 - Step 2: Enable in environment config `gitops/addons/environments/{env}/addons.yaml` (ID: GITOPS_ADD_ENV_ENABLE)
-- Step 3: Add enablement flag to `platform/infra/terraform/hub-config.yaml` (ID: GITOPS_ADD_CLUSTER_FLAG)
-- Step 4: Apply Terraform changes to update cluster secrets (ID: GITOPS_ADD_TERRAFORM_APPLY)
+- Step 3: Add enablement flag to `platform/infra/terraform/hub-config.yaml` under the clusters.{cluster-name}.addons section (ID: GITOPS_ADD_CLUSTER_FLAG)
+- Step 4: Apply Terraform changes using deployment scripts to update cluster secrets (ID: GITOPS_ADD_TERRAFORM_APPLY)
 - Step 5: ArgoCD automatically detects and deploys the addon (ID: GITOPS_ADD_AUTO_DEPLOY)
 
 ### SSO Integration Pattern
