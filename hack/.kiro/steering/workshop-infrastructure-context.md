@@ -21,7 +21,7 @@ Provides context about the workshop's infrastructure and proper deployment patte
 
 ### Infrastructure Phases
 
-- **Phase 1**: Cluster infrastructure (hub, dev, prod EKS clusters) via cluster/ module (ID: WORKSHOP_PHASE1_CLUSTERS)
+- **Phase 1**: Cluster infrastructure (hub, staging, prod EKS clusters) via cluster/ module (ID: WORKSHOP_PHASE1_CLUSTERS)
 - **Phase 2**: Platform addons (ArgoCD, Backstage, Keycloak, External Secrets, ACK controllers) via common/ module (ID: WORKSHOP_PHASE2_ADDONS)
 - **Phase 3**: GitOps applications automatically deployed by ArgoCD based on Git configurations (ID: WORKSHOP_PHASE3_GITOPS)
 
@@ -40,7 +40,7 @@ Provides context about the workshop's infrastructure and proper deployment patte
 ### Multi-Cluster Architecture
 
 - Hub cluster (control-plane) runs platform services: ArgoCD, Backstage, Keycloak (ID: WORKSHOP_HUB_CLUSTER)
-- Spoke clusters (dev, prod) run workloads and connect to hub for management (ID: WORKSHOP_SPOKE_CLUSTERS)
+- Spoke clusters (staging, prod) run workloads and connect to hub for management (ID: WORKSHOP_SPOKE_CLUSTERS)
 - ACK controllers in hub manage AWS resources across all clusters via role assumption (ID: WORKSHOP_CROSS_CLUSTER_ACK)
 
 ### Workshop File Paths

@@ -18,8 +18,8 @@ Provides a systematic approach for troubleshooting issues in the workshop enviro
 ### Infrastructure Troubleshooting Priority
 
 - Use `terraform state list` to identify resources, then `terraform state show <resource>` to inspect detailed configuration and current state before checking AWS CLI or console (ID: TROUBLESHOOT_TF_STATE_INSPECT)
-- For networking issues (LoadBalancers, Ingress), examine vpc.tf, alb.tf, and related networking configurations (ID: TROUBLESHOOT_TF_NETWORKING)
-- When resources are missing or misconfigured, update Terraform configuration rather than creating resources manually (ID: TROUBLESHOOT_TF_UPDATE)
+- For networking issues (LoadBalancers, Ingress), examine terraform configuration files in the workshop repository (ID: TROUBLESHOOT_TF_NETWORKING)
+- When resources are missing or misconfigured, update Terraform configuration and use deployment scripts rather than creating resources manually (ID: TROUBLESHOOT_TF_UPDATE)
 - NEVER use `get_eks_vpc_config` MCP tool - always use Terraform state and configuration files for VPC information (ID: TROUBLESHOOT_NO_EKS_VPC_CONFIG)
 
 ### EKS-Specific Troubleshooting
@@ -30,7 +30,7 @@ Provides a systematic approach for troubleshooting issues in the workshop enviro
 ### MCP Server Troubleshooting
 
 - If EKS MCP tools fail, provide equivalent kubectl or AWS CLI commands as fallback (ID: TROUBLESHOOT_EKS_MCP_FALLBACK)
-- If Terraform MCP tools fail, use direct terraform CLI commands with proper variable passing (ID: TROUBLESHOOT_TF_MCP_FALLBACK)
+- If Terraform MCP tools fail, use terraform state commands for inspection only - never apply/destroy directly (ID: TROUBLESHOOT_TF_MCP_FALLBACK)
 
 ### Terraform State Troubleshooting
 
