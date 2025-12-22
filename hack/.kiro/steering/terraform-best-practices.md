@@ -24,10 +24,9 @@ Ensures all Terraform operations follow Infrastructure as Code best practices an
 ### Workshop Context
 
 - Infrastructure is pre-deployed and managed via Terraform - focus on understanding and extending rather than creating from scratch (ID: TF_PREDEPLOYED)
-- Terraform files are located in `/home/ec2-user/environment/platform-on-eks-workshop/platform/infra/terraform` directory with organized structure: vpc.tf, eks.tf, alb.tf, csi.tf (ID: TF_WORKSHOP_STRUCTURE)
+- Terraform files are located in `/home/ec2-user/environment/platform-on-eks-workshop/platform/infra/terraform/` directory (ID: TF_WORKSHOP_STRUCTURE)
 - Use `terraform show` and `terraform state show` to explore existing resources without modifications (ID: TF_EXPLORE)
-- When running Terraform commands, ALWAYS pass variables: `terraform apply -var="cluster_name=$CLUSTER_NAME" -auto-approve` (ID: TF_PASS_VARS)
-- Never use terraform apply, or terraform destroy, always use the associated shell scripts `deploy.sh` or `destroy.sh`
+- NEVER use terraform apply or terraform destroy directly, ALWAYS use the deployment scripts `deploy.sh` or `destroy.sh` (ID: TF_USE_SCRIPTS)
 
 ## Priority
 
