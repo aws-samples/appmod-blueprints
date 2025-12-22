@@ -100,7 +100,7 @@ resource "aws_secretsmanager_secret_version" "cluster_config" {
   secret_string = jsonencode({
     metadata = local.addons_metadata[each.key]
     addons   = local.addons[each.key]
-    server   = each.value.environment != "control-plane" ? data.aws_eks_cluster.clusters[each.key].endpoint : ""
+    server   = each.value.environment != "control-plane" ? data.aws_eks_cluster.clusters[each.key].arn : ""
     vpc = {
       id         = local.cluster_vpc_ids[each.value.name]
       subnet_ids = data.aws_subnets.private_subnets[each.key].ids
@@ -108,12 +108,7 @@ resource "aws_secretsmanager_secret_version" "cluster_config" {
     config = {
       tlsClientConfig = {
         insecure = false
-        caData   = each.value.environment != "control-plane" ? data.aws_eks_cluster.clusters[each.key].certificate_authority[0].data : null
       }
-      awsAuthConfig = each.value.environment != "control-plane" ? {
-        clusterName = data.aws_eks_cluster.clusters[each.key].name
-        roleARN     = aws_iam_role.spoke[each.key].arn
-      } : null
     }
   })
 }
@@ -145,6 +140,7 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
     user_password_key         = local.password_key
     git_token                 = local.gitlab_token
     git_username              = var.git_username
+    argocd_auth_token         = var.argocd_auth_token
     grafana_api_key           = module.managed_grafana.workspace_api_keys["operator"].key
     devlake_encryption_secret = local.devlake_encryption_secret
     devlake_mysql_password    = local.devlake_mysql_password

@@ -22,3 +22,19 @@ data "aws_cloudfront_cache_policy" "use_origin_cache_control_headers_query_strin
 data "aws_cloudfront_origin_request_policy" "all_viewer" {
   name = "Managed-AllViewer"
 }
+
+# Get public subnets for the hub cluster
+data "aws_subnets" "public" {
+  filter {
+    name   = "vpc-id"
+    values = [local.cluster_vpc_ids[local.hub_cluster.name]]
+  }
+  tags = {
+    "kubernetes.io/role/elb" = "1"
+  }
+}
+
+data "aws_subnet" "public" {
+  for_each = toset(data.aws_subnets.public.ids)
+  id       = each.value
+}

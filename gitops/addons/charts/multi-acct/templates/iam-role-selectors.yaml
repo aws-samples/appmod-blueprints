@@ -1,0 +1,86 @@
+{{- range $key, $value := .Values.clusters }}
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: ec2-{{ $key }}
+spec:
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-ec2"
+  namespaceSelector:
+    names:
+      - {{ $key }}
+  resourceTypeSelector:
+    - group: ec2.services.k8s.aws
+      kind: ""
+      version: ""
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: eks-{{ $key }}
+spec:
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-eks"
+  namespaceSelector:
+    names:
+      - {{ $key }}
+  resourceTypeSelector:
+    - group: eks.services.k8s.aws
+      kind: ""
+      version: ""
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: iam-{{ $key }}
+spec:
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-iam"
+  namespaceSelector:
+    names:
+      - {{ $key }}
+  resourceTypeSelector:
+    - group: iam.services.k8s.aws
+      kind: ""
+      version: ""
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: ecr-{{ $key }}
+spec:
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-ecr"
+  namespaceSelector:
+    names:
+      - {{ $key }}
+  resourceTypeSelector:
+    - group: ecr.services.k8s.aws
+      kind: ""
+      version: ""
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: s3-{{ $key }}
+spec:
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-s3"
+  namespaceSelector:
+    names:
+      - {{ $key }}
+  resourceTypeSelector:
+    - group: s3.services.k8s.aws
+      kind: ""
+      version: ""
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: dynamodb-{{ $key }}
+spec:
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-dynamodb"
+  namespaceSelector:
+    names:
+      - {{ $key }}
+  resourceTypeSelector:
+    - group: dynamodb.services.k8s.aws
+      kind: ""
+      version: ""
+{{- end }}
