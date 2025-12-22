@@ -554,10 +554,25 @@ show_final_status() {
                 done
                 
                 print_warning "Terminating ComparisonError operation for $app"
-                terminate_argocd_operation "$app"
-                sleep 10
-                refresh_argocd_app "$app" "true"
-                sleep 10
+                
+                # Check if this is a revision conflict
+                revision_conflict=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
+                    jq -r '.status.operationState.message // "" | contains("cannot reference a different revision")')
+                
+                if [ "$revision_conflict" = "true" ]; then
+                    # Force revision alignment
+                    kubectl patch application "$app" -n argocd --type='merge' -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                    # Clear operation state
+                    kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+                    # Force refresh
+                    kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+                    sleep 2
+                else
+                    terminate_argocd_operation "$app"
+                    sleep 10
+                    refresh_argocd_app "$app" "true"
+                    sleep 10
+                fi
                 
                 if [[ "$is_best_effort" == true ]]; then
                     sync_argocd_app_in_background "$app"
@@ -610,14 +625,24 @@ show_final_status() {
     echo "----------------------------------------"
     
     if kubectl get applications -n argocd >/dev/null 2>&1; then
-        kubectl get applications -n argocd -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status" --no-headers | \
-        while read name sync health; do
+        kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
+        while IFS='|' read -r name sync health message; do
             if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
-                print_success "$name: $sync/$health"
-            elif [ "$health" = "Healthy" ]; then
-                print_warning "$name: $sync/$health"
+                print_success "$name: OK"
             else
-                print_error "$name: $sync/$health"
+                # Extract key error message
+                error_msg=$(echo "$message" | sed -n 's/.*\(Resource count [0-9]* exceeds limit of [0-9]*\).*/\1/p')
+                if [ -z "$error_msg" ]; then
+                    error_msg=$(echo "$message" | sed -n 's/.*ComparisonError: \(.*\)/\1/p' | head -c 80)
+                fi
+                if [ -z "$error_msg" ] && [ -n "$message" ]; then
+                    error_msg=$(echo "$message" | head -c 80)
+                fi
+                if [ -n "$error_msg" ]; then
+                    print_error "$name: KO - $error_msg"
+                else
+                    print_error "$name: KO - $sync/$health"
+                fi
             fi
         done
     else
