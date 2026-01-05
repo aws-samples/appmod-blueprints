@@ -7,10 +7,17 @@ data "gitlab_user" "workshop" {
 }
 resource "gitlab_personal_access_token" "workshop" {
   user_id    = data.gitlab_user.workshop.id
-  name       = "Workshop Personal access token for ${var.git_username}"
+  name       = "Workshop Personal access token for ${var.git_username} - 2026"
   expires_at = "2026-12-31"
 
   scopes = ["api", "read_api","read_repository", "write_repository"]
+  
+  lifecycle {
+    replace_triggered_by = [
+      # Force recreation when expiration date changes
+      self.expires_at
+    ]
+  }
 }
 
 locals {
