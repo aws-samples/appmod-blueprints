@@ -37,7 +37,7 @@ resource "kubernetes_secret" "git_secrets" {
       secret-type = "repo-creds"
       url         = "https://${local.gitlab_domain_name}/${local.git_username}"
       type        = "git"
-      username    = "not-used"
+      username    = local.git_username
       password    = local.gitlab_token
     }
     git-repository = {
