@@ -378,6 +378,12 @@ gitlab_repository_setup(){
     git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
   fi
   
+  # Check if we're on a tag (detached HEAD)
+  if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+    log_warning "Working from a tag, creating main branch from current state"
+    git checkout -b main 2>/dev/null || git checkout main
+  fi
+  
   if ! git diff --quiet || ! git diff --cached --quiet; then
     git add .
     git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files " || true
