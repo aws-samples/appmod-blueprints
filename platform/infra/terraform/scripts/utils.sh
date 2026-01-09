@@ -313,8 +313,10 @@ gitlab_repository_setup(){
   
   # Check if we're on a tag (detached HEAD)
   if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
-    log_warning "Working from a tag, creating main branch from current state"
-    git checkout -b main 2>/dev/null || git checkout main
+    local tag_name=$(git describe --exact-match --tags HEAD)
+    local branch_name="main-from-tag-${tag_name}"
+    log_warning "Working from a tag, creating $branch_name from current state"
+    git checkout -b "$branch_name"
   fi
   
   if ! git diff --quiet || ! git diff --cached --quiet; then
