@@ -803,8 +803,10 @@ jupyterhub:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     jupyterhub:
       hub:
+        baseUrl: /jupyterhub/
         config:
           JupyterHub:
             authenticator_class: oauthenticator.generic.GenericOAuthenticator
@@ -841,6 +843,18 @@ jupyterhub:
       kind: Secret
       jsonPointers:
         - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      name: hub
+      jsonPointers:
+        - /data
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1secret
+        - /spec/template/metadata/annotations/checksum~1config-map
+        - /spec/template/metadata/annotations/checksum~1auth-token
+        - /spec/template/metadata/annotations/checksum~1proxy-secret
 
 devlake:
   enabled: false
