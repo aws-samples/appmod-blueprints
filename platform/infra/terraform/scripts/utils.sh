@@ -381,7 +381,13 @@ gitlab_repository_setup(){
   # Check if we're on a tag (detached HEAD)
   if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
     log_warning "Working from a tag, creating main branch from current state"
-    git checkout -b main 2>/dev/null || git checkout main
+    # Create and switch to main branch from current tag state
+    git checkout -b main 2>/dev/null || {
+      # If main branch already exists, create a unique branch name
+      local branch_name="main-from-tag-$(date +%s)"
+      log_warning "main branch exists, creating $branch_name instead"
+      git checkout -b "$branch_name"
+    }
   fi
   
   if ! git diff --quiet || ! git diff --cached --quiet; then
