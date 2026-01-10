@@ -242,19 +242,20 @@ force_unlock_if_needed() {
   
   log "Checking for Terraform state locks..."
   
-  # Use timeout command to prevent hanging
-  local lock_output
-  if lock_output=$(timeout 30s terraform -chdir=$script_dir plan -lock-timeout=5s 2>&1); then
+  # Use a more reliable approach - check state list first (faster)
+  if ! timeout 30s terraform -chdir=$script_dir state list &>/dev/null; then
+    log_warning "Cannot access Terraform state - possible lock or connectivity issue"
+    return 1
+  fi
+  
+  # Quick lock check using validate (faster than plan)
+  if timeout 15s terraform -chdir=$script_dir validate &>/dev/null; then
     log "No state lock detected"
     return 0
   fi
   
-  # Check if timeout occurred
-  if [[ $? -eq 124 ]]; then
-    log_warning "Terraform plan timed out - likely due to state lock"
-    # Try to get lock info directly
-    lock_output=$(timeout 10s terraform -chdir=$script_dir plan -lock-timeout=1s 2>&1 || true)
-  fi
+  # If plan fails, check if it's due to lock
+  local lock_output=$(terraform -chdir=$script_dir plan -lock-timeout=1s 2>&1 || true)
   
   if echo "$lock_output" | grep -q "Error acquiring the state lock"; then
     log_warning "State lock detected, attempting to resolve..."
@@ -297,18 +298,6 @@ force_unlock_if_needed() {
       log_error "Could not extract lock ID from error message"
       return 1
     fi
-  elif echo "$lock_output" | grep -q -i "timeout\|timed out"; then
-    log_warning "Terraform operation timed out - assuming stale lock exists"
-    log_warning "Attempting to force unlock any existing locks..."
-    
-    # Try to force unlock without specific ID (will prompt for confirmation)
-    # This is a last resort for hanging locks
-    echo "yes" | terraform -chdir=$script_dir force-unlock -force || {
-      log_error "Could not force unlock state - manual intervention may be required"
-      return 1
-    }
-    log_success "Force unlock completed"
-    return 0
   fi
   
   return 0
