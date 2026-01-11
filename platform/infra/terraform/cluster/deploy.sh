@@ -17,29 +17,9 @@ cd $SCRIPTDIR
 
 # Check for Identity Center configuration
 check_identity_center() {
-  # Try to get outputs from identity-center module if env vars not set
-  if [[ -z "${TF_VAR_identity_center_instance_arn:-}" ]] && [[ -d "../identity-center" ]]; then
-    log "🔍 Checking for Identity Center outputs..."
-    cd ../identity-center
-    
-    # Initialize terraform with S3 backend if not already initialized
-    if [[ ! -d ".terraform" ]]; then
-      log "Initializing identity-center terraform state..."
-      initialize_terraform "identity-center" "$(pwd)"
-    fi
-    
-    if terraform show -json > /dev/null 2>&1; then
-      export TF_VAR_identity_center_instance_arn=$(terraform output -raw instance_arn 2>/dev/null || echo "")
-      export TF_VAR_identity_center_admin_group_id=$(terraform output -raw admin_group_id 2>/dev/null || echo "")
-      export TF_VAR_identity_center_developer_group_id=$(terraform output -raw developer_group_id 2>/dev/null || echo "")
-      log "📥 Auto-loaded Identity Center configuration from terraform outputs"
-    fi
-    cd - > /dev/null
-  fi
-
-  # If still not set, try to get IDC instance ARN from AWS API
+  # Try to get IDC instance ARN from AWS API if env var not set
   if [[ -z "${TF_VAR_identity_center_instance_arn:-}" ]]; then
-    log "🔍 Checking for Identity Center instance via AWS API..."
+    log "🔍 Checking for Identity Center instance..."
     
     # Get IDC instance ARN from AWS API
     IDC_INSTANCE_ARN=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text 2>/dev/null | head -1 | tr -d '\n' || echo "")
@@ -47,43 +27,25 @@ check_identity_center() {
     if [[ -n "$IDC_INSTANCE_ARN" && "$IDC_INSTANCE_ARN" != "None" && "$IDC_INSTANCE_ARN" =~ ^arn:aws:sso ]]; then
       export TF_VAR_identity_center_instance_arn="$IDC_INSTANCE_ARN"
       log "📋 Found Identity Center instance: $IDC_INSTANCE_ARN"
+      
+      # Try to get group IDs from terraform outputs if identity-center module was deployed
+      if [[ -d "../identity-center" ]]; then
+        cd ../identity-center
+        # Initialize terraform with S3 backend if not already initialized
+        if [[ ! -d ".terraform" ]]; then
+          log "Initializing identity-center terraform state..."
+          initialize_terraform "identity-center" "$(pwd)"
+        fi
+        if terraform show -json > /dev/null 2>&1; then
+          export TF_VAR_identity_center_admin_group_id=$(terraform output -raw admin_group_id 2>/dev/null || echo "")
+          export TF_VAR_identity_center_developer_group_id=$(terraform output -raw developer_group_id 2>/dev/null || echo "")
+          log "📋 Retrieved Identity Center group IDs from terraform state"
+        fi
+        cd - > /dev/null
+      fi
+    else
+      log "ℹ️  No Identity Center instance found"
     fi
-  fi
-
-  # Validate Identity Center configuration is complete
-  if [[ -z "${TF_VAR_identity_center_instance_arn:-}" ]]; then
-    log_error "❌ Identity Center instance ARN is required for EKS ArgoCD capability"
-    log_error "Please deploy Identity Center first:"
-    log_error "  cd ../identity-center && ./deploy.sh"
-    exit 1
-  fi
-
-  if [[ -z "${TF_VAR_identity_center_admin_group_id:-}" ]] || [[ -z "${TF_VAR_identity_center_developer_group_id:-}" ]]; then
-    log_error "❌ Identity Center groups are required for EKS ArgoCD capability"
-    log_error "Please deploy Identity Center first:"
-    log_error "  cd ../identity-center && ./deploy.sh"
-    exit 1
-  fi
-
-  log "✅ Identity Center configuration validated"
-  log "   Instance ARN: ${TF_VAR_identity_center_instance_arn}"
-  log "   Admin Group: ${TF_VAR_identity_center_admin_group_id}"
-  log "   Developer Group: ${TF_VAR_identity_center_developer_group_id}"
-}
-
-# Check for Identity Center configuration
-check_identity_center() {
-  # Try to get outputs from identity-center module if env vars not set
-  if [[ -z "${TF_VAR_identity_center_instance_arn:-}" ]] && [[ -d "../identity-center" ]]; then
-    log "🔍 Checking for Identity Center outputs..."
-    cd ../identity-center
-    if terraform show -json > /dev/null 2>&1; then
-      export TF_VAR_identity_center_instance_arn=$(terraform output -raw instance_arn 2>/dev/null || echo "")
-      export TF_VAR_identity_center_admin_group_id=$(terraform output -raw admin_group_id 2>/dev/null || echo "")
-      export TF_VAR_identity_center_developer_group_id=$(terraform output -raw developer_group_id 2>/dev/null || echo "")
-      log "📥 Auto-loaded Identity Center configuration from terraform outputs"
-    fi
-    cd - > /dev/null
   fi
 
   if [[ -n "${TF_VAR_identity_center_instance_arn:-}" ]]; then
@@ -91,6 +53,14 @@ check_identity_center() {
     log "   Instance ARN: ${TF_VAR_identity_center_instance_arn}"
     log "   Admin Group: ${TF_VAR_identity_center_admin_group_id:-not set}"
     log "   Developer Group: ${TF_VAR_identity_center_developer_group_id:-not set}"
+    
+    # Validate that Identity Center groups are configured for ArgoCD capability
+    if [[ -z "${TF_VAR_identity_center_admin_group_id:-}" ]] || [[ -z "${TF_VAR_identity_center_developer_group_id:-}" ]]; then
+      log_error "Identity Center groups are required for EKS ArgoCD capability"
+      log_error "Please run the identity-center deployment first:"
+      log_error "  cd ../identity-center && ./deploy.sh"
+      exit 1
+    fi
   else
     log "⚠️  Identity Center not configured - EKS Capabilities will be created without SSO"
     log "   To enable SSO, run: cd ../identity-center && ./deploy.sh"
