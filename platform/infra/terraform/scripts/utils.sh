@@ -242,8 +242,14 @@ force_unlock_if_needed() {
   
   log "Checking for Terraform state locks..."
   
-  # Try to get state lock info with short timeout
-  if terraform -chdir=$script_dir plan -detailed-exitcode -lock-timeout=10s &>/dev/null; then
+  # Use a more reliable approach - check state list first (faster)
+  if ! timeout 30s terraform -chdir=$script_dir state list &>/dev/null; then
+    log_warning "Cannot access Terraform state - possible lock or connectivity issue"
+    return 1
+  fi
+  
+  # Quick lock check using validate (faster than plan)
+  if timeout 15s terraform -chdir=$script_dir validate &>/dev/null; then
     log "No state lock detected"
     return 0
   fi
@@ -376,6 +382,14 @@ gitlab_repository_setup(){
   
   if ! git remote get-url gitlab >/dev/null 2>&1; then
     git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+  fi
+  
+  # Check if we're on a tag (detached HEAD)
+  if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+    local tag_name=$(git describe --exact-match --tags HEAD)
+    local branch_name="main-from-tag-${tag_name}"
+    log_warning "Working from a tag, creating $branch_name from current state"
+    git checkout -b "$branch_name"
   fi
   
   if ! git diff --quiet || ! git diff --cached --quiet; then
