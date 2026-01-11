@@ -1414,6 +1414,12 @@ spark-operator:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
   ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
+        - /status
     - group: external-secrets.io
       kind: ExternalSecret
       jsonPointers:

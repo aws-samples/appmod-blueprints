@@ -8,13 +8,25 @@ tasks:
       - helm repo add crossplane-stable https://charts.crossplane.io/stable || true
       - helm repo add kubevela https://kubevela.github.io/charts || true
       - helm repo add fluxcd-community https://fluxcd-community.github.io/helm-charts || true
+      - helm repo add apache-airflow https://airflow.apache.org || true
+      - helm repo add jupyterhub https://hub.jupyter.org/helm-chart/ || true
+      - helm repo add spark-operator https://kubeflow.github.io/spark-operator || true
+      - helm repo add mlflow https://community-charts.github.io/helm-charts || true
       - helm repo update
       - echo "Building dependencies for flux chart..."
       - cd ./gitops/addons/charts/flux && helm dependency build
-      - echo "Building dependencies for crossplane chart..."
-      - cd ./gitops/addons/charts/crossplane && helm dependency build
       - echo "Building dependencies for kubevela chart..."
       - cd ./gitops/addons/charts/kubevela && helm dependency build
+      - echo "Building dependencies for airflow chart..."
+      - cd ./gitops/addons/charts/airflow && helm dependency build
+      - echo "Building dependencies for devlake chart..."
+      - cd ./gitops/addons/charts/devlake && helm dependency build
+      - echo "Building dependencies for jupyterhub chart..."
+      - cd ./gitops/addons/charts/jupyterhub && helm dependency build
+      - echo "Building dependencies for spark-operator chart..."
+      - cd ./gitops/addons/charts/spark-operator && helm dependency build
+      - echo "Building dependencies for mlflow chart..."
+      - cd ./gitops/addons/charts/mlflow && helm dependency build
       - echo "All Helm chart dependencies built successfully!"
       - echo "Don't forget to commit the generated Chart.lock files and charts/ directories"
 

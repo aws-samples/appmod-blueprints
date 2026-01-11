@@ -63,7 +63,8 @@ main() {
         while [ $cluster_wait -lt 300 ] && [ "$cluster_ready" = false ]; do
             if kubectl get nodes --request-timeout=10s >/dev/null 2>&1; then
                 local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c "Ready" || echo "0")
-                if [ "$ready_nodes" -gt 0 ]; then
+                ready_nodes=$(echo "$ready_nodes" | tr -d '[:space:]-')
+                if [ "${ready_nodes:-0}" -gt 0 ] 2>/dev/null; then
                     print_status "SUCCESS" "Cluster $cluster_name is ready with $ready_nodes nodes"
                     cluster_ready=true
                 else

@@ -21,57 +21,29 @@ Once you are logged into your AWS Console with the appropriate permissions, you 
 
 - `us-west-2`
 
-The first step is to run the cluster deployment script with the provided CloudFormation template. The easiest way to do this is using AWS CloudShell in the account where you will be running the lab exercises. Open CloudShell with the link below or by following [this documentation](https://docs.aws.amazon.com/cloudshell/latest/userguide/getting-started.html#launch-region-shell):
+The first step is to create an IDE and run the cluster deployment script with the provided CloudFormation template. The easiest way to do this is using AWS CloudShell in the account where you will be running the lab exercises. Open CloudShell with the link below or by following [this documentation](https://docs.aws.amazon.com/cloudshell/latest/userguide/getting-started.html#launch-region-shell):
 
 [Click here to access CloudShell in US-WEST-2](https://console.aws.amazon.com/cloudshell/home?region=us-west-2#)
 
 Once CloudShell has loaded, run the following commands:
 
-### For us-west-2:
 ```bash
-ASSET_URL=https://ws-assets-prod-iad-r-pdx-f3b3f9f1a7d6a3d0.s3.us-west-2.amazonaws.com/daa2a765-04db-4399-aaa7-fddc8d07e9e1/peeks-workshop-team-stack-self.json
+curl https://ws-assets-prod-iad-r-pdx-f3b3f9f1a7d6a3d0.s3.us-west-2.amazonaws.com/95007d58-823f-4cc7-a259-78f05ac86cf8/peeks-workshop-team-stack-self.json --output peeks-workshop.yaml
 
-curl $ASSET_URL --output peeks-workshop.json
-grep '"WORKSHOP_GIT_BRANCH":' static/peeks-workshop-* # should output:  v0.1.2-riv25
-
-bucketName="peeks-workshop-$(uuidgen | tr -d - | tr '[:upper:]' '[:lower:]')"
-aws s3api create-bucket \
-    --bucket "$bucketName" \
+templateBucket=$(aws s3api create-bucket \
+    --bucket peeks-workshop-$(uuidgen | tr -d - | tr '[:upper:]' '[:lower:]') \
     --region us-west-2 \
-    --create-bucket-configuration LocationConstraint=us-west-2
+    --create-bucket-configuration LocationConstraint=us-west-2 \
+    --query 'Location' \
+    --output text | sed 's|http://||' | sed 's|.s3.amazonaws.com/||')
 
 aws cloudformation deploy --stack-name peeks-workshop \
-    --template-file ./peeks-workshop.json \
+    --template-file ./peeks-workshop.yaml \
     --parameter-overrides \
         ParticipantAssumedRoleArn=$(aws sts get-caller-identity --query Arn --output text) \
     --capabilities CAPABILITY_NAMED_IAM \
-    --s3-bucket $bucketName \
-    --disable-rollback
+    --s3-bucket $templateBucket
 ```
-
-### For eu-central-1
-```bash
-ASSET_URL=https://ws-assets-prod-iad-r-fra-b129423e91500967.s3.eu-central-1.amazonaws.com/daa2a765-04db-4399-aaa7-fddc8d07e9e1/peeks-workshop-team-stack-self.json
-
-curl $ASSET_URL --output peeks-workshop.json
-grep '"WORKSHOP_GIT_BRANCH":' static/peeks-workshop-* # should output:  v0.1.2-riv25
-
-bucketName="peeks-workshop-$(uuidgen | tr -d - | tr '[:upper:]' '[:lower:]')"
-aws s3api create-bucket \
-    --bucket "$bucketName" \
-    --region eu-central-1 \
-    --create-bucket-configuration LocationConstraint=eu-central-1
-
-aws cloudformation deploy --stack-name peeks-workshop \
-    --template-file ./peeks-workshop.json \
-    --parameter-overrides \
-        ParticipantAssumedRoleArn=$(aws sts get-caller-identity --query Arn --output text) \
-    --capabilities CAPABILITY_NAMED_IAM \
-    --s3-bucket $bucketName \
-    --disable-rollback
-```
-
-> If you want support for additional regions you can ask the workshop team for the correct asset URL for your region.
 
 You will then see the following output as your CloudFormation template is being deployed:
 
