@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab
+  namespace: gitlab
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-name: "modern-engg-gitlab"
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
+spec:
+  type: LoadBalancer
+  loadBalancerClass: eks.amazonaws.com/nlb
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  - name: ssh
+    port: 22
+    targetPort: 22
+  selector:
+    app: gitlab
