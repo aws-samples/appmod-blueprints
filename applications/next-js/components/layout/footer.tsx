@@ -39,7 +39,7 @@ export default async function Footer() {
             </div>
           }
         >
-          <FooterMenu menu={menu} />
+          <FooterMenu menu={menu instanceof Error ? [] : menu} />
         </Suspense>
       </div>
       <div className="border-t border-neutral-200 py-6 text-sm dark:border-neutral-700">

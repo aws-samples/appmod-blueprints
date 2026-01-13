@@ -48,7 +48,7 @@ spec:
         			metadata: name: "\(context.appName)-\(context.name)-iam-policy"
         			spec: {
         				name: "\(context.appName)-\(context.name)-iam-policy"
-        				forProvider: policy: "\(policy)"
+        				forProvider: policy: "\(parameter.policy)"
         			}
         		}
         	}

@@ -1,30 +1,27 @@
-import { notFound } from "next/navigation";
+import { notFound } from 'next/navigation';
 
-import { GridTileImage } from "components/grid/tile";
-import Footer from "components/layout/footer";
-import { Gallery } from "components/product/gallery";
-import { ProductDescription } from "components/product/product-description";
-import { HIDDEN_PRODUCT_TAG } from "lib/constants";
-import { getProduct } from "lib/dynamo";
-import { Image } from "lib/dynamo/types";
-import Link from "next/link";
-import { Suspense } from "react";
+import { GridTileImage } from 'components/grid/tile';
+import Footer from 'components/layout/footer';
+import { Gallery } from 'components/product/gallery';
+import { ProductDescription } from 'components/product/product-description';
+import { HIDDEN_PRODUCT_TAG } from 'lib/constants';
+import { getProduct } from 'lib/dynamo';
+import { Image } from 'lib/dynamo/types';
+import Link from 'next/link';
+import { Suspense } from 'react';
+import NotFound from 'app/backend-down';
 
-export default async function ProductPage({
-  params,
-}: {
-  params: { handle: string };
-}) {
+export default async function ProductPage({ params }: { params: { handle: string } }) {
   const product = await getProduct(params.handle);
 
-  if (!product) return notFound();
+  if (!product || product instanceof Error) return NotFound();
 
   const productJsonLd = {
-    "@context": "https://schema.org",
-    "@type": "Product",
+    '@context': 'https://schema.org',
+    '@type': 'Product',
     name: product.name,
     description: product.description,
-    image: product.images,
+    image: product.images
   };
 
   return (
@@ -32,7 +29,7 @@ export default async function ProductPage({
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: JSON.stringify(productJsonLd),
+          __html: JSON.stringify(productJsonLd)
         }}
       />
       <div className="mx-auto max-w-screen-2xl px-4">
@@ -46,7 +43,7 @@ export default async function ProductPage({
               <Gallery
                 images={product.images.map((image: Image) => ({
                   src: image.url,
-                  altText: image.altText,
+                  altText: image.altText
                 }))}
               />
             </Suspense>
