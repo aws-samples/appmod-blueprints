@@ -1,0 +1,45 @@
+# Update the subnet IDs and VPC ID before running
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-postgres-password
+  namespace: crossplane-system
+data:
+  password: dGVzdFBhc3N3b3JkMTIz # testPassword123
+---
+apiVersion: awsblueprints.io/v1alpha1
+kind: RelationalDatabase
+metadata:
+  name: test-rds-composition
+  namespace: default
+spec:
+  compositionSelector:
+    matchLabels:
+      awsblueprints.io/provider: aws
+      awsblueprints.io/environment: dev
+      awsblueprints.io/createDBSubnetGroup: "true"
+  writeConnectionSecretToRef:
+    name: test-rds-composition-connection
+  resourceConfig:
+    providerConfigName: default
+    region: us-west-2
+    name: crossplane-v2-test-postgres-db
+    tags:
+      - key: Environment
+        value: test
+      - key: Purpose
+        value: crossplane-v2-composition-test
+  databaseName: testdb
+  engineVersion: "14.12"
+  storageGB: 20
+  # Updated with actual VPC and subnet IDs:
+  subnetIds:
+    - subnet-0f216c24df56e1c92  # us-west-2a
+    - subnet-062280eca155dcc7e  # us-west-2b
+  vpcId: vpc-0f4eea40d618e532a   # Main VPC
+  IngressRules:
+    - ipProtocol: tcp
+      fromPort: 5432
+      toPort: 5432
+      ipRanges:
+        - cidrIp: "10.0.0.0/8"

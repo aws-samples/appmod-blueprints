@@ -12,7 +12,7 @@ spec:
   sources:
     - chart: crossplane
       repoURL: https://charts.crossplane.io/stable
-      targetRevision: 1.17.1
+      targetRevision: 2.0.2
       helm:
         releaseName: crossplane
         valueFiles:
