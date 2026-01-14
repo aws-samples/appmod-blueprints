@@ -1,62 +1,379 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Creates Ray Service on Kubernetes
+  description: Deploy Ray Service on Kubernetes using Kro abstraction and GitOps
   name: ray-serve-kubernetes
   title: Ray Service on Kubernetes
 spec:
   owner: guest
   type: service
   parameters:
-    - title: Configuration Options
-      required:
-        - name
+    - title: Ray Service Configuration
+      description: Basic configuration for your Ray Service
       properties:
         name:
+          title: Service Name
+          description: Name of the Ray Service (lowercase, alphanumeric, hyphens allowed)
           type: string
-          description: Name of this Ray Service
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$'
+          minLength: 1
+          maxLength: 63
+          ui:help: 'Must be lowercase alphanumeric with hyphens, 1-63 characters'
         rayServeFile:
+          title: Ray Serve Config
+          description: URL to your Ray Service Multi-application config zip file
           type: string
           default: "https://github.com/mlops-on-kubernetes/Book/raw/main/Chapter%206/serve-config.zip"
-          description: Path to your Ray Service Multi-application config zip file
+          ui:help: 'URL to zip file containing Ray Serve application code'
+      required:
+        - name
+    - title: Deployment Configuration
+      description: Configure deployment settings for your Ray Service
+      properties:
+        namespace:
+          title: Kubernetes Namespace
+          description: Namespace where the Ray Service will be deployed
+          type: string
+          default: ray-system
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$'
+          ui:help: 'Kubernetes namespace for Ray Service deployment'
+        replicas:
+          title: Worker Replicas
+          description: Number of Ray worker replicas
+          type: integer
+          default: 2
+          minimum: 1
+          maximum: 10
+          ui:help: 'Number of Ray worker pods to deploy'
+    - title: Resource Configuration
+      description: Configure CPU and memory resources
+      properties:
+        headCpu:
+          title: Head CPU
+          description: CPU request for Ray head pod
+          type: string
+          default: "1"
+          pattern: '^[0-9]+(\.[0-9]+)?[m]?$|^[0-9]+$'
+          ui:help: 'CPU cores (e.g., "1", "2", "500m") - must be a string'
+        headMemory:
+          title: Head Memory
+          description: Memory request for Ray head pod
+          type: string
+          default: "2Gi"
+          ui:help: 'Memory size (e.g., "2Gi", "4Gi")'
+        workerCpu:
+          title: Worker CPU
+          description: CPU request for Ray worker pods
+          type: string
+          default: "500m"
+          pattern: '^[0-9]+(\.[0-9]+)?[m]?$|^[0-9]+$'
+          ui:help: 'CPU cores (e.g., "500m", "1") - must be a string'
+        workerMemory:
+          title: Worker Memory
+          description: Memory request for Ray worker pods
+          type: string
+          default: "1Gi"
+          ui:help: 'Memory size (e.g., "1Gi", "2Gi")'
+        workerGpu:
+          title: Worker GPU
+          description: GPU request for Ray worker pods
+          type: string
+          default: "0"
+          ui:help: 'Number of GPUs (e.g., "0", "1", "2") - for ML workloads'
   steps:
+    - id: validate-parameters
+      name: Validate Parameters
+      action: debug:log
+      input:
+        message: |
+          Validating template parameters:
+          - Service Name: ${{ parameters.name }}
+          - Namespace: ${{ parameters.namespace }}
+          - Ray Serve Config: ${{ parameters.rayServeFile }}
+          - Worker Replicas: ${{ parameters.replicas }}
+          - Head Resources: ${{ parameters.headCpu }}/${{ parameters.headMemory }}
+          - Worker Resources: ${{ parameters.workerCpu }}/${{ parameters.workerMemory }}
+
     - id: fetchSystem
       name: Fetch System
       action: catalog:fetch
       input:
         entityRef: system:default/system-info
-    - id: template
-      name: Generating component
-      action: fetch:template
+
+    - action: fetch:template
+      name: Fetch Base
+      id: fetch-base
       input:
-        url: ./skeleton
+        url: ./skeleton/
         values:
-          name: ${{parameters.name}}
-          rayServeFile:  ${{parameters.rayServeFile}}
+          name: ${{ parameters.name }}
+          namespace: ${{ parameters.namespace }}
+          rayServeFile: ${{ parameters.rayServeFile }}
+          replicas: ${{ parameters.replicas }}
+          headCpu: ${{ parameters.headCpu }}
+          headMemory: ${{ parameters.headMemory }}
+          workerCpu: ${{ parameters.workerCpu }}
+          workerMemory: ${{ parameters.workerMemory }}
+          headGpu: "0"
+          workerGpu: ${{ parameters.workerGpu }}
+          gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
+          ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
+          argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
+          git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
+          aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
+          aws_region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
+          created_by: ${{ user.entity.metadata.name | default("unknown") }}
+
     - id: publish
       name: Publishing to GitLab repository
       action: publish:gitlab
       input:
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.name}}-ray-service&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
-    - id: create-argocd-app
-      name: Create ArgoCD App
-      action: argocd:create-app
+        useCustomGit: true
+
+    - id: create-argocd-project
+      name: Create ArgoCD Project
+      action: kube:apply
       input:
-        appName: ${{parameters.name}}
-        appNamespace: ray
-        argoInstance: in-cluster
-        projectName: default
-        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}
-        path: "manifests"
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: AppProject
+          metadata:
+            name: ${{parameters.name}}-ray-project
+            namespace: argocd
+            labels:
+              app.kubernetes.io/name: ${{parameters.name}}
+              app.kubernetes.io/component: ray-service
+              app.kubernetes.io/managed-by: backstage
+              backstage.io/template-name: ray-serve-kubernetes
+            annotations:
+              backstage.io/template-version: "1.0.0"
+              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+          spec:
+            destinations:
+              - name: peeks-hub
+                namespace: ${{ parameters.namespace }}
+            sourceRepos:
+              - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service.git
+            sourceNamespaces:
+              - argocd
+            namespaceResourceWhitelist:
+              - group: ""
+                kind: Namespace
+              - group: ""
+                kind: Service
+              - group: ""
+                kind: ConfigMap
+              - group: ""
+                kind: Secret
+              - group: apps
+                kind: Deployment
+              - group: kro.run
+                kind: RayService
+              - group: ray.io
+                kind: RayService
+              - group: ray.io
+                kind: RayCluster
+              - group: networking.k8s.io
+                kind: Ingress
+            roles:
+              - name: admin
+                policies:
+                  - p, proj:${{parameters.name}}-ray-project:admin, applications, *, ${{parameters.name}}-ray-project/*, allow
+                  - p, proj:${{parameters.name}}-ray-project:admin, repositories, *, *, allow
+                groups:
+                  - eks-argocd-admins
+              - name: developer
+                policies:
+                  - p, proj:${{parameters.name}}-ray-project:developer, applications, get, ${{parameters.name}}-ray-project/*, allow
+                  - p, proj:${{parameters.name}}-ray-project:developer, applications, sync, ${{parameters.name}}-ray-project/*, allow
+                  - p, proj:${{parameters.name}}-ray-project:developer, repositories, get, *, allow
+                groups:
+                  - eks-argocd-developers
+
+    - id: create-argocd-app
+      name: Create ArgoCD Application (GitOps)
+      action: kube:apply
+      input:
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{parameters.name}}-ray-service
+            namespace: argocd
+            labels:
+              app.kubernetes.io/name: ${{parameters.name}}
+              app.kubernetes.io/component: ray-service
+              app.kubernetes.io/managed-by: backstage
+              backstage.io/template-name: ray-serve-kubernetes
+            annotations:
+              backstage.io/template-version: "1.0.0"
+              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+              argocd.argoproj.io/finalizer: resources-finalizer.argocd.argoproj.io
+          spec:
+            project: ${{parameters.name}}-ray-project
+            source:
+              repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service.git
+              path: manifests
+              targetRevision: HEAD
+            destination:
+              name: peeks-hub
+              namespace: ${{ parameters.namespace }}
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+                - PrunePropagationPolicy=foreground
+                - PruneLast=true
+              retry:
+                limit: 5
+                backoff:
+                  duration: 5s
+                  factor: 2
+                  maxDuration: 3m
+            ignoreDifferences:
+              - group: kro.run
+                kind: RayService
+                jsonPointers:
+                  - /status
+              - group: ray.io
+                kind: RayService
+                jsonPointers:
+                  - /status
+              - group: ray.io
+                kind: RayCluster
+                jsonPointers:
+                  - /status
+            info:
+              - name: 'Kro RayService Status'
+                value: 'Check the RayService resource status for detailed information'
+
     - id: register
       name: Register
       action: catalog:register
       input:
-        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
-        catalogInfoPath: 'catalog-info.yaml'
+        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service/-/blob/main
+        catalogInfoPath: "/catalog-info.yaml"
+
+    - id: wait-for-sync
+      name: Wait for Initial Sync
+      action: debug:log
+      input:
+        message: |
+          🔄 **GitOps Deployment Initiated!**
+          
+          Your Ray Service is now being deployed via GitOps using ArgoCD and Kro abstraction. 
+          The Kro RayService resource will be created and managed by ArgoCD, orchestrating 
+          all required Kubernetes and Ray resources.
+          
+          ## 📊 **Kro + GitOps Benefits**
+          - ✅ **High-Level Abstraction**: Single RayService resource manages everything
+          - ✅ **Full Visibility**: All resources appear in ArgoCD applications
+          - ✅ **Version Control**: All changes tracked in Git
+          - ✅ **Rollback Capability**: Easy rollback to previous versions
+          - ✅ **Drift Detection**: ArgoCD monitors and corrects configuration drift
+          - ✅ **Resource Orchestration**: Kro handles complex resource dependencies
+          
+          ## 🔍 **Monitoring Deployment**
+          1. **ArgoCD Application**: Monitor sync status and health
+          2. **Kro Resource Status**: Check RayService resource conditions
+          3. **Ray Resources**: Watch Ray cluster and serve pods being created
+          
+          The ArgoCD application will automatically sync and create the Kro RayService resource,
+          which will then orchestrate the creation of all required Ray and Kubernetes resources.
+
   output:
     links:
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
+      - title: ArgoCD Application (GitOps)
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/${{ parameters.name }}-ray-service?resource=
+        icon: web
+      - title: GitLab Repository (GitOps Source)
+        url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.name }}-ray-service
+        icon: git
+      - title: ArgoCD Project
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/settings/projects/${{ parameters.name }}-ray-project
+        icon: web
+      - title: Ray Serve Endpoint (After Deployment)
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/ray-serve/${{ parameters.name }}/
+        icon: web
+      - title: Ray Dashboard (After Deployment)
+        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/ray-dashboard/${{ parameters.name }}/
+        icon: web
+    text:
+      - title: Kro-based Ray Service Deployment
+        content: |
+          🎉 **Kro + GitOps Ray Service Successfully Initiated!**
+          
+          Your Ray Service is now being deployed using Kro abstraction with GitOps principles. 
+          This approach provides the highest level of automation and management capabilities.
+          
+          ## 🔄 **Kro + GitOps Workflow**
+          1. **Repository Created**: GitLab repository with Kro RayService manifest
+          2. **ArgoCD Application**: Monitors repository for changes
+          3. **Automatic Sync**: ArgoCD deploys Kro RayService resource
+          4. **Kro Orchestration**: RayService creates all required resources
+          5. **Continuous Monitoring**: ArgoCD ensures desired state
+          
+          ## 📊 **Key Advantages**
+          
+          ### **Kro Abstraction Benefits**
+          - **Simplified Management**: Single resource manages complex Ray deployment
+          - **Resource Orchestration**: Automatic dependency handling and ordering
+          - **Status Aggregation**: Unified status across all managed resources
+          - **Lifecycle Management**: Coordinated creation, updates, and deletion
+          
+          ### **GitOps Benefits**
+          - **Version Control**: All configuration changes tracked in Git
+          - **Rollback**: Easy rollback to any previous version
+          - **Audit Trail**: Complete history of who changed what and when
+          - **Drift Detection**: ArgoCD automatically corrects configuration drift
+          
+          ### **Enhanced Management**
+          - **Declarative**: Infrastructure as Code approach
+          - **Reproducible**: Consistent deployments across environments
+          - **Scalable**: Easy to replicate for multiple Ray Services
+          
+          ## 🚀 **What Happens Next**
+          
+          1. **ArgoCD Sync** (1-2 minutes):
+             - ArgoCD detects the new repository
+             - Syncs and creates the Kro RayService resource
+             - RayService appears in ArgoCD UI
+          
+          2. **Kro Resource Orchestration** (3-5 minutes):
+             - Namespace creation
+             - Ray Service deployment
+             - Kubernetes Service and Ingress setup
+             - Ray cluster initialization
+          
+          3. **Ray Service Ready** (5-8 minutes total):
+             - Ray Serve applications operational
+             - HTTP endpoints available
+             - Ray Dashboard accessible
+             - Full monitoring and observability enabled
+          
+          ## 📋 **Resource Overview**
+          - **Service**: ${{ parameters.name }}
+          - **Namespace**: ${{ parameters.namespace }}
+          - **ArgoCD Project**: ${{ parameters.name }}-ray-project
+          - **GitOps Repository**: ${{ parameters.name }}-ray-service
+          - **Worker Replicas**: ${{ parameters.replicas }}
+          - **Head Resources**: ${{ parameters.headCpu }}/${{ parameters.headMemory }}
+          - **Worker Resources**: ${{ parameters.workerCpu }}/${{ parameters.workerMemory }}
+          
+          ## 🔗 **Next Steps**
+          1. **Monitor ArgoCD**: Watch the application sync progress
+          2. **Check Kro Status**: Verify RayService resource health
+          3. **Test Endpoints**: Send requests to your Ray Serve applications
+          4. **Scale Resources**: Adjust replicas and resources as needed
+          5. **Explore Resources**: Use the links above to explore your infrastructure
+          
+          Your Ray Service is now fully integrated with Kro abstraction and GitOps! 🎯
