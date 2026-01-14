@@ -788,6 +788,32 @@ keycloak:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
         - '.spec.versions[].schema.openAPIV3Schema | .. | .volumeClaimTemplates?'
 
+image-prepuller:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '1'    # Early deployment for image caching
+  namespace: kube-system
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/image-prepuller'
+  selector:
+    matchExpressions:
+      - key: enable_image_prepuller
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    images:
+      - rayproject/ray:2.34.0
+      - jupyter/base-notebook:latest
+      - tensorflow/tensorflow:latest-gpu
+    tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+    nodeSelector:
+      karpenter.sh/nodepool: general-purpose
+
 jupyterhub:
   enabled: false
   annotationsAppSet:
@@ -807,6 +833,18 @@ jupyterhub:
     jupyterhub:
       hub:
         baseUrl: /jupyterhub/
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            memory: 1Gi
+        nodeSelector:
+          karpenter.sh/nodepool: system
+        tolerations:
+        - key: "CriticalAddonsOnly"
+          operator: "Exists"
+          effect: "NoSchedule"
         config:
           JupyterHub:
             authenticator_class: oauthenticator.generic.GenericOAuthenticator
@@ -830,6 +868,29 @@ jupyterhub:
               secretKeyRef:
                 name: keycloak-clients
                 key: JUPYTERHUB_CLIENT_SECRET
+      proxy:
+        service:
+          type: ClusterIP
+      scheduling:
+        userScheduler:
+          enabled: true
+          replicas: 2
+      singleuser:
+        extraAnnotations:
+          io.containerd.snapshotter/type: "soci"
+        image:
+          name: jupyter/datascience-notebook
+          tag: latest
+        startTimeout: 300
+        cpu:
+          guarantee: 0.5
+        memory:
+          guarantee: 2G
+      prePuller:
+        hook:
+          enabled: true
+        continuous:
+          enabled: true
       ingress:
         enabled: false
   ignoreDifferences:
@@ -1397,6 +1458,31 @@ mlflow:
       jsonPointers:
         - /metadata/managedFields
 
+ray-operator:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after Keycloak
+  namespace: ray-system
+  chartName: kuberay-operator
+  chartRepository: https://ray-project.github.io/kuberay-helm/
+  defaultVersion: '1.2.2'
+  selector:
+    matchExpressions:
+      - key: enable_ray_operator
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
+        - /status
+
 spark-operator:
   enabled: false
   annotationsAppSet:
@@ -1482,3 +1568,6 @@ platform-manifests:
   valuesObject:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    gpu:
+      enabled: true  # Set to true to enable GPU EKS Auto mode nodepool
