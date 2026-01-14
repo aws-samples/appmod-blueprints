@@ -36,6 +36,7 @@ metadata:
 spec:
   owner: guest
   # values dynamically replaced by platform/infra/terraform/common/deploy.sh on bootstrap
+  ingress_hostname: '{{ values.ingressDomain }}'
   gitlab_hostname: '{{ values.gitlabDomain }}'
   argocd_hostname: '{{ values.argocdDomain }}'
   gituser: '{{ values.gitUsername }}'
