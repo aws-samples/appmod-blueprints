@@ -429,18 +429,33 @@ update_backstage_defaults() {
   # Get admin role name from current AWS context
   ADMIN_ROLE_NAME=$(aws sts get-caller-identity --query 'Arn' --output text | sed 's|.*assumed-role/||' | sed 's|/.*||')
 
+  # Get ArgoCD URL from EKS capability if available
+  ARGOCD_SERVER_URL=$(aws eks describe-capability --cluster-name ${CLUSTER_NAME:-peeks-hub} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null || echo "")
+  
+  # If EKS capability ArgoCD URL is available, extract domain name; otherwise fall back to ARGOCD_DOMAIN
+  if [ -n "$ARGOCD_SERVER_URL" ] && [ "$ARGOCD_SERVER_URL" != "None" ]; then
+    ARGOCD_HOSTNAME=$(echo "$ARGOCD_SERVER_URL" | sed 's|https://||' | sed 's|/.*||')
+    print_info "Using EKS-managed ArgoCD URL: $ARGOCD_HOSTNAME"
+  else
+    ARGOCD_HOSTNAME="$ARGOCD_DOMAIN"
+    print_info "Using in-cluster ArgoCD domain: $ARGOCD_HOSTNAME"
+  fi
+
   print_info "Using the following values for catalog-info.yaml update:"
   echo "  Account ID: $AWS_ACCOUNT_ID"
   echo "  AWS Region: $AWS_REGION"
   echo "  GitLab Domain: $GITLAB_DOMAIN"
+  echo "  Ingress Domain: $INGRESS_DOMAIN"
   echo "  Git Username: $GIT_USERNAME"
   echo "  Admin Role Name: $ADMIN_ROLE_NAME"
+  echo "  ArgoCD Hostname: $ARGOCD_HOSTNAME"
 
   print_step "Updating catalog-info.yaml with environment-specific values"
 
   yq -i '
+    (select(.metadata.name == "system-info").spec.ingress_hostname) = "'$INGRESS_DOMAIN'" |
     (select(.metadata.name == "system-info").spec.gitlab_hostname) = "'$GITLAB_DOMAIN'" |
-    (select(.metadata.name == "system-info").spec.argocd_hostname) = "'$ARGOCD_DOMAIN'" |
+    (select(.metadata.name == "system-info").spec.argocd_hostname) = "'$ARGOCD_HOSTNAME'" |
     (select(.metadata.name == "system-info").spec.gituser) = "'$GIT_USERNAME'" |
     (select(.metadata.name == "system-info").spec.aws_region) = "'$AWS_REGION'" |
     (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'" |
