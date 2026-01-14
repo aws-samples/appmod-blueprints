@@ -1,0 +1,228 @@
+---
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: rayservice.kro.run
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Replace=false
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: RayService
+    spec:
+      name: string
+      rayServeFile: string | default="https://github.com/mlops-on-kubernetes/Book/raw/main/Chapter%206/serve-config.zip"
+      replicas: integer | default=2
+      resources:
+        head:
+          cpu: string | default="1"
+          memory: string | default="2Gi"
+          gpu: string | default="0"
+        worker:
+          cpu: string | default="500m"
+          memory: string | default="1Gi"
+          gpu: string | default="0"
+      gitlab:
+        hostname: string
+        username: string
+      ingressHostname: string
+      createdBy: string | default="unknown"
+    status:
+      # Ray Service information
+      rayServiceName: ${rayservice.metadata.name}
+      rayServiceNamespace: ${rayservice.metadata.namespace}
+      # Service endpoints
+      serveServiceName: ${serveservice.metadata.name}
+      # Ingress information
+      ingressName: ${rayingress.metadata.name}
+  resources:
+    # Ray Service resource
+    - id: rayservice
+      readyWhen:
+        - ${rayservice.metadata.name != ""}
+      template:
+        apiVersion: ray.io/v1
+        kind: RayService
+        metadata:
+          name: ray-service-${schema.spec.name}
+          namespace: ${schema.metadata.namespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: ray-service
+            app.kubernetes.io/managed-by: kro
+            backstage.io/template-name: ray-service-kro
+          annotations:
+            backstage.io/template-version: "1.0.0"
+            backstage.io/created-by: ${schema.spec.createdBy}
+            ray.io/serve-config-source: ${schema.spec.rayServeFile}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RayService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          # Load serve configuration from the zip file
+          # The zip should contain serve_config.py with the application definition
+          serveConfigV2: |
+            import_path: serve_config:applications
+            runtime_env:
+              working_dir: "${schema.spec.rayServeFile}"
+          deploymentUnhealthySecondThreshold: 1200
+          serviceUnhealthySecondThreshold: 1200
+          rayClusterConfig:
+            rayVersion: '2.34.0'
+            enableInTreeAutoscaling: true
+            autoscalerOptions:
+              upscalingMode: Conservative
+              idleTimeoutSeconds: 120
+            headGroupSpec:
+              rayStartParams:
+                dashboard-host: '0.0.0.0'
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/name: ${schema.spec.name}
+                    app.kubernetes.io/component: ray-head
+                    backstage.io/template-name: ray-service-kro
+                spec:
+                  containers:
+                    - name: ray-head
+                      image: rayproject/ray:2.34.0
+                      resources:
+                        limits:
+                          cpu: ${schema.spec.resources.head.cpu}
+                          memory: ${schema.spec.resources.head.memory}
+                          nvidia.com/gpu: ${schema.spec.resources.head.gpu}
+                        requests:
+                          cpu: ${schema.spec.resources.head.cpu}
+                          memory: ${schema.spec.resources.head.memory}
+                          nvidia.com/gpu: ${schema.spec.resources.head.gpu}
+                      ports:
+                        - containerPort: 6379
+                          name: gcs-server
+                        - containerPort: 8265
+                          name: dashboard
+                        - containerPort: 10001
+                          name: client
+                        - containerPort: 8000
+                          name: serve
+            workerGroupSpecs:
+              - replicas: ${schema.spec.replicas}
+                minReplicas: 1
+                maxReplicas: ${schema.spec.replicas * 2}
+                groupName: worker-group
+                rayStartParams: {}
+                template:
+                  metadata:
+                    labels:
+                      app.kubernetes.io/name: ${schema.spec.name}
+                      app.kubernetes.io/component: ray-worker
+                      backstage.io/template-name: ray-service-kro
+                  spec:
+                    containers:
+                      - name: ray-worker
+                        image: rayproject/ray:2.34.0
+                        lifecycle:
+                          preStop:
+                            exec:
+                              command: ["/bin/sh","-c","ray stop"]
+                        resources:
+                          limits:
+                            cpu: ${schema.spec.resources.worker.cpu}
+                            memory: ${schema.spec.resources.worker.memory}
+                            nvidia.com/gpu: ${schema.spec.resources.worker.gpu}
+                          requests:
+                            cpu: ${schema.spec.resources.worker.cpu}
+                            memory: ${schema.spec.resources.worker.memory}
+                            nvidia.com/gpu: ${schema.spec.resources.worker.gpu}
+
+    # Service to expose Ray Serve endpoints
+    - id: serveservice
+      readyWhen:
+        - ${serveservice.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}-ray-serve-svc
+          namespace: ${schema.metadata.namespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: ray-service
+            app.kubernetes.io/managed-by: kro
+            backstage.io/template-name: ray-service-kro
+          annotations:
+            backstage.io/template-version: "1.0.0"
+            backstage.io/created-by: ${schema.spec.createdBy}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RayService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          selector:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: ray-head
+          ports:
+            - name: serve
+              port: 8000
+              targetPort: 8000
+              protocol: TCP
+            - name: dashboard
+              port: 8265
+              targetPort: 8265
+              protocol: TCP
+          type: ClusterIP
+
+    # Ingress for Ray Service
+    - id: rayingress
+      readyWhen:
+        - ${rayingress.metadata.name != ""}
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: ${schema.spec.name}-ray-ingress
+          namespace: ${schema.metadata.namespace}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/component: ray-service
+            app.kubernetes.io/managed-by: kro
+            backstage.io/template-name: ray-service-kro
+          annotations:
+            backstage.io/template-version: "1.0.0"
+            backstage.io/created-by: ${schema.spec.createdBy}
+            nginx.ingress.kubernetes.io/rewrite-target: /$2
+            nginx.ingress.kubernetes.io/use-regex: "true"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RayService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          ingressClassName: nginx
+          rules:
+            - host: ${schema.spec.ingressHostname}
+              http:
+                paths:
+                  - path: /ray-serve/${schema.spec.name}(/|$)(.*)
+                    pathType: ImplementationSpecific
+                    backend:
+                      service:
+                        name: ${schema.spec.name}-ray-serve-svc
+                        port:
+                          number: 8000
+                  - path: /ray-dashboard/${schema.spec.name}(/|$)(.*)
+                    pathType: ImplementationSpecific
+                    backend:
+                      service:
+                        name: ${schema.spec.name}-ray-serve-svc
+                        port:
+                          number: 8265
