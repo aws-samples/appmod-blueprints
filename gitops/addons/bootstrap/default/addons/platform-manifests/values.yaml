@@ -1,0 +1,4 @@
+# Platform manifests default configuration
+
+gpu:
+  enabled: true
