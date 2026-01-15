@@ -1328,6 +1328,21 @@ flux:
       path: '{{.metadata.annotations.addons_repo_basepath}}addons'
     workloads:
       path: '{{.metadata.annotations.workload_repo_basepath}}apps'
+    flux2:
+      helmController:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
+      imageReflectionController:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
   ignoreDifferences:
     - group: rbac.authorization.k8s.io
       kind: ClusterRole
