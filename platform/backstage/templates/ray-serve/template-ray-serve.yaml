@@ -1,7 +1,20 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Deploy Ray Service on Kubernetes using Kro abstraction and GitOps
+  description: |
+    Deploy Ray Service on Kubernetes using Kro abstraction and GitOps.
+    
+    **Recommended Resources by Model:**
+    
+    | Model | Size | CPU | Memory | GPU | Use Case |
+    |-------|------|-----|--------|-----|----------|
+    | DialoGPT-medium | 1.4GB | 2 | 4Gi | 0 | Conversational |
+    | Phi-2 | 5.5GB | 4 | 8Gi | 0 | Technical Q&A |
+    | TinyLlama | 2.2GB | 4 | 8Gi | 0 | Fast inference |
+    | Mistral-7B | 14GB | 8 | 48Gi | 1 | High quality |
+    | Llama-2-7B | 13GB | 8 | 48Gi | 1 | Strong performance |
+    
+    Note: Memory requirements include model weights + inference overhead (2-3x model size).
   name: ray-serve-kubernetes
   title: Ray Service on Kubernetes
 spec:
@@ -23,7 +36,7 @@ spec:
           title: Ray Serve Config
           description: URL to your Ray Service Multi-application config zip file
           type: string
-          default: "https://github.com/mlops-on-kubernetes/Book/raw/main/Chapter%206/serve-config.zip"
+          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/gpu-demo-serve-config.zip"
           ui:help: 'URL to zip file containing Ray Serve application code'
       required:
         - name
@@ -45,41 +58,136 @@ spec:
           minimum: 1
           maximum: 10
           ui:help: 'Number of Ray worker pods to deploy'
+    - title: Model Configuration
+      description: Select the AI model for text generation
+      properties:
+        modelId:
+          title: Model Selection
+          description: Choose the AI model based on your resource availability
+          type: string
+          default: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+          enum:
+            - "microsoft/DialoGPT-medium"
+            - "microsoft/phi-2"
+            - "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+            - "mistralai/Mistral-7B-Instruct-v0.2"
+            - "meta-llama/Llama-2-7b-chat-hf"
+          enumNames:
+            - "DialoGPT-medium (CPU) - 345M params, ~1.4GB - Conversational"
+            - "Phi-2 (CPU) - 2.7B params, ~5.5GB - Technical Q&A"
+            - "TinyLlama (CPU) - 1.1B params, ~2.2GB - Fast & Efficient"
+            - "Mistral-7B (GPU) - 7B params, ~14GB - High Quality (Requires 48GB RAM + GPU)"
+            - "Llama-2-7B (GPU) - 7B params, ~13GB - Strong Performance (Requires 48GB RAM + GPU)"
+          ui:help: 'Model size includes weights only. Total memory needs are 2-3x higher with inference overhead.'
+        maxLength:
+          title: Max Generation Length
+          description: Maximum number of tokens to generate
+          type: string
+          default: "100"
+          ui:help: 'Higher values generate longer responses but take more time (50-500)'
     - title: Resource Configuration
-      description: Configure CPU and memory resources
+      description: Configure CPU and memory resources (defaults set based on model selection)
+      dependencies:
+        modelId:
+          oneOf:
+            - properties:
+                modelId:
+                  enum:
+                    - "microsoft/DialoGPT-medium"
+                workerCpu:
+                  default: "2"
+                workerMemory:
+                  default: "4Gi"
+                workerGpu:
+                  default: "0"
+            - properties:
+                modelId:
+                  enum:
+                    - "microsoft/phi-2"
+                workerCpu:
+                  default: "4"
+                workerMemory:
+                  default: "8Gi"
+                workerGpu:
+                  default: "0"
+            - properties:
+                modelId:
+                  enum:
+                    - "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+                workerCpu:
+                  default: "4"
+                workerMemory:
+                  default: "8Gi"
+                workerGpu:
+                  default: "0"
+            - properties:
+                modelId:
+                  enum:
+                    - "mistralai/Mistral-7B-Instruct-v0.2"
+                workerCpu:
+                  default: "8"
+                workerMemory:
+                  default: "48Gi"
+                workerGpu:
+                  default: "1"
+            - properties:
+                modelId:
+                  enum:
+                    - "meta-llama/Llama-2-7b-chat-hf"
+                workerCpu:
+                  default: "8"
+                workerMemory:
+                  default: "48Gi"
+                workerGpu:
+                  default: "1"
       properties:
         headCpu:
           title: Head CPU
           description: CPU request for Ray head pod
           type: string
-          default: "1"
+          default: "2"
           pattern: '^[0-9]+(\.[0-9]+)?[m]?$|^[0-9]+$'
-          ui:help: 'CPU cores (e.g., "1", "2", "500m") - must be a string'
+          ui:help: 'CPU cores (e.g., "1", "2", "500m") - Head pod coordinates workers'
         headMemory:
           title: Head Memory
           description: Memory request for Ray head pod
           type: string
-          default: "2Gi"
-          ui:help: 'Memory size (e.g., "2Gi", "4Gi")'
+          default: "8Gi"
+          ui:help: 'Memory size (e.g., "4Gi", "8Gi") - Head pod needs minimal memory'
         workerCpu:
           title: Worker CPU
-          description: CPU request for Ray worker pods
+          description: CPU request for Ray worker pods (recommended based on model)
           type: string
-          default: "500m"
+          default: "4"
           pattern: '^[0-9]+(\.[0-9]+)?[m]?$|^[0-9]+$'
-          ui:help: 'CPU cores (e.g., "500m", "1") - must be a string'
+          ui:help: |
+            Recommended by model:
+            - DialoGPT/Phi-2/TinyLlama: 2-4 CPU
+            - Mistral-7B/Llama-2-7B: 8 CPU
         workerMemory:
           title: Worker Memory
-          description: Memory request for Ray worker pods
+          description: Memory request for Ray worker pods (recommended based on model)
           type: string
-          default: "1Gi"
-          ui:help: 'Memory size (e.g., "1Gi", "2Gi")'
+          default: "16Gi"
+          ui:help: |
+            Recommended by model:
+            - DialoGPT: 4Gi
+            - Phi-2: 8Gi  
+            - TinyLlama: 8Gi
+            - Mistral-7B: 48Gi
+            - Llama-2-7B: 48Gi
         workerGpu:
           title: Worker GPU
           description: GPU request for Ray worker pods
           type: string
           default: "0"
-          ui:help: 'Number of GPUs (e.g., "0", "1", "2") - for ML workloads'
+          enum:
+            - "0"
+            - "1"
+          enumNames:
+            - "No GPU (CPU models only)"
+            - "1 GPU (Required for Mistral-7B, Llama-2-7B)"
+          ui:help: 'GPU models (Mistral, Llama) require GPU=1 and 48Gi memory'
   steps:
     - id: validate-parameters
       name: Validate Parameters
@@ -108,6 +216,8 @@ spec:
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
+          modelId: ${{ parameters.modelId }}
+          maxLength: ${{ parameters.maxLength }}
           rayServeFile: ${{ parameters.rayServeFile }}
           replicas: ${{ parameters.replicas }}
           headCpu: ${{ parameters.headCpu }}
@@ -299,13 +409,13 @@ spec:
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.name }}-ray-service
         icon: git
       - title: ArgoCD Project
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/settings/projects/${{ parameters.name }}-ray-project
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/settings/projects/${{ parameters.name }}-ray-project
         icon: web
       - title: Ray Serve Endpoint (After Deployment)
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/ray-serve/${{ parameters.name }}/
+        url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/ray-serve/${{ parameters.name }}/
         icon: web
       - title: Ray Dashboard (After Deployment)
-        url: https://${{ steps['fetchSystem'].output.entity.spec.hostname }}/ray-dashboard/${{ parameters.name }}/
+        url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/ray-dashboard/${{ parameters.name }}/
         icon: web
     text:
       - title: Kro-based Ray Service Deployment
