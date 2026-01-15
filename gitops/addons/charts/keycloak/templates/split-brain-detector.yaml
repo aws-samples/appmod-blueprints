@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-split-brain-detector
+  namespace: keycloak
+data:
+  detector.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    NAMESPACE="keycloak"
+    
+    log() {
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"
+    }
+    
+    get_cluster_members() {
+        local pod=$1
+        kubectl exec -n "$NAMESPACE" "$pod" -- bash -c '
+            kubectl logs -n "$NAMESPACE" "$pod" --tail=1000 | grep "Received new cluster view" 2>/dev/null | tail -1 | 
+            grep -oP "\(\K[0-9]+" || echo "0"
+        ' 2>/dev/null || echo "0"
+    }
+    
+    check_split_brain() {
+        log "Checking Keycloak cluster health..."
+        
+        local pods=($(kubectl get pods -n "$NAMESPACE" -l app=keycloak -o jsonpath='{.items[*].metadata.name}'))
+        
+        if [ ${#pods[@]} -lt 2 ]; then
+            log "Only ${#pods[@]} pod(s) found, skipping"
+            return 0
+        fi
+        
+        log "Found ${#pods[@]} pods: ${pods[*]}"
+        
+        declare -A cluster_sizes
+        for pod in "${pods[@]}"; do
+            local members=$(get_cluster_members "$pod")
+            cluster_sizes[$pod]=$members
+            log "Pod $pod: cluster size $members"
+        done
+        
+        local expected_size=${#pods[@]}
+        local isolated_pod=""
+        
+        for pod in "${pods[@]}"; do
+            local size=${cluster_sizes[$pod]}
+            if [ "$size" -eq 1 ] && [ "$expected_size" -gt 1 ]; then
+                log "⚠️  SPLIT-BRAIN: $pod isolated (size: 1, expected: $expected_size)"
+                isolated_pod=$pod
+                break
+            fi
+        done
+        
+        if [ -n "$isolated_pod" ]; then
+            log "🔧 Healing: deleting $isolated_pod"
+            kubectl delete pod -n "$NAMESPACE" "$isolated_pod" --grace-period=30
+            log "✅ Pod deleted, will rejoin cluster on restart"
+            return 1
+        else
+            log "✅ Cluster healthy"
+            return 0
+        fi
+    }
+    
+    check_split_brain
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: keycloak-split-brain-detector
+  namespace: keycloak
+spec:
+  schedule: "*/10 * * * *"  # Every 10 minutes
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: keycloak-split-brain-detector
+        spec:
+          serviceAccountName: keycloak-split-brain-detector
+          restartPolicy: OnFailure
+          containers:
+          - name: detector
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/bash
+            - /scripts/detector.sh
+            volumeMounts:
+            - name: script
+              mountPath: /scripts
+          volumes:
+          - name: script
+            configMap:
+              name: keycloak-split-brain-detector
+              defaultMode: 0755
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keycloak-split-brain-detector
+  namespace: keycloak
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: keycloak-split-brain-detector
+  namespace: keycloak
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "delete"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: keycloak-split-brain-detector
+  namespace: keycloak
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: keycloak-split-brain-detector
+subjects:
+- kind: ServiceAccount
+  name: keycloak-split-brain-detector
+  namespace: keycloak
