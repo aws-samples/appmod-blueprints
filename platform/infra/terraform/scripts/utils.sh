@@ -242,15 +242,17 @@ force_unlock_if_needed() {
   
   log "Checking for Terraform state locks..."
   
-  # Use a more reliable approach - check state list first (faster)
-  if ! timeout 30s terraform -chdir=$script_dir state list &>/dev/null; then
-    log_warning "Cannot access Terraform state - possible lock or connectivity issue"
-    return 1
+  # Quick validation check with timeout (doesn't require state lock)
+  local validate_output
+  if validate_output=$(timeout 10s terraform -chdir=$script_dir validate 2>&1); then
+    log "No state lock detected"
+    return 0
   fi
   
-  # Quick lock check using validate (faster than plan)
-  if timeout 15s terraform -chdir=$script_dir validate &>/dev/null; then
-    log "No state lock detected"
+  # Check if timeout occurred
+  local exit_code=$?
+  if [ $exit_code -eq 124 ]; then
+    log_warning "Validation check timed out after 10s, skipping lock check"
     return 0
   fi
   
