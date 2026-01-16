@@ -1,26 +1,7 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: |
-    Deploys dev and prod clusters on EKS.
-
-    ⚠️  PREREQUISITE: Create GitLab repository first!
-
-    **Option 1: Use the script (recommended)**
-    ```bash
-    cd /home/ec2-user/environment/platform-on-eks-workshop
-    ./scripts/create-gitlab-repo.sh ${{ parameters.name }}
-    ```
-
-    **Option 2: Manual command**
-    ```bash
-    curl -X POST "$GITLABURL/api/v4/projects" \
-      -H "PRIVATE-TOKEN: $GITLABPW" \
-      -H "Content-Type: application/json" \
-      -d '{"name":"${{ parameters.name }}","path":"${{ parameters.name }}","description":"Dev and Prod environment","visibility":"private","initialize_with_readme":true}'
-    ```
-
-    Then continue with this template.
+  description: Deploy dev and prod EKS clusters with GitOps configuration.
   name: create-dev-and-prod-env
   title: Create Dev and Prod Environment
 spec:
