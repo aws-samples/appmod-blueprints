@@ -46,6 +46,7 @@ spec:
           headGroupSpec:
             rayStartParams:
               dashboard-host: 0.0.0.0
+              num-cpus: "0"
             template:
               metadata:
                 labels:
@@ -72,7 +73,7 @@ spec:
                     requests:
                       cpu: ${schema.spec.resources.head.cpu}
                       memory: ${schema.spec.resources.head.memory}
-          rayVersion: 2.34.0
+          rayVersion: 2.24.0
           workerGroupSpecs:
           - groupName: worker-group
             maxReplicas: ${schema.spec.replicas * 2}
@@ -158,6 +159,7 @@ spec:
           headGroupSpec:
             rayStartParams:
               dashboard-host: 0.0.0.0
+              num-cpus: "0"
             template:
               metadata:
                 labels:
@@ -166,7 +168,7 @@ spec:
                   backstage.io/template-name: ray-service-kro
               spec:
                 containers:
-                - image: rayproject/ray:2.34.0-py39-gpu
+                - image: public.ecr.aws/data-on-eks/ray2.24.0-py310-vllm-gpu:v1
                   name: ray-head
                   ports:
                   - containerPort: 6379
@@ -184,7 +186,7 @@ spec:
                     requests:
                       cpu: ${schema.spec.resources.head.cpu}
                       memory: ${schema.spec.resources.head.memory}
-          rayVersion: 2.34.0
+          rayVersion: 2.24.0
           workerGroupSpecs:
           - groupName: worker-group
             maxReplicas: ${schema.spec.replicas * 2}
@@ -199,7 +201,10 @@ spec:
                   backstage.io/template-name: ray-service-kro
               spec:
                 containers:
-                - image: rayproject/ray:2.34.0-py39-gpu
+                - image: rayproject/ray:2.24.0-py310-cu118
+                  env:
+                  - name: HUGGING_FACE_HUB_TOKEN
+                    value: ${schema.spec.hfToken}
                   lifecycle:
                     preStop:
                       exec:
@@ -220,18 +225,16 @@ spec:
         serveConfigV2: |
           applications:
             - name: gpu_text_generation
-              import_path: app:deployment
+              import_path: vllm_serve:deployment
               route_prefix: /generate
               runtime_env:
                 working_dir: "${schema.spec.rayServeFile}"
                 pip:
-                  - torch>=2.0.0
-                  - transformers>=4.30.0
-                  - accelerate
-                  - bitsandbytes
+                  - vllm==0.4.3
                 env_vars:
                   MODEL_ID: "${schema.spec.modelId}"
-                  MAX_LENGTH: "${schema.spec.maxLength}"
+                  MAX_MODEL_LEN: "${schema.spec.maxLength}"
+                  LD_LIBRARY_PATH: "/home/ray/anaconda3/lib:$LD_LIBRARY_PATH"
         serviceUnhealthySecondThreshold: 1200
   - id: serveservice
     readyWhen:
@@ -331,11 +334,12 @@ spec:
       gitlab:
         hostname: string
         username: string
+      hfToken: string | default=""
       ingressHostname: string
       name: string
       modelId: string | default="microsoft/DialoGPT-medium"
       maxLength: string | default="100"
-      rayServeFile: string | default="https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/gpu-demo-serve-config.zip"
+      rayServeFile: string | default="https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/cpu-serve-config.zip"
       replicas: integer | default=2
       resources:
         head:
