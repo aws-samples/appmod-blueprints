@@ -87,6 +87,7 @@ spec:
                   app.kubernetes.io/name: ${schema.spec.name}
                   backstage.io/template-name: ray-service-kro
               spec:
+                serviceAccountName: ray-worker-sa
                 containers:
                 - image: rayproject/ray:2.34.0
                   lifecycle:
@@ -200,6 +201,7 @@ spec:
                   app.kubernetes.io/name: ${schema.spec.name}
                   backstage.io/template-name: ray-service-kro
               spec:
+                serviceAccountName: ray-worker-sa
                 containers:
                 - image: rayproject/ray:2.24.0-py310-cu118
                   env:
