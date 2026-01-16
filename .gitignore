@@ -166,3 +166,4 @@ platform/infra/terraform/terraform-aws-observability-accelerator
 prodplan
 devplan
 devdbplan
+__pycache__/
