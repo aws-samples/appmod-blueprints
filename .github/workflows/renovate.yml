@@ -31,4 +31,4 @@ jobs:
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           RENOVATE_REPOSITORIES: ${{ github.repository }}
-          RENOVATE_BASE_BRANCHES: '["riv25"]'
+          RENOVATE_BASE_BRANCHES: '["main"]'
