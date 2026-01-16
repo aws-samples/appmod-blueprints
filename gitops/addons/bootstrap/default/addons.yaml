@@ -1584,5 +1584,4 @@ platform-manifests:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
-    gpu:
-      enabled: true  # Set to true to enable GPU EKS Auto mode nodepool
+

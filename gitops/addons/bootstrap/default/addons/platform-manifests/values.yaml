@@ -2,3 +2,6 @@
 
 gpu:
   enabled: true
+
+customNodepools:
+  enabled: true  # Set to true to use custom nodepools instead of EKS Auto Mode defaults
