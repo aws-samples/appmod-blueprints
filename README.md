@@ -32,7 +32,7 @@ Once CloudShell has loaded, run the following commands:
 ASSET_URL=https://ws-assets-prod-iad-r-pdx-f3b3f9f1a7d6a3d0.s3.us-west-2.amazonaws.com/daa2a765-04db-4399-aaa7-fddc8d07e9e1/peeks-workshop-team-stack-self.json
 
 curl $ASSET_URL --output peeks-workshop.json
-grep riv25 peeks-workshop.json # should output:  v0.1.2-riv25
+grep '"WORKSHOP_GIT_BRANCH":' static/peeks-workshop-* # should output:  v0.1.2-riv25
 
 bucketName="peeks-workshop-$(uuidgen | tr -d - | tr '[:upper:]' '[:lower:]')"
 aws s3api create-bucket \
@@ -54,7 +54,7 @@ aws cloudformation deploy --stack-name peeks-workshop \
 ASSET_URL=https://ws-assets-prod-iad-r-fra-b129423e91500967.s3.eu-central-1.amazonaws.com/daa2a765-04db-4399-aaa7-fddc8d07e9e1/peeks-workshop-team-stack-self.json
 
 curl $ASSET_URL --output peeks-workshop.json
-grep riv25 peeks-workshop.json # should output:  v0.1.2-riv25
+grep '"WORKSHOP_GIT_BRANCH":' static/peeks-workshop-* # should output:  v0.1.2-riv25
 
 bucketName="peeks-workshop-$(uuidgen | tr -d - | tr '[:upper:]' '[:lower:]')"
 aws s3api create-bucket \
