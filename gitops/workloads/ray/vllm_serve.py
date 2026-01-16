@@ -6,6 +6,7 @@ from vllm.sampling_params import SamplingParams
 import time
 
 @serve.deployment(
+    name="mistral-deployment",
     ray_actor_options={"num_gpus": 1},
     max_concurrent_queries=100
 )
