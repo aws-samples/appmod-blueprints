@@ -1478,9 +1478,8 @@ ray-operator:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5' # Needs to be after Keycloak
   namespace: ray-system
-  chartName: kuberay-operator
-  chartRepository: https://ray-project.github.io/kuberay-helm/
-  defaultVersion: '1.2.2'
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/ray-operator'
   selector:
     matchExpressions:
       - key: enable_ray_operator
