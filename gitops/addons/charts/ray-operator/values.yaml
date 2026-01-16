@@ -1,0 +1,5 @@
+# Default values for ray-operator
+# This wraps the upstream kuberay-operator chart and adds ServiceAccounts
+
+# Pass through to upstream chart
+kuberay-operator: {}

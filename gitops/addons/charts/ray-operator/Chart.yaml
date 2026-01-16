@@ -1,0 +1,8 @@
+apiVersion: v2
+name: ray-operator
+description: Ray Operator with ServiceAccounts for model storage
+version: 0.1.0
+dependencies:
+  - name: kuberay-operator
+    version: "1.2.2"
+    repository: https://ray-project.github.io/kuberay-helm/
