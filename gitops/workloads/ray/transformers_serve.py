@@ -4,7 +4,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 
 @serve.deployment(
-    name="llm-deployment",
+    name="gpu-deployment",
     ray_actor_options={"num_gpus": 1},
     max_concurrent_queries=10
 )
