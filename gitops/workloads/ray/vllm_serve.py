@@ -15,13 +15,17 @@ class VLLMDeployment:
         model_id = os.environ.get('MODEL_ID', 'mistralai/Mistral-7B-Instruct-v0.2')
         max_model_len = int(os.environ.get('MAX_MODEL_LEN', '8192'))
         
+        # Check if model_id is a local path
+        is_local = model_id.startswith('/') or os.path.exists(model_id)
+        
         engine_args = AsyncEngineArgs(
             model=model_id,
             tensor_parallel_size=1,
             dtype="auto",
             gpu_memory_utilization=0.9,
             max_model_len=max_model_len,
-            trust_remote_code=True
+            trust_remote_code=True,
+            download_dir=None if is_local else None  # Don't download if local
         )
         
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
