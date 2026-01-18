@@ -5,8 +5,7 @@ import torch
 
 @serve.deployment(
     name="gpu-deployment",
-    ray_actor_options={"num_gpus": 1},
-    max_concurrent_queries=10
+    ray_actor_options={"num_gpus": 1}
 )
 class TransformersDeployment:
     def __init__(self):
