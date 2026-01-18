@@ -12,11 +12,12 @@ class TransformersDeployment:
         model_id = os.environ.get('MODEL_ID', '/mnt/models/tinyllama')
         
         print(f"Loading model from: {model_id}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, local_files_only=True)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_id,
             torch_dtype=torch.float16,
-            device_map="auto"
+            device_map="auto",
+            local_files_only=True
         )
         self.model_id = model_id
         print(f"Model loaded successfully: {model_id}")
