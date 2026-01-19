@@ -689,8 +689,10 @@ delete_argocd_apps() {
         return 0
     fi
     
-    # Process all apps
-    echo "$all_apps" | while read -r namespace name _; do
+    # Collect apps to delete
+    local apps_to_delete=()
+    
+    while read -r namespace name _; do
         local should_process=false
         
         # Check if app matches any partial name (convert string to words)
@@ -708,6 +710,15 @@ delete_argocd_apps() {
             continue
         fi
         
+        apps_to_delete+=("$namespace:$name")
+    done <<< "$all_apps"
+    
+    # Phase 1: Initiate deletion for all apps in parallel
+    log "Initiating deletion of ${#apps_to_delete[@]} applications..."
+    for app in "${apps_to_delete[@]}"; do
+        local namespace="${app%%:*}"
+        local name="${app##*:}"
+        
         # Remove finalizers if required
         if [[ "$patch_required" == "true" ]]; then
             kubectl patch application.argoproj.io "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
@@ -715,20 +726,47 @@ delete_argocd_apps() {
         
         terminate_argocd_operation "$name" # Terminate any ongoing operation
         kubectl delete application.argoproj.io "$name" -n "$namespace" --wait=false 2>/dev/null || true
+    done
+    
+    # Phase 2: Wait for deletions with reduced timeout
+    local delete_timeout=15  # 15 seconds - apps that can delete will do so quickly
+    local delete_start=$(date +%s)
+    
+    log "Waiting for applications to delete (timeout: ${delete_timeout}s)..."
+    while true; do
+        local remaining_apps=()
         
-        # Wait for deletion with 5 minute timeout
-        local delete_start=$(date +%s)
-        local delete_timeout=120  # 2 minutes
+        for app in "${apps_to_delete[@]}"; do
+            local namespace="${app%%:*}"
+            local name="${app##*:}"
+            
+            if kubectl get application.argoproj.io "$name" -n "$namespace" >/dev/null 2>&1; then
+                remaining_apps+=("$app")
+            fi
+        done
         
-        while kubectl get application.argoproj.io "$name" -n "$namespace" >/dev/null 2>&1; do
-            local elapsed=$(($(date +%s) - delete_start))
-            if [ $elapsed -ge $delete_timeout ]; then
-                log "Force deleting stuck application: $name"
+        # If no apps remaining, we're done
+        if [[ ${#remaining_apps[@]} -eq 0 ]]; then
+            log "All applications deleted successfully"
+            break
+        fi
+        
+        # Check timeout
+        local elapsed=$(($(date +%s) - delete_start))
+        if [ $elapsed -ge $delete_timeout ]; then
+            log "Timeout reached. Force deleting ${#remaining_apps[@]} stuck applications..."
+            for app in "${remaining_apps[@]}"; do
+                local namespace="${app%%:*}"
+                local name="${app##*:}"
+                
+                log "Force deleting: $name"
                 kubectl patch application.argoproj.io "$name" -n "$namespace" --type='merge' -p='{"metadata":{"finalizers":null}}' 2>/dev/null || true
                 kubectl delete application.argoproj.io "$name" -n "$namespace" --force --grace-period=0 2>/dev/null || true
-                break
-            fi
-            sleep 5
-        done
+            done
+            break
+        fi
+        
+        sleep 2
+        apps_to_delete=("${remaining_apps[@]}")
     done
 }
