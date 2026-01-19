@@ -17,6 +17,8 @@ metadata:
 spec:
   name: ${{values.name}}
   modelId: ${{values.modelId}}
+  s3ModelBucket: ${{values.model_s3_bucket}}
+  awsRegion: ${{values.aws_region}}
   maxLength: "${{values.maxLength}}"
   rayServeFile: ${{values.rayServeFile}}
   replicas: ${{values.replicas}}

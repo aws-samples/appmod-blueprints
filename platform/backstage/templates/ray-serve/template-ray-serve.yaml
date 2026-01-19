@@ -6,6 +6,12 @@ metadata:
     
     Choose between CPU (Transformers) or GPU (vLLM) deployment for AI model inference.
     Supports models from 1GB (TinyLlama) to 14GB (Mistral-7B) with automatic resource configuration.
+    
+    **Model Management:**
+    - Models are pre-uploaded to S3 bucket (configured in system catalog-info.yaml)
+    - Currently available: TinyLlama-1.1B (2GB), Mistral-7B-Instruct (13.5GB)
+    - To add new models: Update ray-operator addon's model-prestage-job.yaml with new model upload job
+    - Models are mounted via S3 CSI driver at /mnt/models/models/{model-name}
   name: ray-serve-kubernetes
   title: Ray Service on Kubernetes
 spec:
@@ -40,11 +46,13 @@ spec:
         modelId:
           title: Model
           type: string
-          default: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+          default: "/mnt/models/models/tinyllama"
           enum:
-            - "microsoft/DialoGPT-medium"
-            - "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-            - "mistralai/Mistral-7B-Instruct-v0.2"
+            - "/mnt/models/models/tinyllama"
+            - "/mnt/models/models/mistral-7b"
+          enumNames:
+            - "TinyLlama-1.1B (1GB, fast)"
+            - "Mistral-7B-Instruct (14GB, high quality)"
         maxLength:
           title: Max Tokens
           type: string
@@ -53,55 +61,31 @@ spec:
         - name
         - deploymentType
     - title: Resource Configuration
-      dependencies:
-        deploymentType:
-          oneOf:
-            - properties:
-                deploymentType:
-                  const: "cpu"
-                headCpu:
-                  title: Head CPU
-                  type: string
-                  const: "2"
-                headMemory:
-                  title: Head Memory
-                  type: string
-                  const: "8Gi"
-                workerCpu:
-                  title: Worker CPU
-                  type: string
-                  const: "4"
-                workerMemory:
-                  title: Worker Memory
-                  type: string
-                  const: "16Gi"
-                workerGpu:
-                  title: Worker GPU
-                  type: string
-                  const: "0"
-            - properties:
-                deploymentType:
-                  const: "gpu"
-                headCpu:
-                  title: Head CPU
-                  type: string
-                  const: "2"
-                headMemory:
-                  title: Head Memory
-                  type: string
-                  const: "16Gi"
-                workerCpu:
-                  title: Worker CPU
-                  type: string
-                  const: "8"
-                workerMemory:
-                  title: Worker Memory
-                  type: string
-                  const: "48Gi"
-                workerGpu:
-                  title: Worker GPU
-                  type: string
-                  const: "1"
+      properties:
+        headCpu:
+          title: Head CPU
+          type: string
+          default: "2"
+        headMemory:
+          title: Head Memory
+          type: string
+          default: "8Gi"
+        workerCpu:
+          title: Worker CPU
+          type: string
+          default: "4"
+        workerMemory:
+          title: Worker Memory
+          type: string
+          default: "16Gi"
+        workerGpu:
+          title: Worker GPU
+          type: string
+          default: "1"
+          enum: ["0", "1"]
+          enumNames:
+            - "CPU only"
+            - "1 GPU"
   steps:
     - id: validate-parameters
       name: Validate Parameters
@@ -132,12 +116,12 @@ spec:
           namespace: ${{ parameters.namespace }}
           modelId: ${{ parameters.modelId }}
           maxLength: ${{ parameters.maxLength }}
-          rayServeFile: ${{ parameters.deploymentType === 'gpu' and 'https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/gpu-serve-config.zip' or 'https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/cpu-serve-config.zip' }}
+          rayServeFile: ${{ parameters.deploymentType === 'gpu' and 'https://github.com/aws-samples/appmod-blueprints/raw/763e8339/gitops/workloads/ray/gpu-serve-transformers.zip' or 'https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/cpu-serve-config.zip' }}
           replicas: ${{ parameters.replicas }}
           headCpu: ${{ parameters.headCpu }}
-          headMemory: ${{ parameters.deploymentType === 'gpu' and '16Gi' or parameters.headMemory }}
-          workerCpu: ${{ parameters.workerCpu }}
-          workerMemory: ${{ parameters.workerMemory }}
+          headMemory: ${{ parameters.headMemory }}
+          workerCpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '8' or parameters.workerCpu }}
+          workerMemory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '32Gi' or parameters.workerMemory }}
           headGpu: "0"
           workerGpu: ${{ parameters.workerGpu }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
@@ -146,6 +130,7 @@ spec:
           git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
           aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
           aws_region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
+          model_s3_bucket: ${{ steps['fetchSystem'].output.entity.spec.model_s3_bucket }}
           created_by: ${{ user.entity.metadata.name | default("unknown") }}
 
     - id: publish
@@ -399,5 +384,30 @@ spec:
           3. **Test Endpoints**: Send requests to your Ray Serve applications
           4. **Scale Resources**: Adjust replicas and resources as needed
           5. **Explore Resources**: Use the links above to explore your infrastructure
+          
+          ## 🧪 **Test Your Endpoint**
+          
+          Once deployed (5-8 minutes), test your inference endpoint:
+          
+          ```bash
+          curl -X POST https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/ray-serve/${{ parameters.name }}/generate \
+            -H "Content-Type: application/json" \
+            -d '{"prompt": "Explain machine learning in simple terms", "max_length": 100}'
+          ```
+          
+          **Expected Response:**
+          ```json
+          {
+            "prompt": "Explain machine learning in simple terms",
+            "generated_text": "Explain machine learning in simple terms: ...",
+            "model": "${{ parameters.modelId }}",
+            "device": "cuda:0"
+          }
+          ```
+          
+          **Troubleshooting:**
+          - If 404: Service still deploying, wait 2-3 more minutes
+          - If 502: Ray Serve not ready, check ArgoCD sync status
+          - If timeout: Check pod status with `kubectl get pods -n ${{ parameters.namespace }}`
           
           Your Ray Service is now fully integrated with Kro abstraction and GitOps! 🎯
