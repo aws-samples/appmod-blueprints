@@ -1,11 +1,12 @@
 # S3 bucket for Ray model storage
 resource "aws_s3_bucket" "ray_models" {
-  bucket = "${var.resource_prefix}-ray-models"
+  bucket = "${var.resource_prefix}-ray-models-${data.aws_caller_identity.current.account_id}"
 
   tags = {
     Name        = "${var.resource_prefix}-ray-models"
     Environment = "platform"
     ManagedBy   = "terraform"
+    AccountId   = data.aws_caller_identity.current.account_id
   }
 }
 
