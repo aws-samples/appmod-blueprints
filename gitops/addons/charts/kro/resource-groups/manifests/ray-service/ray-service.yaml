@@ -7,6 +7,62 @@ metadata:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   resources:
+  # S3 PersistentVolume for model storage
+  - id: s3pv
+    readyWhen:
+    - ${s3pv.metadata.name != ""}
+    template:
+      apiVersion: v1
+      kind: PersistentVolume
+      metadata:
+        name: ${schema.spec.name}-s3-models-pv
+        ownerReferences:
+        - apiVersion: kro.run/v1alpha1
+          blockOwnerDeletion: true
+          controller: false
+          kind: RayService
+          name: ${schema.metadata.name}
+          uid: ${schema.metadata.uid}
+      spec:
+        capacity:
+          storage: 100Gi
+        accessModes:
+          - ReadOnlyMany
+        mountOptions:
+          - allow-delete
+          - region ${schema.spec.?awsRegion.orValue('us-west-2')}
+        csi:
+          driver: s3.csi.aws.com
+          volumeHandle: ${schema.spec.?s3ModelBucket.orValue('peeks-ray-models')}
+          volumeAttributes:
+            bucketName: ${schema.spec.?s3ModelBucket.orValue('peeks-ray-models')}
+  
+  # S3 PersistentVolumeClaim
+  - id: s3pvc
+    readyWhen:
+    - ${s3pvc.metadata.name != ""}
+    template:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: ${schema.spec.name}-s3-models-pvc
+        namespace: ${schema.metadata.namespace}
+        ownerReferences:
+        - apiVersion: kro.run/v1alpha1
+          blockOwnerDeletion: true
+          controller: false
+          kind: RayService
+          name: ${schema.metadata.name}
+          uid: ${schema.metadata.uid}
+      spec:
+        accessModes:
+          - ReadOnlyMany
+        storageClassName: ""
+        resources:
+          requests:
+            storage: 100Gi
+        volumeName: ${s3pv.metadata.name}
+  
   # CPU RayService - no GPU resources
   - id: rayserviceCpu
     includeWhen:
@@ -54,9 +110,17 @@ spec:
                   app.kubernetes.io/name: ${schema.spec.name}
                   backstage.io/template-name: ray-service-kro
               spec:
+                volumes:
+                - name: s3-models
+                  persistentVolumeClaim:
+                    claimName: ${s3pvc.metadata.name}
                 containers:
-                - image: rayproject/ray:2.34.0
+                - image: rayproject/ray:2.34.0-py310
                   name: ray-head
+                  volumeMounts:
+                  - name: s3-models
+                    mountPath: /mnt/models
+                    readOnly: true
                   ports:
                   - containerPort: 6379
                     name: gcs-server
@@ -73,7 +137,7 @@ spec:
                     requests:
                       cpu: ${schema.spec.resources.head.cpu}
                       memory: ${schema.spec.resources.head.memory}
-          rayVersion: 2.24.0
+          rayVersion: 2.34.0
           workerGroupSpecs:
           - groupName: worker-group
             maxReplicas: ${schema.spec.replicas * 2}
@@ -89,7 +153,7 @@ spec:
               spec:
                 serviceAccountName: ray-worker-sa
                 containers:
-                - image: rayproject/ray:2.34.0
+                - image: rayproject/ray:2.34.0-py310
                   lifecycle:
                     preStop:
                       exec:
@@ -168,9 +232,17 @@ spec:
                   app.kubernetes.io/name: ${schema.spec.name}
                   backstage.io/template-name: ray-service-kro
               spec:
+                volumes:
+                - name: s3-models
+                  persistentVolumeClaim:
+                    claimName: ${s3pvc.metadata.name}
                 containers:
-                - image: public.ecr.aws/data-on-eks/ray2.24.0-py310-vllm-gpu:v1
+                - image: rayproject/ray:2.34.0-py310
                   name: ray-head
+                  volumeMounts:
+                  - name: s3-models
+                    mountPath: /mnt/models
+                    readOnly: true
                   ports:
                   - containerPort: 6379
                     name: gcs-server
@@ -187,7 +259,7 @@ spec:
                     requests:
                       cpu: ${schema.spec.resources.head.cpu}
                       memory: ${schema.spec.resources.head.memory}
-          rayVersion: 2.24.0
+          rayVersion: 2.34.0
           workerGroupSpecs:
           - groupName: worker-group
             maxReplicas: ${schema.spec.replicas * 2}
@@ -202,11 +274,19 @@ spec:
                   backstage.io/template-name: ray-service-kro
               spec:
                 serviceAccountName: ray-worker-sa
+                volumes:
+                - name: s3-models
+                  persistentVolumeClaim:
+                    claimName: ${s3pvc.metadata.name}
                 containers:
-                - image: rayproject/ray:2.24.0-py310-cu118
+                - image: rayproject/ray:2.34.0-py310-cu118
                   env:
                   - name: HUGGING_FACE_HUB_TOKEN
                     value: ${schema.spec.hfToken}
+                  volumeMounts:
+                  - name: s3-models
+                    mountPath: /mnt/models
+                    readOnly: true
                   lifecycle:
                     preStop:
                       exec:
@@ -227,16 +307,17 @@ spec:
         serveConfigV2: |
           applications:
             - name: gpu_text_generation
-              import_path: vllm_serve:deployment
+              import_path: app:deployment
               route_prefix: /generate
               runtime_env:
                 working_dir: "${schema.spec.rayServeFile}"
                 pip:
-                  - vllm==0.4.3
+                  - transformers>=4.30.0
+                  - torch>=2.0.0
+                  - accelerate
                 env_vars:
                   MODEL_ID: "${schema.spec.modelId}"
                   MAX_MODEL_LEN: "${schema.spec.maxLength}"
-                  LD_LIBRARY_PATH: "/home/ray/anaconda3/lib:$LD_LIBRARY_PATH"
         serviceUnhealthySecondThreshold: 1200
   - id: serveservice
     readyWhen:
@@ -341,6 +422,8 @@ spec:
       name: string
       modelId: string | default="microsoft/DialoGPT-medium"
       maxLength: string | default="100"
+      s3ModelBucket: string | default="peeks-ray-models"
+      awsRegion: string | default="us-west-2"
       rayServeFile: string | default="https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/cpu-serve-config.zip"
       replicas: integer | default=2
       resources:
