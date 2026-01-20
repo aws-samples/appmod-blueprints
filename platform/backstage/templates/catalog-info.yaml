@@ -43,4 +43,5 @@ spec:
   aws_region: '{{ values.awsRegion }}'
   aws_account_id: '{{ values.awsAccountId }}'
   admin_role_name: '{{ values.adminRoleName }}'
+  resource_prefix: '{{ values.resourcePrefix }}'
   model_s3_bucket: '{{ values.modelS3Bucket }}'
