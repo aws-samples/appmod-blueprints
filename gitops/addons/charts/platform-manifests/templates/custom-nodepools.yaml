@@ -1,0 +1,78 @@
+{{- if .Values.customNodepools.enabled }}
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: peeks-general-purpose
+spec:
+  disruption:
+    budgets:
+    - nodes: 10%
+    consolidateAfter: 10m
+    consolidationPolicy: WhenEmptyOrUnderutilized
+  template:
+    metadata:
+      labels:
+        node-type: general-purpose
+        managed-by: peeks
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand", "spot"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+        - key: "karpenter.k8s.aws/instance-category"
+          operator: In
+          values: ["c", "m", "r"]
+        - key: "karpenter.k8s.aws/instance-generation"
+          operator: Gt
+          values: ["5"]
+      terminationGracePeriod: 48h
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: peeks-system
+spec:
+  disruption:
+    budgets:
+    - nodes: 10%
+    consolidateAfter: 30m
+    consolidationPolicy: WhenEmpty
+  template:
+    metadata:
+      labels:
+        node-type: system
+        managed-by: peeks
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+        - key: "karpenter.k8s.aws/instance-category"
+          operator: In
+          values: ["c", "m", "r"]
+        - key: "karpenter.k8s.aws/instance-generation"
+          operator: Gt
+          values: ["5"]
+        - key: "karpenter.k8s.aws/instance-size"
+          operator: In
+          values: ["large", "xlarge", "2xlarge"]
+      taints:
+        - key: CriticalAddonsOnly
+          effect: NoSchedule
+      terminationGracePeriod: 48h
+{{- end }}

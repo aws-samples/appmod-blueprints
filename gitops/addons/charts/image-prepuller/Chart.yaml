@@ -1,0 +1,5 @@
+apiVersion: v2
+name: image-prepuller
+description: Pre-pulls container images on all nodes to improve startup times
+version: 0.1.0
+appVersion: "1.0"
