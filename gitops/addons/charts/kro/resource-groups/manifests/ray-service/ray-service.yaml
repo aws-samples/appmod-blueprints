@@ -115,7 +115,7 @@ spec:
                   persistentVolumeClaim:
                     claimName: ${s3pvc.metadata.name}
                 containers:
-                - image: rayproject/ray:2.34.0-py310
+                - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/ray-gpu-optimized:latest
                   name: ray-head
                   volumeMounts:
                   - name: s3-models
@@ -153,7 +153,7 @@ spec:
               spec:
                 serviceAccountName: ray-worker-sa
                 containers:
-                - image: rayproject/ray:2.34.0-py310
+                - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/ray-gpu-optimized:latest
                   lifecycle:
                     preStop:
                       exec:
@@ -237,7 +237,7 @@ spec:
                   persistentVolumeClaim:
                     claimName: ${s3pvc.metadata.name}
                 containers:
-                - image: rayproject/ray:2.34.0-py310
+                - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/ray-gpu-optimized:latest
                   name: ray-head
                   volumeMounts:
                   - name: s3-models
@@ -279,7 +279,7 @@ spec:
                   persistentVolumeClaim:
                     claimName: ${s3pvc.metadata.name}
                 containers:
-                - image: rayproject/ray:2.34.0-py310-cu118
+                - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/ray-gpu-optimized:latest
                   env:
                   - name: HUGGING_FACE_HUB_TOKEN
                     value: ${schema.spec.hfToken}
@@ -420,10 +420,11 @@ spec:
       hfToken: string | default=""
       ingressHostname: string
       name: string
-      modelId: string | default="microsoft/DialoGPT-medium"
+      modelId: string | default="/mnt/models/models/tinyllama"
       maxLength: string | default="100"
       s3ModelBucket: string | default="peeks-ray-models"
       awsRegion: string | default="us-west-2"
+      awsAccountId: string | default="ACCOUNT_ID"
       rayServeFile: string | default="https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/cpu-serve-config.zip"
       replicas: integer | default=2
       resources:
