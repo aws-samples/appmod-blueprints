@@ -93,9 +93,13 @@ platform-manifests:
 # ML/AI Platform Addons
 jupyterhub:
   enabled: true
+image-prepuller:
+  enabled: true
 kubeflow:
   enabled: true
 mlflow:
+  enabled: true
+ray-operator:
   enabled: true
 spark-operator:
   enabled: true
