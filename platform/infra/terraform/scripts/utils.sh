@@ -463,6 +463,7 @@ update_backstage_defaults() {
     (select(.metadata.name == "system-info").spec.aws_region) = "'$AWS_REGION'" |
     (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'" |
     (select(.metadata.name == "system-info").spec.admin_role_name) = "'$ADMIN_ROLE_NAME'" |
+    (select(.metadata.name == "system-info").spec.resource_prefix) = "'$RESOURCE_PREFIX'" |
     (select(.metadata.name == "system-info").spec.model_s3_bucket) = "'${RESOURCE_PREFIX}'-ray-models-'${AWS_ACCOUNT_ID}'"
   ' "$CATALOG_INFO_PATH"
 

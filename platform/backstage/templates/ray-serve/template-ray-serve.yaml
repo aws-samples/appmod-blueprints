@@ -130,6 +130,7 @@ spec:
           git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
           aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
           aws_region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
+          resource_prefix: ${{ steps['fetchSystem'].output.entity.spec.resource_prefix }}
           model_s3_bucket: ${{ steps['fetchSystem'].output.entity.spec.model_s3_bucket }}
           created_by: ${{ user.entity.metadata.name | default("unknown") }}
 

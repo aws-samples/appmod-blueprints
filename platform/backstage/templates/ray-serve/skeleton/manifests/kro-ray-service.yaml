@@ -20,6 +20,7 @@ spec:
   s3ModelBucket: ${{values.model_s3_bucket}}
   awsRegion: ${{values.aws_region}}
   awsAccountId: "${{values.aws_account_id}}"
+  resourcePrefix: ${{values.resource_prefix}}
   maxLength: "${{values.maxLength}}"
   rayServeFile: ${{values.rayServeFile}}
   replicas: ${{values.replicas}}
