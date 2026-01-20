@@ -59,7 +59,6 @@ resource "aws_eks_addon" "s3_csi_driver" {
 
   cluster_name             = each.value.name
   addon_name               = "aws-mountpoint-s3-csi-driver"
-  addon_version            = "v2.3.0-eksbuild.1"
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
 
