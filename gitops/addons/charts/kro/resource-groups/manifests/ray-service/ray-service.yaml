@@ -408,6 +408,52 @@ spec:
                           number: 8265
                     path: /ray-dashboard/${schema.spec.name}(/|$)(.*)
                     pathType: ImplementationSpecific
+    # PodDisruptionBudget for head pod
+    - id: headpdb
+      readyWhen:
+        - ${headpdb.metadata.name != ""}
+      template:
+        apiVersion: policy/v1
+        kind: PodDisruptionBudget
+        metadata:
+          name: ${schema.spec.name}-head-pdb
+          namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: RayService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+        spec:
+          minAvailable: 1
+          selector:
+            matchLabels:
+              ray.io/node-type: head
+              app.kubernetes.io/name: ${schema.spec.name}
+    # PodDisruptionBudget for worker pods
+    - id: workerpdb
+      readyWhen:
+        - ${workerpdb.metadata.name != ""}
+      template:
+        apiVersion: policy/v1
+        kind: PodDisruptionBudget
+        metadata:
+          name: ${schema.spec.name}-worker-pdb
+          namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: RayService
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+        spec:
+          minAvailable: 1
+          selector:
+            matchLabels:
+              ray.io/node-type: worker
+              app.kubernetes.io/name: ${schema.spec.name}
   schema:
     apiVersion: v1alpha1
     group: kro.run
