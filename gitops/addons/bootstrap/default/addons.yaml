@@ -1438,6 +1438,9 @@ ray-operator:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    modelPrestage:
+      enabled: true
+      s3Bucket: '{{.metadata.annotations.resource_prefix}}-ray-models-{{.metadata.annotations.aws_account_id}}'
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
