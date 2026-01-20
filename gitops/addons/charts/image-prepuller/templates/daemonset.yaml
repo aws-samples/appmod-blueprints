@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Values.global.resourcePrefix | default "peeks" }}-image-prepuller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: image-prepuller
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: image-prepuller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: image-prepuller
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+      {{- range $index, $image := .Values.images }}
+      - name: prepull-{{ $index }}
+        image: {{ $image }}
+        command: ["sh", "-c", "echo 'Image {{ $image }} pulled successfully'"]
+        resources:
+          {{- toYaml $.Values.resources | nindent 10 }}
+      {{- end }}
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.9
+        resources:
+          limits:
+            cpu: 10m
+            memory: 16Mi
+          requests:
+            cpu: 10m
+            memory: 16Mi

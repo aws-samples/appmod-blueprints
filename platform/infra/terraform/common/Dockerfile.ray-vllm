@@ -1,0 +1,21 @@
+# Use the base Ray image with GPU support
+FROM rayproject/ray:2.49.0-py311-gpu
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=non-interactive
+ENV LD_LIBRARY_PATH=/home/ray/anaconda3/lib:$LD_LIBRARY_PATH
+
+# Set working directory
+WORKDIR /app
+
+# Install vLLM and dependencies in single layer for efficiency
+RUN pip install --no-cache-dir \
+    vllm[runai]==0.10.2 \
+    huggingface_hub==0.35.3
+
+# Force reinstall numpy for compatibility
+RUN pip install --no-cache-dir --force-reinstall numpy==1.26.4
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import vllm; import ray" || exit 1

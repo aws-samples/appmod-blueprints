@@ -1,18 +1,73 @@
----
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: ${{values.name | dump}}
-  description: This is for Ray Serve
+  name: ${{values.name}}-ray-service
+  description: Kro-based Ray Service deployment for ${{ values.name }}
   annotations:
-    backstage.io/kubernetes-label-selector: 'entity-id=${{values.name}}'
-    backstage.io/kubernetes-namespace: argo
-    argocd/app-name: ${{values.name | dump}}
-    argo-workflows.cnoe.io/label-selector: env=dev,entity-id=${{values.name}}
-    argo-workflows.cnoe.io/cluster-name: local
-    apache-ray.cnoe.io/label-selector: env=dev,entity-id=${{values.name}}
-    apache-ray.cnoe.io/cluster-name: local
+    # Kubernetes resource discovery
+    backstage.io/kubernetes-namespace: ${{values.namespace}}
+    backstage.io/kubernetes-label-selector: 'app.kubernetes.io/name=${{values.name}},app.kubernetes.io/component=ray-service'
+    # ArgoCD integration
+    argocd/app-selector: 'app.kubernetes.io/name=${{values.name}}'
+    # Kro resource tracking
+    kro.run/resource-group: rayservice.kro.run
+    kro.run/instance-name: ${{values.name}}-ray-service
+    kro.run/instance-namespace: ${{values.namespace}}
+    # Ray Service integration
+    ray.io/service-name: ray-service-${{values.name}}
+    ray.io/cluster-name: ${{values.name}}-ray-cluster
+    ray.io/namespace: ${{values.namespace}}
+    # ArgoCD integration
+    argocd.argoproj.io/instance: ${{values.name}}-ray-service
+    argocd.argoproj.io/project: ${{values.name}}-ray-project
+    # GitOps source repository
+    backstage.io/source-location: url:https://${{values.gitlab_hostname}}/${{values.git_username}}/${{values.name}}-ray-service/tree/main/
+    # AWS resource tracking
+    aws.amazon.com/region: ${{values.aws_region}}
+    # GitLab integration
+    gitlab.com/project-url: https://${{values.gitlab_hostname}}/${{values.git_username}}/${{values.name}}-ray-service
+  labels:
+    # Component classification
+    app.kubernetes.io/name: ${{values.name}}
+    app.kubernetes.io/component: ray-service
+    app.kubernetes.io/managed-by: kro
+    backstage.io/template-name: ray-serve-kubernetes
+    # Environment and lifecycle
+    environment: ${{values.namespace}}
+    lifecycle: experimental
+    # Technology stack
+    technology: ray
+    technology.ml: ray-serve
+    technology.orchestration: kro
+    technology.gitops: argocd
+  links:
+    - url: https://${{values.gitlab_hostname}}/${{values.git_username}}/${{values.name}}-ray-service
+      title: GitLab Repository
+      icon: gitlab
+    - url: https://${{values.argocd_hostname}}/argocd/applications/argocd/${{values.name}}-ray-service
+      title: ArgoCD Application
+      icon: argocd
+    - url: https://${{values.ingress_hostname}}/ray-serve/${{values.name}}/generate
+      title: Ray Serve Endpoint
+      icon: web
+    - url: https://${{values.ingress_hostname}}/ray-dashboard/${{values.name}}/
+      title: Ray Dashboard
+      icon: web
 spec:
-  owner: guest
-  lifecycle: experimental
   type: service
+  lifecycle: experimental
+  owner: guest
+  system: ${{values.name | dump}}
+  # Dependencies on platform components
+  dependsOn:
+    - resource:default/kro-controller
+    - resource:default/ray-operator
+    - resource:default/argocd
+  # Provides ML serving capabilities
+  providesApis:
+    - ray-serve-api
+  # Consumes platform services
+  consumesApis:
+    - kubernetes-api
+    - ray-api
+    - kro-api
