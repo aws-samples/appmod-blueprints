@@ -40,6 +40,8 @@ module "eks" {
       cidr_blocks = [data.aws_vpc.hub_vpc.cidr_block]
     }
   }
+
+  # TODO We will use our own custom Nodepool (with less aggressive consolidations) / only when EKS Capabilities
   cluster_compute_config = {
     enabled    = true
     node_pools = ["general-purpose", "system"]
