@@ -264,8 +264,8 @@ external-secrets:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
   namespace: external-secrets
   chartName: external-secrets
-  defaultVersion: "0.19.2"
-  chartRepository: "https://charts.external-secrets.io"
+  defaultVersion: '0.19.2'
+  chartRepository: 'https://charts.external-secrets.io'
   selector:
     matchExpressions:
       - key: enable_external_secrets
@@ -610,13 +610,12 @@ kro-manifests:
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/manifests'
   directory:
     recurse: true
-    exclude: "*/tests/**"
+    exclude: '*/tests/**'
   selector:
     matchExpressions:
       - key: enable_kro_manifests
         operator: In
         values: ['true']
-
 
 multi-acct:
   enabled: false
@@ -659,36 +658,36 @@ argo-rollouts:
       annotations: # Using IRSA as Pod Identity is not supported
         eks.amazonaws.com/role-arn: 'arn:aws:iam::{{.metadata.annotations.aws_account_id}}:role/{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
     extraObjects:
-    - apiVersion: iam.services.k8s.aws/v1alpha1
-      kind: Role
-      metadata:
-        name: '{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
-        annotations:
-          argocd.argoproj.io/sync-wave: '-1' # Should be created before SA
-      spec:
-        name: '{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
-        description: "IRSA role for Argo Rollouts"
-        assumeRolePolicyDocument: |
-          {
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Effect": "Allow",
-                "Principal": {
-                  "Federated": "arn:aws:iam::{{.metadata.annotations.aws_account_id}}:oidc-provider/{{.metadata.annotations.eks_oidc_issuer}}"
-                },
-                "Action": "sts:AssumeRoleWithWebIdentity",
-                "Condition": {
-                  "StringEquals": {
-                    "{{.metadata.annotations.eks_oidc_issuer}}:sub": "system:serviceaccount:argo-rollouts:argo-rollouts",
-                    "{{.metadata.annotations.eks_oidc_issuer}}:aud": "sts.amazonaws.com"
+      - apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          name: '{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
+          annotations:
+            argocd.argoproj.io/sync-wave: '-1' # Should be created before SA
+        spec:
+          name: '{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
+          description: 'IRSA role for Argo Rollouts'
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Federated": "arn:aws:iam::{{.metadata.annotations.aws_account_id}}:oidc-provider/{{.metadata.annotations.eks_oidc_issuer}}"
+                  },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "{{.metadata.annotations.eks_oidc_issuer}}:sub": "system:serviceaccount:argo-rollouts:argo-rollouts",
+                      "{{.metadata.annotations.eks_oidc_issuer}}:aud": "sts.amazonaws.com"
+                    }
                   }
                 }
-              }
-            ]
-          }
-        policies:
-          - arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess
+              ]
+            }
+          policies:
+            - arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess
   selector:
     matchExpressions:
       - key: enable_argo_rollouts
@@ -788,6 +787,32 @@ keycloak:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
         - '.spec.versions[].schema.openAPIV3Schema | .. | .volumeClaimTemplates?'
 
+image-prepuller:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '1' # Early deployment for image caching
+  namespace: kube-system
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/image-prepuller'
+  selector:
+    matchExpressions:
+      - key: enable_image_prepuller
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    images:
+      - rayproject/ray:2.34.0
+      - jupyter/base-notebook:latest
+      - tensorflow/tensorflow:latest-gpu
+    tolerations:
+      - key: 'CriticalAddonsOnly'
+        operator: 'Exists'
+        effect: 'NoSchedule'
+    nodeSelector:
+      karpenter.sh/nodepool: general-purpose
+
 jupyterhub:
   enabled: false
   annotationsAppSet:
@@ -819,7 +844,7 @@ jupyterhub:
             authorize_url: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/auth'
             token_url: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/token'
             userdata_url: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/userinfo'
-            scope: ["openid", "profile", "email", "groups"]
+            scope: ['openid', 'profile', 'email', 'groups']
             username_claim: preferred_username
             auth_state_groups_key: groups
             manage_groups: true
@@ -875,7 +900,7 @@ devlake:
       grafana:
         enabled: false
         external:
-          url: "{{.metadata.annotations.aws_grafana_url}}"
+          url: '{{.metadata.annotations.aws_grafana_url}}'
 
 kubeflow:
   enabled: false
@@ -959,7 +984,7 @@ kargo:
   namespace: kargo
   chartName: kargo
   chartRepository: ghcr.io/akuity/kargo-charts
-  defaultVersion: "1.7.5"
+  defaultVersion: '1.7.5'
   selector:
     matchExpressions:
       - key: enable_kargo
@@ -976,43 +1001,43 @@ kargo:
       secret:
         name: kargo-admin-credentials
     extraObjects:
-    - apiVersion: external-secrets.io/v1
-      kind: ExternalSecret # For Kargo Admin Credentials
-      metadata:
-        name: kargo-admin-credentials
-        namespace: kargo
-        annotations:
-          argocd.argoproj.io/sync-wave: "-1"
-      spec:
-        refreshInterval: "30s"
-        secretStoreRef:
-          name: aws-secrets-manager
-          kind: ClusterSecretStore
-        target:
+      - apiVersion: external-secrets.io/v1
+        kind: ExternalSecret # For Kargo Admin Credentials
+        metadata:
           name: kargo-admin-credentials
-          creationPolicy: Owner
-          deletionPolicy: Retain   
-          template:
-            engineVersion: v2
-            mergePolicy: Replace
-            data:
-              ADMIN_ACCOUNT_PASSWORD_HASH: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_HASH }}` }}" }}'
-              ADMIN_ACCOUNT_TOKEN_SIGNING_KEY: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_KEY }}` }}" }}'
-        data:
-          - secretKey: KARGO_ADMIN_PASSWORD_HASH
-            remoteRef:
-              key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
-              property: user_password_hash
-              conversionStrategy: Default
-              decodingStrategy: None
-              metadataPolicy: None
-          - secretKey: KARGO_ADMIN_PASSWORD_KEY
-            remoteRef:
-              key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
-              property: user_password_key
-              conversionStrategy: Default
-              decodingStrategy: None
-              metadataPolicy: None
+          namespace: kargo
+          annotations:
+            argocd.argoproj.io/sync-wave: '-1'
+        spec:
+          refreshInterval: '30s'
+          secretStoreRef:
+            name: aws-secrets-manager
+            kind: ClusterSecretStore
+          target:
+            name: kargo-admin-credentials
+            creationPolicy: Owner
+            deletionPolicy: Retain
+            template:
+              engineVersion: v2
+              mergePolicy: Replace
+              data:
+                ADMIN_ACCOUNT_PASSWORD_HASH: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_HASH }}` }}" }}'
+                ADMIN_ACCOUNT_TOKEN_SIGNING_KEY: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_KEY }}` }}" }}'
+          data:
+            - secretKey: KARGO_ADMIN_PASSWORD_HASH
+              remoteRef:
+                key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
+                property: user_password_hash
+                conversionStrategy: Default
+                decodingStrategy: None
+                metadataPolicy: None
+            - secretKey: KARGO_ADMIN_PASSWORD_KEY
+              remoteRef:
+                key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
+                property: user_password_key
+                conversionStrategy: Default
+                decodingStrategy: None
+                metadataPolicy: None
 
 kubevela:
   enabled: false
@@ -1108,7 +1133,7 @@ crossplane:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
-    args: ["--enable-environment-configs"]
+    args: ['--enable-environment-configs']
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
@@ -1222,7 +1247,7 @@ grafana-dashboards:
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     grafana_url: '{{.metadata.annotations.aws_grafana_url}}'
-        
+
 grafana-operator:
   enabled: false
   releaseName: grafana-operator
@@ -1396,6 +1421,30 @@ mlflow:
       kind: Secret
       jsonPointers:
         - /metadata/managedFields
+
+ray-operator:
+  enabled: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after Keycloak
+  namespace: ray-system
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/ray-operator'
+  selector:
+    matchExpressions:
+      - key: enable_ray_operator
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
+        - /status
 
 spark-operator:
   enabled: false
