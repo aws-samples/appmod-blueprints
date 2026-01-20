@@ -144,6 +144,7 @@ main() {
 
   # Get ArgoCD domain from Terraform output
   export ARGOCD_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
+  export INGRESS_DOMAIN=$ARGOCD_DOMAIN
 
   # Update backstage default values now that both domains are available
   update_backstage_defaults
