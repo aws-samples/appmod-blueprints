@@ -1,0 +1,15 @@
+plugins:
+  describe:
+    shortCut: Shift-D
+    confirm: false
+    description: Describe Resource
+    scopes:
+      - all
+    command: kubectl
+    background: false
+    args:
+      - describe
+      - $RESOURCE_NAME
+      - $NAME
+      - -n
+      - $NAMESPACE
