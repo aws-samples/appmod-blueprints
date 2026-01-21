@@ -31,7 +31,7 @@ metadata:
     app.kubernetes.io/name: ${{values.name}}
     app.kubernetes.io/component: ray-service
     app.kubernetes.io/managed-by: kro
-    backstage.io/template-name: ray-serve-kubernetes
+    backstage.io/template-name: ray-serve-cpu
     # Environment and lifecycle
     environment: ${{values.namespace}}
     lifecycle: experimental

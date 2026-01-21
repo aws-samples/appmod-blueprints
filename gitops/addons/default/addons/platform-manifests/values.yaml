@@ -4,4 +4,4 @@ gpu:
   enabled: true
 
 customNodepools:
-  enabled: true  # Set to true to use custom nodepools instead of EKS Auto Mode defaults
+  enabled: false  # TODO Disabled to avoid conflict with Auto Mode nodepools while not in EKS Capabilities

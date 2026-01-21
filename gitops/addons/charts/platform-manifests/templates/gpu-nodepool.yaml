@@ -5,10 +5,13 @@ metadata:
   name: gpu
 spec:
   disruption:
-    budgets:
-    - nodes: 10%
+    consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 5m
-    consolidationPolicy: WhenEmpty
+    budgets:
+    - nodes: "30%"
+      schedule: "0 20 * * *"
+      duration: 2h
+    - nodes: "0"
   template:
     metadata:
       labels:
