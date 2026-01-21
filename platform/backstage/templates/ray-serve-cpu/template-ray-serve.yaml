@@ -51,8 +51,9 @@ spec:
             - "/mnt/models/models/tinyllama"
             - "/mnt/models/models/mistral-7b"
           enumNames:
-            - "TinyLlama-1.1B (1GB, fast)"
-            - "Mistral-7B-Instruct (14GB, high quality)"
+            - "TinyLlama-1.1B (2GB, CPU)"
+            - "Mistral-7B-Instruct (14GB, GPU)"
+          ui:help: "TinyLlama runs on CPU, Mistral-7B requires GPU"
         maxLength:
           title: Max Tokens
           type: string
@@ -78,14 +79,6 @@ spec:
           title: Worker Memory
           type: string
           default: "16Gi"
-        workerGpu:
-          title: Worker GPU
-          type: string
-          default: "1"
-          enum: ["0", "1"]
-          enumNames:
-            - "CPU only"
-            - "1 GPU"
   steps:
     - id: validate-parameters
       name: Validate Parameters
@@ -106,6 +99,33 @@ spec:
       input:
         entityRef: system:default/system-info
 
+    - id: review
+      name: Review Configuration
+      action: debug:log
+      input:
+        message: |
+          📋 Final Configuration Review:
+          
+          🎯 Service Details:
+          - Name: ${{ parameters.name }}
+          - Namespace: ${{ parameters.namespace }}
+          - Model: ${{ parameters.modelId }}
+          - Replicas: ${{ parameters.replicas }}
+          
+          💻 Computed Resources:
+          - Head CPU: ${{ parameters.headCpu }}
+          - Head Memory: ${{ parameters.headMemory }}
+          - Worker CPU: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '8' or parameters.workerCpu }}
+          - Worker Memory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '48Gi' or parameters.workerMemory }}
+          - Worker GPU: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '1 GPU' or 'CPU only' }}
+          
+          🔧 Infrastructure:
+          - AWS Region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
+          - AWS Account: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
+          - S3 Bucket: ${{ steps['fetchSystem'].output.entity.spec.model_s3_bucket }}
+          - GitLab: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
+          - Ingress: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
+
     - action: fetch:template
       name: Fetch Base
       id: fetch-base
@@ -116,14 +136,14 @@ spec:
           namespace: ${{ parameters.namespace }}
           modelId: ${{ parameters.modelId }}
           maxLength: ${{ parameters.maxLength }}
-          rayServeFile: ${{ parameters.deploymentType === 'gpu' and 'https://github.com/aws-samples/appmod-blueprints/raw/763e8339/gitops/workloads/ray/gpu-serve-transformers.zip' or 'https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/cpu-serve-config.zip' }}
+          rayServeFile: ${{ parameters.deploymentType === 'gpu' and 'https://github.com/aws-samples/appmod-blueprints/raw/763e8339/gitops/workloads/ray/gpu-serve-transformers.zip' or 'https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/ray-module-update/gitops/workloads/ray/cpu-serve-config.zip' }}
           replicas: ${{ parameters.replicas }}
           headCpu: ${{ parameters.headCpu }}
           headMemory: ${{ parameters.headMemory }}
           workerCpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '8' or parameters.workerCpu }}
-          workerMemory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '32Gi' or parameters.workerMemory }}
+          workerMemory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '48Gi' or parameters.workerMemory }}
           headGpu: "0"
-          workerGpu: ${{ parameters.workerGpu }}
+          workerGpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '1' or '0' }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
           argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
@@ -303,13 +323,13 @@ spec:
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
       - title: ArgoCD Application (GitOps)
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/${{ parameters.name }}-ray-service?resource=
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/${{ parameters.name }}-ray-service?resource=
         icon: web
       - title: GitLab Repository (GitOps Source)
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.name }}-ray-service
         icon: git
       - title: ArgoCD Project
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/settings/projects/${{ parameters.name }}-ray-project
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/settings/projects/${{ parameters.name }}-ray-project
         icon: web
       - title: Ray Serve Endpoint (After Deployment)
         url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/ray-serve/${{ parameters.name }}/

@@ -156,8 +156,16 @@ spec:
                       backstage.io/template-name: ray-service-kro
                   spec:
                     serviceAccountName: ray-worker-sa
+                    volumes:
+                      - name: s3-models
+                        persistentVolumeClaim:
+                          claimName: ${s3pvc.metadata.name}
                     containers:
                       - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-vllm-custom:latest
+                        volumeMounts:
+                          - name: s3-models
+                            mountPath: /mnt/models
+                            readOnly: true
                         lifecycle:
                           preStop:
                             exec:
@@ -480,7 +488,7 @@ spec:
       awsRegion: string | default="us-west-2"
       awsAccountId: string | default="ACCOUNT_ID"
       resourcePrefix: string | default="peeks"
-      rayServeFile: string | default="https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/eks-capabilities-squash/gitops/workloads/ray/cpu-serve-config.zip"
+      rayServeFile: string | default="https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/ray-module-update/gitops/workloads/ray/cpu-serve-config.zip"
       replicas: integer | default=2
       resources:
         head:
