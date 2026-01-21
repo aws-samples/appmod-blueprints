@@ -410,8 +410,6 @@ spec:
               kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           ingressClassName: nginx
           rules:
