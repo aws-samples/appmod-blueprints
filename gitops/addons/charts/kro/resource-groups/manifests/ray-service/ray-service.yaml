@@ -16,6 +16,8 @@ spec:
         kind: PersistentVolume
         metadata:
           name: ${schema.spec.name}-s3-models-pv
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
@@ -47,6 +49,8 @@ spec:
         metadata:
           name: ${schema.spec.name}-s3-models-pvc
           namespace: ${schema.metadata.namespace}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
@@ -418,6 +422,8 @@ spec:
         metadata:
           name: ${schema.spec.name}-head-pdb
           namespace: ${schema.metadata.namespace}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
@@ -441,6 +447,8 @@ spec:
         metadata:
           name: ${schema.spec.name}-worker-pdb
           namespace: ${schema.metadata.namespace}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
