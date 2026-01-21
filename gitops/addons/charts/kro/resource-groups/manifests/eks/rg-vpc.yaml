@@ -34,7 +34,7 @@ spec:
         name: ${schema.spec.name}-vpc
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -59,7 +59,7 @@ spec:
         name: ${schema.spec.name}-igw
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -81,7 +81,7 @@ spec:
         name: ${schema.spec.name}-nat-gateway1
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -105,7 +105,7 @@ spec:
         name: ${schema.spec.name}-nat-gateway2
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -129,7 +129,7 @@ spec:
         name: ${schema.spec.name}-eip1
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -150,7 +150,7 @@ spec:
         name: ${schema.spec.name}-eip2
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -171,7 +171,7 @@ spec:
         name: ${schema.spec.name}-public-routetable
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -196,7 +196,7 @@ spec:
         name: ${schema.spec.name}-private-routetable1
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -221,7 +221,7 @@ spec:
         name: ${schema.spec.name}-private-routetable2
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -246,7 +246,7 @@ spec:
         name: ${schema.spec.name}-public-subnet1
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -275,7 +275,7 @@ spec:
         name: ${schema.spec.name}-public-subnet2
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -304,7 +304,7 @@ spec:
         name: ${schema.spec.name}-private-subnet1
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -332,7 +332,7 @@ spec:
         name: ${schema.spec.name}-private-subnet2
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: Vpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true

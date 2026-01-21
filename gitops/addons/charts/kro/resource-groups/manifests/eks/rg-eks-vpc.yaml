@@ -115,7 +115,7 @@ spec:
           app.kubernetes.io/instance: ${schema.spec.name}
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: EksclusterWithVpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true
@@ -145,7 +145,7 @@ spec:
           app.kubernetes.io/instance: ${schema.spec.name}
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
-            kind: EksclusterWithVpc
+            kind: ${schema.kind}
             name: ${schema.metadata.name}
             uid: ${schema.metadata.uid}
             blockOwnerDeletion: true

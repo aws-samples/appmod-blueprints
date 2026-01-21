@@ -22,9 +22,11 @@ spec:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
               controller: false
-              kind: RayService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           capacity:
             storage: 100Gi
@@ -55,9 +57,11 @@ spec:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
               controller: false
-              kind: RayService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           accessModes:
             - ReadOnlyMany
@@ -93,9 +97,11 @@ spec:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
               controller: false
-              kind: RayService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           deploymentUnhealthySecondThreshold: 1200
           rayClusterConfig:
@@ -223,9 +229,11 @@ spec:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
               controller: false
-              kind: RayService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           deploymentUnhealthySecondThreshold: 1200
           rayClusterConfig:
@@ -353,9 +361,11 @@ spec:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
               controller: false
-              kind: RayService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           ports:
             - name: serve
@@ -397,9 +407,11 @@ spec:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
               controller: false
-              kind: RayService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           ingressClassName: nginx
           rules:
@@ -436,9 +448,11 @@ spec:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
               controller: false
-              kind: RayService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           minAvailable: 1
           selector:
@@ -461,9 +475,11 @@ spec:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
               controller: false
-              kind: RayService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           minAvailable: 1
           selector:

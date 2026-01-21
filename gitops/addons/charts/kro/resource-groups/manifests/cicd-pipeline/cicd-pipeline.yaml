@@ -47,7 +47,7 @@ spec:
           name: ${schema.spec.name}-main-repo
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -104,7 +104,7 @@ spec:
           name: ${schema.spec.name}-cache-repo
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -162,7 +162,7 @@ spec:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -215,7 +215,7 @@ spec:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -256,7 +256,7 @@ spec:
           name: ${schema.spec.name}-pod-association
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -284,7 +284,7 @@ spec:
           name: ${schema.spec.name}-sa
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -313,7 +313,7 @@ spec:
           name: ${schema.spec.name}-role
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -387,7 +387,7 @@ spec:
           name: ${schema.spec.name}-rolebinding
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -415,7 +415,7 @@ spec:
           name: ${schema.spec.name}-argocd-access
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -442,7 +442,7 @@ spec:
           name: ${schema.spec.name}-argocd-access
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -472,7 +472,7 @@ spec:
           name: ${schema.spec.name}-config
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -525,7 +525,7 @@ spec:
           name: gitlab-credentials
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -565,7 +565,7 @@ spec:
           name: ${schema.spec.name}-docker-config
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -603,7 +603,7 @@ spec:
           name: ${schema.spec.name}-ecr-refresh
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -706,7 +706,7 @@ spec:
           name: ${schema.spec.name}-provisioning-workflow
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -1004,7 +1004,7 @@ spec:
           name: ${schema.spec.name}-cache-warmup-workflow
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -1081,7 +1081,7 @@ spec:
           name: ${schema.spec.name}-cicd-workflow
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -1351,7 +1351,7 @@ spec:
           name: ${schema.spec.name}-dora-deployment-workflow
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -1627,7 +1627,7 @@ spec:
           name: ${schema.spec.name}-cache-dockerfile
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -2070,7 +2070,7 @@ spec:
           name: ${schema.spec.name}-dora-setup-workflow
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -2101,7 +2101,7 @@ spec:
           name: ${schema.spec.name}-initial-ecr-setup
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -2214,7 +2214,7 @@ spec:
           name: ${schema.spec.name}-setup-workflow
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -2251,7 +2251,7 @@ spec:
           name: ${schema.spec.name}-initial-build-workflow
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -2296,7 +2296,7 @@ spec:
           name: ${schema.spec.name}-gitlab-eventsource
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -2328,7 +2328,7 @@ spec:
           name: ${schema.spec.name}-gitlab-sensor
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -2580,7 +2580,7 @@ spec:
           name: ${schema.spec.name}-webhook-service
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
-               kind: CICDPipeline
+               kind: ${schema.kind}
                name: ${schema.metadata.name}
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
@@ -2611,7 +2611,7 @@ spec:
           name: ${schema.spec.name}-webhook-ingress
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: CICDPipeline
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -2651,7 +2651,7 @@ spec:
           name: eventbus-pdb
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: CICDPipeline
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
