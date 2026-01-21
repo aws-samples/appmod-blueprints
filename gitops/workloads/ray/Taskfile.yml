@@ -5,7 +5,9 @@ tasks:
     desc: Build CPU serve config zip file
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - zip -j cpu-serve-config.zip cpu-app.py
+      - cp cpu-app.py app.py
+      - zip cpu-serve-config.zip app.py
+      - rm app.py
       - echo "✅ Built cpu-serve-config.zip"
     sources:
       - cpu-app.py
@@ -16,7 +18,9 @@ tasks:
     desc: Build GPU serve config zip file
     dir: '{{.TASKFILE_DIR}}'
     cmds:
-      - zip -j gpu-serve-transformers.zip gpu-app.py
+      - cp gpu-app.py app.py
+      - zip gpu-serve-transformers.zip app.py
+      - rm app.py
       - echo "✅ Built gpu-serve-transformers.zip"
     sources:
       - gpu-app.py
