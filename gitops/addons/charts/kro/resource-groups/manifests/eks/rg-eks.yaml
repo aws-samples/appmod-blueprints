@@ -118,7 +118,7 @@ spec:
           name: "${schema.spec.name}-ingress-http"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -159,7 +159,7 @@ spec:
           name: "${schema.spec.name}-ingress-https"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -203,7 +203,7 @@ spec:
           name: "${schema.spec.name}-cluster-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -244,7 +244,7 @@ spec:
           name: "${schema.spec.name}-cluster-node-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -285,7 +285,7 @@ spec:
           # implicit dependencies with roles
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -346,7 +346,7 @@ spec:
           namespace: "${schema.spec.name}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -371,7 +371,7 @@ spec:
           name: "${schema.spec.name}-argocd-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -534,7 +534,7 @@ spec:
           name: "${schema.spec.name}-access-entry"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -560,7 +560,7 @@ spec:
           name: "${schema.spec.name}-access-entry-admin"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -590,7 +590,7 @@ spec:
           name: "${schema.spec.name}-external-secrets-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -629,7 +629,7 @@ spec:
           namespace: "${schema.spec.name}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -659,7 +659,7 @@ spec:
           name: "${schema.spec.name}-ack-iam"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -704,7 +704,7 @@ spec:
           name: "${schema.spec.name}-external-dns-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -746,7 +746,7 @@ spec:
           name: "${schema.spec.name}-external-dns"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -773,7 +773,7 @@ spec:
           name: "${schema.spec.name}-adot-collector-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -813,7 +813,7 @@ spec:
           namespace: "${schema.spec.name}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -844,7 +844,7 @@ spec:
           name: "${schema.spec.name}-kyverno-policy-reporter-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -884,7 +884,7 @@ spec:
           namespace: "${schema.spec.name}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -914,7 +914,7 @@ spec:
           name: "${schema.spec.name}-cni-metrics-helper-policy"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -948,7 +948,7 @@ spec:
           name: "${schema.spec.name}-cni-metrics-helper-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -988,7 +988,7 @@ spec:
           namespace: "${schema.spec.name}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1018,7 +1018,7 @@ spec:
           name: "${schema.spec.name}-cloudwatch-observability-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1058,7 +1058,7 @@ spec:
           namespace: "${schema.spec.name}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1088,7 +1088,7 @@ spec:
           name: "${schema.spec.name}-ack-iam-policy"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1181,7 +1181,7 @@ spec:
           name: "${schema.spec.name}-ack-iam-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1223,7 +1223,7 @@ spec:
           name: "${schema.spec.name}-ack-iam"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1249,7 +1249,7 @@ spec:
           name: "${schema.spec.name}-ack-eks-policy"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1286,7 +1286,7 @@ spec:
           name: "${schema.spec.name}-ack-eks-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1328,7 +1328,7 @@ spec:
           name: "${schema.spec.name}-ack-eks"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1354,7 +1354,7 @@ spec:
           name: "${schema.spec.name}-crossplane-provider-aws-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1394,7 +1394,7 @@ spec:
           name: "${schema.spec.name}-crossplane-provider-aws"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1420,7 +1420,7 @@ spec:
           name: "${schema.spec.name}-aws-load-balancer-controller-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1460,7 +1460,7 @@ spec:
           name: "${schema.spec.name}-aws-load-balancer-controller"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1486,7 +1486,7 @@ spec:
           name: "${schema.spec.name}-ack-s3-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1526,7 +1526,7 @@ spec:
           name: "${schema.spec.name}-ack-s3"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1552,7 +1552,7 @@ spec:
           name: "${schema.spec.name}-ack-dynamodb-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1592,7 +1592,7 @@ spec:
           name: "${schema.spec.name}-ack-dynamodb"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1618,7 +1618,7 @@ spec:
           name: "${schema.spec.name}-ack-ecr-policy"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1651,7 +1651,7 @@ spec:
           name: "${schema.spec.name}-ack-ecr-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1693,7 +1693,7 @@ spec:
           name: "${schema.spec.name}-ack-ecr"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1719,7 +1719,7 @@ spec:
           name: "${schema.spec.name}-ack-ec2-policy"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1752,7 +1752,7 @@ spec:
           name: "${schema.spec.name}-ack-ec2-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
@@ -1794,7 +1794,7 @@ spec:
           name: "${schema.spec.name}-ack-ec2"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: EksCluster
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
