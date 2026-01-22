@@ -12,7 +12,7 @@ This repository implements a complete platform engineering solution on Amazon EK
 
 ![Platform Engineering on EKS Architecture](docs/images/Peeks-Architecture.png)
 
-## Demo
+## Clickable Interactive Demo
 
 [![Platform Engineering Demo](docs/images/demo.gif)](https://app.storylane.io/share/219m06juq81g)
 
