@@ -14,7 +14,7 @@ This repository implements a complete platform engineering solution on Amazon EK
 
 ## Demo
 
-[Storylane Platform Engineering Demo](https://app.storylane.io/share/219m06juq81g)
+[![Platform Engineering Demo](docs/images/demo.gif)](https://app.storylane.io/share/219m06juq81g)
 
 ## Getting Started
 
