@@ -52,7 +52,7 @@ clusters:
       enable_image_prepuller: true
       enable_kubeflow: false
       enable_mlflow: false
-      enable_spark_operator: false
+      enable_spark_operator: true
       enable_airflow: false
       enable_grafana: false
       enable_grafana_operator: true
