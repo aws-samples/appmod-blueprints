@@ -5,6 +5,11 @@ spark-operator:
     repository: kubeflow/spark-operator/controller
     pullPolicy: IfNotPresent
 
+  # Spark job configuration
+  spark:
+    jobNamespaces:
+      - ""  # Watch all namespaces
+
   # Controller configuration
   controller:
     replicas: 1
