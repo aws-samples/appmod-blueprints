@@ -83,7 +83,7 @@ spec:
         entityRef: ${{ steps['register'].output.entityRef }}
       - title: ArgoCD Application
         icon: argocd
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{parameters.name}}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{parameters.name}}
       - title: Argo Workflows
         icon: argo
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argo_workflows_hostname }}/workflows/${{parameters.name}}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argo_workflows_hostname }}/workflows/argo/${{parameters.name}}
