@@ -1,0 +1,42 @@
+# Crossplane Core HA Configuration
+replicas: 2
+
+nodeSelector:
+  karpenter.sh/nodepool: system
+
+tolerations:
+- key: "CriticalAddonsOnly"
+  operator: "Exists"
+  effect: "NoSchedule"
+
+topologySpreadConstraints:
+- maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: DoNotSchedule
+  labelSelector:
+    matchLabels:
+      app: crossplane
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# RBAC Manager HA
+rbacManager:
+  replicas: 2
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+    effect: "NoSchedule"
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app: crossplane-rbac-manager
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1

@@ -1,0 +1,17 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: rollouts-demo-kargo
+  annotations:
+    # This annotation ensures Projects (Namespaces) are created first when deployed via Argo CD
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  promotionPolicies:
+  - stage: test
+    autoPromotionEnabled: true
+  - stage: pre-prod
+    autoPromotionEnabled: true
+  - stage: prod-eu
+    autoPromotionEnabled: false
+  - stage: prod-us
+    autoPromotionEnabled: false

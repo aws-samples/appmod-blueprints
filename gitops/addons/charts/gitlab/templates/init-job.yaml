@@ -1,0 +1,187 @@
+---
+# RBAC resources for GitLab initialization
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: gitlab
+  name: gitlab-init-role
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gitlab-init-rolebinding
+  namespace: gitlab
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: gitlab
+roleRef:
+  kind: Role
+  name: gitlab-init-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# ConfigMap for initialization script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitlab-init-script
+  namespace: gitlab
+data:
+  init-gitlab.sh: |
+    #!/bin/bash
+    set -e
+
+    # Wait for GitLab to be ready
+    echo "Waiting for GitLab to be ready..."
+    until curl -s --head --fail http://gitlab.gitlab.svc.cluster.local/-/readiness; do
+      echo "GitLab not ready yet, waiting..."
+      sleep 10
+    done
+
+    # Set variables
+    export GITLAB_URL=http://gitlab.gitlab.svc.cluster.local
+    export GITLAB_POD_NAME=$(kubectl get pods -n gitlab -l app=gitlab -o jsonpath='{.items[0].metadata.name}')
+    export ROOT_GITLAB_TOKEN=root-{{ .Values.initial_root_password }}
+    export IDE_PASSWORD={{ .Values.initial_root_password }}
+    export GIT_USERNAME="{{ .Values.git_username | default "user1" }}"
+    export WORKING_REPO="{{ .Values.working_repo | default "eks-cluster-mgmt" }}"
+
+    # Check if root token already exists
+    echo "Checking if root token already exists..."
+    TOKEN_EXISTS=$(kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "puts User.find_by_username('root').personal_access_tokens.where(name: 'initial root token').exists?" || echo "false")
+
+    if [[ "$TOKEN_EXISTS" != "true" ]]; then
+      echo "Creating GitLab API token for root..."
+      kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "
+        token = User.find_by_username('root').personal_access_tokens.create(
+          name: 'initial root token',
+          scopes: [
+            'api',
+            'read_user',
+            'read_repository',
+            'write_repository',
+            'sudo',
+            'admin_mode'
+          ],
+          expires_at: 365.days.from_now
+        )
+        token.set_token('${ROOT_GITLAB_TOKEN}')
+        token.save!
+      "
+    else
+      echo "Root token already exists, skipping creation."
+    fi
+
+    # Update GitLab settings
+    echo "Updating GitLab settings..."
+    kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner '::Gitlab::CurrentSettings.update!(signup_enabled: false)'
+
+    # Check if user already exists
+    echo "Checking if user $GIT_USERNAME already exists..."
+    USER_EXISTS=$(curl -s "$GITLAB_URL/api/v4/users?search=$GIT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'length')
+
+    if [[ "$USER_EXISTS" == "0" ]]; then
+      echo "Creating $GIT_USERNAME..."
+      curl -sS -X 'POST' "$GITLAB_URL/api/v4/users" \
+        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
+        -H 'accept: application/json' \
+        -H 'Content-Type: application/json' \
+        -d "{
+        \"name\": \"$GIT_USERNAME\",
+        \"username\": \"$GIT_USERNAME\",
+        \"email\": \"$GIT_USERNAME@example.com\",
+        \"password\": \"$IDE_PASSWORD\"
+      }" && echo -e "\n"
+
+      echo "Creating GitLab API token for $GIT_USERNAME..."
+      kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "
+        token = User.find_by_username('$GIT_USERNAME').personal_access_tokens.create(
+          name: 'initial $GIT_USERNAME token',
+          scopes: [
+            'api',
+            'read_user',
+            'read_repository',
+            'write_repository'
+          ],
+          expires_at: 365.days.from_now
+        )
+        token.set_token('${IDE_PASSWORD}')
+        token.save!
+      "
+    else
+      echo "User $GIT_USERNAME already exists, skipping creation."
+    fi
+
+    # Check if repository already exists
+    echo "Checking if repository $WORKING_REPO already exists..."
+    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'length')
+
+    if [[ "$REPO_EXISTS" == "0" ]]; then
+      echo "Creating $WORKING_REPO Git repository..."
+      curl -Ss -X 'POST' "$GITLAB_URL/api/v4/projects/" \
+        -H "PRIVATE-TOKEN: $IDE_PASSWORD" \
+        -H 'accept: application/json' \
+        -H 'Content-Type: application/json' \
+        -d "{
+        \"name\": \"$WORKING_REPO\"
+      }" && echo -e "\n"
+    else
+      echo "Repository $WORKING_REPO already exists, skipping creation."
+    fi
+
+    # Make main branch unprotected
+    echo "Making main branch unprotected..."
+    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '.[0].id')
+    curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches/main" \
+      -H "PRIVATE-TOKEN: $IDE_PASSWORD" || echo "Main branch was not protected or already unprotected"
+
+    echo "GitLab initialization completed successfully."
+---
+# Initialization Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gitlab-init
+  namespace: gitlab
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      name: gitlab-init
+    spec:
+      serviceAccountName: default
+      restartPolicy: OnFailure
+      containers:
+      - name: gitlab-init
+        image: alpine/k8s:1.32.5
+        command:
+        - /bin/bash
+        - -c
+        - /scripts/init-gitlab.sh
+        volumeMounts:
+        - name: init-script
+          mountPath: /scripts
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+      volumes:
+      - name: init-script
+        configMap:
+          name: gitlab-init-script
+          defaultMode: 0755

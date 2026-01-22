@@ -3,12 +3,12 @@ FROM node:18 as node
 
 WORKDIR /app
 
-COPY WebUI/ClientApp/package*.json ./
+COPY src/WebUI/ClientApp/package*.json ./
 
 RUN npm install
 
-COPY WebUI/ClientApp/*.* ./
-COPY WebUI/ClientApp/src ./src
+COPY src/WebUI/ClientApp/*.* ./
+COPY src/WebUI/ClientApp/src ./src
 
 RUN npm run build
 
@@ -16,7 +16,7 @@ RUN npm run build
 FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build
 WORKDIR /app
 
-COPY . .
+COPY src/ .
 
 WORKDIR /app/WebUI
 RUN dotnet restore

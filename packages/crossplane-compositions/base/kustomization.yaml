@@ -1,3 +1,0 @@
-namespace: crossplane-system
-resources:
-  - https://github.com/aws-samples/appmod-blueprints/tree/main/platform/crossplane/compositions/dynamodb

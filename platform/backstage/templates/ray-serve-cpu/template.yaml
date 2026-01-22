@@ -1,0 +1,250 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  description: |
+    Deploy CPU-based Ray Service for smaller AI models using Transformers library.
+    
+    **Optimized for:**
+    - TinyLlama-1.1B (2GB)
+    - Models up to 7B parameters on CPU
+    
+    **Model Management:**
+    - Models are pre-uploaded to S3 and mounted via S3 CSI driver
+    - Path: /mnt/models/models/{model-name}
+    - Uses cpu-serve-config with local_files_only for fast startup
+  name: ray-serve-cpu
+  title: Ray Service - CPU (Transformers)
+  tags:
+    - ray
+    - ai
+    - cpu
+    - transformers
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - title: Basic Configuration
+      properties:
+        name:
+          title: Service Name
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$'
+          ui:help: 'Lowercase alphanumeric with hyphens, 1-63 characters'
+        namespace:
+          title: Namespace
+          type: string
+          default: ray-system
+        replicas:
+          title: Worker Replicas
+          type: integer
+          default: 2
+          minimum: 1
+          maximum: 10
+          ui:help: 'Number of worker pods for horizontal scaling'
+        modelId:
+          title: Model
+          type: string
+          default: "/mnt/models/models/tinyllama"
+          enum:
+            - "/mnt/models/models/tinyllama"
+          enumNames:
+            - "TinyLlama-1.1B (2GB)"
+          ui:help: "CPU-optimized models from S3 cache"
+        maxLength:
+          title: Max Tokens
+          type: string
+          default: "100"
+          ui:help: 'Maximum number of tokens to generate'
+        rayServeFile:
+          title: Ray Serve Config (ZIP)
+          type: string
+          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/ray-module-update/gitops/workloads/ray/cpu-serve-config.zip"
+          ui:help: 'URL to the Ray Serve application zip file'
+      required:
+        - name
+    - title: Resource Configuration
+      description: CPU and memory allocation for Ray pods
+      properties:
+        headCpu:
+          title: Head Node CPU
+          type: string
+          default: "2"
+          ui:help: 'CPU cores for head node'
+        headMemory:
+          title: Head Node Memory
+          type: string
+          default: "8Gi"
+          ui:help: 'Memory for head node'
+        workerCpu:
+          title: Worker Node CPU
+          type: string
+          default: "4"
+          ui:help: 'CPU cores per worker'
+        workerMemory:
+          title: Worker Node Memory
+          type: string
+          default: "16Gi"
+          ui:help: 'Memory per worker'
+  steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
+
+    - id: review
+      name: Review Configuration
+      action: debug:log
+      input:
+        message: |
+          📋 CPU Ray Service Configuration:
+          
+          🎯 Service: ${{ parameters.name }}
+          📦 Model: ${{ parameters.modelId }}
+          🔢 Replicas: ${{ parameters.replicas }}
+          
+          💻 Resources:
+          - Head: ${{ parameters.headCpu }} CPU / ${{ parameters.headMemory }}
+          - Worker: ${{ parameters.workerCpu }} CPU / ${{ parameters.workerMemory }} (CPU only)
+          
+          🔧 Infrastructure:
+          - Region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
+          - S3 Bucket: ${{ steps['fetchSystem'].output.entity.spec.model_s3_bucket }}
+          
+          📦 Serve Config:
+          - ${{ parameters.rayServeFile }}
+
+    - action: fetch:template
+      name: Fetch Base
+      id: fetch-base
+      input:
+        url: ./skeleton/
+        values:
+          name: ${{ parameters.name }}
+          namespace: ${{ parameters.namespace }}
+          modelId: ${{ parameters.modelId }}
+          maxLength: ${{ parameters.maxLength }}
+          rayServeFile: ${{ parameters.rayServeFile }}
+          replicas: ${{ parameters.replicas }}
+          headCpu: ${{ parameters.headCpu }}
+          headMemory: ${{ parameters.headMemory }}
+          workerCpu: ${{ parameters.workerCpu }}
+          workerMemory: ${{ parameters.workerMemory }}
+          headGpu: "0"
+          workerGpu: "0"
+          gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
+          ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
+          argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
+          git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
+          aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
+          aws_region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
+          resource_prefix: ${{ steps['fetchSystem'].output.entity.spec.resource_prefix }}
+          model_s3_bucket: ${{ steps['fetchSystem'].output.entity.spec.model_s3_bucket }}
+          created_by: ${{ user.entity.metadata.name | default("unknown") }}
+
+    - id: publish
+      name: Publishing to GitLab repository
+      action: publish:gitlab
+      input:
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.name}}-ray-service&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
+        defaultBranch: main
+        useCustomGit: true
+
+    - id: create-argocd-project
+      name: Create ArgoCD Project
+      action: kube:apply
+      input:
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: AppProject
+          metadata:
+            name: ${{parameters.name}}-ray-project
+            namespace: argocd
+            labels:
+              app.kubernetes.io/name: ${{parameters.name}}
+              app.kubernetes.io/component: ray-service
+              app.kubernetes.io/managed-by: backstage
+              backstage.io/template-name: ray-serve-cpu
+            annotations:
+              backstage.io/template-version: "1.0.0"
+              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+          spec:
+            destinations:
+              - name: peeks-hub
+                namespace: ${{ parameters.namespace }}
+            sourceRepos:
+              - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service.git
+            sourceNamespaces:
+              - argocd
+            namespaceResourceWhitelist:
+              - group: ""
+                kind: Namespace
+              - group: ""
+                kind: Service
+              - group: ""
+                kind: ConfigMap
+              - group: ""
+                kind: Secret
+              - group: apps
+                kind: Deployment
+              - group: kro.run
+                kind: RayService
+
+    - id: create-argocd-app
+      name: Create ArgoCD Application
+      action: kube:apply
+      input:
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{parameters.name}}-ray-service
+            namespace: argocd
+            labels:
+              app.kubernetes.io/name: ${{parameters.name}}
+              app.kubernetes.io/component: ray-service
+              app.kubernetes.io/managed-by: backstage
+              backstage.io/template-name: ray-serve-cpu
+            annotations:
+              backstage.io/template-version: "1.0.0"
+              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+            finalizers:
+              - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: ${{parameters.name}}-ray-project
+            source:
+              repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service.git
+              targetRevision: HEAD
+              path: manifests
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: ${{ parameters.namespace }}
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+
+    - id: register
+      name: Register Component
+      action: catalog:register
+      input:
+        repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service/-/blob/main
+        catalogInfoPath: /catalog-info.yaml
+
+  output:
+    links:
+      - title: Repository
+        url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service
+      - title: ArgoCD Application
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/${{parameters.name}}-ray-service
+      - title: Ray Dashboard
+        url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/ray-dashboard/${{parameters.name}}/
+      - title: Ray Serve Endpoint
+        url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/ray-serve/${{parameters.name}}/generate
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}

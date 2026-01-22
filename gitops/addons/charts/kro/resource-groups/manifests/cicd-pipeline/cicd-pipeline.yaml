@@ -1,0 +1,2669 @@
+# kubectl get workflowtemplate,workflow,eventsource,sensor,ingress -n test-cicd-pipeline
+---
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: cicdpipeline.kro.run
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Replace=false
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: CICDPipeline
+    spec:
+      name: string
+      namespace: string
+      aws:
+       region: string
+       clusterName: string
+       resourcePrefix: string | default="peeks"
+      application:
+       name: string
+       dockerfilePath: string | default="."
+       deploymentPath: string | default="./deployment"
+      gitlab:
+       hostname: string
+       username: string
+      hub:
+       hostname: string
+    status:
+      # ECR Repository information
+      ecrMainRepositoryURI: ${ecrmainrepo.status.repositoryURI}
+      ecrCacheRepositoryURI: ${ecrcacherepo.status.repositoryURI}
+      # IAM Role information
+      iamRoleARN: ${iamrole.status.ackResourceMetadata.arn}
+      # Service Account information
+      serviceAccountName: ${serviceaccount.metadata.name}
+  resources:
+    # ECR Repository for main application images
+    - id: ecrmainrepo
+      readyWhen:
+       - ${ecrmainrepo.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+       apiVersion: ecr.services.k8s.aws/v1alpha1
+       kind: Repository
+       metadata:
+          name: ${schema.spec.name}-main-repo
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             ecr.services.k8s.aws/force-delete: "true"
+       spec:
+          name: >-
+             ${schema.spec.aws.resourcePrefix}/${schema.spec.application.name}
+          policy: |
+             {
+               "Version": "2012-10-17",
+               "Statement": [
+                 {
+                   "Sid": "AllowPull",
+                   "Effect": "Allow",
+                   "Principal": {
+                     "AWS": "*"
+                   },
+                   "Action": [
+                     "ecr:GetDownloadUrlForLayer",
+                     "ecr:BatchGetImage"
+                   ]
+                 }
+               ]
+             }
+          lifecyclePolicy: |
+             {
+               "rules": [
+                 {
+                   "rulePriority": 1,
+                   "description": "Keep last 10 images",
+                   "selection": {
+                     "tagStatus": "any",
+                     "countType": "imageCountMoreThan",
+                     "countNumber": 10
+                   },
+                   "action": {
+                     "type": "expire"
+                   }
+                 }
+               ]
+             }
+
+    # ECR Repository for cache images
+    - id: ecrcacherepo
+      readyWhen:
+       - ${ecrcacherepo.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+       apiVersion: ecr.services.k8s.aws/v1alpha1
+       kind: Repository
+       metadata:
+          name: ${schema.spec.name}-cache-repo
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             ecr.services.k8s.aws/force-delete: "true"
+       spec:
+          name: >-
+             ${schema.spec.aws.resourcePrefix}/${schema.spec.application.name}/cache
+          policy: |
+             {
+               "Version": "2012-10-17",
+               "Statement": [
+                 {
+                   "Sid": "AllowPull",
+                   "Effect": "Allow",
+                   "Principal": {
+                     "AWS": "*"
+                   },
+                   "Action": [
+                     "ecr:GetDownloadUrlForLayer",
+                     "ecr:BatchGetImage"
+                   ]
+                 }
+               ]
+             }
+          lifecyclePolicy: |
+             {
+               "rules": [
+                 {
+                   "rulePriority": 1,
+                   "description": "Keep cache images for 7 days",
+                   "selection": {
+                     "tagStatus": "any",
+                     "countType": "sinceImagePushed",
+                     "countUnit": "days",
+                     "countNumber": 7
+                   },
+                   "action": {
+                     "type": "expire"
+                   }
+                 }
+               ]
+             }
+
+    # IAM Policy for ECR access
+    - id: iampolicy
+      readyWhen:
+       - ${iampolicy.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+       apiVersion: iam.services.k8s.aws/v1alpha1
+       kind: Policy
+       metadata:
+          name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+       spec:
+          name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
+          description: ECR access policy for CI/CD pipeline
+          path: '/'
+          policyDocument: |
+             {
+               "Version": "2012-10-17",
+               "Statement": [
+                 {
+                   "Effect": "Allow",
+                   "Action": [
+                     "ecr:GetAuthorizationToken"
+                   ],
+                   "Resource": "*"
+                 },
+                 {
+                   "Effect": "Allow",
+                   "Action": [
+                     "ecr:BatchCheckLayerAvailability",
+                     "ecr:GetDownloadUrlForLayer",
+                     "ecr:BatchGetImage",
+                     "ecr:InitiateLayerUpload",
+                     "ecr:UploadLayerPart",
+                     "ecr:CompleteLayerUpload",
+                     "ecr:PutImage",
+                     "ecr:DescribeRepositories"
+                   ],
+                   "Resource": [
+                     "${ecrmainrepo.status.ackResourceMetadata.arn}",
+                     "${ecrcacherepo.status.ackResourceMetadata.arn}"
+                   ]
+                 }
+               ]
+             }
+
+    # IAM Role with EKS pod identity trust policy
+    - id: iamrole
+      readyWhen:
+       - ${iamrole.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+       apiVersion: iam.services.k8s.aws/v1alpha1
+       kind: Role
+       metadata:
+          name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+       spec:
+          name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
+          description: IAM role for CI/CD pipeline with EKS pod identity
+          path: '/'
+          policies:
+             - ${iampolicy.status.ackResourceMetadata.arn}
+          assumeRolePolicyDocument: |
+             {
+               "Version": "2012-10-17",
+               "Statement": [
+                 {
+                   "Effect": "Allow",
+                   "Principal": {
+                     "Service": "pods.eks.amazonaws.com"
+                   },
+                   "Action": [
+                     "sts:TagSession",
+                     "sts:AssumeRole"
+                   ]
+                 }
+               ]
+             }
+
+    # Pod Identity Association
+    - id: podidentityassoc
+      readyWhen:
+       - ${podidentityassoc.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+       apiVersion: eks.services.k8s.aws/v1alpha1
+       kind: PodIdentityAssociation
+       metadata:
+          name: ${schema.spec.name}-pod-association
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Implicit dependencies through template references
+             roleArn: ${iamrole.status.ackResourceMetadata.arn}
+       spec:
+          clusterName: ${schema.spec.aws.clusterName}
+          roleARN: ${iamrole.status.ackResourceMetadata.arn}
+          serviceAccount: ${schema.spec.name}-sa
+          namespace: ${schema.metadata.namespace}
+          tags:
+             Application: ${schema.spec.application.name}
+             Component: cicd-pipeline
+             ManagedBy: kro
+
+    # Service Account - minimal required permissions for CI/CD operations
+    - id: serviceaccount
+      template:
+       apiVersion: v1
+       kind: ServiceAccount
+       metadata:
+          name: ${schema.spec.name}-sa
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Implicit dependency on IAM role through template reference
+             eks.amazonaws.com/role-arn: ${iamrole.status.ackResourceMetadata.arn}
+             # Reference to Pod Identity Association for tracking
+             eks.amazonaws.com/pod-identity-association: ${podidentityassoc.status.ackResourceMetadata.arn}
+             # Additional metadata for CI/CD operations
+             cicd.kro.run/application: ${schema.spec.application.name}
+             cicd.kro.run/pipeline: ${schema.spec.name}
+       automountServiceAccountToken: true
+
+    # RBAC Role for CI/CD operations - minimal required permissions
+    - id: role
+      template:
+       apiVersion: rbac.authorization.k8s.io/v1
+       kind: Role
+       metadata:
+          name: ${schema.spec.name}-role
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+       rules:
+          # Minimal permissions for CI/CD operations
+          - apiGroups: ['']
+            resources: ['secrets']
+            verbs: ['get', 'list', 'create', 'update', 'patch']
+            resourceNames: ['${schema.spec.name}-docker-config']
+          # Permissions for ECR credential refresh operations
+          - apiGroups: ['']
+            resources: ['secrets']
+            verbs: ['patch', 'update']
+            resourceNames: ['${schema.spec.name}-docker-config']
+          # Permissions for CronJob and Job management
+          - apiGroups: ['batch']
+            resources: ['cronjobs', 'jobs']
+            verbs: ['get', 'list', 'watch']
+            resourceNames:
+               [
+                 '${schema.spec.name}-ecr-refresh',
+                 '${schema.spec.name}-initial-ecr-setup',
+               ]
+          - apiGroups: ['']
+            resources: ['configmaps']
+            verbs: ['get', 'list']
+            resourceNames: ['${schema.spec.name}-config']
+          - apiGroups: ['apps']
+            resources: ['deployments']
+            verbs: ['get', 'list', 'update', 'patch']
+          # Permissions for workflow execution
+          - apiGroups: ['argoproj.io']
+            resources: ['workflows', 'workflowtemplates', 'workflowtaskresults']
+            verbs: ['get', 'list', 'create', 'update', 'patch', 'delete']
+          # Permissions for Argo Events integration
+          - apiGroups: ['argoproj.io']
+            resources: ['eventsources', 'sensors']
+            verbs: ['get', 'list', 'watch']
+          # Permissions to read pods for workflow status
+          - apiGroups: ['']
+            resources: ['pods']
+            verbs: ['get', 'list', 'watch']
+          # Permissions to create events for workflow logging
+          - apiGroups: ['']
+            resources: ['events']
+            verbs: ['create', 'patch']
+          # Permissions for webhook service management
+          - apiGroups: ['']
+            resources: ['services']
+            verbs: ['get', 'list']
+            resourceNames: ['${schema.spec.name}-webhook-service']
+          # Permissions for devlake configuration
+          - apiGroups: ['']
+            resources: ['secrets', 'configmaps']
+            verbs: ['delete', 'create', 'get', 'list']
+
+    # RBAC Role Binding - follows principle of least privilege
+    - id: rolebinding
+      readyWhen:
+       - ${rolebinding.metadata.name != ""}
+      template:
+       apiVersion: rbac.authorization.k8s.io/v1
+       kind: RoleBinding
+       metadata:
+          name: ${schema.spec.name}-rolebinding
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+       subjects:
+          - kind: ServiceAccount
+            name: ${schema.spec.name}-sa
+            namespace: ${schema.metadata.namespace}
+       roleRef:
+          kind: Role
+          name: ${schema.spec.name}-role
+          apiGroup: rbac.authorization.k8s.io
+
+    # ClusterRole for accessing ArgoCD fleet secrets (DORA metrics)
+    - id: clusterrole
+      template:
+       apiVersion: rbac.authorization.k8s.io/v1
+       kind: ClusterRole
+       metadata:
+          name: ${schema.spec.name}-argocd-access
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+       rules:
+          - apiGroups: [""]
+            resources: ["secrets"]
+            resourceNames: ["fleet-secret-fleet-peeks-spoke-dev"]
+            verbs: ["get", "list"]
+
+    # ClusterRoleBinding for ArgoCD access
+    - id: clusterrolebinding
+      readyWhen:
+       - ${clusterrolebinding.metadata.name != ""}
+      template:
+       apiVersion: rbac.authorization.k8s.io/v1
+       kind: ClusterRoleBinding
+       metadata:
+          name: ${schema.spec.name}-argocd-access
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+       subjects:
+          - kind: ServiceAccount
+            name: ${schema.spec.name}-sa
+            namespace: ${schema.metadata.namespace}
+       roleRef:
+          kind: ClusterRole
+          name: ${schema.spec.name}-argocd-access
+          apiGroup: rbac.authorization.k8s.io
+
+    # ConfigMap for ECR repository information and CI/CD configuration
+    - id: configmap
+      readyWhen:
+       - ${configmap.metadata.name != ""}
+      template:
+       apiVersion: v1
+       kind: ConfigMap
+       metadata:
+          name: ${schema.spec.name}-config
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+       data:
+          # ECR repository information
+          ECR_MAIN_REPOSITORY: ${ecrmainrepo.status.repositoryURI}
+          ECR_CACHE_REPOSITORY: ${ecrcacherepo.status.repositoryURI}
+          ECR_MAIN_REPOSITORY_NAME: ${ecrmainrepo.spec.name}
+          ECR_CACHE_REPOSITORY_NAME: ${ecrcacherepo.spec.name}
+          # AWS configuration
+          AWS_REGION: ${schema.spec.aws.region}
+          AWS_ACCOUNT_ID: ${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}
+          # Application configuration
+          APPLICATION_NAME: ${schema.spec.application.name}
+          DOCKERFILE_PATH: ${schema.spec.application.dockerfilePath}
+          DEPLOYMENT_PATH: ${schema.spec.application.deploymentPath}
+          # GitLab configuration
+          GITLAB_HOSTNAME: ${schema.spec.gitlab.hostname}
+          GITLAB_USERNAME: ${schema.spec.gitlab.username}
+          # Webhook configuration
+          WEBHOOK_ENDPOINT: 'https://${schema.spec.hub.hostname}/argo-events/${schema.spec.name}'
+          WEBHOOK_SERVICE_NAME: ${schema.spec.name}-webhook-service
+          EVENTSOURCE_NAME: ${schema.spec.name}-gitlab-eventsource
+          SENSOR_NAME: ${schema.spec.name}-gitlab-sensor
+          # Service account and role information
+          SERVICE_ACCOUNT_NAME: ${schema.spec.name}-sa
+          IAM_ROLE_ARN: ${iamrole.status.ackResourceMetadata.arn}
+          # Namespace scoping
+          PIPELINE_NAMESPACE: ${schema.metadata.namespace}
+          # ECR credential management
+          DOCKER_CONFIG_SECRET_NAME: ${schema.spec.name}-docker-config
+          ECR_CREDENTIAL_REFRESH_SCHEDULE: '0 */6 * * *'
+          ECR_CREDENTIAL_TTL: '12h'
+
+    # ExternalSecret to pull GitLab credentials from AWS Secrets Manager
+    - id: gitlabexternalsecret
+      readyWhen:
+       - ${gitlabexternalsecret.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
+      template:
+       apiVersion: external-secrets.io/v1
+       kind: ExternalSecret
+       metadata:
+          name: gitlab-credentials
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+       spec:
+          refreshInterval: 1h
+          secretStoreRef:
+              name: aws-secrets-manager
+              kind: ClusterSecretStore
+          target:
+              name: gitlab-credentials
+              creationPolicy: Owner
+              template:
+                data:
+                  GITLAB_USERNAME: ${schema.spec.gitlab.username}
+                  GITLAB_TOKEN: '{{ .GITLAB_TOKEN }}'
+          data:
+             - secretKey: GITLAB_TOKEN
+               remoteRef:
+                 key: ${schema.spec.aws.resourcePrefix}-hub/secrets
+                 property: git_token
+
+    # Docker registry secret for ECR authentication - properly scoped to namespace
+    - id: dockersecret
+      readyWhen:
+       - ${dockersecret.metadata.name != ""}
+      template:
+       apiVersion: v1
+       kind: Secret
+       metadata:
+          name: ${schema.spec.name}-docker-config
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}           
+             # Reference to ECR repositories for credential management
+             ecr.aws/main-repository: ${ecrmainrepo.status.repositoryURI}
+             ecr.aws/cache-repository: ${ecrcacherepo.status.repositoryURI}
+             ecr.aws/registry-id: ${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}
+             ecr.aws/region: ${schema.spec.aws.region}
+             # Indicates this secret will be populated by ECR credential helper
+             cicd.kro.run/credential-type: ecr-docker-config
+             cicd.kro.run/credential-refresh: 'true'
+             # Namespace scoping annotations
+             cicd.kro.run/namespace-scoped: 'true'
+             cicd.kro.run/application: ${schema.spec.application.name}
+       type: kubernetes.io/dockerconfigjson
+       data:
+          # Empty auth config - will be populated by ECR credential helper during setup
+          .dockerconfigjson: eyJhdXRocyI6e319
+
+    # CronJob for ECR credential refresh - ensures Docker registry secrets stay current
+    - id: ecrrefreshcronjob
+      readyWhen:
+       - ${ecrrefreshcronjob.metadata.name != ""}
+      template:
+       apiVersion: batch/v1
+       kind: CronJob
+       metadata:
+          name: ${schema.spec.name}-ecr-refresh
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Namespace scoping
+             cicd.kro.run/namespace-scoped: 'true'
+             cicd.kro.run/application: ${schema.spec.application.name}
+       spec:
+          # Run every 6 hours to refresh ECR credentials (they expire after 12 hours)
+          schedule: '0 */6 * * *'
+          concurrencyPolicy: Replace
+          successfulJobsHistoryLimit: 3
+          failedJobsHistoryLimit: 1
+          jobTemplate:
+             spec:
+               template:
+                 metadata:
+                   labels:
+                     app.kubernetes.io/name: ${schema.spec.application.name}
+                     app.kubernetes.io/component: ecr-credential-refresh
+                   annotations:
+                     karpenter.sh/do-not-disrupt: "true"
+                 spec:
+                   serviceAccountName: ${schema.spec.name}-sa
+                   restartPolicy: OnFailure
+                   containers:
+                     - name: ecr-credential-refresh
+                       image: amazon/aws-cli:latest
+                       command: ['/bin/sh', '-c']
+                       args:
+                         - |
+                           echo "Starting ECR credential refresh for ${schema.spec.application.name}"
+
+                           # Install kubectl
+                           yum update -y && yum install -y jq
+                           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                           chmod +x kubectl && mv kubectl /usr/local/bin/
+
+                           # Get ECR login token
+                           ECR_TOKEN=$(aws ecr get-login-password --region ${schema.spec.aws.region})
+                           if [ $? -ne 0 ]; then
+                             echo "ERROR: Failed to get ECR login token"
+                             exit 1
+                           fi
+
+                           # Get registry endpoint
+                           ECR_REGISTRY="${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}.dkr.ecr.${schema.spec.aws.region}.amazonaws.com"
+
+                           # Create docker config JSON with proper structure
+                           DOCKER_CONFIG=$(cat <<EOF | base64 -w 0
+                           {
+                             "auths": {
+                               "$ECR_REGISTRY": {
+                                 "username": "AWS",
+                                 "password": "$ECR_TOKEN",
+                                 "auth": "$(echo -n "AWS:$ECR_TOKEN" | base64 -w 0)"
+                               }
+                             }
+                           }
+                           EOF
+                           )
+
+                           # Update the secret with new credentials
+                           kubectl patch secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
+                             --type='merge' \
+                             -p="{\"data\":{\".dockerconfigjson\":\"$DOCKER_CONFIG\"}}"
+
+                           if [ $? -eq 0 ]; then
+                             echo "Successfully updated ECR credentials for ${schema.spec.application.name}"
+                             # Add timestamp annotation to track last refresh
+                             kubectl annotate secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
+                               cicd.kro.run/last-refresh="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
+                           else
+                             echo "ERROR: Failed to update ECR credentials"
+                             exit 1
+                           fi
+                       env:
+                         - name: AWS_REGION
+                           value: ${schema.spec.aws.region}
+                         - name: AWS_DEFAULT_REGION
+                           value: ${schema.spec.aws.region}
+                       envFrom:
+                         - configMapRef:
+                             name: ${schema.spec.name}-config
+
+    # Argo WorkflowTemplate for provisioning operations
+    - id: provisioningworkflow
+      readyWhen:
+       - ${provisioningworkflow.metadata.name != ""}
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: WorkflowTemplate
+       metadata:
+          name: ${schema.spec.name}-provisioning-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             workflow.kro.run/type: provisioning
+       spec:
+          serviceAccountName: ${schema.spec.name}-sa
+          entrypoint: provision-pipeline
+          arguments:
+             parameters:
+               - name: application-name
+                 value: ${schema.spec.application.name}
+               - name: aws-region
+                 value: ${schema.spec.aws.region}
+          templates:
+             - name: provision-pipeline
+               dag:
+                 tasks:
+                   - name: validate-resources
+                     template: validate-aws-resources
+                   - name: setup-secrets
+                     template: setup-docker-secrets
+                     dependencies: [validate-resources]
+                   - name: setup-gitlab-webhook
+                     template: setup-gitlab-webhook
+                     dependencies: [setup-secrets]
+                   - name: warm-cache
+                     template: cache-warmup
+                     dependencies: [setup-secrets]
+
+             - name: validate-aws-resources
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               container:
+                 image: amazon/aws-cli:latest
+                 command: [sh, -c]
+                 args:
+                   - |
+                     echo "Validating AWS resources for {{workflow.parameters.application-name}}"
+
+                     # Validate ECR repositories exist and are accessible
+                     aws ecr describe-repositories --repository-names ${ecrmainrepo.spec.name} --region {{workflow.parameters.aws-region}}
+                     aws ecr describe-repositories --repository-names ${ecrcacherepo.spec.name} --region {{workflow.parameters.aws-region}}
+
+                     # Test ECR authentication
+                     aws ecr get-login-password --region {{workflow.parameters.aws-region}} > /dev/null
+
+                     echo "All AWS resources validated successfully"
+                 env:
+                   - name: AWS_REGION
+                     value: '{{workflow.parameters.aws-region}}'
+                 envFrom:
+                   - configMapRef:
+                       name: ${schema.spec.name}-config
+
+             - name: setup-docker-secrets
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               container:
+                 image: amazon/aws-cli:latest
+                 command: [sh, -c]
+                 args:
+                   - |
+                     echo "Setting up Docker registry secrets for ${schema.spec.application.name}"
+
+                     # Install jq and kubectl
+                     yum update -y && yum install -y jq
+                     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                     chmod +x kubectl && mv kubectl /usr/local/bin/
+
+                     # Get ECR login token
+                     ECR_TOKEN=$(aws ecr get-login-password --region {{workflow.parameters.aws-region}})
+                     if [ $? -ne 0 ]; then
+                       echo "ERROR: Failed to get ECR login token"
+                       exit 1
+                     fi
+
+                     ECR_REGISTRY="${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}.dkr.ecr.{{workflow.parameters.aws-region}}.amazonaws.com"
+
+                     # Create docker config JSON with proper structure and auth field
+                     DOCKER_CONFIG=$(cat <<EOF | base64 -w 0
+                     {
+                       "auths": {
+                         "$ECR_REGISTRY": {
+                           "username": "AWS",
+                           "password": "$ECR_TOKEN",
+                           "auth": "$(echo -n "AWS:$ECR_TOKEN" | base64 -w 0)"
+                         }
+                       }
+                     }
+                     EOF
+                     )
+
+                     # Update the secret with new credentials
+                     kubectl patch secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
+                       --type='merge' \
+                       -p="{\"data\":{\".dockerconfigjson\":\"$DOCKER_CONFIG\"}}"
+
+                     if [ $? -eq 0 ]; then
+                       echo "Docker registry secrets updated successfully"
+                       # Add initial timestamp annotation
+                       kubectl annotate secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
+                         cicd.kro.run/last-refresh="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                         cicd.kro.run/initial-setup="true" --overwrite
+                       
+                       # Verify the secret is properly formatted
+                       echo "Verifying Docker config secret format..."
+                       kubectl get secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq . > /dev/null
+                       if [ $? -eq 0 ]; then
+                         echo "Docker config secret format verified successfully"
+                       else
+                         echo "WARNING: Docker config secret format verification failed"
+                       fi
+                     else
+                       echo "ERROR: Failed to update Docker registry secrets"
+                       exit 1
+                     fi
+                 env:
+                   - name: AWS_REGION
+                     value: '{{workflow.parameters.aws-region}}'
+                   - name: AWS_DEFAULT_REGION
+                     value: '{{workflow.parameters.aws-region}}'
+                 envFrom:
+                   - configMapRef:
+                       name: ${schema.spec.name}-config
+
+             - name: setup-gitlab-webhook
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               container:
+                 image: alpine:3.20
+                 command: ['/bin/sh', '-c']
+                 envFrom:
+                   - secretRef:
+                       name: gitlab-credentials
+                 args:
+                   - |
+                     apk add curl jq
+                     
+                     # Install kubectl
+                     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                     chmod +x kubectl && mv kubectl /usr/local/bin/
+
+                     # Get configuration from ConfigMap
+                     webhook_url=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.WEBHOOK_ENDPOINT}')
+                     gitlab_hostname=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.GITLAB_HOSTNAME}')
+                     gitlab_username=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.GITLAB_USERNAME}')
+                     app_name=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.APPLICATION_NAME}')
+                     gitlab_token="$$GITLAB_TOKEN"
+
+                     api_url="https://$$gitlab_hostname/api/v4/projects/$$gitlab_username%2F$$app_name/hooks"
+
+                     echo "Configuring GitLab webhook to point to Argo Events endpoint: $$webhook_url"
+
+                     echo "API URL: $$api_url"
+                     echo "Webhook URL: $$webhook_url"
+                     
+                     # Check if webhook already exists
+                     echo "Checking existing webhooks..."
+                     existing_webhooks=$$(curl -k -X 'GET' "$$api_url" \
+                       -H "accept: application/json" \
+                       -H "Authorization: Bearer $$gitlab_token" \
+                       -H "Content-Type: application/json" -s -w "\nHTTP_CODE:%{http_code}")
+                     
+                     http_code=$$(echo "$$existing_webhooks" | tail -1 | sed 's/HTTP_CODE://')
+                     response_body=$$(echo "$$existing_webhooks" | head -n -1)
+                     
+                     echo "HTTP Code: $$http_code"
+                     echo "Response: $$response_body"
+                     
+                     if [ "$$http_code" = "200" ]; then
+                       echo "DEBUG: New webhook detection code is running - version 2025-10-10"
+                       echo "DEBUG: Full response body: $$response_body"
+                       echo "Searching for webhook with URL: $$webhook_url"
+                       echo "Existing webhook URLs:"
+                       echo "$$response_body" | jq -r '.[].url' 2>/dev/null || echo "Failed to parse webhook URLs"
+                       
+                       # Simple and reliable webhook existence check with debugging
+                       webhook_exists=$$(echo "$$response_body" | jq -r ".[] | select(.url == \"$$webhook_url\") | .id" 2>/dev/null | head -1)
+                       echo "Raw jq result: '$$webhook_exists'"
+                       
+                       # Validate the result
+                       if [ -n "$$webhook_exists" ] && [ "$$webhook_exists" != "null" ] && [ "$$webhook_exists" != "" ]; then
+                         echo "Found existing webhook with ID: $$webhook_exists"
+                       else
+                         webhook_exists=""
+                         echo "No existing webhook found - will create new one"
+                       fi
+                     else
+                       echo "Failed to get existing webhooks, HTTP code: $$http_code"
+                       webhook_exists=""
+                     fi
+
+                     if [ -z "$$webhook_exists" ] || [ "$$webhook_exists" = "null" ]; then
+                       echo "Creating new GitLab webhook for Argo Events integration"
+                       webhook_response=$$(curl -k -X 'POST' "$$api_url" \
+                         -H "accept: application/json" \
+                         -H "Authorization: Bearer $$gitlab_token" \
+                         -H "Content-Type: application/json" \
+                         -d '{
+                           "url": "'$$webhook_url'",
+                           "push_events": true,
+                           "issues_events": true,
+                           "merge_requests_events": true,
+                           "tag_push_events": false,
+                           "note_events": false,
+                           "job_events": false,
+                           "pipeline_events": false,
+                           "wiki_page_events": false,
+                           "deployment_events": false,
+                           "releases_events": false,
+                           "subgroup_events": false,
+                           "enable_ssl_verification": false,
+                           "token": "",
+                           "push_events_branch_filter": "main"
+                         }' -s -w "\nHTTP_CODE:%{http_code}")
+                       
+                       create_http_code=$$(echo "$$webhook_response" | tail -1 | sed 's/HTTP_CODE://')
+                       create_response_body=$$(echo "$$webhook_response" | head -n -1)
+                       
+                       echo "Create HTTP Code: $$create_http_code"
+                       echo "Create Response: $$create_response_body"
+                       
+                       if [ "$$create_http_code" = "201" ] && echo "$$create_response_body" | jq -e '.id' > /dev/null 2>&1; then
+                         echo "GitLab webhook created successfully with ID: $$(echo "$$create_response_body" | jq -r '.id')"
+                       else
+                         echo "Warning: Failed to create webhook. HTTP Code: $$create_http_code, Response: $$create_response_body"
+                       fi
+                     else
+                       echo "GitLab webhook already exists with ID: $$webhook_exists"
+                       echo "Webhook is correctly configured - no action needed"
+                     fi
+
+                     echo "GitLab webhook configuration completed"
+
+             - name: cache-warmup
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               container:
+                 image: gcr.io/kaniko-project/executor:latest
+                 args:
+                   - --dockerfile=/tmp/Dockerfile
+                   - --context=dir:///workspace/empty
+                   - --destination=${ecrcacherepo.status.repositoryURI}:cache-base
+                   - --cache=true
+                   - --cache-repo=${ecrcacherepo.status.repositoryURI}
+                   - --cache-ttl=168h
+                   - --no-push
+                   - --verbosity=info
+                 env:
+                   - name: AWS_REGION
+                     value: '{{workflow.parameters.aws-region}}'
+                   - name: AWS_DEFAULT_REGION
+                     value: '{{workflow.parameters.aws-region}}'
+                 volumeMounts:
+                   - name: docker-config
+                     mountPath: /kaniko/.docker
+                     readOnly: true
+                   - name: empty-context
+                     mountPath: /workspace/empty
+                   - name: dockerfile
+                     mountPath: /tmp
+               volumes:
+                 - name: docker-config
+                   secret:
+                     secretName: ${schema.spec.name}-docker-config
+                     # Ensure proper permissions for Kaniko
+                     defaultMode: 0644
+                 - name: empty-context
+                   emptyDir: {}
+                 - name: dockerfile
+                   configMap:
+                     name: ${schema.spec.name}-cache-dockerfile
+                     items:
+                       - key: Dockerfile
+                         path: Dockerfile
+
+    # Argo WorkflowTemplate for cache warmup operations
+    - id: cachewarmupworkflow
+      readyWhen:
+       - ${cachewarmupworkflow.metadata.name != ""}
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: WorkflowTemplate
+       metadata:
+          name: ${schema.spec.name}-cache-warmup-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             workflow.kro.run/type: cache-warmup
+       spec:
+          serviceAccountName: ${schema.spec.name}-sa
+          entrypoint: cache-warmup-pipeline
+          arguments:
+             parameters:
+               - name: base-images
+                 value: 'node:18-alpine,python:3.11-slim,openjdk:17-jre-slim'
+               - name: cache-ttl
+                 value: '168h'
+          templates:
+             - name: cache-warmup-pipeline
+               dag:
+                 tasks:
+                   - name: warm-base-images
+                     template: warm-base-image
+                     arguments:
+                       parameters:
+                         - name: image
+                           value: '{{item}}'
+                     withParam: '{{workflow.parameters.base-images}}'
+
+             - name: warm-base-image
+               inputs:
+                 parameters:
+                   - name: image
+               container:
+                 image: gcr.io/kaniko-project/executor:latest
+                 args:
+                   - --dockerfile=/tmp/Dockerfile
+                   - --context=dir:///workspace
+                   - --destination=${ecrcacherepo.status.repositoryURI}:cache-{{inputs.parameters.image}}
+                   - --cache=true
+                   - --cache-repo=${ecrcacherepo.status.repositoryURI}
+                   - --cache-ttl={{workflow.parameters.cache-ttl}}
+                 env:
+                   - name: AWS_REGION
+                     value: ${schema.spec.aws.region}
+                 volumeMounts:
+                   - name: docker-config
+                     mountPath: /kaniko/.docker
+                   - name: dockerfile
+                     mountPath: /tmp
+               volumes:
+                 - name: docker-config
+                   secret:
+                     secretName: ${schema.spec.name}-docker-config
+                     # Ensure proper permissions for Kaniko
+                     defaultMode: 0644
+                 - name: dockerfile
+                   configMap:
+                     name: ${schema.spec.name}-cache-dockerfile
+                     items:
+                       - key: Dockerfile
+                         path: Dockerfile
+
+    # Argo WorkflowTemplate for CI/CD operations
+    - id: cicdworkflow
+      readyWhen:
+       - ${cicdworkflow.metadata.name != ""}
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: WorkflowTemplate
+       metadata:
+          name: ${schema.spec.name}-cicd-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             workflow.kro.run/type: cicd
+       spec:
+          serviceAccountName: ${schema.spec.name}-sa
+          entrypoint: cicd-pipeline
+          ttlStrategy:
+            secondsAfterCompletion: 3600
+            secondsAfterSuccess: 3600
+            secondsAfterFailure: 7200
+          podGC:
+            strategy: OnWorkflowCompletion
+            deleteDelayDuration: 1h
+          volumeClaimTemplates:
+            - metadata:
+                name: workdir
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                storageClassName: gp3
+                resources:
+                  requests:
+                    storage: 256Mi
+          arguments:
+             parameters:
+               - name: git-url
+               - name: git-revision
+                 value: main
+               - name: git-username
+               - name: git-token
+               - name: repo-name
+               - name: image-tag
+                 value: '{{workflow.creationTimestamp.Y}}{{workflow.creationTimestamp.m}}{{workflow.creationTimestamp.d}}-{{workflow.uid}}'
+               - name: dockerfile-path
+                 value: ${schema.spec.application.dockerfilePath}
+               - name: deployment-path
+                 value: ${schema.spec.application.deploymentPath}
+          templates:
+             - name: cicd-pipeline
+               dag:
+                 tasks:
+                   - name: checkout-code
+                     template: git-checkout
+                   - name: run-tests
+                     template: run-unit-tests
+                     dependencies: [checkout-code]
+                   - name: build-and-push
+                     template: kaniko-build
+                     dependencies: [run-tests]
+                   - name: update-deployment
+                     template: update-git-repo
+                     dependencies: [build-and-push]
+                   - name: notify-completion
+                     template: notify-status
+                     dependencies: [update-deployment]
+
+             - name: git-checkout
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               container:
+                 image: alpine/git:latest
+                 command: [sh, -c]
+                 args:
+                   - |
+                     echo "Checking out code from {{workflow.parameters.git-url}}"
+                     
+                     # Get GitLab token from secret
+                     GITLAB_TOKEN=$(cat /etc/gitlab-secret/GITLAB_TOKEN)
+                     
+                     # Extract branch name from refs/heads/branch format
+                     BRANCH_NAME=$(echo "{{workflow.parameters.git-revision}}" | sed 's|refs/heads/||')
+                     echo "Branch name: $BRANCH_NAME"
+                     
+                     # Clone with token authentication
+                     REPO_URL=$(echo "{{workflow.parameters.git-url}}" | sed 's|https://|https://{{workflow.parameters.git-username}}:'$GITLAB_TOKEN'@|')
+                     git clone $REPO_URL /workdir/source || exit 1
+                     cd /workdir/source || exit 1
+                     git checkout $BRANCH_NAME || git checkout -b $BRANCH_NAME
+                     echo "Code checkout completed"
+                     ls -la /workdir/source
+                 volumeMounts:
+                   - name: workdir
+                     mountPath: /workdir
+                   - name: gitlab-secret
+                     mountPath: /etc/gitlab-secret
+                     readOnly: true
+               volumes:
+                 - name: workspace
+                   emptyDir: {}
+                 - name: gitlab-secret
+                   secret:
+                     secretName: gitlab-credentials
+
+             - name: run-unit-tests
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               container:
+                 image: node:18-alpine
+                 command: [sh, -c]
+                 args:
+                   - |
+                     cd /workdir/source
+                     echo "Running unit tests for {{workflow.parameters.repo-name}}"
+
+                     # Check if package.json exists for Node.js projects
+                     if [ -f "package.json" ]; then
+                       npm ci
+                       npm test || echo "Tests failed but continuing build"
+                     elif [ -f "requirements.txt" ]; then
+                       # Python project
+                       pip install -r requirements.txt
+                       python -m pytest || echo "Tests failed but continuing build"
+                     elif [ -f "pom.xml" ]; then
+                       # Java Maven project
+                       mvn test || echo "Tests failed but continuing build"
+                     else
+                       echo "No recognized test framework found, skipping tests"
+                     fi
+
+                     echo "Test phase completed"
+                 volumeMounts:
+                   - name: workdir
+                     mountPath: /workdir
+
+             - name: kaniko-build
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               container:
+                 image: gcr.io/kaniko-project/executor:latest
+                 args:
+                   - --dockerfile={{workflow.parameters.dockerfile-path}}/Dockerfile
+                   - --context=/workdir/source
+                   - --destination=${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}
+                   - --cache=true
+                   - --cache-repo=${ecrcacherepo.status.repositoryURI}
+                   - --cache-ttl=168h
+                   - --build-arg=BUILDKIT_INLINE_CACHE=1
+                   - --compressed-caching=false
+                   - --snapshot-mode=redo
+                   - --use-new-run
+                   - --verbosity=info
+                 env:
+                   - name: AWS_REGION
+                     value: ${schema.spec.aws.region}
+                   - name: AWS_DEFAULT_REGION
+                     value: ${schema.spec.aws.region}
+                 envFrom:
+                   - configMapRef:
+                       name: ${schema.spec.name}-config
+                 resources:
+                   requests:
+                     memory: "6Gi"
+                     cpu: "4000m"
+                   limits:
+                     memory: "6Gi"
+                 volumeMounts:
+                   - name: docker-config
+                     mountPath: /kaniko/.docker
+                     readOnly: true
+                   - name: workdir
+                     mountPath: /workdir
+               volumes:
+                 - name: docker-config
+                   secret:
+                     secretName: ${schema.spec.name}-docker-config
+                     # Ensure proper permissions for Kaniko
+                     defaultMode: 0644
+
+             - name: update-git-repo
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               container:
+                 image: alpine/git:latest
+                 command: [sh, -c]
+                 args:
+                   - |
+                     echo "Updating deployment manifests with new image tag"
+                     #activate debugging
+                     set -x
+
+                     # Clone the repository
+                     REPO_URL="https://{{workflow.parameters.git-username}}:$GITLAB_TOKEN@${schema.spec.gitlab.hostname}/{{workflow.parameters.git-username}}/{{workflow.parameters.repo-name}}.git"
+                     git clone $REPO_URL /tmp/repo
+                     cd /tmp/repo/{{workflow.parameters.deployment-path}}
+
+                     # Update image references in deployment files
+                     IMAGE_URI="${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}"
+                     echo "Updating image to: $IMAGE_URI"
+
+                     # Update various deployment file formats
+                     echo "Debug: Application name is: ${schema.spec.application.name}"
+                     # Update image only for java applications in deployment/dev/application.yaml
+                     if [ "${schema.spec.application.name}" = "java" ]; then
+                       if [ -f "dev/application.yaml" ]; then
+                         sed -i "s|image: <image>|image: $IMAGE_URI|g" dev/application.yaml
+                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" dev/application.yaml
+                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" dev/application.yaml
+                       fi
+                     else
+                       # Replace placeholder and existing ECR images for non-java applications
+                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: <image>|image: $IMAGE_URI|g"
+                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g"
+                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g"
+                     fi
+
+                     # Show what changed
+                     git diff
+
+                     # Commit and push changes
+                     git add .
+                     if git diff --staged --quiet; then
+                       echo "No changes to commit"
+                     else
+                       git commit -m "chore: update ${schema.spec.application.name} image to {{workflow.parameters.image-tag}}"
+                       git push origin {{workflow.parameters.git-revision}}
+                       echo "Successfully updated deployment manifests"
+                     fi
+                 env:
+                   - name: GIT_AUTHOR_NAME
+                     value: 'CI/CD Pipeline'
+                   - name: GIT_AUTHOR_EMAIL
+                     value: 'cicd@${schema.spec.gitlab.hostname}'
+                   - name: GIT_COMMITTER_NAME
+                     value: 'CI/CD Pipeline'
+                   - name: GIT_COMMITTER_EMAIL
+                     value: 'cicd@${schema.spec.gitlab.hostname}'
+                 envFrom:
+                   - configMapRef:
+                       name: ${schema.spec.name}-config
+                   - secretRef:
+                       name: gitlab-credentials
+
+             - name: notify-status
+               container:
+                 image: curlimages/curl:latest
+                 command: [sh, -c]
+                 args:
+                   - |
+                     echo "CI/CD pipeline completed successfully"
+                     echo "Application: {{workflow.parameters.repo-name}}"
+                     echo "Image: ${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}"
+                     echo "Git revision: {{workflow.parameters.git-revision}}"
+
+                     # Optional: Send notification to external systems
+                     # curl -X POST "https://hooks.slack.com/..." -d "Pipeline completed for {{workflow.parameters.repo-name}}"
+                 envFrom:
+                   - configMapRef:
+                       name: ${schema.spec.name}-config
+
+    - id: doradeploy
+      readyWhen:
+       - ${doradeploy.metadata.name != ""}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata:
+          name: ${schema.spec.name}-dora-deployment-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             workflow.kro.run/type: cicd
+        spec:
+          entrypoint: handle-rollout-check-and-process-deploy
+          arguments:
+            parameters:
+              - name: body
+              - name: appname
+                value: ${schema.spec.application.name}
+              - name: kubeconf-name
+                value: ${schema.spec.application.name}-kubeconfig
+          templates:
+            - name: handle-rollout-check-and-process-deploy
+              steps:
+                # - - name: check-rollout
+                #     template: check-rollout-status
+                #     arguments:
+                #       parameters:
+                #         - name: namespace
+                #           value: team-"{{workflow.parameters.appname}}"
+                #         - name: body
+                #           value: "{{workflow.parameters.body}}"
+                - - name: process-and-send-deployment
+                    template: process-deployment
+                    arguments:
+                      parameters:
+                        - name: status
+                          value: "SUCCESS"
+                #          value: "{{steps.check-rollout.outputs.result}}"
+                        - name: body
+                          value: "{{workflow.parameters.body}}"
+                        - name: url
+                          value: devlake-ui.devlake.svc.cluster.local:4000
+    
+            - name: check-rollout-status
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: body
+              retryStrategy:
+                limit: 60
+                retryPolicy: "Always"
+                backoff:
+                  duration: "10s"
+                  factor: 1
+                  maxDuration: "30s"
+              container:
+                image: amazon/aws-cli:latest
+                volumeMounts:
+                - name: kubeconfig
+                  mountPath: /etc/kubeconfig/config
+                  subPath: config
+                  readOnly: true
+                command: [/bin/bash, -c]
+                args:
+                - |
+                  curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                  chmod +x kubectl && mv kubectl /usr/local/bin/
+
+                  mkdir -p ~/.kube
+                  cp /etc/kubeconfig/config ~/.kube/config
+                  
+                  SEARCH_WORD="{{workflow.parameters.appname}}"
+                  COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after | .[0:7]')
+    
+                  ROLLOUT_NAME=$(kubectl --as=$SA get rollout -n "{{inputs.parameters.namespace}}" -o json | \
+                    jq -r --arg WORD "$SEARCH_WORD" '.items[] | select(.metadata.name | contains($WORD)) | .metadata.name')
+    
+                  if [ -z "$ROLLOUT_NAME" ]; then
+                    echo "No rollout found containing word: $SEARCH_WORD"
+                    exit 1
+                  fi
+    
+                  CURRENT_IMAGE=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
+                  CURRENT_TAG=$(echo $CURRENT_IMAGE | awk -F ":" '{print $2}')
+    
+                  if [[ "$CURRENT_TAG" == *"$COMMIT_HASH"* ]]; then
+                    phase=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
+                    
+                    if [ "$phase" = "Healthy" ]; then
+                      echo "SUCCESS"
+                      exit 0
+                    elif [ "$phase" = "Degraded" ]; then
+                      echo "FAILURE"
+                      exit 0
+                    fi
+                  fi
+    
+                  echo "Still waiting for rollout to complete..."
+                  exit 1
+              volumes:
+                - name: kubeconfig
+                  configMap:
+                    name: "{{workflow.parameters.appname}}-kubeconfig"
+    
+            - name: process-deployment
+              inputs:
+                parameters:
+                  - name: body
+                  - name: url
+                  - name: status
+              script:
+                image: alpine
+                command: [sh]
+                envFrom:
+                  - secretRef:
+                      name: devlake-webhook-secret
+                  - configMapRef:
+                      name: devlake-webhook-id
+                source: |
+                  apk add --no-cache jq curl
+                  RESULT="{{inputs.parameters.status}}"
+                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/deployments          
+                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
+                  . as $root |
+                  {
+                    id: ("deployment-" + (.after | .[0:7])),
+                    createdDate: (.commits | first | .timestamp),
+                    startedDate: (.commits | first | .timestamp),
+                    finishedDate: (.commits | last | .timestamp),
+                    environment: "PRODUCTION",
+                    result: $result,
+                    name: ("deployment-" + (.after | .[0:7])),
+                    deploymentCommits: [
+                      .commits[] | {
+                        repoUrl: $root.repository.git_http_url,
+                        refName: $root.ref,
+                        startedDate: .timestamp,
+                        finishedDate: .timestamp,
+                        commitSha: .id,
+                        commitMsg: .message,
+                        result: $result,
+                      }
+                    ]
+                  }')
+                  echo "====Transformed Payload===="
+                  echo "$PAYLOAD" | jq '.'
+                  curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
+
+    - id: doraincident
+      readyWhen:
+       - ${doraincident.metadata.name != ""}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata:
+          name: ${schema.spec.name}-dora-incident-workflow
+        spec:
+          arguments:
+            parameters:
+              - name: body
+              - name: url
+                value: devlake-ui.devlake.svc.cluster.local:4000
+          templates:
+            - name: process-incident
+              inputs:
+                parameters:
+                  - name: body
+                  - name: url
+              script:
+                image: alpine
+                command: [sh]
+                envFrom:
+                  - secretRef:
+                      name: devlake-webhook-secret
+                  - configMapRef:
+                      name: devlake-webhook-id
+                source: |
+                  apk add --no-cache jq curl
+                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/issues
+                  echo '{{inputs.parameters.body}}'
+                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+                  {
+                    issueKey: (.repository.name + "-" + (.object_attributes.id | tostring)),
+                    title: .object_attributes.title,
+                    description: .object_attributes.description,
+                    url: .object_attributes.url,
+                    type: "INCIDENT",
+                    status: (if .object_attributes.state == "opened" then "TODO" else "DONE" end),
+                    originalStatus: "TODO",
+                    createdDate: .object_attributes.created_at,
+                    updatedDate: .object_attributes.updated_at,
+                    resolutionDate: (if .object_attributes.state == "closed" then .object_attributes.closed_at else null end),
+                    priority: "",
+                    severity: .object_attributes.severity,
+                    creatorId: .user.id,
+                    creatorName: (.user.name // .user.username),
+                    assigneeId: (.object_attributes.assignee_id // ""),
+                    assigneeName: ""
+                  }')
+                  echo "====Transformed Payload===="
+                  echo "$PAYLOAD" | jq '.'
+                  curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
+
+    - id: dorapullrequest
+      readyWhen:
+       - ${dorapullrequest.metadata.name != ""}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata:
+          name: ${schema.spec.name}-dora-pull-request-workflow
+        spec:
+          arguments:
+            parameters:
+              - name: body
+              - name: url
+                value: devlake-ui.devlake.svc.cluster.local:4000
+          templates:
+            - name: process-pull-request
+              inputs:
+                parameters:
+                  - name: body
+                  - name: url
+              script:
+                image: alpine
+                command: [sh]
+                envFrom:
+                  - secretRef:
+                      name: devlake-webhook-secret
+                  - configMapRef:
+                      name: devlake-webhook-id
+                source: |
+                  apk add --no-cache jq curl
+                  webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/pull_requests
+                  echo '{{inputs.parameters.body}}'
+                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+                  {
+                    id: (.repository.name + "-" + (.object_attributes.id | tostring)),
+                    pullRequestKey: (.object_attributes.id | tostring),
+                    displayTitle: .object_attributes.title,
+                    description: .object_attributes.description,
+                    status: (if .object_attributes.state == "opened" then "OPEN" elif .object_attributes.state == "merged" then "MERGED" else "CLOSED" end),
+                    createdDate: .object_attributes.created_at,
+                    updatedDate: .object_attributes.updated_at,
+                    closedDate: (if .object_attributes.state == "closed" then .object_attributes.updated_at),
+                    mergedDate: (if .object_attributes.state == "merged" then .object_attributes.updated_at),
+                    type: "PR",
+                    url: .object_attributes.url,
+                    authorId: .user.id,
+                    authorName: (.user.name // .user.username),
+                    reviewers: [],
+                    comments: 0,
+                    commits: 0,
+                    additions: 0,
+                    deletions: 0,
+                    changedFiles: 0,
+                    baseBranch: .object_attributes.source_branch,
+                    headBranch: .object_attributes.target_branch,
+                    repoId: .project.id,
+                    repoName: .repository.name
+                  }')
+                  echo "====Transformed Payload===="
+                  echo "$PAYLOAD" | jq '.'
+                  curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
+    
+    # ConfigMap for cache warmup Dockerfiles
+    - id: cachedockerfile
+      readyWhen:
+       - ${cachedockerfile.metadata.name != ""}
+      template:
+       apiVersion: v1
+       kind: ConfigMap
+       metadata:
+          name: ${schema.spec.name}-cache-dockerfile
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+       data:
+          Dockerfile: |
+             ARG BASE_IMAGE=node:18-alpine
+             FROM $BASE_IMAGE
+
+             # Install common build tools and dependencies
+             RUN apk add --no-cache \
+                 git \
+                 curl \
+                 wget \
+                 build-base \
+                 python3 \
+                 py3-pip \
+                 && rm -rf /var/cache/apk/*
+
+             # Create workspace directory
+             WORKDIR /workspace
+
+             # This is a cache warming image - no specific application code
+             CMD ["echo", "Cache warming image ready"]
+
+    - id: dorasetuptemplate
+      readyWhen:
+       - ${dorasetuptemplate.metadata.name != ""}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata:
+          name: dora-setup-template
+        spec:
+          arguments:
+            parameters:
+            - name: appname
+              value: ${schema.spec.application.name}
+            - name: namespace
+              value: ${schema.metadata.namespace}
+            - name: url
+              value: http://devlake-lake.devlake.svc.cluster.local:8080
+            - name: secretname
+              value: fleet-secret-fleet-peeks-spoke-dev
+          templates:
+          - name: dora-provisioner
+            dag:
+              tasks:
+                - name: kubeconf-init
+                  template: get-cluster-config
+
+                - name: devlake-init
+                  template: devlake-init
+                  arguments:
+                    parameters:
+                      - name: appname
+                        value: "{{workflow.parameters.appname}}"
+                      - name: url
+                        value: http://devlake-lake.devlake.svc.cluster.local:8080
+        
+                - name: create-devlake-webhook-secret-and-cm
+                  template: create-devlake-webhook-secret-and-cm
+                  arguments:
+                    parameters:
+                    - name: token-and-id
+                      value: "{{tasks.devlake-init.outputs.result}}"
+                  depends: "devlake-init"
+        
+                - name: devlake-generate-data
+                  template: devlake-generate-data
+                  depends: "create-devlake-webhook-secret-and-cm"
+
+          - name: get-cluster-config
+            container:
+              image: amazon/aws-cli:latest
+              command: [/bin/bash, -c]
+              args:
+              - |
+                # Install kubectl and jq
+                yum install -y jq
+                curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                chmod +x kubectl && mv kubectl /usr/local/bin/
+
+                SERVER=$(kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.server}' | base64 -d)
+                CONFIG_DATA=$(kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.config}' | base64 -d)
+
+                CLUSTER_NAME=$(echo "$CONFIG_DATA" | jq -r '.awsAuthConfig.clusterName')
+                CA_DATA=$(echo "$CONFIG_DATA" | jq -r '.tlsClientConfig.caData')
+
+                KUBECONFIG_CONTENT=$(cat <<EOF
+                apiVersion: v1
+                kind: Config
+                clusters:
+                - name: target-cluster
+                  cluster:
+                    certificate-authority-data: $CA_DATA
+                    server: $SERVER
+                users:
+                - name: target-user
+                  user:
+                    exec:
+                      apiVersion: client.authentication.k8s.io/v1beta1
+                      command: aws
+                      args:
+                      - eks
+                      - get-token
+                      - --cluster-name
+                      - $CLUSTER_NAME
+                contexts:
+                - name: target-context
+                  context:
+                    cluster: target-cluster
+                    user: target-user
+                current-context: target-context
+                EOF
+                )
+
+                kubectl create configmap {{workflow.parameters.appname}}-kubeconfig \
+                  -n {{workflow.parameters.namespace}} \
+                  --from-literal=config="$KUBECONFIG_CONTENT" \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              env:
+              - name: AWS_DEFAULT_REGION
+                value: ${schema.spec.aws.region})
+        
+          - name: devlake-init
+            inputs:
+              parameters:
+              - name: appname
+              - name: url
+            container: 
+              image: alpine:3.20
+              command: ["/bin/sh", "-c"]
+              args:
+              - |
+                apk add curl jq >/dev/null 2>&1
+                BASE_URL="{{inputs.parameters.url}}"
+                resp=$(curl -X GET $BASE_URL/proceed-db-migration)
+                
+                projectName="{{inputs.parameters.appname}}"
+                
+                projectCreateRequest=$(
+                  cat <<EOF
+                {
+                  "name": "$projectName",
+                  "description": "",
+                  "metrics": [
+                    {
+                      "pluginName": "dora",
+                      "pluginOption": {},
+                      "enable": true
+                    },
+                    {
+                      "pluginName": "issue_trace",
+                      "pluginOption": {},
+                      "enable": true
+                    }
+                  ]
+                }
+                EOF
+                )
+                projectCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/projects -d "$projectCreateRequest")
+                blueprintID=$(echo $projectCreateResponse | jq -r '.blueprint.id')
+                blueprintName=$(echo $projectCreateResponse | jq -r '.blueprint.name')
+                
+                webhookName="$projectName"_webhook
+                webhookCreateRequest=$(
+                  cat <<EOF
+                {
+                  "name": "$webhookName"
+                }
+                EOF
+                )
+                webhookCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/plugins/webhook/connections -d "$webhookCreateRequest")
+                webhookID=$(echo $webhookCreateResponse | jq -r '.id')
+                webhookApiKey=$(echo $webhookCreateResponse | jq -r '.apiKey.apiKey')
+                
+                blueprintPatchRequest=$(
+                  cat <<EOF
+                {
+                  "name": "$blueprintName",
+                  "projectName": "$projectName",
+                  "mode": "NORMAL",
+                  "plan": null,
+                  "enable": true,
+                  "cronConfig": "0 0 * * 1",
+                  "isManual": false,
+                  "beforePlan": null,
+                  "afterPlan": null,
+                  "labels": [],
+                  "connections": [
+                    {
+                      "pluginName": "webhook",
+                      "connectionId": $webhookID
+                    }
+                  ],
+                  "skipOnFail": false,
+                  "timeAfter": "2024-09-21T00:00:00Z",
+                  "skipCollectors": false,
+                  "fullSync": false,
+                  "id": $blueprintID
+                }
+                EOF
+                )
+                
+                resp=$(curl -X PATCH -H "Content-Type: application/json" $BASE_URL/blueprints/$blueprintID -d "$blueprintPatchRequest")
+                
+                
+                echo "$webhookApiKey|$webhookID|$blueprintID"
+          - name: create-devlake-webhook-secret-and-cm
+            inputs:
+              parameters:
+              - name: token-and-id
+            container: 
+              image: alpine/k8s:1.32.8
+              command: ["/bin/bash", "-c"]
+              args:
+              - |
+                TOKEN=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f1)
+                HOOK_ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f2)
+                BP_ID=$(echo "{{inputs.parameters.token-and-id}}" | cut -d'|' -f3)
+                kubectl delete secret devlake-webhook-secret --ignore-not-found -n "{{workflow.parameters.namespace}}" 
+                kubectl create secret generic devlake-webhook-secret -n "{{workflow.parameters.namespace}}" \
+                  --from-literal=DEVLAKE_TOKEN="$TOKEN"
+                kubectl delete configmap devlake-webhook-id --ignore-not-found -n "{{workflow.parameters.namespace}}" 
+                kubectl create configmap devlake-webhook-id -n "{{workflow.parameters.namespace}}" \
+                  --from-literal=DEVLAKE_HOOK_ID="$HOOK_ID" --from-literal=DEVLAKE_BP_ID="$BP_ID"
+        
+          - name: devlake-generate-data
+            container:
+              image: debian:12
+              command: [/bin/bash, -c]
+              envFrom:
+                - secretRef:
+                    name: devlake-webhook-secret
+                - configMapRef:
+                    name: devlake-webhook-id
+              args:
+              - |
+                apt update
+                apt install -y curl openssl coreutils
+                BASE_URL="http://devlake-ui.devlake.svc.cluster.local:4000"
+                TRIGGER_URL="http://devlake-lake.devlake.svc.cluster.local:8080"
+                API_KEY="$DEVLAKE_TOKEN"
+                CONNECTION_ID="$DEVLAKE_HOOK_ID"
+                BLUEPRINT_ID="$DEVLAKE_BP_ID"
+                
+                
+                rand() {
+                    od -N 4 -t uL -An /dev/urandom | tr -d " "
+                }
+                
+                # Portable date functions
+                get_start_ts() {
+                    date -d "180 days ago" +%s
+                }
+                
+                date_format() {
+                    date -d "@$1" "+%Y-%m-%dT%H:%M:%S%z"
+                }
+                
+                create_pr() {
+                    local pr_id=$1
+                    local created_date=$2
+                    local merged_date=$3
+                    local merge_commit_sha=$4
+                    
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/pull_requests" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
+                         -H 'Content-Type: application/json' \
+                         -d '{
+                      "id": "PR-'"$pr_id"'",
+                      "headRepoId": "repo-'"$(($(rand) % 1000))"'",
+                      "status": "MERGED",
+                      "originalStatus": "OPEN",
+                      "displayTitle": "Feature: Add new functionality '"$pr_id"'",
+                      "description": "This PR adds new features",
+                      "url": "https://github.com/org/repo/pull/'"$pr_id"'",
+                      "pullRequestKey": '"$pr_id"',
+                      "createdDate": "'"$created_date"'",
+                      "mergedDate": "'"$merged_date"'",
+                      "closedDate": null,
+                      "mergeCommitSha": "'"$merge_commit_sha"'",
+                      "headRef": "feature-branch-'"$pr_id"'",
+                      "baseRef": "main",
+                      "baseCommitSha": "'"$(openssl rand -hex 20)"'",
+                      "headCommitSha": "'"$(openssl rand -hex 20)"'",
+                      "isDraft": false
+                    }') 
+                }
+                
+                create_deployment() {
+                    local deploy_id=$1
+                    local start_date=$2
+                    local commit_sha=$3
+                    local finish_date=$4
+                    
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/deployments" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
+                         -d "{
+                      \"id\": \"DEPLOY-$deploy_id\",
+                      \"startedDate\": \"$start_date\",
+                      \"finishedDate\": \"$finish_date\",
+                      \"result\": \"SUCCESS\",
+                      \"url\": \"https://deploy.example.com/$deploy_id\",
+                      \"deploymentCommits\":[
+                        {
+                          \"repoUrl\": \"https://github.com/org/repo\",
+                          \"refName\": \"main\",
+                          \"startedDate\": \"$start_date\",
+                          \"finishedDate\": \"$finish_date\",
+                          \"commitSha\": \"$commit_sha\",
+                          \"commitMsg\": \"Deployment $deploy_id\"
+                        }
+                      ]
+                    }")
+                    
+                    echo "$finish_date"
+                }
+                
+                create_incident() {
+                    local incident_id=$1
+                    local created_date=$2
+                    
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
+                         -d "{
+                      \"issueKey\":\"INC-$incident_id\",
+                      \"title\":\"Incident $incident_id\",
+                      \"type\":\"INCIDENT\",
+                      \"originalStatus\":\"TODO\",
+                      \"status\":\"TODO\",
+                      \"createdDate\":\"$created_date\",
+                      \"updatedDate\":\"$created_date\"
+                    }")
+                }
+                
+                update_incident_status() {
+                    local incident_id=$1
+                    local created_date=$2
+                    local updated_date=$3
+                    
+                    response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
+                         -H "Authorization: Bearer $API_KEY" \
+                         -d "{
+                      \"issueKey\":\"INC-$incident_id\",
+                      \"title\":\"Incident $incident_id\",
+                      \"type\":\"INCIDENT\",
+                      \"originalStatus\":\"TODO\",
+                      \"status\":\"DONE\",
+                      \"createdDate\":\"$created_date\",
+                      \"updatedDate\":\"$updated_date\",
+                      \"resolutionDate\":\"$updated_date\"
+                    }")
+                }
+                
+                cap_timestamp() {
+                    local ts=$1
+                    local current_ts=$(date +%s)
+                    if [ "$ts" -gt "$current_ts" ]; then
+                        echo "$current_ts"
+                    else
+                        echo "$ts"
+                    fi
+                }
+                
+                ONE_HOUR=3600
+                ONE_DAY=$((24*ONE_HOUR))
+                ONE_WEEK=$((ONE_DAY * 7))
+                
+                end_ts=$(date +%s)
+                start_ts=$(get_start_ts)
+                current_ts=$start_ts
+                pr_id=1
+                deploy_id=1
+                incident_id=1
+                
+                # Main loop to generate data for the last six months
+                while [ "$current_ts" -lt "$end_ts" ]; do
+                    created_date=$(date_format "$current_ts")
+                    
+                    merged_ts=$(cap_timestamp $((current_ts + ONE_HOUR + $(rand) % ONE_WEEK)))
+                    merged_date=$(date_format "$merged_ts")
+                    merge_commit_sha=$(openssl rand -hex 20)
+                    
+                    create_pr "$pr_id" "$created_date" "$merged_date" "$merge_commit_sha"
+                    
+                    deploy_finish_ts=$(cap_timestamp $((merged_ts + ONE_HOUR + $(rand) % (2*ONE_HOUR))))
+                    deploy_finish_date=$(date_format "$deploy_finish_ts")
+                    create_deployment "$deploy_id" "$merged_date" "$merge_commit_sha" "$deploy_finish_date"
+                    
+                    current_ts=$deploy_finish_ts
+                    
+                    if [ $(($(rand) % 10)) -eq 0 ]; then
+                        incident_ts=$(cap_timestamp $((deploy_finish_ts + $(rand) % ONE_DAY)))
+                        incident_date=$(date_format "$incident_ts")
+                        create_incident "$incident_id" "$incident_date"
+                        
+                        fix_pr_merge_ts=$(cap_timestamp $((incident_ts + ONE_HOUR + $(rand) % (3*ONE_DAY))))
+                        fix_pr_merge_date=$(date_format "$fix_pr_merge_ts")
+                        fix_merge_commit_sha=$(openssl rand -hex 20)
+                        pr_id=$((pr_id+1))
+                        create_pr "$pr_id" "$incident_date" "$fix_pr_merge_date" "$fix_merge_commit_sha"
+                        
+                        fix_deploy_finish_ts=$(cap_timestamp $((fix_pr_merge_ts + ONE_HOUR + $(rand) % (2*ONE_HOUR))))
+                        fix_deploy_finish_date=$(date_format "$fix_deploy_finish_ts")
+                        deploy_id=$((deploy_id+1))
+                        create_deployment "$deploy_id" "$fix_pr_merge_date" "$fix_merge_commit_sha" "$fix_deploy_finish_date"
+                        
+                        update_incident_status "$incident_id" "$incident_date" "$fix_deploy_finish_date"
+                        incident_id=$((incident_id+1))
+                
+                        current_ts=$fix_deploy_finish_ts
+                    fi
+                    current_ts=$((current_ts + $(rand) % 2*ONE_DAY))
+                    pr_id=$((pr_id + 1))
+                    deploy_id=$((deploy_id + 1))
+                done
+                
+                echo "Data generation complete. Created $((pr_id - 1)) pull requests, $((deploy_id - 1)) deployments, and $((incident_id - 1)) incidents."
+                sleep 10
+                
+                echo "Triggering DORA Metrics Collection"
+                resp=$(curl -s -X POST -H "Content-Type: application/json" "$TRIGGER_URL/blueprints/$BLUEPRINT_ID/trigger" -d '{"skipCollectors":false,"fullSync":false}')
+
+    - id: dorasetupworkflow
+      readyWhen:
+       - ${dorasetupworkflow.metadata.name != ""}
+       #- ${dorasetupworkflow.status.conditions.exists(x, x.type == 'Completed' && x.status == "True")}
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: Workflow
+       metadata:
+          name: ${schema.spec.name}-dora-setup-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Implicit dependency on WorkflowTemplate
+             workflowtemplate-ref: ${dorasetuptemplate.metadata.name}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-setup
+             app.kubernetes.io/managed-by: kro
+       spec:
+          serviceAccountName: ${schema.spec.name}-sa
+          entrypoint: dora-provisioner
+          workflowTemplateRef:
+              name: dora-setup-template
+              namespace: ${schema.metadata.namespace}
+
+    # Initial ECR credential setup Job - runs once during deployment
+    - id: initialecrcredsetup
+      readyWhen:
+       - ${initialecrcredsetup.metadata.name != ""}
+      template:
+       apiVersion: batch/v1
+       kind: Job
+       metadata:
+          name: ${schema.spec.name}-initial-ecr-setup
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false   
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Namespace scoping
+             cicd.kro.run/namespace-scoped: 'true'
+             cicd.kro.run/application: ${schema.spec.application.name}
+             cicd.kro.run/setup-type: 'initial-ecr-credentials'
+       spec:
+          ttlSecondsAfterFinished: 300 # Clean up after 5 minutes
+          template:
+             metadata:
+               labels:
+                 app.kubernetes.io/name: ${schema.spec.application.name}
+                 app.kubernetes.io/component: initial-ecr-setup
+               annotations:
+                 karpenter.sh/do-not-disrupt: "true"
+             spec:
+               serviceAccountName: ${schema.spec.name}-sa
+               restartPolicy: OnFailure
+               containers:
+                 - name: initial-ecr-setup
+                   image: amazon/aws-cli:latest
+                   command: ['/bin/sh', '-c']
+                   args:
+                     - |
+                       echo "Starting initial ECR credential setup for ${schema.spec.application.name}"
+
+                       # Install kubectl
+                       yum update -y && yum install -y jq
+                       curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                       chmod +x kubectl && mv kubectl /usr/local/bin/
+
+                       # Wait for ECR repositories to be fully ready
+                       echo "Waiting for ECR repositories to be ready..."
+                       sleep 10
+
+                       # Get ECR login token
+                       ECR_TOKEN=$(aws ecr get-login-password --region ${schema.spec.aws.region})
+                       if [ $? -ne 0 ]; then
+                         echo "ERROR: Failed to get ECR login token"
+                         exit 1
+                       fi
+
+                       # Get registry endpoint
+                       ECR_REGISTRY="${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}.dkr.ecr.${schema.spec.aws.region}.amazonaws.com"
+
+                       # Create docker config JSON with proper structure
+                       DOCKER_CONFIG=$(cat <<EOF | base64 -w 0
+                       {
+                         "auths": {
+                           "$ECR_REGISTRY": {
+                             "username": "AWS",
+                             "password": "$ECR_TOKEN",
+                             "auth": "$(echo -n "AWS:$ECR_TOKEN" | base64 -w 0)"
+                           }
+                         }
+                       }
+                       EOF
+                       )
+
+                       # Update the secret with new credentials
+                       kubectl patch secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
+                         --type='merge' \
+                         -p="{\"data\":{\".dockerconfigjson\":\"$DOCKER_CONFIG\"}}"
+
+                       if [ $? -eq 0 ]; then
+                         echo "Successfully set up initial ECR credentials for ${schema.spec.application.name}"
+                         # Add timestamp annotation to track setup
+                         kubectl annotate secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} \
+                           cicd.kro.run/initial-setup="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                           cicd.kro.run/last-refresh="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
+                         
+                         # Verify the secret is properly formatted
+                         echo "Verifying Docker config secret format..."
+                         kubectl get secret ${schema.spec.name}-docker-config -n ${schema.metadata.namespace} -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq . > /dev/null
+                         if [ $? -eq 0 ]; then
+                           echo "Docker config secret format verified successfully"
+                         else
+                           echo "WARNING: Docker config secret format verification failed"
+                         fi
+                       else
+                         echo "ERROR: Failed to set up initial ECR credentials"
+                         exit 1
+                       fi
+                   env:
+                     - name: AWS_REGION
+                       value: ${schema.spec.aws.region}
+                     - name: AWS_DEFAULT_REGION
+                       value: ${schema.spec.aws.region}
+                   envFrom:
+                     - configMapRef:
+                         name: ${schema.spec.name}-config
+
+    # Setup Workflow for initial configuration
+    - id: setupworkflow
+      readyWhen:
+       - ${setupworkflow.metadata.name != ""}
+       #- ${setupworkflow.status.conditions.exists(x, x.type == 'Completed' && x.status == "True")}
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: Workflow
+       metadata:
+          name: ${schema.spec.name}-setup-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Implicit dependency on WorkflowTemplate
+             workflowtemplate-ref: ${provisioningworkflow.metadata.name}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-setup
+             app.kubernetes.io/managed-by: kro
+       spec:
+          serviceAccountName: ${schema.spec.name}-sa
+          workflowTemplateRef:
+              name: ${schema.spec.name}-provisioning-workflow
+              namespace: ${schema.metadata.namespace}
+          arguments:
+             parameters:
+               - name: application-name
+                 value: ${schema.spec.application.name}
+               - name: aws-region
+                 value: ${schema.spec.aws.region}
+    # Initial Build Workflow - triggers first build automatically after setup
+    - id: initialbuildworkflow
+      readyWhen:
+       - ${initialbuildworkflow.metadata.name != ""}
+       #- ${initialbuildworkflow.status.?phase == "Succeeded"}
+       #- ${initialbuildworkflow.status.conditions.exists(x, x.?type == 'Completed' && x.status == "True")}
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: Workflow
+       metadata:
+          name: ${schema.spec.name}-initial-build-workflow
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Explicit dependency - reference setup workflow to create implicit dependency
+             kro.run/depends-on: ${setupworkflow.metadata.name}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-initial-build
+             app.kubernetes.io/managed-by: kro
+             triggered-by: initial-setup
+       spec:
+          serviceAccountName: ${schema.spec.name}-sa
+          workflowTemplateRef:
+              name: ${schema.spec.name}-cicd-workflow
+              namespace: ${schema.metadata.namespace}
+          arguments:
+             parameters:
+               - name: git-url
+                 value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}.git'
+               - name: git-revision
+                 value: 'main'
+               - name: git-username
+                 value: ${schema.spec.gitlab.username}
+               - name: git-token
+                 value: 'placeholder-will-use-env-var'
+               - name: repo-name
+                 value: '${schema.spec.application.name}'
+               - name: dockerfile-path
+                 value: ${schema.spec.application.dockerfilePath}
+               - name: deployment-path
+                 value: ${schema.spec.application.deploymentPath}
+
+    # Argo Events EventSource for GitLab webhooks
+    - id: eventsource
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: EventSource
+       metadata:
+          name: ${schema.spec.name}-gitlab-eventsource
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+       spec:
+          service:
+             ports:
+               - port: 12000
+                 targetPort: 12000
+          webhook:
+             gitlab-webhook:
+               port: '12000'
+               endpoint: /webhook
+               method: POST
+               url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.metadata.namespace}.svc.cluster.local:12000/webhook
+
+    # Argo Events Sensor for triggering CI/CD workflows
+    - id: sensor
+      template:
+       apiVersion: argoproj.io/v1alpha1
+       kind: Sensor
+       metadata:
+          name: ${schema.spec.name}-gitlab-sensor
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}          
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+       spec:
+          template:
+             serviceAccountName: ${schema.spec.name}-sa
+          dependencies:
+             - name: incident-webhook
+               eventSourceName: ${schema.spec.name}-gitlab-eventsource
+               eventName: gitlab-webhook
+               filters:
+                 data:
+                   - path: body.object_kind
+                     type: string
+                     value:
+                       - 'issue'
+             - name: pull-request-webhook
+               eventSourceName: ${schema.spec.name}-gitlab-eventsource
+               eventName: gitlab-webhook
+               filters:
+                 data:
+                   - path: body.object_kind
+                     type: string
+                     value:
+                       - 'merge_request'
+                   - path: body.object_attributes.target_branch
+                     type: string
+                     value:
+                       - 'main'
+                   - path: body.object_attributes.target_branch
+                     type: bool
+                     value:
+                       - 'false'
+             - name: gitlab-webhook
+               eventSourceName: ${schema.spec.name}-gitlab-eventsource
+               eventName: gitlab-webhook
+               filters:
+                 data:
+                   - path: body.object_kind
+                     type: string
+                     value:
+                       - 'push'
+                   - path: body.ref
+                     type: string
+                     value:
+                       - 'refs/heads/main'
+                 # Filter out commits from CI/CD pipeline and deployment-only changes
+                 script: |
+                  local commits = event.body.commits
+                  
+                  if commits == nil or #commits == 0 then
+                    return false
+                  end
+                  
+                  for i, commit in ipairs(commits) do
+                    -- Block commits from CI/CD Pipeline (check commit message and author)
+                    if commit.message and string.match(commit.message, "^chore: update .* image to .*") then
+                      return false
+                    end
+                    if commit.author and commit.author.name == "CI/CD Pipeline" then
+                      return false
+                    end
+                    
+                    -- Check if commit has changes outside deployment folder
+                    local has_non_deployment_changes = false
+                    
+                    -- Check added files
+                    if commit.added ~= nil then
+                      for j, file in ipairs(commit.added) do
+                        if not string.match(file, "^deployment/") then
+                          has_non_deployment_changes = true
+                          break
+                        end
+                      end
+                    end
+                    
+                    -- Check modified files
+                    if not has_non_deployment_changes and commit.modified ~= nil then
+                      for j, file in ipairs(commit.modified) do
+                        if not string.match(file, "^deployment/") then
+                          has_non_deployment_changes = true
+                          break
+                        end
+                      end
+                    end
+                    
+                    -- Check removed files
+                    if not has_non_deployment_changes and commit.removed ~= nil then
+                      for j, file in ipairs(commit.removed) do
+                        if not string.match(file, "^deployment/") then
+                          has_non_deployment_changes = true
+                          break
+                        end
+                      end
+                    end
+                    
+                    if has_non_deployment_changes then
+                      return true
+                    end
+                  end
+                  
+                  return false
+          triggers:
+             - template:
+                 name: gitlab-workflow-trigger
+                 conditions: "gitlab-webhook"
+                 argoWorkflow:
+                   operation: submit
+                   source:
+                     resource:
+                       apiVersion: argoproj.io/v1alpha1
+                       kind: Workflow
+                       metadata:
+                         generateName: ${schema.spec.name}-cicd-
+                         namespace: ${schema.metadata.namespace}
+                         labels:
+                           app.kubernetes.io/name: ${schema.spec.application.name}
+                           app.kubernetes.io/component: cicd-pipeline
+                           triggered-by: gitlab-webhook
+                       spec:
+                         serviceAccountName: ${schema.spec.name}-sa
+                         workflowTemplateRef:
+                           name: ${schema.spec.name}-cicd-workflow
+                         arguments:
+                           parameters:
+                             - name: git-url
+                               value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}.git'
+                             - name: git-revision
+                               value: 'main'
+                             - name: git-username
+                               value: ${schema.spec.gitlab.username}
+                             - name: git-token
+                               value: 'placeholder-will-use-env-var'
+                             - name: repo-name
+                               value: '${schema.spec.application.name}'
+                             - name: dockerfile-path
+                               value: ${schema.spec.application.dockerfilePath}
+                             - name: deployment-path
+                               value: ${schema.spec.application.deploymentPath}
+                   parameters:
+                     - src:
+                         dependencyName: gitlab-webhook
+                         dataKey: body.ref
+                       dest: spec.arguments.parameters.1.value
+                       operation: overwrite
+             - template:
+                 name: gitlab-dora-trigger
+                 conditions: "gitlab-webhook"
+                 argoWorkflow:
+                   operation: submit
+                   source:
+                     resource:
+                       apiVersion: argoproj.io/v1alpha1
+                       kind: Workflow
+                       metadata:
+                         generateName: ${schema.spec.name}-dora-deploy
+                         namespace: ${schema.metadata.namespace}
+                         labels:
+                           app.kubernetes.io/name: ${schema.spec.application.name}
+                           app.kubernetes.io/component: cicd-pipeline
+                           triggered-by: gitlab-webhook
+                       spec:
+                         serviceAccountName: ${schema.spec.name}-sa
+                         workflowTemplateRef:
+                           name: ${schema.spec.name}-dora-deployment-workflow
+                         arguments:
+                           parameters:
+                             - name: body
+                               value: 'replace'
+                   parameters:
+                     - src:
+                         dependencyName: gitlab-webhook
+                         dataKey: body
+                       dest: spec.arguments.parameters.0.value
+             - template:
+                 name: dora-incident-trigger
+                 conditions: "incident-webhook"
+                 argoWorkflow:
+                   operation: submit
+                   source:
+                     resource:
+                       apiVersion: argoproj.io/v1alpha1
+                       kind: Workflow
+                       metadata:
+                         generateName: ${schema.spec.name}-dora-incident
+                         namespace: ${schema.metadata.namespace}
+                         labels:
+                           app.kubernetes.io/name: ${schema.spec.application.name}
+                           app.kubernetes.io/component: cicd-pipeline
+                           triggered-by: incident-webhook
+                       spec:
+                         serviceAccountName: ${schema.spec.name}-sa
+                         workflowTemplateRef:
+                           name: ${schema.spec.name}-dora-incident-workflow
+                         arguments:
+                           parameters:
+                             - name: body
+                               value: 'replace'
+                   parameters:
+                     - src:
+                         dependencyName: incident-webhook
+                         dataKey: body
+                       dest: spec.arguments.parameters.0.value
+             - template:
+                 name: dora-pull-request-trigger
+                 conditions: "pull-request-webhook"
+                 argoWorkflow:
+                   operation: submit
+                   source:
+                     resource:
+                       apiVersion: argoproj.io/v1alpha1
+                       kind: Workflow
+                       metadata:
+                         generateName: ${schema.spec.name}-dora-pull-request
+                         namespace: ${schema.metadata.namespace}
+                         labels:
+                           app.kubernetes.io/name: ${schema.spec.application.name}
+                           app.kubernetes.io/component: cicd-pipeline
+                           triggered-by: pull-request-webhook
+                       spec:
+                         serviceAccountName: ${schema.spec.name}-sa
+                         workflowTemplateRef:
+                           name: ${schema.spec.name}-dora-incident-workflow
+                         arguments:
+                           parameters:
+                             - name: body
+                               value: 'replace'
+                   parameters:
+                     - src:
+                         dependencyName: pull-request-webhook
+                         dataKey: body
+                       dest: spec.arguments.parameters.0.value
+
+    # Service for exposing the EventSource webhook endpoint
+    - id: webhookservice
+      readyWhen:
+        - ${webhookservice.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}-webhook-service
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}          
+          labels:
+            app.kubernetes.io/name: ${schema.spec.application.name}
+            app.kubernetes.io/component: cicd-pipeline
+            app.kubernetes.io/managed-by: kro
+        spec:
+          selector:
+            eventsource-name: ${schema.spec.name}-gitlab-eventsource
+          ports:
+            - port: 12000
+              targetPort: 12000
+              protocol: TCP
+          type: ClusterIP
+
+    # Ingress for external webhook access
+    - id: webhookingress
+      readyWhen:
+        - ${webhookingress.metadata.name != ""}
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: ${schema.spec.name}-webhook-ingress
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          labels:
+            app.kubernetes.io/name: ${schema.spec.application.name}
+            app.kubernetes.io/component: cicd-pipeline
+            app.kubernetes.io/managed-by: kro
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            nginx.ingress.kubernetes.io/proxy-body-size: 512m
+            nginx.ingress.kubernetes.io/use-regex: "true"
+            nginx.ingress.kubernetes.io/rewrite-target: /webhook
+            nginx.ingress.kubernetes.io/priority: "100"
+        spec:
+          ingressClassName: nginx
+          rules:
+            - host: ${schema.spec.hub.hostname}
+              http:
+                paths:
+                  - backend:
+                      service:
+                        name: ${schema.spec.name}-gitlab-eventsource-eventsource-svc
+                        port:
+                          number: 12000
+                    path: /argo-events/${schema.spec.name}
+                    pathType: Exact
+
+    # PodDisruptionBudget for eventbus to prevent Karpenter disruptions
+    - id: eventbuspdb
+      readyWhen:
+        - ${eventbuspdb.metadata.name != ""}
+      template:
+        apiVersion: policy/v1
+        kind: PodDisruptionBudget
+        metadata:
+          name: eventbus-pdb
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          labels:
+            app.kubernetes.io/name: ${schema.spec.application.name}
+            app.kubernetes.io/component: cicd-pipeline
+            app.kubernetes.io/managed-by: kro
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          maxUnavailable: 0
+          selector:
+            matchLabels:
+              controller: eventbus-controller

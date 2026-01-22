@@ -1,0 +1,40 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: PromotionTask
+metadata:
+  name: update-image
+  namespace: java-app-kargo
+spec:
+  vars:
+  - name: gitURL
+    value: ${GITLAB_URL}/${GIT_USERNAME}/java.git
+  - name: image
+    value: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/peeks/java
+  steps:
+  - uses: git-clone
+    config:
+      repoURL: ${{ vars.gitURL }}
+      checkout:
+      - branch: main
+        path: ./src
+  - uses: yaml-update
+    config:
+      path: ./src/deployment/${{ ctx.stage }}/application.yaml
+      updates:
+      - key: spec.components.0.properties.image
+        value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
+  - uses: git-commit
+    config:
+      path: ./src
+      message: "Update ${{ ctx.stage }} image to ${{ imageFrom(vars.image).Tag }}"
+      author:
+        name: Kargo
+        email: kargo@akuity.io
+  - uses: git-push
+    config:
+      path: ./src
+  - uses: argocd-update
+    config:
+      apps:
+      - name: java-${{ ctx.stage }}-cd
+        sources:
+        - repoURL: ${{ vars.gitURL }}

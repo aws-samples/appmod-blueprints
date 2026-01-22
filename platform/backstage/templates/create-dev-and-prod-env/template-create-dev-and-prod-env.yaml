@@ -1,26 +1,61 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: Deploys dev and prod clusters on EKS
+  description: |
+    Deploys dev and prod clusters on EKS.
+
+    ⚠️  PREREQUISITE: Create GitLab repository first!
+
+    **Option 1: Use the script (recommended)**
+    ```bash
+    cd /home/ec2-user/environment/platform-on-eks-workshop
+    ./scripts/create-gitlab-repo.sh ${{ parameters.name }}
+    ```
+
+    **Option 2: Manual command**
+    ```bash
+    curl -X POST "$GITLABURL/api/v4/projects" \
+      -H "PRIVATE-TOKEN: $GITLABPW" \
+      -H "Content-Type: application/json" \
+      -d '{"name":"${{ parameters.name }}","path":"${{ parameters.name }}","description":"Dev and Prod environment","visibility":"private","initialize_with_readme":true}'
+    ```
+
+    Then continue with this template.
   name: create-dev-and-prod-env
   title: Create Dev and Prod Environment
 spec:
   owner: guest
   type: service
   parameters:
-    - properties:
+    - title: Configuration Options
+      required:
+        - name
+      properties:
         name:
           title: Name of the component
           type: string
+          description: Name for the dev and prod environment
+          ui:autofocus: true
         namespace:
           default: flux-system
           title: Enter namespace within the EKS cluster to deploy this
           type: string
         aws_region:
-          default: us-west-2
+          default: "${{ steps['fetchSystem'].output.entity.spec.aws_region }}"
           title: Region
           type: string
-      title: Configuration Options
+        repoHostUrl:
+          type: string
+          default: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
+          ui:widget: hidden
+        repoUsername:
+          type: string
+          default: "${{ steps['fetchSystem'].output.entity.spec.gituser }}"
+          ui:widget: hidden
+        repoName:
+          type: string
+          default: platform-on-eks-workshop
+          ui:widget: hidden
   steps:
     - id: fetchSystem
       name: Fetch System
@@ -35,27 +70,20 @@ spec:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
           aws_region: ${{ parameters.aws_region }}
-          repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea
+          repoUrl: https://${{ parameters.repoHostUrl }}/${{ parameters.repoUsername }}
       name: Fetch Base
     - id: publish
-      name: Publishing to a gitea git repository
-      action: publish:gitea
+      name: Publishing to GitLab repository
+      action: publish:gitlab:merge-request
       input:
-        description: CodeBuild create clusters template
-        # Hard coded value for this demo purposes only.
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.name}}
-        defaultBranch: main
-    - id: create-argocd-app
-      name: Create ArgoCD App
-      action: cnoe:create-argocd-app
-      input:
-        appName: ${{parameters.name}}
-        appNamespace: ${{parameters.namespace}}
-        argoInstance: in-cluster
-        projectName: default
-        # necessary until we generate our own cert
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.name}}
-        path: "manifests"
+        repoUrl: ${{ parameters.repoHostUrl }}?repo=${{parameters.name}}&owner=${{ parameters.repoUsername }}
+        title: Add new dev and prod environment - ${{parameters.name}}
+        description: Create dev and prod clusters template
+        sourcePath: .
+        targetPath: .
+        branchName: add-${{parameters.name}}-env
+        removeSourceBranch: true
+        commitAction: auto
     - id: register
       name: Register
       action: catalog:register
@@ -67,4 +95,6 @@ spec:
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
-
+      - title: View Merge Request
+        icon: gitlab
+        url: ${{ steps['publish'].output.mergeRequestUrl }}

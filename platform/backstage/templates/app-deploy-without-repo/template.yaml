@@ -6,7 +6,7 @@ metadata:
   description: Creates a ArgocCD for deploying an App for an existing Git Repo
   tags:
     - app-deploy
-    - gitea
+    - gitlab
     - argocd
 spec:
   owner: guest
@@ -29,7 +29,7 @@ spec:
           description: The environment (e.g., dev, prod)
           enum: ['dev-cluster', 'prod-cluster', 'in-cluster']
         repoName:
-          title: Repo Name of your Gitea Repo integrated with Backstage
+          title: Repo Name of your GitLab Repo integrated with Backstage
           type: string
           pattern: ^[a-zA-Z0-9-_.]+$
         repoPath:
@@ -41,16 +41,73 @@ spec:
           description: The namespace where the app should be deployed
           default: default
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
+    - id: create-argocd-project
+      name: Create ArgoCD Project
+      action: kube:apply
+      input:
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: AppProject
+          metadata:
+            name: ${{parameters.appName}}-project
+            namespace: argocd
+          spec:
+            description: Project for ${{parameters.appName}} application
+            sourceRepos:
+            - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}.git
+            destinations:
+            - namespace: ${{parameters.appNamespace}}
+              server: https://kubernetes.default.svc
+            clusterResourceWhitelist:
+            - group: '*'
+              kind: '*'
+            namespaceResourceWhitelist:
+            - group: '*'
+              kind: '*'
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: cnoe:create-argocd-app
+      action: kube:apply
       input:
-        appName: ${{parameters.appName}}
-        appNamespace: ${{parameters.appNamespace}}
-        argoInstance: ${{parameters.environment}}
-        projectName: default
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.repoName}}
-        path: ${{parameters.repoPath}}
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{parameters.appName}}
+            namespace: argocd
+            labels:
+              backstage-name: ${{parameters.appName}}
+            finalizers:
+            - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: ${{parameters.appName}}-project
+            destination:
+              namespace: ${{parameters.appNamespace}}
+              server: https://kubernetes.default.svc
+            source:
+              repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}.git
+              targetRevision: HEAD
+              path: ${{parameters.repoPath}}
+            syncPolicy:
+              automated:
+                allowEmpty: true
+                prune: false
+                selfHeal: true
+              retry:
+                backoff:
+                  duration: 5s
+                  factor: 2
+                  maxDuration: 5m
+                limit: 10
+              syncOptions:
+              - CreateNamespace=false
+              - FailOnSharedResource=true
     - id: template-output
       name: Template Output
       action: debug:log

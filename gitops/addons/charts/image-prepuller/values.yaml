@@ -1,0 +1,17 @@
+global:
+  resourcePrefix: ""
+
+images:
+  - rayproject/ray:2.34.0
+  - jupyter/base-notebook:latest
+  - tensorflow/tensorflow:latest-gpu
+
+nodeSelector: {}
+tolerations: []
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi

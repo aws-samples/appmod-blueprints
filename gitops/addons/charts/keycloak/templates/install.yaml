@@ -1,0 +1,258 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keycloak
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: keycloak
+  labels:
+    app: keycloak
+spec:
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  selector:
+    app: keycloak
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-headless
+  namespace: keycloak
+  labels:
+    app: keycloak
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: jgroups
+      port: 7600
+      targetPort: 7600
+  selector:
+    app: keycloak
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: keycloak
+  name: keycloak
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  serviceName: keycloak
+  podManagementPolicy: OrderedReady
+  replicas: 2
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      nodeSelector:
+        karpenter.sh/nodepool: system
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: keycloak
+      initContainers:
+        - name: keycloak-db-migration
+          image: quay.io/keycloak/keycloak:26.3.3
+          command: ["/opt/keycloak/bin/kc.sh"]
+          args: ["build", "--db=postgres"]
+          env:
+            - name: KC_DB_URL
+              value: "jdbc:postgresql://postgresql.keycloak.svc.cluster.local:5432/keycloak"
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-config
+                  key: KC_DB_USERNAME
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-config
+                  key: KC_DB_PASSWORD
+      containers:
+        - args:
+            - start
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: "admin"
+            - name: KC_CACHE
+              value: "ispn"
+            - name: JAVA_OPTS_APPEND
+              value: "-Djgroups.dns.query=keycloak-headless.keycloak.svc.cluster.local"
+            # - name: KC_HOSTNAME
+            #   valueFrom:
+            #     configMapKeyRef:
+            #       name: keycloak-config
+            #       key: keycloak-url
+            #       optional: true
+            # - name: KC_HOSTNAME_ADMIN
+            #   valueFrom:
+            #     configMapKeyRef:
+            #       name: keycloak-config
+            #       key: keycloak-url
+            #       optional: true
+            - name: KEYCLOAK_LOGLEVEL
+              value: ALL
+            - name: QUARKUS_TRANSACTION_MANAGER_ENABLE_RECOVERY
+              value: 'true'
+          envFrom:
+            - secretRef:
+                name: keycloak-config
+          image: quay.io/keycloak/keycloak:26.3.3
+          name: keycloak
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /keycloak/realms/master
+              port: 8080
+          volumeMounts:
+            - mountPath: /opt/keycloak/conf
+              name: keycloak-config
+              readOnly: true
+      volumes:
+        - configMap:
+            name: keycloak-config
+          name: keycloak-config
+---
+apiVersion: v1
+data:
+  keycloak.conf: |
+    # Database
+    # The database vendor.
+    db=postgres
+
+    # The username of the database user.
+    db-url=jdbc:postgresql://postgresql.keycloak.svc.cluster.local:5432/postgres
+
+    # hostname settings
+    hostname=https://{{ .Values.global.ingress_domain_name }}/keycloak
+    hostname-admin=https://{{ .Values.global.ingress_domain_name }}/keycloak
+    hostname-strict=true
+    http-relative-path=keycloak
+    http-enabled=true
+    hostname-debug=true
+    # .../keycloak/realms/platform/hostname-debug
+    
+    # Proxy configuration for CloudFront/ALB - use xforwarded for AWS setup
+    proxy-headers=xforwarded
+    
+    # Enable account console and admin features
+    features=account,admin
+    
+    # Development mode settings for better debugging
+    log-level=INFO
+
+kind: ConfigMap
+metadata:
+  name: keycloak-config
+  namespace: keycloak
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: postgresql
+  name: postgresql
+  namespace: keycloak
+spec:
+  clusterIP: None
+  ports:
+    - name: postgres
+      port: 5432
+  selector:
+    app: postgresql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: postgresql
+  name: postgresql
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+  serviceName: service-postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      nodeSelector:
+        karpenter.sh/nodepool: system
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+        - envFrom:
+            - secretRef:
+                name: keycloak-config
+          image: docker.io/library/postgres:17.4-alpine3.21
+          name: postgres
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+              name: postgresdb
+          resources:
+            limits:
+              memory: 500Mi
+            requests:
+              cpu: 100m
+              memory: 300Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: data
+    spec:
+      storageClassName: gp3
+      accessModes: ["ReadWriteOnce"]
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: "500Mi"
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: keycloak-pdb
+  namespace: keycloak
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: keycloak
