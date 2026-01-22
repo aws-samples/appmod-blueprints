@@ -14,15 +14,7 @@ This repository implements a complete platform engineering solution on Amazon EK
 
 ## Demo
 
-[![Platform Engineering Demo](docs/images/demo.gif)](https://app.storylane.io/share/219m06juq81g)
-
-<div>
-  <script async src="https://js.storylane.io/js/v2/storylane.js"></script>
-  <div class="sl-embed" style="position:relative;padding-bottom:calc(52.34% + 25px);width:100%;height:0;transform:scale(1)">
-    <iframe loading="lazy" class="sl-demo" src="https://app.storylane.io/demo/219m06juq81g?embed=popup" name="sl-embed" allow="fullscreen" allowfullscreen style="position:absolute;top:0;left:0;width:100%!important;height:100%!important;border:1px solid rgba(63,95,172,0.35);box-shadow: 0px 0px 18px rgba(26, 19, 72, 0.15);border-radius:10px;box-sizing:border-box;"></iframe>
-  </div>
-</div>
-
+[Storylane Platform Engineering Demo](https://app.storylane.io/share/219m06juq81g)
 
 ## Getting Started
 
