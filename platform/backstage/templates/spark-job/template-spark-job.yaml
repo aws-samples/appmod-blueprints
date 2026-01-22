@@ -40,15 +40,33 @@ spec:
         repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
     - id: create-argocd-app
-      name: Create ArgoCD App
-      action: argocd:create-app
+      name: Create ArgoCD Application
+      action: kube:apply
       input:
-        appName: ${{parameters.name}}
-        appNamespace: ${{parameters.name}}
-        argoInstance: in-cluster
-        projectName: default
-        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}
-        path: "manifests"
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{parameters.name}}
+            namespace: argocd
+            finalizers:
+              - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: default
+            source:
+              repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}.git
+              targetRevision: HEAD
+              path: manifests
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: ${{parameters.name}}
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
     - id: register
       name: Register
       action: catalog:register
@@ -57,6 +75,15 @@ spec:
         catalogInfoPath: 'catalog-info.yaml'
   output:
     links:
+      - title: Repository
+        icon: gitlab
+        url: ${{ steps['publish'].output.remoteUrl }}
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
+      - title: ArgoCD Application
+        icon: argocd
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{parameters.name}}
+      - title: Argo Workflows
+        icon: argo
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argo_workflows_hostname }}/workflows/${{parameters.name}}
