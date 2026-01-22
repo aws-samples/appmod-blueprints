@@ -55,7 +55,10 @@ class TextGenerator:
             
             # Decode response
             response_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            generated_text = response_text[len(prompt):].strip()
+            # Extract only the generated part (after the input tokens)
+            input_length = inputs.shape[1]
+            generated_tokens = outputs[0][input_length:]
+            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
             
             inference_time = time.time() - start_time
             
