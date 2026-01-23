@@ -136,7 +136,7 @@ resource "aws_codebuild_project" "ray_vllm" {
 
   environment {
     compute_type                = "BUILD_GENERAL1_LARGE"
-    image                       = "aws/codebuild/standard:7.0"
+    image                       = "aws/codebuild/amazonlinux-x86_64-standard:5.0"
     type                        = "LINUX_CONTAINER"
     privileged_mode             = true
     image_pull_credentials_type = "CODEBUILD"
@@ -160,6 +160,11 @@ resource "aws_codebuild_project" "ray_vllm" {
       name  = "IMAGE_TAG"
       value = "latest"
     }
+
+    environment_variable {
+      name  = "CONTAINERD_ADDRESS"
+      value = "/var/run/docker/containerd/containerd.sock"
+    }
   }
 
   logs_config {
@@ -181,14 +186,14 @@ resource "aws_codebuild_project" "ray_vllm" {
         pre_build:
           commands:
             - echo Logging in to Amazon ECR...
-            - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+            - export PASSWORD=$(aws ecr get-login-password --region $AWS_DEFAULT_REGION)
+            - echo $PASSWORD | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
             - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
             - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
             - IMAGE_TAG_COMMIT=$${COMMIT_HASH:-latest}
             - echo Installing SOCI CLI...
             - wget -q https://github.com/awslabs/soci-snapshotter/releases/download/v0.8.0/soci-snapshotter-0.8.0-linux-amd64.tar.gz
             - tar -xzf soci-snapshotter-0.8.0-linux-amd64.tar.gz
-            - chmod +x soci
             - mv soci /usr/local/bin/
             - echo Creating Dockerfile...
             - |
@@ -198,20 +203,21 @@ resource "aws_codebuild_project" "ray_vllm" {
         build:
           commands:
             - echo Build started on `date`
-            - echo Building the Docker image...
-            - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
-            - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $REPOSITORY_URI:$IMAGE_TAG
-            - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $REPOSITORY_URI:$IMAGE_TAG_COMMIT
+            - echo Building as OCI image...
+            - docker buildx create --driver=docker-container --use
+            - docker buildx build --tag $REPOSITORY_URI:$IMAGE_TAG --output type=oci,dest=./image.tar .
+            - echo Importing to containerd...
+            - ctr image import ./image.tar
         post_build:
           commands:
-            - echo Build completed on `date`
-            - echo Pushing the Docker images...
-            - docker push $REPOSITORY_URI:$IMAGE_TAG
-            - docker push $REPOSITORY_URI:$IMAGE_TAG_COMMIT
-            - echo Creating SOCI index for faster image pulls...
+            - echo Creating SOCI index...
             - soci create $REPOSITORY_URI:$IMAGE_TAG
-            - soci push --user AWS --password-stdin $REPOSITORY_URI:$IMAGE_TAG <<< $(aws ecr get-login-password --region $AWS_DEFAULT_REGION)
-            - echo Image and SOCI index pushed to $REPOSITORY_URI:$IMAGE_TAG
+            - echo Pushing image and SOCI index...
+            - ctr image push --user AWS:$PASSWORD $REPOSITORY_URI:$IMAGE_TAG
+            - soci push --user AWS:$PASSWORD $REPOSITORY_URI:$IMAGE_TAG
+            - echo Tagging commit version...
+            - if [ "$IMAGE_TAG" != "$IMAGE_TAG_COMMIT" ]; then ctr image tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:$IMAGE_TAG_COMMIT && ctr image push --user AWS:$PASSWORD $REPOSITORY_URI:$IMAGE_TAG_COMMIT; fi
+            - echo Image and SOCI index pushed successfully
     EOF
   }
 
