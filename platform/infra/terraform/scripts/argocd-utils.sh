@@ -18,29 +18,13 @@ export BOOTSTRAP_APPS=(
 # Function to authenticate ArgoCD CLI
 authenticate_argocd() {
     if command -v argocd >/dev/null 2>&1; then
-        local argocd_server=""
-        
-        # Always recalculate the domain to handle cases where it becomes available later
-        # Calculate domain the same way as 1-tools-urls.sh
-        local domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
-        if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
-            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null)
-        fi
-        
-        # Fallback to ARGOCD_URL environment variable if domain calculation fails
-        if [ -z "$domain_name" ] || [ "$domain_name" = "None" ] || [ "$domain_name" = "null" ]; then
-            if [ -n "$ARGOCD_URL" ]; then
-                # Extract hostname from URL (remove https:// and /argocd)
-                domain_name=$(echo "$ARGOCD_URL" | sed 's|https://||' | sed 's|/argocd||')
-            fi
-        fi
-        
-        argocd_server="$domain_name"
-        
-        if [ -n "$argocd_server" ] && [ "$argocd_server" != "None" ] && [ "$argocd_server" != "null" ]; then
-            export ARGOCD_SERVER="$argocd_server"
-            # Login using admin credentials with timeout
-            if timeout 30 argocd login --username admin --password "${IDE_PASSWORD}" --grpc-web-root-path /argocd "$argocd_server" --insecure 2>/dev/null; then
+        # For EKS Marina managed ArgoCD, use environment variables (no login needed)
+        if [ -n "$ARGOCD_SERVER" ] && [ -n "$ARGOCD_AUTH_TOKEN" ]; then
+            export ARGOCD_SERVER
+            export ARGOCD_AUTH_TOKEN
+            export ARGOCD_OPTS="${ARGOCD_OPTS:---grpc-web}"
+            # Test if ArgoCD CLI is working
+            if argocd cluster list >/dev/null 2>&1; then
                 return 0
             fi
         fi
@@ -73,7 +57,6 @@ terminate_argocd_operation() {
         fi
     else
         print_warning "ArgoCD CLI authentication failed, using direct kubectl approach"
-        # Remove the operationState entirely - this is more effective than setting operation to null
         kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
     fi
 }
@@ -153,11 +136,11 @@ sync_argocd_app() {
         print_info "Using ArgoCD CLI to sync $app_name"
         argocd app sync "$app_name" $force_flag --timeout 200 || {
             print_warning "ArgoCD CLI sync failed, falling back to kubectl"
-            kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+            kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
         }
     else
         print_warning "ArgoCD CLI authentication failed, using kubectl"
-        kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+        kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
     fi
 }
 
@@ -583,10 +566,25 @@ show_final_status() {
                 done
                 
                 print_warning "Terminating ComparisonError operation for $app"
-                terminate_argocd_operation "$app"
-                sleep 10
-                refresh_argocd_app "$app" "true"
-                sleep 10
+                
+                # Check if this is a revision conflict
+                revision_conflict=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
+                    jq -r '.status.operationState.message // "" | contains("cannot reference a different revision")')
+                
+                if [ "$revision_conflict" = "true" ]; then
+                    # Force revision alignment
+                    kubectl patch application "$app" -n argocd --type='merge' -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                    # Clear operation state
+                    kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+                    # Force refresh
+                    kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+                    sleep 2
+                else
+                    terminate_argocd_operation "$app"
+                    sleep 10
+                    refresh_argocd_app "$app" "true"
+                    sleep 10
+                fi
                 
                 if [[ "$is_best_effort" == true ]]; then
                     sync_argocd_app_in_background "$app"
@@ -639,14 +637,24 @@ show_final_status() {
     echo "----------------------------------------"
     
     if kubectl get applications -n argocd >/dev/null 2>&1; then
-        kubectl get applications -n argocd -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status" --no-headers | \
-        while read name sync health; do
+        kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
+        while IFS='|' read -r name sync health message; do
             if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
-                print_success "$name: $sync/$health"
-            elif [ "$health" = "Healthy" ]; then
-                print_warning "$name: $sync/$health"
+                print_success "$name: OK"
             else
-                print_error "$name: $sync/$health"
+                # Extract key error message
+                error_msg=$(echo "$message" | sed -n 's/.*\(Resource count [0-9]* exceeds limit of [0-9]*\).*/\1/p')
+                if [ -z "$error_msg" ]; then
+                    error_msg=$(echo "$message" | sed -n 's/.*ComparisonError: \(.*\)/\1/p' | head -c 80)
+                fi
+                if [ -z "$error_msg" ] && [ -n "$message" ]; then
+                    error_msg=$(echo "$message" | head -c 80)
+                fi
+                if [ -n "$error_msg" ]; then
+                    print_error "$name: KO - $error_msg"
+                else
+                    print_error "$name: KO - $sync/$health"
+                fi
             fi
         done
     else
