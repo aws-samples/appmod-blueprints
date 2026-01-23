@@ -1,3 +1,5 @@
+*** this riv25 branch was used for Re:Invent 2025, and is now read-only, look at [main](https://github.com/aws-samples/appmod-blueprints) for next evolutions **
+
 # Platform Engineering on Amazon EKS
 
 A comprehensive platform engineering solution that provides application modernization blueprints, GitOps patterns, and developer self-service capabilities on Amazon EKS.
