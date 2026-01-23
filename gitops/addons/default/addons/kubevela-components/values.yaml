@@ -1,0 +1,9 @@
+# Default values for KubeVela components
+components:
+  enabled: true
+
+traits:
+  enabled: true
+
+compositions:
+  enabled: true

@@ -1,0 +1,36 @@
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: mysql-datasource
+  namespace: grafana-operator
+spec:
+  valuesFrom:
+    - targetPath: "secureJsonData.password"
+      valueFrom:
+        secretKeyRef:
+          name: "grafana-mysql-creds"
+          key: GRAFANA_MYSQL_PASSWORD
+    - targetPath: "url"
+      valueFrom:
+        secretKeyRef:
+          name: "grafana-mysql-creds"
+          key: GRAFANA_MYSQL_URL
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  datasource:
+    name: mysql
+    type: mysql
+    url: ${GRAFANA_MYSQL_URL}
+    access: proxy
+    user: grafanaReader
+    secureJsonData:
+      password: ${GRAFANA_MYSQL_PASSWORD}
+    jsonData:
+      database: lake 
+      maxOpenConns: 100
+      maxIdleConns: 100
+      connMaxLifetime: 14400
+      timeInterval: "1m"
+      tlsSkipVerify: true

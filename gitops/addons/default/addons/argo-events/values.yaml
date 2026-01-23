@@ -1,0 +1,25 @@
+# Argo Events values to fix NATS DNS resolution issues
+configs:
+  nats:
+    # Use latest NATS streaming version with better DNS resolution
+    versions:
+      - version: latest
+        natsStreamingImage: nats-streaming:latest
+        metricsExporterImage: natsio/prometheus-nats-exporter:latest
+
+# Override NATS clustering configuration to use full DNS names
+controller:
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  config:
+    eventBus:
+      nats:
+        native:
+          # Use full cluster domain for DNS resolution
+          clusterDomain: "cluster.local"
+          # Ensure proper DNS resolution for clustering
+          dnsPolicy: "ClusterFirst"

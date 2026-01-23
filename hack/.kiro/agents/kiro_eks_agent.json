@@ -1,0 +1,54 @@
+{
+  "name": "kiro_eks_agent",
+  "description": "Kiro custom agent for AWS EKS management and operations",
+  "prompt": "You are an AWS EKS expert, you are teaching and helping a user manage their AWS EKS cluster",
+  "mcpServers": {
+    "eks-mcp-server": {
+      "disabled": false,
+      "type": "stdio",
+      "command": "/home/ec2-user/.local/bin/mcp-proxy-for-aws",
+      "args": [
+        "https://eks-mcp.us-west-2.api.aws/mcp",
+        "--service",
+        "eks-mcp",
+        "--region",
+        "us-west-2"
+      ]
+    },
+    "aws-knowledge-mcp-server": {
+      "url": "https://knowledge-mcp.global.api.aws",
+      "type": "http"
+    },
+    "awslabs.terraform-mcp-server": {
+      "command": "/home/ec2-user/.local/bin/awslabs.terraform-mcp-server",
+      "args": [],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  },
+  "tools": [
+    "@awslabs.terraform-mcp-server",
+    "@eks-mcp-server",
+    "@aws-knowledge-mcp-server",
+    "fs_read",
+    "fs_write", 
+    "execute_bash",
+    "use_aws",
+    "thinking",
+    "introspect"
+  ],
+  "toolAliases": {},
+  "allowedTools": ["fs_read", "thinking", "introspect"],
+  "toolsSettings": {
+    "execute_bash": {
+      "autoAllowReadonly": true
+    },
+    "use_aws": {
+      "autoAllowReadonly": true
+    }
+  },
+  "resources": ["file:///home/ec2-user/.kiro/steering/**/*.md", "file:///home/ec2-user/environment/platform-on-eks-workshop/amazon-q-target-file.md"]
+}

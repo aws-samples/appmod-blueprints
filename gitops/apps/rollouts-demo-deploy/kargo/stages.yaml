@@ -1,0 +1,82 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: test
+  namespace: rollouts-demo-kargo
+  annotations:
+    kargo.akuity.io/color: green
+spec:
+  requestedFreight:
+  - origin:
+      kind: Warehouse
+      name: rollouts-demo
+    sources:
+      direct: true
+  promotionTemplate:
+    spec:
+      steps:
+      - task:
+          name: promote
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: pre-prod
+  namespace: rollouts-demo-kargo
+  annotations:
+    kargo.akuity.io/color: yellow
+spec:
+  requestedFreight:
+  - origin:
+      kind: Warehouse
+      name: rollouts-demo
+    sources:
+      stages:
+      - test
+  promotionTemplate:
+    spec:
+      steps:
+      - task:
+          name: promote-with-pr
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: prod-eu
+  namespace: rollouts-demo-kargo
+  annotations:
+    kargo.akuity.io/color: purple
+spec:
+  requestedFreight:
+  - origin:
+      kind: Warehouse
+      name: rollouts-demo
+    sources:
+      stages:
+      - pre-prod
+  promotionTemplate:
+    spec:
+      steps:
+      - task:
+          name: promote
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: prod-us
+  namespace: rollouts-demo-kargo
+  annotations:
+    kargo.akuity.io/color: orange
+spec:
+  requestedFreight:
+  - origin:
+      kind: Warehouse
+      name: rollouts-demo
+    sources:
+      stages:
+      - pre-prod
+  promotionTemplate:
+    spec:
+      steps:
+      - task:
+          name: promote

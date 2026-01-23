@@ -1,0 +1,286 @@
+{
+  "extends": [
+    "config:recommended"
+  ],
+  "baseBranches": [
+    "riv25"
+  ],
+  "enabledManagers": [
+    "custom.regex",
+    "github-actions"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update Helm chart versions in ArgoCD Application files",
+      "fileMatch": [
+        "applications/.+\\.ya?ml$",
+        "gitops/.+\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "repoURL:\\s*['\"]?(?<registryUrl>registry-1\\.docker\\.io/bitnamicharts)['\"]?\\s*\\n\\s*targetRevision:\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?\\s*\\n(?:[^\\n]*\\n)*?\\s*chart:\\s*['\"]?(?<depName>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "helm",
+      "registryUrlTemplate": "https://charts.bitnami.com/bitnami"
+    },
+    {
+      "customType": "regex",
+      "description": "Update Helm chart versions for other OCI registries",
+      "fileMatch": [
+        "applications/.+\\.ya?ml$",
+        "gitops/.+\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "repoURL:\\s*['\"]?(?<registryUrl>ghcr\\.io/[^'\"\\s]+)['\"]?\\s*\\n\\s*targetRevision:\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?\\s*\\n(?:[^\\n]*\\n)*?\\s*chart:\\s*['\"]?(?<depName>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker",
+      "registryUrlTemplate": "https://ghcr.io"
+    },
+    {
+      "customType": "regex",
+      "description": "Update Helm chart versions for AWS ECR Public",
+      "fileMatch": [
+        "applications/.+\\.ya?ml$",
+        "gitops/.+\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "repoURL:\\s*['\"]?(?<registryUrl>public\\.ecr\\.aws/[^'\"\\s]+)['\"]?\\s*\\n\\s*targetRevision:\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?\\s*\\n(?:[^\\n]*\\n)*?\\s*chart:\\s*['\"]?(?<depName>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker",
+      "registryUrlTemplate": "https://public.ecr.aws"
+    },
+    {
+      "customType": "regex",
+      "description": "Update Helm chart versions for standard Helm repositories",
+      "fileMatch": [
+        "applications/.+\\.ya?ml$",
+        "gitops/.+\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "repoURL:\\s*['\"]?(?<registryUrl>https://[^'\"\\s]+)['\"]?\\s*\\n\\s*targetRevision:\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?\\s*\\n(?:[^\\n]*\\n)*?\\s*chart:\\s*['\"]?(?<depName>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "helm"
+    },
+    {
+      "customType": "regex",
+      "description": "Update chart versions in values.yaml files",
+      "fileMatch": [
+        "values\\.ya?ml$",
+        ".+/values\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "chart:\\s*(?<depName>[^\\s]+)\\s+repoUrl:\\s*(?<registryUrl>https://[^\\s]+)\\s+targetRevision:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?"
+      ],
+      "datasourceTemplate": "helm"
+    },
+    {
+      "customType": "regex",
+      "description": "Update chart versions in values.yaml files for OCI registries",
+      "fileMatch": [
+        "values\\.ya?ml$",
+        ".+/values\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "chart:\\s*(?<depName>[^\\s]+)\\s+repoUrl:\\s*(?<registryUrl>ghcr\\.io)\\s+targetRevision:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker",
+      "registryUrlTemplate": "https://ghcr.io"
+    },
+    {
+      "customType": "regex",
+      "description": "Update chart versions in values.yaml files for AWS ECR Public",
+      "fileMatch": [
+        "values\\.ya?ml$",
+        ".+/values\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "chart:\\s*(?<depName>[^\\s]+)\\s+repoUrl:\\s*(?<registryUrl>public\\.ecr\\.aws)\\s+targetRevision:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker",
+      "registryUrlTemplate": "https://public.ecr.aws"
+    }
+  ],
+  "hostRules": [
+    {
+      "matchHost": "public.ecr.aws",
+      "hostType": "docker"
+    },
+    {
+      "matchHost": "ghcr.io",
+      "hostType": "docker"
+    },
+    {
+      "matchHost": "registry-1.docker.io",
+      "hostType": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Group all Helm chart updates together",
+      "matchDatasources": [
+        "helm",
+        "docker"
+      ],
+      "groupName": "helm-charts",
+      "commitMessageTopic": "Helm chart {{depName}}",
+      "commitMessageExtra": "to {{newVersion}}",
+      "prTitle": "Update Helm charts"
+    },
+    {
+      "description": "Bitnami charts from Docker registry",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "redis",
+        "postgresql",
+        "mysql",
+        "mongodb",
+        "rabbitmq"
+      ],
+      "registryUrls": [
+        "https://charts.bitnami.com/bitnami"
+      ]
+    },
+    {
+      "description": "ArgoCD charts",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "argo-cd",
+        "argo-workflows",
+        "argo-events",
+        "argo-rollouts"
+      ],
+      "registryUrls": [
+        "https://argoproj.github.io/argo-helm"
+      ]
+    },
+    {
+      "description": "AWS EKS charts",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "aws-load-balancer-controller",
+        "aws-cloudwatch-metrics",
+        "aws-for-fluent-bit",
+        "cni-metrics-helper",
+        "aws-node-termination-handler"
+      ],
+      "registryUrls": [
+        "https://aws.github.io/eks-charts"
+      ]
+    },
+    {
+      "description": "Prometheus community charts",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "kube-prometheus-stack",
+        "prometheus-adapter",
+        "kube-state-metrics",
+        "prometheus-node-exporter"
+      ],
+      "registryUrls": [
+        "https://prometheus-community.github.io/helm-charts"
+      ]
+    },
+    {
+      "description": "Grafana charts",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "grafana",
+        "loki",
+        "tempo"
+      ],
+      "registryUrls": [
+        "https://grafana.github.io/helm-charts"
+      ]
+    },
+    {
+      "description": "Cert-manager charts",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "cert-manager"
+      ],
+      "registryUrls": [
+        "https://charts.jetstack.io"
+      ]
+    },
+    {
+      "description": "External Secrets charts",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "external-secrets"
+      ],
+      "registryUrls": [
+        "https://charts.external-secrets.io"
+      ]
+    },
+    {
+      "description": "Crossplane charts",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "crossplane"
+      ],
+      "registryUrls": [
+        "https://charts.crossplane.io/stable"
+      ]
+    },
+    {
+      "description": "Backstage charts",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchPackageNames": [
+        "backstage"
+      ],
+      "registryUrls": [
+        "https://backstage.github.io/charts"
+      ]
+    },
+    {
+      "description": "Auto-merge patch updates for stable charts",
+      "matchDatasources": [
+        "helm"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "matchPackageNames": [
+        "redis",
+        "postgresql",
+        "mysql",
+        "mongodb",
+        "rabbitmq",
+        "grafana",
+        "prometheus"
+      ],
+      "automerge": true,
+      "automergeType": "pr"
+    }
+  ],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "timezone": "UTC",
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "labels": [
+    "dependencies",
+    "renovate"
+  ],
+  "assignees": [],
+  "reviewers": []
+}

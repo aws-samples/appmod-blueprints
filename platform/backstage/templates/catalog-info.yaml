@@ -5,6 +5,7 @@ metadata:
   description: App Mod Backstage Templates
 spec:
   targets:
+    - ./eks-cluster-template/template.yaml
     - ./rds-cluster/template.yaml
     - ./s3-bucket-ack/template.yaml
     - ./app-deploy/template.yaml
@@ -34,4 +35,13 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  hostname: HOSTNAME
+  # values dynamically replaced by platform/infra/terraform/common/deploy.sh on bootstrap
+  ingress_hostname: '{{ values.ingressDomain }}'
+  gitlab_hostname: '{{ values.gitlabDomain }}'
+  argocd_hostname: '{{ values.argocdDomain }}'
+  gituser: '{{ values.gitUsername }}'
+  aws_region: '{{ values.awsRegion }}'
+  aws_account_id: '{{ values.awsAccountId }}'
+  admin_role_name: '{{ values.adminRoleName }}'
+  resource_prefix: '{{ values.resourcePrefix }}'
+  model_s3_bucket: '{{ values.modelS3Bucket }}'

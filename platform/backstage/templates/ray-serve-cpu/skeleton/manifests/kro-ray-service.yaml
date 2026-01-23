@@ -1,0 +1,39 @@
+# Kro RayService resource for ${{values.name}}
+# This single resource orchestrates all Ray Service components
+apiVersion: kro.run/v1alpha1
+kind: RayService
+metadata:
+  name: ${{values.name}}-ray-service
+  namespace: ${{values.namespace}}
+  labels:
+    app.kubernetes.io/name: ${{values.name}}
+    app.kubernetes.io/component: ray-service
+    app.kubernetes.io/managed-by: kro
+    backstage.io/template-name: ray-serve-kubernetes
+  annotations:
+    backstage.io/template-version: "1.0.0"
+    backstage.io/created-by: ${{values.created_by}}
+    kro.run/resource-group: rayservice.kro.run
+spec:
+  name: ${{values.name}}
+  modelId: ${{values.modelId}}
+  s3ModelBucket: ${{values.model_s3_bucket}}
+  awsRegion: ${{values.aws_region}}
+  awsAccountId: "${{values.aws_account_id}}"
+  resourcePrefix: ${{values.resource_prefix}}
+  maxLength: "${{values.maxLength}}"
+  rayServeFile: ${{values.rayServeFile}}
+  replicas: ${{values.replicas}}
+  resources:
+    head:
+      cpu: "${{values.headCpu}}"
+      memory: ${{values.headMemory}}
+    worker:
+      cpu: "${{values.workerCpu}}"
+      memory: ${{values.workerMemory}}
+      gpu: "${{values.workerGpu}}"
+  gitlab:
+    hostname: ${{values.gitlab_hostname}}
+    username: ${{values.git_username}}
+  ingressHostname: ${{values.ingress_hostname}}
+  createdBy: ${{values.created_by}}

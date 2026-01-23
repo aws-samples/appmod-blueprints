@@ -1,0 +1,35 @@
+global:
+  tolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+  nodeSelector:
+    eks.amazonaws.com/compute-type: auto
+    kubernetes.io/os: linux
+    karpenter.sh/nodepool: system
+api:
+  oidc:
+    enabled: true
+    clientID: kargo
+    dex:
+      enabled: false
+    admins:
+      claims:
+        groups:
+        - admin
+  ingress:
+    enabled: true
+    tls:
+      enabled: false
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+  # service:
+  #   type: LoadBalancer
+  #   annotations:
+  #     service.beta.kubernetes.io/aws-load-balancer-name: "kargo"
+  #     service.beta.kubernetes.io/aws-load-balancer-type: "external"
+  #     service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+  #     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+  tls:
+    enabled: false
+    terminatedUpstream: true

@@ -1,0 +1,18 @@
+plugins:
+  stern:
+    shortCut: Ctrl-L
+    confirm: false
+    description: Pod logs (stern)
+    scopes:
+      - pod
+      - deployment
+      - replicaset
+      - statefulset
+      - daemonset
+    command: stern
+    background: false
+    args:
+      - --tail=50
+      - $FILTER
+      - -n
+      - $NAMESPACE

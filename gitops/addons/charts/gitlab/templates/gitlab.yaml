@@ -1,0 +1,213 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitlab
+---
+# TODO: move to earlier chart
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.eks.amazonaws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+  encrypted: "true"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-data
+  namespace: gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab
+  namespace: gitlab
+spec:
+  selector:
+    matchLabels:
+      app: gitlab
+  strategy:
+    type: Recreate
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: gitlab
+    spec:
+      nodeSelector:
+        karpenter.sh/nodepool: system
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+      volumes:
+      - name: gitlab-data
+        persistentVolumeClaim:
+          claimName: gitlab-data
+      - name: gitlab-config
+        secret:
+          secretName: gitlab-config
+      containers:
+      - name: gitlab
+        image: gitlab/gitlab-ce:latest
+        ports:
+        - containerPort: 80
+          name: http
+        # - containerPort: 443
+        #   name: https
+        - containerPort: 22
+          name: ssh
+        env:
+        - name: GITLAB_OMNIBUS_CONFIG
+          value: |
+            external_url 'https://{{ .Values.domain_name }}'
+            gitlab_rails['gitlab_shell_ssh_port'] = 22
+            gitlab_rails['gitlab_shell_git_timeout'] = 800
+            gitlab_rails['enabled_git_access_protocol'] = 'ssh'
+
+            # Disable Let's Encrypt
+            letsencrypt['enable'] = false
+
+            # Disable HTTPS
+            nginx['ssl_certificate'] = nil
+            nginx['ssl_certificate_key'] = nil
+            nginx['redirect_http_to_https'] = false
+            nginx['listen_https'] = false
+            nginx['listen_port'] = 80
+
+            # Disable Prometheus monitoring
+            prometheus_monitoring['enable'] = false
+
+            # Disable CI/CD features
+            # gitlab_ci['enable'] = false
+            # gitlab_rails['gitlab_default_projects_features_builds'] = false
+
+            # Disable container registry
+            registry['enable'] = false
+            registry_nginx['enable'] = false
+
+            # Disable pages
+            pages_enabled = false
+            gitlab_pages['enable'] = false
+
+            # Disable monitoring features
+            alertmanager['enable'] = false
+            node_exporter['enable'] = false
+            redis_exporter['enable'] = false
+            postgres_exporter['enable'] = false
+
+            # Disable Mattermost
+            mattermost['enable'] = false
+            mattermost_nginx['enable'] = false
+
+            # Disable Kubernetes integration
+            # gitlab_kas['enable'] = false
+
+            # Disable SMTP if not needed
+            gitlab_rails['smtp_enable'] = false
+
+            # Disable Sidekiq metrics
+            sidekiq['metrics_enabled'] = false
+
+            # Puma
+            # puma['worker_processes'] = 0
+            # puma['per_worker_max_memory_mb'] = 1024
+
+            # Reduce Redis resources
+            redis['tcp_timeout'] = 60
+            redis['tcp_keepalive'] = 300
+
+            # # Optional: Disable features at project level
+            # gitlab_rails['gitlab_default_projects_features'] = {
+            #   'issues' => true,
+            #   'merge_requests' => true,
+            #   'wiki' => false,
+            #   'snippets' => false,
+            #   'builds' => true,
+            #   'container_registry' => false
+            # }
+
+            # Reduce Sidekiq concurrency
+            sidekiq['concurrency'] = 5
+            gitlab_rails['monitoring_whitelist'] = ['0.0.0.0/0']
+            gitlab_rails['signup_enabled'] = false
+            gitlab_rails['initial_root_password'] = '{{ .Values.initial_root_password }}'
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "6"
+          limits:
+            memory: "16Gi"
+        securityContext:
+          privileged: false
+          runAsUser: 0
+        livenessProbe:
+          httpGet:
+            path: /-/liveness
+            port: 80
+          initialDelaySeconds: 180
+          timeoutSeconds: 15
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /-/readiness
+            port: 80
+          initialDelaySeconds: 180
+          timeoutSeconds: 15
+          periodSeconds: 30
+        volumeMounts:
+        - name: gitlab-data
+          mountPath: /etc/gitlab
+          subPath: config
+        - name: gitlab-data
+          mountPath: /var/log/gitlab
+          subPath: logs
+        - name: gitlab-data
+          mountPath: /var/opt/gitlab
+          subPath: data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab
+  namespace: gitlab
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-name: "gitlab"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-security-groups: "{{ .Values.security_groups }}"
+    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
+spec:
+  type: LoadBalancer
+  loadBalancerClass: eks.amazonaws.com/nlb
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  - name: ssh
+    port: 22
+    targetPort: 22
+  selector:
+    app: gitlab
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gitlab-pdb
+  namespace: gitlab
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: gitlab

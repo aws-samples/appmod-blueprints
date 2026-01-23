@@ -1,0 +1,111 @@
+useSelectors: true # necessary to enable addons with cluster secret labels
+
+#We are using this to enable applicationSets, then use cluster secret to enable applications
+# globalSelectors:
+#   fleet_member: control-plane #If we activate this, only cluster from this selector will have the applicationsets enabled
+argocd:
+  enabled: true
+external-secrets:
+  enabled: true
+metrics-server:
+  enabled: true
+aws-efs-csi-driver:
+  enabled: true
+aws-for-fluentbit:
+  enabled: false
+cert-manager:
+  enabled: true
+external-dns:
+  enabled: true
+opentelemetry-operator:
+  enabled: false
+kyverno:
+  enabled: true
+kyverno-policy-reporter:
+  enabled: true
+kyverno-policies:
+  enabled: true
+cni-metrics-helper:
+  enabled: false
+kube-state-metrics:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+cw-prometheus:
+  enabled: false
+
+ack-iam:
+  enabled: true
+ack-eks:
+  enabled: true
+ack-ec2:
+  enabled: true
+ack-ecr:
+  enabled: true
+ack-efs:
+  enabled: true
+ack-s3:
+  enabled: true
+ack-dynamodb:
+  enabled: true
+kro:
+  enabled: true
+kro-manifests:
+  enabled: true
+kubevela:
+  enabled: true
+multi-acct:
+  enabled: true
+
+ingress-class-alb:
+  enabled: true
+ingress-nginx:
+  enabled: true
+gitlab:
+  enabled: true
+keycloak:
+  enabled: true
+argo-rollouts:
+  enabled: true
+argo-events:
+  enabled: true
+argo-workflows:
+  enabled: true
+backstage:
+  enabled: true
+kargo:
+  enabled: true
+crossplane:
+  enabled: true
+crossplane-aws:
+  enabled: true
+flux:
+  enabled: true
+grafana:
+  enabled: false
+grafana-operator:
+  enabled: true
+grafana-dashboards:
+  enabled: true
+platform-manifests:
+  enabled: true
+
+# ML/AI Platform Addons
+jupyterhub:
+  enabled: true
+image-prepuller:
+  enabled: true
+kubeflow:
+  enabled: true
+mlflow:
+  enabled: true
+ray-operator:
+  enabled: true
+spark-operator:
+  enabled: true
+airflow:
+  enabled: true
+
+# DORA Metrics
+devlake:
+  enabled: true

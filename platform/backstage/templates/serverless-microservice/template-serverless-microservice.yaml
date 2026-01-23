@@ -48,23 +48,22 @@ spec:
           tfVars: ${{parameters.tfVars}}
       name: Fetch Base
     - id: publish
-      name: Publishing to a gitea git repository
-      action: publish:gitea
+      name: Publishing to GitLab repository
+      action: publish:gitlab
       input:
-        description: Example of serverless microservice
         # Hard coded value for this demo purposes only.
-        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.hostname }}/gitea?repo=${{parameters.tfVars.name}}
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.tfVars.name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
         defaultBranch: main
     - id: create-argocd-app
       name: Create ArgoCD App
-      action: cnoe:create-argocd-app
+      action: argocd:create-app
       input:
         appName: ${{parameters.tfVars.name}}
         appNamespace: ${{parameters.namespace}}
         argoInstance: in-cluster
         projectName: default
         # necessary until we generate our own cert
-        repoUrl: http://my-gitea-http.gitea.svc.cluster.local:3000/giteaAdmin/${{parameters.tfVars.name}}
+        repoUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.tfVars.name}}
         path: "manifests"
     - id: register
       name: Register

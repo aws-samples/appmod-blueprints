@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rollouts-demo
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+  labels:
+    app: rollouts-demo
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+  #             service:
+  #               name: rollouts-demo
+  #               port:
+  #                 number: 80
+  # Argo Rollouts integration
+              service:
+                # serviceName must match either: canary.trafficRouting.alb.rootService (if specified),
+                # or canary.stableService (if rootService is omitted)
+                name: rollouts-demo
+                # servicePort must be the value: use-annotation
+                # This instructs AWS Load Balancer Controller to look to annotations on how to direct traffic
+                port:
+                  name: use-annotation

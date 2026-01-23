@@ -1,0 +1,38 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: devlake-rds-mysql
+  namespace: {{ .Values.namespace | default "devlake" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  components:
+    - name: devlake-mysql-db
+      type: rds-cluster-mysql
+      properties:
+        deploy: {{ .Values.clusterName }}
+      traits:
+        - type: component-iam-policy
+          properties:
+            service: rds-db
+            policy: |
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "rds-db:connect"
+                    ],
+                    "Resource": "*"
+                  }
+                ]
+              }
+    - name: devlake-mysql-access
+      type: dp-service-account
+      properties:
+        clusterName: {{ .Values.clusterName }}
+        clusterRegion: {{ .Values.clusterRegion }}
+        componentNamesForAccess:
+          - devlake-mysql-db

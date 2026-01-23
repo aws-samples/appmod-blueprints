@@ -1,0 +1,48 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  annotations:
+    definition.oam.dev/alias: ""
+    definition.oam.dev/description: Amazon RDS MySQL Cluster
+  name: rds-cluster-mysql
+spec:
+  schematic:
+    cue:
+      template: |
+        output: {
+        	apiVersion: "awsblueprints.io/v1alpha1"
+        	kind:       "RelationalDatabase"
+        	metadata: {
+        		name:      context.name
+        		namespace: context.namespace
+        	}
+        	spec: {
+        		compositionSelector: matchLabels: {
+        			"awsblueprints.io/provider":            "aws"
+        			"awsblueprints.io/environment":         "prod"
+        			"awsblueprints.io/createDBSubnetGroup": "true"
+        			"awsblueprints.io/dbEngine":            "mysql"
+        		}
+        		resourceConfig: {
+        			name:           context.name
+        			deletionPolicy: "Delete"
+        			tags: [
+        				{
+        					key:   "env"
+        					value: "prod"
+        				},
+        				{
+        					key:   "app"
+        					value: "\(context.name)"
+        				},
+        			]
+        		}
+        		databaseName: "initdb"
+        		deploy:       "\(parameter.deploy)"
+        	}
+        }
+        parameter: deploy: string
+  workload:
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment

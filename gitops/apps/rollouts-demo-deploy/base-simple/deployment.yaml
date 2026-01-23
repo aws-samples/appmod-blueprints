@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollouts-demo
+  labels:
+    app: rollouts-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rollouts-demo
+  template:
+    metadata:
+      labels:
+        app: rollouts-demo
+    spec:
+      containers:
+        - name: rollouts-demo
+          image: MANAGEMENT_ACCOUNT_ID.dkr.AWS_REGION.amazonaws.com/rollouts-demo
+          imagePullPolicy: Always
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 5m

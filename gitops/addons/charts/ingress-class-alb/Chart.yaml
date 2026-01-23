@@ -1,0 +1,5 @@
+apiVersion: v2
+name: ingress-class-alb
+description: A Helm chart for IngressClass ALB
+type: application
+version: 0.1.0

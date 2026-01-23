@@ -1,0 +1,16 @@
+plugins:
+  debug:
+    shortCut: Shift-D
+    confirm: false
+    scopes:
+      - containers
+    description: Add debug container
+    command: kubectl
+    background: false
+    args:
+      - debug
+      - $POD
+      - -n
+      - $NAMESPACE
+      - --image=busybox
+      - --target=$NAME

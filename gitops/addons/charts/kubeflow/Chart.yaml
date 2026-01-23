@@ -1,0 +1,7 @@
+apiVersion: v2
+name: kubeflow
+description: A Helm chart for Kubeflow ML Platform with OIDC authentication
+type: application
+version: 0.1.0
+# Note: Kubeflow doesn't have an official Helm chart, so we'll use manifests
+# This chart will deploy Kubeflow manifests with custom OIDC overlay
