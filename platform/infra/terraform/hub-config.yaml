@@ -48,12 +48,15 @@ clusters:
       enable_kubevela: true
       enable_devlake: true
       enable_jupyterhub: true
+      enable_ray_operator: true
+      enable_image_prepuller: true
       enable_kubeflow: false
       enable_mlflow: false
-      enable_spark_operator: false
+      enable_spark_operator: true
       enable_airflow: false
       enable_grafana: false
       enable_grafana_operator: true
+      enable_platform_manifests: true
       enable_aws_efs_csi_driver: false
       enable_aws_for_fluentbit: false
       enable_cni_metrics_helper: false
@@ -87,7 +90,7 @@ clusters:
       enable_flux: true
       enable_metrics_server: true
       enable_kro: true
-      enable_kro_manifests: true      
+      enable_kro_manifests: true
       enable_aws_efs_csi_driver: false
       enable_aws_for_fluentbit: false
       enable_cert_manager: true

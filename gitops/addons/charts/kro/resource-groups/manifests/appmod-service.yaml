@@ -36,11 +36,13 @@ spec:
           name: ${schema.metadata.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: AppmodService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           replicas: ${schema.spec.replicas}
           revisionHistoryLimit: 2
@@ -88,11 +90,13 @@ spec:
           name: ${schema.metadata.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: AppmodService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           selector:
             app: ${schema.metadata.name}
@@ -108,11 +112,13 @@ spec:
           name: ${schema.metadata.name}-preview
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: AppmodService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           selector:
             app: ${schema.metadata.name}
@@ -130,12 +136,13 @@ spec:
           name: ${schema.metadata.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: AppmodService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
           annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             nginx.ingress.kubernetes.io/rewrite-target: /$2
             nginx.ingress.kubernetes.io/use-regex: "true"
         spec:
@@ -159,11 +166,13 @@ spec:
           name: amp-workspace-secrets-${schema.metadata.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: AppmodService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           secretStoreRef:
             name: aws-secrets-manager
@@ -192,11 +201,13 @@ spec:
           name: functional-gate-${schema.metadata.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: AppmodService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           args:
             - name: service-name
@@ -227,11 +238,13 @@ spec:
           name: performance-gate-${schema.metadata.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: AppmodService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           args:
             - name: service-name
@@ -262,11 +275,13 @@ spec:
           name: metrics-${schema.metadata.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: AppmodService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           args:
             - name: service-name
@@ -303,11 +318,13 @@ spec:
           name: benchmark-config-${schema.metadata.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: AppmodService
+              kind: ${schema.kind}
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         data:
           benchmark.yaml: |
             config:
