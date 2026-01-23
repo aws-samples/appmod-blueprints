@@ -26,6 +26,32 @@ resource "aws_security_group" "gitlab_http" {
   }
 }
 
+# Get subnets from the EKS cluster, excluding ap-northeast-2a
+data "aws_subnets" "cluster_subnets" {
+  filter {
+    name   = "vpc-id"
+    values = [local.cluster_vpc_ids[local.hub_cluster.name]]
+  }
+  
+  tags = {
+    "kubernetes.io/role/elb" = "1"
+  }
+}
+
+data "aws_subnet" "cluster_subnet_details" {
+  for_each = toset(data.aws_subnets.cluster_subnets.ids)
+  id       = each.value
+}
+
+locals {
+  # Filter out ap-northeast-2a subnets
+  allowed_subnet_ids = [
+    for id, subnet in data.aws_subnet.cluster_subnet_details : id
+    if subnet.availability_zone != "ap-northeast-2a"
+  ]
+  allowed_subnets_string = join(",", local.allowed_subnet_ids)
+}
+
 # Create a Kubernetes namespace for GitLab
 resource "kubernetes_namespace" "gitlab" {
   # depends_on = [local.cluster_info]
@@ -58,6 +84,7 @@ resource "kubernetes_service" "gitlab_nlb" {
       "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
       "service.beta.kubernetes.io/aws-load-balancer-security-groups" = local.gitlab_security_groups
       "service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules" = "true"
+      "service.beta.kubernetes.io/aws-load-balancer-subnets" = local.gitlab_subnets
       "meta.helm.sh/release-name" = "gitlab"
       "meta.helm.sh/release-namespace" = "gitlab"
     }
@@ -103,7 +130,7 @@ data "aws_lb" "gitlab_nlb" {
 ################################################################################
 resource "aws_cloudfront_vpc_origin" "gitlab" {
   vpc_origin_endpoint_config {
-    name                   = "gitlab-vpc-origin"
+    name                   = "${var.resource_prefix}-gitlab-vpc-origin"
     arn                    = data.aws_lb.gitlab_nlb.arn
     http_port              = 80
     https_port             = 443

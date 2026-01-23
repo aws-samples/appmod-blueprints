@@ -1,0 +1,43 @@
+{{- if .Values.gpu.enabled }}
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu
+spec:
+  disruption:
+    budgets:
+    - nodes: 10%
+    consolidateAfter: 5m
+    consolidationPolicy: WhenEmpty
+  template:
+    metadata:
+      labels:
+        node-type: gpu
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand", "spot"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+        - key: "eks.amazonaws.com/instance-family"
+          operator: In
+          values:
+          - g4dn
+          - g4ad
+          - g5
+          - g6
+          - g6e
+          - p3
+          - p4d
+          - p5
+      taints:
+        - key: nvidia.com/gpu
+          effect: NoSchedule
+      terminationGracePeriod: 24h0m0s
+{{- end }}

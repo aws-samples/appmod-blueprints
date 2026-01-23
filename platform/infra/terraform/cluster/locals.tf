@@ -7,6 +7,16 @@ locals {
     GithubRepo = "github.com/aws-samples/appmod-blueprints"
   }
 
+  # ACK service policy mappings for EKS Capabilities
+  ack_service_policies = {
+    ec2      = "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
+    eks      = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+    iam      = "arn:aws:iam::aws:policy/IAMFullAccess"
+    ecr      = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
+    s3       = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    dynamodb = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+  }
+
 }
 
 locals {

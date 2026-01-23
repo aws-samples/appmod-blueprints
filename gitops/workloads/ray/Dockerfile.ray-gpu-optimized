@@ -1,0 +1,15 @@
+FROM rayproject/ray:2.34.0-py310-cu118
+
+# Pre-install ML dependencies to avoid runtime downloads
+# This saves 3-5 minutes on first deployment
+RUN pip install --no-cache-dir \
+    transformers==4.37.2 \
+    torch==2.1.2 \
+    accelerate==0.26.1
+
+# DO NOT pre-download models - they come from S3 via CSI mount
+# Models are too large and change frequently
+
+LABEL maintainer="platform-team"
+LABEL description="Ray GPU image with ML dependencies pre-installed"
+LABEL base-image="rayproject/ray:2.34.0-py310-cu118"

@@ -85,6 +85,7 @@ spec:
         enable_ingress_nginx: string
         enable_platform_manifests: string
         enable_kubevela: string
+        enable_image_prepuller: string
 
         adot_collector_namespace: string
         adot_collector_service_account: string
@@ -448,6 +449,7 @@ spec:
             enable_ingress_nginx: "${schema.spec.addons.enable_ingress_nginx}"
             enable_platform_manifests: "${schema.spec.addons.enable_platform_manifests}"
             enable_kubevela: "${schema.spec.addons.enable_kubevela}"
+            enable_image_prepuller: "${schema.spec.addons.enable_image_prepuller}"
 
           # Note: Cannot use ownerReferences here as it would be cross-namespace
           # (EksCluster is in ${schema.spec.name} namespace, Secret is in argocd namespace)

@@ -145,6 +145,11 @@ export const CustomHomepage = () => {
                       icon: <img src="/backstage/img/argo-workflows.png" alt="Argo Workflows" style={{ width: '24px', height: '24px' }} />,
                     },
                     {
+                      url: domainUrl + '/jupyterhub',
+                      label: 'JupyterHub',
+                      icon: <img src="/backstage/img/jupyter.png" alt="JupyterHub" style={{ width: '24px', height: '24px' }} />,
+                    },
+                    {
                       url: domainUrl,
                       label: 'Kargo',
                       icon: <img src="/backstage/img/kargo.png" alt="Kargo" style={{ width: '24px', height: '24px' }} />,
@@ -153,6 +158,11 @@ export const CustomHomepage = () => {
                       url: domainUrl + '/keycloak',
                       label: 'Keycloak',
                       icon: <img src="/backstage/img/keycloak.png" alt="Keycloak" style={{ width: '24px', height: '24px' }} />,
+                    },
+                    {
+                      url: domainUrl + '/keycloak/realms/platform/protocol/openid-connect/logout',
+                      label: 'Logout',
+                      icon: <img src="/backstage/img/logout.png" alt="Logout" style={{ width: '24px', height: '24px' }} />,
                     },
                   ]}
                 />

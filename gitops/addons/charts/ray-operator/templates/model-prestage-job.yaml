@@ -1,0 +1,130 @@
+{{- if .Values.modelPrestage.enabled }}
+---
+# Model prestage job for TinyLlama
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.global.resourcePrefix | default "peeks" }}-tinyllama-prestage
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ray
+    app.kubernetes.io/component: model-prestage
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    model: tinyllama
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        app: model-prestage
+        model: tinyllama
+    spec:
+      serviceAccountName: model-prestage-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: upload-model
+        image: amazon/aws-cli:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "Installing dependencies..."
+          yum install -y python3-pip tar gzip
+          pip3 install huggingface_hub
+          
+          echo "Downloading TinyLlama-1.1B..."
+          python3 << 'PYTHON'
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+              local_dir="/tmp/tinyllama",
+              local_dir_use_symlinks=False
+          )
+          PYTHON
+          
+          echo "Uploading to S3..."
+          aws s3 sync /tmp/tinyllama/ s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/tinyllama/ --no-progress
+          
+          echo "Upload complete!"
+          aws s3 ls s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/tinyllama/
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /tmp
+      volumes:
+      - name: model-storage
+        emptyDir:
+          sizeLimit: 20Gi
+---
+# Model prestage job for Mistral-7B
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.global.resourcePrefix | default "peeks" }}-mistral-7b-prestage
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ray
+    app.kubernetes.io/component: model-prestage
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    model: mistral-7b
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        app: model-prestage
+        model: mistral-7b
+    spec:
+      serviceAccountName: model-prestage-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: upload-model
+        image: amazon/aws-cli:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "Installing dependencies..."
+          yum install -y python3-pip tar gzip
+          pip3 install huggingface_hub
+          
+          echo "Downloading Mistral-7B-Instruct-v0.2..."
+          python3 << 'PYTHON'
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id="mistralai/Mistral-7B-Instruct-v0.2",
+              local_dir="/tmp/mistral",
+              local_dir_use_symlinks=False
+          )
+          PYTHON
+          
+          echo "Uploading to S3..."
+          aws s3 sync /tmp/mistral/ s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/mistral-7b/ --no-progress
+          
+          echo "Upload complete!"
+          aws s3 ls s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/mistral-7b/
+        resources:
+          requests:
+            cpu: "4"
+            memory: "16Gi"
+          limits:
+            cpu: "4"
+            memory: "16Gi"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /tmp
+      volumes:
+      - name: model-storage
+        emptyDir:
+          sizeLimit: 50Gi
+{{- end }}

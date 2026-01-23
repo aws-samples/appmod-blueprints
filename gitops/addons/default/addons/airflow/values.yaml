@@ -1,31 +1,26 @@
 airflow:
-  # Airflow configuration
-  image:
-    repository: apache/airflow
-    tag: '2.10.2'
-    pullPolicy: IfNotPresent
+  # Use default CeleryExecutor instead of KubernetesExecutor
+  executor: CeleryExecutor
 
   # Fernet key for encryption
   fernetKey: "Fernet.generate()"
+  
+  # Enable hooks for proper job management
   createUserJob:
-    useHelmHooks: false
+    useHelmHooks: true
   migrateDatabaseJob:
     enabled: true
-    useHelmHooks: false
-
-  # Executor configuration (using KubernetesExecutor for scalability)
-  executor: KubernetesExecutor
+    useHelmHooks: true
 
   # Webserver configuration
   webserver:
     replicas: 1
     resources:
       limits:
-        cpu: 1000m
-        memory: 1Gi
-      requests:
-        cpu: 200m
         memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
     service:
       type: ClusterIP
 
@@ -34,45 +29,35 @@ airflow:
     replicas: 1
     resources:
       limits:
-        cpu: 1000m
-        memory: 1Gi
-      requests:
-        cpu: 200m
-        memory: 512Mi
-
-  # Triggerer configuration (for deferrable operators)
-  triggerer:
-    enabled: true
-    replicas: 1
-    resources:
-      limits:
-        cpu: 500m
         memory: 512Mi
       requests:
         cpu: 100m
         memory: 256Mi
 
-  # Worker configuration (disabled for KubernetesExecutor)
-  workers:
-    replicas: 0
-
-  # Flower configuration (disabled for KubernetesExecutor)
-  flower:
-    enabled: false
-
-  # Redis configuration (not needed for KubernetesExecutor)
+  # Enable Redis for CeleryExecutor
   redis:
+    enabled: true
+
+  # Enable workers for CeleryExecutor
+  workers:
+    replicas: 1
+    resources:
+      limits:
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+  # Disable triggerer (not needed for CeleryExecutor)
+  triggerer:
     enabled: false
 
   # PostgreSQL database configuration
   postgresql:
     enabled: true
-    image:
-      registry: public.ecr.aws
-      repository: bitnami/postgresql
-      tag: "16.1.0"
     auth:
-      enablePostgresUser: false
+      enablePostgresUser: true
+      postgresPassword: postgres
       username: airflow
       password: airflow
       database: airflow
@@ -219,11 +204,11 @@ airflow:
     enabled: true
     schedule: '0 1 * * *'
     command:
-      - airflow
-      - db
-      - clean
-      - --clean-before-timestamp
-      - '$(date -d "7 days ago" +%Y-%m-%d)'
+      - /bin/bash
+      - -c
+      - |
+        CLEAN_DATE=$(date -d "7 days ago" +%Y-%m-%d)
+        airflow db clean --clean-before-timestamp $CLEAN_DATE
 
   # Monitoring and metrics
   statsd:
