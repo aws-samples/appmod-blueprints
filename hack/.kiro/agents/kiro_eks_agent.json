@@ -10,7 +10,9 @@
       "args": [
         "https://eks-mcp.us-west-2.api.aws/mcp",
         "--service",
-        "eks-mcp"
+        "eks-mcp",
+        "--region",
+        "us-west-2"
       ]
     },
     "aws-knowledge-mcp-server": {
