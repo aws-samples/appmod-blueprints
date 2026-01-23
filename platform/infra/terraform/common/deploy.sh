@@ -47,6 +47,20 @@ main() {
     # Initialize Terraform with S3 backend
     initialize_terraform "gitlab infra" "$DEPLOY_SCRIPTDIR/gitlab_infra"
     
+    # Check for and clear any stale locks
+    cd "$DEPLOY_SCRIPTDIR/gitlab_infra"
+    if terraform state list &>/dev/null; then
+      log "State accessible, no lock issues"
+    else
+      log_warning "State lock detected, attempting to force unlock"
+      LOCK_ID=$(terraform force-unlock -force 2>&1 | grep -oP 'Lock ID: \K[a-f0-9-]+' || echo "")
+      if [[ -n "$LOCK_ID" ]]; then
+        log "Force unlocking with ID: $LOCK_ID"
+        terraform force-unlock -force "$LOCK_ID" || log_warning "Force unlock failed, continuing anyway"
+      fi
+    fi
+    cd -
+    
     # Apply Terraform configuration with retry logic
     log "Applying gitlab infra resources..."
     
@@ -98,6 +112,20 @@ main() {
   
   # Initialize Terraform with S3 backend
   initialize_terraform "bootstrap" "$DEPLOY_SCRIPTDIR"
+  
+  # Check for and clear any stale locks
+  cd "$DEPLOY_SCRIPTDIR"
+  if terraform state list &>/dev/null; then
+    log "State accessible, no lock issues"
+  else
+    log_warning "State lock detected, attempting to force unlock"
+    LOCK_ID=$(terraform force-unlock -force 2>&1 | grep -oP 'Lock ID: \K[a-f0-9-]+' || echo "")
+    if [[ -n "$LOCK_ID" ]]; then
+      log "Force unlocking with ID: $LOCK_ID"
+      terraform force-unlock -force "$LOCK_ID" || log_warning "Force unlock failed, continuing anyway"
+    fi
+  fi
+  cd -
   
   # Apply Terraform configuration with retry mechanism
   deploy_bootstrap_stack() {
