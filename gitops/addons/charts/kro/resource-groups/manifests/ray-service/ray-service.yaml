@@ -320,11 +320,11 @@ spec:
                           limits:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
-                            ${schema.spec.?acceleratorType.orValue('gpu') == 'neuron' ? 'aws.amazon.com/neuron' : 'nvidia.com/gpu'}: ${schema.spec.resources.worker.gpu}
+                            nvidia.com/gpu: ${schema.spec.resources.worker.gpu}
                           requests:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
-                            ${schema.spec.?acceleratorType.orValue('gpu') == 'neuron' ? 'aws.amazon.com/neuron' : 'nvidia.com/gpu'}: ${schema.spec.resources.worker.gpu}
+                            nvidia.com/gpu: ${schema.spec.resources.worker.gpu}
           serveConfigV2: |
             applications:
               - name: gpu_text_generation
