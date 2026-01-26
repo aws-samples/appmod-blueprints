@@ -1,0 +1,18 @@
+# Use the official vLLM Neuron image as base
+FROM public.ecr.aws/neuron/pytorch-inference-vllm-neuronx:0.9.1-neuronx-py311-sdk2.26.0-ubuntu22.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=non-interactive
+ENV NEURON_RT_NUM_CORES=2
+ENV VLLM_NEURON_FRAMEWORK=neuronx-distributed-inference
+
+# Set working directory
+WORKDIR /app
+
+# Install additional dependencies
+RUN pip install --no-cache-dir \
+    huggingface_hub==0.35.3
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import vllm; import ray" || exit 1

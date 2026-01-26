@@ -24,6 +24,7 @@ spec:
   maxLength: "${{values.maxLength}}"
   rayServeFile: ${{values.rayServeFile}}
   replicas: ${{values.replicas}}
+  acceleratorType: ${{values.acceleratorType}}
   resources:
     head:
       cpu: "${{values.headCpu}}"

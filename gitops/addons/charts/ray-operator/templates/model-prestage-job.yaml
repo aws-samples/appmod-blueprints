@@ -127,4 +127,68 @@ spec:
       - name: model-storage
         emptyDir:
           sizeLimit: 50Gi
+---
+# Model prestage job for Mistral-7B Neuron (pre-compiled for Trainium)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.global.resourcePrefix | default "peeks" }}-mistral-7b-neuron-prestage
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ray
+    app.kubernetes.io/component: model-prestage
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    model: mistral-7b-neuron
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        app: model-prestage
+        model: mistral-7b-neuron
+    spec:
+      serviceAccountName: model-prestage-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: upload-model
+        image: amazon/aws-cli:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "Installing dependencies..."
+          yum install -y python3-pip tar gzip
+          pip3 install huggingface_hub
+          
+          echo "Downloading Mistral-7B-Instruct pre-compiled for Neuron..."
+          python3 << 'PYTHON'
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id="aws-neuron/Mistral-7B-Instruct-v0.3-seqlen-2048-bs-1-cores-2",
+              local_dir="/tmp/mistral-neuron",
+              local_dir_use_symlinks=False
+          )
+          PYTHON
+          
+          echo "Uploading to S3..."
+          aws s3 sync /tmp/mistral-neuron/ s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/mistral-7b-neuron/ --no-progress
+          
+          echo "Upload complete!"
+          aws s3 ls s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/mistral-7b-neuron/
+        resources:
+          requests:
+            cpu: "4"
+            memory: "16Gi"
+          limits:
+            cpu: "4"
+            memory: "16Gi"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /tmp
+      volumes:
+      - name: model-storage
+        emptyDir:
+          sizeLimit: 50Gi
 {{- end }}
