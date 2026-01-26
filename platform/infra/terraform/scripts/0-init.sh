@@ -230,6 +230,15 @@ main() {
     
     # Show final status
     show_final_status
+    
+    # Validate workshop setup and recover any issues
+    print_status "INFO" "Running final workshop validation..."
+    if bash "$SCRIPT_DIR/check-workshop-setup.sh"; then
+        print_status "SUCCESS" "Workshop setup validation completed - all components healthy!"
+    else
+        print_status "WARNING" "Workshop setup validation found issues - check output above"
+        print_status "INFO" "You can run 'check-workshop-setup' command later to verify"
+    fi
 
 }
 
