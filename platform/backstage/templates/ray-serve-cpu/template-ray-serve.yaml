@@ -136,7 +136,7 @@ spec:
           namespace: ${{ parameters.namespace }}
           modelId: ${{ parameters.modelId }}
           maxLength: ${{ parameters.maxLength }}
-          rayServeFile: ${{ parameters.deploymentType === 'gpu' and 'https://github.com/aws-samples/appmod-blueprints/raw/763e8339/gitops/workloads/ray/gpu-serve-transformers.zip' or 'https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/ray-module-update/gitops/workloads/ray/cpu-serve-config.zip' }}
+          rayServeFile: ${{ parameters.deploymentType === 'gpu' and 'https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/' + system.spec.workshop_git_branch + '/gitops/workloads/ray/gpu-serve-transformers.zip' or 'https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/' + system.spec.workshop_git_branch + '/gitops/workloads/ray/cpu-serve-config.zip' }}
           replicas: ${{ parameters.replicas }}
           headCpu: ${{ parameters.headCpu }}
           headMemory: ${{ parameters.headMemory }}

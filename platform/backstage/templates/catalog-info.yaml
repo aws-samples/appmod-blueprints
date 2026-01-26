@@ -46,3 +46,4 @@ spec:
   admin_role_name: '{{ values.adminRoleName }}'
   resource_prefix: '{{ values.resourcePrefix }}'
   model_s3_bucket: '{{ values.modelS3Bucket }}'
+  workshop_git_branch: '{{ values.workshopGitBranch }}'
