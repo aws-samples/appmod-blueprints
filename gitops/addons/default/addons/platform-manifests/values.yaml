@@ -1,0 +1,7 @@
+# Platform manifests default configuration
+
+gpu:
+  enabled: true
+
+customNodepools:
+  enabled: false  # TODO Disabled to avoid conflict with Auto Mode nodepools while not in EKS Capabilities

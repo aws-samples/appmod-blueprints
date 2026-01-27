@@ -347,7 +347,7 @@ export const kroPermissionsModule = createBackendModule({
         const rbacValidator = new KroRBACValidator(logger, null); // kubernetesApi would be injected here
 
         // Create and register permission policy
-        // Initialize KRO policy
+        // Initialize kro policy
         new KroPermissionPolicy(rbacValidator, logger);
 
         // Note: In a real implementation, you would register this policy with the permission system

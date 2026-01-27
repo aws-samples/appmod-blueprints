@@ -51,6 +51,19 @@ main() {
   initialize_terraform "boostrap" "$DEPLOY_SCRIPTDIR"
 
   cd "$DEPLOY_SCRIPTDIR" # Get into common stack directory
+  
+  # Check for and clear any stale locks
+  if terraform state list &>/dev/null; then
+    log "State accessible, no lock issues"
+  else
+    log_warning "State lock detected, attempting to force unlock"
+    LOCK_ID=$(terraform force-unlock -force 2>&1 | grep -oP 'Lock ID: \K[a-f0-9-]+' || echo "")
+    if [[ -n "$LOCK_ID" ]]; then
+      log "Force unlocking with ID: $LOCK_ID"
+      terraform force-unlock -force "$LOCK_ID" || log_warning "Force unlock failed, continuing anyway"
+    fi
+  fi
+  
   # Remove GitLab resources from state, if they exist
   if ! terraform state rm gitlab_personal_access_token.workshop || ! terraform state rm data.gitlab_user.workshop; then
     log_warning "GitLab resources not found in state"
@@ -68,7 +81,18 @@ main() {
     -var="git_password=${USER1_PASSWORD}" \
     -var="working_repo=${WORKING_REPO}" \
     -auto-approve -refresh=false; then
-    log_warning "Bootstrap stack destroy failed, trying again"
+    log_warning "Bootstrap stack destroy failed, checking for lock issues"
+    
+    # Extract lock ID from error if present
+    cd "$DEPLOY_SCRIPTDIR"
+    LOCK_ID=$(terraform plan 2>&1 | grep -oP 'ID:\s+\K[a-f0-9-]+' | head -1 || echo "")
+    if [[ -n "$LOCK_ID" ]]; then
+      log "Forcing unlock with ID: $LOCK_ID"
+      terraform force-unlock -force "$LOCK_ID" || true
+    fi
+    cd -
+    
+    log_warning "Retrying destroy after lock handling"
     if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
       -var-file="${GENERATED_TFVAR_FILE}" \
       -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \

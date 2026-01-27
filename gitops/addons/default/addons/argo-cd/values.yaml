@@ -64,6 +64,8 @@ redis-ha:
   haproxy:
     enabled: true
     replicas: 3
+    podDisruptionBudget:
+      maxUnavailable: 1
     resources:
       requests:
         cpu: 50m
@@ -170,6 +172,8 @@ configs:
     # Skip TLS verification for OIDC
     oidc.tls.insecure.skip.verify: "true"
     controller.self.heal.timeout.seconds: "600"
+    # setting to short time for workshop purposes only, best practice is to use a git webhook
+    timeout.reconciliation: 30s
     # Specifies if resource health should be persisted in app CRD (default true)
     # Changing this to `false` significantly reduce number of Application CRD updates and improves controller performance.
     controller.resource.health.persist: "false"

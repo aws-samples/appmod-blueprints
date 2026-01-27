@@ -5,6 +5,7 @@ metadata:
   namespace: java-app-kargo
   annotations:
     kargo.akuity.io/color: green
+    kargo.akuity.io/auto-promotion: "false"
 spec:
   requestedFreight:
   - origin:

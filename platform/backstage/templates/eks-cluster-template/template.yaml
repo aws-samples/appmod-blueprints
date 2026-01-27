@@ -225,7 +225,7 @@ spec:
         path: ./repo/gitops/addons/tenants/${{ parameters.tenant }}/default/addons/multi-acct/values.yaml
         content: "\n  ${{ parameters.clusterName }}: \"${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\""
     - id: addKroClusterConfig
-      name: Update KRO Clusters Configuration
+      name: Update kro Clusters Configuration
       action: roadiehq:utils:fs:append
       input:
         path: ./repo/gitops/fleet/kro-values/tenants/${{ parameters.tenant }}/kro-clusters/values.yaml
@@ -283,7 +283,7 @@ spec:
           
           Changes:
           - Added cluster configuration to multi-acct values
-          - Added KRO cluster configuration  
+          - Added kro cluster configuration  
           - Added Backstage component definition
         sourcePath: ./repo
         targetPath: .

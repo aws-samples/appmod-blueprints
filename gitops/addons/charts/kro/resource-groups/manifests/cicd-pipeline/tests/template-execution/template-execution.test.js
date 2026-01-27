@@ -19,7 +19,7 @@ describe('Backstage Template Execution Tests', () => {
       expect(templateSpec.apiVersion).toBe('scaffolder.backstage.io/v1beta3');
       expect(templateSpec.kind).toBe('Template');
       expect(templateSpec.metadata.name).toBe('cicd-pipeline-gitops');
-      expect(templateSpec.metadata.title).toBe('Deploy CI/CD Pipeline With KRO (GitOps)');
+      expect(templateSpec.metadata.title).toBe('Deploy CI/CD Pipeline With kro (GitOps)');
       expect(templateSpec.metadata.description).toContain('Kro-based CI/CD Pipeline');
       expect(templateSpec.metadata.description).toContain('GitOps');
     });

@@ -13,9 +13,15 @@ metadata:
     apache-spark.cnoe.io/label-selector: env=dev,entity-id=${{values.name}}
     apache-spark.cnoe.io/cluster-name: local
   links:
-    - url: https://${{values.repoUrl}}?repo=${{values.name}}
-      title: Repo URL
-      icon: github
+    - url: https://${{values.repoUrl}}/${{values.gituser}}/${{values.name}}
+      title: GitLab Repository
+      icon: gitlab
+    - url: https://${{values.argocd_hostname}}/argocd/applications/argocd/${{values.name}}
+      title: ArgoCD Application
+      icon: argocd
+    - url: https://${{values.argocd_hostname}}/argo-workflows/workflows/argo/${{values.name}}
+      title: Argo Workflows
+      icon: argo
 spec:
   owner: guest
   lifecycle: experimental

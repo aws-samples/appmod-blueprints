@@ -1,4 +1,4 @@
-# EventBus for Argo Events - managed separately from KRO
+# EventBus for Argo Events - managed separately from kro
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: EventBus
@@ -9,3 +9,10 @@ spec:
   jetstream:
     version: latest
     replicas: 3
+    containerTemplate:
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "256Mi"
+        limits:
+          memory: "512Mi"

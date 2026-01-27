@@ -1,0 +1,519 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: rayservice.kro.run
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=false
+    argocd.argoproj.io/sync-wave: '0'
+spec:
+  resources:
+    # S3 PersistentVolume for model storage
+    - id: s3pv
+      readyWhen:
+        - ${s3pv.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: PersistentVolume
+        metadata:
+          name: ${schema.spec.name}-s3-models-pv
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          capacity:
+            storage: 100Gi
+          accessModes:
+            - ReadOnlyMany
+          mountOptions:
+            - allow-delete
+            - region ${schema.spec.?awsRegion.orValue('us-west-2')}
+          csi:
+            driver: s3.csi.aws.com
+            volumeHandle: ${schema.spec.?s3ModelBucket.orValue('peeks-ray-models')}
+            volumeAttributes:
+              bucketName: ${schema.spec.?s3ModelBucket.orValue('peeks-ray-models')}
+
+    # S3 PersistentVolumeClaim
+    - id: s3pvc
+      readyWhen:
+        - ${s3pvc.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: ${schema.spec.name}-s3-models-pvc
+          namespace: ${schema.metadata.namespace}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          accessModes:
+            - ReadOnlyMany
+          storageClassName: ''
+          resources:
+            requests:
+              storage: 100Gi
+          volumeName: ${s3pv.metadata.name}
+
+    # CPU RayService - no GPU resources
+    - id: rayserviceCpu
+      includeWhen:
+        - ${schema.spec.resources.worker.gpu == "0"}
+      readyWhen:
+        - ${rayserviceCpu.metadata.name != ""}
+      template:
+        apiVersion: ray.io/v1
+        kind: RayService
+        metadata:
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            backstage.io/created-by: ${schema.spec.createdBy}
+            backstage.io/template-version: 1.0.0
+            ray.io/serve-config-source: ${schema.spec.rayServeFile}
+          labels:
+            app.kubernetes.io/component: ray-service
+            app.kubernetes.io/managed-by: kro
+            app.kubernetes.io/name: ${schema.spec.name}
+            backstage.io/template-name: ray-service-kro
+          name: ray-service-${schema.spec.name}
+          namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          deploymentUnhealthySecondThreshold: 1200
+          rayClusterConfig:
+            autoscalerOptions:
+              idleTimeoutSeconds: 120
+              upscalingMode: Conservative
+            enableInTreeAutoscaling: true
+            headGroupSpec:
+              rayStartParams:
+                dashboard-host: 0.0.0.0
+                num-cpus: '0'
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/component: ray-head
+                    app.kubernetes.io/name: ${schema.spec.name}
+                    backstage.io/template-name: ray-service-kro
+                spec:
+                  volumes:
+                    - name: s3-models
+                      persistentVolumeClaim:
+                        claimName: ${s3pvc.metadata.name}
+                  containers:
+                    - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-vllm-custom:latest
+                      name: ray-head
+                      volumeMounts:
+                        - name: s3-models
+                          mountPath: /mnt/models
+                          readOnly: true
+                      ports:
+                        - containerPort: 6379
+                          name: gcs-server
+                        - containerPort: 8265
+                          name: dashboard
+                        - containerPort: 10001
+                          name: client
+                        - containerPort: 8000
+                          name: serve
+                      resources:
+                        limits:
+                          cpu: ${schema.spec.resources.head.cpu}
+                          memory: ${schema.spec.resources.head.memory}
+                        requests:
+                          cpu: ${schema.spec.resources.head.cpu}
+                          memory: ${schema.spec.resources.head.memory}
+            rayVersion: 2.34.0
+            workerGroupSpecs:
+              - groupName: worker-group
+                maxReplicas: ${schema.spec.replicas * 2}
+                minReplicas: 1
+                rayStartParams: {}
+                replicas: ${schema.spec.replicas}
+                template:
+                  metadata:
+                    labels:
+                      app.kubernetes.io/component: ray-worker
+                      app.kubernetes.io/name: ${schema.spec.name}
+                      backstage.io/template-name: ray-service-kro
+                  spec:
+                    serviceAccountName: ray-worker-sa
+                    volumes:
+                      - name: s3-models
+                        persistentVolumeClaim:
+                          claimName: ${s3pvc.metadata.name}
+                    containers:
+                      - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-vllm-custom:latest
+                        volumeMounts:
+                          - name: s3-models
+                            mountPath: /mnt/models
+                            readOnly: true
+                        lifecycle:
+                          preStop:
+                            exec:
+                              command:
+                                - /bin/sh
+                                - -c
+                                - ray stop
+                        name: ray-worker
+                        resources:
+                          limits:
+                            cpu: ${schema.spec.resources.worker.cpu}
+                            memory: ${schema.spec.resources.worker.memory}
+                          requests:
+                            cpu: ${schema.spec.resources.worker.cpu}
+                            memory: ${schema.spec.resources.worker.memory}
+          serveConfigV2: |
+            applications:
+              - name: gpu_text_generation
+                import_path: app:deployment
+                route_prefix: /generate
+                runtime_env:
+                  working_dir: "${schema.spec.rayServeFile}"
+                  pip:
+                    - torch>=2.0.0
+                    - transformers>=4.30.0
+                    - accelerate
+                    - bitsandbytes
+                  env_vars:
+                    MODEL_ID: "${schema.spec.modelId}"
+                    MAX_LENGTH: "${schema.spec.maxLength}"
+          serviceUnhealthySecondThreshold: 1200
+    # GPU RayService - with GPU resources
+    - id: rayserviceGpu
+      includeWhen:
+        - ${schema.spec.resources.worker.gpu != "0"}
+      readyWhen:
+        - ${rayserviceGpu.metadata.name != ""}
+      template:
+        apiVersion: ray.io/v1
+        kind: RayService
+        metadata:
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            backstage.io/created-by: ${schema.spec.createdBy}
+            backstage.io/template-version: 1.0.0
+            ray.io/serve-config-source: ${schema.spec.rayServeFile}
+          labels:
+            app.kubernetes.io/component: ray-service
+            app.kubernetes.io/managed-by: kro
+            app.kubernetes.io/name: ${schema.spec.name}
+            backstage.io/template-name: ray-service-kro
+          name: ray-service-${schema.spec.name}
+          namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          deploymentUnhealthySecondThreshold: 1200
+          rayClusterConfig:
+            autoscalerOptions:
+              idleTimeoutSeconds: 120
+              upscalingMode: Conservative
+            enableInTreeAutoscaling: true
+            headGroupSpec:
+              rayStartParams:
+                dashboard-host: 0.0.0.0
+                num-cpus: '0'
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/component: ray-head
+                    app.kubernetes.io/name: ${schema.spec.name}
+                    backstage.io/template-name: ray-service-kro
+                spec:
+                  volumes:
+                    - name: s3-models
+                      persistentVolumeClaim:
+                        claimName: ${s3pvc.metadata.name}
+                  containers:
+                    - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-vllm-custom:latest
+                      name: ray-head
+                      volumeMounts:
+                        - name: s3-models
+                          mountPath: /mnt/models
+                          readOnly: true
+                      ports:
+                        - containerPort: 6379
+                          name: gcs-server
+                        - containerPort: 8265
+                          name: dashboard
+                        - containerPort: 10001
+                          name: client
+                        - containerPort: 8000
+                          name: serve
+                      resources:
+                        limits:
+                          cpu: ${schema.spec.resources.head.cpu}
+                          memory: ${schema.spec.resources.head.memory}
+                        requests:
+                          cpu: ${schema.spec.resources.head.cpu}
+                          memory: ${schema.spec.resources.head.memory}
+            rayVersion: 2.34.0
+            workerGroupSpecs:
+              - groupName: worker-group
+                maxReplicas: ${schema.spec.replicas * 2}
+                minReplicas: 1
+                rayStartParams: {}
+                replicas: ${schema.spec.replicas}
+                template:
+                  metadata:
+                    labels:
+                      app.kubernetes.io/component: ray-worker
+                      app.kubernetes.io/name: ${schema.spec.name}
+                      backstage.io/template-name: ray-service-kro
+                  spec:
+                    serviceAccountName: ray-worker-sa
+                    volumes:
+                      - name: s3-models
+                        persistentVolumeClaim:
+                          claimName: ${s3pvc.metadata.name}
+                    containers:
+                      - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-vllm-custom:latest
+                        env:
+                          - name: HUGGING_FACE_HUB_TOKEN
+                            value: ${schema.spec.hfToken}
+                        volumeMounts:
+                          - name: s3-models
+                            mountPath: /mnt/models
+                            readOnly: true
+                        lifecycle:
+                          preStop:
+                            exec:
+                              command:
+                                - /bin/sh
+                                - -c
+                                - ray stop
+                        name: ray-worker
+                        resources:
+                          limits:
+                            cpu: ${schema.spec.resources.worker.cpu}
+                            memory: ${schema.spec.resources.worker.memory}
+                            nvidia.com/gpu: ${schema.spec.resources.worker.gpu}
+                          requests:
+                            cpu: ${schema.spec.resources.worker.cpu}
+                            memory: ${schema.spec.resources.worker.memory}
+                            nvidia.com/gpu: ${schema.spec.resources.worker.gpu}
+          serveConfigV2: |
+            applications:
+              - name: gpu_text_generation
+                import_path: app:deployment
+                route_prefix: /generate
+                runtime_env:
+                  working_dir: "${schema.spec.rayServeFile}"
+                  pip:
+                    - transformers>=4.30.0
+                    - torch>=2.0.0
+                    - accelerate
+                  env_vars:
+                    MODEL_ID: "${schema.spec.modelId}"
+                    MAX_MODEL_LEN: "${schema.spec.maxLength}"
+          serviceUnhealthySecondThreshold: 1200
+    - id: serveservice
+      readyWhen:
+        - ${serveservice.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            backstage.io/created-by: ${schema.spec.createdBy}
+            backstage.io/template-version: 1.0.0
+          labels:
+            app.kubernetes.io/component: ray-service
+            app.kubernetes.io/managed-by: kro
+            app.kubernetes.io/name: ${schema.spec.name}
+            backstage.io/template-name: ray-service-kro
+          name: ${schema.spec.name}-ray-serve-svc
+          namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          ports:
+            - name: serve
+              port: 8000
+              protocol: TCP
+              targetPort: 8000
+            - name: dashboard
+              port: 8265
+              protocol: TCP
+              targetPort: 8265
+          selector:
+            app.kubernetes.io/component: ray-head
+            app.kubernetes.io/name: ${schema.spec.name}
+          type: ClusterIP
+    - id: rayingress
+      readyWhen:
+        - ${rayingress.metadata.name != ""}
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            backstage.io/created-by: ${schema.spec.createdBy}
+            backstage.io/template-version: 1.0.0
+            nginx.ingress.kubernetes.io/rewrite-target: /$2
+            nginx.ingress.kubernetes.io/use-regex: 'true'
+            nginx.ingress.kubernetes.io/proxy-connect-timeout: '600'
+            nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
+            nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
+          labels:
+            app.kubernetes.io/component: ray-service
+            app.kubernetes.io/managed-by: kro
+            app.kubernetes.io/name: ${schema.spec.name}
+            backstage.io/template-name: ray-service-kro
+          name: ${schema.spec.name}-ray-ingress
+          namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+        spec:
+          ingressClassName: nginx
+          rules:
+            - host: ${schema.spec.ingressHostname}
+              http:
+                paths:
+                  - backend:
+                      service:
+                        name: ${schema.spec.name}-ray-serve-svc
+                        port:
+                          number: 8000
+                    path: /ray-serve/${schema.spec.name}(/|$)(.*)
+                    pathType: ImplementationSpecific
+                  - backend:
+                      service:
+                        name: ${schema.spec.name}-ray-serve-svc
+                        port:
+                          number: 8265
+                    path: /ray-dashboard/${schema.spec.name}(/|$)(.*)
+                    pathType: ImplementationSpecific
+    # PodDisruptionBudget for head pod
+    - id: headpdb
+      readyWhen:
+        - ${headpdb.metadata.name != ""}
+      template:
+        apiVersion: policy/v1
+        kind: PodDisruptionBudget
+        metadata:
+          name: ${schema.spec.name}-head-pdb
+          namespace: ${schema.metadata.namespace}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          minAvailable: 1
+          selector:
+            matchLabels:
+              ray.io/node-type: head
+              app.kubernetes.io/name: ${schema.spec.name}
+    # PodDisruptionBudget for worker pods
+    - id: workerpdb
+      readyWhen:
+        - ${workerpdb.metadata.name != ""}
+      template:
+        apiVersion: policy/v1
+        kind: PodDisruptionBudget
+        metadata:
+          name: ${schema.spec.name}-worker-pdb
+          namespace: ${schema.metadata.namespace}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          minAvailable: 1
+          selector:
+            matchLabels:
+              ray.io/node-type: worker
+              app.kubernetes.io/name: ${schema.spec.name}
+  schema:
+    apiVersion: v1alpha1
+    group: kro.run
+    kind: RayService
+    spec:
+      createdBy: string | default="unknown"
+      gitlab:
+        hostname: string
+        username: string
+      hfToken: string | default=""
+      ingressHostname: string
+      name: string
+      modelId: string | default="/mnt/models/models/tinyllama"
+      maxLength: string | default="100"
+      s3ModelBucket: string | default="peeks-ray-models"
+      awsRegion: string | default="us-west-2"
+      awsAccountId: string | default="ACCOUNT_ID"
+      resourcePrefix: string | default="peeks"
+      rayServeFile: string | default="https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/ray-module-update/gitops/workloads/ray/cpu-serve-config.zip"
+      replicas: integer | default=2
+      resources:
+        head:
+          cpu: string | default="1"
+          memory: string | default="2Gi"
+        worker:
+          cpu: string | default="500m"
+          gpu: string | default="0"
+          memory: string | default="1Gi"
+    status:
+      ingressName: ${rayingress.metadata.name}
+      rayServiceCpuName: ${rayserviceCpu.metadata.name}
+      rayServiceGpuName: ${rayserviceGpu.metadata.name}
+      serveServiceName: ${serveservice.metadata.name}

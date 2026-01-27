@@ -11,12 +11,26 @@ spec:
         image_name: java-app
         port: 8080
         targetPort: 8080
+        replicas: 2
         appPath: "/java-app"
         env:
           - name: APP_ENV
             value: "DEV"
+        readinessProbe:
+          httpGet:
+            path: /java-app/
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "256Mi"
+          limits:
+            memory: "512Mi"
         # functionalGate:
-        #   pause: "10s"
+        #   pause: "20s"
         #   image: "httpd:alpine"
         #   extraArgs: "red"
         # performanceGate:

@@ -8,3 +8,7 @@ ssm-setup-ide-logs() {
         return 1
     fi
 }
+
+argocd-sync() {
+    ~/environment/platform-on-eks-workshop/platform/infra/terraform/scripts/recover-argocd-apps.sh  
+}

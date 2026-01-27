@@ -1,9 +1,14 @@
 spark-operator:
   # Spark Operator configuration
   image:
-    repository: gcr.io/spark-operator/spark-operator
-    tag: v1beta2-1.6.0-3.5.0
+    registry: ghcr.io
+    repository: kubeflow/spark-operator/controller
     pullPolicy: IfNotPresent
+
+  # Spark job configuration
+  spark:
+    jobNamespaces:
+      - ""  # Watch all namespaces
 
   # Controller configuration
   controller:
@@ -19,7 +24,6 @@ spark-operator:
   # Webhook configuration
   webhook:
     enable: true
-    port: 8080
     namespaceSelector: {}
     objectSelector: {}
     timeoutSeconds: 30

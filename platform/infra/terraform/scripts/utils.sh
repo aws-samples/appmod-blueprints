@@ -215,6 +215,12 @@ initialize_terraform() {
       -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
       -backend-config="region=${AWS_REGION}"; then
       log_success "Terraform initialized successfully on attempt $attempt"
+      
+      # Check for and resolve state locks before proceeding
+      if ! force_unlock_if_needed "$script_dir"; then
+        log_warning "State lock issue detected but could not be resolved automatically"
+      fi
+      
       return 0
     fi
     
@@ -228,6 +234,75 @@ initialize_terraform() {
     delay=$((delay * 2))  # Exponential backoff
     attempt=$((attempt + 1))
   done
+}
+
+# Force unlock Terraform state if locked
+force_unlock_if_needed() {
+  local script_dir=$1
+  
+  log "Checking for Terraform state locks..."
+  
+  # Quick validation check with timeout (doesn't require state lock)
+  local validate_output
+  if validate_output=$(timeout 10s terraform -chdir=$script_dir validate 2>&1); then
+    log "No state lock detected"
+    return 0
+  fi
+  
+  # Check if timeout occurred
+  local exit_code=$?
+  if [ $exit_code -eq 124 ]; then
+    log_warning "Validation check timed out after 10s, skipping lock check"
+    return 0
+  fi
+  
+  # If plan fails, check if it's due to lock
+  local lock_output=$(terraform -chdir=$script_dir plan -lock-timeout=1s 2>&1 || true)
+  
+  if echo "$lock_output" | grep -q "Error acquiring the state lock"; then
+    log_warning "State lock detected, attempting to resolve..."
+    
+    # Extract lock ID from error message
+    local lock_id=$(echo "$lock_output" | grep -A 20 "Lock Info:" | grep "ID:" | awk '{print $2}' | head -1)
+    
+    if [[ -n "$lock_id" ]]; then
+      log "Found lock ID: $lock_id"
+      
+      # Check if lock is stale (older than 30 minutes)
+      local lock_created=$(echo "$lock_output" | grep -A 20 "Lock Info:" | grep "Created:" | cut -d' ' -f4-)
+      if [[ -n "$lock_created" ]]; then
+        local lock_age_seconds=$(( $(date +%s) - $(date -d "$lock_created" +%s 2>/dev/null || echo 0) ))
+        
+        if [[ $lock_age_seconds -gt 1800 ]]; then  # 30 minutes
+          log_warning "Lock is stale (${lock_age_seconds}s old), forcing unlock..."
+          if terraform -chdir=$script_dir force-unlock -force "$lock_id"; then
+            log_success "Successfully unlocked stale state lock"
+            return 0
+          else
+            log_error "Failed to force unlock state"
+            return 1
+          fi
+        else
+          log "Lock is recent (${lock_age_seconds}s old), waiting..."
+          return 1
+        fi
+      else
+        log_warning "Cannot determine lock age, forcing unlock anyway due to likely stale lock..."
+        if terraform -chdir=$script_dir force-unlock -force "$lock_id"; then
+          log_success "Successfully unlocked state lock"
+          return 0
+        else
+          log_error "Failed to force unlock state"
+          return 1
+        fi
+      fi
+    else
+      log_error "Could not extract lock ID from error message"
+      return 1
+    fi
+  fi
+  
+  return 0
 }
 
 # Cleanup Kubernetes resources with fallback
@@ -311,6 +386,14 @@ gitlab_repository_setup(){
     git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
   fi
   
+  # Check if we're on a tag (detached HEAD)
+  if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+    local tag_name=$(git describe --exact-match --tags HEAD)
+    local branch_name="main-from-tag-${tag_name}"
+    log_warning "Working from a tag, creating $branch_name from current state"
+    git checkout -b "$branch_name"
+  fi
+  
   if ! git diff --quiet || ! git diff --cached --quiet; then
     git add .
     git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files " || true
@@ -348,22 +431,40 @@ update_backstage_defaults() {
   # Get admin role name from current AWS context
   ADMIN_ROLE_NAME=$(aws sts get-caller-identity --query 'Arn' --output text | sed 's|.*assumed-role/||' | sed 's|/.*||')
 
+  # Get ArgoCD URL from EKS capability if available
+  ARGOCD_SERVER_URL=$(aws eks describe-capability --cluster-name ${CLUSTER_NAME:-peeks-hub} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null || echo "")
+  
+  # If EKS capability ArgoCD URL is available, extract domain name; otherwise fall back to ARGOCD_DOMAIN
+  if [ -n "$ARGOCD_SERVER_URL" ] && [ "$ARGOCD_SERVER_URL" != "None" ]; then
+    ARGOCD_HOSTNAME=$(echo "$ARGOCD_SERVER_URL" | sed 's|https://||' | sed 's|/.*||')
+    print_info "Using EKS-managed ArgoCD URL: $ARGOCD_HOSTNAME"
+  else
+    ARGOCD_HOSTNAME="$ARGOCD_DOMAIN"
+    print_info "Using in-cluster ArgoCD domain: $ARGOCD_HOSTNAME"
+  fi
+
   print_info "Using the following values for catalog-info.yaml update:"
   echo "  Account ID: $AWS_ACCOUNT_ID"
   echo "  AWS Region: $AWS_REGION"
   echo "  GitLab Domain: $GITLAB_DOMAIN"
+  echo "  Ingress Domain: $INGRESS_DOMAIN"
   echo "  Git Username: $GIT_USERNAME"
   echo "  Admin Role Name: $ADMIN_ROLE_NAME"
+  echo "  ArgoCD Hostname: $ARGOCD_HOSTNAME"
+  echo "  Model S3 Bucket: ${RESOURCE_PREFIX}-ray-models-${AWS_ACCOUNT_ID}"
 
   print_step "Updating catalog-info.yaml with environment-specific values"
 
   yq -i '
+    (select(.metadata.name == "system-info").spec.ingress_hostname) = "'$INGRESS_DOMAIN'" |
     (select(.metadata.name == "system-info").spec.gitlab_hostname) = "'$GITLAB_DOMAIN'" |
-    (select(.metadata.name == "system-info").spec.argocd_hostname) = "'$ARGOCD_DOMAIN'" |
+    (select(.metadata.name == "system-info").spec.argocd_hostname) = "'$ARGOCD_HOSTNAME'" |
     (select(.metadata.name == "system-info").spec.gituser) = "'$GIT_USERNAME'" |
     (select(.metadata.name == "system-info").spec.aws_region) = "'$AWS_REGION'" |
     (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'" |
-    (select(.metadata.name == "system-info").spec.admin_role_name) = "'$ADMIN_ROLE_NAME'"
+    (select(.metadata.name == "system-info").spec.admin_role_name) = "'$ADMIN_ROLE_NAME'" |
+    (select(.metadata.name == "system-info").spec.resource_prefix) = "'$RESOURCE_PREFIX'" |
+    (select(.metadata.name == "system-info").spec.model_s3_bucket) = "'${RESOURCE_PREFIX}'-ray-models-'${AWS_ACCOUNT_ID}'"
   ' "$CATALOG_INFO_PATH"
 
   print_success "Updated catalog-info.yaml with environment values"
