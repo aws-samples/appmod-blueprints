@@ -3,7 +3,15 @@ kind: Template
 metadata:
   name: eks-cluster-template
   title: Setup EKS Environment
-  description: Creates a new Amazon EKS AutoMode cluster and Environment
+  description: |
+    Creates a new Amazon EKS AutoMode cluster using Kro and ACK controllers.
+    
+    This template uses:
+    - **Kro (Kubernetes Resource Orchestrator)**: Declarative resource graph for cluster creation
+    - **ACK (AWS Controllers for Kubernetes)**: Manages AWS resources (VPC, EKS, IAM) from Kubernetes
+    - **GitOps**: Automatically registers the new cluster with ArgoCD hub for continuous deployment
+    
+    The cluster will be fully configured with networking, IAM roles, and ready for workload deployment.
 spec:
   owner: user:guest
   type: service

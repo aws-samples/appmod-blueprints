@@ -152,7 +152,7 @@ spec:
           aws_region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
           resource_prefix: ${{ steps['fetchSystem'].output.entity.spec.resource_prefix }}
           model_s3_bucket: ${{ steps['fetchSystem'].output.entity.spec.model_s3_bucket }}
-          created_by: ${{ user.entity.metadata.name | default("unknown") }}
+          created_by: ${{ (user.entity.spec.profile.displayName | default(user.entity.metadata.name) | default(user.ref) | default("backstage-user")) | replace(" ", "-") }}
 
     - id: publish
       name: Publishing to GitLab repository
@@ -180,7 +180,7 @@ spec:
               backstage.io/template-name: ray-serve-kubernetes
             annotations:
               backstage.io/template-version: "1.0.0"
-              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+              backstage.io/created-by: ${{ (user.entity.spec.profile.displayName | default(user.entity.metadata.name) | default(user.ref) | default("backstage-user")) | replace(" ", "-") }}
           spec:
             destinations:
               - name: peeks-hub
@@ -241,7 +241,7 @@ spec:
               backstage.io/template-name: ray-serve-kubernetes
             annotations:
               backstage.io/template-version: "1.0.0"
-              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+              backstage.io/created-by: ${{ (user.entity.spec.profile.displayName | default(user.entity.metadata.name) | default(user.ref) | default("backstage-user")) | replace(" ", "-") }}
               argocd.argoproj.io/finalizer: resources-finalizer.argocd.argoproj.io
           spec:
             project: ${{parameters.name}}-ray-project

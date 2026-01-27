@@ -103,7 +103,7 @@ spec:
           aws_resource_prefix: peeks
           dockerfile_path: ${{parameters.dockerfile_path}}
           deployment_path: ${{parameters.deployment_path}}
-          created_by: ${{ user.entity.metadata.name | default("unknown") }}
+          created_by: ${{ (user.entity.spec.profile.displayName | default(user.entity.metadata.name) | default(user.ref) | default("backstage-user")) | replace(" ", "-") }}
 
     - id: publish
       name: Publishing to GitLab repository
@@ -131,7 +131,7 @@ spec:
               backstage.io/template-name: cicd-pipeline-gitops
             annotations:
               backstage.io/template-version: "1.0.0"
-              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+              backstage.io/created-by: ${{ (user.entity.spec.profile.displayName | default(user.entity.metadata.name) | default(user.ref) | default("backstage-user")) | replace(" ", "-") }}
           spec:
             destinations:
               - name: local
@@ -169,7 +169,7 @@ spec:
               backstage.io/template-name: cicd-pipeline-gitops
             annotations:
               backstage.io/template-version: "1.0.0"
-              backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
+              backstage.io/created-by: ${{ (user.entity.spec.profile.displayName | default(user.entity.metadata.name) | default(user.ref) | default("backstage-user")) | replace(" ", "-") }}
               argocd.argoproj.io/finalizer: resources-finalizer.argocd.argoproj.io
           spec:
             project: ${{parameters.appname}}-project
