@@ -1,22 +1,13 @@
-# Base Ray image with Python 3.11
-FROM rayproject/ray:2.49.0-py311
+# Use AWS pre-built vLLM-Neuron image (Python 3.11, proven working)
+FROM public.ecr.aws/neuron/pytorch-inference-vllm-neuronx:0.9.1-neuronx-py311-sdk2.26.0-ubuntu22.04
 
-# Set environment variables
-ENV DEBIAN_FRONTEND=non-interactive
+# Install Ray on top of working vLLM-Neuron base
+RUN pip install --no-cache-dir ray[default]==2.9.3
+
+# Set environment variables (from EKS Workshop)
 ENV NEURON_RT_NUM_CORES=2
 ENV NEURON_RT_VISIBLE_CORES=0,1
-
-# Configure pip to use AWS Neuron repository
-RUN pip config set global.extra-index-url https://pip.repos.neuron.amazonaws.com
-
-# Install AWS Neuron SDK and vLLM with Neuron support
-RUN pip install --no-cache-dir \
-    torch-neuronx \
-    neuronx-cc \
-    transformers==4.45.2 \
-    accelerate==0.34.2 \
-    huggingface_hub==0.35.3 \
-    vllm==0.6.3.post1+neuron218
+ENV VLLM_NEURON_FRAMEWORK=neuronx-distributed-inference
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

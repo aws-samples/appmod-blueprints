@@ -432,6 +432,12 @@ spec:
                       app.kubernetes.io/name: ${schema.spec.name}
                       backstage.io/template-name: ray-service-kro
                   spec:
+                    nodeSelector:
+                      karpenter.sh/nodepool: trainium
+                    tolerations:
+                      - key: aws.amazon.com/neuron
+                        operator: Exists
+                        effect: NoSchedule
                     serviceAccountName: ray-worker-sa
                     volumes:
                       - name: s3-models
@@ -441,11 +447,13 @@ spec:
                       - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-neuron-custom:latest
                         env:
                           - name: HUGGING_FACE_HUB_TOKEN
+                            value: ${schema.spec.hfToken}
                           - name: NEURON_RT_NUM_CORES
                             value: "2"
                           - name: NEURON_RT_VISIBLE_CORES
                             value: "0,1"
-                            value: ${schema.spec.hfToken}
+                          - name: VLLM_NEURON_FRAMEWORK
+                            value: "neuronx-distributed-inference"
                         volumeMounts:
                           - name: s3-models
                             mountPath: /mnt/models
@@ -462,11 +470,11 @@ spec:
                           limits:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
-                            aws.amazon.com/neuroncore: ${schema.spec.resources.worker.gpu}
+                            aws.amazon.com/neuron: "1"
                           requests:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
-                            aws.amazon.com/neuroncore: ${schema.spec.resources.worker.gpu}
+                            aws.amazon.com/neuron: "1"
           serveConfigV2: |
             applications:
               - name: gpu_text_generation
