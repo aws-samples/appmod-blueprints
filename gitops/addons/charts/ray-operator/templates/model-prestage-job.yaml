@@ -172,6 +172,9 @@ spec:
           )
           PYTHON
           
+          echo "Creating neuron-compiled-artifacts directory for vLLM..."
+          mkdir -p /tmp/mistral-neuron/neuron-compiled-artifacts
+          
           echo "Uploading to S3..."
           aws s3 sync /tmp/mistral-neuron/ s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/mistral-7b-neuron/ --no-progress
           

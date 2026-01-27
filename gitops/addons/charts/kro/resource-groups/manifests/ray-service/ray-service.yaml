@@ -31,7 +31,7 @@ spec:
           capacity:
             storage: 100Gi
           accessModes:
-            - ReadOnlyMany
+            - ReadWriteMany
           mountOptions:
             - allow-delete
             - region ${schema.spec.?awsRegion.orValue('us-west-2')}
@@ -64,7 +64,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           accessModes:
-            - ReadOnlyMany
+            - ReadWriteMany
           storageClassName: ''
           resources:
             requests:
@@ -443,6 +443,9 @@ spec:
                       - name: s3-models
                         persistentVolumeClaim:
                           claimName: ${s3pvc.metadata.name}
+                      - name: neuron-compile-cache
+                        emptyDir:
+                          sizeLimit: 10Gi
                     containers:
                       - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-neuron-custom:latest
                         env:
@@ -457,7 +460,8 @@ spec:
                         volumeMounts:
                           - name: s3-models
                             mountPath: /mnt/models
-                            readOnly: true
+                          - name: neuron-compile-cache
+                            mountPath: /tmp/neuron-compile-cache
                         lifecycle:
                           preStop:
                             exec:
