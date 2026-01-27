@@ -1,8 +1,10 @@
 # Use AWS pre-built vLLM-Neuron image (Python 3.11, proven working)
 FROM public.ecr.aws/neuron/pytorch-inference-vllm-neuronx:0.9.1-neuronx-py311-sdk2.26.0-ubuntu22.04
 
-# Install Ray on top of working vLLM-Neuron base
-RUN pip install --no-cache-dir ray[default]==2.9.3
+# Install Ray and required dependencies
+RUN pip install --no-cache-dir \
+    ray[default]==2.9.3 \
+    aiorwlock
 
 # Set environment variables (from EKS Workshop)
 ENV NEURON_RT_NUM_CORES=2
