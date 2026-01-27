@@ -396,7 +396,7 @@ spec:
                       persistentVolumeClaim:
                         claimName: ${s3pvc.metadata.name}
                   containers:
-                    - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-vllm-custom:latest
+                    - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-neuron-custom:latest
                       name: ray-head
                       volumeMounts:
                         - name: s3-models
@@ -438,9 +438,13 @@ spec:
                         persistentVolumeClaim:
                           claimName: ${s3pvc.metadata.name}
                     containers:
-                      - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-vllm-custom:latest
+                      - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-neuron-custom:latest
                         env:
                           - name: HUGGING_FACE_HUB_TOKEN
+                          - name: NEURON_RT_NUM_CORES
+                            value: "2"
+                          - name: NEURON_RT_VISIBLE_CORES
+                            value: "0,1"
                             value: ${schema.spec.hfToken}
                         volumeMounts:
                           - name: s3-models
@@ -458,11 +462,11 @@ spec:
                           limits:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
-                            aws.amazon.com/neuron: ${schema.spec.resources.worker.gpu}
+                            aws.amazon.com/neuroncore: ${schema.spec.resources.worker.gpu}
                           requests:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
-                            aws.amazon.com/neuron: ${schema.spec.resources.worker.gpu}
+                            aws.amazon.com/neuroncore: ${schema.spec.resources.worker.gpu}
           serveConfigV2: |
             applications:
               - name: gpu_text_generation

@@ -3,23 +3,21 @@ FROM rayproject/ray:2.49.0-py311
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=non-interactive
-ENV NEURON_RT_VISIBLE_CORES=0
-ENV NEURON_RT_NUM_CORES=1
+ENV NEURON_RT_NUM_CORES=2
+ENV NEURON_RT_VISIBLE_CORES=0,1
 
-# Install AWS Neuron SDK and dependencies
+# Configure pip to use AWS Neuron repository
+RUN pip config set global.extra-index-url https://pip.repos.neuron.amazonaws.com
+
+# Install AWS Neuron SDK and vLLM with Neuron support
 RUN pip install --no-cache-dir \
-    neuronx-cc==2.15.* \
-    torch-neuronx==2.1.* \
-    transformers-neuronx==0.12.* \
+    torch-neuronx \
+    neuronx-cc \
     transformers==4.45.2 \
     accelerate==0.34.2 \
-    huggingface_hub==0.35.3
-
-# Install vLLM for Neuron (if available, otherwise use transformers)
-RUN pip install --no-cache-dir \
-    optimum-neuron==0.0.25 \
-    || echo "vLLM Neuron not available, using transformers"
+    huggingface_hub==0.35.3 \
+    vllm==0.6.3.post1+neuron218
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import ray; import transformers" || exit 1
+    CMD python -c "import ray; import vllm" || exit 1

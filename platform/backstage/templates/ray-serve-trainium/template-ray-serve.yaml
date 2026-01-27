@@ -143,7 +143,7 @@ spec:
           workerCpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b-neuron' and '8' or parameters.workerCpu }}
           workerMemory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b-neuron' and '32Gi' or parameters.workerMemory }}
           headGpu: "0"
-          workerGpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '1' or '0' }}
+          workerGpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b-neuron' and '2' or '0' }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
           argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
