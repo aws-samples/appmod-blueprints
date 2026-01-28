@@ -200,7 +200,7 @@ spec:
                     - accelerate
                     - bitsandbytes
                   env_vars:
-                    MODEL_ID: "${schema.spec.modelId}"
+                    MODEL_ID: "/mnt/models/models/${schema.spec.modelPath}"
                     MAX_LENGTH: "${schema.spec.maxLength}"
           serviceUnhealthySecondThreshold: 1200
     # GPU RayService - with GPU resources
@@ -337,7 +337,7 @@ spec:
                     - torch>=2.0.0
                     - accelerate
                   env_vars:
-                    MODEL_ID: "${schema.spec.modelId}"
+                    MODEL_ID: "/mnt/models/models/${schema.spec.modelPath}"
                     MAX_MODEL_LEN: "${schema.spec.maxLength}"
           serviceUnhealthySecondThreshold: 1200
 
