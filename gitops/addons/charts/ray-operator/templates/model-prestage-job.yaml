@@ -1,16 +1,18 @@
 {{- if .Values.modelPrestage.enabled }}
+{{- range $modelName, $modelConfig := .Values.modelPrestage.models }}
+{{- if $modelConfig.enabled }}
 ---
-# Model prestage job for TinyLlama
+# Model prestage job for {{ $modelName }}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Values.global.resourcePrefix | default "peeks" }}-tinyllama-prestage
-  namespace: {{ .Release.Namespace }}
+  name: {{ $.Values.global.resourcePrefix | default "peeks" }}-{{ $modelName }}-prestage
+  namespace: {{ $.Release.Namespace }}
   labels:
     app.kubernetes.io/name: ray
     app.kubernetes.io/component: model-prestage
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    model: tinyllama
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    model: {{ $modelName }}
 spec:
   backoffLimit: 3
   activeDeadlineSeconds: 7200
@@ -18,7 +20,7 @@ spec:
     metadata:
       labels:
         app: model-prestage
-        model: tinyllama
+        model: {{ $modelName }}
     spec:
       serviceAccountName: model-prestage-sa
       restartPolicy: OnFailure
@@ -34,164 +36,35 @@ spec:
           yum install -y python3-pip tar gzip
           pip3 install huggingface_hub
           
-          echo "Downloading TinyLlama-1.1B..."
+          echo "Downloading {{ $modelName }} from {{ $modelConfig.repoId }}..."
           python3 << 'PYTHON'
           from huggingface_hub import snapshot_download
           snapshot_download(
-              repo_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-              local_dir="/tmp/tinyllama",
+              repo_id="{{ $modelConfig.repoId }}",
+              local_dir="/tmp/{{ $modelName }}",
               local_dir_use_symlinks=False
           )
           PYTHON
           
           echo "Uploading to S3..."
-          aws s3 sync /tmp/tinyllama/ s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/tinyllama/ --no-progress
+          aws s3 sync /tmp/{{ $modelName }}/ s3://{{ $.Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/{{ $modelName }}/ --no-progress
           
           echo "Upload complete!"
-          aws s3 ls s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/tinyllama/
+          aws s3 ls s3://{{ $.Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/{{ $modelName }}/
         resources:
           requests:
             cpu: "4"
-            memory: "8Gi"
+            memory: {{ $modelConfig.memory | quote }}
           limits:
             cpu: "4"
-            memory: "8Gi"
+            memory: {{ $modelConfig.memory | quote }}
         volumeMounts:
         - name: model-storage
           mountPath: /tmp
       volumes:
       - name: model-storage
         emptyDir:
-          sizeLimit: 20Gi
----
-# Model prestage job for Mistral-7B
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: {{ .Values.global.resourcePrefix | default "peeks" }}-mistral-7b-prestage
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: ray
-    app.kubernetes.io/component: model-prestage
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    model: mistral-7b
-spec:
-  backoffLimit: 3
-  activeDeadlineSeconds: 7200
-  template:
-    metadata:
-      labels:
-        app: model-prestage
-        model: mistral-7b
-    spec:
-      serviceAccountName: model-prestage-sa
-      restartPolicy: OnFailure
-      containers:
-      - name: upload-model
-        image: amazon/aws-cli:latest
-        command:
-        - /bin/bash
-        - -c
-        - |
-          set -e
-          echo "Installing dependencies..."
-          yum install -y python3-pip tar gzip
-          pip3 install huggingface_hub
-          
-          echo "Downloading Mistral-7B-Instruct-v0.2..."
-          python3 << 'PYTHON'
-          from huggingface_hub import snapshot_download
-          snapshot_download(
-              repo_id="mistralai/Mistral-7B-Instruct-v0.2",
-              local_dir="/tmp/mistral",
-              local_dir_use_symlinks=False
-          )
-          PYTHON
-          
-          echo "Uploading to S3..."
-          aws s3 sync /tmp/mistral/ s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/mistral-7b/ --no-progress
-          
-          echo "Upload complete!"
-          aws s3 ls s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/mistral-7b/
-        resources:
-          requests:
-            cpu: "4"
-            memory: "16Gi"
-          limits:
-            cpu: "4"
-            memory: "16Gi"
-        volumeMounts:
-        - name: model-storage
-          mountPath: /tmp
-      volumes:
-      - name: model-storage
-        emptyDir:
-          sizeLimit: 50Gi
----
-# Model prestage job for Mistral-7B Neuron (pre-compiled for Trainium)
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: {{ .Values.global.resourcePrefix | default "peeks" }}-mistral-7b-neuron-prestage
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: ray
-    app.kubernetes.io/component: model-prestage
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    model: mistral-7b-neuron
-spec:
-  backoffLimit: 3
-  activeDeadlineSeconds: 7200
-  template:
-    metadata:
-      labels:
-        app: model-prestage
-        model: mistral-7b-neuron
-    spec:
-      serviceAccountName: model-prestage-sa
-      restartPolicy: OnFailure
-      containers:
-      - name: upload-model
-        image: amazon/aws-cli:latest
-        command:
-        - /bin/bash
-        - -c
-        - |
-          set -e
-          echo "Installing dependencies..."
-          yum install -y python3-pip tar gzip
-          pip3 install huggingface_hub
-          
-          echo "Downloading Mistral-7B-Instruct pre-compiled for Neuron..."
-          python3 << 'PYTHON'
-          from huggingface_hub import snapshot_download
-          snapshot_download(
-              repo_id="aws-neuron/Mistral-7B-Instruct-v0.3-seqlen-2048-bs-1-cores-2",
-              local_dir="/tmp/mistral-neuron",
-              local_dir_use_symlinks=False
-          )
-          PYTHON
-          
-          echo "Creating neuron-compiled-artifacts directory for vLLM..."
-          mkdir -p /tmp/mistral-neuron/neuron-compiled-artifacts
-          
-          echo "Uploading to S3..."
-          aws s3 sync /tmp/mistral-neuron/ s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/mistral-7b-neuron/ --no-progress
-          
-          echo "Upload complete!"
-          aws s3 ls s3://{{ .Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/mistral-7b-neuron/
-        resources:
-          requests:
-            cpu: "4"
-            memory: "16Gi"
-          limits:
-            cpu: "4"
-            memory: "16Gi"
-        volumeMounts:
-        - name: model-storage
-          mountPath: /tmp
-      volumes:
-      - name: model-storage
-        emptyDir:
-          sizeLimit: 50Gi
+          sizeLimit: {{ $modelConfig.storageSize }}
+{{- end }}
+{{- end }}
 {{- end }}
