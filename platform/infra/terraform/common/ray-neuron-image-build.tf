@@ -159,7 +159,7 @@ resource "null_resource" "trigger_neuron_build" {
   }
 
   triggers = {
-    dockerfile_hash = filemd5("${path.module}/Dockerfile.ray-neuron")
+    always_run = timestamp()
   }
 }
 
