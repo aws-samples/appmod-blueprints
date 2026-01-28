@@ -16,7 +16,7 @@
     "@types/js-yaml": "^4.0.5",
     "ajv": "^8.12.0",
     "ajv-formats": "^2.1.1",
-    "@kubernetes/client-node": "^0.20.0",
+    "@kubernetes/client-node": "^1.4.0",
     "aws-sdk": "^2.1500.0"
   },
   "type": "module"
