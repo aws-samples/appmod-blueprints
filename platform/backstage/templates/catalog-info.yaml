@@ -20,6 +20,7 @@ spec:
     - ./spark-job/template-spark-job.yaml
     - ./ray-serve-cpu/template.yaml
     - ./ray-serve-gpu/template.yaml
+    - ./ray-serve-trainium/template.yaml
     - ./serverless-microservice/template-serverless-microservice.yaml
     - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
     - ./cicd-pipeline/template-cicd-pipeline.yaml
