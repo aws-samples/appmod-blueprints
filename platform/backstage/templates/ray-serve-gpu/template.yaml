@@ -128,7 +128,7 @@ spec:
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
-          modelId: ${{ parameters.modelId }}
+          modelPath: ${{ parameters.modelPath }}
           maxLength: ${{ parameters.maxLength }}
           rayServeFile: ${{ parameters.rayServeFile }}
           replicas: ${{ parameters.replicas }}
