@@ -446,6 +446,20 @@ spec:
                       - name: neuron-compile-cache
                         emptyDir:
                           sizeLimit: 10Gi
+                    initContainers:
+                      - name: model-streamer
+                        image: gcr.io/run-ai-lab/model-streamer:latest
+                        env:
+                          - name: SOURCE_PATH
+                            value: "/mnt/models/models/mistral-7b-neuron"
+                          - name: DEST_PATH
+                            value: "/tmp/neuron-compile-cache/mistral-7b-neuron"
+                        volumeMounts:
+                          - name: s3-models
+                            mountPath: /mnt/models
+                            readOnly: true
+                          - name: neuron-compile-cache
+                            mountPath: /tmp/neuron-compile-cache
                     containers:
                       - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-neuron-custom:latest
                         env:
