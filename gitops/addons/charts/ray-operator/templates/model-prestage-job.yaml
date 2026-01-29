@@ -55,9 +55,11 @@ spec:
           requests:
             cpu: "4"
             memory: {{ $modelConfig.memory | quote }}
+            ephemeral-storage: {{ $modelConfig.storageSize }}
           limits:
             cpu: "4"
             memory: {{ $modelConfig.memory | quote }}
+            ephemeral-storage: {{ $modelConfig.storageSize }}
         volumeMounts:
         - name: model-storage
           mountPath: /tmp
