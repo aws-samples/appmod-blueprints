@@ -41,20 +41,17 @@ spec:
           minimum: 1
           maximum: 10
           ui:help: 'Number of GPU worker pods'
-        modelPath:
+        modelName:
           title: Model
           type: string
-          default: "tinyllama"
+          default: "gpt2-neuron"
           enum:
-            - "tinyllama"
-            - "mistral-7b-neuron"
             - "gpt2-neuron"
+            - "mistral-7b-neuron"
           enumNames:
-            - "TinyLlama-1.1B-Chat (Neuron-compiled) - Recommended"
-            - "Mistral-7B-Instruct (Neuron-compiled) - OOM on trn1.2xlarge"
-            - "GPT-2 (Neuron-compiled) - Fits on trn1.2xlarge"
-            - "Llama-2-7B-Chat (Neuron-compiled) - Recommended"
-          ui:help: "Neuron-compiled models from S3"
+            - "GPT-2-Neuron (1GB, fast, fits on trn1.2xlarge)"
+            - "Mistral-7B-Instruct-Neuron (14GB, OOM on trn1.2xlarge)"
+          ui:help: "Neuron-compiled models optimized for AWS Trainium. Note: TinyLlama does not have a Neuron version."
         maxLength:
           title: Max Tokens
           type: string
@@ -133,7 +130,7 @@ spec:
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
-          modelPath: ${{ parameters.modelPath }}
+          modelName: ${{ parameters.modelName }}
           maxLength: ${{ parameters.maxLength }}
           rayServeFile: ${{ parameters.rayServeFile }}
           replicas: ${{ parameters.replicas }}

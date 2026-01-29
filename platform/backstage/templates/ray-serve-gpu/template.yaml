@@ -41,13 +41,17 @@ spec:
           minimum: 1
           maximum: 10
           ui:help: 'Number of GPU worker pods'
-        modelId:
+        modelName:
           title: Model
           type: string
-          default: "/mnt/models/models/mistral-7b"
+          default: "mistral-7b"
           enum:
-            - "/mnt/models/models/mistral-7b"
+            - "tinyllama"
+            - "mistral-7b"
           enumNames:
+            - "TinyLlama-1.1B-Chat (2GB, can run on CPU)"
+            - "Mistral-7B-Instruct (14GB, requires GPU)"
+          ui:help: "GPU-optimized models. Mistral-7B requires GPU, TinyLlama can run on CPU."
             - "Mistral-7B-Instruct (14GB, requires GPU)"
           ui:help: "GPU-accelerated models from S3 cache"
         maxLength:
@@ -128,7 +132,7 @@ spec:
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
-          modelPath: ${{ parameters.modelPath }}
+          modelName: ${{ parameters.modelName }}
           maxLength: ${{ parameters.maxLength }}
           rayServeFile: ${{ parameters.rayServeFile }}
           replicas: ${{ parameters.replicas }}

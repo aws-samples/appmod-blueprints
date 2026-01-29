@@ -43,13 +43,13 @@ spec:
           default: 2
           minimum: 1
           maximum: 10
-        modelId:
+        modelName:
           title: Model
           type: string
-          default: "/mnt/models/models/tinyllama"
+          default: "tinyllama"
           enum:
-            - "/mnt/models/models/tinyllama"
-            - "/mnt/models/models/mistral-7b"
+            - "tinyllama"
+            - "mistral-7b"
           enumNames:
             - "TinyLlama-1.1B (2GB, CPU)"
             - "Mistral-7B-Instruct (14GB, GPU)"
@@ -109,15 +109,15 @@ spec:
           🎯 Service Details:
           - Name: ${{ parameters.name }}
           - Namespace: ${{ parameters.namespace }}
-          - Model: ${{ parameters.modelId }}
+          - Model: ${{ parameters.modelName }}
           - Replicas: ${{ parameters.replicas }}
           
           💻 Computed Resources:
           - Head CPU: ${{ parameters.headCpu }}
           - Head Memory: ${{ parameters.headMemory }}
-          - Worker CPU: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '8' or parameters.workerCpu }}
-          - Worker Memory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '48Gi' or parameters.workerMemory }}
-          - Worker GPU: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '1 GPU' or 'CPU only' }}
+          - Worker CPU: ${{ parameters.modelName === 'mistral-7b' and '8' or parameters.workerCpu }}
+          - Worker Memory: ${{ parameters.modelName === 'mistral-7b' and '48Gi' or parameters.workerMemory }}
+          - Worker GPU: ${{ parameters.modelName === 'mistral-7b' and '1 GPU' or 'CPU only' }}
           
           🔧 Infrastructure:
           - AWS Region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
@@ -134,16 +134,16 @@ spec:
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
-          modelId: ${{ parameters.modelId }}
+          modelName: ${{ parameters.modelName }}
           maxLength: ${{ parameters.maxLength }}
           rayServeFile: ${{ parameters.rayServeFile }}
           replicas: ${{ parameters.replicas }}
           headCpu: ${{ parameters.headCpu }}
           headMemory: ${{ parameters.headMemory }}
-          workerCpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '8' or parameters.workerCpu }}
-          workerMemory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '48Gi' or parameters.workerMemory }}
+          workerCpu: ${{ parameters.modelName === 'mistral-7b' and '8' or parameters.workerCpu }}
+          workerMemory: ${{ parameters.modelName === 'mistral-7b' and '48Gi' or parameters.workerMemory }}
           headGpu: "0"
-          workerGpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '1' or '0' }}
+          workerGpu: ${{ parameters.modelName === 'mistral-7b' and '1' or '0' }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
           argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
@@ -421,7 +421,7 @@ spec:
           {
             "prompt": "Explain machine learning in simple terms",
             "generated_text": "Explain machine learning in simple terms: ...",
-            "model": "${{ parameters.modelId }}",
+            "model": "${{ parameters.modelName }}",
             "device": "cuda:0"
           }
           ```

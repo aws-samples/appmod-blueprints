@@ -16,7 +16,7 @@ metadata:
     kro.run/resource-group: rayservice.kro.run
 spec:
   name: ${{values.name}}
-  modelId: ${{values.modelId}}
+  modelName: ${{values.modelName}}
   s3ModelBucket: ${{values.model_s3_bucket}}
   awsRegion: ${{values.aws_region}}
   awsAccountId: "${{values.aws_account_id}}"

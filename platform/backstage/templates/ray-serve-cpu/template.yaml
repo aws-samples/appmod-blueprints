@@ -41,13 +41,17 @@ spec:
           minimum: 1
           maximum: 10
           ui:help: 'Number of worker pods for horizontal scaling'
-        modelId:
+        modelName:
           title: Model
           type: string
-          default: "/mnt/models/models/tinyllama"
+          default: "tinyllama"
           enum:
-            - "/mnt/models/models/tinyllama"
+            - "tinyllama"
+            - "gpt2"
           enumNames:
+            - "TinyLlama-1.1B-Chat (2GB, CPU optimized)"
+            - "GPT-2 (500MB, fast, CPU optimized)"
+          ui:help: "CPU-optimized models. For GPU models, use the GPU template."
             - "TinyLlama-1.1B (2GB)"
           ui:help: "CPU-optimized models from S3 cache"
         maxLength:
@@ -122,7 +126,7 @@ spec:
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
-          modelPath: ${{ parameters.modelPath }}
+          modelName: ${{ parameters.modelName }}
           maxLength: ${{ parameters.maxLength }}
           rayServeFile: ${{ parameters.rayServeFile }}
           replicas: ${{ parameters.replicas }}

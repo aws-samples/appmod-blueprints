@@ -2204,8 +2204,6 @@ spec:
 
     # Setup Workflow for initial configuration
     - id: setupworkflow
-      readyWhen:
-       - ${setupworkflow.status.?phase == "Succeeded"}
       template:
        apiVersion: argoproj.io/v1alpha1
        kind: Workflow

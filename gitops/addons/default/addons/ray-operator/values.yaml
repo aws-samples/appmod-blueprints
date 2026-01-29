@@ -8,6 +8,11 @@ modelPrestage:
       repoId: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
       memory: "8Gi"
       storageSize: "20Gi"
+    gpt2:
+      enabled: true
+      repoId: "openai-community/gpt2"
+      memory: "4Gi"
+      storageSize: "10Gi"
     mistral-7b:
       enabled: false
       repoId: "mistralai/Mistral-7B-Instruct-v0.2"

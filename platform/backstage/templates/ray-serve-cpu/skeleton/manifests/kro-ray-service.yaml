@@ -17,7 +17,7 @@ metadata:
     argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
 spec:
   name: ${{values.name}}
-  modelId: ${{values.modelId}}
+  modelName: ${{values.modelName}}
   s3ModelBucket: ${{values.model_s3_bucket}}
   awsRegion: ${{values.aws_region}}
   awsAccountId: "${{values.aws_account_id}}"

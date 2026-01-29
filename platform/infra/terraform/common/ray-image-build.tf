@@ -312,7 +312,10 @@ resource "aws_iam_role_policy" "lambda_trigger" {
         Action = [
           "codebuild:StartBuild"
         ]
-        Resource = aws_codebuild_project.ray_vllm.arn
+        Resource = [
+          aws_codebuild_project.ray_vllm.arn,
+          aws_codebuild_project.ray_neuron.arn
+        ]
       }
     ]
   })
