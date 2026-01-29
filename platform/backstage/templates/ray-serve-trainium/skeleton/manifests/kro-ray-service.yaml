@@ -14,10 +14,9 @@ metadata:
     backstage.io/template-version: "1.0.0"
     backstage.io/created-by: ${{values.created_by}}
     kro.run/resource-group: rayservice.kro.run
-    argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"]}
 spec:
   name: ${{values.name}}
-  modelId: ${{values.modelId}}
+  modelPath: ${{values.modelPath}}
   s3ModelBucket: ${{values.model_s3_bucket}}
   awsRegion: ${{values.aws_region}}
   awsAccountId: "${{values.aws_account_id}}"

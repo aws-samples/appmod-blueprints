@@ -1,0 +1,30 @@
+# Model prestage configuration for ray-operator
+# Controls which models are pre-loaded to S3
+
+modelPrestage:
+  models:
+    tinyllama:
+      enabled: true
+      repoId: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+      memory: "8Gi"
+      storageSize: "20Gi"
+    mistral-7b:
+      enabled: false
+      repoId: "mistralai/Mistral-7B-Instruct-v0.2"
+      memory: "16Gi"
+      storageSize: "50Gi"
+    mistral-7b-neuron:
+      enabled: true
+      repoId: "aws-neuron/Mistral-7B-Instruct-v0.3-seqlen-2048-bs-1-cores-2"
+      memory: "16Gi"
+      storageSize: "50Gi"
+    llama-2-7b-neuron:
+      enabled: false
+      repoId: "aws-neuron/Llama-2-7b-chat-hf-seqlen-2048-bs-1"
+      memory: "16Gi"
+      storageSize: "50Gi"
+    gpt2-neuron:
+      enabled: true
+      repoId: "aws-neuron/gpt2-seqlen-1024-bs-16"
+      memory: "8Gi"
+      storageSize: "20Gi"

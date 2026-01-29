@@ -2,23 +2,23 @@ apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
   description: |
-    Deploy GPU-based Ray Service for larger AI models using vLLM library.
+    Deploy Trainium-based Ray Service for AI models using AWS Neuron SDK.
     
     **Optimized for:**
     - Mistral-7B-Instruct (14GB)
-    - Models requiring GPU acceleration
+    - Models requiring AWS Trainium acceleration
     
     **Model Management:**
-    - Models are pre-uploaded to S3 and mounted via S3 CSI driver
+    - Models are pre-compiled for Neuron and uploaded to S3
     - Path: /mnt/models/models/{model-name}
-    - Uses gpu-serve-transformers with vLLM for optimized inference
-  name: ray-serve-gpu
-  title: Ray Service - GPU (vLLM)
+    - Uses vLLM with Neuron backend for optimized inference
+  name: ray-serve-trainium
+  title: Ray Service - Trainium (AWS Neuron)
   tags:
     - ray
     - ai
-    - gpu
-    - vllm
+    - trainium
+    - neuron
 spec:
   owner: guest
   type: service
@@ -37,19 +37,24 @@ spec:
         replicas:
           title: Worker Replicas
           type: integer
-          default: 2
+          default: 1
           minimum: 1
           maximum: 10
           ui:help: 'Number of GPU worker pods'
-        modelId:
+        modelPath:
           title: Model
           type: string
-          default: "/mnt/models/models/mistral-7b"
+          default: "tinyllama"
           enum:
-            - "/mnt/models/models/mistral-7b"
+            - "tinyllama"
+            - "mistral-7b-neuron"
+            - "gpt2-neuron"
           enumNames:
-            - "Mistral-7B-Instruct (14GB, requires GPU)"
-          ui:help: "GPU-accelerated models from S3 cache"
+            - "TinyLlama-1.1B-Chat (Neuron-compiled) - Recommended"
+            - "Mistral-7B-Instruct (Neuron-compiled) - OOM on trn1.2xlarge"
+            - "GPT-2 (Neuron-compiled) - Fits on trn1.2xlarge"
+            - "Llama-2-7B-Chat (Neuron-compiled) - Recommended"
+          ui:help: "Neuron-compiled models from S3"
         maxLength:
           title: Max Tokens
           type: string
@@ -58,8 +63,8 @@ spec:
         rayServeFile:
           title: Ray Serve Config (ZIP)
           type: string
-          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/main/gitops/workloads/ray/gpu-serve-transformers.zip"
-          ui:help: 'URL to the Ray Serve application zip file (vLLM)'
+          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/main/gitops/workloads/ray/trainium-serve-neuron.zip"
+          ui:help: 'URL to the Ray Serve application zip file (Neuron SDK)'
       required:
         - name
     - title: Resource Configuration
@@ -78,19 +83,19 @@ spec:
         workerCpu:
           title: Worker Node CPU
           type: string
-          default: "8"
-          ui:help: 'CPU cores per GPU worker (recommended: 8)'
+          default: "4"
+          ui:help: 'CPU cores per Trainium worker (4 for trn1.2xlarge)'
         workerMemory:
           title: Worker Node Memory
           type: string
-          default: "48Gi"
-          ui:help: 'Memory per GPU worker (recommended: 48Gi for 7B models)'
+          default: "20Gi"
+          ui:help: 'Memory per Trainium worker (20Gi for trn1.2xlarge)'
         workerGpu:
-          title: Worker Node GPU
+          title: Worker Node Neuron Cores
           type: string
           default: "1"
           enum: ["1"]
-          ui:help: 'GPUs per worker (1 GPU required)'
+          ui:help: 'Neuron cores per worker (1 = 2 Neuron cores on trn1.2xlarge)'
   steps:
     - id: fetchSystem
       name: Fetch System
@@ -132,7 +137,7 @@ spec:
           maxLength: ${{ parameters.maxLength }}
           rayServeFile: ${{ parameters.rayServeFile }}
           replicas: ${{ parameters.replicas }}
-          acceleratorType: gpu
+          acceleratorType: neuron
           headCpu: ${{ parameters.headCpu }}
           headMemory: ${{ parameters.headMemory }}
           workerCpu: ${{ parameters.workerCpu }}

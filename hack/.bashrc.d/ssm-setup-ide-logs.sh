@@ -12,3 +12,11 @@ ssm-setup-ide-logs() {
 argocd-sync() {
     ~/environment/platform-on-eks-workshop/platform/infra/terraform/scripts/recover-argocd-apps.sh  
 }
+
+check-ray-build() {
+    ~/environment/platform-on-eks-workshop/platform/infra/terraform/scripts/check-ray-build.sh
+}
+
+check-workshop-setup() {
+    ~/environment/platform-on-eks-workshop/platform/infra/terraform/scripts/check-workshop-setup.sh
+}

@@ -46,14 +46,12 @@ spec:
         modelId:
           title: Model
           type: string
-          default: "/mnt/models/models/tinyllama"
+          default: "/mnt/models/models/mistral-7b-neuron"
           enum:
-            - "/mnt/models/models/tinyllama"
-            - "/mnt/models/models/mistral-7b"
+            - "/mnt/models/models/mistral-7b-neuron"
           enumNames:
-            - "TinyLlama-1.1B (2GB, CPU)"
-            - "Mistral-7B-Instruct (14GB, GPU)"
-          ui:help: "TinyLlama runs on CPU, Mistral-7B requires GPU"
+            - "Mistral-7B-Instruct-Neuron (14GB, pre-compiled for Trainium)"
+          ui:help: "Pre-compiled Neuron model optimized for AWS Trainium"
         maxLength:
           title: Max Tokens
           type: string
@@ -74,11 +72,13 @@ spec:
         workerCpu:
           title: Worker CPU
           type: string
-          default: "4"
+          default: "8"
+          ui:help: "8 vCPUs for trn1.2xlarge"
         workerMemory:
           title: Worker Memory
           type: string
-          default: "16Gi"
+          default: "32Gi"
+          ui:help: "32GB RAM for trn1.2xlarge (Neuron model requires more memory)"
   steps:
     - id: validate-parameters
       name: Validate Parameters
@@ -115,9 +115,9 @@ spec:
           💻 Computed Resources:
           - Head CPU: ${{ parameters.headCpu }}
           - Head Memory: ${{ parameters.headMemory }}
-          - Worker CPU: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '4' or parameters.workerCpu }}
-          - Worker Memory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '32Gi' or parameters.workerMemory }}
-          - Worker GPU: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '1 GPU' or 'CPU only' }}
+          - Worker CPU: ${{ parameters.modelId === '/mnt/models/models/mistral-7b-neuron' and '8' or parameters.workerCpu }}
+          - Worker Memory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b-neuron' and '32Gi' or parameters.workerMemory }}
+          - Worker Neuron: ${{ parameters.modelId === '/mnt/models/models/mistral-7b-neuron' and '1 Neuron' or 'CPU only' }}
           
           🔧 Infrastructure:
           - AWS Region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
@@ -140,10 +140,10 @@ spec:
           replicas: ${{ parameters.replicas }}
           headCpu: ${{ parameters.headCpu }}
           headMemory: ${{ parameters.headMemory }}
-          workerCpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '4' or parameters.workerCpu }}
-          workerMemory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '16Gi' or parameters.workerMemory }}
+          workerCpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b-neuron' and '8' or parameters.workerCpu }}
+          workerMemory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b-neuron' and '32Gi' or parameters.workerMemory }}
           headGpu: "0"
-          workerGpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '1' or '0' }}
+          workerGpu: ${{ parameters.modelId === '/mnt/models/models/mistral-7b-neuron' and '2' or '0' }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
           argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}

@@ -803,9 +803,9 @@ image-prepuller:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     images:
-      - rayproject/ray:2.34.0
+      - public.ecr.aws/seb-demo/ray:2.49.0-py311-gpu
       - jupyter/base-notebook:latest
-      - tensorflow/tensorflow:latest-gpu
+      - jupyter/datascience-notebook:latest
     tolerations:
       - key: 'CriticalAddonsOnly'
         operator: 'Exists'

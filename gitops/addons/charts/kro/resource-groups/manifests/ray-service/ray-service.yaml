@@ -31,7 +31,7 @@ spec:
           capacity:
             storage: 100Gi
           accessModes:
-            - ReadOnlyMany
+            - ReadWriteMany
           mountOptions:
             - allow-delete
             - region ${schema.spec.?awsRegion.orValue('us-west-2')}
@@ -64,7 +64,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           accessModes:
-            - ReadOnlyMany
+            - ReadWriteMany
           storageClassName: ''
           resources:
             requests:
@@ -200,12 +200,13 @@ spec:
                     - accelerate
                     - bitsandbytes
                   env_vars:
-                    MODEL_ID: "${schema.spec.modelId}"
+                    MODEL_ID: "/mnt/models/models/${schema.spec.modelPath}"
                     MAX_LENGTH: "${schema.spec.maxLength}"
           serviceUnhealthySecondThreshold: 1200
     # GPU RayService - with GPU resources
     - id: rayserviceGpu
       includeWhen:
+        - ${schema.spec.?acceleratorType.orValue('gpu') != 'neuron'}
         - ${schema.spec.resources.worker.gpu != "0"}
       readyWhen:
         - ${rayserviceGpu.metadata.name != ""}
@@ -336,7 +337,187 @@ spec:
                     - torch>=2.0.0
                     - accelerate
                   env_vars:
-                    MODEL_ID: "${schema.spec.modelId}"
+                    MODEL_ID: "/mnt/models/models/${schema.spec.modelPath}"
+                    MAX_MODEL_LEN: "${schema.spec.maxLength}"
+          serviceUnhealthySecondThreshold: 1200
+
+    # Neuron RayService - with Neuron resources
+    - id: rayserviceNeuron
+      includeWhen:
+        - ${schema.spec.?acceleratorType.orValue('gpu') == 'neuron'}
+        - ${schema.spec.resources.worker.gpu != "0"}
+      readyWhen:
+        - ${rayserviceNeuron.metadata.name != ""}
+      template:
+        apiVersion: ray.io/v1
+        kind: RayService
+        metadata:
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            backstage.io/created-by: ${schema.spec.createdBy}
+            backstage.io/template-version: 1.0.0
+            ray.io/serve-config-source: ${schema.spec.rayServeFile}
+          labels:
+            app.kubernetes.io/component: ray-service
+            app.kubernetes.io/managed-by: kro
+            app.kubernetes.io/name: ${schema.spec.name}
+            backstage.io/template-name: ray-service-kro
+          name: ray-service-${schema.spec.name}
+          namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          deploymentUnhealthySecondThreshold: 1200
+          rayClusterConfig:
+            autoscalerOptions:
+              idleTimeoutSeconds: 120
+              upscalingMode: Conservative
+            enableInTreeAutoscaling: true
+            headGroupSpec:
+              rayStartParams:
+                dashboard-host: 0.0.0.0
+                num-cpus: '0'
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/component: ray-head
+                    app.kubernetes.io/name: ${schema.spec.name}
+                    backstage.io/template-name: ray-service-kro
+                spec:
+                  volumes:
+                    - name: s3-models
+                      persistentVolumeClaim:
+                        claimName: ${s3pvc.metadata.name}
+                  containers:
+                    - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-neuron-custom:latest
+                      name: ray-head
+                      volumeMounts:
+                        - name: s3-models
+                          mountPath: /mnt/models
+                          readOnly: true
+                      ports:
+                        - containerPort: 6379
+                          name: gcs-server
+                        - containerPort: 8265
+                          name: dashboard
+                        - containerPort: 10001
+                          name: client
+                        - containerPort: 8000
+                          name: serve
+                      resources:
+                        limits:
+                          cpu: ${schema.spec.resources.head.cpu}
+                          memory: ${schema.spec.resources.head.memory}
+                        requests:
+                          cpu: ${schema.spec.resources.head.cpu}
+                          memory: ${schema.spec.resources.head.memory}
+            rayVersion: 2.34.0
+            workerGroupSpecs:
+              - groupName: worker-group
+                maxReplicas: ${schema.spec.replicas * 2}
+                minReplicas: 1
+                rayStartParams: {}
+                replicas: ${schema.spec.replicas}
+                template:
+                  metadata:
+                    labels:
+                      app.kubernetes.io/component: ray-worker
+                      app.kubernetes.io/name: ${schema.spec.name}
+                      backstage.io/template-name: ray-service-kro
+                  spec:
+                    nodeSelector:
+                      karpenter.sh/nodepool: trainium
+                    tolerations:
+                      - key: aws.amazon.com/neuron
+                        operator: Exists
+                        effect: NoSchedule
+                    serviceAccountName: ray-worker-sa
+                    volumes:
+                      - name: s3-models
+                        persistentVolumeClaim:
+                          claimName: ${s3pvc.metadata.name}
+                      - name: neuron-compile-cache
+                        emptyDir:
+                          sizeLimit: 10Gi
+                    initContainers:
+                      - name: copy-model
+                        image: alpine:latest
+                        command:
+                          - sh
+                          - -c
+                          - |
+                            apk add --no-cache rsync
+                            echo "=== Model Copy Started at $(date) ==="
+                            START_TIME=$(date +%s)
+                            mkdir -p /tmp/neuron-compile-cache
+                            rsync -av --info=progress2 /mnt/models/models/${schema.spec.modelPath}/ /tmp/neuron-compile-cache/${schema.spec.modelPath}/
+                            END_TIME=$(date +%s)
+                            DURATION=$$((END_TIME - START_TIME))
+                            echo "=== Model Copy Completed at $(date) ==="
+                            echo "=== Total Duration: $$DURATION seconds ==="
+                        volumeMounts:
+                          - name: s3-models
+                            mountPath: /mnt/models
+                            readOnly: true
+                          - name: neuron-compile-cache
+                            mountPath: /tmp/neuron-compile-cache
+                    containers:
+                      - image: ${schema.spec.awsAccountId}.dkr.ecr.${schema.spec.awsRegion}.amazonaws.com/${schema.spec.resourcePrefix}-ray-neuron-custom:latest
+                        env:
+                          - name: HUGGING_FACE_HUB_TOKEN
+                            value: ${schema.spec.hfToken}
+                          - name: NEURON_RT_NUM_CORES
+                            value: "2"
+                          - name: NEURON_RT_VISIBLE_CORES
+                            value: "0,1"
+                          - name: VLLM_NEURON_FRAMEWORK
+                            value: "neuronx-distributed-inference"
+                          - name: RAY_memory_usage_threshold
+                            value: "0.98"
+                          - name: MALLOC_ARENA_MAX
+                            value: "1"
+                        volumeMounts:
+                          - name: s3-models
+                            mountPath: /mnt/models
+                          - name: neuron-compile-cache
+                            mountPath: /tmp/neuron-compile-cache
+                        lifecycle:
+                          preStop:
+                            exec:
+                              command:
+                                - /bin/sh
+                                - -c
+                                - ray stop
+                        name: ray-worker
+                        resources:
+                          limits:
+                            cpu: ${schema.spec.resources.worker.cpu}
+                            memory: ${schema.spec.resources.worker.memory}
+                            aws.amazon.com/neuron: "1"
+                          requests:
+                            cpu: ${schema.spec.resources.worker.cpu}
+                            memory: ${schema.spec.resources.worker.memory}
+                            aws.amazon.com/neuron: "1"
+          serveConfigV2: |
+            applications:
+              - name: gpu_text_generation
+                import_path: app:deployment
+                route_prefix: /generate
+                runtime_env:
+                  working_dir: "${schema.spec.rayServeFile}"
+                  pip:
+                    - transformers>=4.30.0
+                    - torch>=2.0.0
+                    - accelerate
+                  env_vars:
+                    MODEL_ID: "/tmp/neuron-compile-cache/${schema.spec.modelPath}"
                     MAX_MODEL_LEN: "${schema.spec.maxLength}"
           serviceUnhealthySecondThreshold: 1200
     - id: serveservice
@@ -496,7 +677,7 @@ spec:
       hfToken: string | default=""
       ingressHostname: string
       name: string
-      modelId: string | default="/mnt/models/models/tinyllama"
+      modelPath: string | default="tinyllama"
       maxLength: string | default="100"
       s3ModelBucket: string | default="peeks-ray-models"
       awsRegion: string | default="us-west-2"
@@ -504,6 +685,7 @@ spec:
       resourcePrefix: string | default="peeks"
       rayServeFile: string | default="https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/ray-module-update/gitops/workloads/ray/cpu-serve-config.zip"
       replicas: integer | default=2
+      acceleratorType: string | default="gpu"
       resources:
         head:
           cpu: string | default="1"

@@ -18,7 +18,9 @@ spec:
     - ./eks-cost-monitoring/template-cost-monitoring.yaml
     - ./eks-istio/template-istio.yaml
     - ./spark-job/template-spark-job.yaml
-    - ./ray-serve/template-ray-serve.yaml
+    - ./ray-serve-cpu/template.yaml
+    - ./ray-serve-gpu/template.yaml
+    - ./ray-serve-trainium/template.yaml
     - ./serverless-microservice/template-serverless-microservice.yaml
     - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
     - ./cicd-pipeline/template-cicd-pipeline.yaml
@@ -45,3 +47,4 @@ spec:
   admin_role_name: '{{ values.adminRoleName }}'
   resource_prefix: '{{ values.resourcePrefix }}'
   model_s3_bucket: '{{ values.modelS3Bucket }}'
+  workshop_git_branch: '{{ values.workshopGitBranch }}'

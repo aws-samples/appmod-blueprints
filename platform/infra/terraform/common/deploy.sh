@@ -78,7 +78,7 @@ main() {
           -var="git_username=${GIT_USERNAME}" \
           -var="git_password=${USER1_PASSWORD}" \
           -var="working_repo=${WORKING_REPO}" \
-          -parallelism=3 -auto-approve; then
+          -parallelism=10 -auto-approve; then
           log_success "Terraform apply succeeded on attempt $attempt"
           return 0
         fi
@@ -145,7 +145,7 @@ main() {
         -var="git_password=${USER1_PASSWORD}" \
         -var="resource_prefix=${RESOURCE_PREFIX}" \
         -var="working_repo=${WORKING_REPO}" \
-        -parallelism=3 -auto-approve; then
+        -parallelism=10 -auto-approve; then
         log_success "Bootstrap stack deployment succeeded on attempt $attempt"
         return 0
       fi

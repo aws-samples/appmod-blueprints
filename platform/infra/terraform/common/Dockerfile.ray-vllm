@@ -1,5 +1,5 @@
-# Use the base Ray image with GPU support
-FROM rayproject/ray:2.49.0-py311-gpu
+# Use the base Ray image from AWS ECR Public Gallery (seb-demo) - source : rayproject/ray:2.49.0-py311-gpu
+FROM public.ecr.aws/seb-demo/ray:2.49.0-py311-gpu
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=non-interactive

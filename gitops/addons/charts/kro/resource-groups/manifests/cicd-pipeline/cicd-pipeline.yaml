@@ -645,7 +645,7 @@ spec:
 
                            # Install kubectl
                            yum update -y && yum install -y jq
-                           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                           curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
                            chmod +x kubectl && mv kubectl /usr/local/bin/
 
                            # Get ECR login token
@@ -781,7 +781,7 @@ spec:
 
                      # Install jq and kubectl
                      yum update -y && yum install -y jq
-                     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                     curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
                      chmod +x kubectl && mv kubectl /usr/local/bin/
 
                      # Get ECR login token
@@ -855,7 +855,7 @@ spec:
                      apk add curl jq
                      
                      # Install kubectl
-                     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                     curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
                      chmod +x kubectl && mv kubectl /usr/local/bin/
 
                      # Get configuration from ConfigMap
@@ -1416,7 +1416,7 @@ spec:
                 command: [/bin/bash, -c]
                 args:
                 - |
-                  curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                  curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
                   chmod +x kubectl && mv kubectl /usr/local/bin/
 
                   mkdir -p ~/.kube
@@ -1714,7 +1714,7 @@ spec:
               - |
                 # Install kubectl and jq
                 yum install -y jq
-                curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
                 chmod +x kubectl && mv kubectl /usr/local/bin/
 
                 SERVER=$(kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.server}' | base64 -d)
@@ -2138,7 +2138,7 @@ spec:
 
                        # Install kubectl
                        yum update -y && yum install -y jq
-                       curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                       curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
                        chmod +x kubectl && mv kubectl /usr/local/bin/
 
                        # Wait for ECR repositories to be fully ready
@@ -2205,8 +2205,7 @@ spec:
     # Setup Workflow for initial configuration
     - id: setupworkflow
       readyWhen:
-       - ${setupworkflow.metadata.name != ""}
-       #- ${setupworkflow.status.conditions.exists(x, x.type == 'Completed' && x.status == "True")}
+       - ${setupworkflow.status.?phase == "Succeeded"}
       template:
        apiVersion: argoproj.io/v1alpha1
        kind: Workflow

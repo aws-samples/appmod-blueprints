@@ -452,6 +452,7 @@ update_backstage_defaults() {
   echo "  Admin Role Name: $ADMIN_ROLE_NAME"
   echo "  ArgoCD Hostname: $ARGOCD_HOSTNAME"
   echo "  Model S3 Bucket: ${RESOURCE_PREFIX}-ray-models-${AWS_ACCOUNT_ID}"
+  echo "  Workshop Git Branch: ${WORKSHOP_GIT_BRANCH:-main}"
 
   print_step "Updating catalog-info.yaml with environment-specific values"
 
@@ -464,7 +465,8 @@ update_backstage_defaults() {
     (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'" |
     (select(.metadata.name == "system-info").spec.admin_role_name) = "'$ADMIN_ROLE_NAME'" |
     (select(.metadata.name == "system-info").spec.resource_prefix) = "'$RESOURCE_PREFIX'" |
-    (select(.metadata.name == "system-info").spec.model_s3_bucket) = "'${RESOURCE_PREFIX}'-ray-models-'${AWS_ACCOUNT_ID}'"
+    (select(.metadata.name == "system-info").spec.model_s3_bucket) = "'${RESOURCE_PREFIX}'-ray-models-'${AWS_ACCOUNT_ID}'" |
+    (select(.metadata.name == "system-info").spec.workshop_git_branch) = "'${WORKSHOP_GIT_BRANCH:-main}'"
   ' "$CATALOG_INFO_PATH"
 
   print_success "Updated catalog-info.yaml with environment values"

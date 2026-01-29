@@ -58,7 +58,7 @@ spec:
         rayServeFile:
           title: Ray Serve Config (ZIP)
           type: string
-          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/feat/ray-module-update/gitops/workloads/ray/cpu-serve-config.zip"
+          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/main/gitops/workloads/ray/cpu-serve-config.zip"
           ui:help: 'URL to the Ray Serve application zip file'
       required:
         - name
@@ -122,10 +122,11 @@ spec:
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
-          modelId: ${{ parameters.modelId }}
+          modelPath: ${{ parameters.modelPath }}
           maxLength: ${{ parameters.maxLength }}
           rayServeFile: ${{ parameters.rayServeFile }}
           replicas: ${{ parameters.replicas }}
+          acceleratorType: cpu
           headCpu: ${{ parameters.headCpu }}
           headMemory: ${{ parameters.headMemory }}
           workerCpu: ${{ parameters.workerCpu }}
@@ -227,6 +228,19 @@ spec:
                 selfHeal: true
               syncOptions:
                 - CreateNamespace=true
+                - PrunePropagationPolicy=foreground
+                - PruneLast=true
+              retry:
+                limit: 5
+                backoff:
+                  duration: 5s
+                  factor: 2
+                  maxDuration: 3m
+            ignoreDifferences:
+              - group: kro.run
+                kind: RayService
+                jsonPointers:
+                  - /status
 
     - id: register
       name: Register Component
