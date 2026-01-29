@@ -140,7 +140,6 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
     user_password_key         = local.password_key
     git_token                 = local.gitlab_token
     git_username              = var.git_username
-    argocd_auth_token         = var.argocd_auth_token
     grafana_api_key           = module.managed_grafana.workspace_api_keys["operator"].key
     devlake_encryption_secret = local.devlake_encryption_secret
     devlake_mysql_password    = local.devlake_mysql_password

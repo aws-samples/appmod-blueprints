@@ -122,9 +122,9 @@ When deploying with Trainium, use pre-compiled Neuron models and adjust the vLLM
 spec:
   name: ray-trainium
   modelId: /mnt/models/models/mistral-7b-neuron  # Pre-compiled Neuron model
-  s3ModelBucket: peeks-ray-models-586794472760
+  s3ModelBucket: peeks-ray-models-${AWS_ACCOUNT_ID}
   awsRegion: us-west-2
-  awsAccountId: "586794472760"
+  awsAccountId: "${AWS_ACCOUNT_ID}"
   resourcePrefix: peeks
   maxLength: "2048"
   rayServeFile: https://github.com/example/ray-serve-neuron.zip
@@ -152,7 +152,7 @@ HF_HUB_ENABLE_HF_TRANSFER=1 hf download \
 
 # Upload to S3
 aws s3 sync /models/mistral-7b-neuron \
-  s3://peeks-ray-models-586794472760/models/mistral-7b-neuron/
+  s3://peeks-ray-models-${AWS_ACCOUNT_ID}/models/mistral-7b-neuron/
 ```
 
 ## vLLM Command Differences
@@ -185,11 +185,11 @@ vllm serve /models/mistral-7b-neuron \
 
 ## Available Trainium Instances
 
-| Instance Type | Neuron Cores | vCPUs | Memory | Use Case |
-|--------------|--------------|-------|---------|----------|
-| trn1.2xlarge | 1 (2 cores) | 8 | 32 GiB | Small models, development |
-| trn1.32xlarge | 16 (32 cores) | 128 | 512 GiB | Large models, production |
-| trn1n.32xlarge | 16 (32 cores) | 128 | 512 GiB | Enhanced networking |
+| Instance Type  | Neuron Cores  | vCPUs | Memory  | Use Case                  |
+|----------------|---------------|-------|---------|---------------------------|
+| trn1.2xlarge   | 1 (2 cores)   | 8     | 32 GiB  | Small models, development |
+| trn1.32xlarge  | 16 (32 cores) | 128   | 512 GiB | Large models, production  |
+| trn1n.32xlarge | 16 (32 cores) | 128   | 512 GiB | Enhanced networking       |
 
 ## Troubleshooting
 
