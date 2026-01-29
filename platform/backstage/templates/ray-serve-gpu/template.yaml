@@ -52,8 +52,6 @@ spec:
             - "TinyLlama-1.1B-Chat (2GB, can run on CPU)"
             - "Mistral-7B-Instruct (14GB, requires GPU)"
           ui:help: "GPU-optimized models. Mistral-7B requires GPU, TinyLlama can run on CPU."
-            - "Mistral-7B-Instruct (14GB, requires GPU)"
-          ui:help: "GPU-accelerated models from S3 cache"
         maxLength:
           title: Max Tokens
           type: string

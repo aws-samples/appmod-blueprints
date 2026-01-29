@@ -52,8 +52,6 @@ spec:
             - "TinyLlama-1.1B-Chat (2GB, CPU optimized)"
             - "GPT-2 (500MB, fast, CPU optimized)"
           ui:help: "CPU-optimized models. For GPU models, use the GPU template."
-            - "TinyLlama-1.1B (2GB)"
-          ui:help: "CPU-optimized models from S3 cache"
         maxLength:
           title: Max Tokens
           type: string
