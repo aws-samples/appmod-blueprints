@@ -144,9 +144,11 @@ spec:
                         limits:
                           cpu: ${schema.spec.resources.head.cpu}
                           memory: ${schema.spec.resources.head.memory}
+                          ephemeral-storage: 15Gi
                         requests:
                           cpu: ${schema.spec.resources.head.cpu}
                           memory: ${schema.spec.resources.head.memory}
+                          ephemeral-storage: 15Gi
             rayVersion: 2.34.0
             workerGroupSpecs:
               - groupName: worker-group
@@ -184,9 +186,11 @@ spec:
                           limits:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
+                            ephemeral-storage: 20Gi
                           requests:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
+                            ephemeral-storage: 15Gi
           serveConfigV2: |
             applications:
               - name: gpu_text_generation
@@ -277,9 +281,11 @@ spec:
                         limits:
                           cpu: ${schema.spec.resources.head.cpu}
                           memory: ${schema.spec.resources.head.memory}
+                          ephemeral-storage: 20Gi
                         requests:
                           cpu: ${schema.spec.resources.head.cpu}
                           memory: ${schema.spec.resources.head.memory}
+                          ephemeral-storage: 15Gi
             rayVersion: 2.34.0
             workerGroupSpecs:
               - groupName: worker-group
@@ -320,10 +326,12 @@ spec:
                           limits:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
+                            ephemeral-storage: 20Gi
                             nvidia.com/gpu: ${schema.spec.resources.worker.gpu}
                           requests:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
+                            ephemeral-storage: 15Gi
                             nvidia.com/gpu: ${schema.spec.resources.worker.gpu}
           serveConfigV2: |
             applications:
@@ -415,9 +423,11 @@ spec:
                         limits:
                           cpu: ${schema.spec.resources.head.cpu}
                           memory: ${schema.spec.resources.head.memory}
+                          ephemeral-storage: 20Gi
                         requests:
                           cpu: ${schema.spec.resources.head.cpu}
                           memory: ${schema.spec.resources.head.memory}
+                          ephemeral-storage: 15Gi
             rayVersion: 2.34.0
             workerGroupSpecs:
               - groupName: worker-group
@@ -500,10 +510,12 @@ spec:
                           limits:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
+                            ephemeral-storage: 20Gi
                             aws.amazon.com/neuron: "1"
                           requests:
                             cpu: ${schema.spec.resources.worker.cpu}
                             memory: ${schema.spec.resources.worker.memory}
+                            ephemeral-storage: 15Gi
                             aws.amazon.com/neuron: "1"
           serveConfigV2: |
             applications:

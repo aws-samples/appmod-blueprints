@@ -33,3 +33,8 @@ modelPrestage:
       repoId: "aws-neuron/gpt2-seqlen-1024-bs-16"
       memory: "8Gi"
       storageSize: "20Gi"
+    qwen2.5-1.5b-instruct:
+      enabled: true
+      repoId: "Qwen/Qwen2.5-1.5B-Instruct"
+      memory: "8Gi"
+      storageSize: "20Gi"
