@@ -642,15 +642,15 @@ spec:
       mergePolicy: Replace
       data:
         KEYCLOAK_CLIENT_SECRET: "{{ `{{.BACKSTAGE_CLIENT_SECRET}}` }}"
-        ARGOCD_AUTH_TOKEN: "argocd.token={{ `{{.ARGOCD_AUTH_TOKEN}}` }}"
+        # ARGOCD_AUTH_TOKEN: "argocd.token={{ `{{.ARGOCD_AUTH_TOKEN}}` }}"
   data:
-    - secretKey: ARGOCD_AUTH_TOKEN
-      remoteRef:
-        conversionStrategy: Default
-        decodingStrategy: None
-        key: {{ .Values.global.aws_cluster_name }}/secrets
-        metadataPolicy: None
-        property: argocd_auth_token
+    # - secretKey: ARGOCD_AUTH_TOKEN
+    #   remoteRef:
+    #     conversionStrategy: Default
+    #     decodingStrategy: None
+    #     key: {{ .Values.global.aws_cluster_name }}/secrets
+    #     metadataPolicy: None
+    #     property: argocd_auth_token
     - secretKey: BACKSTAGE_CLIENT_SECRET
       remoteRef:
         conversionStrategy: Default
