@@ -44,14 +44,18 @@ spec:
         modelName:
           title: Model
           type: string
-          default: "gpt2-neuron"
+          default: "tinyllama"
           enum:
+            - "tinyllama"
+            - "qwen2.5-1.5b-instruct"
             - "gpt2-neuron"
             - "mistral-7b-neuron"
           enumNames:
-            - "GPT-2-Neuron (1GB, fast, fits on trn1.2xlarge)"
-            - "Mistral-7B-Instruct-Neuron (14GB, OOM on trn1.2xlarge)"
-          ui:help: "Neuron-compiled models optimized for AWS Trainium. Note: TinyLlama does not have a Neuron version."
+            - "TinyLlama-1.1B-Chat (1.1B params, vLLM compatible, fits trn1.2xlarge)"
+            - "Qwen2.5-1.5B-Instruct (1.5B params, vLLM compatible, fits trn1.2xlarge)"
+            - "GPT-2-Neuron (NOT SUPPORTED - vLLM doesn't support GPT-2 on Neuron)"
+            - "Mistral-7B-Instruct-Neuron (14GB, requires trn1.32xlarge)"
+          ui:help: "Models for AWS Trainium. TinyLlama and Qwen2.5 are recommended for trn1.2xlarge."
         maxLength:
           title: Max Tokens
           type: string
