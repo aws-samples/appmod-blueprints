@@ -200,7 +200,7 @@ spec:
                     - accelerate
                     - bitsandbytes
                   env_vars:
-                    MODEL_ID: "/mnt/models/models/${schema.spec.modelPath}"
+                    MODEL_ID: "/mnt/models/models/${schema.spec.modelName}"
                     MAX_LENGTH: "${schema.spec.maxLength}"
           serviceUnhealthySecondThreshold: 1200
     # GPU RayService - with GPU resources
@@ -337,7 +337,7 @@ spec:
                     - torch>=2.0.0
                     - accelerate
                   env_vars:
-                    MODEL_ID: "/mnt/models/models/${schema.spec.modelPath}"
+                    MODEL_ID: "/mnt/models/models/${schema.spec.modelName}"
                     MAX_MODEL_LEN: "${schema.spec.maxLength}"
           serviceUnhealthySecondThreshold: 1200
 
@@ -457,7 +457,7 @@ spec:
                             echo "=== Model Copy Started at $(date) ==="
                             START_TIME=$(date +%s)
                             mkdir -p /tmp/neuron-compile-cache
-                            rsync -av --info=progress2 /mnt/models/models/${schema.spec.modelPath}/ /tmp/neuron-compile-cache/${schema.spec.modelPath}/
+                            rsync -av --info=progress2 /mnt/models/models/${schema.spec.modelName}/ /tmp/neuron-compile-cache/${schema.spec.modelName}/
                             END_TIME=$(date +%s)
                             DURATION=$$((END_TIME - START_TIME))
                             echo "=== Model Copy Completed at $(date) ==="
@@ -517,7 +517,7 @@ spec:
                     - torch>=2.0.0
                     - accelerate
                   env_vars:
-                    MODEL_ID: "/tmp/neuron-compile-cache/${schema.spec.modelPath}"
+                    MODEL_ID: "/tmp/neuron-compile-cache/${schema.spec.modelName}"
                     MAX_MODEL_LEN: "${schema.spec.maxLength}"
           serviceUnhealthySecondThreshold: 1200
     - id: serveservice
@@ -677,7 +677,7 @@ spec:
       hfToken: string | default=""
       ingressHostname: string
       name: string
-      modelPath: string | default="tinyllama"
+      modelName: string | default="tinyllama"
       maxLength: string | default="100"
       s3ModelBucket: string | default="peeks-ray-models"
       awsRegion: string | default="us-west-2"
