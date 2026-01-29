@@ -49,10 +49,10 @@ spec:
           default: "tinyllama"
           enum:
             - "tinyllama"
-            - "mistral-7b"
+            - "gpt2"
           enumNames:
-            - "TinyLlama-1.1B (2GB, CPU)"
-            - "Mistral-7B-Instruct (14GB, GPU)"
+            - "TinyLlama-1.1B-Chat (2GB, CPU optimized)"
+            - "GPT-2 (500MB, fast, CPU optimized)"
           ui:help: "TinyLlama runs on CPU, Mistral-7B requires GPU"
         maxLength:
           title: Max Tokens
