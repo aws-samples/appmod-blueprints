@@ -63,7 +63,8 @@ main() {
         while [ $cluster_wait -lt 300 ] && [ "$cluster_ready" = false ]; do
             if kubectl get nodes --request-timeout=10s >/dev/null 2>&1; then
                 local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c "Ready" || echo "0")
-                if [ "$ready_nodes" -gt 0 ]; then
+                ready_nodes=$(echo "$ready_nodes" | tr -d '[:space:]-')
+                if [ "${ready_nodes:-0}" -gt 0 ] 2>/dev/null; then
                     print_status "SUCCESS" "Cluster $cluster_name is ready with $ready_nodes nodes"
                     cluster_ready=true
                 else
@@ -96,11 +97,11 @@ main() {
     #    export BACKSTAGE_BUILD_PID
     #fi
 
-    # Wait for ArgoCD to be fully ready first
-    print_status "INFO" "Waiting for ArgoCD to be fully ready..."
+    # Wait for ArgoCD to be fully ready first (EKS Capabilities version)
+    print_status "INFO" "Waiting for ArgoCD EKS capability to be ready..."
     local argocd_ready=false
     local argocd_wait_time=0
-    local argocd_max_wait=1200  # 20 minutes (increased from 15)
+    local argocd_max_wait=1200  # 20 minutes
     
     while [ $argocd_wait_time -lt $argocd_max_wait ] && [ "$argocd_ready" = false ]; do
         # Check if ArgoCD namespace exists first
@@ -111,61 +112,12 @@ main() {
             continue
         fi
         
-        # Check if ArgoCD deployments exist and are ready with better error handling and retries
-        local argocd_pods_ready="0"
-        local argocd_repo_ready="0"
-        local retry_count=0
-        
-        while [ $retry_count -lt 3 ]; do
-            argocd_pods_ready=$(kubectl get deployment -n argocd argocd-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-            argocd_repo_ready=$(kubectl get deployment -n argocd argocd-repo-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-            
-            # Handle empty responses (convert to 0)
-            [ -z "$argocd_pods_ready" ] && argocd_pods_ready="0"
-            [ -z "$argocd_repo_ready" ] && argocd_repo_ready="0"
-            
-            # If we got valid responses, break
-            if [[ "$argocd_pods_ready" =~ ^[0-9]+$ ]] && [[ "$argocd_repo_ready" =~ ^[0-9]+$ ]]; then
-                break
-            fi
-            
-            retry_count=$((retry_count + 1))
-            if [ $retry_count -lt 3 ]; then
-                print_status "INFO" "kubectl query failed, retrying... ($retry_count/3)"
-                sleep 5
-            fi
-        done
-        
-        # Check if ArgoCD API is responding with timeout
-        local api_ready=false
+        # For EKS capabilities, ArgoCD runs as managed service - only check API availability
         if timeout 10 kubectl get applications -n argocd >/dev/null 2>&1; then
-            api_ready=true
-        fi
-        
-        # Check if ArgoCD domain is available with improved logic
-        local domain_available=false
-        local domain_name=""
-        
-        # Try to get domain from secret first
-        domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null || echo "")
-        
-        # If not found in secret, try CloudFront
-        if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
-            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null || echo "")
-        fi
-        
-        # Validate domain
-        if [ -n "$domain_name" ] && [ "$domain_name" != "None" ] && [ "$domain_name" != "null" ] && [ "$domain_name" != "" ]; then
-            domain_available=true
-            print_status "INFO" "ArgoCD domain found: $domain_name"
-        fi
-        
-        # More robust readiness check - require at least 1 pod for each deployment
-        if [ "$argocd_pods_ready" -ge 1 ] && [ "$argocd_repo_ready" -ge 1 ] && [ "$api_ready" = true ] && [ "$domain_available" = true ]; then
-            print_status "SUCCESS" "ArgoCD is ready (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: responding, domain: $domain_name)"
+            print_status "SUCCESS" "ArgoCD EKS capability is ready (API responding)"
             argocd_ready=true
         else
-            print_status "INFO" "ArgoCD not ready yet (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: $api_ready, domain: $domain_available), waiting..."
+            print_status "INFO" "ArgoCD EKS capability API not ready yet, waiting..."
             sleep 30
             argocd_wait_time=$((argocd_wait_time + 30))
         fi

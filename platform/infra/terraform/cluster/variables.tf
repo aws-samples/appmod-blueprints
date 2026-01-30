@@ -32,3 +32,44 @@ variable "clusters" {
     addons = map(bool)
   }))
 }
+
+# EKS Capabilities variables
+variable "identity_center_instance_arn" {
+  description = "AWS Identity Center instance ARN for ArgoCD capability"
+  type        = string
+  default     = ""
+}
+
+variable "identity_center_admin_group_id" {
+  description = "AWS Identity Center group ID for ArgoCD admin access"
+  type        = string
+  default     = ""
+}
+
+variable "identity_center_developer_group_id" {
+  description = "AWS Identity Center group ID for ArgoCD developer access"
+  type        = string
+  default     = ""
+}
+
+variable "domain_name" {
+  description = "Domain name for the cluster"
+  type        = string
+  default     = ""
+}
+
+variable "repo" {
+  description = "Repository configuration"
+  type = object({
+    url      = string
+    revision = string
+    path     = string
+    basepath = string
+  })
+  default = {
+    url      = ""
+    revision = ""
+    path     = ""
+    basepath = ""
+  }
+}

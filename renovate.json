@@ -3,7 +3,7 @@
     "config:recommended"
   ],
   "baseBranches": [
-    "riv25"
+    "main"
   ],
   "enabledManagers": [
     "custom.regex",
