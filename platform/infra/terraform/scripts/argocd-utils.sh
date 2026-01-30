@@ -432,17 +432,12 @@ wait_for_sync_wave_completion() {
             return 0
         fi
         
-        # Check for stuck apps and recover (only truly stuck apps, not healthy ones)
+        # Check for stuck apps and recover (both stuck operations and stuck Progressing)
         local stuck_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
             jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '.items[] | select(
-                # Skip apps that are already Healthy and Synced
-                (.status.health.status != "Healthy" or .status.sync.status != "Synced") and
-                # Must have a stuck operation (Running for >5min)
-                (
-                    (.status.operationState.phase == "Running" and 
-                     ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300))
-                )
+                ((.status.operationState.phase == "Running") or (.status.health.status == "Progressing")) and 
+                ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)
             ) | .metadata.name' 2>/dev/null || echo "")
         
         if [ -n "$stuck_apps" ]; then
