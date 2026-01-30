@@ -65,9 +65,8 @@ echo "$stuck_apps" | while IFS='|' read -r app health sync phase; do
         
         if [ "$revision_conflict" = "true" ]; then
             echo "  → Fixing revision conflict for: $app"
-            # Force revision alignment
-            kubectl patch application "$app" -n argocd --type='merge' -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
-            # Clear operation state
+            # Clear the stuck operation first
+            kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
             kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
             # Force refresh
             kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
