@@ -1631,5 +1631,6 @@ platform-manifests:
       accountId: '{{.metadata.annotations.aws_account_id}}'
       region: '{{.metadata.annotations.aws_region}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      eksAutoModeRoleName: '{{.metadata.annotations.eks_auto_mode_role_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'

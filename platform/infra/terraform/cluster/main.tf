@@ -58,11 +58,13 @@ module "eks" {
     }
   }
   
-  # Comment out default Auto Mode nodepools to use custom Karpenter nodepools instead
-  # compute_config = {
-  #   enabled    = true
-  #   node_pools = ["general-purpose", "system"]
-  # }
+  # Enable EKS Auto Mode with IAM resources only (no default node pools)
+  create_auto_mode_iam_resources = true
+  
+  compute_config = {
+    enabled = true
+    # Omit node_pools to create only IAM resources for custom node pools
+  }
 
   tags = {
     Blueprint  = local.context_prefix
