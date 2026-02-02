@@ -58,6 +58,7 @@ spec:
           VPC_ID=$(echo "$SECRET_DATA" | jq -r '.id')
           SUBNET_1=$(echo "$SECRET_DATA" | jq -r '.subnet_ids[0]')
           SUBNET_2=$(echo "$SECRET_DATA" | jq -r '.subnet_ids[1]')
+          CLUSTER_SG=$(echo "$SECRET_DATA" | jq -r '.cluster_security_group_id // ""')
         
           # Create EnvironmentConfig
           cat <<EOF | kubectl apply -f -
@@ -73,6 +74,7 @@ spec:
             privateSubnetIds:
               - "${SUBNET_1}"
               - "${SUBNET_2}"
+            clusterSecurityGroupId: "${CLUSTER_SG}"
           EOF
         volumeMounts:
         - name: {{ .Values.global.clusterName }}-vpc-secret
