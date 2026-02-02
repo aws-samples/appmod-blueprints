@@ -58,10 +58,11 @@ module "eks" {
     }
   }
   
-  compute_config = {
-    enabled    = true
-    node_pools = ["general-purpose", "system"]
-  }
+  # Comment out default Auto Mode nodepools to use custom Karpenter nodepools instead
+  # compute_config = {
+  #   enabled    = true
+  #   node_pools = ["general-purpose", "system"]
+  # }
 
   tags = {
     Blueprint  = local.context_prefix

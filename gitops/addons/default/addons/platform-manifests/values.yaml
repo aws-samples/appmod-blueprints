@@ -4,7 +4,7 @@ gpu:
   enabled: true
 
 customNodepools:
-  enabled: false  # TODO Disabled to avoid conflict with Auto Mode nodepools while not in EKS Capabilities
+  enabled: true  # Enable custom Karpenter nodepools (Auto Mode default nodepools disabled in Terraform)
 
 # Hugging Face models to download and store in S3
 # Note: Values with {{ }} will be templated by Helm at render time
