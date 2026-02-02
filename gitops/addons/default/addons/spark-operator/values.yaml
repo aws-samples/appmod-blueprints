@@ -20,6 +20,10 @@ spark-operator:
       requests:
         cpu: 100m
         memory: 128Mi
+    livenessProbe:
+      timeoutSeconds: 5
+    readinessProbe:
+      timeoutSeconds: 5
 
   # Webhook configuration
   webhook:
@@ -28,6 +32,10 @@ spark-operator:
     objectSelector: {}
     timeoutSeconds: 30
     failurePolicy: Fail
+    livenessProbe:
+      timeoutSeconds: 5
+    readinessProbe:
+      timeoutSeconds: 5
 
   # Service accounts
   serviceAccounts:

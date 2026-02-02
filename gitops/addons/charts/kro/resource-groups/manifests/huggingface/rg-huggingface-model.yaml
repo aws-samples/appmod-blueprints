@@ -13,10 +13,11 @@ spec:
       serviceAccount: string       # Service account name
       accountId: string            # AWS account ID
       region: string               # AWS region
+      clusterName: string          # EKS cluster name
   
   resources:
     # Namespace
-    - id: namespace
+    - id: appNamespace
       template:
         apiVersion: v1
         kind: Namespace
