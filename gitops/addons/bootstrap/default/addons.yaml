@@ -654,6 +654,20 @@ argo-rollouts:
   chartRepository: https://argoproj.github.io/argo-helm
   defaultVersion: '2.39.5'
   valuesObject:
+    controller:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+    dashboard:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
     serviceAccount:
       annotations: # Using IRSA as Pod Identity is not supported
         eks.amazonaws.com/role-arn: 'arn:aws:iam::{{.metadata.annotations.aws_account_id}}:role/{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
@@ -707,6 +721,14 @@ argo-events:
       - key: enable_argo_events
         operator: In
         values: ['true']
+  valuesObject:
+    controller:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
 
 ingress-nginx:
   enabled: false
@@ -767,6 +789,13 @@ keycloak:
       cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       region: '{{.metadata.annotations.aws_region}}'
       grafana_url: '{{.metadata.annotations.aws_grafana_url}}'
+    keycloak:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          memory: 1Gi
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -832,6 +861,12 @@ jupyterhub:
     jupyterhub:
       hub:
         baseUrl: /jupyterhub/
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
         config:
           JupyterHub:
             authenticator_class: oauthenticator.generic.GenericOAuthenticator
@@ -848,6 +883,14 @@ jupyterhub:
             username_claim: preferred_username
             auth_state_groups_key: groups
             manage_groups: true
+      proxy:
+        chp:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
             auto_login: true
         extraEnv:
           OAUTH_CLIENT_SECRET:
@@ -902,10 +945,23 @@ devlake:
         external:
           url: '{{.metadata.annotations.aws_grafana_url}}'
       lake:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
         livenessProbe:
           timeoutSeconds: 5
         readinessProbe:
           timeoutSeconds: 5
+      ui:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
 
 kubeflow:
   enabled: false
@@ -998,6 +1054,12 @@ kargo:
   valuesObject:
     api:
       host: '{{.metadata.annotations.ingress_domain_name}}'
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
       argocd:
         urls:
           - https://{{.metadata.annotations.ingress_domain_name}}/argocd
@@ -1005,6 +1067,27 @@ kargo:
         issuerURL: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
       secret:
         name: kargo-admin-credentials
+    controller:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+    webhooksServer:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+    managementController:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
     extraObjects:
       - apiVersion: external-secrets.io/v1
         kind: ExternalSecret # For Kargo Admin Credentials
