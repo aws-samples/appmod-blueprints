@@ -1,4 +1,14 @@
 {{- if .Values.huggingfaceModels }}
+{{- $resourcePrefix := "peeks" }}
+{{- $accountId := "123456789012" }}
+{{- $region := "us-west-2" }}
+{{- $clusterName := "peeks-hub" }}
+{{- if .Values.global }}
+{{- $resourcePrefix = .Values.global.resourcePrefix | default "peeks" }}
+{{- $accountId = .Values.global.accountId | default "123456789012" }}
+{{- $region = .Values.global.region | default "us-west-2" }}
+{{- $clusterName = .Values.global.clusterName | default "peeks-hub" }}
+{{- end }}
 {{- range .Values.huggingfaceModels }}
 ---
 apiVersion: kro.run/v1alpha1
@@ -10,11 +20,11 @@ metadata:
     argocd.argoproj.io/sync-wave: "10"
 spec:
   modelId: {{ .modelId | quote }}
-  s3Bucket: {{ printf "%s-ray-models-%v" $.Values.global.resourcePrefix $.Values.global.accountId | quote }}
+  s3Bucket: {{ printf "%s-ray-models-%v" $resourcePrefix $accountId | quote }}
   namespace: {{ .namespace | default "ray-system" }}
   serviceAccount: {{ .serviceAccount | default "model-download-sa" }}
-  accountId: {{ $.Values.global.accountId | quote }}
-  region: {{ $.Values.global.region | quote }}
-  clusterName: {{ $.Values.global.clusterName | quote }}
+  accountId: {{ $accountId | quote }}
+  region: {{ $region | quote }}
+  clusterName: {{ $clusterName | quote }}
 {{- end }}
 {{- end }}
