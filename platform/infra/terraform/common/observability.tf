@@ -147,37 +147,22 @@ resource "null_resource" "spoke_dev_cert_manager_wait" {
   }
 }
 
-# Wait for OpenTelemetry operator to be ready
+# Wait for OpenTelemetry operator to be ready (deployed by eks_monitoring module)
 resource "null_resource" "spoke_dev_opentelemetry_operator_wait" {
   depends_on = [
-    module.gitops_bridge_bootstrap,
-    null_resource.spoke_dev_flux_crd_wait
+    module.eks_monitoring_spoke_dev,
   ]
 
   provisioner "local-exec" {
     command = <<-EOT
-      echo "Waiting for OpenTelemetry operator CRDs to be available..."
+      echo "Waiting for OpenTelemetry operator webhook to stabilize..."
       for i in {1..60}; do
-        if kubectl --context ${local.spoke_clusters["spoke1"].name} get crd opentelemetrycollectors.opentelemetry.io >/dev/null 2>&1; then
-          echo "OpenTelemetry operator CRDs found, waiting for readiness..."
-          kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=Established crd/opentelemetrycollectors.opentelemetry.io --timeout=300s
+        if kubectl --context ${local.spoke_clusters["spoke1"].name} get endpoints opentelemetry-operator-webhook -n opentelemetry-operator-system -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .; then
+          echo "OpenTelemetry operator webhook endpoints found, waiting for stabilization..."
+          sleep 600
           break
         fi
-        echo "Waiting for OpenTelemetry operator CRDs... ($i/60)"
-        sleep 10
-      done
-      
-      echo "Waiting for OpenTelemetry operator deployment to be ready..."
-      kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=available --timeout=600s deployment/opentelemetry-operator-controller-manager -n opentelemetry-operator-system || true
-      
-      echo "Waiting for OpenTelemetry operator webhook to be ready..."
-      for i in {1..30}; do
-        if kubectl --context ${local.spoke_clusters["spoke1"].name} get service opentelemetry-operator-webhook -n opentelemetry-operator-system >/dev/null 2>&1; then
-          echo "OpenTelemetry operator webhook service found"
-          sleep 10
-          break
-        fi
-        echo "Waiting for OpenTelemetry operator webhook service... ($i/30)"
+        echo "Waiting for OpenTelemetry operator webhook endpoints... ($i/60)"
         sleep 10
       done
     EOT
@@ -189,7 +174,6 @@ module "eks_monitoring_spoke_dev" {
     module.gitops_bridge_bootstrap,
     null_resource.spoke_dev_flux_crd_wait,
     null_resource.spoke_dev_cert_manager_wait,
-    null_resource.spoke_dev_opentelemetry_operator_wait,
   ]
 
   source         = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
@@ -324,37 +308,22 @@ resource "null_resource" "spoke_prod_cert_manager_wait" {
   }
 }
 
-# Wait for OpenTelemetry operator to be ready
+# Wait for OpenTelemetry operator to be ready (deployed by eks_monitoring module)
 resource "null_resource" "spoke_prod_opentelemetry_operator_wait" {
   depends_on = [
-    module.gitops_bridge_bootstrap,
-    null_resource.spoke_prod_flux_crd_wait
+    module.eks_monitoring_spoke_prod,
   ]
 
   provisioner "local-exec" {
     command = <<-EOT
-      echo "Waiting for OpenTelemetry operator CRDs to be available..."
+      echo "Waiting for OpenTelemetry operator webhook to stabilize..."
       for i in {1..60}; do
-        if kubectl --context ${local.spoke_clusters["spoke2"].name} get crd opentelemetrycollectors.opentelemetry.io >/dev/null 2>&1; then
-          echo "OpenTelemetry operator CRDs found, waiting for readiness..."
-          kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=Established crd/opentelemetrycollectors.opentelemetry.io --timeout=300s
+        if kubectl --context ${local.spoke_clusters["spoke2"].name} get endpoints opentelemetry-operator-webhook -n opentelemetry-operator-system -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .; then
+          echo "OpenTelemetry operator webhook endpoints found, waiting for stabilization..."
+          sleep 600
           break
         fi
-        echo "Waiting for OpenTelemetry operator CRDs... ($i/60)"
-        sleep 10
-      done
-      
-      echo "Waiting for OpenTelemetry operator deployment to be ready..."
-      kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=available --timeout=600s deployment/opentelemetry-operator-controller-manager -n opentelemetry-operator-system || true
-      
-      echo "Waiting for OpenTelemetry operator webhook to be ready..."
-      for i in {1..30}; do
-        if kubectl --context ${local.spoke_clusters["spoke2"].name} get service opentelemetry-operator-webhook -n opentelemetry-operator-system >/dev/null 2>&1; then
-          echo "OpenTelemetry operator webhook service found"
-          sleep 10
-          break
-        fi
-        echo "Waiting for OpenTelemetry operator webhook service... ($i/30)"
+        echo "Waiting for OpenTelemetry operator webhook endpoints... ($i/60)"
         sleep 10
       done
     EOT
@@ -366,7 +335,6 @@ module "eks_monitoring_spoke_prod" {
     module.gitops_bridge_bootstrap,
     null_resource.spoke_prod_flux_crd_wait,
     null_resource.spoke_prod_cert_manager_wait,
-    null_resource.spoke_prod_opentelemetry_operator_wait,
   ]
 
   source         = "github.com/aws-observability/terraform-aws-observability-accelerator//modules/eks-monitoring?ref=v2.13.1"
