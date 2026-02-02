@@ -393,6 +393,30 @@ wait_for_argocd_apps_with_dependencies() {
     wait_for_remaining_apps_health
 }
 
+recover_stuck_workflows() {
+    local namespace=$1
+    local max_age_minutes=${2:-15}
+    
+    # Find workflows stuck in Running phase for more than max_age_minutes
+    local stuck_workflows=$(kubectl get workflows -n "$namespace" -o json 2>/dev/null | \
+        jq -r --arg max_age "$max_age_minutes" \
+        '.items[] | select(
+            .status.phase == "Running" and
+            (now - (.status.startedAt | fromdateiso8601)) > (($max_age | tonumber) * 60)
+        ) | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$stuck_workflows" ]; then
+        echo "$stuck_workflows" | while read -r workflow; do
+            if [ -n "$workflow" ]; then
+                print_warning "[$namespace] Deleting stuck workflow: $workflow (running > ${max_age_minutes}min)"
+                kubectl delete workflow "$workflow" -n "$namespace" --ignore-not-found=true 2>/dev/null || true
+            fi
+        done
+        return 0
+    fi
+    return 1
+}
+
 wait_for_sync_wave_completion() {
     local cluster=$1
     local max_wave=$2
@@ -431,6 +455,9 @@ wait_for_sync_wave_completion() {
             print_success "[$cluster] Sync waves 0-$max_wave completed (ignoring best effort apps)"
             return 0
         fi
+        
+        # Check for stuck Argo Workflows and recover
+        recover_stuck_workflows "devlake" 15 || true
         
         # Check for stuck apps and recover (both stuck operations and stuck Progressing)
         local stuck_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
