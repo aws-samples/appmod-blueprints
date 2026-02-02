@@ -1,0 +1,23 @@
+{{- if .Values.customNodepools.enabled }}
+---
+apiVersion: eks.amazonaws.com/v1
+kind: NodeClass
+metadata:
+  name: default
+spec:
+  # Use EKS Auto Mode IAM role (passed from Terraform via cluster secret annotation)
+  role: {{ .Values.global.eksAutoModeRoleName }}
+  ephemeralStorage:
+    iops: 3000
+    size: 80Gi
+    throughput: 125
+  networkPolicy: DefaultAllow
+  networkPolicyEventLogs: Disabled
+  snatPolicy: Random
+  subnetSelectorTerms:
+  - tags:
+      kubernetes.io/role/internal-elb: "1"
+  securityGroupSelectorTerms:
+  - tags:
+      aws:eks:cluster-name: {{ .Values.global.clusterName }}
+{{- end }}
