@@ -3127,7 +3127,7 @@ spec:
             path: /
             port: 2746
             scheme: HTTP
-          initialDelaySeconds: 10
+          initialDelaySeconds: 30
           periodSeconds: 20
           timeoutSeconds: 5
         securityContext:
