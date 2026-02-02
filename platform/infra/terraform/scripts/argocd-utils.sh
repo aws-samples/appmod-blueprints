@@ -414,7 +414,7 @@ wait_for_argocd_apps_with_dependencies() {
 wait_for_sync_wave_completion() {
     local cluster=$1
     local max_wave=$2
-    local timeout=1800  # 30 minutes per phase
+    local timeout=2700  # 45 minutes per phase
     
     print_info "[$cluster] Waiting for sync waves 0-$max_wave to complete..."
     
