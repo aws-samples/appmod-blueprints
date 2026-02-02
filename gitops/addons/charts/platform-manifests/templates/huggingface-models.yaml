@@ -1,0 +1,20 @@
+{{- if .Values.huggingfaceModels }}
+{{- range .Values.huggingfaceModels }}
+---
+apiVersion: kro.run/v1alpha1
+kind: HuggingFaceModel
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace | default "ray-system" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  modelId: {{ .modelId | quote }}
+  s3Bucket: {{ printf "%s-ray-models-%v" $.Values.global.resourcePrefix $.Values.global.accountId | quote }}
+  namespace: {{ .namespace | default "ray-system" }}
+  serviceAccount: {{ .serviceAccount | default "model-download-sa" }}
+  accountId: {{ $.Values.global.accountId | quote }}
+  region: {{ $.Values.global.region | quote }}
+  clusterName: {{ $.Values.global.clusterName | quote }}
+{{- end }}
+{{- end }}

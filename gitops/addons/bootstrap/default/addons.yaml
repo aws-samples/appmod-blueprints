@@ -1528,5 +1528,10 @@ platform-manifests:
         operator: In
         values: ['true']
   valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
