@@ -171,13 +171,13 @@ resource "null_resource" "spoke_dev_opentelemetry_operator_wait" {
       kubectl --context ${local.spoke_clusters["spoke1"].name} wait --for=condition=available --timeout=600s deployment/opentelemetry-operator-controller-manager -n opentelemetry-operator-system || true
       
       echo "Waiting for OpenTelemetry operator webhook to be ready..."
-      for i in {1..30}; do
-        if kubectl --context ${local.spoke_clusters["spoke1"].name} get service opentelemetry-operator-webhook -n opentelemetry-operator-system >/dev/null 2>&1; then
-          echo "OpenTelemetry operator webhook service found"
-          sleep 10
+      for i in {1..60}; do
+        if kubectl --context ${local.spoke_clusters["spoke1"].name} get endpoints opentelemetry-operator-webhook -n opentelemetry-operator-system -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .; then
+          echo "OpenTelemetry operator webhook endpoints found, waiting for stabilization..."
+          sleep 600
           break
         fi
-        echo "Waiting for OpenTelemetry operator webhook service... ($i/30)"
+        echo "Waiting for OpenTelemetry operator webhook endpoints... ($i/60)"
         sleep 10
       done
     EOT
@@ -348,13 +348,13 @@ resource "null_resource" "spoke_prod_opentelemetry_operator_wait" {
       kubectl --context ${local.spoke_clusters["spoke2"].name} wait --for=condition=available --timeout=600s deployment/opentelemetry-operator-controller-manager -n opentelemetry-operator-system || true
       
       echo "Waiting for OpenTelemetry operator webhook to be ready..."
-      for i in {1..30}; do
-        if kubectl --context ${local.spoke_clusters["spoke2"].name} get service opentelemetry-operator-webhook -n opentelemetry-operator-system >/dev/null 2>&1; then
-          echo "OpenTelemetry operator webhook service found"
-          sleep 10
+      for i in {1..60}; do
+        if kubectl --context ${local.spoke_clusters["spoke2"].name} get endpoints opentelemetry-operator-webhook -n opentelemetry-operator-system -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .; then
+          echo "OpenTelemetry operator webhook endpoints found, waiting for stabilization..."
+          sleep 600
           break
         fi
-        echo "Waiting for OpenTelemetry operator webhook service... ($i/30)"
+        echo "Waiting for OpenTelemetry operator webhook endpoints... ($i/60)"
         sleep 10
       done
     EOT
