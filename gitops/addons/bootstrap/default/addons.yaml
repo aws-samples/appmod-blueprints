@@ -901,6 +901,11 @@ devlake:
         enabled: false
         external:
           url: '{{.metadata.annotations.aws_grafana_url}}'
+      lake:
+        livenessProbe:
+          timeoutSeconds: 5
+        readinessProbe:
+          timeoutSeconds: 5
 
 kubeflow:
   enabled: false
@@ -1262,6 +1267,11 @@ grafana-operator:
       - key: enable_grafana_operator
         operator: In
         values: ['true']
+  valuesObject:
+    livenessProbe:
+      timeoutSeconds: 5
+    readinessProbe:
+      timeoutSeconds: 5
 
 flux:
   enabled: false
@@ -1441,6 +1451,11 @@ ray-operator:
     modelPrestage:
       enabled: true
       s3Bucket: '{{.metadata.annotations.resource_prefix}}-ray-models-{{.metadata.annotations.aws_account_id}}'
+    kuberay-operator:
+      livenessProbe:
+        timeoutSeconds: 5
+      readinessProbe:
+        timeoutSeconds: 5
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
