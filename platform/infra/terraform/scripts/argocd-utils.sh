@@ -52,6 +52,14 @@ authenticate_argocd() {
 terminate_argocd_operation() {
     local app_name=$1
     
+    # Check if there's actually an operation in progress
+    local has_operation=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+    
+    if [ -z "$has_operation" ] || [ "$has_operation" == "null" ]; then
+        print_info "No operation in progress for $app_name, skipping termination"
+        return 0
+    fi
+    
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
         print_info "Using ArgoCD CLI to terminate operation for $app_name"
