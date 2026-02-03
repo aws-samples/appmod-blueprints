@@ -52,14 +52,25 @@ authenticate_argocd() {
 terminate_argocd_operation() {
     local app_name=$1
     
+    # Check if there's actually an operation in progress
+    local has_operation=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+    
+    if [ -z "$has_operation" ] || [ "$has_operation" == "null" ]; then
+        print_info "No operation in progress for $app_name, skipping termination"
+        return 0
+    fi
+    
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
         print_info "Using ArgoCD CLI to terminate operation for $app_name"
-        argocd app terminate-op "$app_name" || {
-            print_warning "ArgoCD CLI terminate failed, using direct kubectl approach"
-            # Remove the operationState entirely - this is more effective
-            kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
-        }
+        if ! output=$(argocd app terminate-op "$app_name" 2>&1); then
+            if echo "$output" | grep -q "Unable to terminate operation"; then
+                print_info "No operation to terminate for $app_name"
+            else
+                print_warning "ArgoCD CLI terminate failed: $output, using direct kubectl approach"
+                kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+            fi
+        fi
     else
         print_warning "ArgoCD CLI authentication failed, using direct kubectl approach"
         # Remove the operationState entirely - this is more effective than setting operation to null
