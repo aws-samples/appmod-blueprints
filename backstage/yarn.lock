@@ -3428,14 +3428,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@backstage/cli-common@npm:^0.1.14, @backstage/cli-common@npm:^0.1.15":
-  version: 0.1.15
-  resolution: "@backstage/cli-common@npm:0.1.15"
-  checksum: 10c0/6155d7343814dbe1bc84073d5cdf73e00f379ffc7880a166ad8843443e7dedbe0887a389df5010b909832e8f232d4283a81b2abbda992130a865286445643ff9
-  languageName: node
-  linkType: hard
-
-"@backstage/cli-common@npm:^0.1.16, @backstage/cli-common@npm:^0.1.17":
+"@backstage/cli-common@npm:^0.1.14, @backstage/cli-common@npm:^0.1.15, @backstage/cli-common@npm:^0.1.16, @backstage/cli-common@npm:^0.1.17":
   version: 0.1.17
   resolution: "@backstage/cli-common@npm:0.1.17"
   dependencies:
