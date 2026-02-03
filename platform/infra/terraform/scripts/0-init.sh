@@ -11,6 +11,9 @@ fi
 BEST_EFFORT_APPS=(
     "devlake-peeks-hub"
     "grafana-dashboards-peeks-hub"
+    "jupyterhub-peeks-hub"
+    "spark-operator-peeks-hub"
+    "image-prepuller-peeks-hub"
 )
 
 #be sure we source env var
