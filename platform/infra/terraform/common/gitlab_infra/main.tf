@@ -114,6 +114,10 @@ resource "aws_cloudfront_vpc_origin" "gitlab" {
       quantity = 1
     }
   }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_cloudfront_distribution" "gitlab" {
