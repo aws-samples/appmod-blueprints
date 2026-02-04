@@ -3,7 +3,7 @@ module "eks" {
   #checkov:skip=CKV_TF_2:We are using version control for those modules
   for_each = var.clusters
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.10.1"
+  version = "~> 21.15"
 
   name                   = each.value.name
   kubernetes_version     = each.value.kubernetes_version
@@ -62,8 +62,8 @@ module "eks" {
   create_auto_mode_iam_resources = true
   
   compute_config = {
-    enabled = true
-    # Omit node_pools to create only IAM resources for custom node pools
+    enabled    = true
+    node_pools = ["system"]
   }
 
   tags = {
@@ -333,7 +333,7 @@ resource "aws_iam_role_policy_attachment" "eks_capability_kro_cluster_admin" {
 ################################################################################
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  version = "~> 6.0"
 
   for_each = local.spoke_clusters
   name = "${local.context_prefix}-${each.value.name}"
