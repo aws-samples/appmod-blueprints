@@ -44,7 +44,7 @@ metadata:
     - url: https://${{values.gitlab_hostname}}/${{values.git_username}}/${{values.name}}-ray-service
       title: GitLab Repository
       icon: gitlab
-    - url: https://${{values.argocd_hostname}}/argocd/applications/argocd/${{values.name}}-ray-service
+    - url: https://${{values.argocd_hostname}}/applications/argocd/${{values.name}}-ray-service
       title: ArgoCD Application
       icon: argocd
     - url: https://${{values.ingress_hostname}}/ray-serve/${{values.name}}/generate

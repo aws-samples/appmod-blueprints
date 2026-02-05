@@ -441,6 +441,7 @@ update_backstage_defaults() {
   echo "  Git Username: $GIT_USERNAME"
   echo "  Admin Role Name: $ADMIN_ROLE_NAME"
   echo "  ArgoCD Hostname: $ARGOCD_HOSTNAME"
+  echo "  Hub Cluster Name: ${RESOURCE_PREFIX}-hub"
   echo "  Model S3 Bucket: ${RESOURCE_PREFIX}-ray-models-${AWS_ACCOUNT_ID}"
   echo "  Workshop Git Branch: ${WORKSHOP_GIT_BRANCH:-main}"
 
@@ -455,6 +456,7 @@ update_backstage_defaults() {
     (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'" |
     (select(.metadata.name == "system-info").spec.admin_role_name) = "'$ADMIN_ROLE_NAME'" |
     (select(.metadata.name == "system-info").spec.resource_prefix) = "'$RESOURCE_PREFIX'" |
+    (select(.metadata.name == "system-info").spec.hub_cluster_name) = "'${RESOURCE_PREFIX}'-hub" |
     (select(.metadata.name == "system-info").spec.model_s3_bucket) = "'${RESOURCE_PREFIX}'-ray-models-'${AWS_ACCOUNT_ID}'" |
     (select(.metadata.name == "system-info").spec.workshop_git_branch) = "'${WORKSHOP_GIT_BRANCH:-main}'"
   ' "$CATALOG_INFO_PATH"

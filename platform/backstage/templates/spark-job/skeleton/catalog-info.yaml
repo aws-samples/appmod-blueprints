@@ -16,7 +16,7 @@ metadata:
     - url: https://${{values.repoUrl}}/${{values.gituser}}/${{values.name}}
       title: GitLab Repository
       icon: gitlab
-    - url: https://${{values.argocd_hostname}}/argocd/applications/argocd/${{values.name}}
+    - url: https://${{values.argocd_hostname}}/applications/argocd/${{values.name}}
       title: ArgoCD Application
       icon: argocd
     - url: https://${{values.argocd_hostname}}/argo-workflows/workflows/argo/${{values.name}}

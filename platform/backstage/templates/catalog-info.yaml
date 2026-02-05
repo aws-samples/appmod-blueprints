@@ -46,5 +46,6 @@ spec:
   aws_account_id: '{{ values.awsAccountId }}'
   admin_role_name: '{{ values.adminRoleName }}'
   resource_prefix: '{{ values.resourcePrefix }}'
+  hub_cluster_name: '{{ values.hubClusterName }}'
   model_s3_bucket: '{{ values.modelS3Bucket }}'
   workshop_git_branch: '{{ values.workshopGitBranch }}'

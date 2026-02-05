@@ -59,7 +59,7 @@ spec:
               targetRevision: HEAD
               path: manifests
             destination:
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
               namespace: ${{parameters.name}}
             syncPolicy:
               automated:
@@ -83,7 +83,7 @@ spec:
         entityRef: ${{ steps['register'].output.entityRef }}
       - title: ArgoCD Application
         icon: argocd
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{parameters.name}}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{parameters.name}}
       - title: Argo Workflows
         icon: argo
         url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflows/argo/${{parameters.name}}

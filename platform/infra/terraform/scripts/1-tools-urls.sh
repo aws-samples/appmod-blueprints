@@ -50,8 +50,19 @@ pad_string() {
     printf "%-${len}s" "$str"
 }
 
-# Store URLs for display
-ARGOCD_URL="https://$DOMAIN_NAME/argocd"
+# Get ArgoCD URL from EKS capability if available
+ARGOCD_SERVER_URL=$(aws eks describe-capability --cluster-name ${RESOURCE_PREFIX}-hub --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null || echo "")
+
+# If EKS capability ArgoCD URL is available, use it; otherwise fall back to ingress domain
+if [ -n "$ARGOCD_SERVER_URL" ] && [ "$ARGOCD_SERVER_URL" != "None" ]; then
+  ARGOCD_URL="$ARGOCD_SERVER_URL"
+  print_info "Using EKS-managed ArgoCD URL: $ARGOCD_URL"
+else
+  ARGOCD_URL="https://$DOMAIN_NAME/argocd"
+  print_info "Using in-cluster ArgoCD URL: $ARGOCD_URL"
+fi
+
+# Store other URLs for display
 BACKSTAGE_URL="https://$DOMAIN_NAME/backstage"
 KARGO_URL="https://$DOMAIN_NAME"
 WORKFLOWS_URL="https://$DOMAIN_NAME/argo-workflows"

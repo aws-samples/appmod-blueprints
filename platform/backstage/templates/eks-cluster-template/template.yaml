@@ -250,7 +250,7 @@ spec:
             name: ${{ parameters.clusterName }}
             description: EKS Cluster deployed by kro
             links:
-              - url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/clusters
+              - url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/clusters
                 title: ArgoCD App URL
                 icon: externalLink
               - url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.repoName }}/-/blob/main/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
