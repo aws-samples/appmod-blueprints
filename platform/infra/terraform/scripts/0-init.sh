@@ -142,6 +142,22 @@ main() {
     # Dependency-aware ArgoCD app synchronization
     wait_for_argocd_apps_with_dependencies
 
+    # Setup GitLab remote for local environment (without push)
+    cd "$GIT_ROOT_PATH"
+    git config --global credential.helper store
+    git config --global user.name "$GIT_USERNAME"
+    git config --global user.email "$GIT_USERNAME@workshop.local"
+    
+    if ! git remote get-url gitlab >/dev/null 2>&1; then
+        git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+    fi
+    
+    # Reconfigure remotes: GitLab as origin only
+    git remote remove origin 2>/dev/null || true
+    git remote rename gitlab origin
+    git fetch origin
+    git checkout -B main origin/main
+    cd -
 
     # Initialize GitLab configuration
     bash "$SCRIPT_DIR/2-gitlab-init.sh"
