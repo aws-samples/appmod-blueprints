@@ -170,6 +170,61 @@ handle_stuck_operations() {
     fi
 }
 
+# Recover from CRD annotation size issues and missing namespaces
+recover_crd_and_namespace_issues() {
+    local app_name=$1
+    
+    # Get application details
+    local app_json=$(kubectl get application "$app_name" -n argocd -o json 2>/dev/null)
+    if [ -z "$app_json" ]; then
+        return 0
+    fi
+    
+    # Check for CRD annotation size errors
+    local operation_message=$(echo "$app_json" | jq -r '.status.operationState.message // ""')
+    if [[ "$operation_message" == *"metadata.annotations: Too long: may not be more than 262144 bytes"* ]]; then
+        print_warning "Detected CRD annotation size issue in $app_name"
+        
+        # Extract CRD names from error message
+        local crds=$(echo "$operation_message" | grep -oP 'CustomResourceDefinition\.apiextensions\.k8s\.io "\K[^"]+' | sort -u)
+        
+        if [ -n "$crds" ]; then
+            echo "$crds" | while read -r crd; do
+                if [ -n "$crd" ]; then
+                    print_info "Cleaning oversized annotations from CRD: $crd"
+                    kubectl get crd "$crd" -o json 2>/dev/null | \
+                        jq 'del(.metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"])' | \
+                        kubectl replace -f - 2>/dev/null || true
+                fi
+            done
+            
+            # Clear failed operation state and trigger resync
+            kubectl patch application "$app_name" -n argocd --type=json -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+            sleep 2
+            sync_argocd_app "$app_name"
+        fi
+    fi
+    
+    # Check for missing namespace errors
+    if [[ "$operation_message" == *"namespaces"*"not found"* ]]; then
+        # Extract namespace from error or app spec
+        local target_namespace=$(echo "$app_json" | jq -r '.spec.destination.namespace // ""')
+        
+        if [ -n "$target_namespace" ] && [ "$target_namespace" != "null" ]; then
+            if ! kubectl get namespace "$target_namespace" >/dev/null 2>&1; then
+                print_warning "Creating missing namespace: $target_namespace"
+                kubectl create namespace "$target_namespace" 2>/dev/null || true
+                sleep 2
+                
+                # Clear failed operation state and trigger resync
+                kubectl patch application "$app_name" -n argocd --type=json -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+                sleep 2
+                sync_argocd_app "$app_name"
+            fi
+        fi
+    fi
+}
+
 # Handle sync issues (revision conflicts and OutOfSync applications)
 handle_sync_issues() {
     # Get apps with revision conflicts OR OutOfSync/Missing status (often related issues)
@@ -190,6 +245,18 @@ handle_sync_issues() {
                 sleep 3
                 sync_argocd_app "$app"
                 sleep 2
+            fi
+        done
+    fi
+    
+    # Check for CRD and namespace issues in failed apps
+    local failed_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.operationState.phase == "Failed") | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$failed_apps" ]; then
+        echo "$failed_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                recover_crd_and_namespace_issues "$app"
             fi
         done
     fi
@@ -493,11 +560,21 @@ wait_for_sync_wave_completion() {
             done
         fi
         
-        # Try to sync remaining problematic apps
+        # Try to sync remaining problematic apps (only if they need it)
         for app in $blocking_apps; do
             if [ -n "$app" ]; then
-                print_info "[$cluster] Syncing blocking app: $app"
-                sync_argocd_app "$app" || true
+                # Check if app actually needs sync
+                local app_status=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
+                    jq -r '{sync: .status.sync.status, health: .status.health.status}')
+                local sync_status=$(echo "$app_status" | jq -r '.sync')
+                local health_status=$(echo "$app_status" | jq -r '.health')
+                
+                if [[ "$sync_status" != "Synced" ]] || [[ "$health_status" != "Healthy" ]]; then
+                    print_info "[$cluster] Syncing blocking app: $app"
+                    sync_argocd_app "$app" || true
+                else
+                    print_info "[$cluster] App $app already healthy and synced, skipping"
+                fi
             fi
         done
         
