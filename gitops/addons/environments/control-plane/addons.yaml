@@ -87,6 +87,9 @@ grafana-operator:
   enabled: true
 grafana-dashboards:
   enabled: true
+platform-manifests-bootstrap:
+  enabled: true
+
 platform-manifests:
   enabled: true
 

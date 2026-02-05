@@ -56,6 +56,7 @@ clusters:
       enable_airflow: false
       enable_grafana: false
       enable_grafana_operator: true
+      enable_platform_manifests_bootstrap: true
       enable_platform_manifests: true
       enable_aws_efs_csi_driver: false
       enable_aws_for_fluentbit: false
@@ -112,6 +113,7 @@ clusters:
       enable_keycloak: false
       enable_kargo: false
       enable_backstage: false
+      enable_platform_manifests_bootstrap: true
       enable_platform_manifests: true
   spoke2:
     name: spoke-prod
@@ -160,4 +162,6 @@ clusters:
       enable_keycloak: false
       enable_kargo: false
       enable_backstage: false
+      enable_platform_manifests_bootstrap: true
       enable_platform_manifests: true
+# Test comment 1770278611

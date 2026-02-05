@@ -2,7 +2,7 @@
 replicas: 2
 
 nodeSelector:
-  karpenter.sh/nodepool: system
+  karpenter.sh/nodepool: system-peeks
 
 tolerations:
 - key: "CriticalAddonsOnly"
@@ -25,7 +25,7 @@ podDisruptionBudget:
 rbacManager:
   replicas: 2
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
   - key: "CriticalAddonsOnly"
     operator: "Exists"

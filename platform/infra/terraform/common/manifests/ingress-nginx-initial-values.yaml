@@ -23,6 +23,12 @@ controller:
     - key: "CriticalAddonsOnly"
       operator: "Exists"
       effect: "NoSchedule"
+  admissionWebhooks:
+    patch:
+      tolerations:
+        - key: "CriticalAddonsOnly"
+          operator: "Exists"
+          effect: "NoSchedule"
   topologySpreadConstraints:
     - maxSkew: 1
       minDomains: 2

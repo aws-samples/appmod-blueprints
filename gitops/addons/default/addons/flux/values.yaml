@@ -2,6 +2,41 @@
 sshRepository:
   enabled: false
 
+# Resource limits for Flux controllers (recommended values)
+# These are passed to the flux2 subchart
+flux2:
+  sourceController:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 256Mi
+
+  helmController:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 256Mi
+
+  notificationController:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 128Mi
+
+  imageAutomationController:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 128Mi
+
 # Dynamic values injected by ApplicationSet valuesObject:
 # - clusterName: from cluster_name annotation
 # - gitRepository.url: from addons_repo_url annotation  

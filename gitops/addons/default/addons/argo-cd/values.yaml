@@ -6,7 +6,7 @@ global:
   nodeSelector:
     eks.amazonaws.com/compute-type: auto
     kubernetes.io/os: linux
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
 
 # HA Configuration for Application Controller (Singleton by design)
 controller:

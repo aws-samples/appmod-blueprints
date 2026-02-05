@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+# Fixed 2026-02-05: Added hard refresh to resolve Git revision conflicts
 # Source utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/colors.sh"
@@ -32,7 +33,8 @@ stuck_apps_time=$(kubectl get applications -n argocd -o json 2>/dev/null | \
 
 stuck_apps_revision=$(kubectl get applications -n argocd -o json 2>/dev/null | \
     jq -r '.items[] | select(
-        (.status.operationState.message // "") | contains("ComparisonError") or contains("cannot reference a different revision")
+        ((.status.operationState.message // "") | contains("ComparisonError") or contains("cannot reference a different revision")) or
+        ((.status.conditions[]?.message // "") | contains("ComparisonError") or contains("cannot reference a different revision"))
     ) | "\(.metadata.name)|\(.status.health.status // "Unknown")|\(.status.sync.status // "Unknown")|\(.status.operationState.phase // "None")|\(.status.operationState.finishedAt // "none")"' 2>/dev/null || echo "")
 
 stuck_apps=$(echo -e "$stuck_apps_time\n$stuck_apps_revision" | grep -v '^$' | sort -u)
@@ -62,23 +64,23 @@ echo "$stuck_apps" | while IFS='|' read -r app health sync phase finished; do
         # Check if operation already finished (stale state)
         if [ "$finished" != "none" ]; then
             echo "  → Clearing stale operation state for: $app (finished at $finished)"
-            kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+            kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+            kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite || echo "    ⚠ Failed to add hard refresh annotation"
             continue
         fi
         
         # Check if this is a revision conflict
         revision_conflict=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
-            jq -r '.status.operationState.message // "" | contains("cannot reference a different revision")')
+            jq -r '(.status.operationState.message // .status.conditions[]?.message // "") | contains("cannot reference a different revision")')
         
         if [ "$revision_conflict" = "true" ]; then
             echo "  → Fixing revision conflict for: $app"
-            # Clear stuck operation state first
-            kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
-            # Force refresh
-            kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
-            sleep 2
-            # Trigger fresh sync with HEAD revision
-            kubectl patch application "$app" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD","syncOptions":["CreateNamespace=true","ServerSideApply=true"]}}}' 2>/dev/null || true
+            # Clear operation and status
+            kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+            # Force hard refresh
+            kubectl patch application "$app" -n argocd --type merge -p='{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}' 2>/dev/null || true
         else
             echo "  → Terminating operation for: $app"
             terminate_argocd_operation "$app"

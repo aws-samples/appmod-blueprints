@@ -11,6 +11,10 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 
 # Save the current script directory before sourcing utils.sh
 DEPLOY_SCRIPTDIR="$SCRIPTDIR"
+
+# Force regeneration of CONFIG_FILE to pick up latest hub-config.yaml changes
+unset CONFIG_FILE
+
 source $SCRIPTDIR/../scripts/utils.sh
 
 # Check if clusters are created through Workshop
