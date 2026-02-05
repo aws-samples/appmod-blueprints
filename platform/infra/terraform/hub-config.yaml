@@ -43,7 +43,8 @@ clusters:
       enable_crossplane_aws: true
       enable_kro: false # EKS Managed capability
       enable_grafana_dashboards: true
-      enable_kro_manifests: true
+      enable_kro_manifests: false # Use kro_manifests_hub for hub cluster
+      enable_kro_manifests_hub: true
       enable_mutli_acct: true # EKS Managed capability
       enable_kubevela: true
       enable_devlake: true
@@ -57,7 +58,7 @@ clusters:
       enable_grafana: false
       enable_grafana_operator: true
       enable_platform_manifests_bootstrap: true
-      enable_platform_manifests: true
+      enable_platform_manifests_hub: true
       enable_aws_efs_csi_driver: false
       enable_aws_for_fluentbit: false
       enable_cni_metrics_helper: false
@@ -114,7 +115,7 @@ clusters:
       enable_kargo: false
       enable_backstage: false
       enable_platform_manifests_bootstrap: true
-      enable_platform_manifests: true
+      enable_platform_manifests_hub: false
   spoke2:
     name: spoke-prod
     region: us-west-2 # replaced by deploy.sh
@@ -163,5 +164,5 @@ clusters:
       enable_kargo: false
       enable_backstage: false
       enable_platform_manifests_bootstrap: true
-      enable_platform_manifests: true
+      enable_platform_manifests_hub: false
 # Test comment 1770278611

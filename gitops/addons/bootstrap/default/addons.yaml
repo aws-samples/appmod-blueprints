@@ -616,10 +616,25 @@ kro-manifests:
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/manifests'
   directory:
     recurse: true
-    exclude: '*/tests/**'
+    exclude: '{cicd-pipeline/**,huggingface/**,ray-service/**}'
   selector:
     matchExpressions:
       - key: enable_kro_manifests
+        operator: In
+        values: ['true']
+
+kro-manifests-hub:
+  enabled: false
+  type: manifest
+  namespace: kro
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-2' # Needs to be before resources that needs PodIdentity
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/manifests'
+  directory:
+    recurse: true
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests_hub
         operator: In
         values: ['true']
 
@@ -768,6 +783,11 @@ gitlab:
       - key: enable_gitlab
         operator: In
         values: ['true']
+  ignoreDifferences:
+    - group: ''
+      kind: Namespace
+      jsonPointers:
+        - /metadata/annotations/argocd.argoproj.io~1tracking-id
   valuesObject:
     domain_name: '{{.metadata.annotations.gitlab_domain_name}}'
     initial_root_password: '{{.metadata.annotations.ide_password}}'
@@ -863,6 +883,12 @@ jupyterhub:
             memory: 256Mi
           limits:
             memory: 512Mi
+        extraEnv:
+          OAUTH_CLIENT_SECRET:
+            valueFrom:
+              secretKeyRef:
+                name: keycloak-clients
+                key: JUPYTERHUB_CLIENT_SECRET
         config:
           JupyterHub:
             authenticator_class: oauthenticator.generic.GenericOAuthenticator
@@ -879,6 +905,7 @@ jupyterhub:
             username_claim: preferred_username
             auth_state_groups_key: groups
             manage_groups: true
+            auto_login: true
       proxy:
         chp:
           resources:
@@ -887,13 +914,6 @@ jupyterhub:
               memory: 128Mi
             limits:
               memory: 256Mi
-            auto_login: true
-        extraEnv:
-          OAUTH_CLIENT_SECRET:
-            valueFrom:
-              secretKeyRef:
-                name: keycloak-clients
-                key: JUPYTERHUB_CLIENT_SECRET
       ingress:
         enabled: false
   ignoreDifferences:
@@ -1642,7 +1662,7 @@ platform-manifests:
     argocd.argoproj.io/sync-wave: '6'  # After Argo Workflows (wave 5)
   selector:
     matchExpressions:
-      - key: enable_platform_manifests
+      - key: enable_platform_manifests_hub
         operator: In
         values: ['true']
   valuesObject:
