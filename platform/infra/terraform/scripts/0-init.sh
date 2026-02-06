@@ -142,6 +142,18 @@ main() {
     # Dependency-aware ArgoCD app synchronization
     wait_for_argocd_apps_with_dependencies
 
+    # Get GitLab domain from CloudFront distribution
+    if [ -z "$GITLAB_DOMAIN" ]; then
+        print_status "INFO" "Retrieving GitLab domain from CloudFront..."
+        GITLAB_DOMAIN=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName" --output text)
+        if [ -z "$GITLAB_DOMAIN" ]; then
+            print_status "ERROR" "Failed to retrieve GitLab domain from CloudFront"
+            exit 1
+        fi
+        print_status "SUCCESS" "GitLab domain: $GITLAB_DOMAIN"
+        update_workshop_var "GITLAB_DOMAIN" "$GITLAB_DOMAIN"
+    fi
+
     # Setup GitLab remote for local environment (without push)
     cd "$GIT_ROOT_PATH"
     git config --global credential.helper store
