@@ -154,21 +154,36 @@ main() {
         update_workshop_var "GITLAB_DOMAIN" "$GITLAB_DOMAIN"
     fi
 
-    # Setup GitLab remote for local environment (without push)
+    # Setup GitLab remote for local environment
     cd "$GIT_ROOT_PATH"
     git config --global credential.helper store
     git config --global user.name "$GIT_USERNAME"
     git config --global user.email "$GIT_USERNAME@workshop.local"
     
-    if ! git remote get-url gitlab >/dev/null 2>&1; then
-        git remote add gitlab "https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+    GITLAB_URL="https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+    
+    # Preserve GitHub as 'github' remote if origin points to GitHub
+    if git remote get-url origin 2>/dev/null | grep -q "github.com"; then
+        if ! git remote get-url github >/dev/null 2>&1; then
+            git remote rename origin github
+        fi
     fi
     
-    # Reconfigure remotes: GitLab as origin only
-    git remote remove origin 2>/dev/null || true
-    git remote rename gitlab origin
-    git fetch origin
-    git checkout -B main origin/main
+    # Set GitLab as origin
+    if git remote get-url origin >/dev/null 2>&1; then
+        git remote set-url origin "$GITLAB_URL"
+    else
+        git remote add origin "$GITLAB_URL"
+    fi
+    
+    # Try to fetch from GitLab, but don't fail if repository doesn't exist yet
+    if git fetch origin 2>/dev/null; then
+        print_status "INFO" "Fetched from GitLab repository"
+        git checkout -B main origin/main 2>/dev/null || git checkout -B main
+    else
+        print_status "WARNING" "GitLab repository not accessible yet, will be initialized by 2-gitlab-init.sh"
+        git checkout -B main 2>/dev/null || true
+    fi
     cd -
 
     # Initialize GitLab configuration
