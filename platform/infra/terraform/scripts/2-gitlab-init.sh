@@ -129,11 +129,14 @@ set_gitlab_remote_for_peeks() {
   git config user.email "participants@workshops.aws"
   git config user.name "Workshop Participant"
   
-  # Fetch from GitLab
-  git fetch gitlab
-  
-  # Switch to main branch from GitLab (creates if doesn't exist)
-  git checkout -B main gitlab/main
+  # Fetch from GitLab (origin now points to GitLab)
+  if git fetch origin 2>/dev/null; then
+    # Switch to main branch from GitLab (creates if doesn't exist)
+    git checkout -B main origin/main
+  else
+    echo "GitLab repository not accessible yet, staying on current branch"
+    git checkout -B main 2>/dev/null || true
+  fi
   
   popd
   echo "GitLab remote set for ~/environment/$WORKING_REPO - switched to main branch"
