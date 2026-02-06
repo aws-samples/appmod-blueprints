@@ -9,6 +9,9 @@ kuberay-operator:
       memory: 256Mi
     limits:
       memory: 512Mi
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
 
 modelPrestage:
   models:

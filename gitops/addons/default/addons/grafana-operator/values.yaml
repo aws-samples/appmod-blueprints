@@ -4,3 +4,7 @@ resources:
     memory: 128Mi
   limits:
     memory: 256Mi
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1

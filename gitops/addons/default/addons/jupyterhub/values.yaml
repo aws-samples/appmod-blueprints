@@ -52,6 +52,9 @@ jupyterhub:
   scheduling:
     userScheduler:
       enabled: false
+    podDisruptionBudget:
+      enabled: true
+      maxUnavailable: 1
 
   prePuller:
     hook:

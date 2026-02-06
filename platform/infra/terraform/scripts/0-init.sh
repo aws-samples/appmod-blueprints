@@ -8,6 +8,7 @@ else
 fi
 
 # Best effort applications - sync but don't wait for them to be healthy
+# These apps may take longer to deploy or have known issues that don't block the workshop
 BEST_EFFORT_APPS=(
     "devlake-peeks-hub"
     "grafana-dashboards-peeks-hub"
@@ -36,8 +37,13 @@ source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
 
 # Configuration
 SCRIPT_DIR="$(dirname "$0")"
-WAIT_TIMEOUT=3600  #(60 minutes)
+WAIT_TIMEOUT=${BOOTSTRAP_WAIT_TIMEOUT:-5400}  # 90 minutes (can be overridden via env var)
 CHECK_INTERVAL=30 # 30 seconds
+MAX_SYNC_RETRIES=3  # Maximum retries for stuck apps
+
+# Export for use in sourced scripts
+export WAIT_TIMEOUT
+export CHECK_INTERVAL
 
 
 # Main execution
@@ -104,7 +110,7 @@ main() {
     print_status "INFO" "Waiting for ArgoCD EKS capability to be ready..."
     local argocd_ready=false
     local argocd_wait_time=0
-    local argocd_max_wait=1200  # 20 minutes
+    local argocd_max_wait=1800  # 30 minutes (increased from 20)
     
     while [ $argocd_wait_time -lt $argocd_max_wait ] && [ "$argocd_ready" = false ]; do
         # Check if ArgoCD namespace exists first
@@ -120,7 +126,7 @@ main() {
             print_status "SUCCESS" "ArgoCD EKS capability is ready (API responding)"
             argocd_ready=true
         else
-            print_status "INFO" "ArgoCD EKS capability API not ready yet, waiting..."
+            print_status "INFO" "ArgoCD EKS capability API not ready yet, waiting... ($argocd_wait_time/$argocd_max_wait seconds)"
             sleep 30
             argocd_wait_time=$((argocd_wait_time + 30))
         fi

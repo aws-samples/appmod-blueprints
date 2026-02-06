@@ -197,8 +197,8 @@ spark-operator:
 
   # Pod disruption budget
   podDisruptionBudget:
-    enabled: false
-    minAvailable: 1
+    enabled: true
+    maxUnavailable: 1
 
   # Network policies
   networkPolicy:
