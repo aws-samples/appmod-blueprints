@@ -16,6 +16,13 @@ providers:
     lambdaVersion: "v1.13.0"
     rdsVersion: "v1.13.1"
     runtimeConfigRef: "aws-irsa-drc"
+    # Default resources for all providers
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
 
 compositions:
   enabled: true

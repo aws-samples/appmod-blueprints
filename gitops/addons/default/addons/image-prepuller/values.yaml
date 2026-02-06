@@ -3,6 +3,13 @@ images:
   - jupyter/base-notebook:latest
   - jupyter/datascience-notebook:latest
 
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
 tolerations:
   - key: 'CriticalAddonsOnly'
     operator: 'Exists'

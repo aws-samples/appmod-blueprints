@@ -25,6 +25,12 @@ spec:
           - name: package-runtime
             args:
             - --debug
+            resources:
+              requests:
+                cpu: {{ .Values.providers.aws.resources.requests.cpu | default "100m" }}
+                memory: {{ .Values.providers.aws.resources.requests.memory | default "256Mi" }}
+              limits:
+                memory: {{ .Values.providers.aws.resources.limits.memory | default "512Mi" }}
 ---
 apiVersion: aws.upbound.io/v1beta1
 kind: ProviderConfig
