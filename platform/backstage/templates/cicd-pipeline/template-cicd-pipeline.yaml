@@ -127,10 +127,10 @@ spec:
             destinations:
               - name: local
                 namespace: team-${{ parameters.appname }}
-                name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
+                server: '*'
               - name: argocd
                 namespace: argocd
-                name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
+                server: '*'
             sourceRepos:
               - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
             namespaceResourceWhitelist:

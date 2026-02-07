@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Timestamp function for performance tracking
+log_timestamp() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
 # Enable alias expansion in non-interactive shell
 if [[ -n "$ZSH_VERSION" ]]; then
   setopt aliases
@@ -48,6 +53,7 @@ export CHECK_INTERVAL
 
 # Main execution
 main() {
+    log_timestamp "=== SCRIPT START ==="
     print_status "INFO" "Starting bootstrap deployment process"
     print_status "INFO" "Script directory: $SCRIPT_DIR"
     print_status "INFO" "ArgoCD re-check interval: $CHECK_INTERVAL seconds"
@@ -56,6 +62,7 @@ main() {
     source "$SCRIPT_DIR/backstage-utils.sh"
 
     # Ensure clusters are fully ready before proceeding
+    log_timestamp "Phase: Verifying cluster readiness"
     print_status "INFO" "Verifying cluster readiness before starting deployment..."
     for cluster_name in "${CLUSTER_NAMES[@]}"; do
         print_status "INFO" "Checking cluster: $cluster_name"
@@ -107,6 +114,7 @@ main() {
     #fi
 
     # Wait for ArgoCD to be fully ready first (EKS Capabilities version)
+    log_timestamp "Phase: Waiting for ArgoCD EKS capability"
     print_status "INFO" "Waiting for ArgoCD EKS capability to be ready..."
     local argocd_ready=false
     local argocd_wait_time=0
@@ -236,10 +244,13 @@ main() {
     show_final_status
     
     # Validate workshop setup and recover any issues
+    log_timestamp "Phase: Final workshop validation"
     print_status "INFO" "Running final workshop validation..."
     if bash "$SCRIPT_DIR/check-workshop-setup.sh"; then
+        log_timestamp "=== SCRIPT COMPLETED SUCCESSFULLY ==="
         print_status "SUCCESS" "Workshop setup validation completed - all components healthy!"
     else
+        log_timestamp "=== SCRIPT COMPLETED WITH WARNINGS ==="
         print_status "WARNING" "Workshop setup validation found issues - check output above"
         print_status "INFO" "You can run 'check-workshop-setup' command later to verify"
     fi
