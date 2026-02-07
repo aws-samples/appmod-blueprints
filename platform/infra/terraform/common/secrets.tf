@@ -102,8 +102,9 @@ resource "aws_secretsmanager_secret_version" "cluster_config" {
     addons   = local.addons[each.key]
     server   = each.value.environment != "control-plane" ? data.aws_eks_cluster.clusters[each.key].arn : ""
     vpc = {
-      id         = local.cluster_vpc_ids[each.value.name]
-      subnet_ids = data.aws_subnets.private_subnets[each.key].ids
+      id                         = local.cluster_vpc_ids[each.value.name]
+      subnet_ids                 = data.aws_subnets.private_subnets[each.key].ids
+      cluster_security_group_id  = data.aws_eks_cluster.clusters[each.key].vpc_config[0].cluster_security_group_id
     }
     config = {
       tlsClientConfig = {

@@ -2,6 +2,31 @@
 
 ---
 
+## Performance Optimizations (2026-02-07)
+
+### Sync Wave Optimizations
+
+Reduced ArgoCD sync wave dependencies to improve initial setup time by ~6-7 minutes.
+
+**Changes:**
+- **Backstage**: Wave 10 → 4 (only depends on Keycloak wave 3)
+- **Devlake**: Wave 10 → 7 (only depends on Crossplane-AWS wave 6)
+- **Argo Workflows**: Wave 6 → 4 (only depends on Keycloak wave 3)
+- **Kargo**: Wave 6 → 4 (only depends on Keycloak wave 3)
+
+**Revert Instructions (if needed):**
+```bash
+# In gitops/addons/bootstrap/default/addons.yaml
+# Backstage: sync-wave: '4' → '10'
+# Devlake: sync-wave: '7' → '10'
+# Argo Workflows: sync-wave: '4' → '6'
+# Kargo: sync-wave: '4' → '6'
+```
+
+**Impact:** These addons now deploy in parallel with other wave 4-7 services instead of waiting for all previous waves to complete.
+
+---
+
 ## EKS Capabilities Integration (feat/eks-capabilities-integration)
 
 ### Overview

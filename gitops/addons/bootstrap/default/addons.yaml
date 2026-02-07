@@ -943,7 +943,7 @@ jupyterhub:
 devlake:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '10' # Needs to be after crossplane-aws
+    argocd.argoproj.io/sync-wave: '7' # Needs to be after crossplane-aws (wave 6)
   namespace: devlake
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/devlake'
   defaultVersion: '0.1.0'
@@ -952,6 +952,42 @@ devlake:
       - key: enable_devlake
         operator: In
         values: ['true']
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Workflow
+      jsonPointers:
+        - /spec
+        - /status
+        - /metadata/generation
+    - group: awsblueprints.io
+      kind: RelationalDatabase
+      jsonPointers:
+        - /status
+    - group: awsblueprints.io
+      kind: XRelationalDatabase
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: Policy
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /status
+    - group: eks.aws.upbound.io
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status
+    - group: ""
+      kind: ServiceAccount
+      name: devlake-mysql-access
+      jsonPointers:
+        - /secrets
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
@@ -1026,7 +1062,7 @@ kubeflow:
 argo-workflows:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '6' # Needs to be after Keycloak
+    argocd.argoproj.io/sync-wave: '4' # Needs to be after Keycloak (wave 3)
   namespace: argo
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/argo-workflows'
@@ -1057,7 +1093,7 @@ argo-workflows:
 kargo:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '6' # Needs to be after Keycloak
+    argocd.argoproj.io/sync-wave: '4' # Needs to be after Keycloak (wave 3)
   namespace: kargo
   chartName: kargo
   chartRepository: ghcr.io/akuity/kargo-charts
@@ -1439,7 +1475,7 @@ flux:
 backstage:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '10' # Needs to be after Keycloak, External Secrets, and Kro
+    argocd.argoproj.io/sync-wave: '4' # Needs to be after Keycloak (3), can run parallel with other tools
   namespace: backstage
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/backstage'

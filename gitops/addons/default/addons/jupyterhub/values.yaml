@@ -21,6 +21,9 @@ jupyterhub:
           secretKeyRef:
             name: keycloak-clients
             key: JUPYTERHUB_CLIENT_SECRET
+    pdb:
+      enabled: true
+      minAvailable: 1
 
   proxy:
     service:
@@ -52,9 +55,6 @@ jupyterhub:
   scheduling:
     userScheduler:
       enabled: false
-    podDisruptionBudget:
-      enabled: true
-      maxUnavailable: 1
 
   prePuller:
     hook:
