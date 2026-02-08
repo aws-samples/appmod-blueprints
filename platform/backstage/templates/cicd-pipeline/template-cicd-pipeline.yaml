@@ -131,6 +131,8 @@ spec:
               - name: argocd
                 namespace: argocd
                 server: '*'
+            sourceNamespaces:
+              - argocd
             sourceRepos:
               - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
             namespaceResourceWhitelist:
