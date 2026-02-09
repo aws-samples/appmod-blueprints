@@ -650,6 +650,9 @@ multi-acct:
       - key: enable_mutli_acct
         operator: In
         values: ['true']
+  syncPolicy:
+    automated:
+      selfHeal: true
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'

@@ -11,9 +11,26 @@ spec:
     spec:
       name: string
       region: string
+      accountId: string
     status:
       bucketStatus: ${s3bucket.status.conditions}
   resources:
+  - id: iamroleselector
+    template:
+      apiVersion: services.k8s.aws/v1alpha1
+      kind: IAMRoleSelector
+      metadata:
+        name: ${schema.metadata.name}-s3
+        namespace: ${schema.metadata.namespace}
+      spec:
+        arn: arn:aws:iam::${schema.spec.accountId}:role/peeks-cluster-mgmt-s3
+        namespaceSelector:
+          names:
+            - ${schema.metadata.namespace}
+        resourceTypeSelector:
+          - group: s3.services.k8s.aws
+            kind: ""
+            version: ""
   - id: s3bucket
     readyWhen:
       - ${s3bucket.status.conditions[0].status == "True"}

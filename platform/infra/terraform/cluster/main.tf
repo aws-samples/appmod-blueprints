@@ -195,22 +195,28 @@ resource "aws_iam_role" "eks_capability_ack" {
   tags = local.tags
 }
 
-# ACK Capability Role Policies (all clusters)
-resource "aws_iam_role_policy_attachment" "eks_capability_ack_policies" {
-  for_each = { 
-    for pair in flatten([
-      for k, v in var.clusters : [
-        for service in ["ec2", "eks", "iam", "ecr", "s3", "dynamodb"] : {
-          cluster_key = k
-          service = service
-          cluster = v
-        }
-      ]
-    ]) : "${pair.cluster_key}-${pair.service}" => pair
-  }
+# ACK Capability Role Inline Policy (minimal permissions for IAM Role Selector pattern)
+resource "aws_iam_role_policy" "eks_capability_ack_assume_workload_roles" {
+  for_each = var.clusters
+  
+  name = "AssumeWorkloadRoles"
+  role = aws_iam_role.eks_capability_ack[each.key].id
 
-  role       = aws_iam_role.eks_capability_ack[each.value.cluster_key].name
-  policy_arn = local.ack_service_policies[each.value.service]
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+        Resource = [
+          "arn:aws:iam::${each.value.account_id}:role/${local.context_prefix}-cluster-mgmt-*"
+        ]
+      }
+    ]
+  })
 }
 
 # ArgoCD Capability Role Policies (requires Identity Center)
