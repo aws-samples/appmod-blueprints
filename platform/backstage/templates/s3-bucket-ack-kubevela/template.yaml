@@ -1,9 +1,9 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: s3-bucket-template-ack
-  title: S3 Bucket Template ACK
-  description: Create S3 bucket using OAM and ACK
+  name: s3-bucket-template-ack-kubevela
+  title: S3 Bucket Template ACK with Kubevela
+  description: Create S3 bucket using KubeVela OAM and ACK
 spec:
   owner: user:guest
   type: service
@@ -76,6 +76,8 @@ spec:
             namespace: argocd
           spec:
             description: Project for ${{parameters.bucket_name}} S3 bucket
+            sourceNamespaces:
+            - argocd
             sourceRepos:
             - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git
             destinations:

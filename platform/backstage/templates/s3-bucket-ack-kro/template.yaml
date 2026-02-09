@@ -1,11 +1,11 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: s3-bucket-template-crossplane
-  title: S3 Bucket Template Crosspane
-  description: Create S3 bucket using OAM and CrossPlane
+  name: s3-bucket-template-ack-kro
+  title: S3 Bucket Template ACK with KRO
+  description: Create S3 bucket using KRO and ACK
 spec:
-  owner: guest
+  owner: user:guest
   type: service
   parameters:
     - title: Provide S3 Bucket Information
@@ -23,11 +23,6 @@ spec:
           type: string
           description: The environment (e.g., dev, prod)
           enum: ['dev', 'prod']
-        provider:
-          title: Provider
-          type: string
-          description: Provider Configuration
-          default: default
         region:
           title: Region
           type: string
@@ -54,7 +49,6 @@ spec:
       input:
         url: ./skeleton
         values:
-          provider: ${{ parameters.provider }}
           bucket_name: ${{ parameters.bucket_name }}
           configuration: ${{ parameters.configuration }}
           namespace: ${{ parameters.namespace }}
@@ -99,7 +93,7 @@ spec:
               ignore:
               - kind: Bucket
     - id: create-argocd-app
-      name: Create ArgoCD App
+      name: Create ArgoCD App with Pruning Disabled
       action: kube:apply
       input:
         namespaced: true
@@ -125,7 +119,7 @@ spec:
             syncPolicy:
               automated:
                 allowEmpty: true
-                prune: false
+                prune: false  # Disable pruning to prevent deletion of KubeVela-generated resources
                 selfHeal: true
               retry:
                 backoff:
@@ -136,8 +130,11 @@ spec:
               syncOptions:
               - CreateNamespace=false
               - FailOnSharedResource=true
+            ignoreDifferences:
+            - group: s3.services.k8s.aws
+              kind: Bucket
     - id: register
-      name: Register
+      name: Register in catalog
       action: catalog:register
       input:
         repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}/-/blob/main
@@ -151,6 +148,16 @@ spec:
     links:
       - title: Repository
         url: ${{ steps.publish.output.remoteUrl }}
-      - title: Open in catalog
-        icon: catalog
-        entityRef: ${{ steps.register.output.entityRef }}
+      - title: View catalog-info.yaml
+        url: ${{ steps.publish.output.remoteUrl }}/-/blob/main/catalog-info.yaml
+      - title: ArgoCD Application
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{ parameters.bucket_name }}?view=tree&resource=
+        icon: web
+    text:
+      - title: Manual Catalog Registration
+        content: |
+          To register this component in Backstage catalog, go to:
+          /catalog-import
+          
+          And add this URL:
+          ${{ steps.publish.output.remoteUrl }}/-/blob/main/catalog-info.yaml

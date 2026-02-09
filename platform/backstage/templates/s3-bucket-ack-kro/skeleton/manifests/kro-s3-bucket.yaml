@@ -1,0 +1,8 @@
+apiVersion: kro.run/v1alpha1
+kind: S3Bucket
+metadata:
+  name: ${{values.bucket_name}}
+  namespace: ${{values.namespace}}
+spec:
+  name: ${{values.bucket_name}}
+  region: ${{values.region}}

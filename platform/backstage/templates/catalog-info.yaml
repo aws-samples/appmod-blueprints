@@ -7,7 +7,8 @@ spec:
   targets:
     - ./eks-cluster-template/template.yaml
     - ./rds-cluster/template.yaml
-    - ./s3-bucket-ack/template.yaml
+    - ./s3-bucket-ack-kubevela/template.yaml
+    - ./s3-bucket-ack-kro/template.yaml
     - ./app-deploy/template.yaml
     - ./app-deploy-without-repo/template.yaml
     - ./spark-job/template-spark-job.yaml

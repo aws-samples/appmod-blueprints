@@ -1,0 +1,37 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: s3bucket.kro.run
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: S3Bucket
+    spec:
+      name: string
+      region: string
+    status:
+      bucketStatus: ${s3bucket.status.conditions}
+  resources:
+  - id: s3bucket
+    readyWhen:
+      - ${s3bucket.status.conditions[0].status == "True"}
+    template:
+      apiVersion: s3.services.k8s.aws/v1alpha1
+      kind: Bucket
+      metadata:
+        name: ${schema.spec.name}
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: ${schema.kind}
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
+        annotations:
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          services.k8s.aws/region: ${schema.spec.region}
+          argocd.argoproj.io/sync-options: "Ignore=true,SkipDryRunOnMissingResource=true"
+      spec:
+        name: ${schema.spec.name}
