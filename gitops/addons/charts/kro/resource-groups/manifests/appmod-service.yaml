@@ -28,6 +28,21 @@ spec:
       metricsEnabled: boolean | default=false
       metrics: 'map[string]string | default={"enabled": "false"}'
   resources:
+    - id: serviceaccount
+      template:
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: ${schema.spec.serviceAccount}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
     - id: rollout
       template:
         apiVersion: argoproj.io/v1alpha1

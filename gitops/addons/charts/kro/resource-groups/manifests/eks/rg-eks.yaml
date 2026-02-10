@@ -116,6 +116,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ingress-http"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of EC2 security groups that may be protecting production workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -157,6 +161,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ingress-https"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of EC2 security groups that may be protecting production workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -201,6 +209,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cluster-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -242,6 +254,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cluster-node-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -369,6 +385,10 @@ spec:
         kind: Role
         metadata:
           name: "${schema.spec.name}-argocd-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -532,6 +552,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-access-entry"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of EKS access entries that control cluster access
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -558,6 +582,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-access-entry-admin"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of EKS access entries that control cluster access
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -588,6 +616,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-external-secrets-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -657,6 +689,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-iam"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM policies that may be referenced by other resources
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -702,6 +738,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-external-dns-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -744,6 +784,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-external-dns"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of Pod Identity associations that may be in use
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -771,6 +815,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-adot-collector-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -842,6 +890,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-kyverno-policy-reporter-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -912,6 +964,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cni-metrics-helper-policy"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM policies that may be referenced by other resources
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -946,6 +1002,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cni-metrics-helper-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -1016,6 +1076,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cloudwatch-observability-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -1092,6 +1156,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-capability-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -1135,6 +1203,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-kro-capability-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}

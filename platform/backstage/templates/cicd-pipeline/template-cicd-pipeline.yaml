@@ -240,7 +240,7 @@ spec:
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
         icon: git
       - title: ArgoCD Project
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/settings/argocd/projects/${{ parameters.appname }}-project
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/settings/projects/${{ parameters.appname }}-project
         icon: web
       - title: Argo Workflows templates (After Sync)
         url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}

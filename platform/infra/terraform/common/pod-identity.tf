@@ -438,10 +438,16 @@ resource "aws_iam_role" "ack_workload_role" {
       {
         Effect = "Allow"
         Principal = {
-          AWS = [
-            for cluster_key, cluster_value in var.clusters :
-            aws_iam_role.ack_controller["${cluster_key}-${each.key}"].arn
-          ]
+          AWS = concat(
+            [
+              for cluster_key, cluster_value in var.clusters :
+              aws_iam_role.ack_controller["${cluster_key}-${each.key}"].arn
+            ],
+            [
+              for cluster_key, cluster_value in var.clusters :
+              "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-${cluster_value.name}-ack-capability-role"
+            ]
+          )
         }
         Action = ["sts:AssumeRole", "sts:TagSession"]
       }
@@ -581,6 +587,11 @@ locals {
             "eks:DescribePodIdentityAssociation",
             "eks:ListPodIdentityAssociations",
             "eks:UpdatePodIdentityAssociation",
+            "eks:CreateCapability",
+            "eks:DeleteCapability",
+            "eks:DescribeCapability",
+            "eks:ListCapabilities",
+            "eks:UpdateCapability",
             "iam:PassRole",
             "iam:GetRole"
           ]

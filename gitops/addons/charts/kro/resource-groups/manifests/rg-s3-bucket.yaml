@@ -21,7 +21,6 @@ spec:
       kind: IAMRoleSelector
       metadata:
         name: ${schema.metadata.name}-s3
-        namespace: ${schema.metadata.namespace}
       spec:
         arn: arn:aws:iam::${schema.spec.accountId}:role/peeks-cluster-mgmt-s3
         namespaceSelector:
@@ -39,6 +38,11 @@ spec:
       kind: Bucket
       metadata:
         name: ${schema.spec.name}
+        # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+        # This prevents accidental deletion of S3 buckets containing production data
+        # WARNING: S3 buckets must be empty before deletion, so retain policy is highly recommended
+        # annotations:
+        #   services.k8s.aws/deletion-policy: retain
         ownerReferences:
           - apiVersion: kro.run/v1alpha1
             kind: ${schema.kind}

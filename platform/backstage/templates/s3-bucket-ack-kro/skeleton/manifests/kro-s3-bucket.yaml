@@ -6,3 +6,4 @@ metadata:
 spec:
   name: ${{values.bucket_name}}
   region: ${{values.region}}
+  accountId: "${{values.accountId}}"

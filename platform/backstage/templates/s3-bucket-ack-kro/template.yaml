@@ -28,6 +28,10 @@ spec:
           type: string
           description: AWS region for the S3 bucket
           default: us-west-2
+        accountId:
+          title: AWS Account ID
+          type: string
+          description: AWS Account ID (defaults to current account)
         namespace:
           default: default
           title: Existing namespace to create this resource
@@ -54,6 +58,7 @@ spec:
           namespace: ${{ parameters.namespace }}
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
+          accountId: ${{ parameters.accountId | default(steps['fetchSystem'].output.entity.spec.aws_account_id) }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
     - id: publish
       name: Publishing to GitLab repository
