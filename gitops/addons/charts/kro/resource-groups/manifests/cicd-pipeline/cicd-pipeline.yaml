@@ -2243,6 +2243,8 @@ spec:
                  value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}.git'
                - name: git-revision
                  value: 'main'
+               - name: image-tag
+                 value: 'initial'
                - name: git-username
                  value: ${schema.spec.gitlab.username}
                - name: git-token
@@ -2432,14 +2434,14 @@ spec:
                                value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}.git'
                              - name: git-revision
                                value: 'main'
-                             - name: image-tag
-                               value: 'sha'
                              - name: git-username
                                value: ${schema.spec.gitlab.username}
                              - name: git-token
                                value: 'placeholder-will-use-env-var'
                              - name: repo-name
                                value: '${schema.spec.application.name}'
+                             - name: image-tag
+                               value: 'sha'
                              - name: dockerfile-path
                                value: ${schema.spec.application.dockerfilePath}
                              - name: deployment-path
@@ -2453,7 +2455,7 @@ spec:
                      - src:
                          dependencyName: gitlab-webhook
                          dataKey: body.after
-                       dest: spec.arguments.parameters.2.value
+                       dest: spec.arguments.parameters.5.value
                        operation: overwrite
              - template:
                  name: gitlab-dora-trigger
