@@ -1530,6 +1530,7 @@ spec:
         metadata:
           name: ${schema.spec.name}-dora-incident-workflow
         spec:
+          entrypoint: process-incident
           arguments:
             parameters:
               - name: body
@@ -1562,9 +1563,9 @@ spec:
                     type: "INCIDENT",
                     status: (if .object_attributes.state == "opened" then "TODO" else "DONE" end),
                     originalStatus: "TODO",
-                    createdDate: .object_attributes.created_at,
-                    updatedDate: .object_attributes.updated_at,
-                    resolutionDate: (if .object_attributes.state == "closed" then .object_attributes.closed_at else null end),
+                    createdDate: (.object_attributes.created_at | sub(" UTC$"; "Z") | sub(" "; "T")),
+                    updatedDate: (.object_attributes.updated_at | sub(" UTC$"; "Z") | sub(" "; "T")),
+                    resolutionDate: (if .object_attributes.state == "closed" then (.object_attributes.closed_at | sub(" UTC$"; "Z") | sub(" "; "T")) else null end),
                     priority: "",
                     severity: .object_attributes.severity,
                     creatorId: .user.id,
@@ -1585,6 +1586,7 @@ spec:
         metadata:
           name: ${schema.spec.name}-dora-pull-request-workflow
         spec:
+          entrypoint: process-pull-request
           arguments:
             parameters:
               - name: body
@@ -1615,10 +1617,12 @@ spec:
                     displayTitle: .object_attributes.title,
                     description: .object_attributes.description,
                     status: (if .object_attributes.state == "opened" then "OPEN" elif .object_attributes.state == "merged" then "MERGED" else "CLOSED" end),
-                    createdDate: .object_attributes.created_at,
-                    updatedDate: .object_attributes.updated_at,
-                    closedDate: (if .object_attributes.state == "closed" then .object_attributes.updated_at),
-                    mergedDate: (if .object_attributes.state == "merged" then .object_attributes.updated_at),
+                    createdDate: (.object_attributes.created_at | sub(" UTC$"; "Z") | sub(" "; "T")),
+                    updatedDate: (.object_attributes.updated_at | sub(" UTC$"; "Z") | sub(" "; "T")),
+                    closedDate: (if .object_attributes.state == "closed" then (.object_attributes.updated_at | sub(" UTC$"; "Z") | sub(" "; "T")) else null end),
+                    mergedDate: (if .object_attributes.state == "merged" then (.object_attributes.updated_at | sub(" UTC$"; "Z") | sub(" "; "T")) else null end),
+                    mergeCommitSha: (if .object_attributes.state == "merged" then .object_attributes.merge_commit_sha else null end),
+                    isDraft: .object_attributes.draft,
                     type: "PR",
                     url: .object_attributes.url,
                     authorId: .user.id,
@@ -1629,10 +1633,10 @@ spec:
                     additions: 0,
                     deletions: 0,
                     changedFiles: 0,
-                    baseBranch: .object_attributes.source_branch,
-                    headBranch: .object_attributes.target_branch,
+                    baseRef: .object_attributes.target_branch,
+                    headRef: .object_attributes.source_branch,
                     repoId: .project.id,
-                    repoName: .repository.name
+                    headRepoId: .repository.name
                   }')
                   echo "====Transformed Payload===="
                   echo "$PAYLOAD" | jq '.'
@@ -2534,7 +2538,7 @@ spec:
                        spec:
                          serviceAccountName: ${schema.spec.name}-sa
                          workflowTemplateRef:
-                           name: ${schema.spec.name}-dora-incident-workflow
+                           name: ${schema.spec.name}-dora-pull-request-workflow
                          arguments:
                            parameters:
                              - name: body
