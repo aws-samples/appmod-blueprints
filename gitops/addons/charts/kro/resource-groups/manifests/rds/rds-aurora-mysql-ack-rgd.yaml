@@ -1,0 +1,123 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGroup
+metadata:
+  name: rds-aurora-mysql-ack
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: RelationalDatabase
+    spec:
+      databaseName: string
+      engineVersion: string | default="8.0.mysql_aurora.3.10.0"
+      instanceClass: string | default="db.r5.xlarge"
+      region: string
+      privateSubnetIds: array
+      vpcId: string
+  resources:
+    - id: subnetgroup
+      readyWhen:
+        - ${subnetgroup.status.conditions.exists(c, c.type == 'ACK.ResourceSynced' && c.status == 'True')}
+      template:
+        apiVersion: rds.services.k8s.aws/v1alpha1
+        kind: DBSubnetGroup
+        metadata:
+          name: ${schema.metadata.name}-subnet-group
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RelationalDatabase
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: ${schema.metadata.name}-subnet-group
+          description: rds-mysql
+          subnetIDs: ${schema.spec.privateSubnetIds}
+
+    - id: securitygroup
+      readyWhen:
+        - ${securitygroup.status.conditions.exists(c, c.type == 'ACK.ResourceSynced' && c.status == 'True')}
+      template:
+        apiVersion: ec2.services.k8s.aws/v1alpha1
+        kind: SecurityGroup
+        metadata:
+          name: ${schema.metadata.name}-sg
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RelationalDatabase
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: rds-mysql-sg-${schema.metadata.uid}
+          description: rds-mysql-sg
+          vpcID: ${schema.spec.vpcId}
+          ingressRules: 
+            - fromPort: 3306
+              ipProtocol: tcp
+              toPort: 3306
+              ipRanges:
+                - cidrIP: 10.0.0.0/8
+                  description: 'in vpc traffic'
+
+    - id: cluster
+      readyWhen:
+        - ${cluster.status.conditions.exists(c, c.type == 'ACK.ResourceSynced' && c.status == 'True')}
+      template:
+        apiVersion: rds.services.k8s.aws/v1alpha1
+        kind: DBCluster
+        metadata:
+          name: ${schema.metadata.name}-cluster
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RelationalDatabase
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          dbClusterIdentifier: ${schema.metadata.name}-cluster
+          databaseName: ${schema.spec.databaseName}
+          engine: aurora-mysql
+          engineVersion: ${schema.spec.engineVersion}
+          masterUsername: root
+          manageMasterUserPassword: true
+          dbSubnetGroupName: ${subnetgroup.spec.name}
+          vpcSecurityGroupIDs:
+            - ${securitygroup.status.id}
+          backupRetentionPeriod: 7
+          preferredBackupWindow: 02:00-03:00
+          preferredMaintenanceWindow: sun:04:00-sun:05:00
+          storageEncrypted: true
+          skipFinalSnapshot: true
+
+    - id: clusterinstance
+      readyWhen:
+        - ${clusterinstance.status.conditions.exists(c, c.type == 'ACK.ResourceSynced' && c.status == 'True')}
+      template:
+        apiVersion: rds.services.k8s.aws/v1alpha1
+        kind: DBInstance
+        metadata:
+          name: ${schema.metadata.name}-instance
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RelationalDatabase
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          dbInstanceIdentifier: ${schema.metadata.name}-instance
+          dbInstanceClass: ${schema.spec.instanceClass}
+          engine: aurora-mysql
+          dbClusterIdentifier: ${cluster.spec.dbClusterIdentifier}
+          dbSubnetGroupName: ${subnetgroup.spec.name}

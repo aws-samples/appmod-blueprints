@@ -20,6 +20,7 @@ locals {
   hub_subnet_ids          = data.aws_eks_cluster.clusters[local.hub_cluster_key].vpc_config[0].subnet_ids
   spoke_clusters          = { for k, v in var.clusters : k => v if v.environment != "control-plane" }
   cluster_vpc_ids         = { for k, v in var.clusters : v.name => data.aws_eks_cluster.clusters[k].vpc_config[0].vpc_id }
+  cluster_subnet_ids      = { for k, v in var.clusters : v.name => data.aws_eks_cluster.clusters[k].vpc_config[0].subnet_ids }
   cluster_oidc_issuers    = { for k, v in var.clusters : v.name => replace(data.aws_eks_cluster.clusters[k].identity[0].oidc[0].issuer, "https://", "") }
   argocd_namespace        = "argocd"
   ingress_name            = { for k, v in var.clusters : v.name => "${v.name}-ingress" }
@@ -130,6 +131,7 @@ locals {
         aws_account_id   = data.aws_caller_identity.current.account_id
         eks_oidc_issuer  = local.cluster_oidc_issuers[v.name]
         aws_vpc_id       = local.cluster_vpc_ids[v.name]
+        aws_subnet_ids   = local.cluster_subnet_ids[v.name]
         aws_grafana_url  = module.managed_grafana.workspace_endpoint
         resource_prefix  = var.resource_prefix
       },
