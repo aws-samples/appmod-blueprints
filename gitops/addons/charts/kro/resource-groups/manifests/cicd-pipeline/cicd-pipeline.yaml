@@ -1157,7 +1157,6 @@ spec:
                - name: git-token
                - name: repo-name
                - name: image-tag
-                 value: '{{workflow.creationTimestamp.Y}}{{workflow.creationTimestamp.m}}{{workflow.creationTimestamp.d}}-{{workflow.uid}}'
                - name: dockerfile-path
                  value: ${schema.spec.application.dockerfilePath}
                - name: deployment-path
@@ -1453,12 +1452,12 @@ spec:
                 - |
                   aws eks update-kubeconfig \
                     --name "{{workflow.parameters.target-cluster-name}}" \
-                    --region "{{workflow.parameters.target-cluster-region}}"
+                    --region "{{workflow.parameters.target-cluster-region}}" > /dev/null
 
                   curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
                   chmod +x kubectl && mv kubectl /usr/local/bin/
 
-                  COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after | .[0:7]')
+                  COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after')
 
                   ROLLOUT_NAME=$(kubectl get rollout -n "{{inputs.parameters.namespace}}" -o jsonpath='{.items[0].metadata.name}')
                   CURRENT_IMAGE=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
@@ -2433,6 +2432,8 @@ spec:
                                value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}.git'
                              - name: git-revision
                                value: 'main'
+                             - name: image-tag
+                               value: 'sha'
                              - name: git-username
                                value: ${schema.spec.gitlab.username}
                              - name: git-token
@@ -2448,6 +2449,11 @@ spec:
                          dependencyName: gitlab-webhook
                          dataKey: body.ref
                        dest: spec.arguments.parameters.1.value
+                       operation: overwrite
+                     - src:
+                         dependencyName: gitlab-webhook
+                         dataKey: body.after
+                       dest: spec.arguments.parameters.2.value
                        operation: overwrite
              - template:
                  name: gitlab-dora-trigger
