@@ -32,6 +32,7 @@ spec:
       ingress:
         enabled: boolean | default=false
         path: string | default="/"
+        rewrite: boolean | default=true
       functionalGate:
         enabled: boolean | default=false
         image: string | default="httpd:alpine"
@@ -313,6 +314,7 @@ spec:
     - id: ingress
       includeWhen:
         - ${schema.spec.ingress.enabled}
+        - ${schema.spec.ingress.rewrite == true}
       template:
         apiVersion: networking.k8s.io/v1
         kind: Ingress
@@ -334,7 +336,39 @@ spec:
           rules:
             - http:
                 paths:
-                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
+                  - path: "${schema.spec.appPath + \"(/|$)(.*)\"}"
+                    pathType: ImplementationSpecific
+                    backend:
+                      service:
+                        name: ${service.metadata.name}
+                        port:
+                          number: ${schema.spec.port}
+
+    - id: ingressNoRewrite
+      includeWhen:
+        - ${schema.spec.ingress.enabled}
+        - ${schema.spec.ingress.rewrite == false}
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: ${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            nginx.ingress.kubernetes.io/use-regex: "true"
+        spec:
+          ingressClassName: nginx
+          rules:
+            - http:
+                paths:
+                  - path: "${schema.spec.appPath + \"(.*)\"}"
                     pathType: ImplementationSpecific
                     backend:
                       service:
