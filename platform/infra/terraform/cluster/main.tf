@@ -212,7 +212,7 @@ resource "aws_iam_role_policy" "eks_capability_ack_assume_workload_roles" {
           "sts:TagSession"
         ]
         Resource = [
-          "arn:aws:iam::${each.value.account_id}:role/${local.context_prefix}-cluster-mgmt-*"
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-cluster-mgmt-*"
         ]
       }
     ]
