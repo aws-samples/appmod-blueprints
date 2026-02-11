@@ -157,6 +157,40 @@ ack-s3:
       managedFieldsManagers:
         - kube-controller-manager
 
+ack-rds:
+  enabled: false
+  enableACK: false
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
+  namespace: ack-system
+  chartName: rds-chart
+  defaultVersion: '1.7.6'
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  releaseName: rds-chart
+  selector:
+    matchExpressions:
+      - key: enable_ack_rds
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-rds-controller" (index .metadata.annotations "ack_rds_service_account")}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      managedFieldsManagers:
+        - kube-controller-manager
+
 ack-dynamodb:
   enabled: false
   enableACK: false

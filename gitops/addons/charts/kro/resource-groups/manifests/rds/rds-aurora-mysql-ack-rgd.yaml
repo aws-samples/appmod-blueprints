@@ -1,5 +1,5 @@
 apiVersion: kro.run/v1alpha1
-kind: ResourceGroup
+kind: ResourceGraphDefinition
 metadata:
   name: rds-aurora-mysql-ack
 spec:
@@ -11,7 +11,7 @@ spec:
       engineVersion: string | default="8.0.mysql_aurora.3.10.0"
       instanceClass: string | default="db.r5.xlarge"
       region: string
-      privateSubnetIds: array
+      privateSubnetIds: "[]string"
       vpcId: string
   resources:
     - id: subnetgroup
@@ -96,7 +96,6 @@ spec:
           preferredBackupWindow: 02:00-03:00
           preferredMaintenanceWindow: sun:04:00-sun:05:00
           storageEncrypted: true
-          skipFinalSnapshot: true
 
     - id: clusterinstance
       readyWhen:
