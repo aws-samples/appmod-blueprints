@@ -16,9 +16,17 @@ spec:
       port: integer | default=80
       targetPort: integer | default=8080
       serviceAccount: string | default="default"
+      clusterName: string
+      accountId: string
       appPath: string | default="/"
       envName: string | default="PRODUCTION"
       domain: string | default="*.elb.us-west-2.amazonaws.com"
+      components:
+        dynamodb:
+          enabled: boolean | default=false
+          tableName: string | default=""
+          partitionKey: string | default="id"
+          partitionKeyType: string | default="S"
       ingressEnabled: boolean | default=false
       ingress: 'map[string]string | default={"enabled": "false"}'
       functionalGateEnabled: boolean | default=false
@@ -28,6 +36,142 @@ spec:
       metricsEnabled: boolean | default=false
       metrics: 'map[string]string | default={"enabled": "false"}'
   resources:
+    - id: iamroleselector
+      template:
+        apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: ${schema.metadata.namespace}-iam
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+        spec:
+          arn: arn:aws:iam::${schema.spec.accountId}:role/peeks-cluster-mgmt-iam
+          namespaceSelector:
+            names:
+              - ${schema.metadata.namespace}
+          resourceTypeSelector:
+            - group: iam.services.k8s.aws
+              kind: ""
+              version: ""
+    - id: eksroleselector
+      template:
+        apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: ${schema.metadata.namespace}-eks
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+        spec:
+          arn: arn:aws:iam::${schema.spec.accountId}:role/peeks-cluster-mgmt-eks
+          namespaceSelector:
+            names:
+              - ${schema.metadata.namespace}
+          resourceTypeSelector:
+            - group: eks.services.k8s.aws
+              kind: ""
+              version: ""
+    - id: dynamodbroleselector
+      template:
+        apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: ${schema.metadata.namespace}-dynamodb
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+        spec:
+          arn: arn:aws:iam::${schema.spec.accountId}:role/peeks-cluster-mgmt-dynamodb
+          namespaceSelector:
+            names:
+              - ${schema.metadata.namespace}
+          resourceTypeSelector:
+            - group: dynamodb.services.k8s.aws
+              kind: ""
+              version: ""
+    - id: dynamodbtable
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
+      readyWhen:
+        - ${dynamodbtable.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: dynamodb.services.k8s.aws/v1alpha1
+        kind: Table
+        metadata:
+          name: ${schema.spec.components.dynamodb.tableName}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          tableName: ${schema.spec.components.dynamodb.tableName}
+          billingMode: PAY_PER_REQUEST
+          attributeDefinitions:
+            - attributeName: ${schema.spec.components.dynamodb.partitionKey}
+              attributeType: ${schema.spec.components.dynamodb.partitionKeyType}
+          keySchema:
+            - attributeName: ${schema.spec.components.dynamodb.partitionKey}
+              keyType: HASH
+    - id: iamrole
+      readyWhen:
+        - ${iamrole.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          name: ${schema.metadata.name}-role
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          name: ${schema.metadata.name}-role
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "pods.eks.amazonaws.com"
+                  },
+                  "Action": [
+                    "sts:AssumeRole",
+                    "sts:TagSession"
+                  ]
+                }
+              ]
+            }
+          policies:
+            - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+    - id: podidentity
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          name: ${schema.metadata.name}-podidentity
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          clusterName: ${schema.spec.clusterName}
+          namespace: ${schema.metadata.namespace}
+          roleARN: ${iamrole.status.ackResourceMetadata.arn}
+          serviceAccount: ${schema.spec.serviceAccount}
     - id: serviceaccount
       template:
         apiVersion: v1
