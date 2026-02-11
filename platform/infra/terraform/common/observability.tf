@@ -113,7 +113,7 @@ resource "aws_prometheus_scraper" "peeks-scraper" {
     eks {
       cluster_arn        = each.value.name
       subnet_ids         = data.aws_eks_cluster.clusters[each.key].vpc_config[0].subnet_ids
-      security_group_ids = concat([data.aws_eks_cluster.clusters[each.key].vpc_config[0].cluster_security_group_id], data.aws_eks_cluster.clusters[each.key].vpc_config[0].security_group_ids)
+      security_group_ids = concat([data.aws_eks_cluster.clusters[each.key].vpc_config[0].cluster_security_group_id], tolist(data.aws_eks_cluster.clusters[each.key].vpc_config[0].security_group_ids))
     }
   }
   destination {
