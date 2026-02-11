@@ -12,7 +12,7 @@ metrics-server:
 aws-efs-csi-driver:
   enabled: true
 aws-for-fluentbit:
-  enabled: false
+  enabled: true
 cert-manager:
   enabled: true
 external-dns:
@@ -26,13 +26,13 @@ kyverno-policy-reporter:
 kyverno-policies:
   enabled: true
 cni-metrics-helper:
-  enabled: false
+  enabled: true
 kube-state-metrics:
-  enabled: false
+  enabled: true
 prometheus-node-exporter:
-  enabled: false
+  enabled: true
 cw-prometheus:
-  enabled: false
+  enabled: true
 
 ack-iam:
   enabled: true

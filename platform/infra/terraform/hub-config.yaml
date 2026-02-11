@@ -92,7 +92,7 @@ clusters:
       enable_kro: true
       enable_kro_manifests: true
       enable_aws_efs_csi_driver: false
-      enable_aws_for_fluentbit: false
+      enable_aws_for_fluentbit: true
       enable_cert_manager: true
       enable_external_dns: false
       enable_opentelemetry_operator: false
@@ -140,7 +140,7 @@ clusters:
       enable_flux: true
       enable_metrics_server: true
       enable_aws_efs_csi_driver: false
-      enable_aws_for_fluentbit: false
+      enable_aws_for_fluentbit: true
       enable_cert_manager: true
       enable_external_dns: false
       enable_opentelemetry_operator: false
