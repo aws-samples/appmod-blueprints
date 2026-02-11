@@ -100,10 +100,10 @@ clusters:
       enable_kyverno: false
       enable_kyverno_policy_reporter: false
       enable_kyverno_policies: false
-      enable_cni_metrics_helper: false
-      enable_kube_state_metrics: false
-      enable_prometheus_node_exporter: false
-      enable_prometheus_scraper: false
+      enable_cni_metrics_helper: true
+      enable_kube_state_metrics: true
+      enable_prometheus_node_exporter: true
+      enable_prometheus_scraper: true
       enable_cw_prometheus: false
       enable_mutli_acct: false
       enable_ingress_class_alb: false
@@ -148,10 +148,10 @@ clusters:
       enable_kyverno: false
       enable_kyverno_policy_reporter: false
       enable_kyverno_policies: false
-      enable_cni_metrics_helper: false
-      enable_kube_state_metrics: false
-      enable_prometheus_node_exporter: false
-      enable_prometheus_scraper: false
+      enable_cni_metrics_helper: true
+      enable_kube_state_metrics: true
+      enable_prometheus_node_exporter: true
+      enable_prometheus_scraper: true
       enable_cw_prometheus: false
       enable_mutli_acct: false
       enable_ingress_class_alb: false
