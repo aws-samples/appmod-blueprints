@@ -17,7 +17,7 @@ spec:
       targetPort: integer | default=8080
       serviceAccount: string | default="default"
       clusterName: string
-      accountId: string
+      accountId: string | default=""
       appPath: string | default="/"
       envName: string | default="PRODUCTION"
       domain: string | default="*.elb.us-west-2.amazonaws.com"
@@ -25,18 +25,29 @@ spec:
         dynamodb:
           enabled: boolean | default=false
           tableName: string | default=""
-          partitionKey: string | default="id"
+          partitionKey: string | default="partition_key"
           partitionKeyType: string | default="S"
-      ingressEnabled: boolean | default=false
-      ingress: 'map[string]string | default={"enabled": "false"}'
-      functionalGateEnabled: boolean | default=false
-      functionalGate: 'map[string]string | default={"enabled": "false", "image": "httpd:alpine", "extraArgs": ""}'
-      performanceGateEnabled: boolean | default=false
-      performanceGate: 'map[string]string | default={"enabled": "false", "image": "httpd:alpine", "extraArgs": "160"}'
-      metricsEnabled: boolean | default=false
-      metrics: 'map[string]string | default={"enabled": "false"}'
+          sortKey: string | default="sort_key"
+          sortKeyType: string | default="S"
+      ingress:
+        enabled: boolean | default=false
+        path: string | default="/"
+      functionalGate:
+        enabled: boolean | default=false
+        image: string | default="httpd:alpine"
+        extraArgs: string | default=""
+        pause: string | default="5s"
+      performanceGate:
+        enabled: boolean | default=false
+        image: string | default="httpd:alpine"
+        extraArgs: string | default="160"
+        pause: string | default="5s"
+      metrics:
+        enabled: boolean | default=false
   resources:
     - id: iamroleselector
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
       template:
         apiVersion: services.k8s.aws/v1alpha1
         kind: IAMRoleSelector
@@ -54,6 +65,8 @@ spec:
               kind: ""
               version: ""
     - id: eksroleselector
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
       template:
         apiVersion: services.k8s.aws/v1alpha1
         kind: IAMRoleSelector
@@ -71,6 +84,8 @@ spec:
               kind: ""
               version: ""
     - id: dynamodbroleselector
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
       template:
         apiVersion: services.k8s.aws/v1alpha1
         kind: IAMRoleSelector
@@ -112,10 +127,16 @@ spec:
           attributeDefinitions:
             - attributeName: ${schema.spec.components.dynamodb.partitionKey}
               attributeType: ${schema.spec.components.dynamodb.partitionKeyType}
+            - attributeName: ${schema.spec.components.dynamodb.sortKey}
+              attributeType: ${schema.spec.components.dynamodb.sortKeyType}
           keySchema:
             - attributeName: ${schema.spec.components.dynamodb.partitionKey}
               keyType: HASH
+            - attributeName: ${schema.spec.components.dynamodb.sortKey}
+              keyType: RANGE
     - id: iamrole
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
       readyWhen:
         - ${iamrole.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       template:
@@ -153,6 +174,8 @@ spec:
           policies:
             - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
     - id: podidentity
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
       template:
         apiVersion: eks.services.k8s.aws/v1alpha1
         kind: PodIdentityAssociation
@@ -240,6 +263,8 @@ spec:
                   env:
                     - name: "APP_ENV"
                       value: ${schema.spec.envName}
+                    - name: "TABLE_NAME"
+                      value: ${schema.spec.components.dynamodb.tableName}
 
     - id: service
       template:
@@ -287,7 +312,7 @@ spec:
 
     - id: ingress
       includeWhen:
-        - ${schema.spec.ingressEnabled}
+        - ${schema.spec.ingress.enabled}
       template:
         apiVersion: networking.k8s.io/v1
         kind: Ingress
@@ -309,7 +334,7 @@ spec:
           rules:
             - http:
                 paths:
-                  - path: "${schema.spec.appPath + \"(/|$)(.*)\"}"
+                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
                     pathType: ImplementationSpecific
                     backend:
                       service:
@@ -352,7 +377,7 @@ spec:
 
     - id: functionalanalysis
       includeWhen:
-        - ${schema.spec.functionalGateEnabled}
+        - ${schema.spec.functionalGate.enabled}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: AnalysisTemplate
@@ -379,17 +404,17 @@ spec:
                       spec:
                         containers:
                           - name: test
-                            image: ${schema.spec.functionalGate.?image.orValue("httpd:alpine")}
+                            image: ${schema.spec.functionalGate.image}
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "wget -qO- http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ | grep -q '${schema.spec.functionalGate.?extraArgs.orValue(\"\")}'"
+                              - "wget -qO- http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ | grep -q '${schema.spec.functionalGate.extraArgs}'"
                         restartPolicy: Never
                     backoffLimit: 0
 
     - id: performanceanalysis
       includeWhen:
-        - ${schema.spec.performanceGateEnabled}
+        - ${schema.spec.performanceGate.enabled}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: AnalysisTemplate
@@ -416,17 +441,17 @@ spec:
                       spec:
                         containers:
                           - name: test
-                            image: ${schema.spec.performanceGate.?image.orValue("httpd:alpine")}
+                            image: ${schema.spec.performanceGate.image}
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.?extraArgs.orValue(\"160\")} ] && exit 0 || exit 1"
+                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
                         restartPolicy: Never
                     backoffLimit: 0
 
     - id: metricsanalysis
       includeWhen:
-        - ${schema.spec.metricsEnabled}
+        - ${schema.spec.metrics.enabled}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: AnalysisTemplate
@@ -469,7 +494,7 @@ spec:
 
     - id: benchmarkconfig
       includeWhen:
-        - ${schema.spec.performanceGateEnabled}
+        - ${schema.spec.performanceGate.enabled}
       template:
         apiVersion: v1
         kind: ConfigMap
