@@ -149,6 +149,8 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
     devlake_encryption_secret = local.devlake_encryption_secret
     devlake_mysql_password    = local.devlake_mysql_password
     grafana_mysql_password    = local.grafana_mysql_password
+    amp_endpoint_url          = module.managed_service_prometheus.workspace_prometheus_endpoint
+    amp_region                = each.value.region
   })
 }
 

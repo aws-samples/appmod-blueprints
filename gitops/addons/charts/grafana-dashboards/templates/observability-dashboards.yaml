@@ -10,7 +10,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/infrastructure/cluster.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/infrastructure/cluster.json"
 ---
 # Namespace Workloads Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -23,7 +23,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/infrastructure/namespace-workloads.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/infrastructure/namespace-workloads.json"
 ---
 # Node Exporter Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -36,7 +36,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/infrastructure/node-exporter.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/infrastructure/nodeexporter-nodes.json"
 ---
 # Nodes Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -49,7 +49,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/infrastructure/nodes.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/infrastructure/nodes.json"
 ---
 # Workloads Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -62,7 +62,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/infrastructure/workloads.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/infrastructure/workloads.json"
 ---
 # Kubelet Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -75,7 +75,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/infrastructure/kubelet.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/infrastructure/kubelet.json"
 ---
 # Java/JMX Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -88,7 +88,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/java/default.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/java/default.json"
 ---
 # NGINX Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -101,7 +101,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/nginx/default.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/nginx/default.json"
 ---
 # API Server Basic Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -114,7 +114,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/apiserver/basic.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/apiserver/basic.json"
 ---
 # API Server Advanced Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -127,7 +127,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/apiserver/advanced.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/apiserver/advanced.json"
 ---
 # API Server Troubleshooting Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -140,4 +140,4 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/terraform-aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/apiserver/troubleshooting.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/apiserver/troubleshooting.json"
