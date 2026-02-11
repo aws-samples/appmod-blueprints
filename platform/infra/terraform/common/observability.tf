@@ -111,7 +111,7 @@ resource "aws_prometheus_scraper" "peeks-scraper" {
   for_each = { for k, v in local.spoke_clusters : k => v if try(v.addons.enable_prometheus_scraper, false) }
   source {
     eks {
-      cluster_arn        = each.value.name
+      cluster_arn        = data.aws_eks_cluster.clusters[each.key].arn
       subnet_ids         = data.aws_eks_cluster.clusters[each.key].vpc_config[0].subnet_ids
       security_group_ids = concat([data.aws_eks_cluster.clusters[each.key].vpc_config[0].cluster_security_group_id], tolist(data.aws_eks_cluster.clusters[each.key].vpc_config[0].security_group_ids))
     }
