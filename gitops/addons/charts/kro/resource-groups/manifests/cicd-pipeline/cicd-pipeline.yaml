@@ -19,6 +19,7 @@ spec:
        clusterName: string
        resourcePrefix: string | default="peeks"
        accountId: string
+       deployClusterName: string | default="peeks-spoke-dev"
       application:
        name: string
        dockerfilePath: string | default="."
@@ -249,6 +250,13 @@ spec:
                  {
                    "Effect": "Allow",
                    "Action": [
+                     "eks:DescribeCluster"
+                   ],
+                   "Resource": "arn:aws:eks:${schema.spec.aws.region}:*:cluster/${schema.spec.aws.deployClusterName}"
+                 },
+                 {
+                   "Effect": "Allow",
+                   "Action": [
                      "ecr:BatchCheckLayerAvailability",
                      "ecr:GetDownloadUrlForLayer",
                      "ecr:BatchGetImage",
@@ -344,6 +352,35 @@ spec:
              Application: ${schema.spec.application.name}
              Component: cicd-pipeline
              ManagedBy: kro
+
+    # Access Entry
+    - id: accessentry
+      readyWhen:
+       - ${accessentry.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          name: "${schema.spec.name}-${schema.spec.aws.deployClusterName}-access-entry"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: CICDPipeline
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.aws.region}
+        spec:
+          clusterName: "${schema.spec.aws.deployClusterName}"
+          accessPolicies:
+            - accessScope:
+                type: "cluster"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          principalARN: "${iamrole.status.ackResourceMetadata.arn}"
+          type: STANDARD
+
 
     # Service Account - minimal required permissions for CI/CD operations
     - id: serviceaccount
@@ -498,7 +535,7 @@ spec:
        rules:
           - apiGroups: [""]
             resources: ["secrets"]
-            resourceNames: ["fleet-secret-fleet-peeks-spoke-dev"]
+            resourceNames: ["fleet-secret-fleet-${schema.spec.aws.deployClusterName}"]
             verbs: ["get", "list"]
 
     # ClusterRoleBinding for ArgoCD access
@@ -715,7 +752,7 @@ spec:
 
                            # Install kubectl
                            yum update -y && yum install -y jq
-                           curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
+                           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
                            chmod +x kubectl && mv kubectl /usr/local/bin/
 
                            # Get ECR login token
@@ -851,7 +888,7 @@ spec:
 
                      # Install jq and kubectl
                      yum update -y && yum install -y jq
-                     curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
+                     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
                      chmod +x kubectl && mv kubectl /usr/local/bin/
 
                      # Get ECR login token
@@ -925,7 +962,7 @@ spec:
                      apk add curl jq
                      
                      # Install kubectl
-                     curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
+                     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
                      chmod +x kubectl && mv kubectl /usr/local/bin/
 
                      # Get configuration from ConfigMap
@@ -1190,7 +1227,6 @@ spec:
                - name: git-token
                - name: repo-name
                - name: image-tag
-                 value: '{{workflow.creationTimestamp.Y}}{{workflow.creationTimestamp.m}}{{workflow.creationTimestamp.d}}-{{workflow.uid}}'
                - name: dockerfile-path
                  value: ${schema.spec.application.dockerfilePath}
                - name: deployment-path
@@ -1439,26 +1475,31 @@ spec:
               - name: body
               - name: appname
                 value: ${schema.spec.application.name}
-              - name: kubeconf-name
-                value: ${schema.spec.application.name}-kubeconfig
+              - name: namespace
+                value: ${schema.spec.namespace}
+              - name: target-cluster-name
+                value: ${schema.spec.aws.deployClusterName}
+              - name: target-cluster-region
+                value: ${schema.spec.aws.region}
+              - name: target-role-arn
+                value: ${iamrole.status.ackResourceMetadata.arn}
           templates:
             - name: handle-rollout-check-and-process-deploy
               steps:
-                # - - name: check-rollout
-                #     template: check-rollout-status
-                #     arguments:
-                #       parameters:
-                #         - name: namespace
-                #           value: team-"{{workflow.parameters.appname}}"
-                #         - name: body
-                #           value: "{{workflow.parameters.body}}"
+                - - name: check-rollout
+                    template: check-rollout-status
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: team-"{{workflow.parameters.appname}}"
+                        - name: body
+                          value: "{{workflow.parameters.body}}"
                 - - name: process-and-send-deployment
                     template: process-deployment
                     arguments:
                       parameters:
                         - name: status
-                          value: "SUCCESS"
-                #          value: "{{steps.check-rollout.outputs.result}}"
+                          value: "{{steps.check-rollout.outputs.result}}"
                         - name: body
                           value: "{{workflow.parameters.body}}"
                         - name: url
@@ -1474,41 +1515,26 @@ spec:
                 retryPolicy: "Always"
                 backoff:
                   duration: "10s"
-                  factor: 1
-                  maxDuration: "30s"
               container:
                 image: amazon/aws-cli:latest
-                volumeMounts:
-                - name: kubeconfig
-                  mountPath: /etc/kubeconfig/config
-                  subPath: config
-                  readOnly: true
                 command: [/bin/bash, -c]
                 args:
                 - |
-                  curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
+                  aws eks update-kubeconfig \
+                    --name "{{workflow.parameters.target-cluster-name}}" \
+                    --region "{{workflow.parameters.target-cluster-region}}" > /dev/null
+
+                  curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
                   chmod +x kubectl && mv kubectl /usr/local/bin/
 
-                  mkdir -p ~/.kube
-                  cp /etc/kubeconfig/config ~/.kube/config
-                  
-                  SEARCH_WORD="{{workflow.parameters.appname}}"
-                  COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after | .[0:7]')
-    
-                  ROLLOUT_NAME=$(kubectl --as=$SA get rollout -n "{{inputs.parameters.namespace}}" -o json | \
-                    jq -r --arg WORD "$SEARCH_WORD" '.items[] | select(.metadata.name | contains($WORD)) | .metadata.name')
-    
-                  if [ -z "$ROLLOUT_NAME" ]; then
-                    echo "No rollout found containing word: $SEARCH_WORD"
-                    exit 1
-                  fi
-    
-                  CURRENT_IMAGE=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
+                  COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after')
+
+                  ROLLOUT_NAME=$(kubectl get rollout -n "{{inputs.parameters.namespace}}" -o jsonpath='{.items[0].metadata.name}')
+                  CURRENT_IMAGE=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
                   CURRENT_TAG=$(echo $CURRENT_IMAGE | awk -F ":" '{print $2}')
-    
+
                   if [[ "$CURRENT_TAG" == *"$COMMIT_HASH"* ]]; then
-                    phase=$(kubectl --as=$SA get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
-                    
+                    phase=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
                     if [ "$phase" = "Healthy" ]; then
                       echo "SUCCESS"
                       exit 0
@@ -1517,13 +1543,9 @@ spec:
                       exit 0
                     fi
                   fi
-    
+
                   echo "Still waiting for rollout to complete..."
                   exit 1
-              volumes:
-                - name: kubeconfig
-                  configMap:
-                    name: "{{workflow.parameters.appname}}-kubeconfig"
     
             - name: process-deployment
               inputs:
@@ -1578,6 +1600,7 @@ spec:
         metadata:
           name: ${schema.spec.name}-dora-incident-workflow
         spec:
+          entrypoint: process-incident
           arguments:
             parameters:
               - name: body
@@ -1610,9 +1633,9 @@ spec:
                     type: "INCIDENT",
                     status: (if .object_attributes.state == "opened" then "TODO" else "DONE" end),
                     originalStatus: "TODO",
-                    createdDate: .object_attributes.created_at,
-                    updatedDate: .object_attributes.updated_at,
-                    resolutionDate: (if .object_attributes.state == "closed" then .object_attributes.closed_at else null end),
+                    createdDate: (.object_attributes.created_at | sub(" UTC$"; "Z") | sub(" "; "T")),
+                    updatedDate: (.object_attributes.updated_at | sub(" UTC$"; "Z") | sub(" "; "T")),
+                    resolutionDate: (if .object_attributes.state == "closed" then (.object_attributes.closed_at | sub(" UTC$"; "Z") | sub(" "; "T")) else null end),
                     priority: "",
                     severity: .object_attributes.severity,
                     creatorId: .user.id,
@@ -1633,6 +1656,7 @@ spec:
         metadata:
           name: ${schema.spec.name}-dora-pull-request-workflow
         spec:
+          entrypoint: process-pull-request
           arguments:
             parameters:
               - name: body
@@ -1663,10 +1687,12 @@ spec:
                     displayTitle: .object_attributes.title,
                     description: .object_attributes.description,
                     status: (if .object_attributes.state == "opened" then "OPEN" elif .object_attributes.state == "merged" then "MERGED" else "CLOSED" end),
-                    createdDate: .object_attributes.created_at,
-                    updatedDate: .object_attributes.updated_at,
-                    closedDate: (if .object_attributes.state == "closed" then .object_attributes.updated_at),
-                    mergedDate: (if .object_attributes.state == "merged" then .object_attributes.updated_at),
+                    createdDate: (.object_attributes.created_at | sub(" UTC$"; "Z") | sub(" "; "T")),
+                    updatedDate: (.object_attributes.updated_at | sub(" UTC$"; "Z") | sub(" "; "T")),
+                    closedDate: (if .object_attributes.state == "closed" then (.object_attributes.updated_at | sub(" UTC$"; "Z") | sub(" "; "T")) else null end),
+                    mergedDate: (if .object_attributes.state == "merged" then (.object_attributes.updated_at | sub(" UTC$"; "Z") | sub(" "; "T")) else null end),
+                    mergeCommitSha: (if .object_attributes.state == "merged" then .object_attributes.merge_commit_sha else null end),
+                    isDraft: .object_attributes.draft,
                     type: "PR",
                     url: .object_attributes.url,
                     authorId: .user.id,
@@ -1677,10 +1703,10 @@ spec:
                     additions: 0,
                     deletions: 0,
                     changedFiles: 0,
-                    baseBranch: .object_attributes.source_branch,
-                    headBranch: .object_attributes.target_branch,
+                    baseRef: .object_attributes.target_branch,
+                    headRef: .object_attributes.source_branch,
                     repoId: .project.id,
-                    repoName: .repository.name
+                    headRepoId: .repository.name
                   }')
                   echo "====Transformed Payload===="
                   echo "$PAYLOAD" | jq '.'
@@ -1747,14 +1773,11 @@ spec:
             - name: url
               value: http://devlake-lake.devlake.svc.cluster.local:8080
             - name: secretname
-              value: fleet-secret-fleet-peeks-spoke-dev
+              value: "fleet-secret-fleet-${schema.spec.aws.deployClusterName}"
           templates:
           - name: dora-provisioner
             dag:
               tasks:
-                - name: kubeconf-init
-                  template: get-cluster-config
-
                 - name: devlake-init
                   template: devlake-init
                   arguments:
@@ -1776,59 +1799,7 @@ spec:
                   template: devlake-generate-data
                   depends: "create-devlake-webhook-secret-and-cm"
 
-          - name: get-cluster-config
-            container:
-              image: amazon/aws-cli:latest
-              command: [/bin/bash, -c]
-              args:
-              - |
-                # Install kubectl and jq
-                yum install -y jq
-                curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
-                chmod +x kubectl && mv kubectl /usr/local/bin/
-
-                SERVER=$(kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.server}' | base64 -d)
-                CONFIG_DATA=$(kubectl get secret {{workflow.parameters.secretname}} -n argocd -o jsonpath='{.data.config}' | base64 -d)
-
-                CLUSTER_NAME=$(echo "$CONFIG_DATA" | jq -r '.awsAuthConfig.clusterName')
-                CA_DATA=$(echo "$CONFIG_DATA" | jq -r '.tlsClientConfig.caData')
-
-                KUBECONFIG_CONTENT=$(cat <<EOF
-                apiVersion: v1
-                kind: Config
-                clusters:
-                - name: target-cluster
-                  cluster:
-                    certificate-authority-data: $CA_DATA
-                    server: $SERVER
-                users:
-                - name: target-user
-                  user:
-                    exec:
-                      apiVersion: client.authentication.k8s.io/v1beta1
-                      command: aws
-                      args:
-                      - eks
-                      - get-token
-                      - --cluster-name
-                      - $CLUSTER_NAME
-                contexts:
-                - name: target-context
-                  context:
-                    cluster: target-cluster
-                    user: target-user
-                current-context: target-context
-                EOF
-                )
-
-                kubectl create configmap {{workflow.parameters.appname}}-kubeconfig \
-                  -n {{workflow.parameters.namespace}} \
-                  --from-literal=config="$KUBECONFIG_CONTENT" \
-                  --dry-run=client -o yaml | kubectl apply -f -
-              env:
-              - name: AWS_DEFAULT_REGION
-                value: ${schema.spec.aws.region})
-        
+          
           - name: devlake-init
             inputs:
               parameters:
@@ -2208,7 +2179,7 @@ spec:
 
                        # Install kubectl
                        yum update -y && yum install -y jq
-                       curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -L -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
+                       curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
                        chmod +x kubectl && mv kubectl /usr/local/bin/
 
                        # Wait for ECR repositories to be fully ready
@@ -2345,6 +2316,8 @@ spec:
                  value: 'https://${schema.spec.gitlab.hostname}/${schema.spec.gitlab.username}/${schema.spec.application.name}.git'
                - name: git-revision
                  value: 'main'
+               - name: image-tag
+                 value: 'initial'
                - name: git-username
                  value: ${schema.spec.gitlab.username}
                - name: git-token
@@ -2544,6 +2517,8 @@ spec:
                                value: 'placeholder-will-use-env-var'
                              - name: repo-name
                                value: '${schema.spec.application.name}'
+                             - name: image-tag
+                               value: 'sha'
                              - name: dockerfile-path
                                value: ${schema.spec.application.dockerfilePath}
                              - name: deployment-path
@@ -2553,6 +2528,11 @@ spec:
                          dependencyName: gitlab-webhook
                          dataKey: body.ref
                        dest: spec.arguments.parameters.1.value
+                       operation: overwrite
+                     - src:
+                         dependencyName: gitlab-webhook
+                         dataKey: body.after
+                       dest: spec.arguments.parameters.5.value
                        operation: overwrite
              - template:
                  name: gitlab-dora-trigger
@@ -2631,7 +2611,7 @@ spec:
                        spec:
                          serviceAccountName: ${serviceaccount.metadata.name}
                          workflowTemplateRef:
-                           name: ${doraincident.metadata.name}
+                           name: ${schema.spec.name}-dora-pull-request-workflow
                          arguments:
                            parameters:
                              - name: body
