@@ -33,6 +33,36 @@ spec:
           name: ${schema.spec.serviceAccount}
           namespace: ${schema.spec.namespace}
     
+    # Kubernetes Role for Argo Workflows
+    - id: workflowRole
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: ${schema.spec.serviceAccount}-workflow-role
+          namespace: ${schema.spec.namespace}
+        rules:
+        - apiGroups: ["argoproj.io"]
+          resources: ["workflowtaskresults"]
+          verbs: ["create", "patch"]
+    
+    # Kubernetes RoleBinding
+    - id: workflowRoleBinding
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: ${schema.spec.serviceAccount}-workflow-binding
+          namespace: ${schema.spec.namespace}
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: ${schema.spec.serviceAccount}-workflow-role
+        subjects:
+        - kind: ServiceAccount
+          name: ${schema.spec.serviceAccount}
+          namespace: ${schema.spec.namespace}
+    
     # IAM Policy for S3 access
     - id: s3Policy
       template:

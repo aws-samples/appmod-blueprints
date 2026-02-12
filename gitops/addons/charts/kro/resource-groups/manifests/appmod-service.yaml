@@ -9,6 +9,10 @@ spec:
   schema:
     apiVersion: v1alpha1
     kind: AppmodService
+    types:
+      EnvVar:
+        name: string
+        value: string
     spec:
       image: string
       image_name: string
@@ -18,9 +22,9 @@ spec:
       serviceAccount: string | default="default"
       clusterName: string
       accountId: string | default=""
-      appPath: string | default="/"
       envName: string | default="PRODUCTION"
-      domain: string | default="*.elb.us-west-2.amazonaws.com"
+      apiBaseUrl: string | default=""
+      env: "[]EnvVar | default=[]"
       components:
         dynamodb:
           enabled: boolean | default=false
@@ -30,6 +34,7 @@ spec:
           sortKey: string | default="sort_key"
           sortKeyType: string | default="S"
       ingress:
+        host: string | default="*.elb.us-west-2.amazonaws.com"
         enabled: boolean | default=false
         path: string | default="/"
         rewrite: boolean | default=true
@@ -262,9 +267,11 @@ spec:
                   ports:
                     - containerPort: ${schema.spec.targetPort}
                   env:
-                    - name: "APP_ENV"
+                    - name: APP_ENV
                       value: ${schema.spec.envName}
-                    - name: "TABLE_NAME"
+                    - name: API_BASE_URL
+                      value: ${schema.spec.apiBaseUrl}
+                    - name: TABLE_NAME
                       value: ${schema.spec.components.dynamodb.tableName}
 
     - id: service
@@ -334,9 +341,10 @@ spec:
         spec:
           ingressClassName: nginx
           rules:
-            - http:
+            - host: ${schema.spec.ingress.host}
+              http:
                 paths:
-                  - path: "${schema.spec.appPath + \"(/|$)(.*)\"}"
+                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
                     pathType: ImplementationSpecific
                     backend:
                       service:
@@ -366,9 +374,10 @@ spec:
         spec:
           ingressClassName: nginx
           rules:
-            - http:
+            - host: ${schema.spec.ingress.host}
+              http:
                 paths:
-                  - path: "${schema.spec.appPath + \"(.*)\"}"
+                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
                     pathType: ImplementationSpecific
                     backend:
                       service:
@@ -442,7 +451,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "wget -qO- http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ | grep -q '${schema.spec.functionalGate.extraArgs}'"
+                              - "wget -qO- http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.ingress.path}/ | grep -q '${schema.spec.functionalGate.extraArgs}'"
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -479,7 +488,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
+                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.ingress.path}/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
                         restartPolicy: Never
                     backoffLimit: 0
 

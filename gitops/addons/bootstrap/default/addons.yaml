@@ -739,7 +739,7 @@ argo-events:
   namespace: argo-events
   chartName: argo-events
   chartRepository: https://argoproj.github.io/argo-helm
-  defaultVersion: '2.4.17'
+  defaultVersion: '2.4.20'
   selector:
     matchExpressions:
       - key: enable_argo_events

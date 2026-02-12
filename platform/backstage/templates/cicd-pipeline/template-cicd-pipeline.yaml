@@ -89,6 +89,7 @@ spec:
           aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
+          ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
           git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
           cluster_name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
           aws_resource_prefix: peeks
