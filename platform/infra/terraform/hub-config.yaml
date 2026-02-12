@@ -104,7 +104,7 @@ clusters:
       enable_kube_state_metrics: true
       enable_prometheus_node_exporter: true
       enable_prometheus_scraper: true
-      enable_cw_prometheus: false
+      enable_cw_prometheus: true
       enable_mutli_acct: false
       enable_ingress_class_alb: false
       enable_ingress_nginx: true
@@ -152,7 +152,7 @@ clusters:
       enable_kube_state_metrics: true
       enable_prometheus_node_exporter: true
       enable_prometheus_scraper: true
-      enable_cw_prometheus: false
+      enable_cw_prometheus: true
       enable_mutli_acct: false
       enable_ingress_class_alb: false
       enable_ingress_nginx: true
