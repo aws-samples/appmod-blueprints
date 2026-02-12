@@ -773,6 +773,7 @@ ingress-nginx:
         annotations:
           service.beta.kubernetes.io/aws-load-balancer-name: '{{.metadata.annotations.ingress_name}}'
           service.beta.kubernetes.io/aws-load-balancer-security-groups: '{{.metadata.annotations.ingress_security_groups}}'
+          service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: 'true'
 
 gitlab:
   enabled: false
