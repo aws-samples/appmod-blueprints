@@ -32,7 +32,7 @@ kube-state-metrics:
 prometheus-node-exporter:
   enabled: true
 cw-prometheus:
-  enabled: true
+  enabled: false
 
 ack-iam:
   enabled: true
