@@ -1,47 +1,29 @@
-apiVersion: core.oam.dev/v1beta1
-kind: Application
+apiVersion: kro.run/v1alpha1
+kind: AppmodService
 metadata:
-  name: java-application
+  name: java-webservice
+  namespace: team-java
 spec:
-  components:
-    - name: java-webservice
-      type: appmod-service
-      properties:
-        image: <image>
-        image_name: java-app
-        port: 8080
-        targetPort: 8080
-        replicas: 2
-        appPath: "/java-app"
-        env:
-          - name: APP_ENV
-            value: "PROD"
-        readinessProbe:
-          httpGet:
-            path: /java-app/
-            port: 8080
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 5
-        resources:
-          requests:
-            cpu: "500m"
-            memory: "256Mi"
-          limits:
-            memory: "512Mi"
-        functionalGate:
-          pause: "20s"
-          image: "httpd:alpine"
-          extraArgs: "orange"
-        # Skip performance gate in production to avoid affecting real user traffic
-        # performanceGate:
-        #   pause: "10s"
-        #   image: "httpd:alpine"
-        #   extraArgs: "160"
-      traits:
-        - type: path-based-ingress
-          properties:
-            domain: "*.elb.us-west-2.amazonaws.com"
-            rewritePath: true
-            http:
-              /java-app: 8080
+  image: <image>
+  image_name: java-app
+  port: 8080
+  targetPort: 8080
+  clusterName: peeks-spoke-dev
+  envName: "PROD"
+  env: []
+  ingress:
+    enabled: true
+    path: /java-app
+    rewrite: true
+  functionalGate:
+    enabled: true
+    pause: "10s"
+    image: "httpd:alpine"
+    extraArgs: "orange"
+  performanceGate:
+    enabled: true
+    pause: "10s"
+    image: "httpd:alpine"
+    extraArgs: "160"
+  metrics:
+    enabled: true

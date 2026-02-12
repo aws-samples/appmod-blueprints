@@ -1,8 +1,8 @@
 # apiVersion: kro.run/v1alpha1
 # kind: AppmodService
 # metadata:
-#   name: java-application
-#   namespace: default
+#   name: java-webservice
+#   namespace: java
 # spec:
 #   image: 096337013420.dkr.ecr.us-west-2.amazonaws.com/peeks/java:20251114-3fedf668-d619-4ad0-910f-8add258e2372
 #   image_name: java-app
