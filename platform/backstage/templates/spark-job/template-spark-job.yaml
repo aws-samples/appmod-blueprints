@@ -33,6 +33,9 @@ spec:
         values:
           name: ${{parameters.name}}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
+          argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
+          ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
+          gituser: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
     - id: publish
       name: Publishing to GitLab repository
       action: publish:gitlab

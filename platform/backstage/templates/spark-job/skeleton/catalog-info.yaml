@@ -19,7 +19,7 @@ metadata:
     - url: https://${{values.argocd_hostname}}/applications/argocd/${{values.name}}
       title: ArgoCD Application
       icon: argocd
-    - url: https://${{values.argocd_hostname}}/argo-workflows/workflows/argo/${{values.name}}
+    - url: https://${{values.ingress_hostname}}/argo-workflows/workflows/argo/${{values.name}}
       title: Argo Workflows
       icon: argo
 spec:
