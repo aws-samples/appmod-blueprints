@@ -1,24 +1,24 @@
-apiVersion: core.oam.dev/v1beta1
-kind: Application
+apiVersion: kro.run/v1alpha1
+kind: AppmodService
 metadata:
-  name: next-js-application
+  name: next-js-app
+  namespace: team-nextjs
 spec:
+  image: public.ecr.aws/a0m0j3q7/modernengg/nextjs-ui:latest
+  image_name: next-js-app
+  replicas: 1
+  port: 8080
+  targetPort: 8080
+  serviceAccount: nextjs-service-account
+  clusterName: peeks-spoke-dev
+  accountId: "785349965618"
+  env:
+    - name: API_BASE_URL
+      value: "http://rust-microservice.team-rust.svc.cluster.local:80"
   components:
-    - name: next-js
-      type: appmod-service
-      properties:
-        image: public.ecr.aws/a0m0j3q7/modernengg/nextjs-ui:latest
-        image_name: next-js-app
-        port: 8080
-        replicas: 1
-        env:
-          - name: API_BASE_URL
-            value: "http://rust-app.team-rust.svc.cluster.local:80"
-      traits:
-        - type: path-based-ingress
-          properties:
-            domain: "*.elb.us-west-2.amazonaws.com"
-            rewritePath: false
-            http:
-              /unicorn: 8080
-        
+    dynamodb:
+      enabled: false
+  ingress:
+    enabled: true
+    path: /unicorn
+    rewrite: false

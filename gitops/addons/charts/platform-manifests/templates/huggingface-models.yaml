@@ -22,7 +22,6 @@ spec:
   modelId: {{ .modelId | quote }}
   s3Bucket: {{ printf "%s-ray-models-%v" $resourcePrefix $accountId | quote }}
   namespace: {{ .namespace | default "ray-system" }}
-  serviceAccount: {{ .serviceAccount | default "model-download-sa" }}
   accountId: {{ $accountId | quote }}
   region: {{ $region | quote }}
   clusterName: {{ $clusterName | quote }}

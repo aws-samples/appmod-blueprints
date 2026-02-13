@@ -1,19 +1,23 @@
-apiVersion: core.oam.dev/v1beta1
-kind: Application
+apiVersion: kro.run/v1alpha1
+kind: AppmodService
 metadata:
   name: progressive-app
+  namespace: team-java
 spec:
+  image: argoproj/rollouts-demo:yellow
+  image_name: rollout-demo
+  replicas: 2
+  port: 8080
+  targetPort: 8080
+  serviceAccount: progressive-service-account
+  clusterName: peeks-spoke-dev
+  env:
+    - name: APP_ENV
+      value: "PRODUCTION"
   components:
-    - name: progressive-demo
-      type: appmod-service
-      properties:
-        image: argoproj/rollouts-demo:blue
-        image_name: rollout-demo  
-        port: 8080
-      traits:
-        - type: path-based-ingress
-          properties:
-            domain: "*.elb.us-west-2.amazonaws.com" 
-            rewritePath: true
-            http:
-              /progressive: 8080
+    dynamodb:
+      enabled: false
+  ingress:
+    enabled: true
+    path: /progressive
+    rewrite: true

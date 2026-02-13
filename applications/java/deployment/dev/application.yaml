@@ -4,25 +4,29 @@ metadata:
   name: java-webservice
   namespace: team-java
 spec:
-  image: 073931178476.dkr.ecr.us-west-2.amazonaws.com/peeks/java:initial
+  image: <image>
   image_name: java-app
+  replicas: 2
   port: 8080
   targetPort: 8080
+  serviceAccount: java-service-account
   clusterName: peeks-spoke-dev
-  envName: "DEV"
-  env: []
+  env:
+    - name: APP_ENV
+      value: "DEV"
+  components:
+    dynamodb:
+      enabled: false
   ingress:
     enabled: true
     path: /java-app
     rewrite: true
   functionalGate:
     enabled: true
-    pause: "10s"
     image: "httpd:alpine"
     extraArgs: "red"
   performanceGate:
     enabled: true
-    pause: "10s"
     image: "httpd:alpine"
     extraArgs: "160"
   metrics:

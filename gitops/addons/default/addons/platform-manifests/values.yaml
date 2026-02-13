@@ -11,28 +11,13 @@ customNodepools:
 huggingfaceModels:
   - name: gpt2-neuron
     modelId: "gpt2"
-    s3Bucket: ""  # Will be set from global values
     namespace: "ray-system"
-    serviceAccount: "model-download-sa"
-    accountId: ""  # Will be set from global values
-    region: ""  # Will be set from global values
-    clusterName: ""  # Will be set from global values
   
   - name: mistral-7b-neuron
     modelId: "mistralai/Mistral-7B-v0.1"
-    s3Bucket: ""
     namespace: "ray-system"
-    serviceAccount: "model-download-sa"
-    accountId: ""
-    region: ""
-    clusterName: ""
   
   - name: tinyllama
     modelId: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    s3Bucket: ""
     namespace: "ray-system"
-    serviceAccount: "model-download-sa"
-    accountId: ""
-    region: ""
-    clusterName: ""
 

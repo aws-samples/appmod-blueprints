@@ -6,23 +6,27 @@ metadata:
 spec:
   image: <image>
   image_name: java-app
+  replicas: 2
   port: 8080
   targetPort: 8080
+  serviceAccount: java-service-account
   clusterName: peeks-spoke-dev
-  envName: "PROD"
-  env: []
+  env:
+    - name: APP_ENV
+      value: "PROD"
+  components:
+    dynamodb:
+      enabled: false
   ingress:
     enabled: true
     path: /java-app
     rewrite: true
   functionalGate:
     enabled: true
-    pause: "10s"
     image: "httpd:alpine"
     extraArgs: "orange"
   performanceGate:
     enabled: true
-    pause: "10s"
     image: "httpd:alpine"
     extraArgs: "160"
   metrics:

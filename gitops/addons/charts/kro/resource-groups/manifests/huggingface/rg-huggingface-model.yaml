@@ -10,36 +10,18 @@ spec:
       modelId: string              # e.g., "meta-llama/Llama-2-7b-hf"
       s3Bucket: string             # Target S3 bucket name
       namespace: string            # Kubernetes namespace
-      serviceAccount: string       # Service account name
       accountId: string            # AWS account ID
       region: string               # AWS region
       clusterName: string          # EKS cluster name
   
   resources:
-    # Namespace
-    - id: appNamespace
-      template:
-        apiVersion: v1
-        kind: Namespace
-        metadata:
-          name: ${schema.spec.namespace}
-    
-    # Service Account
-    - id: serviceAccount
-      template:
-        apiVersion: v1
-        kind: ServiceAccount
-        metadata:
-          name: ${schema.spec.serviceAccount}
-          namespace: ${schema.spec.namespace}
-    
     # Kubernetes Role for Argo Workflows
     - id: workflowRole
       template:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
         metadata:
-          name: ${schema.spec.serviceAccount}-workflow-role
+          name: ${schema.metadata.name}-workflow-role
           namespace: ${schema.spec.namespace}
         rules:
         - apiGroups: ["argoproj.io"]
@@ -52,15 +34,15 @@ spec:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
         metadata:
-          name: ${schema.spec.serviceAccount}-workflow-binding
+          name: ${schema.metadata.name}-workflow-binding
           namespace: ${schema.spec.namespace}
         roleRef:
           apiGroup: rbac.authorization.k8s.io
           kind: Role
-          name: ${schema.spec.serviceAccount}-workflow-role
+          name: ${schema.metadata.name}-workflow-role
         subjects:
         - kind: ServiceAccount
-          name: ${schema.spec.serviceAccount}
+          name: ${schema.metadata.name}-sa
           namespace: ${schema.spec.namespace}
     
     # IAM Policy for S3 access
@@ -71,6 +53,8 @@ spec:
         metadata:
           name: ${schema.metadata.name}-s3-policy
           namespace: ${schema.spec.namespace}
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
         spec:
           name: ${schema.metadata.name}-s3-policy
           policyDocument: |
@@ -95,13 +79,15 @@ spec:
     # IAM Role
     - id: iamRole
       readyWhen:
-        - ${iamRole.status.conditions[0].status == "True"}
+        - ${iamRole.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       template:
         apiVersion: iam.services.k8s.aws/v1alpha1
         kind: Role
         metadata:
           name: ${schema.metadata.name}-role
           namespace: ${schema.spec.namespace}
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
         spec:
           name: ${schema.metadata.name}-role
           policyRefs:
@@ -137,8 +123,21 @@ spec:
         spec:
           clusterName: ${schema.spec.clusterName}
           namespace: ${schema.spec.namespace}
-          serviceAccount: ${schema.spec.serviceAccount}
+          serviceAccount: ${schema.metadata.name}-sa
           roleARN: ${iamRole.status.ackResourceMetadata.arn}
+    
+    # Service Account (created after PodIdentity)
+    - id: serviceAccount
+      readyWhen:
+        - ${serviceAccount.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: ${schema.metadata.name}-sa
+          namespace: ${schema.spec.namespace}
+          annotations:
+            eks.amazonaws.com/role-arn: ${podIdentity.spec.roleARN}
     
     # Argo Workflow for model download
     - id: downloadWorkflow
@@ -149,7 +148,7 @@ spec:
           name: ${schema.metadata.name}-download
           namespace: ${schema.spec.namespace}
         spec:
-          serviceAccountName: ${schema.spec.serviceAccount}
+          serviceAccountName: ${serviceAccount.metadata.name}
           entrypoint: download-and-upload
           
           templates:
