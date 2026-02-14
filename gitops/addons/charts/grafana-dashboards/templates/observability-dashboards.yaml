@@ -45,7 +45,7 @@ metadata:
   name: nodes-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Observability Accelerator Dashboards"
+  folder: "Platform Observability"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
@@ -58,7 +58,7 @@ metadata:
   name: workloads-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Observability Accelerator Dashboards"
+  folder: "Workload Observability"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
