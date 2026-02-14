@@ -71,7 +71,7 @@ metadata:
   name: kubelet-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Observability Accelerator Dashboards"
+  folder: "Platform Observability"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
@@ -84,7 +84,7 @@ metadata:
   name: java-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Observability Accelerator Dashboards"
+  folder: "Workload Observability"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
@@ -97,7 +97,7 @@ metadata:
   name: nginx-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Observability Accelerator Dashboards"
+  folder: "Workload Observability"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
