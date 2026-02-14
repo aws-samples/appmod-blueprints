@@ -6,7 +6,7 @@ metadata:
   name: cluster-grafanadashboard
   namespace: grafana-operator
 spec:
-  folder: "Observability Accelerator Dashboards"
+  folder: "Platform Observability"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
@@ -101,7 +101,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/nginx/default.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/nginx/nginx.json"
 ---
 # API Server Basic Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -114,7 +114,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/apiserver/basic.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/apiserver/apiserver-basic.json"
 ---
 # API Server Advanced Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -127,7 +127,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/apiserver/advanced.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/apiserver/apiserver-advanced.json"
 ---
 # API Server Troubleshooting Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
@@ -140,4 +140,4 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/apiserver/troubleshooting.json"
+  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/v0.2.0/artifacts/grafana-dashboards/eks/apiserver/apiserver-troubleshooting.json"
