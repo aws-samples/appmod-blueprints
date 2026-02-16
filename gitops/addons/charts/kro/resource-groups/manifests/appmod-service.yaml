@@ -9,7 +9,6 @@ spec:
   schema:
     apiVersion: v1alpha1
     kind: AppmodService
-    types:
     spec:
       image: string
       image_name: string
