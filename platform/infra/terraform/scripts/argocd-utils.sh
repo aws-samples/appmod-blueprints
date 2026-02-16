@@ -225,6 +225,62 @@ recover_crd_and_namespace_issues() {
     fi
 }
 
+# Verify critical resources actually exist in cluster
+verify_critical_resources() {
+    local app_name=$1
+    
+    # Only check platform-manifests-bootstrap apps
+    if [[ ! "$app_name" == *"platform-manifests-bootstrap"* ]]; then
+        return 0  # Skip other apps
+    fi
+    
+    # Get expected NodePool resources from app status
+    local expected_nodepools=$(kubectl get application "$app_name" -n argocd -o json 2>/dev/null | \
+        jq -r '.status.resources[]? | select(.kind == "NodePool") | .name' 2>/dev/null || echo "")
+    
+    if [ -z "$expected_nodepools" ]; then
+        return 0  # No NodePools expected
+    fi
+    
+    # Get cluster context from app destination
+    local cluster_context=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.spec.destination.name}' 2>/dev/null)
+    
+    if [ -z "$cluster_context" ]; then
+        return 0  # Can't determine cluster
+    fi
+    
+    # Check if NodePools actually exist in target cluster
+    local missing_nodepools=""
+    while read -r nodepool; do
+        if [ -n "$nodepool" ]; then
+            if ! kubectl get nodepool "$nodepool" --context "$cluster_context" >/dev/null 2>&1; then
+                missing_nodepools="$missing_nodepools $nodepool"
+            fi
+        fi
+    done <<< "$expected_nodepools"
+    
+    # If NodePools are missing, force recreation
+    if [ -n "$missing_nodepools" ]; then
+        print_warning "Critical resources missing for $app_name:$missing_nodepools"
+        print_info "Forcing hard refresh and sync to recreate missing resources..."
+        
+        # Clear operation state
+        kubectl patch application "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+        kubectl patch application "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+        
+        # Force hard refresh
+        kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+        sleep 5
+        
+        # Trigger sync with force flag
+        kubectl patch application "$app_name" -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{},"apply":{"force":true}},"prune":true}}}' 2>/dev/null || true
+        
+        return 1  # Signal that we fixed something
+    fi
+    
+    return 0  # Everything is fine
+}
+
 # Handle sync issues (revision conflicts and OutOfSync applications)
 handle_sync_issues() {
     # Get apps with revision conflicts OR OutOfSync/Missing status (often related issues)
@@ -269,6 +325,14 @@ handle_sync_issues() {
         echo "$outofsync_healthy" | while read -r app; do
             if [ -n "$app" ]; then
                 print_info "Syncing OutOfSync/Healthy application: $app"
+                
+                # Verify critical resources actually exist before syncing
+                if ! verify_critical_resources "$app"; then
+                    print_warning "Critical resources missing for $app, forced recreation initiated"
+                    sleep 5
+                    continue  # Skip normal sync, we already triggered force sync
+                fi
+                
                 refresh_argocd_app "$app"
                 sleep 1
                 sync_argocd_app "$app"
