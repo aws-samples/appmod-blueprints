@@ -162,10 +162,6 @@ main() {
       log_warning "Attempt $attempt failed, waiting ${delay}s before retry..."
       log_warning "Restarting Kyverno admission controller to fix potential webhook issues..."
       kubectl rollout restart deployment kyverno-admission-controller -n kyverno 2>/dev/null || true
-      log_warning "Restarting OpenTelemetry operators to fix potential webhook issues..."
-      for cluster in "${CLUSTER_NAMES[@]}"; do
-        kubectl rollout restart deployment opentelemetry-operator -n opentelemetry-operator-system --context $cluster 2>/dev/null || true
-      done
       sleep $delay
       delay=$((delay * 2))  # Exponential backoff
       attempt=$((attempt + 1))

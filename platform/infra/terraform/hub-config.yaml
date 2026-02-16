@@ -94,7 +94,7 @@ clusters:
       enable_kro: false # EKS Managed capability
       enable_kro_manifests: true
       enable_aws_efs_csi_driver: false
-      enable_aws_for_fluentbit: false
+      enable_aws_for_fluentbit: true
       enable_cert_manager: true
       enable_external_dns: false
       enable_opentelemetry_operator: false
@@ -102,10 +102,10 @@ clusters:
       enable_kyverno: false
       enable_kyverno_policy_reporter: false
       enable_kyverno_policies: false
-      enable_cni_metrics_helper: false
-      enable_kube_state_metrics: false
-      enable_prometheus_node_exporter: false
-      enable_prometheus_scraper: false
+      enable_cni_metrics_helper: true
+      enable_kube_state_metrics: true
+      enable_prometheus_node_exporter: true
+      enable_prometheus_scraper: true
       enable_cw_prometheus: false
       enable_mutli_acct: false
       enable_ingress_class_alb: false
@@ -143,7 +143,7 @@ clusters:
       enable_flux: true
       enable_metrics_server: true
       enable_aws_efs_csi_driver: false
-      enable_aws_for_fluentbit: false
+      enable_aws_for_fluentbit: true
       enable_cert_manager: true
       enable_external_dns: false
       enable_opentelemetry_operator: false
@@ -151,10 +151,10 @@ clusters:
       enable_kyverno: false
       enable_kyverno_policy_reporter: false
       enable_kyverno_policies: false
-      enable_cni_metrics_helper: false
-      enable_kube_state_metrics: false
-      enable_prometheus_node_exporter: false
-      enable_prometheus_scraper: false
+      enable_cni_metrics_helper: true
+      enable_kube_state_metrics: true
+      enable_prometheus_node_exporter: true
+      enable_prometheus_scraper: true
       enable_cw_prometheus: false
       enable_mutli_acct: false
       enable_ingress_class_alb: false

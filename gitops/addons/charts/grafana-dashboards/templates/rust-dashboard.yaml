@@ -4,7 +4,7 @@ metadata:
   name: rust-metrics-dashboard
   namespace: {{ .Values.namespace | default "grafana-operator" }}
 spec:
-  folder: "Observability Accelerator Dashboards"
+  folder: "Workload Observability"
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
