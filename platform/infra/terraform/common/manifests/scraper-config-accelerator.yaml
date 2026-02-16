@@ -43,7 +43,7 @@ scrape_configs:
     relabel_configs:
       - action: labelmap
         regex: __meta_kubernetes_node_label_(.+)
-      - replacement: kubernetes.default.svc.cluster.local:443
+      - replacement: kubernetes.default.svc:443
         target_label: __address__
       - regex: (.+)
         replacement: /api/v1/nodes/$${1}/proxy/metrics
@@ -65,7 +65,7 @@ scrape_configs:
     relabel_configs:
       - action: labelmap
         regex: __meta_kubernetes_node_label_(.+)
-      - replacement: kubernetes.default.svc.cluster.local:443
+      - replacement: kubernetes.default.svc:443
         target_label: __address__
       - regex: (.+)
         replacement: /api/v1/nodes/$${1}/proxy/metrics/cadvisor
