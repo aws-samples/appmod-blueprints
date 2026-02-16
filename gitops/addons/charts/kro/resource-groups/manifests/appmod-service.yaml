@@ -10,21 +10,17 @@ spec:
     apiVersion: v1alpha1
     kind: AppmodService
     types:
-      EnvVar:
-        name: string
-        value: string
     spec:
       image: string
       image_name: string
       replicas: integer | default=3
       port: integer | default=80
       targetPort: integer | default=8080
-      serviceAccount: string | default="default"
+      serviceAccount: string
       clusterName: string
       accountId: string | default=""
-      envName: string | default="PRODUCTION"
       apiBaseUrl: string | default=""
-      env: "[]EnvVar | default=[]"
+      env: "[]map[string]string | default=[{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]"
       components:
         dynamodb:
           enabled: boolean | default=false
@@ -206,7 +202,7 @@ spec:
         apiVersion: v1
         kind: ServiceAccount
         metadata:
-          name: ${schema.spec.serviceAccount}
+          name: ${schema.spec.?serviceAccount.orValue(schema.metadata.name)}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -261,14 +257,14 @@ spec:
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
-              serviceAccountName: ${schema.spec.serviceAccount}
+              serviceAccountName: ${schema.spec.?serviceAccount.orValue(schema.metadata.name)}
               containers:
                 - name: ${schema.spec.image_name}
                   image: ${schema.spec.image}
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: ${schema.spec.env}
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
 
     - id: rolloutWithGates
       includeWhen:
@@ -327,14 +323,14 @@ spec:
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
-              serviceAccountName: ${schema.spec.serviceAccount}
+              serviceAccountName: ${schema.spec.?serviceAccount.orValue(schema.metadata.name)}
               containers:
                 - name: ${schema.spec.image_name}
                   image: ${schema.spec.image}
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: ${schema.spec.env}
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
 
     - id: service
       template:
