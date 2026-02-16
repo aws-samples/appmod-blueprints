@@ -39,43 +39,53 @@ scrape_configs:
   - job_name: kubernetes-kubelet
     bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
     kubernetes_sd_configs:
-      - role: node
+    - role: node
     relabel_configs:
-      - action: labelmap
-        regex: __meta_kubernetes_node_label_(.+)
-      - replacement: kubernetes.default.svc:443
-        target_label: __address__
-      - regex: (.+)
-        replacement: /api/v1/nodes/$${1}/proxy/metrics
-        source_labels:
-          - __meta_kubernetes_node_name
-        target_label: __metrics_path__
+    - action: labelmap
+      regex: __meta_kubernetes_node_label_(.+)
+    - replacement: kubernetes.default.svc:443
+      target_label: __address__
+    - regex: (.+)
+      replacement: /api/v1/nodes/${1}/proxy/metrics
+      source_labels:
+      - __meta_kubernetes_node_name
+      target_label: __metrics_path__
     scheme: https
     scrape_interval: 60s
     scrape_timeout: 15s
     tls_config:
       ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
       insecure_skip_verify: true
+    metric_relabel_configs:
+    - source_labels:
+      - __name__
+      regex: kubelet_.*
+      action: keep
 
   # Kubelet cAdvisor metrics
-  - job_name: kubelet
+  - job_name: cadvisor
     bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
     kubernetes_sd_configs:
-      - role: node
+    - role: node
     relabel_configs:
-      - action: labelmap
-        regex: __meta_kubernetes_node_label_(.+)
-      - replacement: kubernetes.default.svc:443
-        target_label: __address__
-      - regex: (.+)
-        replacement: /api/v1/nodes/$${1}/proxy/metrics/cadvisor
-        source_labels:
-          - __meta_kubernetes_node_name
-        target_label: __metrics_path__
+    - action: labelmap
+      regex: __meta_kubernetes_node_label_(.+)
+    - replacement: kubernetes.default.svc:443
+      target_label: __address__
+    - regex: (.+)
+      replacement: /api/v1/nodes/$${1}/proxy/metrics/cadvisor
+      source_labels:
+      - __meta_kubernetes_node_name
+      target_label: __metrics_path__
     scheme: https
     tls_config:
       ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
       insecure_skip_verify: true
+    metric_relabel_configs:
+    - source_labels:
+      - __name__
+      regex: container_.*|machine_.*
+      action: keep
 
   # Kubernetes Scheduler metrics via EKS API
   - job_name: ksh-metrics
