@@ -792,6 +792,10 @@ gitlab:
       kind: Namespace
       jsonPointers:
         - /metadata/annotations/argocd.argoproj.io~1tracking-id
+    - group: ''
+      kind: Service
+      jsonPointers:
+        - /metadata/annotations/argocd.argoproj.io~1tracking-id
   valuesObject:
     domain_name: '{{.metadata.annotations.gitlab_domain_name}}'
     initial_root_password: '{{.metadata.annotations.ide_password}}'
