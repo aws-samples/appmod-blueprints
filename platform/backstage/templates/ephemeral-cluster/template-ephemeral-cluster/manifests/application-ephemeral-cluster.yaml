@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ${{values.name}}-ephemeral-cluster
+  namespace: argocd
+  labels:
+    cnoe.io/stackName: ${{values.name}}-ephemeral-cluster
+    cnoe.io/applicationName: ${{values.name}}-ephemeral-cluster-helm
+spec:
+  project: default
+  source:
+    chart: vcluster
+    repoURL: https://charts.loft.sh
+    targetRevision: 0.24.0
+    helm:
+      valuesObject:
+        sync:
+          fromHost:
+            nodes:
+              enabled: true
+            storageClasses:
+              enabled: true
+        controlPlane:
+          advanced:
+            virtualScheduler:
+              enabled: true
+          statefulSet:
+            persistence:
+              volumeClaim:
+                storageClass: "gp3"
+            scheduling:
+              podManagementPolicy: OrderedReady
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ${{values.name}}-ephemeral-cluster
+  syncPolicy:
+    automated: {}
+    syncOptions:
+    - CreateNamespace=true
