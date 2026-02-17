@@ -554,9 +554,10 @@ cni-metrics-helper:
   chartName: cni-metrics-helper
   chartRepository: https://aws.github.io/eks-charts
   defaultVersion: '1.19.2'
-  values:
+  valuesObject:
     env:
       AWS_CLUSTER_ID: '{{.metadata.annotations.aws_cluster_name}}'
+      AWS_REGION: '{{.metadata.annotations.aws_region}}'
   selector:
     matchExpressions:
       - key: enable_cni_metrics_helper

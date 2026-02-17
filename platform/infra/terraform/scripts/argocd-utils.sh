@@ -595,9 +595,11 @@ wait_for_argocd_apps_with_dependencies() {
     wait_for_remaining_apps_health
 }
 
+# Recover from stuck workflows
 recover_stuck_workflows() {
     local namespace=$1
     local max_age_minutes=${2:-15}
+    local workflows_deleted=false
     
     # Find workflows stuck in Running phase for more than max_age_minutes
     local stuck_workflows=$(kubectl get workflows -n "$namespace" -o json 2>/dev/null | \
@@ -612,10 +614,47 @@ recover_stuck_workflows() {
             if [ -n "$workflow" ]; then
                 print_warning "[$namespace] Deleting stuck workflow: $workflow (running > ${max_age_minutes}min)"
                 kubectl delete workflow "$workflow" -n "$namespace" --ignore-not-found=true 2>/dev/null || true
+                workflows_deleted=true
             fi
         done
+    fi
+    
+    # Find workflows in Error or Failed phase
+    local failed_workflows=$(kubectl get workflows -n "$namespace" -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.phase == "Error" or .status.phase == "Failed") | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$failed_workflows" ]; then
+        echo "$failed_workflows" | while read -r workflow; do
+            if [ -n "$workflow" ]; then
+                print_warning "[$namespace] Deleting failed workflow: $workflow (phase: Error/Failed)"
+                kubectl delete workflow "$workflow" -n "$namespace" --ignore-not-found=true 2>/dev/null || true
+                workflows_deleted=true
+            fi
+        done
+    fi
+    
+    # If workflows were deleted, trigger sync of applications that manage them
+    if [ "$workflows_deleted" = true ]; then
+        print_info "[$namespace] Workflows deleted, triggering application sync to recreate them"
+        
+        # Find applications that target this namespace
+        local apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r --arg ns "$namespace" \
+            '.items[] | select(.spec.destination.namespace == $ns) | .metadata.name' 2>/dev/null || echo "")
+        
+        if [ -n "$apps" ]; then
+            echo "$apps" | while read -r app; do
+                if [ -n "$app" ]; then
+                    print_info "[$namespace] Syncing application: $app"
+                    kubectl patch application "$app" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+                    sleep 1
+                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                fi
+            done
+        fi
         return 0
     fi
+    
     return 1
 }
 
