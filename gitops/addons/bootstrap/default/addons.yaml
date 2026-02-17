@@ -1121,7 +1121,7 @@ crossplane:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5' # Needs to be after external-secrets and before infrastructure provisioning
   namespace: crossplane-system
-  defaultVersion: '1.17.1'
+  defaultVersion: '2.0.2'
   selector:
     matchExpressions:
       - key: enable_crossplane
@@ -1133,7 +1133,7 @@ crossplane:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
-    args: ['--enable-environment-configs']
+    args: []
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
