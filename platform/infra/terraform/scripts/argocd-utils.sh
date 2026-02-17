@@ -364,6 +364,22 @@ handle_sync_issues() {
         done
     fi
     
+    # Handle Degraded applications (Synced but Degraded health)
+    local degraded_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.sync.status == "Synced" and .status.health.status == "Degraded") | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$degraded_apps" ]; then
+        echo "$degraded_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                print_info "Refreshing degraded application: $app"
+                refresh_argocd_app "$app" "true"
+                sleep 2
+                sync_argocd_app "$app"
+                sleep 2
+            fi
+        done
+    fi
+    
     # Check for CRD and namespace issues in failed apps
     local failed_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
         jq -r '.items[] | select(.status.operationState.phase == "Failed") | .metadata.name' 2>/dev/null || echo "")
