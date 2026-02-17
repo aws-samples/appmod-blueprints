@@ -64,7 +64,10 @@ stuck_apps_crd_annotations=$(kubectl get applications -n argocd -o json 2>/dev/n
         ((.status.conditions[]?.message // "") | contains("Too long: may not be more than 262144 bytes"))
     ) | "\(.metadata.name)|\(.status.health.status // "Unknown")|\(.status.sync.status // "Unknown")|\(.status.operationState.phase // "None")|\(.status.operationState.finishedAt // "none")|crd-annotations"' 2>/dev/null || echo "")
 
-stuck_apps=$(echo -e "$stuck_apps_time\n$stuck_apps_revision\n$stuck_apps_crd_annotations" | grep -v '^$' | sort -u)
+stuck_apps_degraded=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+    jq -r '.items[] | select(.status.sync.status == "Synced" and .status.health.status == "Degraded") | "\(.metadata.name)|\(.status.health.status)|\(.status.sync.status)|None|none|degraded"' 2>/dev/null || echo "")
+
+stuck_apps=$(echo -e "$stuck_apps_time\n$stuck_apps_revision\n$stuck_apps_crd_annotations\n$stuck_apps_degraded" | grep -v '^$' | sort -u)
 
 total_apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
 healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(.status.health.status == "Healthy" and .status.sync.status == "Synced")] | length')
@@ -88,6 +91,15 @@ print_info "Recovering stuck applications..."
 
 echo "$stuck_apps" | while IFS='|' read -r app health sync phase finished issue_type; do
     if [ -n "$app" ]; then
+        # Handle degraded applications
+        if [ "$issue_type" = "degraded" ]; then
+            echo "  → Refreshing degraded application: $app"
+            kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep 2
+            sync_argocd_app "$app"
+            continue
+        fi
+        
         # Handle CRD annotation size limit issues
         if [ "$issue_type" = "crd-annotations" ]; then
             echo "  → Fixing CRD annotation size limit for: $app"
