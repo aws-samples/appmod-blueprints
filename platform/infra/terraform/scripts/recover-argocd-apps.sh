@@ -23,23 +23,26 @@ done
 echo "----------------------------------------"
 echo ""
 
-# Check for pods in CrashLoopBackOff that need restart
-print_info "Checking for pods in CrashLoopBackOff..."
-crashloop_pods=$(kubectl get pods -A -o json 2>/dev/null | \
-    jq -r '.items[] | select(.status.containerStatuses[]? | select(.state.waiting.reason == "CrashLoopBackOff" and .restartCount > 50)) | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null || echo "")
-
-if [ -n "$crashloop_pods" ]; then
-    print_warning "Found pods in CrashLoopBackOff (>50 restarts), restarting:"
-    echo "$crashloop_pods" | while read pod; do
-        if [ -n "$pod" ]; then
-            namespace="${pod%%/*}"
-            podname="${pod##*/}"
-            echo "  → Restarting pod: $podname in namespace $namespace"
-            kubectl delete pod "$podname" -n "$namespace" 2>/dev/null || echo "    ⚠ Failed to delete pod"
-        fi
-    done
-    echo ""
-fi
+# Check for pods in CrashLoopBackOff that need restart across all clusters
+print_info "Checking for pods in CrashLoopBackOff across all clusters..."
+for context in $(kubectl config get-contexts -o name 2>/dev/null | grep -E "peeks-(hub|spoke)"); do
+    cluster_name=$(echo "$context" | sed 's/.*peeks-/peeks-/')
+    crashloop_pods=$(kubectl get pods -A --context "$context" -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.containerStatuses[]? | select(.state.waiting.reason == "CrashLoopBackOff" and .restartCount > 50)) | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null || echo "")
+    
+    if [ -n "$crashloop_pods" ]; then
+        print_warning "Found pods in CrashLoopBackOff (>50 restarts) in $cluster_name:"
+        echo "$crashloop_pods" | while read pod; do
+            if [ -n "$pod" ]; then
+                namespace="${pod%%/*}"
+                podname="${pod##*/}"
+                echo "  → Restarting pod: $podname in namespace $namespace"
+                kubectl delete pod "$podname" -n "$namespace" --context "$context" 2>/dev/null || echo "    ⚠ Failed to delete pod"
+            fi
+        done
+    fi
+done
+echo ""
 
 # Find stuck apps with their status (including revision conflicts and stale finished operations)
 stuck_apps_time=$(kubectl get applications -n argocd -o json 2>/dev/null | \
