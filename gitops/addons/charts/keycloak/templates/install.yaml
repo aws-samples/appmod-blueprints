@@ -125,6 +125,8 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          resources:
+{{ toYaml .Values.keycloak.resources | indent 12 }}
           readinessProbe:
             httpGet:
               path: /keycloak/realms/master

@@ -3122,6 +3122,8 @@ spec:
         ports:
         - containerPort: 2746
           name: web
+        resources:
+{{ toYaml .Values.server.resources | indent 10 }}
         readinessProbe:
           httpGet:
             path: /
@@ -3189,6 +3191,8 @@ spec:
         - containerPort: 9090
           name: metrics
         - containerPort: 6060
+        resources:
+{{ toYaml .Values.controller.resources | indent 10 }}
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

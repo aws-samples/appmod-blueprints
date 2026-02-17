@@ -86,6 +86,59 @@ sync_argocd_app_in_background() {
     fi
 }
 
+# Function to check and trigger Keycloak PostSync hook
+check_keycloak_postsync_hook() {
+    local app_name=$1
+    
+    # Only check keycloak apps
+    if [[ ! "$app_name" == *"keycloak"* ]]; then
+        return 0
+    fi
+    
+    # Check if config job exists and completed
+    local job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
+    
+    if [ "$job_status" = "True" ]; then
+        print_info "Keycloak config job already completed"
+        return 0
+    fi
+    
+    # Check if keycloak-clients secret exists in AWS Secrets Manager
+    local secret_name="${RESOURCE_PREFIX:-peeks}-hub/keycloak-clients"
+    local secret_exists=$(aws secretsmanager describe-secret --secret-id "$secret_name" --region ${AWS_REGION:-us-west-2} --query 'Name' --output text 2>/dev/null || echo "")
+    
+    if [ -n "$secret_exists" ] && [ "$secret_exists" != "None" ]; then
+        print_info "Keycloak secrets already exist in AWS Secrets Manager"
+        return 0
+    fi
+    
+    print_warning "Keycloak PostSync hook not executed, triggering sync..."
+    
+    # Clear any existing operation
+    kubectl patch application "$app_name" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+    sleep 2
+    
+    # Trigger fresh sync to execute PostSync hooks
+    kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+    
+    # Wait for job to complete
+    print_info "Waiting for Keycloak config job to complete..."
+    local timeout=300
+    local elapsed=0
+    while [ $elapsed -lt $timeout ]; do
+        job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
+        if [ "$job_status" = "True" ]; then
+            print_success "Keycloak config job completed successfully"
+            return 0
+        fi
+        sleep 10
+        elapsed=$((elapsed + 10))
+    done
+    
+    print_warning "Timeout waiting for Keycloak config job"
+    return 1
+}
+
 # Function to sync ArgoCD application
 sync_argocd_app() {
     local app_name=$1
@@ -113,6 +166,9 @@ sync_argocd_app() {
         # Skip if already healthy and synced with no running operations (unless we just fixed revision mismatch)
         if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ] && [ "$revision_mismatch" = false ]; then
             print_info "App $app_name already healthy and synced, skipping sync"
+            
+            # Check Keycloak PostSync hook even if app is synced
+            check_keycloak_postsync_hook "$app_name"
             return 0
         fi
         
@@ -142,6 +198,9 @@ sync_argocd_app() {
         print_warning "ArgoCD CLI authentication failed, using kubectl"
         kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
     fi
+    
+    # Check Keycloak PostSync hook after sync
+    check_keycloak_postsync_hook "$app_name"
 }
 
 # Handle stuck operations (terminate if running > 3 mins)
