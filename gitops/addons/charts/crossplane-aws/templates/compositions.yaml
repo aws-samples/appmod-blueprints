@@ -3,208 +3,380 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
-  name: xbuckets.storage.example.com
+  name: xobjectstorages.awsblueprints.io
   annotations:
     argocd.argoproj.io/sync-wave: "20"
 spec:
-  group: storage.example.com
+  claimNames:
+    kind: ObjectStorage
+    plural: objectstorages
+  group: awsblueprints.io
   names:
-    kind: XBucket
-    plural: xbuckets
+    kind: XObjectStorage
+    plural: xobjectstorages
+  connectionSecretKeys:
+    - region
+    - bucket-name
+    - s3-put-policy
   versions:
-  - name: v1alpha1
-    served: true
-    referenceable: true
-    schema:
-      openAPIV3Schema:
-        type: object
-        properties:
-          spec:
-            type: object
-            properties:
-              bucketName:
-                type: string
-                description: Name of the S3 bucket
-              region:
-                type: string
-                description: AWS region for the bucket
-                default: "us-east-1"
-              versioning:
-                type: boolean
-                description: Enable versioning on the bucket
-                default: false
-          status:
-            type: object
-            properties:
-              bucketArn:
-                type: string
-                description: ARN of the created bucket
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          properties:
+            spec:
+              description: ObjectStorageSpec defines the desired state of ObjectStorage
+              properties:
+                resourceConfig:
+                  description: ResourceConfig defines general properties of this AWS resource.
+                  properties:
+                    deletionPolicy:
+                      description: Defaults to Delete
+                      enum:
+                      - Delete
+                      - Orphan
+                      type: string
+                    name:
+                      description: Set the name of this resource in AWS to the value provided by this field.
+                      type: string
+                    providerConfigName:
+                      type: string
+                    region:
+                      type: string
+                    tags:
+                      items:
+                        properties:
+                          key:
+                            type: string
+                          value:
+                            type: string
+                        required:
+                        - key
+                        - value
+                        type: object
+                      type: array
+                  required:
+                  - providerConfigName
+                  - region
+                  - tags
+                  type: object
+              required:
+              - resourceConfig
+              type: object
+            status:
+              description: ObjectStorageStatus defines the observed state of ObjectStorage
+              properties:
+                bucketName:
+                  type: string
+                bucketArn:
+                  type: string
+              type: object
+          type: object
 ---
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: s3-bucket-composition
+  name: s3bucket.awsblueprints.io
   labels:
-    provider: aws
-    service: s3
+    awsblueprints.io/provider: aws
+    awsblueprints.io/environment: dev
+    s3.awsblueprints.io/configuration: standard
   annotations:
     argocd.argoproj.io/sync-wave: "25"
 spec:
+  writeConnectionSecretsToNamespace: crossplane-system
   compositeTypeRef:
-    apiVersion: storage.example.com/v1alpha1
-    kind: XBucket
-  resources:
-  - name: s3-bucket
-    base:
-      apiVersion: s3.aws.upbound.io/v1beta1
-      kind: Bucket
-      spec:
-        forProvider:
-          region: us-east-1
-        providerConfigRef:
-          name: provider-aws-config
-    patches:
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.bucketName
-      toFieldPath: metadata.name
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.bucketName
-      toFieldPath: spec.forProvider.bucket
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.region
-      toFieldPath: spec.forProvider.region
-    - type: ToCompositeFieldPath
-      fromFieldPath: status.atProvider.arn
-      toFieldPath: status.bucketArn
-    readinessChecks:
-      - type: MatchCondition
-        matchCondition:
-          type: Ready
-          status: "True"
-  - name: s3-bucket-versioning
-    base:
-      apiVersion: s3.aws.upbound.io/v1beta1
-      kind: BucketVersioning
-      spec:
-        forProvider:
-          versioningConfiguration:
-          - status: Disabled
-        providerConfigRef:
-          name: provider-aws-config
-    patches:
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.bucketName
-      toFieldPath: spec.forProvider.bucket
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.versioning
-      toFieldPath: spec.forProvider.versioningConfiguration[0].status
-      transforms:
-      - type: map
-        map:
-          true: "Enabled"
-          false: "Disabled"
-    readinessChecks:
-      - type: MatchCondition
-        matchCondition:
-          type: Ready
-          status: "True"
+    apiVersion: awsblueprints.io/v1alpha1
+    kind: XObjectStorage
+  mode: Pipeline
+  pipeline:
+    - step: s3-bucket
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: bucket
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta2
+              kind: Bucket
+              spec:
+                forProvider:
+                  region: us-west-2
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.providerConfigName
+                toFieldPath: spec.providerConfigRef.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.region
+                toFieldPath: spec.forProvider.region
+              - type: ToCompositeFieldPath
+                fromFieldPath: metadata.annotations[crossplane.io/external-name]
+                toFieldPath: status.bucketName
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.arn
+                toFieldPath: status.bucketArn
+              - fromFieldPath: metadata.uid
+                toFieldPath: spec.writeConnectionSecretToRef.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-bucket"
+              - fromFieldPath: spec.writeConnectionSecretToRef.namespace
+                toFieldPath: spec.writeConnectionSecretToRef.namespace
+            connectionDetails:
+              - name: bucket-name
+                type: FromFieldPath
+                fromFieldPath: metadata.annotations[crossplane.io/external-name]
+              - name: region
+                type: FromValue
+                value: us-west-2
+          - name: bucket-public-access-block
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta1
+              kind: BucketPublicAccessBlock
+              spec:
+                forProvider:
+                  bucketSelector:
+                    matchControllerRef: true
+                  blockPublicPolicy: true
+                  restrictPublicBuckets: true
+                  region: us-west-2
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.providerConfigName
+                toFieldPath: spec.providerConfigRef.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.region
+                toFieldPath: spec.forProvider.region
+          - name: bucket-ownership
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta2
+              kind: BucketOwnershipControls
+              spec:
+                forProvider:
+                  bucketSelector:
+                    matchControllerRef: true
+                  rule:
+                    objectOwnership: BucketOwnerEnforced
+                  region: us-west-2
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.providerConfigName
+                toFieldPath: spec.providerConfigRef.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.region
+                toFieldPath: spec.forProvider.region
+          - name: bucket-sse
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta2
+              kind: BucketServerSideEncryptionConfiguration
+              spec:
+                forProvider:
+                  bucketSelector:
+                    matchControllerRef: true
+                  rule:
+                    - applyServerSideEncryptionByDefault:
+                        sseAlgorithm: AES256
+                  region: us-west-2
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.providerConfigName
+                toFieldPath: spec.providerConfigRef.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.region
+                toFieldPath: spec.forProvider.region
 ---
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
-  name: xdynamodbtables.database.example.com
+  name: xdynamodbtables.awsblueprints.io
   annotations:
     argocd.argoproj.io/sync-wave: "20"
 spec:
-  group: database.example.com
+  group: awsblueprints.io
   names:
     kind: XDynamoDBTable
     plural: xdynamodbtables
+  claimNames:
+    kind: DynamoDBTable
+    plural: dynamodbtables
+  connectionSecretKeys:
+    - tableName
+    - tableArn
   versions:
-  - name: v1alpha1
-    served: true
-    referenceable: true
-    schema:
-      openAPIV3Schema:
-        type: object
-        properties:
-          spec:
-            type: object
-            properties:
-              tableName:
-                type: string
-                description: Name of the DynamoDB table
-              hashKey:
-                type: string
-                description: Hash key for the table
-              billingMode:
-                type: string
-                description: Billing mode for the table
-                default: "PAY_PER_REQUEST"
-                enum: ["PAY_PER_REQUEST", "PROVISIONED"]
-          status:
-            type: object
-            properties:
-              tableArn:
-                type: string
-                description: ARN of the created table
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          properties:
+            spec:
+              properties:
+                dynamoConfig:
+                  properties:
+                    attribute:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          type:
+                            type: string
+                    hashKey:
+                      type: string
+                    rangeKey:
+                      type: string
+                    billingMode:
+                      type: string
+                      default: "PROVISIONED"
+                    readCapacity:
+                      type: integer
+                      default: 20
+                    writeCapacity:
+                      type: integer
+                      default: 20
+                    globalSecondaryIndex:
+                      type: array
+                      items:
+                        type: object
+                    localSecondaryIndex:
+                      type: array
+                      items:
+                        type: object
+                  required:
+                    - hashKey
+                  type: object
+                resourceConfig:
+                  description: ResourceConfig defines general properties of this AWS resource.
+                  properties:
+                    deletionPolicy:
+                      description: Defaults to Delete
+                      enum:
+                      - Delete
+                      - Orphan
+                      type: string
+                    name:
+                      description: Set the name of this resource in AWS to the value provided by this field.
+                      type: string
+                    providerConfigName:
+                      type: string
+                    region:
+                      type: string
+                    tags:
+                      additionalProperties:
+                        type: string
+                      type: object
+                  required:
+                  - providerConfigName
+                  - region
+                  type: object
+              required:
+              - dynamoConfig
+              - resourceConfig
+              type: object
+            status:
+              properties:
+                tableName:
+                  type: string
+                tableArn:
+                  type: string
+              type: object
+          type: object
 ---
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: dynamodb-table-composition
+  name: table.dynamodb.awsblueprints.io
   labels:
-    provider: aws
-    service: dynamodb
+    awsblueprints.io/provider: aws
+    awsblueprints.io/environment: dev
   annotations:
     argocd.argoproj.io/sync-wave: "25"
 spec:
+  writeConnectionSecretsToNamespace: crossplane-system
   compositeTypeRef:
-    apiVersion: database.example.com/v1alpha1
+    apiVersion: awsblueprints.io/v1alpha1
     kind: XDynamoDBTable
-  resources:
-  - name: dynamodb-table
-    base:
-      apiVersion: dynamodb.aws.upbound.io/v1beta1
-      kind: Table
-      spec:
-        forProvider:
-          billingMode: PAY_PER_REQUEST
-          attribute:
-          - name: id
-            type: S
-          hashKey: id
-        providerConfigRef:
-          name: provider-aws-config
-    patches:
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.tableName
-      toFieldPath: metadata.name
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.tableName
-      toFieldPath: spec.forProvider.name
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.hashKey
-      toFieldPath: spec.forProvider.hashKey
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.hashKey
-      toFieldPath: spec.forProvider.attribute[0].name
-    - type: FromCompositeFieldPath
-      fromFieldPath: spec.billingMode
-      toFieldPath: spec.forProvider.billingMode
-    - type: ToCompositeFieldPath
-      fromFieldPath: status.atProvider.arn
-      toFieldPath: status.tableArn
-    readinessChecks:
-      - type: MatchCondition
-        matchCondition:
-          type: Ready
-          status: "True"
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        patchSets:
+          - name: common-fields
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.providerConfigName
+                toFieldPath: spec.providerConfigRef.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.region
+                toFieldPath: spec.forProvider.region
+        resources:
+          - name: table
+            connectionDetails:
+              - type: FromFieldPath
+                name: tableName
+                fromFieldPath: status.atProvider.id
+            base:
+              apiVersion: dynamodb.aws.upbound.io/v1beta1
+              kind: Table
+            patches:
+              - type: PatchSet
+                patchSetName: common-fields
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.dynamoConfig.attribute
+                toFieldPath: spec.forProvider.attribute
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.tags
+                toFieldPath: spec.forProvider.tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.dynamoConfig.hashKey
+                toFieldPath: spec.forProvider.hashKey
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.dynamoConfig.billingMode
+                toFieldPath: spec.forProvider.billingMode
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.dynamoConfig.rangeKey
+                toFieldPath: spec.forProvider.rangeKey
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.dynamoConfig.readCapacity
+                toFieldPath: spec.forProvider.readCapacity 
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.dynamoConfig.writeCapacity
+                toFieldPath: spec.forProvider.writeCapacity
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.dynamoConfig.globalSecondaryIndex
+                toFieldPath: spec.forProvider.globalSecondaryIndex
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.dynamoConfig.localSecondaryIndex
+                toFieldPath: spec.forProvider.localSecondaryIndex
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.tableName
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.arn
+                toFieldPath: status.tableArn
 ---
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
   name: xrelationaldatabases.awsblueprints.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
 spec:
   group: awsblueprints.io
   names:
@@ -227,8 +399,6 @@ spec:
           properties:
             spec:
               properties:
-                deploy:
-                  type: string
                 databaseName:
                   type: string
                 dbSubnetGroupName:
@@ -263,8 +433,7 @@ spec:
                             cidrIp:
                               type: string
                 resourceConfig:
-                  description: ResourceConfig defines general properties of this AWS
-                    resource.
+                  description: ResourceConfig defines general properties of this AWS resource.
                   properties:
                     deletionPolicy:
                       description: Defaults to Delete
@@ -292,11 +461,12 @@ spec:
                         type: object
                       type: array
                   required:
+                  - providerConfigName
+                  - region
                   - tags
                   type: object
               required:
               - resourceConfig
-              - deploy
               type: object
             status:
               properties:
@@ -310,214 +480,137 @@ spec:
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: rds-aurora-mysql.awsblueprints.io
+  name: rds-postgresql.awsblueprints.io
   labels:
     awsblueprints.io/provider: aws
-    awsblueprints.io/environment: prod
+    awsblueprints.io/environment: dev
     awsblueprints.io/createDBSubnetGroup: "true"
-    awsblueprints.io/dbEngine: mysql
+  annotations:
+    argocd.argoproj.io/sync-wave: "25"
 spec:
-  environment:
-    environmentConfigs:
-    - type: Selector
-      selector:
-        mode: Single
-        sortByFieldPath: metadata.name
-        matchLabels:
-        - fromFieldPathPolicy: Required
-          key: env
-          type: FromCompositeFieldPath
-          valueFromFieldPath: spec.deploy
   writeConnectionSecretsToNamespace: crossplane-system
   compositeTypeRef:
     apiVersion: awsblueprints.io/v1alpha1
     kind: XRelationalDatabase
-  patchSets:
-    - name: common-fields
-      patches:
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.resourceConfig.deletionPolicy
-          toFieldPath: spec.deletionPolicy
-        - type: FromEnvironmentFieldPath
-          fromFieldPath: region
-          toFieldPath: spec.forProvider.region
-    - name: connection-secret
-      patches:
-        - fromFieldPath: "metadata.uid"
-          toFieldPath: "spec.writeConnectionSecretToRef.name"
-          transforms:
-            - type: string
-              string:
-                fmt: "%s-mysql"
-                type: Format
-          type: FromCompositeFieldPath
-        - fromFieldPath: "spec.writeConnectionSecretToRef.namespace"
-          toFieldPath: "spec.writeConnectionSecretToRef.namespace"
-          type: FromCompositeFieldPath
-  resources:
-    - base:
-        apiVersion: rds.aws.upbound.io/v1beta1
-        kind: SubnetGroup
-        spec:
-          forProvider:
-            description: "rds-mysql"
-          providerConfigRef:
-            name: provider-aws-config
-      patches:
-        - type: PatchSet
-          patchSetName: common-fields
-        - type: FromEnvironmentFieldPath
-          fromFieldPath: "privateSubnetIds"
-          toFieldPath: spec.forProvider.subnetIds
-      readinessChecks:
-        - matchCondition:
-            status: 'True'
-            type: Ready
-          type: MatchCondition
-    - base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: SecurityGroup
-        spec:
-          forProvider:
-            description: "rds-mysql-sg"
-          providerConfigRef:
-            name: provider-aws-config
-      patches:
-        - type: PatchSet
-          patchSetName: common-fields
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.IngressRules
-          toFieldPath: spec.forProvider.ingress
-          policy:
-            mergeOptions:
-              appendSlice: true
-        - fromFieldPath: "metadata.uid"
-          toFieldPath: "spec.forProvider.name"
-          transforms:
-            - type: string
-              string:
-                fmt: "rds-mysql-sg-%s"
-                type: Format
-          type: FromCompositeFieldPath
-        - type: FromEnvironmentFieldPath
-          fromFieldPath: "vpcId"
-          toFieldPath: "spec.forProvider.vpcId"
-      readinessChecks:
-        - matchCondition:
-            status: 'True'
-            type: Ready
-          type: MatchCondition
-    - base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: SecurityGroupIngressRule
-        spec:
-          forProvider:
-            fromPort: 3306
-            toPort: 3306
-            ipProtocol: "tcp"
-            cidrIpv4: "10.0.0.0/8"
-            securityGroupIdSelector:
-              matchControllerRef: true
-          providerConfigRef:
-            name: provider-aws-config
-      patches:
-        - type: PatchSet
-          patchSetName: common-fields
-      readinessChecks:
-        - matchCondition:
-            status: 'True'
-            type: Ready
-          type: MatchCondition
-    - base:
-        apiVersion: rds.aws.upbound.io/v1beta2
-        kind: Cluster
-        spec:
-          forProvider:
-            autoGeneratePassword: true
-            backupRetentionPeriod: 7
-            copyTagsToSnapshot: true
-            engine: aurora-mysql
-            engineVersion: "8.0.mysql_aurora.3.10.0"
-            finalDBSnapshotIdentifier: "to-be-patched"
-            masterPasswordSecretRef:
-              key: password
-              namespace: crossplane-system
-            masterUsername: root
-            preferredBackupWindow: 02:00-03:00
-            preferredMaintenanceWindow: sun:04:00-sun:05:00
-            skipFinalSnapshot: true
-            storageEncrypted: true
-            dbSubnetGroupNameSelector:
-              matchControllerRef: true
-            vpcSecurityGroupIdSelector:
-              matchControllerRef: true
-          providerConfigRef:
-            name: provider-aws-config
-      patches:
-        - type: PatchSet
-          patchSetName: common-fields
-        - fromFieldPath: spec.writeConnectionSecretToRef.namespace
-          toFieldPath: spec.writeConnectionSecretToRef.namespace
-          type: FromCompositeFieldPath
-        - fromFieldPath: "metadata.name"
-          toFieldPath: "spec.forProvider.masterPasswordSecretRef.name"
-          transforms:
-            - type: string
-              string:
-                fmt: "%s-cluster-mysql-master-password"
-                type: Format
-          type: FromCompositeFieldPath
-        - fromFieldPath: "metadata.name"
-          toFieldPath: "spec.writeConnectionSecretToRef.name"
-          transforms:
-            - type: string
-              string:
-                fmt: "%s-cluster-mysql-connection"
-                type: Format
-          type: FromCompositeFieldPath
-        - fromFieldPath: "metadata.name"
-          toFieldPath: "spec.forProvider.finalDBSnapshotIdentifier"
-          transforms:
-            - type: string
-              string:
-                fmt: "%s-final-snapshot"
-                type: Format
-          type: FromCompositeFieldPath
-        - fromFieldPath: "spec.engineVersion"
-          toFieldPath: "spec.forProvider.engineVersion"
-          type: FromCompositeFieldPath
-        - fromFieldPath: "spec.databaseName"
-          toFieldPath: "spec.forProvider.databaseName"
-          type: FromCompositeFieldPath
-      readinessChecks:
-        - matchCondition:
-            status: 'True'
-            type: Ready
-          type: MatchCondition
-      connectionDetails:
-        - fromConnectionSecretKey: username
-        - fromConnectionSecretKey: password
-        - fromConnectionSecretKey: endpoint
-        - fromConnectionSecretKey: port
-    - base:
-        apiVersion: rds.aws.upbound.io/v1beta1
-        kind: ClusterInstance
-        spec:
-          forProvider:
-            clusterIdentifierSelector:
-              matchControllerRef: true
-            dbSubnetGroupNameSelector:
-              matchControllerRef: true
-            instanceClass: db.r5.xlarge
-            engine: aurora-mysql
-          providerConfigRef:
-            name: provider-aws-config
-      patches:
-        - type: PatchSet
-          patchSetName: common-fields
-      readinessChecks:
-        - matchCondition:
-            status: 'True'
-            type: Ready
-          type: MatchCondition
+  mode: Pipeline
+  pipeline:
+    - step: rds-resources
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: db-subnet-group
+            base:
+              apiVersion: rds.aws.upbound.io/v1beta1
+              kind: SubnetGroup
+              spec:
+                forProvider:
+                  description: "rds-postgres"
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.providerConfigName
+                toFieldPath: spec.providerConfigRef.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.deletionPolicy
+                toFieldPath: spec.deletionPolicy
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.region
+                toFieldPath: spec.forProvider.region
+              - fromFieldPath: spec.writeConnectionSecretToRef.namespace
+                toFieldPath: spec.writeConnectionSecretToRef.namespace
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - fromFieldPath: "spec.subnetIds"
+                toFieldPath: spec.forProvider.subnetIds
+              - fromFieldPath: "metadata.uid"
+                toFieldPath: "spec.writeConnectionSecretToRef.name"
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-dbsubnet"
+          - name: security-group
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: SecurityGroup
+              spec:
+                forProvider:
+                  description: "rds-postgres-sg"
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.providerConfigName
+                toFieldPath: spec.providerConfigRef.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.region
+                toFieldPath: spec.forProvider.region
+              - fromFieldPath: "spec.vpcId"
+                toFieldPath: "spec.forProvider.vpcId"
+          - name: db-instance
+            base:
+              apiVersion: rds.aws.upbound.io/v1beta3
+              kind: Instance
+              spec:
+                forProvider:
+                  applyImmediately: true
+                  backupRetentionPeriod: 3
+                  dbSubnetGroupNameSelector:
+                    matchControllerRef: true
+                  instanceClass: db.t4g.small
+                  username: root
+                  passwordSecretRef:
+                    key: password
+                    name: test-postgres-password
+                    namespace: crossplane-system
+                  engine: postgres
+                  engineVersion: "14.12"
+                  skipFinalSnapshot: true
+                  storageEncrypted: true
+                  storageType: gp3
+                  publiclyAccessible: false
+                  vpcSecurityGroupIdSelector:
+                    matchControllerRef: true
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.providerConfigName
+                toFieldPath: spec.providerConfigRef.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.deletionPolicy
+                toFieldPath: spec.deletionPolicy
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.region
+                toFieldPath: spec.forProvider.region
+              - fromFieldPath: spec.writeConnectionSecretToRef.namespace
+                toFieldPath: spec.writeConnectionSecretToRef.namespace
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourceConfig.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - fromFieldPath: "metadata.uid"
+                toFieldPath: "spec.writeConnectionSecretToRef.name"
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-postgresql"
+              - fromFieldPath: "spec.storageGB"
+                toFieldPath: "spec.forProvider.allocatedStorage"
+              - fromFieldPath: "spec.engineVersion"
+                toFieldPath: "spec.forProvider.engineVersion"
+              - fromFieldPath: "spec.databaseName"
+                toFieldPath: "spec.forProvider.dbName"
+            connectionDetails:
+              - name: username
+                type: FromConnectionSecretKey
+                fromConnectionSecretKey: username
+              - name: password
+                type: FromConnectionSecretKey
+                fromConnectionSecretKey: password
+              - name: endpoint
+                type: FromConnectionSecretKey
+                fromConnectionSecretKey: endpoint
+              - name: port
+                type: FromConnectionSecretKey
+                fromConnectionSecretKey: port
 {{- end }}
