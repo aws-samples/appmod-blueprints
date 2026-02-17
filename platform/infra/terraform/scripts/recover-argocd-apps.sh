@@ -23,6 +23,24 @@ done
 echo "----------------------------------------"
 echo ""
 
+# Check for pods in CrashLoopBackOff that need restart
+print_info "Checking for pods in CrashLoopBackOff..."
+crashloop_pods=$(kubectl get pods -A -o json 2>/dev/null | \
+    jq -r '.items[] | select(.status.containerStatuses[]? | select(.state.waiting.reason == "CrashLoopBackOff" and .restartCount > 50)) | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null || echo "")
+
+if [ -n "$crashloop_pods" ]; then
+    print_warning "Found pods in CrashLoopBackOff (>50 restarts), restarting:"
+    echo "$crashloop_pods" | while read pod; do
+        if [ -n "$pod" ]; then
+            namespace="${pod%%/*}"
+            podname="${pod##*/}"
+            echo "  → Restarting pod: $podname in namespace $namespace"
+            kubectl delete pod "$podname" -n "$namespace" 2>/dev/null || echo "    ⚠ Failed to delete pod"
+        fi
+    done
+    echo ""
+fi
+
 # Find stuck apps with their status (including revision conflicts and stale finished operations)
 stuck_apps_time=$(kubectl get applications -n argocd -o json 2>/dev/null | \
     jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -37,7 +55,13 @@ stuck_apps_revision=$(kubectl get applications -n argocd -o json 2>/dev/null | \
         ((.status.conditions[]?.message // "") | contains("ComparisonError") or contains("cannot reference a different revision"))
     ) | "\(.metadata.name)|\(.status.health.status // "Unknown")|\(.status.sync.status // "Unknown")|\(.status.operationState.phase // "None")|\(.status.operationState.finishedAt // "none")"' 2>/dev/null || echo "")
 
-stuck_apps=$(echo -e "$stuck_apps_time\n$stuck_apps_revision" | grep -v '^$' | sort -u)
+stuck_apps_crd_annotations=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+    jq -r '.items[] | select(
+        ((.status.operationState.message // "") | contains("Too long: may not be more than 262144 bytes")) or
+        ((.status.conditions[]?.message // "") | contains("Too long: may not be more than 262144 bytes"))
+    ) | "\(.metadata.name)|\(.status.health.status // "Unknown")|\(.status.sync.status // "Unknown")|\(.status.operationState.phase // "None")|\(.status.operationState.finishedAt // "none")|crd-annotations"' 2>/dev/null || echo "")
+
+stuck_apps=$(echo -e "$stuck_apps_time\n$stuck_apps_revision\n$stuck_apps_crd_annotations" | grep -v '^$' | sort -u)
 
 total_apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
 healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(.status.health.status == "Healthy" and .status.sync.status == "Synced")] | length')
@@ -59,8 +83,35 @@ done
 echo ""
 print_info "Recovering stuck applications..."
 
-echo "$stuck_apps" | while IFS='|' read -r app health sync phase finished; do
+echo "$stuck_apps" | while IFS='|' read -r app health sync phase finished issue_type; do
     if [ -n "$app" ]; then
+        # Handle CRD annotation size limit issues
+        if [ "$issue_type" = "crd-annotations" ]; then
+            echo "  → Fixing CRD annotation size limit for: $app"
+            
+            # Extract CRD names from error message
+            error_msg=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
+                jq -r '.status.operationState.message // .status.conditions[]?.message // ""')
+            
+            # Find all CRDs mentioned in the error
+            crds=$(echo "$error_msg" | grep -oP 'CustomResourceDefinition\.apiextensions\.k8s\.io "\K[^"]+' | sort -u)
+            
+            if [ -n "$crds" ]; then
+                echo "$crds" | while read -r crd; do
+                    echo "    → Removing last-applied-configuration from: $crd"
+                    kubectl annotate crd "$crd" kubectl.kubernetes.io/last-applied-configuration- 2>/dev/null || true
+                done
+                
+                # Force hard refresh to retry sync
+                kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+                kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+                kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite || echo "    ⚠ Failed to add hard refresh annotation"
+            else
+                echo "    ⚠ Could not extract CRD names from error message"
+            fi
+            continue
+        fi
+        
         # Check if operation already finished (stale state)
         if [ "$finished" != "none" ]; then
             echo "  → Clearing stale operation state for: $app (finished at $finished)"
