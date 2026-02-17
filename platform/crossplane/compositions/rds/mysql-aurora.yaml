@@ -104,7 +104,7 @@ spec:
             backupRetentionPeriod: 7
             copyTagsToSnapshot: true
             engine: aurora-mysql
-            engineVersion: "8.0.mysql_aurora.3.05.2"
+            engineVersion: "8.0.mysql_aurora.3.10.0"
             finalDBSnapshotIdentifier: "to-be-patched"
             masterPasswordSecretRef:
               key: password

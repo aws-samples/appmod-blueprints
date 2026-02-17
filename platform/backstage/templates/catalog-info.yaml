@@ -22,6 +22,7 @@ spec:
     - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
     - ./cicd-pipeline/template-cicd-pipeline.yaml
     - ./create-env-aurora-postgres/template-env-aurora-postgres.yaml
+    - ./dora-onboarding/template-dora-onboarding.yaml
     - ./s3-lambda-terraform/template-s3-lambda-terraform.yaml
     - ./stepfunctions-bedrock-terraform/template-stepfunctions-bedrock-terraform.yaml
     - ./apigw-sqs-terraform/template-apigw-sqs-terraform.yaml
@@ -36,4 +37,4 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  hostname: modern-engg-591204cb6d7471ff.elb.us-west-2.amazonaws.com #HOSTNAME
+  hostname: HOSTNAME

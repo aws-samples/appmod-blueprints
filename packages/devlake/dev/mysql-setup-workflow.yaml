@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: devlake-mysql-setup-sa
+  namespace: devlake
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: devlake-mysql-setup-access-binding
+subjects:
+- kind: ServiceAccount
+  name: devlake-mysql-setup-sa
+  namespace: devlake
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: mysql-setup-workflow
+  namespace: devlake
+spec:
+  serviceAccountName: devlake-mysql-setup-sa
+  entrypoint: mysql-setup
+  templates:
+  - name: mysql-setup
+    dag:
+      tasks:
+      - name: create-secrets
+        template: create-secrets
+      - name: wait-for-mysql
+        template: wait-for-mysql
+        dependencies: [create-secrets]
+      - name: create-users
+        template: create-users
+        dependencies: [wait-for-mysql]
+
+  - name: create-secrets
+    container:
+      image: bitnami/kubectl
+      command: ["/bin/bash", "-c"]
+      args:
+      - |
+        while true; do
+            CONN_SECRET_NAME=$(kubectl get secrets -n crossplane-system -o custom-columns=NAME:.metadata.name | grep "^devlake-mysql.*cluster-mysql-connection$" || true)
+            if [ -n "$CONN_SECRET_NAME" ]; then
+                break
+            fi
+            echo "Waiting for secret to be available..."
+            sleep 10
+        done
+        
+        echo "Secret found: ${CONN_SECRET_NAME}"
+        while true; do
+            endpoint=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.endpoint}' | base64 --decode)
+            if [ -n "$endpoint" ]; then
+                break
+            fi
+            echo "Waiting for endpoint to be available..."
+            sleep 10
+        done
+        echo "Retrieved endpoint: $endpoint"
+        
+        # Create service pointing to the RDS endpoint
+        kubectl create service externalname devlake-mysql-service --external-name=${endpoint} -n devlake --dry-run=client -o yaml | kubectl apply -f -
+        
+        while true; do
+            password=$(kubectl get secret ${CONN_SECRET_NAME} -n crossplane-system -o jsonpath='{.data.attribute\.master_password}' | base64 --decode)
+            if [ -n "$password" ]; then
+                break
+            fi
+            echo "Waiting for password to be available..."
+            sleep 10
+        done
+        echo "Password retrieved (first 2 chars): ${password:0:2}..."
+        
+        # Create auth secret with credentials
+        kubectl create secret generic devlake-mysql-auth -n devlake \
+        --from-literal=MYSQL_USER=merico \
+        --from-literal=MYSQL_PASSWORD=merico \
+        --from-literal=MYSQL_DATABASE=lake \
+        --from-literal=MYSQL_ROOT_PASSWORD=$password \
+        --from-literal=DB_URL="mysql://merico:merico@devlake-mysql-service:3306/lake?charset=utf8mb4&parseTime=True" --dry-run=client -o yaml | kubectl apply -f -
+
+  - name: wait-for-mysql
+    retryStrategy:
+      limit: 40
+      retryPolicy: "Always"
+      backoff:
+        duration: "10"
+        factor: 2
+        maxDuration: "300s"
+    container:
+      image: mysql:8
+      command: ["/bin/bash", "-c"]
+      args:
+      - |
+        echo "Waiting for MySQL to be fully initialized..."
+        sleep 60  # Initial delay to allow RDS to initialize
+        
+        if mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; then
+          echo "MySQL is ready!"
+          exit 0
+        else
+          echo "MySQL not ready yet, will retry..."
+          exit 1
+        fi
+      env:
+      - name: MYSQL_ROOT_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: devlake-mysql-auth
+            key: MYSQL_ROOT_PASSWORD
+
+  - name: create-users
+    container:
+      image: mysql:8
+      command: ["/bin/bash", "-c"]
+      args:
+      - |
+        echo "Creating lake database..."
+        mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+        CREATE DATABASE IF NOT EXISTS lake;
+        "
+
+        echo "Creating devlake user..."
+        mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+        CREATE USER IF NOT EXISTS 'merico' IDENTIFIED BY 'merico';
+        GRANT ALL PRIVILEGES ON lake.* TO 'merico';
+        FLUSH PRIVILEGES;
+        "
+      
+        echo "Creating Grafana user..."
+        mysql -h devlake-mysql-service -P 3306 -u root -p${MYSQL_ROOT_PASSWORD} -e "
+        CREATE USER IF NOT EXISTS 'grafanaReader' IDENTIFIED BY 'grafana_password';
+        GRANT SELECT ON lake.* TO 'grafanaReader';
+        FLUSH PRIVILEGES;
+        "
+
+        echo "User creation completed."
+      env:
+      - name: MYSQL_ROOT_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: devlake-mysql-auth
+            key: MYSQL_ROOT_PASSWORD

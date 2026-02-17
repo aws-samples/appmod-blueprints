@@ -1,0 +1,5 @@
+resources:
+  - devlake.yaml
+  - mysql.yaml
+  - rust.yaml
+
