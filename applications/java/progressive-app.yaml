@@ -4,7 +4,7 @@ metadata:
   name: progressive-app
   namespace: team-java
 spec:
-  image: argoproj/rollouts-demo:yellow
+  image: argoproj/rollouts-demo:blue
   image_name: rollout-demo
   replicas: 2
   port: 8080

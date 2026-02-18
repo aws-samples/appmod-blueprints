@@ -1,0 +1,38 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: rust-application
+spec:
+  components:
+    - name: rust-webservice
+      type: appmod-service
+      properties:
+        image: <image>
+        image_name: rust-app
+        port: 8080
+        targetPort: 8080
+        replicas: 2
+        appPath: "/rust-app"
+        env:
+          - name: APP_ENV
+            value: "DEV"
+        readinessProbe:
+          httpGet:
+            path: /rust-app/
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "256Mi"
+          limits:
+            memory: "512Mi"
+      traits:
+        - type: path-based-ingress
+          properties:
+            domain: "*.elb.us-west-2.amazonaws.com"
+            rewritePath: true
+            http:
+              /rust-app: 8080
