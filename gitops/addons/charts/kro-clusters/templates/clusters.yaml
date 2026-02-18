@@ -13,7 +13,7 @@ spec:
   tenant: {{ $cluster.tenant | default "tenant1" | quote }}
   environment: {{ $cluster.environment | default "staging" | quote }}
   region: {{ $cluster.region | default "us-west-2" | quote }}
-  k8sVersion: {{ $cluster.k8sVersion | default "1.32" | quote }}
+  k8sVersion: {{ $cluster.k8sVersion | default "1.34" | quote }}
   accountId: {{ $cluster.accountId | quote }}
   managementAccountId: {{ $cluster.managementAccountId | quote }}
   argoCdHubRoleArn: {{ $.Values.global.argoCdHubRoleArn | default "" | quote }}

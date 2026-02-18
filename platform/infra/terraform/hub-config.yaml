@@ -11,7 +11,7 @@ clusters:
   hub:
     name: hub
     region: us-west-2 # replaced by deploy.sh
-    kubernetes_version: 1.32
+    kubernetes_version: 1.34
     environment: control-plane
     tenant: control-plane
     auto_mode: true
@@ -70,7 +70,7 @@ clusters:
   spoke1:
     name: spoke-dev
     region: us-west-2 # replaced by deploy.sh
-    kubernetes_version: 1.32
+    kubernetes_version: 1.34
     environment: dev
     tenant: tenant1
     auto_mode: true
@@ -119,7 +119,7 @@ clusters:
   spoke2:
     name: spoke-prod
     region: us-west-2 # replaced by deploy.sh
-    kubernetes_version: 1.32
+    kubernetes_version: 1.34
     environment: prod
     tenant: tenant1
     auto_mode: true
