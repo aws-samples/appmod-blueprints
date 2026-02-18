@@ -15,6 +15,467 @@ export BOOTSTRAP_APPS=(
     "fleet-secrets"
 )
 
+# Infrastructure Verification Functions
+
+# Verify cluster infrastructure health
+verify_cluster_infrastructure() {
+    local status=0
+    
+    print_info "Verifying cluster infrastructure..."
+    
+    # Check nodes
+    local node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+    local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo "0")
+    
+    if [ "$node_count" -eq 0 ]; then
+        print_error "No nodes found in cluster"
+        return 2
+    elif [ "$ready_nodes" -lt "$node_count" ]; then
+        print_warning "Nodes: $ready_nodes/$node_count ready"
+        status=1
+    else
+        print_success "Nodes: $ready_nodes/$node_count ready"
+    fi
+    
+    # Check node capacity
+    local allocatable_pods=$(kubectl get nodes -o json 2>/dev/null | jq -r '[.items[].status.allocatable.pods | tonumber] | add' 2>/dev/null || echo "0")
+    local current_pods=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l)
+    
+    if [ "$allocatable_pods" -gt 0 ]; then
+        local pod_usage=$((current_pods * 100 / allocatable_pods))
+        if [ "$pod_usage" -gt 90 ]; then
+            print_warning "Pod capacity: $current_pods/$allocatable_pods (${pod_usage}% - high utilization)"
+            status=1
+        else
+            print_info "Pod capacity: $current_pods/$allocatable_pods (${pod_usage}%)"
+        fi
+    fi
+    
+    return $status
+}
+
+# Verify namespace exists and is active
+verify_namespace_exists() {
+    local namespace=$1
+    
+    if [ -z "$namespace" ]; then
+        return 1
+    fi
+    
+    local ns_status=$(kubectl get namespace "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null)
+    
+    if [ -z "$ns_status" ]; then
+        print_warning "Namespace $namespace does not exist"
+        return 2
+    elif [ "$ns_status" != "Active" ]; then
+        print_warning "Namespace $namespace is in $ns_status phase"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Verify operator health
+verify_operator_health() {
+    local operator=$1
+    local namespace=$2
+    local label_selector=$3
+    
+    if ! verify_namespace_exists "$namespace" 2>/dev/null; then
+        print_warning "Operator $operator: namespace $namespace not found"
+        return 2
+    fi
+    
+    local pods=$(kubectl get pods -n "$namespace" -l "$label_selector" --no-headers 2>/dev/null || echo "")
+    
+    if [ -z "$pods" ]; then
+        print_warning "Operator $operator: no pods found"
+        return 2
+    fi
+    
+    local total=$(echo "$pods" | wc -l)
+    local running=$(echo "$pods" | grep -c "Running" 2>/dev/null || echo "0")
+    local completed=$(echo "$pods" | grep -c "Completed" 2>/dev/null || echo "0")
+    
+    # Ensure numeric values
+    running=$(echo "$running" | tr -d '[:space:]')
+    completed=$(echo "$completed" | tr -d '[:space:]')
+    total=$(echo "$total" | tr -d '[:space:]')
+    
+    local healthy=$((running + completed))
+    
+    if [ "$running" -eq 0 ] && [ "$completed" -eq 0 ]; then
+        print_error "Operator $operator: 0/$total pods running or completed"
+        return 2
+    elif [ "$healthy" -lt "$total" ]; then
+        local unhealthy=$((total - healthy))
+        print_warning "Operator $operator: $running running, $completed completed, $unhealthy unhealthy"
+        return 1
+    else
+        if [ "$completed" -gt 0 ]; then
+            print_success "Operator $operator: $running running, $completed completed"
+        else
+            print_success "Operator $operator: $running/$total pods running"
+        fi
+    fi
+    
+    return 0
+}
+
+# Generate infrastructure report
+get_infrastructure_report() {
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_info "Infrastructure Health Report"
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    verify_cluster_infrastructure || true
+    local infra_status=$?
+    
+    echo ""
+    print_info "Operator Health:"
+    
+    verify_operator_health "KubeVela" "vela-system" "app.kubernetes.io/name=vela-core" || true
+    verify_operator_health "Crossplane" "crossplane-system" "app=crossplane" || true
+    verify_operator_health "Argo Workflows" "argo" "app in (argo-server,workflow-controller)" || true
+    verify_operator_health "Grafana Operator" "grafana-operator" "app.kubernetes.io/name=grafana-operator" || true
+    
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    
+    return 0
+}
+
+# Generate dependency report with root cause analysis
+generate_dependency_report() {
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_info "Dependency Analysis Report"
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Get all apps with sync wave and status
+    local apps_data=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | 
+        {
+            name: .metadata.name,
+            wave: (.metadata.annotations."argocd.argoproj.io/sync-wave" // "0"),
+            sync: (.status.sync.status // "Unknown"),
+            health: (.status.health.status // "Unknown"),
+            message: (.status.operationState.message // .status.conditions[]?.message // "")
+        } | 
+        "\(.wave)|\(.name)|\(.sync)|\(.health)|\(.message)"' 2>/dev/null)
+    
+    # Group by sync wave
+    local waves=$(echo "$apps_data" | cut -d'|' -f1 | sort -n | uniq)
+    
+    for wave in $waves; do
+        local wave_apps=$(echo "$apps_data" | grep "^${wave}|")
+        local total=$(echo "$wave_apps" | wc -l)
+        local healthy=$(echo "$wave_apps" | grep -c "|Synced|Healthy|" || echo "0")
+        
+        if [ "$healthy" -eq "$total" ]; then
+            print_success "Sync Wave $wave: $healthy/$total healthy"
+        else
+            print_warning "Sync Wave $wave: $healthy/$total healthy"
+            
+            # Show unhealthy apps with categorized issues
+            echo "$wave_apps" | while IFS='|' read -r w name sync health message; do
+                if [ "$sync" != "Synced" ] || [ "$health" != "Healthy" ]; then
+                    local issue_category="Unknown"
+                    local root_cause=""
+                    
+                    # Categorize issue
+                    if echo "$message" | grep -q "controller sync timeout"; then
+                        issue_category="Sync Timeout"
+                        root_cause="Application controller timeout (>15min)"
+                    elif echo "$message" | grep -q "Too long: may not be more than 262144 bytes"; then
+                        issue_category="CRD Annotation Size"
+                        root_cause="CRD annotation exceeds 262KB limit"
+                    elif echo "$message" | grep -q "cannot reference a different revision"; then
+                        issue_category="Revision Conflict"
+                        root_cause="Git revision mismatch"
+                    elif echo "$message" | grep -q "waiting for healthy state.*Workflow"; then
+                        issue_category="Workflow Dependency"
+                        root_cause="Workflow not started or incomplete"
+                    elif [ "$health" = "Degraded" ] && [ "$sync" = "Synced" ]; then
+                        issue_category="Resource Degraded"
+                        root_cause="Resources synced but not healthy"
+                    elif [ "$health" = "Missing" ]; then
+                        issue_category="Resources Missing"
+                        root_cause="Expected resources not found"
+                    fi
+                    
+                    print_error "  ├─ $name: $sync/$health"
+                    print_info "  │  Category: $issue_category"
+                    [ -n "$root_cause" ] && print_info "  │  Root Cause: $root_cause"
+                fi
+            done
+        fi
+    done
+    
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+# Verify Keycloak secrets and trigger PostSync if needed
+verify_keycloak_secrets() {
+    local secret_name="${RESOURCE_PREFIX:-peeks}-hub/keycloak-clients"
+    
+    print_info "Checking Keycloak secrets..."
+    
+    # Check AWS Secrets Manager
+    if aws secretsmanager describe-secret --secret-id "$secret_name" --region "${AWS_REGION:-us-west-2}" >/dev/null 2>&1; then
+        print_success "Keycloak clients secret exists in AWS Secrets Manager"
+        return 0
+    fi
+    
+    print_warning "Keycloak clients secret not found: $secret_name"
+    
+    # Check if config job completed
+    local job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
+    
+    if [ "$job_status" = "True" ]; then
+        print_warning "Config job completed but secret not found - may need manual investigation"
+        return 1
+    fi
+    
+    print_info "Triggering Keycloak sync to execute PostSync hooks..."
+    
+    # Force sync
+    kubectl patch application keycloak-peeks-hub -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+    sleep 2
+    kubectl patch application keycloak-peeks-hub -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+    
+    # Wait for job
+    local timeout=300
+    local elapsed=0
+    print_info "Waiting for Keycloak config job to complete (timeout: ${timeout}s)..."
+    while [ $elapsed -lt $timeout ]; do
+        job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
+        if [ "$job_status" = "True" ]; then
+            print_success "Keycloak config job completed"
+            sleep 5
+            
+            # Verify secret created
+            if aws secretsmanager describe-secret --secret-id "$secret_name" --region "${AWS_REGION:-us-west-2}" >/dev/null 2>&1; then
+                print_success "Keycloak clients secret created successfully"
+                return 0
+            else
+                print_error "Secret still not found after job completion"
+                return 1
+            fi
+        fi
+        sleep 10
+        elapsed=$((elapsed + 10))
+    done
+    
+    print_error "Timeout waiting for Keycloak config job"
+    return 1
+}
+
+# Refresh apps that depend on Keycloak secrets
+refresh_keycloak_dependent_apps() {
+    local dependent_apps="backstage argo-workflows jupyterhub devlake"
+    
+    print_info "Waiting for ExternalSecrets to sync..."
+    
+    # Wait for ExternalSecrets to sync (max 60 seconds)
+    local timeout=60
+    local elapsed=0
+    local all_ready=false
+    
+    while [ $elapsed -lt $timeout ]; do
+        all_ready=true
+        
+        for app in $dependent_apps; do
+            # Check if ExternalSecret exists and is ready
+            local es_status=$(kubectl get externalsecret -n "$app" -l "app.kubernetes.io/instance=${app}-peeks-hub" \
+                -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+            
+            if [ -n "$es_status" ]; then
+                if echo "$es_status" | grep -q "False"; then
+                    all_ready=false
+                    break
+                fi
+            fi
+        done
+        
+        if [ "$all_ready" = true ]; then
+            print_success "All ExternalSecrets synced successfully"
+            break
+        fi
+        
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+    
+    if [ "$all_ready" = false ]; then
+        print_warning "Some ExternalSecrets still syncing after ${timeout}s, forcing refresh anyway"
+    fi
+    
+    # Now refresh the applications
+    print_info "Refreshing apps that depend on Keycloak secrets..."
+    
+    for app in $dependent_apps; do
+        local app_name="${app}-peeks-hub"
+        if kubectl get application "$app_name" -n argocd >/dev/null 2>&1; then
+            print_info "  Refreshing $app_name..."
+            kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep 1
+        fi
+    done
+    
+    # Give apps a moment to start syncing
+    sleep 5
+    
+    # Trigger sync for apps that are OutOfSync
+    print_info "Triggering sync for OutOfSync dependent apps..."
+    for app in $dependent_apps; do
+        local app_name="${app}-peeks-hub"
+        if kubectl get application "$app_name" -n argocd >/dev/null 2>&1; then
+            local sync_status=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
+            if [ "$sync_status" = "OutOfSync" ]; then
+                print_info "  Syncing $app_name..."
+                sync_argocd_app "$app_name" || true
+            fi
+        fi
+    done
+}
+
+# Detect workflows with null phase (never started)
+detect_null_phase_workflows() {
+    local namespace=$1
+    
+    if ! verify_namespace_exists "$namespace" >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    kubectl get workflows.argoproj.io -n "$namespace" -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.phase == null or .status.phase == "") | 
+        "\(.metadata.name)|\(.metadata.creationTimestamp)"' 2>/dev/null
+}
+
+# Trigger workflow manually
+trigger_workflow_manually() {
+    local workflow_name=$1
+    local namespace=$2
+    
+    print_info "Attempting to trigger workflow: $workflow_name in namespace: $namespace"
+    
+    # Check dependencies first
+    print_info "  Checking workflow dependencies..."
+    verify_kubevela_dependencies "$namespace"
+    local dep_status=$?
+    
+    if [ $dep_status -eq 2 ]; then
+        print_error "  Critical dependencies missing, cannot trigger workflow"
+        return 1
+    elif [ $dep_status -eq 1 ]; then
+        print_warning "  Some dependencies not ready, workflow may fail"
+    fi
+    
+    # Get workflow definition
+    local workflow_def=$(kubectl get workflow "$workflow_name" -n "$namespace" -o json 2>/dev/null)
+    
+    if [ -z "$workflow_def" ]; then
+        print_error "  Workflow $workflow_name not found"
+        return 1
+    fi
+    
+    # Check if workflow has actually started (has phase)
+    local current_phase=$(echo "$workflow_def" | jq -r '.status.phase // "null"')
+    
+    if [ "$current_phase" != "null" ] && [ "$current_phase" != "" ]; then
+        print_info "  Workflow already has phase: $current_phase, skipping trigger"
+        return 0
+    fi
+    
+    # Delete and recreate workflow to trigger it (workflows are immutable)
+    print_info "  Deleting workflow to trigger recreation..."
+    kubectl delete workflow "$workflow_name" -n "$namespace" --ignore-not-found=true 2>/dev/null
+    
+    sleep 2
+    
+    # Extract and recreate workflow
+    echo "$workflow_def" | jq 'del(.status, .metadata.uid, .metadata.resourceVersion, .metadata.creationTimestamp, .metadata.generation, .metadata.managedFields)' | \
+        kubectl apply -f - 2>/dev/null
+    
+    if [ $? -eq 0 ]; then
+        print_success "  Workflow $workflow_name triggered successfully"
+        return 0
+    else
+        print_error "  Failed to trigger workflow $workflow_name"
+        return 1
+    fi
+}
+
+# Verify KubeVela/Crossplane dependencies for an app
+verify_kubevela_dependencies() {
+    local namespace=$1
+    local status=0
+    
+    print_info "Checking KubeVela/Crossplane dependencies for namespace: $namespace"
+    
+    # Check if namespace exists
+    if ! verify_namespace_exists "$namespace" >/dev/null 2>&1; then
+        print_warning "  Namespace $namespace does not exist"
+        return 2
+    fi
+    
+    # Check for KubeVela Applications
+    local vela_apps=$(kubectl get applications.core.oam.dev -n "$namespace" --no-headers 2>/dev/null)
+    
+    if [ -n "$vela_apps" ]; then
+        while read -r name rest; do
+            local app_status=$(kubectl get application.core.oam.dev "$name" -n "$namespace" -o jsonpath='{.status.status}' 2>/dev/null)
+            if [ "$app_status" = "running" ] || [ "$app_status" = "runningWorkflow" ]; then
+                print_success "  KubeVela App $name: $app_status"
+            else
+                print_warning "  KubeVela App $name: ${app_status:-unknown}"
+                status=1
+            fi
+        done <<< "$vela_apps"
+    fi
+    
+    # Check for Crossplane-managed database secrets
+    local db_secrets=$(kubectl get secrets -n crossplane-system --no-headers 2>/dev/null | grep -E "${namespace}.*connection" || echo "")
+    
+    if [ -n "$db_secrets" ]; then
+        while read -r secret_name rest; do
+            local has_endpoint=$(kubectl get secret "$secret_name" -n crossplane-system -o jsonpath='{.data.endpoint}' 2>/dev/null)
+            local has_password=$(kubectl get secret "$secret_name" -n crossplane-system -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null)
+            
+            if [ -n "$has_endpoint" ] && [ -n "$has_password" ]; then
+                print_success "  Crossplane Secret $secret_name: ready (endpoint + password)"
+            else
+                print_warning "  Crossplane Secret $secret_name: incomplete"
+                status=1
+            fi
+        done <<< "$db_secrets"
+    else
+        print_info "  No Crossplane database secrets found (may not be required)"
+    fi
+    
+    return $status
+}
+
+# Detect applications with sync timeout pattern
+detect_sync_timeout_pattern() {
+    local timeout_threshold=${1:-900}  # 15 minutes default
+    
+    kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r --arg threshold "$timeout_threshold" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '.items[] | select(
+            .status.operationState.phase == "Running" and
+            ((.status.operationState.message // "") | contains("controller sync timeout")) and
+            ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - ($threshold | tonumber))
+        ) | 
+        {
+            name: .metadata.name,
+            duration: (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime)),
+            message: .status.operationState.message,
+            resources: [.status.resources[] | select(.status == "OutOfSync") | .kind + "/" + .name] | join(", ")
+        } | 
+        "\(.name)|\(.duration)|\(.message)|\(.resources)"' 2>/dev/null
+}
+
 # Function to authenticate ArgoCD CLI
 authenticate_argocd() {
     if command -v argocd >/dev/null 2>&1; then

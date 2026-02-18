@@ -89,6 +89,96 @@ done
 echo ""
 print_info "Recovering stuck applications..."
 
+# Infrastructure Verification
+echo ""
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+print_info "Phase 1: Infrastructure Verification"
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+get_infrastructure_report
+
+# Sync Timeout Detection (>15 minutes)
+echo ""
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+print_info "Phase 2: Sync Timeout Detection (>15 minutes)"
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+timeout_apps=$(detect_sync_timeout_pattern 900)
+
+if [ -n "$timeout_apps" ]; then
+    print_warning "Found applications with sync timeout pattern:"
+    echo "$timeout_apps" | while IFS='|' read -r app duration message resources; do
+        if [ -n "$app" ]; then
+            duration_min=$((duration / 60))
+            retry_count=$(echo "$message" | grep -oP 'attempt #\K\d+' || echo "unknown")
+            print_error "  $app: ${duration_min}m (retry #${retry_count})"
+            [ -n "$resources" ] && print_info "    OutOfSync resources: $resources"
+            
+            # Aggressive recovery for timeout apps
+            print_info "    → Terminating stuck operation..."
+            terminate_argocd_operation "$app"
+            sleep 2
+            
+            print_info "    → Forcing hard refresh..."
+            kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep 3
+            
+            print_info "    → Syncing application..."
+            sync_argocd_app "$app"
+            sleep 2
+        fi
+    done
+else
+    print_success "No applications with sync timeout pattern found"
+fi
+
+# Workflow Dependency Check
+echo ""
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+print_info "Phase 3: Workflow Dependency Check"
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Check apps with workflows (devlake, etc.)
+workflow_namespaces="devlake"
+
+for ns in $workflow_namespaces; do
+    if verify_namespace_exists "$ns" >/dev/null 2>&1; then
+        print_info "Checking namespace: $ns"
+        verify_kubevela_dependencies "$ns" || true
+        
+        # Detect null-phase workflows
+        null_workflows=$(detect_null_phase_workflows "$ns" 2>/dev/null || echo "")
+        
+        if [ -n "$null_workflows" ]; then
+            echo "$null_workflows" | while IFS='|' read -r wf_name created_at; do
+                if [ -n "$wf_name" ]; then
+                    print_warning "  Found null-phase workflow: $wf_name (created: $created_at)"
+                    trigger_workflow_manually "$wf_name" "$ns" || true
+                fi
+            done
+        else
+            print_success "  No null-phase workflows found in $ns"
+        fi
+    fi
+done
+
+# Phase 3.5: Keycloak Secret Verification
+echo ""
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+print_info "Phase 3.5: Keycloak Secret Verification"
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+if verify_keycloak_secrets; then
+    refresh_keycloak_dependent_apps
+else
+    print_warning "Keycloak secrets verification failed - dependent apps may remain unhealthy"
+fi
+
+# Existing recovery logic
+echo ""
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+print_info "Phase 4: Standard Recovery (CRD, Revision, Degraded)"
+print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
 echo "$stuck_apps" | while IFS='|' read -r app health sync phase finished issue_type; do
     if [ -n "$app" ]; then
         # Handle degraded applications
@@ -163,13 +253,35 @@ echo ""
 print_success "Recovery complete. Run again to verify all apps are healthy."
 
 echo ""
+generate_dependency_report
+
+echo ""
 print_info "Final Application Status:"
 echo "----------------------------------------"
 kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
 while IFS='|' read -r name sync health message; do
+    # Determine issue category for reporting
+    issue_cat=""
     if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
         print_success "$name: OK"
     else
+        # Categorize the issue
+        if echo "$message" | grep -q "controller sync timeout"; then
+            issue_cat="[Sync Timeout]"
+        elif echo "$message" | grep -q "Too long: may not be more than 262144 bytes"; then
+            issue_cat="[CRD Size]"
+        elif echo "$message" | grep -q "cannot reference a different revision"; then
+            issue_cat="[Revision Conflict]"
+        elif echo "$message" | grep -q "waiting for healthy state.*Workflow"; then
+            issue_cat="[Workflow Dep]"
+        elif [ "$health" = "Degraded" ]; then
+            issue_cat="[Degraded]"
+        elif [ "$health" = "Missing" ]; then
+            issue_cat="[Missing]"
+        else
+            issue_cat="[Unknown]"
+        fi
+        
         # Extract key error message
         error_msg=$(echo "$message" | sed -n 's/.*\(Resource count [0-9]* exceeds limit of [0-9]*\).*/\1/p')
         if [ -z "$error_msg" ]; then
@@ -179,9 +291,9 @@ while IFS='|' read -r name sync health message; do
             error_msg=$(echo "$message" | head -c 80)
         fi
         if [ -n "$error_msg" ]; then
-            print_error "$name: KO - $error_msg"
+            print_error "$name: KO $issue_cat - $error_msg"
         else
-            print_error "$name: KO - $sync/$health"
+            print_error "$name: KO $issue_cat - $sync/$health"
         fi
     fi
 done

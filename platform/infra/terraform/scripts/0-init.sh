@@ -156,6 +156,21 @@ main() {
     # Dependency-aware ArgoCD app synchronization
     wait_for_argocd_apps_with_dependencies
 
+    # Run enhanced recovery to handle any remaining issues
+    log_timestamp "Phase: Enhanced ArgoCD Recovery"
+    print_status "INFO" "Running enhanced ArgoCD recovery to ensure all apps are healthy..."
+    "${SCRIPT_DIR}/recover-argocd-apps.sh"
+    
+    # Verify final application health
+    local total_apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
+    local healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(.status.health.status == "Healthy" and .status.sync.status == "Synced")] | length')
+    
+    if [ "$healthy_apps" -eq "$total_apps" ]; then
+        print_status "SUCCESS" "All $total_apps ArgoCD applications are healthy!"
+    else
+        print_status "WARNING" "$healthy_apps/$total_apps applications are healthy. Some apps may still be deploying."
+    fi
+
     # Get GitLab domain from CloudFront distribution
     if [ -z "$GITLAB_DOMAIN" ]; then
         print_status "INFO" "Retrieving GitLab domain from CloudFront..."
