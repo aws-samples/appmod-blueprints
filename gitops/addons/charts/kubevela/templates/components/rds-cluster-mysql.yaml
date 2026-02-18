@@ -24,7 +24,6 @@ spec:
         			"awsblueprints.io/dbEngine":            "mysql"
         		}
         		resourceConfig: {
-        			name:           context.name
         			deletionPolicy: "Delete"
         			tags: [
         				{
