@@ -95,13 +95,14 @@ spec:
               kind: BucketVersioning
               spec:
                 forProvider:
-                  bucketSelector:
-                    matchControllerRef: true
                   versioningConfiguration:
                     - status: Disabled
                 providerConfigRef:
                   name: provider-aws-config
             patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.bucketName
+                toFieldPath: spec.forProvider.bucket
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.region
                 toFieldPath: spec.forProvider.region
@@ -472,6 +473,7 @@ spec:
                   copyTagsToSnapshot: true
                   engine: aurora-mysql
                   engineVersion: "8.0.mysql_aurora.3.10.0"
+                  finalDBSnapshotIdentifier: "to-be-patched"
                   masterUsername: root
                   masterPasswordSecretRef:
                     key: password
