@@ -55,11 +55,17 @@ git push
 ### Verify Deployment
 
 ```bash
-# Check ApplicationSet
-kubectl get applicationset -n argocd | grep agent-platform
+# Check individual applications
+kubectl get applications -n argocd | grep agent-platform
 
-# Check applications
-kubectl get applications -n argocd | grep -E "kagent|litellm|langfuse"
+# Expected output:
+# peeks-agent-platform-kagent
+# peeks-agent-platform-litellm
+# peeks-agent-platform-agent-gateway
+# peeks-agent-platform-langfuse
+# peeks-agent-platform-jaeger
+# peeks-agent-platform-tofu-controller
+# peeks-agent-platform-agent-core
 
 # Check pods
 kubectl get pods -n agent-platform
@@ -72,8 +78,8 @@ kubectl get pods -n agent-platform
 The agent platform uses a GitOps bridge pattern:
 
 1. **appmod-blueprints** repository contains a lightweight bridge chart
-2. Bridge chart references **sample-agent-platform-on-eks** repository
-3. ArgoCD ApplicationSet generates individual applications for each component
+2. Bridge chart creates individual ArgoCD Applications for each component
+3. Each Application references a Helm chart in **sample-agent-platform-on-eks** repository
 4. Components deploy to spoke clusters (dev/prod)
 
 ```
@@ -81,9 +87,23 @@ Hub Cluster (ArgoCD)
     ↓
 Bridge Chart (appmod-blueprints)
     ↓
-ApplicationSet Generator
+Individual ArgoCD Applications
+    ├─ kagent-application.yaml
+    ├─ litellm-application.yaml
+    ├─ agent-gateway-application.yaml
+    ├─ langfuse-application.yaml
+    ├─ jaeger-application.yaml
+    ├─ tofu-controller-application.yaml
+    └─ agent-core-application.yaml
     ↓
-Component Charts (sample-agent-platform-on-eks)
+Component Helm Charts (sample-agent-platform-on-eks/gitops/)
+    ├─ kagent/
+    ├─ litellm/
+    ├─ agent-gateway/
+    ├─ langfuse/
+    ├─ jaeger/
+    ├─ tofu-controller/
+    └─ agent-core/
     ↓
 Spoke Clusters (Dev/Prod)
 ```

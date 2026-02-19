@@ -61,30 +61,35 @@ This document describes the design for integrating agent platform components (Ka
 │         │                                │ (if enabled)                 │
 │         │                                ▼                              │
 │         │         ┌──────────────────────────────────────────┐          │
-│         │         │  ApplicationSet Generator                │          │
-│         │         │  Creates Applications for:               │          │
-│         │         │  - Kagent, LiteLLM, Agent Gateway        │          │
-│         │         │  - Langfuse, Jaeger, Tofu Controller     │          │
-│         │         │  - Agent Core Components                 │          │
+│         │         │  ArgoCD Applications (Individual)        │          │
+│         │         │  - kagent-application.yaml               │          │
+│         │         │  - litellm-application.yaml              │          │
+│         │         │  - agent-gateway-application.yaml        │          │
+│         │         │  - langfuse-application.yaml             │          │
+│         │         │  - jaeger-application.yaml               │          │
+│         │         │  - tofu-controller-application.yaml      │          │
+│         │         │  - agent-core-application.yaml           │          │
 │         │         └──────────────────────────────────────────┘          │
 │         │                                │                              │
 └─────────┼────────────────────────────────┼──────────────────────────────┘
           │                                │
-          │                                │ Points to External Repo
+          │                                │ Each Application Points to
+          │                                │ External Repo Helm Chart
           │                                ▼
 ┌─────────┼────────────────────────────────────────────────────────────────┐
 │         │         sample-agent-platform-on-eks Repository                │
 │         │                                                                │
 │         │         ┌──────────────────────────────────────────┐          │
 │         └────────▶│  gitops/                                 │          │
-│                   │  ├── kagent/          (Helm Chart)       │          │
-│                   │  ├── litellm/         (Helm Chart)       │          │
-│                   │  ├── agent-gateway/   (Helm Chart)       │          │
-│                   │  ├── langfuse/        (Helm Chart)       │          │
-│                   │  ├── jaeger/          (Helm Chart)       │          │
-│                   │  ├── tofu-controller/ (Helm Chart)       │          │
-│                   │  └── agent-core/      (Helm Chart)       │          │
+│                   │  ├── kagent/          (Helm Chart)       │◀─────────│
+│                   │  ├── litellm/         (Helm Chart)       │◀─────────│
+│                   │  ├── agent-gateway/   (Helm Chart)       │◀─────────│
+│                   │  ├── langfuse/        (Helm Chart)       │◀─────────│
+│                   │  ├── jaeger/          (Helm Chart)       │◀─────────│
+│                   │  ├── tofu-controller/ (Helm Chart)       │◀─────────│
+│                   │  └── agent-core/      (Helm Chart)       │◀─────────│
 │                   └──────────────────────────────────────────┘          │
+│                   Each ArgoCD Application references its chart          │
 └─────────────────────────────────────────────────────────────────────────┘
           │
           │ Deploys to
@@ -126,15 +131,21 @@ User Deploys Workshop
               Bridge Chart Activated
                       │
                       ▼
-              ApplicationSet Created
-                      │
-                      ▼
-         Generates Individual Applications
+         Creates Individual ArgoCD Applications
          (One per component)
                       │
+                      ├─── kagent-application.yaml
+                      ├─── litellm-application.yaml
+                      ├─── agent-gateway-application.yaml
+                      ├─── langfuse-application.yaml
+                      ├─── jaeger-application.yaml
+                      ├─── tofu-controller-application.yaml
+                      └─── agent-core-application.yaml
+                      │
                       ▼
-         Points to External Repository
-         (sample-agent-platform-on-eks)
+         Each Application Points to
+         External Repository Helm Chart
+         (sample-agent-platform-on-eks/gitops/<component>)
                       │
                       ▼
          Deploys Component Charts
@@ -168,7 +179,13 @@ appmod-blueprints/
 │   │   │       └── templates/
 │   │   │           ├── _helpers.tpl
 │   │   │           ├── namespace.yaml
-│   │   │           └── applicationset.yaml
+│   │   │           ├── kagent-application.yaml
+│   │   │           ├── litellm-application.yaml
+│   │   │           ├── agent-gateway-application.yaml
+│   │   │           ├── langfuse-application.yaml
+│   │   │           ├── jaeger-application.yaml
+│   │   │           ├── tofu-controller-application.yaml
+│   │   │           └── agent-core-application.yaml
 │   │   │
 │   │   ├── default/
 │   │   │   └── addons/
@@ -688,23 +705,67 @@ terraform apply \
 
 ### Conditional Logic in Bridge Chart
 
-**File**: `gitops/addons/charts/agent-platform/templates/applicationset.yaml`
+**File**: `gitops/addons/charts/agent-platform/templates/kagent-application.yaml`
 
 ```yaml
 {{- if .Values.enabled }}
-# Only create ApplicationSet if enabled
+{{- if .Values.components.kagent.enabled }}
 apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
+kind: Application
 metadata:
-  name: {{ .Values.global.resourcePrefix }}-agent-platform
+  name: {{ .Values.global.resourcePrefix }}-agent-platform-kagent
   namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  # ... ApplicationSet configuration
-{{- else }}
-# Agent Platform is disabled
-# No resources created
+  project: default
+  source:
+    repoURL: {{ .Values.externalRepo.url }}
+    targetRevision: {{ .Values.externalRepo.revision }}
+    path: {{ .Values.externalRepo.basePath }}{{ .Values.components.kagent.path }}
+    helm:
+      valueFiles:
+        - values.yaml
+      values: |
+        global:
+          namespace: {{ .Values.global.namespace }}
+          resourcePrefix: {{ .Values.global.resourcePrefix }}
+          awsRegion: {{ .Values.global.awsRegion }}
+          eksClusterName: {{ .Values.global.eksClusterName }}
+        {{- with .Values.components.kagent.config }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.global.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  info:
+    - name: Component
+      value: Kagent
+    - name: Wave
+      value: "{{ .Values.components.kagent.syncWave }}"
+{{- end }}
 {{- end }}
 ```
+
+**Similar templates for each component**:
+- `litellm-application.yaml`
+- `agent-gateway-application.yaml`
+- `langfuse-application.yaml`
+- `jaeger-application.yaml`
+- `tofu-controller-application.yaml`
+- `agent-core-application.yaml`
 
 ### Verification Commands
 
@@ -715,8 +776,14 @@ kubectl get configmap -n argocd -o yaml | grep agent-platform
 # Check for agent platform applications
 kubectl get applications -n argocd | grep agent-platform
 
-# Check ApplicationSet
-kubectl get applicationset -n argocd | grep agent-platform
+# Should show individual applications:
+# peeks-agent-platform-kagent
+# peeks-agent-platform-litellm
+# peeks-agent-platform-agent-gateway
+# peeks-agent-platform-langfuse
+# peeks-agent-platform-jaeger
+# peeks-agent-platform-tofu-controller
+# peeks-agent-platform-agent-core
 
 # If disabled, all above should return empty/not found
 ```
@@ -785,37 +852,42 @@ Core Platform Addons Deployed
 Agent Platform Bridge Chart Activated
      │
      ▼
-ApplicationSet Created
+Individual ArgoCD Applications Created
      │
-     ▼
-Individual Applications Generated
+     ├─▶ Tofu Controller Application (Wave -1)
+     │   └─▶ Points to: sample-agent-platform-on-eks/gitops/tofu-controller
+     │       └─▶ Deployed
      │
-     ├─▶ Tofu Controller (Wave -1)
-     │   └─▶ Deployed
+     ├─▶ Kagent CRDs Application (Wave -4)
+     │   └─▶ Points to: sample-agent-platform-on-eks/gitops/kagent (CRDs)
+     │       └─▶ Deployed
      │
-     ├─▶ Kagent CRDs (Wave -4)
-     │   └─▶ Deployed
+     ├─▶ Kagent Application (Wave 0)
+     │   └─▶ Points to: sample-agent-platform-on-eks/gitops/kagent
+     │       └─▶ Deployed
      │
-     ├─▶ Kagent (Wave 0)
-     │   └─▶ Deployed
+     ├─▶ Jaeger Application (Wave 0)
+     │   └─▶ Points to: sample-agent-platform-on-eks/gitops/jaeger
+     │       └─▶ Deployed
      │
-     ├─▶ Jaeger (Wave 0)
-     │   └─▶ Deployed
+     ├─▶ LiteLLM Application (Wave 1)
+     │   └─▶ Points to: sample-agent-platform-on-eks/gitops/litellm
+     │       └─▶ Deployed
      │
-     ├─▶ LiteLLM (Wave 1)
-     │   └─▶ Deployed
+     ├─▶ Langfuse Application (Wave 1)
+     │   └─▶ Points to: sample-agent-platform-on-eks/gitops/langfuse
+     │       └─▶ Deployed
      │
-     ├─▶ Langfuse (Wave 1)
-     │   └─▶ Deployed
+     ├─▶ Agent Gateway Application (Wave 2)
+     │   └─▶ Points to: sample-agent-platform-on-eks/gitops/agent-gateway
+     │       └─▶ Deployed
      │
-     ├─▶ Agent Gateway (Wave 2)
-     │   └─▶ Deployed
-     │
-     └─▶ Agent Core (Wave 3)
-         └─▶ Terraform CR Created
-             └─▶ Tofu Controller Provisions AWS Resources
-                 └─▶ Agent Deployment Created
-                     └─▶ Deployed
+     └─▶ Agent Core Application (Wave 3)
+         └─▶ Points to: sample-agent-platform-on-eks/gitops/agent-core
+             └─▶ Terraform CR Created
+                 └─▶ Tofu Controller Provisions AWS Resources
+                     └─▶ Agent Deployment Created
+                         └─▶ Deployed
      │
      ▼
 ✅ Agent Platform Workshop Ready
@@ -1226,9 +1298,6 @@ terraform apply \
 kubectl get applications -n argocd | grep agent-platform
 # Expected: No results
 
-kubectl get applicationset -n argocd | grep agent-platform
-# Expected: No results
-
 # Verify core platform works
 kubectl get pods -n argocd
 kubectl get pods -n backstage
@@ -1248,13 +1317,16 @@ terraform apply \
   -var="workshop_type=$WORKSHOP_TYPE" \
   -var="enable_agent_platform=$ENABLE_AGENT_PLATFORM"
 
-# Verify agent platform ApplicationSet created
-kubectl get applicationset -n argocd agent-platform
-# Expected: Found
-
 # Verify individual applications created
-kubectl get applications -n argocd | grep -E "kagent|litellm|langfuse|jaeger"
-# Expected: All components listed
+kubectl get applications -n argocd | grep agent-platform
+# Expected: Individual applications listed:
+# peeks-agent-platform-kagent
+# peeks-agent-platform-litellm
+# peeks-agent-platform-agent-gateway
+# peeks-agent-platform-langfuse
+# peeks-agent-platform-jaeger
+# peeks-agent-platform-tofu-controller
+# peeks-agent-platform-agent-core
 
 # Verify components deployed
 kubectl get pods -n agent-platform
@@ -1457,11 +1529,17 @@ git push
 #### Step 3: Verify Deployment
 
 ```bash
-# Check ApplicationSet created
-kubectl get applicationset -n argocd | grep agent-platform
+# Check individual applications created
+kubectl get applications -n argocd | grep agent-platform
 
-# Check applications created
-kubectl get applications -n argocd | grep -E "kagent|litellm|langfuse"
+# Expected output:
+# peeks-agent-platform-kagent
+# peeks-agent-platform-litellm
+# peeks-agent-platform-agent-gateway
+# peeks-agent-platform-langfuse
+# peeks-agent-platform-jaeger
+# peeks-agent-platform-tofu-controller
+# peeks-agent-platform-agent-core
 
 # Monitor deployment
 kubectl get pods -n agent-platform -w
@@ -2249,12 +2327,13 @@ A: Update the version in the component chart's `Chart.yaml` in the `sample-agent
 
 ### Troubleshooting Questions
 
-**Q: Agent platform ApplicationSet is not creating applications**
+**Q: Agent platform applications are not being created**
 
-A: Check:
+A: The agent platform uses individual ArgoCD Applications created by the bridge chart. Check:
 1. Feature flag is enabled: `kubectl get configmap -n argocd -o yaml | grep agent-platform`
-2. Bridge chart is deployed: `kubectl get applicationset -n argocd | grep agent-platform`
-3. ApplicationSet logs: `kubectl logs -n argocd deployment/argocd-applicationset-controller`
+2. Bridge chart is deployed: `helm list -n argocd | grep agent-platform`
+3. Individual applications exist: `kubectl get applications -n argocd | grep agent-platform`
+4. Application controller logs: `kubectl logs -n argocd deployment/argocd-application-controller`
 
 **Q: Kagent pods are failing with "AccessDenied" errors**
 
