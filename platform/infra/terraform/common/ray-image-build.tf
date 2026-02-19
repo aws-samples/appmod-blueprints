@@ -236,11 +236,15 @@ data "archive_file" "lambda_trigger" {
     content  = <<-EOF
       import boto3
       import os
+      import time
       
       codebuild = boto3.client('codebuild')
       
       def handler(event, context):
           project_name = os.environ['CODEBUILD_PROJECT_NAME']
+          
+          # Add delay to ensure CodeBuild project is fully provisioned
+          time.sleep(5)
           
           response = codebuild.start_build(projectName=project_name)
           
