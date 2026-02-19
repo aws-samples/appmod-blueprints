@@ -1,0 +1,210 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+  name: kagent-with-rollout
+  namespace: vela-system
+  annotations:
+    definition.oam.dev/description: "Kagent-compatible agent with Argo Rollouts support"
+spec:
+  workload:
+    definition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Rollout
+  schematic:
+    cue:
+      template: |
+        import "strings"
+        
+        output: {
+          apiVersion: "argoproj.io/v1alpha1"
+          kind: "Rollout"
+          metadata: {
+            name: parameter.name
+            namespace: parameter.namespace
+            labels: {
+              "kagent.dev/agent": parameter.name
+              "app.kubernetes.io/name": parameter.name
+              "app.kubernetes.io/component": "ai-agent"
+            }
+          }
+          spec: {
+            replicas: parameter.replicas
+            strategy: parameter.rolloutStrategy
+            selector: {
+              matchLabels: {
+                "kagent.dev/agent": parameter.name
+              }
+            }
+            template: {
+              metadata: {
+                labels: {
+                  "kagent.dev/agent": parameter.name
+                  "app.kubernetes.io/name": parameter.name
+                }
+              }
+              spec: {
+                serviceAccountName: parameter.serviceAccount
+                containers: [{
+                  name: "agent"
+                  image: parameter.image
+                  ports: [{
+                    name: "a2a"
+                    containerPort: 8083
+                    protocol: "TCP"
+                  }]
+                  env: [
+                    {
+                      name: "MODEL_NAME"
+                      value: parameter.modelConfig.model
+                    },
+                    {
+                      name: "SYSTEM_MESSAGE"
+                      value: parameter.systemMessage
+                    },
+                    if parameter.modelConfig.apiKeySecret != _|_ {
+                      {
+                        name: "MODEL_API_KEY"
+                        valueFrom: {
+                          secretKeyRef: {
+                            name: parameter.modelConfig.apiKeySecret.name
+                            key: parameter.modelConfig.apiKeySecret.key
+                          }
+                        }
+                      }
+                    },
+                    if parameter.mcpServers != _|_ && len(parameter.mcpServers) > 0 {
+                      {
+                        name: "MCP_SERVERS"
+                        value: strings.Join([for s in parameter.mcpServers {
+                          "\(s.name)=http://\(s.name).\(parameter.namespace).svc.cluster.local:\(s.port)"
+                        }], ",")
+                      }
+                    },
+                    if parameter.tools != _|_ && len(parameter.tools) > 0 {
+                      {
+                        name: "ENABLED_TOOLS"
+                        value: strings.Join([for t in parameter.tools {t.name}], ",")
+                      }
+                    },
+                  ]
+                  livenessProbe: {
+                    httpGet: {
+                      path: "/.well-known/agent.json"
+                      port: 8083
+                    }
+                    initialDelaySeconds: 10
+                    periodSeconds: 30
+                  }
+                  readinessProbe: {
+                    httpGet: {
+                      path: "/.well-known/agent.json"
+                      port: 8083
+                    }
+                    initialDelaySeconds: 5
+                    periodSeconds: 10
+                  }
+                }]
+              }
+            }
+          }
+        }
+        
+        outputs: {
+          service: {
+            apiVersion: "v1"
+            kind: "Service"
+            metadata: {
+              name: parameter.name
+              namespace: parameter.namespace
+              labels: {
+                "kagent.dev/agent": parameter.name
+                "app.kubernetes.io/name": parameter.name
+              }
+            }
+            spec: {
+              selector: {
+                "kagent.dev/agent": parameter.name
+              }
+              ports: [{
+                name: "a2a"
+                port: 8083
+                targetPort: 8083
+                protocol: "TCP"
+              }]
+              type: "ClusterIP"
+            }
+          }
+          
+          agentCard: {
+            apiVersion: "v1"
+            kind: "ConfigMap"
+            metadata: {
+              name: parameter.name + "-card"
+              namespace: parameter.namespace
+              labels: {
+                "kagent.dev/agent": parameter.name
+                "kagent.dev/type": "agent-card"
+              }
+            }
+            data: {
+              name: parameter.name
+              description: parameter.description
+              type: "BYO"
+              if parameter.tools != _|_ && len(parameter.tools) > 0 {
+                tools: strings.Join([for t in parameter.tools {t.name}], ",")
+              }
+            }
+          }
+        }
+        
+        parameter: {
+          // Required fields
+          name: string
+          namespace: string
+          image: string
+          description: string
+          systemMessage: string
+          
+          // Optional fields with defaults
+          replicas: *3 | int
+          serviceAccount: *"default" | string
+          
+          // Model configuration
+          modelConfig: {
+            model: string
+            apiKeySecret?: {
+              name: string
+              key: string
+            }
+          }
+          
+          // MCP servers - simplified
+          mcpServers?: [...{
+            name: string
+            port: *3000 | int
+          }]
+          
+          // Tools - Kagent-style references
+          tools?: [...{
+            name: string
+            mcpServer?: string
+          }]
+          
+          // Argo Rollouts strategy
+          rolloutStrategy: {
+            canary?: {
+              steps: [...{
+                setWeight?: int
+                pause?: {
+                  duration?: string
+                }
+              }]
+            }
+            blueGreen?: {
+              activeService: string
+              previewService: string
+              autoPromotionEnabled?: bool
+              scaleDownDelaySeconds?: int
+            }
+          }
+        }
