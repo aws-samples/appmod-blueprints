@@ -847,9 +847,9 @@ keycloak:
       jsonPointers:
         - /metadata/managedFields
         - /status
+        - /spec/volumeClaimTemplates/0/metadata/creationTimestamp
       jqPathExpressions:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
-        - '.spec.versions[].schema.openAPIV3Schema | .. | .volumeClaimTemplates?'
 
 image-prepuller:
   enabled: false
@@ -1528,6 +1528,9 @@ backstage:
       jsonPointers:
         - /metadata/managedFields
         - /status
+        - /spec/volumeClaimTemplates/0/metadata/creationTimestamp
+      jqPathExpressions:
+        - '.spec.volumeClaimTemplates[].metadata.creationTimestamp'
     - group: rbac.authorization.k8s.io
       kind: ClusterRole
       jsonPointers:
