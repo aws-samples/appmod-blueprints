@@ -22,7 +22,7 @@ This guide helps you diagnose and resolve common issues with the agent platform.
 
 **Symptoms**:
 - No agent platform applications in ArgoCD
-- ApplicationSet not created
+- Individual component applications not created
 - Feature flag appears enabled but nothing happens
 
 **Diagnosis**:
@@ -30,11 +30,14 @@ This guide helps you diagnose and resolve common issues with the agent platform.
 # Check feature flag
 kubectl get configmap -n argocd -o yaml | grep -A 5 agent-platform
 
-# Check ApplicationSet
-kubectl get applicationset -n argocd | grep agent-platform
+# Check for individual applications
+kubectl get applications -n argocd | grep agent-platform
 
-# Check ApplicationSet controller logs
-kubectl logs -n argocd deployment/argocd-applicationset-controller --tail=100
+# Check bridge chart deployment
+helm list -n argocd | grep agent-platform
+
+# Check ArgoCD application controller logs
+kubectl logs -n argocd deployment/argocd-application-controller --tail=100
 ```
 
 **Solutions**:
@@ -66,13 +69,13 @@ helm install agent-platform . -n argocd \
   -f ../../default/addons/agent-platform/values.yaml
 ```
 
-3. **ApplicationSet controller issues**:
+3. **Application controller issues**:
 ```bash
-# Restart ApplicationSet controller
-kubectl rollout restart deployment/argocd-applicationset-controller -n argocd
+# Restart application controller
+kubectl rollout restart deployment/argocd-application-controller -n argocd
 
 # Wait for restart
-kubectl rollout status deployment/argocd-applicationset-controller -n argocd
+kubectl rollout status deployment/argocd-application-controller -n argocd
 ```
 
 ### Issue: Applications Stuck in Progressing
