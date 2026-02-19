@@ -14,7 +14,7 @@ spec:
   accountId: "785349965618"
   env:
     - name: API_BASE_URL
-      value: "http://rust-microservice.team-rust.svc.cluster.local:80"
+      value: "http://rust-microservice.team-rust.svc.cluster.local:8080"
   components:
     dynamodb:
       enabled: false
@@ -22,3 +22,29 @@ spec:
     enabled: true
     path: /unicorn
     rewrite: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: next-js-app
+  namespace: team-nextjs
+spec:
+  selector:
+    app: next-js-app
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: next-js-app-preview
+  namespace: team-nextjs
+spec:
+  selector:
+    app: next-js-app
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
