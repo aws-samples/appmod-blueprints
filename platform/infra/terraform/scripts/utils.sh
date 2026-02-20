@@ -242,64 +242,54 @@ force_unlock_if_needed() {
   
   log "Checking for Terraform state locks..."
   
-  # Quick validation check with timeout (doesn't require state lock)
-  local validate_output
-  if validate_output=$(timeout 10s terraform -chdir=$script_dir validate 2>&1); then
-    log "No state lock detected"
-    return 0
-  fi
+  # Check DynamoDB lock table directly (much faster than terraform plan)
+  local lock_table="${TFSTATE_BUCKET_NAME}-lock"
+  log "DEBUG: Checking DynamoDB table: $lock_table"
   
-  # Check if timeout occurred
-  local exit_code=$?
-  if [ $exit_code -eq 124 ]; then
-    log_warning "Validation check timed out after 10s, skipping lock check"
-    return 0
-  fi
+  local has_locks=false
+  local lock_info=""
   
-  # If plan fails, check if it's due to lock
-  local lock_output=$(terraform -chdir=$script_dir plan -lock-timeout=1s 2>&1 || true)
-  
-  if echo "$lock_output" | grep -q "Error acquiring the state lock"; then
-    log_warning "State lock detected, attempting to resolve..."
+  if aws dynamodb scan --table-name "$lock_table" --max-items 1 --region "${AWS_REGION}" &>/dev/null; then
+    lock_info=$(aws dynamodb scan --table-name "$lock_table" --region "${AWS_REGION}" --output json 2>/dev/null)
+    local lock_count=$(echo "$lock_info" | jq -r '.Count // 0')
     
-    # Extract lock ID from error message
-    local lock_id=$(echo "$lock_output" | grep -A 20 "Lock Info:" | grep "ID:" | awk '{print $2}' | head -1)
-    
-    if [[ -n "$lock_id" ]]; then
-      log "Found lock ID: $lock_id"
+    if [ "$lock_count" -gt 0 ]; then
+      has_locks=true
+      log_warning "Found $lock_count lock(s) in DynamoDB table"
       
-      # Check if lock is stale (older than 30 minutes)
-      local lock_created=$(echo "$lock_output" | grep -A 20 "Lock Info:" | grep "Created:" | cut -d' ' -f4-)
-      if [[ -n "$lock_created" ]]; then
-        local lock_age_seconds=$(( $(date +%s) - $(date -d "$lock_created" +%s 2>/dev/null || echo 0) ))
-        
-        if [[ $lock_age_seconds -gt 1800 ]]; then  # 30 minutes
-          log_warning "Lock is stale (${lock_age_seconds}s old), forcing unlock..."
-          if terraform -chdir=$script_dir force-unlock -force "$lock_id"; then
-            log_success "Successfully unlocked stale state lock"
-            return 0
-          else
-            log_error "Failed to force unlock state"
-            return 1
+      # Parse lock details
+      echo "$lock_info" | jq -r '.Items[] | "  Lock ID: \(.LockID.S // "unknown"), Created: \(.Info.S | fromjson | .Created // "unknown")"'
+      
+      # Check if locks are stale (older than 30 minutes)
+      local current_time=$(date +%s)
+      local stale_locks=$(echo "$lock_info" | jq -r --arg current_time "$current_time" '
+        .Items[] | 
+        select(
+          (.Info.S | fromjson | .Created | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) < ($current_time | tonumber - 1800)
+        ) | 
+        .LockID.S
+      ')
+      
+      if [ -n "$stale_locks" ]; then
+        log_warning "Found stale locks (>30 minutes old), attempting to force unlock..."
+        while IFS= read -r lock_id; do
+          if [ -n "$lock_id" ]; then
+            log "Force unlocking stale lock: $lock_id"
+            if terraform -chdir=$script_dir force-unlock -force "$lock_id" 2>&1; then
+              log_success "Successfully unlocked stale lock: $lock_id"
+            else
+              log_error "Failed to force unlock: $lock_id"
+            fi
           fi
-        else
-          log "Lock is recent (${lock_age_seconds}s old), waiting..."
-          return 1
-        fi
+        done <<< "$stale_locks"
       else
-        log_warning "Cannot determine lock age, forcing unlock anyway due to likely stale lock..."
-        if terraform -chdir=$script_dir force-unlock -force "$lock_id"; then
-          log_success "Successfully unlocked state lock"
-          return 0
-        else
-          log_error "Failed to force unlock state"
-          return 1
-        fi
+        log "All locks are recent (<30 minutes), Terraform will wait for them automatically"
       fi
     else
-      log_error "Could not extract lock ID from error message"
-      return 1
+      log "No active locks found in DynamoDB"
     fi
+  else
+    log "DynamoDB lock table not found or not accessible, skipping lock check"
   fi
   
   return 0
@@ -451,6 +441,7 @@ update_backstage_defaults() {
   echo "  Git Username: $GIT_USERNAME"
   echo "  Admin Role Name: $ADMIN_ROLE_NAME"
   echo "  ArgoCD Hostname: $ARGOCD_HOSTNAME"
+  echo "  Hub Cluster Name: ${RESOURCE_PREFIX}-hub"
   echo "  Model S3 Bucket: ${RESOURCE_PREFIX}-ray-models-${AWS_ACCOUNT_ID}"
   echo "  Workshop Git Branch: ${WORKSHOP_GIT_BRANCH:-main}"
 
@@ -465,6 +456,7 @@ update_backstage_defaults() {
     (select(.metadata.name == "system-info").spec.aws_account_id) = "'$AWS_ACCOUNT_ID'" |
     (select(.metadata.name == "system-info").spec.admin_role_name) = "'$ADMIN_ROLE_NAME'" |
     (select(.metadata.name == "system-info").spec.resource_prefix) = "'$RESOURCE_PREFIX'" |
+    (select(.metadata.name == "system-info").spec.hub_cluster_name) = "'${RESOURCE_PREFIX}'-hub" |
     (select(.metadata.name == "system-info").spec.model_s3_bucket) = "'${RESOURCE_PREFIX}'-ray-models-'${AWS_ACCOUNT_ID}'" |
     (select(.metadata.name == "system-info").spec.workshop_git_branch) = "'${WORKSHOP_GIT_BRANCH:-main}'"
   ' "$CATALOG_INFO_PATH"

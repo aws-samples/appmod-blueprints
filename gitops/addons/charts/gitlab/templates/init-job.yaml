@@ -163,6 +163,12 @@ spec:
     spec:
       serviceAccountName: default
       restartPolicy: OnFailure
+      nodeSelector:
+        karpenter.sh/nodepool: system
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
       containers:
       - name: gitlab-init
         image: alpine/k8s:1.32.5

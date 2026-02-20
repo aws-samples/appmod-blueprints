@@ -11,6 +11,10 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 
 # Save the current script directory before sourcing utils.sh
 DEPLOY_SCRIPTDIR="$SCRIPTDIR"
+
+# Force regeneration of CONFIG_FILE to pick up latest hub-config.yaml changes
+unset CONFIG_FILE
+
 source $SCRIPTDIR/../scripts/utils.sh
 
 # Check if clusters are created through Workshop
@@ -158,10 +162,6 @@ main() {
       log_warning "Attempt $attempt failed, waiting ${delay}s before retry..."
       log_warning "Restarting Kyverno admission controller to fix potential webhook issues..."
       kubectl rollout restart deployment kyverno-admission-controller -n kyverno 2>/dev/null || true
-      log_warning "Restarting OpenTelemetry operators to fix potential webhook issues..."
-      for cluster in "${CLUSTER_NAMES[@]}"; do
-        kubectl rollout restart deployment opentelemetry-operator -n opentelemetry-operator-system --context $cluster 2>/dev/null || true
-      done
       sleep $delay
       delay=$((delay * 2))  # Exponential backoff
       attempt=$((attempt + 1))
@@ -174,9 +174,8 @@ main() {
     exit 1
   fi
 
-  # Get ArgoCD domain from Terraform output
-  export ARGOCD_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
-  export INGRESS_DOMAIN=$ARGOCD_DOMAIN
+  # Get Ingress domain from Terraform output
+  export INGRESS_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
 
   # Update backstage default values now that both domains are available
   update_backstage_defaults

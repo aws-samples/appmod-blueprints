@@ -50,8 +50,19 @@ pad_string() {
     printf "%-${len}s" "$str"
 }
 
-# Store URLs for display
-ARGOCD_URL="https://$DOMAIN_NAME/argocd"
+# Get ArgoCD URL from EKS capability if available
+ARGOCD_SERVER_URL=$(aws eks describe-capability --cluster-name ${RESOURCE_PREFIX}-hub --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null || echo "")
+
+# If EKS capability ArgoCD URL is available, use it; otherwise fall back to ingress domain
+if [ -n "$ARGOCD_SERVER_URL" ] && [ "$ARGOCD_SERVER_URL" != "None" ]; then
+  ARGOCD_URL="$ARGOCD_SERVER_URL"
+  print_info "Using EKS-managed ArgoCD URL: $ARGOCD_URL"
+else
+  ARGOCD_URL="https://$DOMAIN_NAME/argocd"
+  print_info "Using in-cluster ArgoCD URL: $ARGOCD_URL"
+fi
+
+# Store other URLs for display
 BACKSTAGE_URL="https://$DOMAIN_NAME/backstage"
 KARGO_URL="https://$DOMAIN_NAME"
 WORKFLOWS_URL="https://$DOMAIN_NAME/argo-workflows"
@@ -89,7 +100,9 @@ echo -e "${BOLD}+----------------+----------------------------------------------
 echo -e "${BOLD}|${NC} ${GREEN}$(pad_string "Grafana" $TOOL_COL)${NC}${BOLD} |${NC} ${YELLOW}$(pad_string "$GRAFANA_URL" $URL_COL)${NC}${BOLD} |${NC} $(pad_string "user1 / $IDE_PASSWORD" $CRED_COL)${BOLD} |${NC}"
 echo -e "${BOLD}+----------------+-------------------------------------------------------------------+------------------------------------------+${NC}"
 
+update_workshop_var "INGRESS_DOMAIN" "$DOMAIN_NAME"
 update_workshop_var "ARGOCD_URL" "$ARGOCD_URL"
+update_workshop_var "ARGOCD_DOMAIN" "$(echo $ARGOCD_URL | sed 's|https://||')"
 update_workshop_var "GIT_HOSTNAME" "$GIT_HOSTNAME"
 update_workshop_var "BACKSTAGE_URL" "$BACKSTAGE_URL"
 update_workshop_var "KARGO_URL" "$KARGO_URL"
@@ -101,4 +114,3 @@ update_workshop_var "GRAFANA_URL" "$GRAFANA_URL"
 update_workshop_var "KEYCLOAK_ADMIN_PASSWORD" "$KEYCLOAK_ADMIN_PASSWORD"
 update_workshop_var "USER_PASSWORD" "$USER_PASSWORD"
 update_workshop_var "GITLAB_DOMAIN" "$(echo $GITLAB_URL | sed 's|https://||')"
-update_workshop_var "ARGOCD_DOMAIN" "$DOMAIN_NAME"

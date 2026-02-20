@@ -57,10 +57,23 @@ resource "aws_eks_pod_identity_association" "s3_csi_driver" {
 resource "aws_eks_addon" "s3_csi_driver" {
   for_each = var.clusters
 
-  cluster_name             = each.value.name
-  addon_name               = "aws-mountpoint-s3-csi-driver"
+  cluster_name                = each.value.name
+  addon_name                  = "aws-mountpoint-s3-csi-driver"
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
+
+  # Configure controller tolerations for CriticalAddonsOnly taint
+  configuration_values = jsonencode({
+    controller = {
+      tolerations = [
+        {
+          key      = "CriticalAddonsOnly"
+          operator = "Exists"
+          effect   = "NoSchedule"
+        }
+      ]
+    }
+  })
 
   tags = {
     Name        = "${var.resource_prefix}-s3-csi-driver-${each.key}"

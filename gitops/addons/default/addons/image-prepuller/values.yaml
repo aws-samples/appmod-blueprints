@@ -1,0 +1,19 @@
+images:
+  - public.ecr.aws/seb-demo/ray:2.49.0-py311-gpu
+  - jupyter/base-notebook:latest
+  - jupyter/datascience-notebook:latest
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+tolerations:
+  - key: 'CriticalAddonsOnly'
+    operator: 'Exists'
+    effect: 'NoSchedule'
+
+nodeSelector:
+  karpenter.sh/nodepool: general-purpose-peeks

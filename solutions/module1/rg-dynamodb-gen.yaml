@@ -1,0 +1,62 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: dynamodbtable.kro.run
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: DynamoDBTable
+    spec:
+      name: string
+      region: string
+      accountId: string
+      attributeName: string
+      attributeType: string
+    status:
+      tableStatus: ${dynamodbtable.status.conditions}
+  resources:
+  - id: iamroleselector
+    template:
+      apiVersion: services.k8s.aws/v1alpha1
+      kind: IAMRoleSelector
+      metadata:
+        name: ${schema.metadata.name}-dynamodb
+      spec:
+        arn: arn:aws:iam::${schema.spec.accountId}:role/peeks-cluster-mgmt-dynamodb
+        namespaceSelector:
+          names:
+            - ${schema.metadata.namespace}
+        resourceTypeSelector:
+          - group: dynamodb.services.k8s.aws
+            kind: ""
+            version: ""
+  - id: dynamodbtable
+    readyWhen:
+      - ${dynamodbtable.status.conditions[0].status == "True"}
+    template:
+      apiVersion: dynamodb.services.k8s.aws/v1alpha1
+      kind: Table
+      metadata:
+        name: ${schema.spec.name}
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: ${schema.kind}
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
+        annotations:
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          services.k8s.aws/region: ${schema.spec.region}
+          argocd.argoproj.io/sync-options: "Ignore=true,SkipDryRunOnMissingResource=true"
+      spec:
+        tableName: ${schema.spec.name}
+        billingMode: PAY_PER_REQUEST
+        attributeDefinitions:
+          - attributeName: ${schema.spec.attributeName}
+            attributeType: ${schema.spec.attributeType}
+        keySchema:
+          - attributeName: ${schema.spec.attributeName}
+            keyType: HASH

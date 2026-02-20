@@ -24,7 +24,6 @@ COPY src/api/ ./src/api/
 RUN cargo build --release --bin api --target x86_64-unknown-linux-musl && \
     cp target/x86_64-unknown-linux-musl/release/api ./api
 
-
 # Copy the statically-linked binary into a scratch container.
 FROM scratch
 

@@ -61,7 +61,7 @@ spec:
         app: keycloak
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system
+        karpenter.sh/nodepool: system-peeks
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
@@ -125,6 +125,8 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          resources:
+{{ toYaml .Values.keycloak.resources | indent 12 }}
           readinessProbe:
             httpGet:
               path: /keycloak/realms/master
@@ -207,7 +209,7 @@ spec:
         app: postgresql
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system
+        karpenter.sh/nodepool: system-peeks
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"

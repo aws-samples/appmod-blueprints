@@ -10,6 +10,12 @@ devlake:
   lake:
     image:
       tag: v1.0.3-beta7
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
     encryptionSecret:
       secretName: devlake-encryption-secret
       autoCreateSecret: false
@@ -40,6 +46,12 @@ devlake:
   ui:
     image:
       tag: v1.0.3-beta7
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
     securityContext:
       runAsNonRoot: true
     containerSecurityContext:

@@ -7,28 +7,16 @@ spec:
   targets:
     - ./eks-cluster-template/template.yaml
     - ./rds-cluster/template.yaml
-    - ./s3-bucket-ack/template.yaml
+    - ./s3-bucket-ack-kubevela/template.yaml
+    - ./s3-bucket-ack-kro/template.yaml
     - ./app-deploy/template.yaml
     - ./app-deploy-without-repo/template.yaml
-    - ./jupyterhub-on-eks/template-jupyterhub-on-eks.yaml
-    - ./spark-on-eks/template-data-on-eks.yaml
-    - ./eks-observability-accelerator/template-infra-monitoring.yaml
-    - ./eks-nvdia-gpu-efa/template-nvidia-gpu-efa.yaml
-    - ./eks-stateful-workload/template-stateful-workload.yaml
-    - ./eks-cost-monitoring/template-cost-monitoring.yaml
-    - ./eks-istio/template-istio.yaml
     - ./spark-job/template-spark-job.yaml
     - ./ray-serve-cpu/template.yaml
     - ./ray-serve-gpu/template.yaml
     - ./ray-serve-trainium/template.yaml
-    - ./serverless-microservice/template-serverless-microservice.yaml
     - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
     - ./cicd-pipeline/template-cicd-pipeline.yaml
-    - ./create-env-aurora-postgres/template-env-aurora-postgres.yaml
-    - ./s3-lambda-terraform/template-s3-lambda-terraform.yaml
-    - ./stepfunctions-bedrock-terraform/template-stepfunctions-bedrock-terraform.yaml
-    - ./apigw-sqs-terraform/template-apigw-sqs-terraform.yaml
-    - ./eventbridge-to-lambda-terraform/template-eventbridge-to-lambda-terraform.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: System
@@ -46,5 +34,6 @@ spec:
   aws_account_id: '{{ values.awsAccountId }}'
   admin_role_name: '{{ values.adminRoleName }}'
   resource_prefix: '{{ values.resourcePrefix }}'
+  hub_cluster_name: '{{ values.hubClusterName }}'
   model_s3_bucket: '{{ values.modelS3Bucket }}'
   workshop_git_branch: '{{ values.workshopGitBranch }}'

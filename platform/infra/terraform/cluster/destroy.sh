@@ -55,7 +55,6 @@ main() {
     -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
     -auto-approve; then
     log_warning "Clusters stack destroy failed, checking for lock issues"
-    
     # Extract lock ID from error if present
     cd "$DEPLOY_SCRIPTDIR"
     LOCK_ID=$(terraform plan 2>&1 | grep -oP 'ID:\s+\K[a-f0-9-]+' | head -1 || echo "")
@@ -64,7 +63,6 @@ main() {
       terraform force-unlock -force "$LOCK_ID" || true
     fi
     cd -
-    
     log_warning "Retrying destroy after lock handling"
     if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
       -var-file="${GENERATED_TFVAR_FILE}" \

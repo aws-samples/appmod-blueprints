@@ -82,7 +82,7 @@ variable "clusters" {
     hub = {
       name               = "hub"
       region             = "us-west-2"
-      kubernetes_version = "1.32"
+      kubernetes_version = "1.34"
       environment        = "control-plane"
       auto_mode          = true
       addons             = {}
@@ -91,7 +91,7 @@ variable "clusters" {
     spoke1 = {
       name               = "spoke-dev"
       region             = "us-west-2"
-      kubernetes_version = "1.32"
+      kubernetes_version = "1.34"
       environment        = "dev"
       auto_mode          = true
       addons             = {}
@@ -100,7 +100,7 @@ variable "clusters" {
     spoke2 = {
       name               = "spoke-prod"
       region             = "us-west-2"
-      kubernetes_version = "1.32"
+      kubernetes_version = "1.34"
       environment        = "prod"
       auto_mode          = true
       addons             = {}

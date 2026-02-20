@@ -18,6 +18,7 @@ spec:
        region: string
        clusterName: string
        resourcePrefix: string | default="peeks"
+       accountId: string
        deployClusterName: string | default="peeks-spoke-dev"
       application:
        name: string
@@ -30,13 +31,62 @@ spec:
        hostname: string
     status:
       # ECR Repository information
-      ecrMainRepositoryURI: ${ecrmainrepo.status.repositoryURI}
-      ecrCacheRepositoryURI: ${ecrcacherepo.status.repositoryURI}
+      ecrMainRepositoryURI: ${ecrmainrepo.status.?repositoryURI}
+      ecrCacheRepositoryURI: ${ecrcacherepo.status.?repositoryURI}
       # IAM Role information
-      iamRoleARN: ${iamrole.status.ackResourceMetadata.arn}
+      iamRoleARN: ${iamrole.status.?ackResourceMetadata.?arn}
       # Service Account information
-      serviceAccountName: ${serviceaccount.metadata.name}
+      serviceAccountName: ${serviceaccount.metadata.?name}
   resources:
+    # IAMRoleSelectors for ACK controllers to manage resources in this namespace
+    - id: iamroleselectorIam
+      template:
+       apiVersion: services.k8s.aws/v1alpha1
+       kind: IAMRoleSelector
+       metadata:
+          name: ${schema.metadata.namespace}-iam
+       spec:
+          arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-iam
+          namespaceSelector:
+             names:
+                - ${schema.metadata.namespace}
+          resourceTypeSelector:
+             - group: iam.services.k8s.aws
+               kind: ""
+               version: ""
+
+    - id: iamroleselectorEcr
+      template:
+       apiVersion: services.k8s.aws/v1alpha1
+       kind: IAMRoleSelector
+       metadata:
+          name: ${schema.metadata.namespace}-ecr
+       spec:
+          arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-ecr
+          namespaceSelector:
+             names:
+                - ${schema.metadata.namespace}
+          resourceTypeSelector:
+             - group: ecr.services.k8s.aws
+               kind: ""
+               version: ""
+
+    - id: iamroleselectorEks
+      template:
+       apiVersion: services.k8s.aws/v1alpha1
+       kind: IAMRoleSelector
+       metadata:
+          name: ${schema.metadata.namespace}-eks
+       spec:
+          arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-eks
+          namespaceSelector:
+             names:
+                - ${schema.metadata.namespace}
+          resourceTypeSelector:
+             - group: eks.services.k8s.aws
+               kind: ""
+               version: ""
+
     # ECR Repository for main application images
     - id: ecrmainrepo
       readyWhen:
@@ -46,6 +96,10 @@ spec:
        kind: Repository
        metadata:
           name: ${schema.spec.name}-main-repo
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of ECR repositories containing production container images
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -103,6 +157,10 @@ spec:
        kind: Repository
        metadata:
           name: ${schema.spec.name}-cache-repo
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of ECR repositories containing cached build layers
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -161,6 +219,10 @@ spec:
        kind: Policy
        metadata:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM policies that may be referenced by other resources
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -221,6 +283,10 @@ spec:
        kind: Role
        metadata:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -262,6 +328,10 @@ spec:
        kind: PodIdentityAssociation
        metadata:
           name: ${schema.spec.name}-pod-association
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of Pod Identity associations that may be in use
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -670,7 +740,7 @@ spec:
                    annotations:
                      karpenter.sh/do-not-disrupt: "true"
                  spec:
-                   serviceAccountName: ${schema.spec.name}-sa
+                   serviceAccountName: ${serviceaccount.metadata.name}
                    restartPolicy: OnFailure
                    containers:
                      - name: ecr-credential-refresh
@@ -755,7 +825,7 @@ spec:
              app.kubernetes.io/component: cicd-pipeline
              workflow.kro.run/type: provisioning
        spec:
-          serviceAccountName: ${schema.spec.name}-sa
+          serviceAccountName: ${serviceaccount.metadata.name}
           entrypoint: provision-pipeline
           arguments:
              parameters:
@@ -1053,7 +1123,7 @@ spec:
              app.kubernetes.io/component: cicd-pipeline
              workflow.kro.run/type: cache-warmup
        spec:
-          serviceAccountName: ${schema.spec.name}-sa
+          serviceAccountName: ${serviceaccount.metadata.name}
           entrypoint: cache-warmup-pipeline
           arguments:
              parameters:
@@ -1130,7 +1200,7 @@ spec:
              app.kubernetes.io/component: cicd-pipeline
              workflow.kro.run/type: cicd
        spec:
-          serviceAccountName: ${schema.spec.name}-sa
+          serviceAccountName: ${serviceaccount.metadata.name}
           entrypoint: cicd-pipeline
           ttlStrategy:
             secondsAfterCompletion: 3600
@@ -2055,10 +2125,10 @@ spec:
              app.kubernetes.io/component: cicd-setup
              app.kubernetes.io/managed-by: kro
        spec:
-          serviceAccountName: ${schema.spec.name}-sa
+          serviceAccountName: ${serviceaccount.metadata.name}
           entrypoint: dora-provisioner
           workflowTemplateRef:
-              name: dora-setup-template
+              name: ${dorasetuptemplate.metadata.name}
               namespace: ${schema.metadata.namespace}
 
     # Initial ECR credential setup Job - runs once during deployment
@@ -2097,7 +2167,7 @@ spec:
                annotations:
                  karpenter.sh/do-not-disrupt: "true"
              spec:
-               serviceAccountName: ${schema.spec.name}-sa
+               serviceAccountName: ${serviceaccount.metadata.name}
                restartPolicy: OnFailure
                containers:
                  - name: initial-ecr-setup
@@ -2177,7 +2247,6 @@ spec:
     - id: setupworkflow
       readyWhen:
        - ${setupworkflow.metadata.name != ""}
-       #- ${setupworkflow.status.conditions.exists(x, x.type == 'Completed' && x.status == "True")}
       template:
        apiVersion: argoproj.io/v1alpha1
        kind: Workflow
@@ -2199,9 +2268,9 @@ spec:
              app.kubernetes.io/component: cicd-setup
              app.kubernetes.io/managed-by: kro
        spec:
-          serviceAccountName: ${schema.spec.name}-sa
+          serviceAccountName: ${serviceaccount.metadata.name}
           workflowTemplateRef:
-              name: ${schema.spec.name}-provisioning-workflow
+              name: ${provisioningworkflow.metadata.name}
               namespace: ${schema.metadata.namespace}
           arguments:
              parameters:
@@ -2237,9 +2306,9 @@ spec:
              app.kubernetes.io/managed-by: kro
              triggered-by: initial-setup
        spec:
-          serviceAccountName: ${schema.spec.name}-sa
+          serviceAccountName: ${serviceaccount.metadata.name}
           workflowTemplateRef:
-              name: ${schema.spec.name}-cicd-workflow
+              name: ${cicdworkflow.metadata.name}
               namespace: ${schema.metadata.namespace}
           arguments:
              parameters:
@@ -2262,6 +2331,8 @@ spec:
 
     # Argo Events EventSource for GitLab webhooks
     - id: eventsource
+      readyWhen:
+        - ${eventsource.metadata.name != ""}
       template:
        apiVersion: argoproj.io/v1alpha1
        kind: EventSource
@@ -2294,6 +2365,8 @@ spec:
 
     # Argo Events Sensor for triggering CI/CD workflows
     - id: sensor
+      readyWhen:
+        - ${sensor.metadata.name != ""}
       template:
        apiVersion: argoproj.io/v1alpha1
        kind: Sensor
@@ -2314,10 +2387,10 @@ spec:
              app.kubernetes.io/managed-by: kro
        spec:
           template:
-             serviceAccountName: ${schema.spec.name}-sa
+             serviceAccountName: ${serviceaccount.metadata.name}
           dependencies:
              - name: incident-webhook
-               eventSourceName: ${schema.spec.name}-gitlab-eventsource
+               eventSourceName: ${eventsource.metadata.name}
                eventName: gitlab-webhook
                filters:
                  data:
@@ -2326,7 +2399,7 @@ spec:
                      value:
                        - 'issue'
              - name: pull-request-webhook
-               eventSourceName: ${schema.spec.name}-gitlab-eventsource
+               eventSourceName: ${eventsource.metadata.name}
                eventName: gitlab-webhook
                filters:
                  data:
@@ -2343,7 +2416,7 @@ spec:
                      value:
                        - 'false'
              - name: gitlab-webhook
-               eventSourceName: ${schema.spec.name}-gitlab-eventsource
+               eventSourceName: ${eventsource.metadata.name}
                eventName: gitlab-webhook
                filters:
                  data:
@@ -2429,9 +2502,9 @@ spec:
                            app.kubernetes.io/component: cicd-pipeline
                            triggered-by: gitlab-webhook
                        spec:
-                         serviceAccountName: ${schema.spec.name}-sa
+                         serviceAccountName: ${serviceaccount.metadata.name}
                          workflowTemplateRef:
-                           name: ${schema.spec.name}-cicd-workflow
+                           name: ${cicdworkflow.metadata.name}
                          arguments:
                            parameters:
                              - name: git-url
@@ -2478,9 +2551,9 @@ spec:
                            app.kubernetes.io/component: cicd-pipeline
                            triggered-by: gitlab-webhook
                        spec:
-                         serviceAccountName: ${schema.spec.name}-sa
+                         serviceAccountName: ${serviceaccount.metadata.name}
                          workflowTemplateRef:
-                           name: ${schema.spec.name}-dora-deployment-workflow
+                           name: ${doradeploy.metadata.name}
                          arguments:
                            parameters:
                              - name: body
@@ -2507,9 +2580,9 @@ spec:
                            app.kubernetes.io/component: cicd-pipeline
                            triggered-by: incident-webhook
                        spec:
-                         serviceAccountName: ${schema.spec.name}-sa
+                         serviceAccountName: ${serviceaccount.metadata.name}
                          workflowTemplateRef:
-                           name: ${schema.spec.name}-dora-incident-workflow
+                           name: ${doraincident.metadata.name}
                          arguments:
                            parameters:
                              - name: body
@@ -2536,7 +2609,7 @@ spec:
                            app.kubernetes.io/component: cicd-pipeline
                            triggered-by: pull-request-webhook
                        spec:
-                         serviceAccountName: ${schema.spec.name}-sa
+                         serviceAccountName: ${serviceaccount.metadata.name}
                          workflowTemplateRef:
                            name: ${schema.spec.name}-dora-pull-request-workflow
                          arguments:

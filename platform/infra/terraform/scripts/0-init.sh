@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Timestamp function for performance tracking
+log_timestamp() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
 # Enable alias expansion in non-interactive shell
 if [[ -n "$ZSH_VERSION" ]]; then
   setopt aliases
@@ -8,9 +13,13 @@ else
 fi
 
 # Best effort applications - sync but don't wait for them to be healthy
+# These apps may take longer to deploy or have known issues that don't block the workshop
 BEST_EFFORT_APPS=(
     "devlake-peeks-hub"
     "grafana-dashboards-peeks-hub"
+    "jupyterhub-peeks-hub"
+    "spark-operator-peeks-hub"
+    "image-prepuller-peeks-hub"
 )
 
 #be sure we source env var
@@ -33,12 +42,18 @@ source "${GIT_ROOT_PATH}/platform/infra/terraform/scripts/utils.sh"
 
 # Configuration
 SCRIPT_DIR="$(dirname "$0")"
-WAIT_TIMEOUT=3600  #(60 minutes)
+WAIT_TIMEOUT=${BOOTSTRAP_WAIT_TIMEOUT:-5400}  # 90 minutes (can be overridden via env var)
 CHECK_INTERVAL=30 # 30 seconds
+MAX_SYNC_RETRIES=3  # Maximum retries for stuck apps
+
+# Export for use in sourced scripts
+export WAIT_TIMEOUT
+export CHECK_INTERVAL
 
 
 # Main execution
 main() {
+    log_timestamp "=== SCRIPT START ==="
     print_status "INFO" "Starting bootstrap deployment process"
     print_status "INFO" "Script directory: $SCRIPT_DIR"
     print_status "INFO" "ArgoCD re-check interval: $CHECK_INTERVAL seconds"
@@ -47,6 +62,7 @@ main() {
     source "$SCRIPT_DIR/backstage-utils.sh"
 
     # Ensure clusters are fully ready before proceeding
+    log_timestamp "Phase: Verifying cluster readiness"
     print_status "INFO" "Verifying cluster readiness before starting deployment..."
     for cluster_name in "${CLUSTER_NAMES[@]}"; do
         print_status "INFO" "Checking cluster: $cluster_name"
@@ -63,7 +79,8 @@ main() {
         while [ $cluster_wait -lt 300 ] && [ "$cluster_ready" = false ]; do
             if kubectl get nodes --request-timeout=10s >/dev/null 2>&1; then
                 local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c "Ready" || echo "0")
-                if [ "$ready_nodes" -gt 0 ]; then
+                ready_nodes=$(echo "$ready_nodes" | tr -d '[:space:]-')
+                if [ "${ready_nodes:-0}" -gt 0 ] 2>/dev/null; then
                     print_status "SUCCESS" "Cluster $cluster_name is ready with $ready_nodes nodes"
                     cluster_ready=true
                 else
@@ -96,11 +113,12 @@ main() {
     #    export BACKSTAGE_BUILD_PID
     #fi
 
-    # Wait for ArgoCD to be fully ready first
-    print_status "INFO" "Waiting for ArgoCD to be fully ready..."
+    # Wait for ArgoCD to be fully ready first (EKS Capabilities version)
+    log_timestamp "Phase: Waiting for ArgoCD EKS capability"
+    print_status "INFO" "Waiting for ArgoCD EKS capability to be ready..."
     local argocd_ready=false
     local argocd_wait_time=0
-    local argocd_max_wait=1200  # 20 minutes (increased from 15)
+    local argocd_max_wait=1800  # 30 minutes (increased from 20)
     
     while [ $argocd_wait_time -lt $argocd_max_wait ] && [ "$argocd_ready" = false ]; do
         # Check if ArgoCD namespace exists first
@@ -111,61 +129,12 @@ main() {
             continue
         fi
         
-        # Check if ArgoCD deployments exist and are ready with better error handling and retries
-        local argocd_pods_ready="0"
-        local argocd_repo_ready="0"
-        local retry_count=0
-        
-        while [ $retry_count -lt 3 ]; do
-            argocd_pods_ready=$(kubectl get deployment -n argocd argocd-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-            argocd_repo_ready=$(kubectl get deployment -n argocd argocd-repo-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-            
-            # Handle empty responses (convert to 0)
-            [ -z "$argocd_pods_ready" ] && argocd_pods_ready="0"
-            [ -z "$argocd_repo_ready" ] && argocd_repo_ready="0"
-            
-            # If we got valid responses, break
-            if [[ "$argocd_pods_ready" =~ ^[0-9]+$ ]] && [[ "$argocd_repo_ready" =~ ^[0-9]+$ ]]; then
-                break
-            fi
-            
-            retry_count=$((retry_count + 1))
-            if [ $retry_count -lt 3 ]; then
-                print_status "INFO" "kubectl query failed, retrying... ($retry_count/3)"
-                sleep 5
-            fi
-        done
-        
-        # Check if ArgoCD API is responding with timeout
-        local api_ready=false
+        # For EKS capabilities, ArgoCD runs as managed service - only check API availability
         if timeout 10 kubectl get applications -n argocd >/dev/null 2>&1; then
-            api_ready=true
-        fi
-        
-        # Check if ArgoCD domain is available with improved logic
-        local domain_available=false
-        local domain_name=""
-        
-        # Try to get domain from secret first
-        domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null || echo "")
-        
-        # If not found in secret, try CloudFront
-        if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
-            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null || echo "")
-        fi
-        
-        # Validate domain
-        if [ -n "$domain_name" ] && [ "$domain_name" != "None" ] && [ "$domain_name" != "null" ] && [ "$domain_name" != "" ]; then
-            domain_available=true
-            print_status "INFO" "ArgoCD domain found: $domain_name"
-        fi
-        
-        # More robust readiness check - require at least 1 pod for each deployment
-        if [ "$argocd_pods_ready" -ge 1 ] && [ "$argocd_repo_ready" -ge 1 ] && [ "$api_ready" = true ] && [ "$domain_available" = true ]; then
-            print_status "SUCCESS" "ArgoCD is ready (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: responding, domain: $domain_name)"
+            print_status "SUCCESS" "ArgoCD EKS capability is ready (API responding)"
             argocd_ready=true
         else
-            print_status "INFO" "ArgoCD not ready yet (server: $argocd_pods_ready, repo: $argocd_repo_ready, api: $api_ready, domain: $domain_available), waiting..."
+            print_status "INFO" "ArgoCD EKS capability API not ready yet, waiting... ($argocd_wait_time/$argocd_max_wait seconds)"
             sleep 30
             argocd_wait_time=$((argocd_wait_time + 30))
         fi
@@ -187,6 +156,64 @@ main() {
     # Dependency-aware ArgoCD app synchronization
     wait_for_argocd_apps_with_dependencies
 
+    # Run enhanced recovery to handle any remaining issues
+    log_timestamp "Phase: Enhanced ArgoCD Recovery"
+    print_status "INFO" "Running enhanced ArgoCD recovery to ensure all apps are healthy..."
+    "${SCRIPT_DIR}/recover-argocd-apps.sh"
+    
+    # Verify final application health
+    local total_apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
+    local healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(.status.health.status == "Healthy" and .status.sync.status == "Synced")] | length')
+    
+    if [ "$healthy_apps" -eq "$total_apps" ]; then
+        print_status "SUCCESS" "All $total_apps ArgoCD applications are healthy!"
+    else
+        print_status "WARNING" "$healthy_apps/$total_apps applications are healthy. Some apps may still be deploying."
+    fi
+
+    # Get GitLab domain from CloudFront distribution
+    if [ -z "$GITLAB_DOMAIN" ]; then
+        print_status "INFO" "Retrieving GitLab domain from CloudFront..."
+        GITLAB_DOMAIN=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName" --output text)
+        if [ -z "$GITLAB_DOMAIN" ]; then
+            print_status "ERROR" "Failed to retrieve GitLab domain from CloudFront"
+            exit 1
+        fi
+        print_status "SUCCESS" "GitLab domain: $GITLAB_DOMAIN"
+        update_workshop_var "GITLAB_DOMAIN" "$GITLAB_DOMAIN"
+    fi
+
+    # Setup GitLab remote for local environment
+    cd "$GIT_ROOT_PATH"
+    git config --global credential.helper store
+    git config --global user.name "$GIT_USERNAME"
+    git config --global user.email "$GIT_USERNAME@workshop.local"
+    
+    GITLAB_URL="https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+    
+    # Preserve GitHub as 'github' remote if origin points to GitHub
+    if git remote get-url origin 2>/dev/null | grep -q "github.com"; then
+        if ! git remote get-url github >/dev/null 2>&1; then
+            git remote rename origin github
+        fi
+    fi
+    
+    # Set GitLab as origin
+    if git remote get-url origin >/dev/null 2>&1; then
+        git remote set-url origin "$GITLAB_URL"
+    else
+        git remote add origin "$GITLAB_URL"
+    fi
+    
+    # Try to fetch from GitLab, but don't fail if repository doesn't exist yet
+    if git fetch origin 2>/dev/null; then
+        print_status "INFO" "Fetched from GitLab repository"
+        git checkout -B main origin/main 2>/dev/null || git checkout -B main
+    else
+        print_status "WARNING" "GitLab repository not accessible yet, will be initialized by 2-gitlab-init.sh"
+        git checkout -B main 2>/dev/null || true
+    fi
+    cd -
 
     # Initialize GitLab configuration
     bash "$SCRIPT_DIR/2-gitlab-init.sh"
@@ -232,10 +259,13 @@ main() {
     show_final_status
     
     # Validate workshop setup and recover any issues
+    log_timestamp "Phase: Final workshop validation"
     print_status "INFO" "Running final workshop validation..."
     if bash "$SCRIPT_DIR/check-workshop-setup.sh"; then
+        log_timestamp "=== SCRIPT COMPLETED SUCCESSFULLY ==="
         print_status "SUCCESS" "Workshop setup validation completed - all components healthy!"
     else
+        log_timestamp "=== SCRIPT COMPLETED WITH WARNINGS ==="
         print_status "WARNING" "Workshop setup validation found issues - check output above"
         print_status "INFO" "You can run 'check-workshop-setup' command later to verify"
     fi

@@ -3122,13 +3122,16 @@ spec:
         ports:
         - containerPort: 2746
           name: web
+        resources:
+{{ toYaml .Values.server.resources | indent 10 }}
         readinessProbe:
           httpGet:
             path: /
             port: 2746
             scheme: HTTP
-          initialDelaySeconds: 10
+          initialDelaySeconds: 30
           periodSeconds: 20
+          timeoutSeconds: 5
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -3188,6 +3191,8 @@ spec:
         - containerPort: 9090
           name: metrics
         - containerPort: 6060
+        resources:
+{{ toYaml .Values.controller.resources | indent 10 }}
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

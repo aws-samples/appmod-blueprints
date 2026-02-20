@@ -21,6 +21,9 @@ jupyterhub:
           secretKeyRef:
             name: keycloak-clients
             key: JUPYTERHUB_CLIENT_SECRET
+    pdb:
+      enabled: true
+      minAvailable: 1
 
   proxy:
     service:

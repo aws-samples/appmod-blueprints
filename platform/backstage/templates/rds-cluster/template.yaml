@@ -69,11 +69,13 @@ spec:
             namespace: argocd
           spec:
             description: Project for ${{parameters.name}} RDS cluster
+            sourceNamespaces:
+            - argocd
             sourceRepos:
             - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}.git
             destinations:
             - namespace: ${{parameters.namespace}}
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
             clusterResourceWhitelist:
             - group: '*'
               kind: '*'
@@ -99,7 +101,7 @@ spec:
             project: ${{parameters.name}}-project
             destination:
               namespace: ${{parameters.namespace}}
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
             source:
               repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}.git
               targetRevision: HEAD

@@ -15,20 +15,229 @@ spec:
       replicas: integer | default=3
       port: integer | default=80
       targetPort: integer | default=8080
-      serviceAccount: string | default="default"
-      appPath: string | default="/"
-      envName: string | default="PRODUCTION"
-      domain: string | default="*.elb.us-west-2.amazonaws.com"
-      ingressEnabled: boolean | default=false
-      ingress: 'map[string]string | default={"enabled": "false"}'
-      functionalGateEnabled: boolean | default=false
-      functionalGate: 'map[string]string | default={"enabled": "false", "image": "httpd:alpine", "extraArgs": ""}'
-      performanceGateEnabled: boolean | default=false
-      performanceGate: 'map[string]string | default={"enabled": "false", "image": "httpd:alpine", "extraArgs": "160"}'
-      metricsEnabled: boolean | default=false
-      metrics: 'map[string]string | default={"enabled": "false"}'
+      serviceAccount: string
+      clusterName: string
+      accountId: string | default=""
+      apiBaseUrl: string | default=""
+      env: "[]map[string]string | default=[{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]"
+      components:
+        dynamodb:
+          enabled: boolean | default=false
+          tableName: string | default=""
+          partitionKey: string | default="partition_key"
+          partitionKeyType: string | default="S"
+          sortKey: string | default="sort_key"
+          sortKeyType: string | default="S"
+      ingress:
+        host: string | default="*.elb.us-west-2.amazonaws.com"
+        enabled: boolean | default=false
+        path: string | default="/"
+        rewrite: boolean | default=true
+      functionalGate:
+        enabled: boolean | default=false
+        image: string | default="httpd:alpine"
+        extraArgs: string | default=""
+        pause: string | default="30s"
+        path: string | default="/"
+      performanceGate:
+        enabled: boolean | default=false
+        image: string | default="httpd:alpine"
+        extraArgs: string | default="160"
+        pause: string | default="5s"
+      metrics:
+        enabled: boolean | default=false
+        path: string | default="/collection/FRONT_PAGE"
   resources:
-    - id: rollout
+    - id: iamroleselector
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
+      template:
+        apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: ${schema.metadata.namespace}-${schema.metadata.name}-iam
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+        spec:
+          arn: arn:aws:iam::${schema.spec.accountId}:role/peeks-cluster-mgmt-iam
+          namespaceSelector:
+            names:
+              - ${schema.metadata.namespace}
+          resourceTypeSelector:
+            - group: iam.services.k8s.aws
+              kind: ""
+              version: ""
+    - id: eksroleselector
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
+      template:
+        apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: ${schema.metadata.namespace}-${schema.metadata.name}-eks
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+        spec:
+          arn: arn:aws:iam::${schema.spec.accountId}:role/peeks-cluster-mgmt-eks
+          namespaceSelector:
+            names:
+              - ${schema.metadata.namespace}
+          resourceTypeSelector:
+            - group: eks.services.k8s.aws
+              kind: ""
+              version: ""
+    - id: dynamodbroleselector
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
+      template:
+        apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: ${schema.metadata.namespace}-${schema.metadata.name}-dynamodb
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+        spec:
+          arn: arn:aws:iam::${schema.spec.accountId}:role/peeks-cluster-mgmt-dynamodb
+          namespaceSelector:
+            names:
+              - ${schema.metadata.namespace}
+          resourceTypeSelector:
+            - group: dynamodb.services.k8s.aws
+              kind: ""
+              version: ""
+    - id: dynamodbtable
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
+      readyWhen:
+        - ${dynamodbtable.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: dynamodb.services.k8s.aws/v1alpha1
+        kind: Table
+        metadata:
+          name: ${schema.spec.components.dynamodb.tableName}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          tableName: ${schema.spec.components.dynamodb.tableName}
+          billingMode: PAY_PER_REQUEST
+          attributeDefinitions:
+            - attributeName: ${schema.spec.components.dynamodb.partitionKey}
+              attributeType: ${schema.spec.components.dynamodb.partitionKeyType}
+            - attributeName: ${schema.spec.components.dynamodb.sortKey}
+              attributeType: ${schema.spec.components.dynamodb.sortKeyType}
+          keySchema:
+            - attributeName: ${schema.spec.components.dynamodb.partitionKey}
+              keyType: HASH
+            - attributeName: ${schema.spec.components.dynamodb.sortKey}
+              keyType: RANGE
+    - id: iamrole
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
+      readyWhen:
+        - ${iamrole.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          name: ${schema.metadata.name}-role
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          name: ${schema.metadata.name}-role
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "pods.eks.amazonaws.com"
+                  },
+                  "Action": [
+                    "sts:AssumeRole",
+                    "sts:TagSession"
+                  ]
+                }
+              ]
+            }
+          policies:
+            - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+    - id: podidentity
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
+      readyWhen:
+        - ${podidentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          name: ${schema.metadata.name}-podidentity
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          clusterName: ${schema.spec.clusterName}
+          namespace: ${schema.metadata.namespace}
+          roleARN: ${iamrole.status.ackResourceMetadata.arn}
+          serviceAccount: ${schema.spec.serviceAccount}
+    - id: serviceaccountWithDynamoDB
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == true}
+      template:
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: ${schema.spec.?serviceAccount.orValue(schema.metadata.name)}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            kro.run/depends-on: ${podidentity.metadata.name}
+    - id: serviceaccountWithoutDynamoDB
+      includeWhen:
+        - ${schema.spec.components.dynamodb.enabled == false}
+      template:
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: ${schema.spec.?serviceAccount.orValue(schema.metadata.name)}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+    - id: rolloutWithDynamoDB
+      includeWhen:
+        - ${schema.spec.functionalGate.enabled == false && schema.spec.performanceGate.enabled == false && schema.spec.components.dynamodb.enabled == true}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Rollout
@@ -51,8 +260,8 @@ spec:
               app: ${schema.metadata.name}
           strategy:
             canary:
-              canaryService: ${previewservice.metadata.name}
-              stableService: ${service.metadata.name}
+              canaryService: ${schema.metadata.name}-preview
+              stableService: ${schema.metadata.name}
               steps:
                 - setWeight: 20
                 - pause:
@@ -71,21 +280,21 @@ spec:
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
-              serviceAccountName: ${schema.spec.serviceAccount}
+              serviceAccountName: ${serviceaccountWithDynamoDB.metadata.name}
               containers:
                 - name: ${schema.spec.image_name}
                   image: ${schema.spec.image}
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env:
-                    - name: "APP_ENV"
-                      value: ${schema.spec.envName}
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
 
-    - id: service
+    - id: rolloutWithoutDynamoDB
+      includeWhen:
+        - ${schema.spec.functionalGate.enabled == false && schema.spec.performanceGate.enabled == false && schema.spec.components.dynamodb.enabled == false}
       template:
-        apiVersion: v1
-        kind: Service
+        apiVersion: argoproj.io/v1alpha1
+        kind: Rollout
         metadata:
           name: ${schema.metadata.name}
           ownerReferences:
@@ -98,18 +307,50 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
+          replicas: ${schema.spec.replicas}
+          revisionHistoryLimit: 2
           selector:
-            app: ${schema.metadata.name}
-          ports:
-            - port: ${schema.spec.port}
-              targetPort: ${schema.spec.targetPort}
+            matchLabels:
+              app: ${schema.metadata.name}
+          strategy:
+            canary:
+              canaryService: ${schema.metadata.name}-preview
+              stableService: ${schema.metadata.name}
+              steps:
+                - setWeight: 20
+                - pause:
+                    duration: 5s
+                - setWeight: 40
+                - pause:
+                    duration: 5s
+                - setWeight: 60
+                - pause:
+                    duration: 5s
+                - setWeight: 80
+          template:
+            metadata:
+              labels:
+                app: ${schema.metadata.name}
+              annotations:
+                replicas: "${string(schema.spec.replicas)}"
+            spec:
+              serviceAccountName: ${serviceaccountWithoutDynamoDB.metadata.name}
+              containers:
+                - name: ${schema.spec.image_name}
+                  image: ${schema.spec.image}
+                  imagePullPolicy: Always
+                  ports:
+                    - containerPort: ${schema.spec.targetPort}
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
 
-    - id: previewservice
+    - id: rolloutWithGatesAndDynamoDB
+      includeWhen:
+        - ${(schema.spec.functionalGate.enabled == true || schema.spec.performanceGate.enabled == true) && schema.spec.components.dynamodb.enabled == true}
       template:
-        apiVersion: v1
-        kind: Service
+        apiVersion: argoproj.io/v1alpha1
+        kind: Rollout
         metadata:
-          name: ${schema.metadata.name}-preview
+          name: ${schema.metadata.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -120,15 +361,162 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
+          replicas: ${schema.spec.replicas}
+          revisionHistoryLimit: 2
           selector:
-            app: ${schema.metadata.name}
-          ports:
-            - port: ${schema.spec.port}
-              targetPort: ${schema.spec.targetPort}
+            matchLabels:
+              app: ${schema.metadata.name}
+          strategy:
+            canary:
+              canaryService: ${schema.metadata.name}-preview
+              stableService: ${schema.metadata.name}
+              steps:
+                - setWeight: 20
+                - pause:
+                    duration: ${schema.spec.functionalGate.pause}
+                - analysis:
+                    templates:
+                    - templateName: functional-gate-${schema.metadata.name}
+                    args:
+                    - name: service-name
+                      value: ${schema.metadata.name}-preview
+                - setWeight: 40
+                - pause:
+                    duration: 5s
+                - setWeight: 60
+                - pause:
+                    duration: ${schema.spec.performanceGate.pause}
+                - analysis:
+                    templates:
+                    - templateName: performance-gate-${schema.metadata.name}
+                    args:
+                    - name: service-name
+                      value: ${schema.metadata.name}
+                - setWeight: 80
+          template:
+            metadata:
+              labels:
+                app: ${schema.metadata.name}
+              annotations:
+                replicas: "${string(schema.spec.replicas)}"
+            spec:
+              serviceAccountName: ${serviceaccountWithDynamoDB.metadata.name}
+              containers:
+                - name: ${schema.spec.image_name}
+                  image: ${schema.spec.image}
+                  imagePullPolicy: Always
+                  ports:
+                    - containerPort: ${schema.spec.targetPort}
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+
+    - id: rolloutWithGatesWithoutDynamoDB
+      includeWhen:
+        - ${(schema.spec.functionalGate.enabled == true || schema.spec.performanceGate.enabled == true) && schema.spec.components.dynamodb.enabled == false}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: Rollout
+        metadata:
+          name: ${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          replicas: ${schema.spec.replicas}
+          revisionHistoryLimit: 2
+          selector:
+            matchLabels:
+              app: ${schema.metadata.name}
+          strategy:
+            canary:
+              canaryService: ${schema.metadata.name}-preview
+              stableService: ${schema.metadata.name}
+              steps:
+                - setWeight: 20
+                - pause:
+                    duration: ${schema.spec.functionalGate.pause}
+                - analysis:
+                    templates:
+                    - templateName: functional-gate-${schema.metadata.name}
+                    args:
+                    - name: service-name
+                      value: ${schema.metadata.name}-preview
+                - setWeight: 40
+                - pause:
+                    duration: 5s
+                - setWeight: 60
+                - pause:
+                    duration: ${schema.spec.performanceGate.pause}
+                - analysis:
+                    templates:
+                    - templateName: performance-gate-${schema.metadata.name}
+                    args:
+                    - name: service-name
+                      value: ${schema.metadata.name}
+                - setWeight: 80
+          template:
+            metadata:
+              labels:
+                app: ${schema.metadata.name}
+              annotations:
+                replicas: "${string(schema.spec.replicas)}"
+            spec:
+              serviceAccountName: ${serviceaccountWithoutDynamoDB.metadata.name}
+              containers:
+                - name: ${schema.spec.image_name}
+                  image: ${schema.spec.image}
+                  imagePullPolicy: Always
+                  ports:
+                    - containerPort: ${schema.spec.targetPort}
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+
+    # Services removed from Kro - Argo Rollouts will create and manage them automatically
+    # - id: service
+    #   template:
+    #     apiVersion: v1
+    #     kind: Service
+    #     metadata:
+    #       name: ${schema.metadata.name}
+    #       ownerReferences:
+    #         - apiVersion: kro.run/v1alpha1
+    #           kind: ${schema.kind}
+    #           name: ${schema.metadata.name}
+    #           uid: ${schema.metadata.uid}
+    #           blockOwnerDeletion: true
+    #           controller: false
+    #       annotations:
+    #         argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+    #     spec:
+    #       selector:
+    #         app: ${schema.metadata.name}
+    #       ports:
+    #         - port: ${schema.spec.port}
+    #           targetPort: ${schema.spec.targetPort}
+
+    # - id: previewservice
+    #   template:
+    #     apiVersion: v1
+    #     kind: Service
+    #     metadata:
+    #       name: ${schema.metadata.name}-preview
+    #       annotations:
+    #         argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+    #     spec:
+    #       selector:
+    #         app: ${schema.metadata.name}
+    #       ports:
+    #         - port: ${schema.spec.port}
+    #           targetPort: ${schema.spec.targetPort}
 
     - id: ingress
       includeWhen:
-        - ${schema.spec.ingressEnabled}
+        - ${schema.spec.ingress.enabled}
+        - ${schema.spec.ingress.rewrite == true}
       template:
         apiVersion: networking.k8s.io/v1
         kind: Ingress
@@ -148,13 +536,47 @@ spec:
         spec:
           ingressClassName: nginx
           rules:
-            - http:
+            - host: ${schema.spec.ingress.host}
+              http:
                 paths:
-                  - path: "${schema.spec.appPath + \"(/|$)(.*)\"}"
+                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
                     pathType: ImplementationSpecific
                     backend:
                       service:
-                        name: ${service.metadata.name}
+                        name: ${schema.metadata.name}
+                        port:
+                          number: ${schema.spec.port}
+
+    - id: ingressNoRewrite
+      includeWhen:
+        - ${schema.spec.ingress.enabled}
+        - ${schema.spec.ingress.rewrite == false}
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: ${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            nginx.ingress.kubernetes.io/use-regex: "true"
+        spec:
+          ingressClassName: nginx
+          rules:
+            - host: ${schema.spec.ingress.host}
+              http:
+                paths:
+                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
+                    pathType: ImplementationSpecific
+                    backend:
+                      service:
+                        name: ${schema.metadata.name}
                         port:
                           number: ${schema.spec.port}
 
@@ -193,7 +615,7 @@ spec:
 
     - id: functionalanalysis
       includeWhen:
-        - ${schema.spec.functionalGateEnabled}
+        - ${schema.spec.functionalGate.enabled}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: AnalysisTemplate
@@ -212,7 +634,7 @@ spec:
           args:
             - name: service-name
           metrics:
-            - name: ${schema.metadata.name}-metrics
+            - name: ${schema.metadata.name}-m
               provider:
                 job:
                   spec:
@@ -220,17 +642,17 @@ spec:
                       spec:
                         containers:
                           - name: test
-                            image: ${schema.spec.functionalGate.?image.orValue("httpd:alpine")}
+                            image: ${schema.spec.functionalGate.image}
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "wget -qO- http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ | grep -q '${schema.spec.functionalGate.?extraArgs.orValue(\"\")}'"
+                              - "set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://{{args.service-name}}:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: ${schema.spec.functionalGate.extraArgs}'; if echo \"$RESPONSE\" | grep -q '${schema.spec.functionalGate.extraArgs}'; then echo 'PASS: Found ${schema.spec.functionalGate.extraArgs}'; exit 0; else echo 'FAIL: ${schema.spec.functionalGate.extraArgs} not found'; exit 1; fi"
                         restartPolicy: Never
                     backoffLimit: 0
 
     - id: performanceanalysis
       includeWhen:
-        - ${schema.spec.performanceGateEnabled}
+        - ${schema.spec.performanceGate.enabled}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: AnalysisTemplate
@@ -249,7 +671,7 @@ spec:
           args:
             - name: service-name
           metrics:
-            - name: ${schema.metadata.name}-metrics
+            - name: ${schema.metadata.name}-m
               provider:
                 job:
                   spec:
@@ -257,17 +679,17 @@ spec:
                       spec:
                         containers:
                           - name: test
-                            image: ${schema.spec.performanceGate.?image.orValue("httpd:alpine")}
+                            image: ${schema.spec.performanceGate.image}
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.port)}${schema.spec.appPath}/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.?extraArgs.orValue(\"160\")} ] && exit 0 || exit 1"
+                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
                         restartPolicy: Never
                     backoffLimit: 0
 
     - id: metricsanalysis
       includeWhen:
-        - ${schema.spec.metricsEnabled}
+        - ${schema.spec.metrics.enabled}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: AnalysisTemplate
@@ -310,7 +732,7 @@ spec:
 
     - id: benchmarkconfig
       includeWhen:
-        - ${schema.spec.performanceGateEnabled}
+        - ${schema.spec.performanceGate.enabled}
       template:
         apiVersion: v1
         kind: ConfigMap
@@ -328,7 +750,7 @@ spec:
         data:
           benchmark.yaml: |
             config:
-              target: "http://127.0.0.1:80"
+              target: "http://${schema.metadata.name}:${string(schema.spec.targetPort)}"
               phases:
                 - duration: 5
                   arrivalRate: 1
@@ -338,4 +760,4 @@ spec:
               - name: "Navigate Menus"
                 flow:
                   - get:
-                      url: "/collection/FRONT_PAGE"
+                      url: "${schema.spec.metrics.path}"

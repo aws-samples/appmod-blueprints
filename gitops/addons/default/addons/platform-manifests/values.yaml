@@ -4,4 +4,20 @@ gpu:
   enabled: true
 
 customNodepools:
-  enabled: false  # TODO Disabled to avoid conflict with Auto Mode nodepools while not in EKS Capabilities
+  enabled: true  # Enable custom Karpenter nodepools (Auto Mode default nodepools disabled in Terraform)
+
+# Hugging Face models to download and store in S3
+# Note: Values with {{ }} will be templated by Helm at render time
+huggingfaceModels:
+  - name: gpt2-neuron
+    modelId: "gpt2"
+    namespace: "ray-system"
+  
+  - name: mistral-7b-neuron
+    modelId: "mistralai/Mistral-7B-v0.1"
+    namespace: "ray-system"
+  
+  - name: tinyllama
+    modelId: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    namespace: "ray-system"
+

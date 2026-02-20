@@ -1,8 +1,15 @@
 # Crossplane Core HA Configuration
 replicas: 2
 
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
 nodeSelector:
-  karpenter.sh/nodepool: system
+  karpenter.sh/nodepool: system-peeks
 
 tolerations:
 - key: "CriticalAddonsOnly"
@@ -24,8 +31,14 @@ podDisruptionBudget:
 # RBAC Manager HA
 rbacManager:
   replicas: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
   - key: "CriticalAddonsOnly"
     operator: "Exists"

@@ -18,6 +18,12 @@ useSelectors: true
 repoURLGit: '{{.metadata.annotations.addons_repo_url}}'
 repoURLGitRevision: '{{.metadata.annotations.addons_repo_revision}}'
 repoURLGitBasePath: '{{.metadata.annotations.addons_repo_basepath}}'
+
+# Nodepool configuration - update in 3 places:
+# 1. gitops/addons/default/addons/*/values.yaml (addon-specific configs)
+# 2. gitops/addons/charts/platform-manifests-bootstrap/templates/custom-nodepools.yaml (nodepool definitions)
+# 3. gitops/addons/charts/*/templates/*.yaml (chart templates)
+# Current names: system-peeks, general-purpose-peeks
 valueFiles:
   - default/addons
   - environments/{{.metadata.labels.environment}}/addons
@@ -543,14 +549,15 @@ cni-metrics-helper:
   enabled: false
   releaseName: cni-metrics-helper
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after PodIdentityAssociation is fully synced by ACK
   namespace: '{{ default "kube-system" (index .metadata.annotations "cni_metrics_helper_namespace")}}'
   chartName: cni-metrics-helper
   chartRepository: https://aws.github.io/eks-charts
   defaultVersion: '1.19.2'
-  values:
+  valuesObject:
     env:
       AWS_CLUSTER_ID: '{{.metadata.annotations.aws_cluster_name}}'
+      AWS_REGION: '{{.metadata.annotations.aws_region}}'
   selector:
     matchExpressions:
       - key: enable_cni_metrics_helper
@@ -591,7 +598,7 @@ cw-prometheus:
   enabled: false
   namespace: '{{ default "amazon-cloudwatch" (index .metadata.annotations "cw_prometheus_namespace")}}'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
+    argocd.argoproj.io/sync-wave: '5' # Needs to be after PodIdentityAssociation is fully synced by ACK
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/cw-prometheus'
   chartRepository: '{{.metadata.annotations.addons_repo_url}}'
   targetRevision: '{{.metadata.annotations.addons_repo_revision}}'
@@ -610,10 +617,25 @@ kro-manifests:
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/manifests'
   directory:
     recurse: true
-    exclude: '*/tests/**'
+    exclude: '{cicd-pipeline/**,huggingface/**,ray-service/**}'
   selector:
     matchExpressions:
       - key: enable_kro_manifests
+        operator: In
+        values: ['true']
+
+kro-manifests-hub:
+  enabled: false
+  type: manifest
+  namespace: kro
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-2' # Needs to be before resources that needs PodIdentity
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/manifests'
+  directory:
+    recurse: true
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests_hub
         operator: In
         values: ['true']
 
@@ -629,6 +651,9 @@ multi-acct:
       - key: enable_mutli_acct
         operator: In
         values: ['true']
+  syncPolicy:
+    automated:
+      selfHeal: true
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
@@ -654,6 +679,20 @@ argo-rollouts:
   chartRepository: https://argoproj.github.io/argo-helm
   defaultVersion: '2.39.5'
   valuesObject:
+    controller:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+    dashboard:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
     serviceAccount:
       annotations: # Using IRSA as Pod Identity is not supported
         eks.amazonaws.com/role-arn: 'arn:aws:iam::{{.metadata.annotations.aws_account_id}}:role/{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
@@ -701,12 +740,20 @@ argo-events:
   namespace: argo-events
   chartName: argo-events
   chartRepository: https://argoproj.github.io/argo-helm
-  defaultVersion: '2.4.17'
+  defaultVersion: '2.4.20'
   selector:
     matchExpressions:
       - key: enable_argo_events
         operator: In
         values: ['true']
+  valuesObject:
+    controller:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
 
 ingress-nginx:
   enabled: false
@@ -727,6 +774,7 @@ ingress-nginx:
         annotations:
           service.beta.kubernetes.io/aws-load-balancer-name: '{{.metadata.annotations.ingress_name}}'
           service.beta.kubernetes.io/aws-load-balancer-security-groups: '{{.metadata.annotations.ingress_security_groups}}'
+          service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: 'true'
 
 gitlab:
   enabled: false
@@ -740,6 +788,15 @@ gitlab:
       - key: enable_gitlab
         operator: In
         values: ['true']
+  ignoreDifferences:
+    - group: ''
+      kind: Namespace
+      jsonPointers:
+        - /metadata/annotations/argocd.argoproj.io~1tracking-id
+    - group: ''
+      kind: Service
+      jsonPointers:
+        - /metadata/annotations/argocd.argoproj.io~1tracking-id
   valuesObject:
     domain_name: '{{.metadata.annotations.gitlab_domain_name}}'
     initial_root_password: '{{.metadata.annotations.ide_password}}'
@@ -767,6 +824,13 @@ keycloak:
       cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       region: '{{.metadata.annotations.aws_region}}'
       grafana_url: '{{.metadata.annotations.aws_grafana_url}}'
+    keycloak:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          memory: 1Gi
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -783,9 +847,9 @@ keycloak:
       jsonPointers:
         - /metadata/managedFields
         - /status
+        - /spec/volumeClaimTemplates/0/metadata/creationTimestamp
       jqPathExpressions:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
-        - '.spec.versions[].schema.openAPIV3Schema | .. | .volumeClaimTemplates?'
 
 image-prepuller:
   enabled: false
@@ -802,16 +866,6 @@ image-prepuller:
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
-    images:
-      - public.ecr.aws/seb-demo/ray:2.49.0-py311-gpu
-      - jupyter/base-notebook:latest
-      - jupyter/datascience-notebook:latest
-    tolerations:
-      - key: 'CriticalAddonsOnly'
-        operator: 'Exists'
-        effect: 'NoSchedule'
-    nodeSelector:
-      karpenter.sh/nodepool: general-purpose
 
 jupyterhub:
   enabled: false
@@ -832,6 +886,18 @@ jupyterhub:
     jupyterhub:
       hub:
         baseUrl: /jupyterhub/
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+        extraEnv:
+          OAUTH_CLIENT_SECRET:
+            valueFrom:
+              secretKeyRef:
+                name: keycloak-clients
+                key: JUPYTERHUB_CLIENT_SECRET
         config:
           JupyterHub:
             authenticator_class: oauthenticator.generic.GenericOAuthenticator
@@ -849,12 +915,14 @@ jupyterhub:
             auth_state_groups_key: groups
             manage_groups: true
             auto_login: true
-        extraEnv:
-          OAUTH_CLIENT_SECRET:
-            valueFrom:
-              secretKeyRef:
-                name: keycloak-clients
-                key: JUPYTERHUB_CLIENT_SECRET
+      proxy:
+        chp:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
       ingress:
         enabled: false
   ignoreDifferences:
@@ -884,7 +952,7 @@ jupyterhub:
 devlake:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '10' # Needs to be after crossplane-aws
+    argocd.argoproj.io/sync-wave: '7' # Needs to be after crossplane-aws (wave 6)
   namespace: devlake
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/devlake'
   defaultVersion: '0.1.0'
@@ -893,6 +961,42 @@ devlake:
       - key: enable_devlake
         operator: In
         values: ['true']
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Workflow
+      jsonPointers:
+        - /spec
+        - /status
+        - /metadata/generation
+    - group: awsblueprints.io
+      kind: RelationalDatabase
+      jsonPointers:
+        - /status
+    - group: awsblueprints.io
+      kind: XRelationalDatabase
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: Policy
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /status
+    - group: eks.aws.upbound.io
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status
+    - group: ""
+      kind: ServiceAccount
+      name: devlake-mysql-access
+      jsonPointers:
+        - /secrets
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
@@ -901,6 +1005,24 @@ devlake:
         enabled: false
         external:
           url: '{{.metadata.annotations.aws_grafana_url}}'
+      lake:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+        livenessProbe:
+          timeoutSeconds: 5
+        readinessProbe:
+          timeoutSeconds: 5
+      ui:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
 
 kubeflow:
   enabled: false
@@ -949,7 +1071,7 @@ kubeflow:
 argo-workflows:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '6' # Needs to be after Keycloak
+    argocd.argoproj.io/sync-wave: '4' # Needs to be after Keycloak (wave 3)
   namespace: argo
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/argo-workflows'
@@ -980,7 +1102,7 @@ argo-workflows:
 kargo:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '6' # Needs to be after Keycloak
+    argocd.argoproj.io/sync-wave: '4' # Needs to be after Keycloak (wave 3)
   namespace: kargo
   chartName: kargo
   chartRepository: ghcr.io/akuity/kargo-charts
@@ -993,6 +1115,12 @@ kargo:
   valuesObject:
     api:
       host: '{{.metadata.annotations.ingress_domain_name}}'
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
       argocd:
         urls:
           - https://{{.metadata.annotations.ingress_domain_name}}/argocd
@@ -1000,6 +1128,27 @@ kargo:
         issuerURL: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
       secret:
         name: kargo-admin-credentials
+    controller:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+    webhooksServer:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+    managementController:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
     extraObjects:
       - apiVersion: external-secrets.io/v1
         kind: ExternalSecret # For Kargo Admin Credentials
@@ -1262,6 +1411,11 @@ grafana-operator:
       - key: enable_grafana_operator
         operator: In
         values: ['true']
+  valuesObject:
+    livenessProbe:
+      timeoutSeconds: 5
+    readinessProbe:
+      timeoutSeconds: 5
 
 flux:
   enabled: false
@@ -1330,7 +1484,7 @@ flux:
 backstage:
   enabled: false
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '10' # Needs to be after Keycloak, External Secrets, and Kro
+    argocd.argoproj.io/sync-wave: '4' # Needs to be after Keycloak (3), can run parallel with other tools
   namespace: backstage
   defaultVersion: '0.1.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/backstage'
@@ -1374,6 +1528,9 @@ backstage:
       jsonPointers:
         - /metadata/managedFields
         - /status
+        - /spec/volumeClaimTemplates/0/metadata/creationTimestamp
+      jqPathExpressions:
+        - '.spec.volumeClaimTemplates[].metadata.creationTimestamp'
     - group: rbac.authorization.k8s.io
       kind: ClusterRole
       jsonPointers:
@@ -1441,6 +1598,11 @@ ray-operator:
     modelPrestage:
       enabled: true
       s3Bucket: '{{.metadata.annotations.resource_prefix}}-ray-models-{{.metadata.annotations.aws_account_id}}'
+    kuberay-operator:
+      livenessProbe:
+        timeoutSeconds: 5
+      readinessProbe:
+        timeoutSeconds: 5
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
@@ -1515,18 +1677,48 @@ airflow:
       jsonPointers:
         - /metadata/managedFields
 
+platform-manifests-bootstrap:
+  enabled: false
+  namespace: default
+  defaultVersion: '1.0.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/platform-manifests-bootstrap'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'  # Very early for nodepools
+  selector:
+    matchExpressions:
+      - key: enable_platform_manifests_bootstrap
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      aws_region: '{{.metadata.annotations.aws_region}}'
+      aws_account_id: '{{.metadata.annotations.aws_account_id}}'
+      aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
+    customNodepools:
+      enabled: true
+    gpu:
+      enabled: true
+
 platform-manifests:
   enabled: false
   namespace: default
   defaultVersion: '1.0.0'
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/platform-manifests'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '10'
+    argocd.argoproj.io/sync-wave: '6'  # After Argo Workflows (wave 5)
   selector:
     matchExpressions:
-      - key: enable_platform_manifests
+      - key: enable_platform_manifests_hub
         operator: In
         values: ['true']
   valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      eksAutoModeRoleName: '{{.metadata.annotations.eks_auto_mode_role_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
