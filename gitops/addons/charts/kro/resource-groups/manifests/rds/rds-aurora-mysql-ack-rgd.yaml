@@ -13,6 +13,7 @@ spec:
       region: string
       privateSubnetIds: "[]string"
       vpcId: string
+      createService: boolean | default=false
   resources:
     - id: subnetgroup
       readyWhen:
@@ -120,3 +121,86 @@ spec:
           engine: aurora-mysql
           dbClusterIdentifier: ${cluster.spec.dbClusterIdentifier}
           dbSubnetGroupName: ${subnetgroup.spec.name}
+
+    - id: externalsecret
+      readyWhen:
+        - ${externalsecret.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')}
+      template:
+        apiVersion: external-secrets.io/v1beta1
+        kind: ExternalSecret
+        metadata:
+          name: ${schema.metadata.name}-credentials
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RelationalDatabase
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          refreshInterval: 1h
+          secretStoreRef:
+            name: aws-secrets-manager
+            kind: ClusterSecretStore
+          target:
+            name: ${schema.metadata.name}-credentials
+            template:
+              data:
+                username: "{{ .username }}"
+                password: "{{ .password }}"
+                host: "${cluster.status.endpoint}"
+          data:
+            - secretKey: username
+              remoteRef:
+                key: ${cluster.status.masterUserSecret.secretARN}
+                property: username
+            - secretKey: password
+              remoteRef:
+                key: ${cluster.status.masterUserSecret.secretARN}
+                property: password
+
+    - id: configmap
+      readyWhen:
+        - ${configmap.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.metadata.name}-config
+          namespace: ${schema.spec.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RelationalDatabase
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        data:
+          DB_PORT: "3306"
+          DB_NAME: ${schema.spec.databaseName}
+          DB_ENDPOINT: ${cluster.status.endpoint}
+
+    - id: service
+      includeWhen:
+        - ${schema.spec.createService}
+      readyWhen:
+        - ${service.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.metadata.name}-service
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: RelationalDatabase
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          type: ExternalName
+          externalName: ${cluster.status.endpoint}
+          ports:
+            - port: 3306
+              targetPort: 3306
+              protocol: TCP
