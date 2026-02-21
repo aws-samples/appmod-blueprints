@@ -1,0 +1,15 @@
+apiVersion: kro.run/v1alpha1
+kind: RelationalDatabase
+metadata:
+  name: devlake-mysql
+  namespace: {{ .Values.namespace | default "devlake" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  databaseName: devlake
+  engineVersion: {{ .Values.rds.engineVersion | default "8.0.mysql_aurora.3.10.0" }}
+  instanceClass: {{ .Values.rds.instanceClass | default "db.r5.large" }}
+  region: {{ .Values.clusterRegion }}
+  privateSubnetIds: {{ .Values.rds.privateSubnetIds | toJson }}
+  vpcId: {{ .Values.rds.vpcId }}
+  createService: true
