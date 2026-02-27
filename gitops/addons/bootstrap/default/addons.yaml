@@ -130,7 +130,7 @@ ack-s3:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
   namespace: ack-system
   chartName: s3-chart
-  defaultVersion: '1.0.14'
+  defaultVersion: '1.3.1'
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
   releaseName: s3-chart

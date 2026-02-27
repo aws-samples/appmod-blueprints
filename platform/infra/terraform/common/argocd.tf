@@ -22,7 +22,7 @@ module "gitops_bridge_bootstrap" {
   argocd = {
     name          = "argocd"
     namespace     = kubernetes_namespace.argocd.metadata[0].name
-    chart_version = "7.9.1"
+    chart_version = "9.4.5"
     values = [
       templatefile("${path.module}/manifests/argocd-initial-values.yaml", {
         DOMAIN_NAME     = local.ingress_domain_name
