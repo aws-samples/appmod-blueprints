@@ -29,7 +29,31 @@ spec:
           }
           spec: {
             replicas: parameter.replicas
-            strategy: parameter.rolloutStrategy
+            strategy: {
+              if parameter.rolloutStrategy.canary != _|_ {
+                canary: {
+                  canaryService: parameter.name + "-canary"
+                  stableService: parameter.name + "-stable"
+                  steps: parameter.rolloutStrategy.canary.steps
+                  if parameter.rolloutStrategy.canary.trafficRouting != _|_ {
+                    trafficRouting: parameter.rolloutStrategy.canary.trafficRouting
+                  }
+                  if parameter.rolloutStrategy.canary.dynamicStableScale != _|_ {
+                    dynamicStableScale: parameter.rolloutStrategy.canary.dynamicStableScale
+                  }
+                }
+              }
+              if parameter.rolloutStrategy.blueGreen != _|_ {
+                blueGreen: {
+                  activeService: parameter.name + "-stable"
+                  previewService: parameter.name + "-preview"
+                  autoPromotionEnabled: parameter.rolloutStrategy.blueGreen.autoPromotionEnabled
+                  if parameter.rolloutStrategy.blueGreen.scaleDownDelaySeconds != _|_ {
+                    scaleDownDelaySeconds: parameter.rolloutStrategy.blueGreen.scaleDownDelaySeconds
+                  }
+                }
+              }
+            }
             selector: {
               matchLabels: {
                 "kagent.dev/agent": parameter.name
@@ -54,13 +78,21 @@ spec:
                   }]
                   env: [
                     {
-                      name: "MODEL_NAME"
+                      name: "MODEL_ID"
                       value: parameter.modelConfig.model
                     },
                     {
-                      name: "SYSTEM_MESSAGE"
+                      name: "SYSTEM_PROMPT"
                       value: parameter.systemMessage
                     },
+                  ] + [
+                    if parameter.modelConfig.agentGatewayUrl != _|_ {
+                      {
+                        name: "AGENTGATEWAY_URL"
+                        value: parameter.modelConfig.agentGatewayUrl
+                      }
+                    },
+                  ] + [
                     if parameter.modelConfig.apiKeySecret != _|_ {
                       {
                         name: "MODEL_API_KEY"
@@ -72,6 +104,49 @@ spec:
                         }
                       }
                     },
+                  ] + [
+                    if parameter.memoryConfig != _|_ {
+                      {
+                        name: "MEMORY_TYPE"
+                        value: parameter.memoryConfig.type
+                      }
+                    },
+                  ] + [
+                    if parameter.memoryConfig != _|_ {
+                      {
+                        name: "MEMORY_COMPONENT"
+                        value: parameter.memoryConfig.component
+                      }
+                    },
+                  ] + [
+                    if parameter.agentcoreConfig != _|_ && parameter.agentcoreConfig.browser != _|_ {
+                      {
+                        name: "AGENTCORE_BROWSER_COMPONENT"
+                        value: parameter.agentcoreConfig.browser.component
+                      }
+                    },
+                  ] + [
+                    if parameter.agentcoreConfig != _|_ && parameter.agentcoreConfig.browser != _|_ && parameter.agentcoreConfig.browser.enabled != _|_ {
+                      {
+                        name: "AGENTCORE_BROWSER_ENABLED"
+                        value: "\(parameter.agentcoreConfig.browser.enabled)"
+                      }
+                    },
+                  ] + [
+                    if parameter.agentcoreConfig != _|_ && parameter.agentcoreConfig.codeInterpreter != _|_ {
+                      {
+                        name: "AGENTCORE_CODE_INTERPRETER_COMPONENT"
+                        value: parameter.agentcoreConfig.codeInterpreter.component
+                      }
+                    },
+                  ] + [
+                    if parameter.agentcoreConfig != _|_ && parameter.agentcoreConfig.codeInterpreter != _|_ && parameter.agentcoreConfig.codeInterpreter.enabled != _|_ {
+                      {
+                        name: "AGENTCORE_CODE_INTERPRETER_ENABLED"
+                        value: "\(parameter.agentcoreConfig.codeInterpreter.enabled)"
+                      }
+                    },
+                  ] + [
                     if parameter.mcpServers != _|_ && len(parameter.mcpServers) > 0 {
                       {
                         name: "MCP_SERVERS"
@@ -80,6 +155,7 @@ spec:
                         }], ",")
                       }
                     },
+                  ] + [
                     if parameter.tools != _|_ && len(parameter.tools) > 0 {
                       {
                         name: "ENABLED_TOOLS"
@@ -110,11 +186,12 @@ spec:
         }
         
         outputs: {
-          service: {
+          // Stable service (always created)
+          stableService: {
             apiVersion: "v1"
             kind: "Service"
             metadata: {
-              name: parameter.name
+              name: parameter.name + "-stable"
               namespace: parameter.namespace
               labels: {
                 "kagent.dev/agent": parameter.name
@@ -132,6 +209,62 @@ spec:
                 protocol: "TCP"
               }]
               type: "ClusterIP"
+            }
+          }
+          
+          // Canary service (for canary deployments)
+          if parameter.rolloutStrategy.canary != _|_ {
+            canaryService: {
+              apiVersion: "v1"
+              kind: "Service"
+              metadata: {
+                name: parameter.name + "-canary"
+                namespace: parameter.namespace
+                labels: {
+                  "kagent.dev/agent": parameter.name
+                  "app.kubernetes.io/name": parameter.name
+                }
+              }
+              spec: {
+                selector: {
+                  "kagent.dev/agent": parameter.name
+                }
+                ports: [{
+                  name: "a2a"
+                  port: 8083
+                  targetPort: 8083
+                  protocol: "TCP"
+                }]
+                type: "ClusterIP"
+              }
+            }
+          }
+          
+          // Preview service (for blue-green deployments)
+          if parameter.rolloutStrategy.blueGreen != _|_ {
+            previewService: {
+              apiVersion: "v1"
+              kind: "Service"
+              metadata: {
+                name: parameter.name + "-preview"
+                namespace: parameter.namespace
+                labels: {
+                  "kagent.dev/agent": parameter.name
+                  "app.kubernetes.io/name": parameter.name
+                }
+              }
+              spec: {
+                selector: {
+                  "kagent.dev/agent": parameter.name
+                }
+                ports: [{
+                  name: "a2a"
+                  port: 8083
+                  targetPort: 8083
+                  protocol: "TCP"
+                }]
+                type: "ClusterIP"
+              }
             }
           }
           
@@ -172,9 +305,28 @@ spec:
           // Model configuration
           modelConfig: {
             model: string
+            agentGatewayUrl?: string
             apiKeySecret?: {
               name: string
               key: string
+            }
+          }
+          
+          // Memory configuration
+          memoryConfig?: {
+            type: string
+            component: string
+          }
+          
+          // Agentcore configuration
+          agentcoreConfig?: {
+            browser?: {
+              component: string
+              enabled?: *true | bool
+            }
+            codeInterpreter?: {
+              component: string
+              enabled?: *true | bool
             }
           }
           
@@ -196,14 +348,31 @@ spec:
               steps: [...{
                 setWeight?: int
                 pause?: {
-                  duration?: string
+                  duration?: string | int
                 }
               }]
+              trafficRouting?: {
+                alb?: {
+                  ingress: string
+                  rootService?: string
+                  servicePort: int
+                }
+                istio?: {
+                  virtualService: {
+                    name: string
+                    routes?: [...string]
+                  }
+                  destinationRule?: {
+                    name: string
+                    canarySubsetName?: string
+                    stableSubsetName?: string
+                  }
+                }
+              }
+              dynamicStableScale?: bool
             }
             blueGreen?: {
-              activeService: string
-              previewService: string
-              autoPromotionEnabled?: bool
+              autoPromotionEnabled: *true | bool
               scaleDownDelaySeconds?: int
             }
           }

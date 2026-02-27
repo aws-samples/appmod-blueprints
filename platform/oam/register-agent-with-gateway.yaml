@@ -1,0 +1,92 @@
+# Register a Strands agent with AgentGateway
+# This creates an HTTPRoute that makes the agent accessible through the gateway
+
+---
+# Agent Service with A2A protocol annotation
+apiVersion: v1
+kind: Service
+metadata:
+  name: assistant-agent
+  namespace: agents
+  labels:
+    app: assistant-agent
+spec:
+  selector:
+    app.kubernetes.io/name: assistant-agent
+  ports:
+  - name: a2a
+    port: 8083
+    targetPort: 8083
+    protocol: TCP
+    appProtocol: kgateway.dev/a2a  # Tells AgentGateway to use A2A protocol
+
+---
+# HTTPRoute to register agent with AgentGateway
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: assistant-agent
+  namespace: agents
+spec:
+  # Reference the AgentGateway proxy
+  parentRefs:
+  - name: agentgateway-proxy
+    namespace: agentgateway-system
+  
+  # Optional: Specific hostname for this agent
+  # hostnames:
+  # - "assistant.agents.example.com"
+  
+  # Routing rules
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: assistant-agent
+      port: 8083
+      namespace: agents
+
+---
+# Example: Register multiple agents with path-based routing
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: multi-agent-routes
+  namespace: agents
+spec:
+  parentRefs:
+  - name: agentgateway-proxy
+    namespace: agentgateway-system
+  
+  rules:
+  # Route /assistant/* to assistant agent
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /assistant
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /
+    backendRefs:
+    - name: assistant-agent
+      port: 8083
+  
+  # Route /weather/* to weather agent
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /weather
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /
+    backendRefs:
+    - name: weather-agent
+      port: 8083

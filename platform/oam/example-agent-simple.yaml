@@ -1,0 +1,52 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: my-assistant
+  namespace: default
+spec:
+  components:
+    - name: assistant
+      type: agent
+      properties:
+        name: oap-assistant-a
+        namespace: default
+        description: "General purpose AI assistant with A2A protocol support"
+        
+        # agent image
+        # image: 498530348755.dkr.ecr.us-west-2.amazonaws.com/strands-agent:latest
+        
+        # Multiple replicas with consistent hashing
+        replicas: 3
+        
+        # System prompt
+        systemMessage: |
+          You are a helpful AI assistant with access to various tools and capabilities.
+          You can help with general questions, data analysis, and task automation.
+          Always be clear, concise, and helpful in your responses.
+        
+        # Model configuration
+        modelConfig:
+          modelId: claude-sonnet
+          region: us-west-2
+          llmGatewayUrl: http://litellm-proxy.agentgateway-system.svc.cluster.local:4000
+          llmGatewayApiKey: sk-1234
+        
+        # Service account for AWS permissions (if needed)
+        serviceAccount: default
+        
+        # Blue-green deployment settings
+        autoPromotionEnabled: true
+        autoPromotionSeconds: 10
+        scaleDownDelaySeconds: 30
+        
+        # AgentGateway registration
+        registerWithGateway: true
+        
+        # Resource limits
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi

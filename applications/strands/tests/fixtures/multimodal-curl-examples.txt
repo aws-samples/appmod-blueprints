@@ -1,0 +1,136 @@
+# Multi-Modal A2A API Examples with curl
+
+# 1. Text-only message
+curl -X POST http://localhost:8083/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "role": "user",
+    "parts": [
+      {
+        "kind": "text",
+        "text": "Hello! What is the capital of France?"
+      }
+    ]
+  }'
+
+# 2. Multi-modal: Text + Image (base64)
+# Note: Replace <BASE64_IMAGE_DATA> with actual base64-encoded image
+curl -X POST http://localhost:8083/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "role": "user",
+    "parts": [
+      {
+        "kind": "text",
+        "text": "What is in this image?"
+      },
+      {
+        "kind": "file",
+        "type": "image/jpeg",
+        "data": "<BASE64_IMAGE_DATA>",
+        "filename": "photo.jpg"
+      }
+    ]
+  }'
+
+# 3. Multi-modal: Text + Image (URL)
+curl -X POST http://localhost:8083/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "role": "user",
+    "parts": [
+      {
+        "kind": "text",
+        "text": "Describe this image"
+      },
+      {
+        "kind": "file",
+        "type": "image/png",
+        "uri": "https://example.com/image.png"
+      }
+    ]
+  }'
+
+# 4. Multiple parts: Text + JSON data + Text
+curl -X POST http://localhost:8083/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "role": "user",
+    "parts": [
+      {
+        "kind": "text",
+        "text": "Here is some customer data:"
+      },
+      {
+        "kind": "json",
+        "json": {
+          "name": "Alice Smith",
+          "email": "alice@example.com",
+          "orders": 5,
+          "total_spent": 299.99
+        }
+      },
+      {
+        "kind": "text",
+        "text": "Can you analyze this customer profile?"
+      }
+    ]
+  }'
+
+# 5. Get agent capabilities (check if multimodal is supported)
+curl http://localhost:8083/.well-known/agent.json
+
+# Expected response:
+# {
+#   "name": "strands-agent",
+#   "description": "A Strands agent with A2A protocol support",
+#   "version": "1.0.0",
+#   "capabilities": [
+#     "text-generation",
+#     "conversation",
+#     "streaming",
+#     "multimodal",
+#     "vision"
+#   ]
+# }
+
+# 6. Encode an image to base64 (helper command)
+# On macOS/Linux:
+base64 -i image.jpg | tr -d '\n' > image_base64.txt
+
+# Then use in curl:
+IMAGE_DATA=$(cat image_base64.txt)
+curl -X POST http://localhost:8083/message \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"role\": \"user\",
+    \"parts\": [
+      {
+        \"kind\": \"text\",
+        \"text\": \"What's in this image?\"
+      },
+      {
+        \"kind\": \"file\",
+        \"type\": \"image/jpeg\",
+        \"data\": \"$IMAGE_DATA\"
+      }
+    ]
+  }"
+
+# 7. Streaming multi-modal message
+curl -X POST http://localhost:8083/message/stream \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "role": "user",
+    "parts": [
+      {
+        "kind": "text",
+        "text": "Tell me a story about this image"
+      },
+      {
+        "kind": "file",
+        "type": "image/png",
+        "data": "<BASE64_IMAGE_DATA>"
+      }
+    ]
+  }'

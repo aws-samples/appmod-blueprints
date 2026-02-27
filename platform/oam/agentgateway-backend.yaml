@@ -1,0 +1,15 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: bedrock
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      bedrock:
+        model: "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+        region: "us-west-2"
+  policies:
+    auth:
+      secretRef:
+        name: bedrock-secret

@@ -1,0 +1,85 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: agentgateway-system
+data:
+  config.yaml: |
+    model_list:
+      - model_name: claude-sonnet
+        litellm_params:
+          model: bedrock/us.anthropic.claude-3-5-sonnet-20241022-v2:0
+          aws_region_name: us-west-2
+    
+    general_settings:
+      master_key: sk-1234
+      
+    litellm_settings:
+      drop_params: true
+      use_bedrock_converse: true
+      success_callback: []
+      failure_callback: []
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-proxy
+  namespace: agentgateway-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: litellm-proxy
+  template:
+    metadata:
+      labels:
+        app: litellm-proxy
+    spec:
+      serviceAccountName: agentgateway-proxy
+      containers:
+      - name: litellm
+        image: ghcr.io/berriai/litellm:main-latest
+        ports:
+        - containerPort: 4000
+          name: http
+        env:
+        - name: AWS_REGION
+          value: us-west-2
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        command:
+        - litellm
+        - --config
+        - /app/config.yaml
+        - --port
+        - "4000"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: config
+        configMap:
+          name: litellm-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-proxy
+  namespace: agentgateway-system
+spec:
+  selector:
+    app: litellm-proxy
+  ports:
+  - port: 4000
+    targetPort: 4000
+    name: http
+  type: ClusterIP

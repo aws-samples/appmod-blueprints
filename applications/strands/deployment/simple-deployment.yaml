@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: strands-agent
+  namespace: default
+  labels:
+    app: strands-agent
+spec:
+  selector:
+    app: strands-agent
+  ports:
+  - name: a2a
+    port: 8083
+    targetPort: 8083
+    protocol: TCP
+    appProtocol: kgateway.dev/a2a
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: strands-agent
+  namespace: default
+  labels:
+    app: strands-agent
+spec:
+  # Single replica for debugging
+  # For multi-replica, use kgateway-session-affinity.yaml
+  replicas: 1
+  selector:
+    matchLabels:
+      app: strands-agent
+  template:
+    metadata:
+      labels:
+        app: strands-agent
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: agent
+        image: 498530348755.dkr.ecr.us-west-2.amazonaws.com/strands-agent:latest
+        imagePullPolicy: Always
+        ports:
+        - name: a2a
+          containerPort: 8083
+          protocol: TCP
+        env:
+        - name: AGENT_NAME
+          value: "strands-agent"
+        - name: MODEL_ID
+          value: "claude-sonnet"
+        - name: SYSTEM_PROMPT
+          value: |
+            You are a helpful AI assistant with access to various tools and capabilities.
+            You can help with general questions, data analysis, and task automation.
+            Always be clear, concise, and helpful in your responses.
+        - name: PORT
+          value: "8083"
+        - name: AWS_REGION
+          value: "us-west-2"
+        - name: LLM_GATEWAY_URL
+          value: "http://litellm-proxy.agentgateway-system.svc.cluster.local:4000"
+        - name: LLM_GATEWAY_API_KEY
+          value: "sk-1234"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8083
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8083
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi

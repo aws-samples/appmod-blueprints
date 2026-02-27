@@ -1,0 +1,10 @@
+# Core dependencies
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0
+
+# Strands Agents SDK with A2A support
+strands-agents[a2a]>=1.0.0
+
+# LiteLLM for gateway integration
+litellm>=1.0.0

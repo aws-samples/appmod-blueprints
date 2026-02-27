@@ -1,0 +1,185 @@
+apiVersion: gateway.kgateway.dev/v1
+kind: BackendConfigPolicy
+metadata:
+  name: strands-agent-session-affinity
+  namespace: default
+  labels:
+    app: strands-agent
+spec:
+  # Target the strands-agent service
+  targetRefs:
+  - group: ""
+    kind: Service
+    name: strands-agent
+  
+  config:
+    loadBalancer:
+      # Use RING_HASH for tunable ring size
+      # Alternative: MAGLEV for fixed lookup table (faster)
+      type: RING_HASH
+      
+      # Ringhash configuration
+      ringHashConfig:
+        minimumRingSize: 1024  # Balance memory vs precision
+        maximumRingSize: 8192
+      
+      # Hash policies (evaluated in order)
+      hashPolicies:
+      
+      # Policy 1: Hash by X-Context-ID header (from A2A contextId)
+      - header:
+          name: X-Context-ID
+        terminal: true  # Stop if this header is present
+      
+      # Policy 2: Fallback to session cookie
+      - cookie:
+          name: session-id
+          ttl: 3600s  # 1 hour
+          path: /
+        terminal: true
+      
+      # Policy 3: Final fallback to source IP
+      - sourceIP: true
+        terminal: true
+
+---
+# Alternative: Using MAGLEV algorithm (faster, fixed table size)
+apiVersion: gateway.kgateway.dev/v1
+kind: BackendConfigPolicy
+metadata:
+  name: strands-agent-session-affinity-maglev
+  namespace: default
+  labels:
+    app: strands-agent
+spec:
+  targetRefs:
+  - group: ""
+    kind: Service
+    name: strands-agent
+  
+  config:
+    loadBalancer:
+      type: MAGLEV  # Fixed 65,357 entry lookup table
+      
+      hashPolicies:
+      - header:
+          name: X-Context-ID
+        terminal: true
+      - sourceIP: true
+        terminal: true
+
+---
+# HTTPRoute with session affinity
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: strands-agent-route
+  namespace: default
+  labels:
+    app: strands-agent
+spec:
+  parentRefs:
+  - name: agent-gateway
+    namespace: agentgateway-system
+  
+  hostnames:
+  - "agents.example.com"
+  
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /strands-agent
+    
+    filters:
+    # Strip the /strands-agent prefix
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /
+    
+    backendRefs:
+    - name: strands-agent
+      port: 8083
+      weight: 100
+
+---
+# Service with appProtocol for AgentGateway discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: strands-agent
+  namespace: default
+  labels:
+    app: strands-agent
+spec:
+  selector:
+    app: strands-agent
+  ports:
+  - name: a2a
+    port: 8083
+    targetPort: 8083
+    protocol: TCP
+    appProtocol: kgateway.dev/a2a
+  type: ClusterIP
+
+---
+# Deployment with multiple replicas (now supported with consistent hashing)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: strands-agent
+  namespace: default
+  labels:
+    app: strands-agent
+spec:
+  # With consistent hashing, we can now use multiple replicas!
+  replicas: 3
+  selector:
+    matchLabels:
+      app: strands-agent
+  template:
+    metadata:
+      labels:
+        app: strands-agent
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: agent
+        image: strands-agent:latest
+        ports:
+        - name: a2a
+          containerPort: 8083
+        env:
+        - name: AGENT_NAME
+          value: "strands-agent"
+        - name: MODEL_ID
+          value: "claude-sonnet"
+        - name: PORT
+          value: "8083"
+        - name: AWS_REGION
+          value: "us-west-2"
+        - name: LLM_GATEWAY_URL
+          value: "http://litellm-proxy.agentgateway-system.svc.cluster.local:4000"
+        - name: LLM_GATEWAY_API_KEY
+          value: "sk-1234"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8083
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8083
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi

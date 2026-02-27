@@ -1,0 +1,24 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: minimal-agent
+  namespace: default
+spec:
+  components:
+    - name: simple-agent
+      type: agent
+      properties:
+        name: simple-agent
+        namespace: default
+        description: "Minimal AI assistant configuration"
+        
+        # Only required fields
+        systemMessage: "You are a helpful AI assistant."
+        
+        # Everything else uses defaults:
+        # - image: 498530348755.dkr.ecr.us-east-1.amazonaws.com/strands-agent:latest
+        # - replicas: 3
+        # - modelId: claude-sonnet
+        # - llmGatewayUrl: http://litellm-proxy.agentgateway-system.svc.cluster.local:4000
+        # - autoPromotionEnabled: true
+        # - registerWithGateway: true

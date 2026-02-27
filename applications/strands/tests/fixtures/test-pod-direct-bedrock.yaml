@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: strands-agent-test-sa
+  namespace: default
+  annotations:
+    # Replace with your IAM role ARN
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/strands-agent-bedrock-role
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: strands-agent-test
+  namespace: default
+  labels:
+    app: strands-agent-test
+spec:
+  serviceAccountName: strands-agent-test-sa
+  containers:
+  - name: agent
+    image: 498530348755.dkr.ecr.us-east-1.amazonaws.com/strands-agent:latest
+    ports:
+    - name: http
+      containerPort: 8083
+      protocol: TCP
+    env:
+    # Agent configuration
+    - name: AGENT_NAME
+      value: "test-agent"
+    - name: AGENT_DESCRIPTION
+      value: "Test Strands agent with direct Bedrock access"
+    
+    # System prompt
+    - name: SYSTEM_PROMPT
+      value: |
+        You are a helpful AI assistant for testing purposes.
+        You can answer questions and help with various tasks.
+        Always be clear and concise in your responses.
+    
+    # Model configuration
+    - name: MODEL_ID
+      value: "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+    - name: AWS_REGION
+      value: "us-east-1"
+    
+    # NO AGENTGATEWAY_URL - uses direct Bedrock access with pod identity
+    
+    # Server configuration
+    - name: PORT
+      value: "8083"
+    - name: LOG_LEVEL
+      value: "INFO"
+    
+    # Optional: MCP servers (comma-separated)
+    # - name: MCP_SERVERS
+    #   value: "http://mcp-server-1:3000,http://mcp-server-2:3001"
+    
+    # Health checks
+    livenessProbe:
+      httpGet:
+        path: /.well-known/agent.json
+        port: 8083
+      initialDelaySeconds: 15
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8083
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+  
+  restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: strands-agent-test
+  namespace: default
+  labels:
+    app: strands-agent-test
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8083
+    targetPort: 8083
+    protocol: TCP
+  selector:
+    app: strands-agent-test
