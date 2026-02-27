@@ -220,7 +220,14 @@ template: {
 						matches: [{
 							path: {
 								type:  "PathPrefix"
-								value: "/"
+								value: "/" + parameter.name
+							}
+						}]
+						filters: [{
+							type: "URLRewrite"
+							urlRewrite: path: {
+								type:               "ReplacePrefixMatch"
+								replacePrefixMatch: "/"
 							}
 						}]
 						backendRefs: [{
