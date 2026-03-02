@@ -231,7 +231,7 @@ ack-ecr:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
   namespace: ack-system
   chartName: ecr-chart
-  defaultVersion: '1.0.19'
+  defaultVersion: '1.5.1'
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
   selector:
