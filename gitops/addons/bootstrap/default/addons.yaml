@@ -398,7 +398,7 @@ cert-manager:
   namespace: '{{ default "cert-manager" (index .metadata.annotations "cert-manager_namespace") }}'
   chartName: cert-manager
   chartRepository: https://charts.jetstack.io
-  defaultVersion: 'v1.15.2'
+  defaultVersion: 'v1.19.4'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '2'
   selector:
