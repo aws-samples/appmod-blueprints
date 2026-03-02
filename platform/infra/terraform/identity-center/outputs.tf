@@ -14,8 +14,13 @@ output "admin_group_id" {
 }
 
 output "developer_group_id" {
-  description = "ID of the developer group"
-  value       = local.identity_store_id != null ? aws_identitystore_group.developer[0].group_id : null
+  description = "ID of the editor group"
+  value       = local.identity_store_id != null ? aws_identitystore_group.editor[0].group_id : null
+}
+
+output "non_developer_group_id" {
+  description = "ID of the viewer group"
+  value       = local.identity_store_id != null ? aws_identitystore_group.viewer[0].group_id : null
 }
 
 output "test_user_id" {
