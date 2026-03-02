@@ -838,16 +838,31 @@ keycloak:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+        - /metadata/resourceVersion
     - group: ''
       kind: Secret
       jsonPointers:
         - /metadata/managedFields
+        - /metadata/resourceVersion
+        - /data
     - group: apps
       kind: StatefulSet
       jsonPointers:
         - /metadata/managedFields
+        - /metadata/generation
         - /status
-        - /spec/volumeClaimTemplates/0/metadata/creationTimestamp
+        - /spec/replicas
+        - /spec/template/metadata/annotations
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+        - '.spec.template.metadata.annotations'
+        - '.spec.volumeClaimTemplates[].metadata.creationTimestamp'
+    - group: ''
+      kind: Service
+      jsonPointers:
+        - /spec/clusterIP
+        - /spec/clusterIPs
+        - /metadata/managedFields
       jqPathExpressions:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
 
@@ -1527,10 +1542,13 @@ backstage:
       kind: StatefulSet
       jsonPointers:
         - /metadata/managedFields
+        - /metadata/generation
         - /status
-        - /spec/volumeClaimTemplates/0/metadata/creationTimestamp
+        - /spec/replicas
+        - /spec/template/metadata/annotations
+        - /spec/volumeClaimTemplates/0/metadata
       jqPathExpressions:
-        - '.spec.volumeClaimTemplates[].metadata.creationTimestamp'
+        - '.spec.template.metadata.annotations'
     - group: rbac.authorization.k8s.io
       kind: ClusterRole
       jsonPointers:
