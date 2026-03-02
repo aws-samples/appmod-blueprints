@@ -12,7 +12,7 @@ resource "aws_identitystore_group" "admin" {
   count             = local.identity_store_id != null ? 1 : 0
   identity_store_id = local.identity_store_id
   display_name      = "admin"
-  description       = "Admin group for EKS Managed Capability for ArgoCD"
+  description       = "Platform Admin group for EKS Managed Capability for ArgoCD"
 }
 
 # Create admin group
@@ -20,7 +20,7 @@ resource "aws_identitystore_group" "editor" {
   count             = local.identity_store_id != null ? 1 : 0
   identity_store_id = local.identity_store_id
   display_name      = "editor"
-  description       = "SRE group for EKS Managed Capability for ArgoCD"
+  description       = "Developer group for EKS Managed Capability for ArgoCD"
 }
 
 # Create developer group
@@ -28,7 +28,7 @@ resource "aws_identitystore_group" "viewer" {
   count             = local.identity_store_id != null ? 1 : 0
   identity_store_id = local.identity_store_id
   display_name      = "viewer"
-  description       = "Developer group for EKS Managed Capability for ArgoCD"
+  description       = "Non-Developer group for EKS Managed Capability for ArgoCD"
 }
 
 # Optional: Create test user - Backup User, Won't be used until Keycloak integration works

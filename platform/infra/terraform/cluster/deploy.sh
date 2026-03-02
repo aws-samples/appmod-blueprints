@@ -43,6 +43,7 @@ check_identity_center() {
         if terraform show -json > /dev/null 2>&1; then
           export TF_VAR_identity_center_admin_group_id=$(terraform output -raw admin_group_id 2>/dev/null || echo "")
           export TF_VAR_identity_center_developer_group_id=$(terraform output -raw developer_group_id 2>/dev/null || echo "")
+          export TF_VAR_identity_center_non_developer_group_id=$(terraform output -raw non_developer_group_id 2>/dev/null || echo "")
           log "📋 Retrieved Identity Center group IDs from terraform state"
         fi
         cd - > /dev/null
@@ -57,9 +58,10 @@ check_identity_center() {
     log "   Instance ARN: ${TF_VAR_identity_center_instance_arn}"
     log "   Admin Group: ${TF_VAR_identity_center_admin_group_id:-not set}"
     log "   Developer Group: ${TF_VAR_identity_center_developer_group_id:-not set}"
+    log "   Non-Developer Group: ${TF_VAR_identity_center_non_developer_group_id:-not set}"
     
     # Validate that Identity Center groups are configured for ArgoCD capability
-    if [[ -z "${TF_VAR_identity_center_admin_group_id:-}" ]] || [[ -z "${TF_VAR_identity_center_developer_group_id:-}" ]]; then
+    if [[ -z "${TF_VAR_identity_center_admin_group_id:-}" ]] || [[ -z "${TF_VAR_identity_center_developer_group_id:-}" ]] || [[ -z "${TF_VAR_identity_center_non_developer_group_id:-}" ]]; then
       log_error "Identity Center groups are required for EKS ArgoCD capability"
       log_error "Please run the identity-center deployment first:"
       log_error "  cd ../identity-center && ./deploy.sh"
