@@ -153,6 +153,97 @@ main() {
         fi
     fi
 
+    # ---------------------------------------------------------------------------
+    # Phase: Configure IAM Identity Center + retrieve ArgoCD auth token
+    # ---------------------------------------------------------------------------
+    log_timestamp "Phase: IAM Identity Center configuration and ArgoCD token retrieval"
+
+    if wait_for_keycloak_ready 900 30; then
+        # Resolve IDC instance ID
+        local idc_instance_arn
+        idc_instance_arn=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text 2>/dev/null || echo "None")
+        local idc_instance_id=""
+        if [ -n "$idc_instance_arn" ] && [ "$idc_instance_arn" != "None" ]; then
+            idc_instance_id=$(echo "$idc_instance_arn" | grep -oP '[0-9a-f]{16}$' || echo "")
+            if [ -z "$idc_instance_id" ]; then
+                idc_instance_id=$(echo "$idc_instance_arn" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//')
+            fi
+        fi
+
+        # Resolve domain name (same pattern as argocd-utils.sh wait_for_argocd_apps_health)
+        local domain_name
+        domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null || echo "")
+        if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
+            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null || echo "")
+        fi
+
+        # Resolve Keycloak admin password
+        local keycloak_admin_password
+        keycloak_admin_password=$(kubectl get secret keycloak-config -n keycloak -o jsonpath='{.data.KC_BOOTSTRAP_ADMIN_PASSWORD}' 2>/dev/null | base64 -d || echo "")
+
+        if [ -z "$idc_instance_id" ] || [ -z "$domain_name" ] || [ "$domain_name" = "None" ] || [ -z "$keycloak_admin_password" ]; then
+            print_status "WARNING" "Missing parameters for Identity Center configuration (instance_id=$idc_instance_id, domain=$domain_name, kc_password set=$([ -n "$keycloak_admin_password" ] && echo yes || echo no))"
+        else
+            # Run configure_identity_center.py with up to 3 retries, 5 min wait between
+            local idc_success=false
+            local idc_attempt=0
+            local idc_max_retries=3
+            local idc_retry_wait=300  # 5 minutes
+
+            while [ $idc_attempt -lt $idc_max_retries ] && [ "$idc_success" = false ]; do
+                idc_attempt=$((idc_attempt + 1))
+                print_status "INFO" "Running configure_identity_center.py (attempt $idc_attempt/$idc_max_retries)..."
+
+                if python3 "${GIT_ROOT_PATH}/scripts/configure_identity_center.py" \
+                    --region "$AWS_REGION" \
+                    --instance-id "$idc_instance_id" \
+                    --keycloak-dns "$domain_name" \
+                    --keycloak-admin-password "$keycloak_admin_password"; then
+                    print_status "SUCCESS" "IAM Identity Center configuration completed"
+                    idc_success=true
+                else
+                    print_status "WARNING" "configure_identity_center.py failed (attempt $idc_attempt/$idc_max_retries)"
+                    if [ $idc_attempt -lt $idc_max_retries ]; then
+                        print_status "INFO" "Retrying in $((idc_retry_wait / 60)) minutes..."
+                        sleep $idc_retry_wait
+                    fi
+                fi
+            done
+
+            if [ "$idc_success" = false ]; then
+                print_status "WARNING" "IAM Identity Center configuration failed after $idc_max_retries attempts, continuing without it"
+            fi
+        fi
+
+        # Retrieve ArgoCD auth token via browser automation
+        print_status "INFO" "Retrieving ArgoCD authentication token..."
+        local argocd_server_url
+        argocd_server_url=$(aws eks describe-capability --cluster-name "${RESOURCE_PREFIX}-hub" --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null || echo "")
+
+        if [ -n "$argocd_server_url" ] && [ "$argocd_server_url" != "None" ]; then
+            local argocd_token
+            argocd_token=$(python3 "${GIT_ROOT_PATH}/scripts/argocd_token_automation.py" \
+                --url "$argocd_server_url" \
+                --username "user1" \
+                --password "${USER1_PASSWORD}" \
+                --output token 2>/dev/null || echo "")
+
+            if [ -n "$argocd_token" ]; then
+                export ARGOCD_AUTH_TOKEN="$argocd_token"
+                export ARGOCD_SERVER=$(echo "$argocd_server_url" | sed 's|https://||' | sed 's|/.*||')
+                print_status "SUCCESS" "ArgoCD auth token retrieved and exported"
+                update_workshop_var "ARGOCD_AUTH_TOKEN" "$ARGOCD_AUTH_TOKEN"
+                update_workshop_var "ARGOCD_SERVER" "$ARGOCD_SERVER"
+            else
+                print_status "WARNING" "Failed to retrieve ArgoCD token, continuing without CLI authentication"
+            fi
+        else
+            print_status "WARNING" "ArgoCD server URL not available, skipping token retrieval"
+        fi
+    else
+        print_status "WARNING" "Skipping Identity Center configuration and ArgoCD token retrieval"
+    fi
+
     # Dependency-aware ArgoCD app synchronization
     wait_for_argocd_apps_with_dependencies
 

@@ -1546,3 +1546,40 @@ delete_argocd_apps() {
         apps_to_delete=("${remaining_apps[@]}")
     done
 }
+
+# Wait for Keycloak ArgoCD application to be healthy and synced
+# Returns 0 if healthy, 1 if timeout
+wait_for_keycloak_ready() {
+    local max_wait=${1:-900}  # 15 minutes default
+    local check_interval=${2:-30}
+    local elapsed=0
+
+    print_info "Waiting for Keycloak ArgoCD app to be healthy (timeout: ${max_wait}s)..."
+
+    while [ $elapsed -lt $max_wait ]; do
+        local kc_health=""
+        local kc_sync=""
+
+        # Try label-based lookup first
+        kc_health=$(kubectl get application -n argocd -l "app.kubernetes.io/instance=keycloak" -o jsonpath='{.items[0].status.health.status}' 2>/dev/null || echo "")
+        kc_sync=$(kubectl get application -n argocd -l "app.kubernetes.io/instance=keycloak" -o jsonpath='{.items[0].status.sync.status}' 2>/dev/null || echo "")
+
+        # Fallback to name pattern match
+        if [ -z "$kc_health" ]; then
+            kc_health=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | test("keycloak")) | .status.health.status' | head -1)
+            kc_sync=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | test("keycloak")) | .status.sync.status' | head -1)
+        fi
+
+        if [ "$kc_health" = "Healthy" ] && [ "$kc_sync" = "Synced" ]; then
+            print_success "Keycloak is healthy and synced"
+            return 0
+        fi
+
+        print_info "Keycloak status: health=$kc_health sync=$kc_sync, waiting... ($elapsed/${max_wait}s)"
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+
+    print_warning "Keycloak did not become healthy within ${max_wait}s"
+    return 1
+}
