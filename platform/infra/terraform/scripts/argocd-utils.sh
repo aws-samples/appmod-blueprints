@@ -1140,16 +1140,24 @@ wait_for_sync_wave_completion() {
     local max_wave=$2
     local timeout=2700  # 45 minutes per phase
     
-    print_info "[$cluster] Waiting for sync waves 0-$max_wave to complete..."
+    log_timestamp "[$cluster] Waiting for sync waves 0-$max_wave to complete..."
     
     local start_time=$(date +%s)
     while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+        local elapsed=$(($(date +%s) - start_time))
+        
+        # An app is considered "done" if:
+        # 1. It's Healthy AND Synced, OR
+        # 2. It's Healthy AND last operation Succeeded (even if OutOfSync due to drift)
         local pending_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
             jq -r --arg max_wave "$max_wave" \
             '.items[] | select(
                 ((.metadata.annotations."argocd.argoproj.io/sync-wave" // "0") | tonumber) <= ($max_wave | tonumber) and
-                ((.status.sync.status != "Synced" or .status.health.status != "Healthy") and
-                 (.status.operationState.phase // "None") != "Running")
+                (
+                    (.status.health.status != "Healthy") or
+                    ((.status.sync.status != "Synced") and (.status.operationState.phase // "None") != "Succeeded")
+                ) and
+                (.status.operationState.phase // "None") != "Running"
             ) | .metadata.name' 2>/dev/null)
         
         # Filter out best effort apps from blocking
@@ -1159,7 +1167,7 @@ wait_for_sync_wave_completion() {
             for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
                 if [[ "$app" == "$best_effort_app" ]]; then
                     is_best_effort=true
-                    print_info "[$cluster] Syncing best effort app: $app (non-blocking)"
+                    log_timestamp "[$cluster] Syncing best effort app: $app (non-blocking)"
                     sync_argocd_app_in_background "$app"
                     break
                 fi
@@ -1170,7 +1178,7 @@ wait_for_sync_wave_completion() {
         done
         
         if [ -z "$blocking_apps" ]; then
-            print_success "[$cluster] Sync waves 0-$max_wave completed (ignoring best effort apps)"
+            log_timestamp "[$cluster] Sync waves 0-$max_wave completed (ignoring best effort apps) - elapsed: ${elapsed}s"
             return 0
         fi
         
@@ -1188,7 +1196,7 @@ wait_for_sync_wave_completion() {
         if [ -n "$stuck_apps" ]; then
             echo "$stuck_apps" | while read -r app; do
                 if [ -n "$app" ]; then
-                    print_info "[$cluster] Recovering stuck app: $app"
+                    log_timestamp "[$cluster] Recovering stuck app: $app"
                     terminate_argocd_operation "$app"
                     sleep 1
                     refresh_argocd_app "$app" "true"
@@ -1199,29 +1207,35 @@ wait_for_sync_wave_completion() {
             done
         fi
         
-        # Try to sync remaining problematic apps (only if they need it)
+        # Try to sync remaining problematic apps (only if they actually need it)
         for app in $blocking_apps; do
             if [ -n "$app" ]; then
-                # Check if app actually needs sync
-                local app_status=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
-                    jq -r '{sync: .status.sync.status, health: .status.health.status}')
-                local sync_status=$(echo "$app_status" | jq -r '.sync')
-                local health_status=$(echo "$app_status" | jq -r '.health')
+                # Check detailed app status
+                local app_info=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
+                    jq -r '{sync: .status.sync.status, health: .status.health.status, operation: (.status.operationState.phase // "None")}')
+                local sync_status=$(echo "$app_info" | jq -r '.sync')
+                local health_status=$(echo "$app_info" | jq -r '.health')
+                local operation_status=$(echo "$app_info" | jq -r '.operation')
                 
-                if [[ "$sync_status" != "Synced" ]] || [[ "$health_status" != "Healthy" ]]; then
-                    print_info "[$cluster] Syncing blocking app: $app"
+                # Skip if app is Healthy and last operation Succeeded (even if OutOfSync)
+                if [[ "$health_status" == "Healthy" ]] && [[ "$operation_status" == "Succeeded" ]]; then
+                    log_timestamp "[$cluster] App $app is Healthy with Succeeded operation (sync=$sync_status) - considering done"
+                    continue
+                fi
+                
+                # Sync if not healthy or operation didn't succeed
+                if [[ "$health_status" != "Healthy" ]] || [[ "$operation_status" != "Succeeded" ]]; then
+                    log_timestamp "[$cluster] Syncing blocking app: $app (health=$health_status, sync=$sync_status, operation=$operation_status)"
                     sync_argocd_app "$app" || true
-                else
-                    print_info "[$cluster] App $app already healthy and synced, skipping"
                 fi
             fi
         done
         
-        print_info "[$cluster] Waiting for: $blocking_apps"
+        log_timestamp "[$cluster] Still waiting for: $blocking_apps (elapsed: ${elapsed}s / ${timeout}s)"
         sleep 30
     done
     
-    print_warning "[$cluster] Timeout waiting for sync waves 0-$max_wave"
+    log_timestamp "[$cluster] Timeout waiting for sync waves 0-$max_wave after ${timeout}s"
     return 1
 }
 
@@ -1380,9 +1394,10 @@ show_final_status() {
     echo "----------------------------------------"
     
     if kubectl get applications -n argocd >/dev/null 2>&1; then
-        kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
-        while IFS='|' read -r name sync health message; do
-            if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
+        kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.phase // "")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
+        while IFS='|' read -r name sync health operation message; do
+            # Accept Healthy + (Synced OR operation=Succeeded) to handle false OutOfSync from drift
+            if [ "$health" = "Healthy" ] && { [ "$sync" = "Synced" ] || [ "$operation" = "Succeeded" ]; }; then
                 print_success "$name: OK"
             else
                 # Extract key error message

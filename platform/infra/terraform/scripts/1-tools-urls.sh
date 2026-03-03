@@ -4,6 +4,10 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
 
+# Source required utility scripts
+source "${SCRIPT_DIR}/colors.sh"
+source "${SCRIPT_DIR}/utils.sh"
+
 # Source environment variables
 if [ -d /home/ec2-user/.bashrc.d ]; then
     for file in /home/ec2-user/.bashrc.d/*.sh; do

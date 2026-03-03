@@ -7,22 +7,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/colors.sh"
 source "$SCRIPT_DIR/argocd-utils.sh"
 
-# Show current status
-print_info "ArgoCD Applications Status:"
-echo "----------------------------------------"
-kubectl get applications -n argocd -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status" --no-headers | \
-while read name sync health; do
-    if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
-        print_success "$name: $sync/$health"
-    elif [ "$health" = "Healthy" ]; then
-        print_warning "$name: $sync/$health"
-    else
-        print_error "$name: $sync/$health"
-    fi
-done
-echo "----------------------------------------"
-echo ""
-
 # Check for pods in CrashLoopBackOff that need restart across all clusters
 print_info "Checking for pods in CrashLoopBackOff across all clusters..."
 for context in $(kubectl config get-contexts -o name 2>/dev/null | grep -E "peeks-(hub|spoke)"); do
