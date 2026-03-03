@@ -857,6 +857,14 @@ keycloak:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
         - '.spec.template.metadata.annotations'
         - '.spec.volumeClaimTemplates[].metadata.creationTimestamp'
+        - '.spec.volumeClaimTemplates[].metadata'
+    - group: ''
+      kind: PersistentVolumeClaim
+      jsonPointers:
+        - /metadata/creationTimestamp
+        - /metadata/managedFields
+        - /metadata/resourceVersion
+        - /status
     - group: ''
       kind: Service
       jsonPointers:

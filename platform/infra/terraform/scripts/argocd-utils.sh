@@ -1394,9 +1394,10 @@ show_final_status() {
     echo "----------------------------------------"
     
     if kubectl get applications -n argocd >/dev/null 2>&1; then
-        kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
-        while IFS='|' read -r name sync health message; do
-            if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
+        kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.phase // "")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
+        while IFS='|' read -r name sync health operation message; do
+            # Accept Healthy + (Synced OR operation=Succeeded) to handle false OutOfSync from drift
+            if [ "$health" = "Healthy" ] && { [ "$sync" = "Synced" ] || [ "$operation" = "Succeeded" ]; }; then
                 print_success "$name: OK"
             else
                 # Extract key error message
