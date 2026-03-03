@@ -3,8 +3,20 @@
 # Disable Terraform color output to prevent ANSI escape sequences
 export TF_CLI_ARGS="-no-color"
 
+# Allow git to traverse filesystem boundaries (needed for EFS mounts)
+export GIT_DISCOVERY_ACROSS_FILESYSTEM=1
+
 # set -euo pipefail  # Commented out to allow safe sourcing
-GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
+# Use pre-set GIT_ROOT_PATH if available, otherwise try to detect it
+if [[ -z "${GIT_ROOT_PATH:-}" ]]; then
+  GIT_ROOT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+fi
+
+# Exit early if not in a git repository
+if [[ -z "$GIT_ROOT_PATH" ]]; then
+  echo "Note: Not in a git repository. Workshop utilities not loaded." >&2
+  return 0 2>/dev/null || exit 0
+fi
 
 [[ -n "${DEBUG:-}" ]] && set -x
 
