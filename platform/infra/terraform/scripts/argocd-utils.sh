@@ -1148,22 +1148,25 @@ wait_for_sync_wave_completion() {
         
         # An app is considered "done" if:
         # 1. It's Healthy AND Synced, OR
-        # 2. It's Healthy AND last operation Succeeded (even if OutOfSync due to drift)
+        # 2. It's in HEALTHY_OUTOFSYNC_OK_APPS AND Healthy AND last operation Succeeded
         local pending_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
             jq -r --arg max_wave "$max_wave" \
             '.items[] | select(
                 ((.metadata.annotations."argocd.argoproj.io/sync-wave" // "0") | tonumber) <= ($max_wave | tonumber) and
                 (
                     (.status.health.status != "Healthy") or
-                    ((.status.sync.status != "Synced") and (.status.operationState.phase // "None") != "Succeeded")
+                    (.status.sync.status != "Synced" and (.status.operationState.phase // "None") != "Succeeded")
                 ) and
                 (.status.operationState.phase // "None") != "Running"
             ) | .metadata.name' 2>/dev/null)
         
-        # Filter out best effort apps from blocking
+        # Filter out best effort apps and healthy-outofsync-ok apps from blocking
         local blocking_apps=""
         for app in $pending_apps; do
             local is_best_effort=false
+            local is_healthy_outofsync_ok=false
+            
+            # Check if it's a best effort app
             for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
                 if [[ "$app" == "$best_effort_app" ]]; then
                     is_best_effort=true
@@ -1172,7 +1175,27 @@ wait_for_sync_wave_completion() {
                     break
                 fi
             done
+            
+            # Check if it's a healthy-outofsync-ok app with Succeeded operation
             if [[ "$is_best_effort" == false ]]; then
+                for healthy_outofsync_app in "${HEALTHY_OUTOFSYNC_OK_APPS[@]}"; do
+                    if [[ "$app" == "$healthy_outofsync_app" ]]; then
+                        # Verify it's Healthy with Succeeded operation
+                        local app_status=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
+                            jq -r '{health: .status.health.status, operation: (.status.operationState.phase // "None")}')
+                        local health=$(echo "$app_status" | jq -r '.health')
+                        local operation=$(echo "$app_status" | jq -r '.operation')
+                        
+                        if [[ "$health" == "Healthy" ]] && [[ "$operation" == "Succeeded" ]]; then
+                            is_healthy_outofsync_ok=true
+                            log_timestamp "[$cluster] App $app is Healthy with Succeeded operation (OutOfSync OK)"
+                            break
+                        fi
+                    fi
+                done
+            fi
+            
+            if [[ "$is_best_effort" == false ]] && [[ "$is_healthy_outofsync_ok" == false ]]; then
                 blocking_apps="$blocking_apps $app"
             fi
         done

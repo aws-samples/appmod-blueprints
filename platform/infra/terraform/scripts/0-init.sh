@@ -15,12 +15,19 @@ fi
 # Best effort applications - sync but don't wait for them to be healthy
 # These apps may take longer to deploy or have known issues that don't block the workshop
 BEST_EFFORT_APPS=(
-    "devlake-peeks-hub"
-    "grafana-dashboards-peeks-hub"
-    "jupyterhub-peeks-hub"
-    "spark-operator-peeks-hub"
-    "image-prepuller-peeks-hub"
+    "image-prepuller-peeks-hub"  # Truly optional - only for performance
 )
+
+# Apps that are OK if Healthy but OutOfSync (known ArgoCD ignore issues)
+# These must have: status.health.status == "Healthy" AND status.operationState.phase == "Succeeded"
+HEALTHY_OUTOFSYNC_OK_APPS=(
+    "keycloak-peeks-hub"
+    "backstage-peeks-hub"
+)
+
+# Export for use in sourced scripts
+export BEST_EFFORT_APPS
+export HEALTHY_OUTOFSYNC_OK_APPS
 
 #be sure we source env var
 source /etc/profile.d/workshop.sh
