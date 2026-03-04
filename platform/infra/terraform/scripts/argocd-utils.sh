@@ -512,13 +512,19 @@ terminate_argocd_operation() {
             if echo "$output" | grep -q "Unable to terminate operation"; then
                 print_info "No operation to terminate for $app_name"
             else
-                print_warning "ArgoCD CLI terminate failed: $output, using direct kubectl approach"
-                kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+                print_warning "ArgoCD CLI terminate failed, trying multiple kubectl approaches"
+                # Try multiple approaches
+                kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/status/operationState"}]' 2>/dev/null || true
+                sleep 1
+                kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/operation"}]' 2>/dev/null || true
             fi
         fi
     else
-        print_warning "ArgoCD CLI authentication failed, using direct kubectl approach"
-        kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+        print_warning "ArgoCD CLI authentication failed, using kubectl approaches"
+        # Try multiple approaches in sequence
+        kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/status/operationState"}]' 2>/dev/null || true
+        sleep 1
+        kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/operation"}]' 2>/dev/null || true
     fi
 }
 
@@ -612,15 +618,63 @@ sync_argocd_app() {
         local sync=$(echo "$app_status" | jq -r '.status.sync.status // "Unknown"')
         local operation_phase=$(echo "$app_status" | jq -r '.status.operationState.phase // "None"')
         
-        # Check for revision mismatch errors in operation state
+        # Check for revision mismatch errors in operation state OR stuck in Running for too long
         local operation_message=$(echo "$app_status" | jq -r '.status.operationState.message // ""')
+        local operation_started=$(echo "$app_status" | jq -r '.status.operationState.startedAt // ""')
         local revision_mismatch=false
-        if [[ "$operation_message" == *"cannot reference a different revision"* ]] || [[ "$operation_message" == *"ComparisonError"* ]]; then
-            print_info "Detected revision mismatch in $app_name, applying complete fix..."
-            terminate_argocd_operation "$app_name"
-            sleep 2
-            refresh_argocd_app "$app_name" "true"
+        
+        # Check if stuck in Running state for more than 5 minutes
+        local stuck_running=false
+        if [ "$operation_phase" = "Running" ] && [ -n "$operation_started" ] && [ "$operation_started" != "null" ]; then
+            local start_epoch=$(date -d "$operation_started" +%s 2>/dev/null || echo "0")
+            local now_epoch=$(date +%s)
+            local elapsed=$((now_epoch - start_epoch))
+            if [ $elapsed -gt 300 ]; then  # 5 minutes
+                print_warning "App $app_name stuck in Running state for ${elapsed}s (>5min)"
+                stuck_running=true
+            fi
+        fi
+        
+        if [[ "$operation_message" == *"cannot reference a different revision"* ]] || [[ "$operation_message" == *"ComparisonError"* ]] || [ "$stuck_running" = true ]; then
+            print_warning "Detected revision mismatch or stuck operation in $app_name - applying fix..."
+            
+            # Extract the commit that main resolves to from error message
+            local target_commit=$(echo "$operation_message" | grep -oP 'references "main" which resolves to "\K[a-f0-9]{40}' | head -1)
+            
+            # Check if cluster-addons has already synced this commit (check first revision in array)
+            local cluster_addons_revision=$(kubectl get application cluster-addons -n argocd -o jsonpath='{.status.sync.revisions[0]}' 2>/dev/null)
+            local cluster_addons_phase=$(kubectl get application cluster-addons -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+            
+            if [ "$cluster_addons_phase" != "Running" ] && [ "$cluster_addons_revision" != "$target_commit" ]; then
+                print_info "Force syncing cluster-addons (current: $cluster_addons_revision, target: $target_commit)"
+                kubectl patch application cluster-addons -n argocd --type='merge' -p='{"operation":{"sync":{}}}' 2>/dev/null || true
+                sleep 3
+            else
+                print_info "cluster-addons already at target revision ($cluster_addons_revision), skipping sync"
+            fi
+            
+            # Step 1: Disable auto-sync temporarily
+            print_info "Step 1: Disabling auto-sync"
+            kubectl patch application "$app_name" -n argocd --type merge -p '{"spec":{"syncPolicy":null}}' 2>/dev/null || true
             sleep 5
+            
+            # Step 2: Hard refresh to clear comparison error (KEY STEP)
+            print_info "Step 2: Hard refresh to clear comparison error"
+            kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep 10
+            
+            # Step 3: Remove stuck operation (try both paths)
+            print_info "Step 3: Removing stuck operation"
+            kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/status/operationState"}]' 2>/dev/null || true
+            sleep 3
+            kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/operation"}]' 2>/dev/null || true
+            sleep 5
+            
+            # Step 4: Trigger new sync manually
+            print_info "Step 4: Triggering new sync"
+            kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{"revision":null}}}' 2>/dev/null || true
+            sleep 5
+            
             revision_mismatch=true
         fi
         
