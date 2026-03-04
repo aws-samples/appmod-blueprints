@@ -243,6 +243,7 @@ main() {
                 print_status "SUCCESS" "ArgoCD auth token retrieved and exported"
                 update_workshop_var "ARGOCD_AUTH_TOKEN" "$ARGOCD_AUTH_TOKEN"
                 update_workshop_var "ARGOCD_SERVER" "$ARGOCD_SERVER"
+                update_workshop_var "ARGOCD_OPTS" "${ARGOCD_OPTS:---grpc-web}"
             else
                 print_status "WARNING" "Failed to retrieve ArgoCD token, continuing without CLI authentication"
             fi
