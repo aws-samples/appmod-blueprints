@@ -46,18 +46,64 @@ STORAGE_STATE_FILE = "/tmp/aws_console_state.json"
 AWS_METADATA_FILE = "/tmp/aws-id.xml"
 KEYCLOAK_SAML_FILE = "/tmp/keycloak-saml.xml"
 SCIM_DATA_FILE = "/tmp/scim-data.json"
+ASSUME_ROLE_CREDENTIALS_FILE = '/tmp/keycloak-idc-integration-credentials.json'
+
+
+# ---------------------------------------------------------------------------
+# AWS Credentials loader
+# ---------------------------------------------------------------------------
+
+def load_aws_credentials():
+    """Load AWS credentials from ASSUME_ROLE_CREDENTIALS_FILE."""
+    if not os.path.exists(ASSUME_ROLE_CREDENTIALS_FILE):
+        print(f"Error: Credentials file not found: {ASSUME_ROLE_CREDENTIALS_FILE}", file=sys.stderr)
+        sys.exit(1)
+    
+    try:
+        with open(ASSUME_ROLE_CREDENTIALS_FILE, 'r') as f:
+            creds = json.load(f)
+        
+        required_keys = ['AccessKeyId', 'SecretAccessKey', 'SessionToken']
+        missing_keys = [key for key in required_keys if key not in creds]
+        if missing_keys:
+            print(f"Error: Missing required keys in credentials file: {', '.join(missing_keys)}", file=sys.stderr)
+            sys.exit(1)
+        
+        return creds
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in credentials file: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: Failed to load credentials: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
 # AWS Console helpers
 # ---------------------------------------------------------------------------
 
+def is_console_aws_url(url: str) -> bool:
+    """
+    Check if URL is on console.aws.amazon.com domain.
+    Uses hostname parsing to avoid substring bypass vulnerabilities.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        # Allow exact match or subdomain
+        return hostname == "console.aws.amazon.com" or hostname.endswith(".console.aws.amazon.com")
+    except Exception:
+        return False
+
+
 def get_console_signin_url(destination: str) -> str:
-    creds = boto3.Session().get_credentials().get_frozen_credentials()
+    creds = load_aws_credentials()
     session_data = json.dumps({
-        "sessionId": creds.access_key,
-        "sessionKey": creds.secret_key,
-        "sessionToken": creds.token,
+        "sessionId": creds['AccessKeyId'],
+        "sessionKey": creds['SecretAccessKey'],
+        "sessionToken": creds['SessionToken'],
     })
     token = requests.get(
         "https://signin.aws.amazon.com/federation",
@@ -302,7 +348,7 @@ async def configure_identity_center(
                 await page.goto(sso_url, wait_until="domcontentloaded")
                 await wait_for_stable(page)
                 logged_in = (
-                    "console.aws.amazon.com" in page.url
+                    is_console_aws_url(page.url)
                     and "signin" not in page.url.lower()
                     and await page.locator('[data-testid="awsc-nav-account-menu-button"]').count() > 0
                 )
