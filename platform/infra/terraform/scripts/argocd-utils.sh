@@ -483,7 +483,7 @@ authenticate_argocd() {
         if [ -n "$ARGOCD_SERVER" ] && [ -n "$ARGOCD_AUTH_TOKEN" ]; then
             export ARGOCD_SERVER
             export ARGOCD_AUTH_TOKEN
-            export ARGOCD_OPTS="${ARGOCD_OPTS:---grpc-web}"
+            export ARGOCD_OPTS
             # Test if ArgoCD CLI is working
             if argocd cluster list >/dev/null 2>&1; then
                 return 0
