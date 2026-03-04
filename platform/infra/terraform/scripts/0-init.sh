@@ -21,8 +21,8 @@ BEST_EFFORT_APPS=(
 # Apps that are OK if Healthy but OutOfSync (known ArgoCD ignore issues)
 # These must have: status.health.status == "Healthy" AND status.operationState.phase == "Succeeded"
 HEALTHY_OUTOFSYNC_OK_APPS=(
-    "keycloak-peeks-hub"
-    "backstage-peeks-hub"
+    "keycloak-${RESOURCE_PREFIX}-hub"
+    "backstage-${RESOURCE_PREFIX}-hub"
 )
 
 # Export for use in sourced scripts

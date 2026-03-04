@@ -239,9 +239,9 @@ verify_keycloak_secrets() {
     print_info "Triggering Keycloak sync to execute PostSync hooks..."
     
     # Force sync
-    kubectl patch application keycloak-peeks-hub -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+    kubectl patch application "keycloak-${RESOURCE_PREFIX}-hub" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
     sleep 2
-    kubectl patch application keycloak-peeks-hub -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+    kubectl patch application "keycloak-${RESOURCE_PREFIX}-hub" -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
     
     # Wait for job
     local timeout=300
@@ -286,7 +286,7 @@ refresh_keycloak_dependent_apps() {
         
         for app in $dependent_apps; do
             # Check if ExternalSecret exists and is ready
-            local es_status=$(kubectl get externalsecret -n "$app" -l "app.kubernetes.io/instance=${app}-peeks-hub" \
+            local es_status=$(kubectl get externalsecret -n "$app" -l "app.kubernetes.io/instance=${app}-${RESOURCE_PREFIX}-hub" \
                 -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
             
             if [ -n "$es_status" ]; then
@@ -314,7 +314,7 @@ refresh_keycloak_dependent_apps() {
     print_info "Refreshing apps that depend on Keycloak secrets..."
     
     for app in $dependent_apps; do
-        local app_name="${app}-peeks-hub"
+        local app_name="${app}-${RESOURCE_PREFIX}-hub"
         if kubectl get application "$app_name" -n argocd >/dev/null 2>&1; then
             print_info "  Refreshing $app_name..."
             kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
@@ -328,7 +328,7 @@ refresh_keycloak_dependent_apps() {
     # Trigger sync for apps that are OutOfSync
     print_info "Triggering sync for OutOfSync dependent apps..."
     for app in $dependent_apps; do
-        local app_name="${app}-peeks-hub"
+        local app_name="${app}-${RESOURCE_PREFIX}-hub"
         if kubectl get application "$app_name" -n argocd >/dev/null 2>&1; then
             local sync_status=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
             if [ "$sync_status" = "OutOfSync" ]; then
