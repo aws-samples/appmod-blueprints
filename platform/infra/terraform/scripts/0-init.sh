@@ -15,7 +15,7 @@ fi
 # Best effort applications - sync but don't wait for them to be healthy
 # These apps may take longer to deploy or have known issues that don't block the workshop
 BEST_EFFORT_APPS=(
-    "image-prepuller-peeks-hub"  # Truly optional - only for performance
+    "image-prepuller-${RESOURCE_PREFIX}-hub"  # Truly optional - only for performance
 )
 
 # Apps that are OK if Healthy but OutOfSync (known ArgoCD ignore issues)
