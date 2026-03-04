@@ -191,17 +191,22 @@ main() {
         if [ -z "$idc_instance_id" ] || [ -z "$domain_name" ] || [ "$domain_name" = "None" ] || [ -z "$keycloak_admin_password" ]; then
             print_status "WARNING" "Missing parameters for Identity Center configuration (instance_id=$idc_instance_id, domain=$domain_name, kc_password set=$([ -n "$keycloak_admin_password" ] && echo yes || echo no))"
         else
-            # Run configure_identity_center.py with up to 3 retries, 5 min wait between
-            local idc_success=false
-            local idc_attempt=0
-            local idc_max_retries=3
-            local idc_retry_wait=300  # 5 minutes
+            # Fetch AWS credentials from SSM Parameter Store
+            print_status "INFO" "Fetching AWS credentials from SSM Parameter Store..."
+            if aws ssm get-parameter --name "/${RESOURCE_PREFIX}/keycloak-idc-integration-credentials" --with-decryption --query 'Parameter.Value' --output text | jq > /tmp/keycloak-idc-integration-credentials.json 2>/dev/null; then
+                print_status "SUCCESS" "AWS credentials retrieved and saved to /tmp/keycloak-idc-integration-credentials.json"
+                
+                # Run configure_identity_center.py with up to 3 retries, 5 min wait between
+                local idc_success=false
+                local idc_attempt=0
+                local idc_max_retries=3
+                local idc_retry_wait=300  # 5 minutes
 
-            while [ $idc_attempt -lt $idc_max_retries ] && [ "$idc_success" = false ]; do
-                idc_attempt=$((idc_attempt + 1))
-                print_status "INFO" "Running configure_identity_center.py (attempt $idc_attempt/$idc_max_retries)..."
+                while [ $idc_attempt -lt $idc_max_retries ] && [ "$idc_success" = false ]; do
+                    idc_attempt=$((idc_attempt + 1))
+                    print_status "INFO" "Running configure_identity_center.py (attempt $idc_attempt/$idc_max_retries)..."
 
-                if python3 "${GIT_ROOT_PATH}/scripts/configure_identity_center.py" \
+                    if python3 "${SCRIPT_DIR}/configure_identity_center.py" \
                     --region "$AWS_REGION" \
                     --instance-id "$idc_instance_id" \
                     --keycloak-dns "$domain_name" \
@@ -220,6 +225,10 @@ main() {
             if [ "$idc_success" = false ]; then
                 print_status "WARNING" "IAM Identity Center configuration failed after $idc_max_retries attempts, continuing without it"
             fi
+            else
+                print_status "ERROR" "Failed to retrieve AWS credentials from SSM Parameter Store"
+                print_status "WARNING" "Skipping Identity Center configuration"
+            fi
         fi
 
         # Retrieve ArgoCD auth token via browser automation
@@ -229,7 +238,7 @@ main() {
 
         if [ -n "$argocd_server_url" ] && [ "$argocd_server_url" != "None" ]; then
             local argocd_token
-            argocd_token=$(python3 "${GIT_ROOT_PATH}/scripts/argocd_token_automation.py" \
+            argocd_token=$(python3 "${SCRIPT_DIR}/argocd_token_automation.py" \
                 --url "$argocd_server_url" \
                 --username "user1" \
                 --password "${USER1_PASSWORD}" \
