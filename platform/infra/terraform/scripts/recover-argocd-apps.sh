@@ -9,8 +9,8 @@ source "$SCRIPT_DIR/argocd-utils.sh"
 
 # Check for pods in CrashLoopBackOff that need restart across all clusters
 print_info "Checking for pods in CrashLoopBackOff across all clusters..."
-for context in $(kubectl config get-contexts -o name 2>/dev/null | grep -E "peeks-(hub|spoke)"); do
-    cluster_name=$(echo "$context" | sed 's/.*peeks-/peeks-/')
+for context in $(kubectl config get-contexts -o name 2>/dev/null | grep -E "${RESOURCE_PREFIX}-(hub|spoke)"); do
+    cluster_name=$(echo "$context" | sed "s/.*${RESOURCE_PREFIX}-/${RESOURCE_PREFIX}-/")
     crashloop_pods=$(kubectl get pods -A --context "$context" -o json 2>/dev/null | \
         jq -r '.items[] | select(.status.containerStatuses[]? | select(.state.waiting.reason == "CrashLoopBackOff" and .restartCount > 50)) | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null || echo "")
     

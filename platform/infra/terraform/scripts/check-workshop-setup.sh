@@ -11,20 +11,20 @@ source "$SCRIPT_DIR/colors.sh"
 
 # Define critical applications that MUST be healthy for workshop to function
 CRITICAL_APPS=(
-    "cert-manager-peeks-hub"
-    "external-secrets-peeks-hub"
-    "ingress-nginx-peeks-hub"
-    "metrics-server-peeks-hub"
-    "keycloak-peeks-hub"
-    "backstage-peeks-hub"
-    "gitlab-peeks-hub"
-    "argo-workflows-peeks-hub"
+    "cert-manager-${RESOURCE_PREFIX}-hub"
+    "external-secrets-${RESOURCE_PREFIX}-hub"
+    "ingress-nginx-${RESOURCE_PREFIX}-hub"
+    "metrics-server-${RESOURCE_PREFIX}-hub"
+    "keycloak-${RESOURCE_PREFIX}-hub"
+    "backstage-${RESOURCE_PREFIX}-hub"
+    "gitlab-${RESOURCE_PREFIX}-hub"
+    "argo-workflows-${RESOURCE_PREFIX}-hub"
 )
 
 # Apps that are OK if Healthy but OutOfSync (known ArgoCD ignore issues)
 HEALTHY_OUTOFSYNC_OK_APPS=(
-    "keycloak-peeks-hub"
-    "backstage-peeks-hub"
+    "keycloak-${RESOURCE_PREFIX}-hub"
+    "backstage-${RESOURCE_PREFIX}-hub"
 )
 
 print_header "Workshop Setup Validation"
