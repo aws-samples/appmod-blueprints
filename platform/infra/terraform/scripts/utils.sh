@@ -434,7 +434,7 @@ update_backstage_defaults() {
   ADMIN_ROLE_NAME=$(aws sts get-caller-identity --query 'Arn' --output text | sed 's|.*assumed-role/||' | sed 's|/.*||')
 
   # Get ArgoCD URL from EKS capability if available
-  ARGOCD_SERVER_URL=$(aws eks describe-capability --cluster-name ${CLUSTER_NAME:-peeks-hub} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null || echo "")
+  ARGOCD_SERVER_URL=$(aws eks describe-capability --cluster-name ${CLUSTER_NAME:-${RESOURCE_PREFIX}-hub} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null || echo "")
   
   # If EKS capability ArgoCD URL is available, extract domain name; otherwise fall back to ARGOCD_DOMAIN
   if [ -n "$ARGOCD_SERVER_URL" ] && [ "$ARGOCD_SERVER_URL" != "None" ]; then
