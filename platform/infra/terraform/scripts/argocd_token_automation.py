@@ -11,13 +11,15 @@ import sys
 try:
     from playwright.async_api import async_playwright
 except ImportError:
-    os.system("pip install playwright && playwright install chromium")
+    print("Installing playwright...", file=sys.stderr)
+    os.system("pip install playwright >/dev/null 2>&1 && playwright install chromium >/dev/null 2>&1")
     from playwright.async_api import async_playwright
 
 try:
     import pyotp
 except ImportError:
-    os.system("pip install pyotp")
+    print("Installing pyotp...", file=sys.stderr)
+    os.system("pip install pyotp >/dev/null 2>&1")
     import pyotp
 
 
