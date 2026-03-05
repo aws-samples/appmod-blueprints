@@ -1207,11 +1207,10 @@ wait_for_sync_wave_completion() {
             jq -r --arg max_wave "$max_wave" \
             '.items[] | select(
                 ((.metadata.annotations."argocd.argoproj.io/sync-wave" // "0") | tonumber) <= ($max_wave | tonumber) and
-                (
-                    (.status.health.status != "Healthy") or
-                    (.status.sync.status != "Synced" and (.status.operationState.phase // "None") != "Succeeded")
-                ) and
-                (.status.operationState.phase // "None") != "Running"
+                not(
+                    (.status.health.status == "Healthy" and .status.sync.status == "Synced") or
+                    ((.status.operationState.phase // "None") == "Succeeded")
+                )
             ) | .metadata.name' 2>/dev/null)
         
         # Filter out best effort apps and healthy-outofsync-ok apps from blocking
