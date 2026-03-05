@@ -143,4 +143,14 @@ resource "aws_prometheus_scraper" "peeks-scraper" {
     "{account_id}",
     data.aws_caller_identity.current.account_id
   )
+
+  lifecycle {
+    # Workaround for AWS provider bug where source.eks block disappears after apply
+    # This prevents Terraform from detecting drift in the source configuration
+    ignore_changes = [
+      source
+    ]
+    # Prevent recreation during normal operations
+    create_before_destroy = false
+  }
 }
