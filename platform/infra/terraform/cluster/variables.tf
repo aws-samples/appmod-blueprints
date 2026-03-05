@@ -52,6 +52,12 @@ variable "identity_center_developer_group_id" {
   default     = ""
 }
 
+variable "identity_center_non_developer_group_id" {
+  description = "AWS Identity Center group ID for ArgoCD non-developer access"
+  type        = string
+  default     = ""
+}
+
 variable "domain_name" {
   description = "Domain name for the cluster"
   type        = string

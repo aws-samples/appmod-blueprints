@@ -2,9 +2,14 @@
 # CloudFront Distribution for Ingress NLB
 ################################################################################
 
+# Random suffix for unique policy name
+resource "random_id" "keycloak_policy_suffix" {
+  byte_length = 4
+}
+
 # Custom origin request policy for Keycloak to forward all required headers
 resource "aws_cloudfront_origin_request_policy" "keycloak_policy" {
-  name    = "${var.resource_prefix}-KeycloakOriginRequestPolicy"
+  name    = "${var.resource_prefix}-KeycloakOriginRequestPolicy-${random_id.keycloak_policy_suffix.hex}"
   comment = "Origin request policy for Keycloak with all required headers"
   
   cookies_config {
