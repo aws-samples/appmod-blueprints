@@ -1,6 +1,0 @@
-sudo dnf install -y atk at-spi2-atk cups-libs libdrm libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libxkbcommon 2>/dev/null || echo "Some packages may already be installed"
-
-python platform-on-eks-workshop/platform/infra/terraform/scripts/configure_identity_center.py \                                                                                    ─╯
-  --region us-west-2 \ 
-  --keycloak-dns d3lldowh1nnvm4.cloudfront.net
-  --instance-id 7907df4a55a1b273

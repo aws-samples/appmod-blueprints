@@ -22,6 +22,7 @@ Shortcut flags:
 import asyncio
 import json
 import re
+import subprocess
 import sys
 import os
 import time
@@ -33,13 +34,48 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Chromium runtime dependencies for Amazon Linux / RHEL (yum-based systems).
+# Playwright's --with-deps flag assumes apt-get, so we handle deps ourselves.
+_CHROMIUM_YUM_DEPS = [
+    "atk", "at-spi2-atk", "cups-libs", "libdrm", "libxkbcommon",
+    "libXcomposite", "libXdamage", "libXrandr", "mesa-libgbm", "pango",
+    "alsa-lib", "nss", "nspr", "libXScrnSaver", "libXtst", "gtk3",
+]
+
+
+def _install_system_deps():
+    """Install Chromium system dependencies via yum (Amazon Linux / RHEL)."""
+    print("Installing Chromium system dependencies via yum...", file=sys.stderr)
+    subprocess.run(["sudo", "yum", "install", "-y"] + _CHROMIUM_YUM_DEPS,
+                   capture_output=True)
+
+
+def _ensure_playwright_browsers():
+    """Ensure Playwright Chromium browser binary is installed."""
+    try:
+        from playwright._impl._driver import compute_driver_executable
+        driver = compute_driver_executable()
+        result = subprocess.run(
+            [str(driver), "install", "--dry-run", "chromium"],
+            capture_output=True, text=True,
+        )
+        needs_install = result.returncode != 0
+    except Exception:
+        needs_install = True
+
+    if needs_install:
+        print("Installing Playwright Chromium browser...", file=sys.stderr)
+        _install_system_deps()
+        # Do NOT use --with-deps; it requires apt-get which doesn't exist on Amazon Linux.
+        subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+
+
 try:
     from playwright.async_api import async_playwright
 except ImportError:
-    os.system("pip install playwright")
-    os.system("sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon "
-              "libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib 2>/dev/null || true")
-    os.system("playwright install chromium 2>/dev/null")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
+    _install_system_deps()
+    subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
     from playwright.async_api import async_playwright
 
 STORAGE_STATE_FILE = "/tmp/aws_console_state.json"
@@ -105,14 +141,44 @@ def get_console_signin_url(destination: str) -> str:
         "sessionKey": creds['SecretAccessKey'],
         "sessionToken": creds['SessionToken'],
     })
-    token = requests.get(
-        "https://signin.aws.amazon.com/federation",
-        params={"Action": "getSigninToken", "SessionDuration": "3600", "Session": session_data},
-    ).json()["SigninToken"]
-    return (
-        f"https://signin.aws.amazon.com/federation"
-        f"?Action=login&Destination={urllib.parse.quote(destination)}&SigninToken={token}"
-    )
+
+    # SessionDuration is only valid for IAM user credentials.
+    # For assumed-role / STS credentials it causes HTTP 400, so omit it.
+    has_session_token = bool(creds.get('SessionToken'))
+    params = {"Action": "getSigninToken", "Session": session_data}
+    if not has_session_token:
+        params["SessionDuration"] = "3600"
+
+    last_err = None
+    for attempt in range(1, 4):
+        resp = requests.get(
+            "https://signin.aws.amazon.com/federation",
+            params=params,
+        )
+        body = resp.text[:500]
+        if resp.status_code != 200:
+            last_err = RuntimeError(
+                f"Federation getSigninToken HTTP {resp.status_code}: {body}"
+            )
+            print(f"Federation request failed (attempt {attempt}/3, "
+                  f"HTTP {resp.status_code}): {body}", file=sys.stderr)
+            time.sleep(5)
+            continue
+        try:
+            token = resp.json()["SigninToken"]
+            return (
+                f"https://signin.aws.amazon.com/federation"
+                f"?Action=login&Destination={urllib.parse.quote(destination)}&SigninToken={token}"
+            )
+        except (json.JSONDecodeError, KeyError) as exc:
+            last_err = RuntimeError(
+                f"Federation response not valid JSON or missing SigninToken "
+                f"(attempt {attempt}/3). Status={resp.status_code}, Body={body}"
+            )
+            print(f"{last_err}", file=sys.stderr)
+            time.sleep(5)
+
+    raise last_err
 
 
 async def wait_for_stable(page, timeout=10000):
@@ -332,6 +398,8 @@ async def configure_identity_center(
 
     sso_url = f"https://{region}.console.aws.amazon.com/singlesignon/home?region={region}"
     settings_url = f"{sso_url}#/instances/{instance_id}/settings"
+
+    _ensure_playwright_browsers()
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless)

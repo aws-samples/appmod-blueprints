@@ -192,8 +192,8 @@ main() {
                 # Run configure_identity_center.py with up to 3 retries, 5 min wait between
                 local idc_success=false
                 local idc_attempt=0
-                local idc_max_retries=3
-                local idc_retry_wait=300  # 5 minutes
+                local idc_max_retries=5
+                local idc_retry_wait=120  # 2 minutes
 
                 while [ $idc_attempt -lt $idc_max_retries ] && [ "$idc_success" = false ]; do
                     idc_attempt=$((idc_attempt + 1))
