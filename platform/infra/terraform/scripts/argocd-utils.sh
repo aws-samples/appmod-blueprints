@@ -159,7 +159,7 @@ generate_dependency_report() {
             wave: (.metadata.annotations."argocd.argoproj.io/sync-wave" // "0"),
             sync: (.status.sync.status // "Unknown"),
             health: (.status.health.status // "Unknown"),
-            message: (.status.operationState.message // .status.conditions[]?.message // "")
+            message: ((.status.operationState.message // .status.conditions[0]?.message // "") | gsub("\n"; " "))
         } | 
         "\(.wave)|\(.name)|\(.sync)|\(.health)|\(.message)"' 2>/dev/null)
     
