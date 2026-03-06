@@ -275,7 +275,7 @@ wait_for_argocd_apps_health() {
         [ -z "$argocd_server_ready" ] && argocd_server_ready="0"
         
         # Also check actual pod status
-        argocd_pods_running=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | grep -c "1/1.*Running" || echo "0")
+        argocd_pods_running=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | { grep -c "1/1.*Running" || true; })
         
         if [ "$argocd_server_ready" -eq 0 ] || [ "$argocd_pods_running" -eq 0 ]; then
             print_warning "ArgoCD server not ready (deployment: $argocd_server_ready, running pods: $argocd_pods_running), waiting..."
