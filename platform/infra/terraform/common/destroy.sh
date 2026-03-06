@@ -36,6 +36,9 @@ main() {
 
   # Delete backstage ecr repo
   delete_backstage_ecr_repo
+
+  # Force-delete ECR repos and empty S3 bucket that block terraform destroy
+  force_cleanup_ray_resources
   
   export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
   yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
@@ -80,7 +83,7 @@ main() {
     -var="git_username=${GIT_USERNAME}" \
     -var="git_password=${USER1_PASSWORD}" \
     -var="working_repo=${WORKING_REPO}" \
-    -auto-approve -refresh=false; then
+    -auto-approve; then
     log_warning "Bootstrap stack destroy failed, checking for lock issues"
     
     # Extract lock ID from error if present
@@ -101,7 +104,7 @@ main() {
       -var="git_username=${GIT_USERNAME}" \
       -var="git_password=${USER1_PASSWORD}" \
       -var="working_repo=${WORKING_REPO}" \
-      -auto-approve -refresh=false; then
+      -auto-approve; then
       log_error "Bootstrap stack destroy failed again, exiting"
       exit 1
     fi

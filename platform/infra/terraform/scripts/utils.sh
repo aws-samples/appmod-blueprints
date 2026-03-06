@@ -501,6 +501,49 @@ delete_backstage_ecr_repo() {
     fi
 }
 
+# Force-delete Ray ECR repos and empty the Ray models S3 bucket before terraform destroy
+force_cleanup_ray_resources() {
+    local account_id
+    account_id=$(aws sts get-caller-identity --query "Account" --output text)
+
+    # Force-delete ECR repositories
+    for repo in "${RESOURCE_PREFIX}-ray-vllm-custom" "${RESOURCE_PREFIX}-ray-neuron-custom"; do
+        if aws ecr describe-repositories --repository-names "$repo" --region "$AWS_REGION" > /dev/null 2>&1; then
+            log "Force-deleting ECR repository: $repo"
+            aws ecr delete-repository --repository-name "$repo" --region "$AWS_REGION" --force > /dev/null 2>&1 || true
+        fi
+    done
+
+    # Empty and delete versioned S3 bucket
+    local bucket="${RESOURCE_PREFIX}-ray-models-${account_id}"
+    if aws s3api head-bucket --bucket "$bucket" 2>/dev/null; then
+        log "Emptying S3 bucket: $bucket"
+        aws s3api list-object-versions --bucket "$bucket" --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null | \
+            python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+objects = data.get('Objects') or []
+if objects:
+    print(json.dumps({'Objects': objects, 'Quiet': True}))
+" | while read -r batch; do
+            [ -n "$batch" ] && aws s3api delete-objects --bucket "$bucket" --delete "$batch" > /dev/null 2>&1 || true
+        done
+        # Also delete any delete markers
+        aws s3api list-object-versions --bucket "$bucket" --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null | \
+            python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+objects = data.get('Objects') or []
+if objects:
+    print(json.dumps({'Objects': objects, 'Quiet': True}))
+" | while read -r batch; do
+            [ -n "$batch" ] && aws s3api delete-objects --bucket "$bucket" --delete "$batch" > /dev/null 2>&1 || true
+        done
+    fi
+
+    log "Ray resource pre-cleanup complete"
+}
+
 create_spoke_cluster_secret_values() {
 
   cd "$GIT_ROOT_PATH"
