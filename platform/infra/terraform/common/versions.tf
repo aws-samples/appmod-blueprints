@@ -19,14 +19,14 @@ terraform {
       version = ">= 2.1.3"
     }
     gitlab = {
-      source = "gitlabhq/gitlab"
+      source  = "gitlabhq/gitlab"
       version = "18.3.0"
     }
   }
   # Backend configuration provided via CLI parameters
   backend "s3" {
     # bucket provided via -backend-config
-    key = "common/terraform.tfstate"
+    key          = "common/terraform.tfstate"
     use_lockfile = true
   }
 }

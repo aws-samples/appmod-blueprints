@@ -132,6 +132,8 @@ locals {
         aws_vpc_id       = local.cluster_vpc_ids[v.name]
         aws_grafana_url  = module.managed_grafana.workspace_endpoint
         resource_prefix  = var.resource_prefix
+        # Extract EKS Auto Mode node role name from cluster compute config
+        eks_auto_mode_role_name = try(split("/", data.aws_eks_cluster.clusters[k].compute_config[0].node_role_arn)[1], "")
       },
       {
         argocd_namespace        = local.argocd_namespace,

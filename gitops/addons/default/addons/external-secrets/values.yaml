@@ -10,7 +10,7 @@ resources:
     memory: 128Mi
 
 nodeSelector:
-  karpenter.sh/nodepool: system
+  karpenter.sh/nodepool: system-peeks
 
 tolerations:
 - key: "CriticalAddonsOnly"
@@ -39,7 +39,7 @@ certController:
     limits:
       memory: 64Mi
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
   - key: "CriticalAddonsOnly"
     operator: "Exists"
@@ -65,7 +65,7 @@ webhook:
     limits:
       memory: 64Mi
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
   - key: "CriticalAddonsOnly"
     operator: "Exists"

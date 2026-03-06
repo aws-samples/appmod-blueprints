@@ -12,7 +12,7 @@ metrics-server:
 aws-efs-csi-driver:
   enabled: true
 aws-for-fluentbit:
-  enabled: false
+  enabled: true
 cert-manager:
   enabled: true
 external-dns:
@@ -26,11 +26,11 @@ kyverno-policy-reporter:
 kyverno-policies:
   enabled: true
 cni-metrics-helper:
-  enabled: false
+  enabled: true
 kube-state-metrics:
-  enabled: false
+  enabled: true
 prometheus-node-exporter:
-  enabled: false
+  enabled: true
 cw-prometheus:
   enabled: false
 
@@ -51,6 +51,8 @@ ack-dynamodb:
 kro:
   enabled: true
 kro-manifests:
+  enabled: true
+kro-manifests-hub:
   enabled: true
 kubevela:
   enabled: true
@@ -87,6 +89,9 @@ grafana-operator:
   enabled: true
 grafana-dashboards:
   enabled: true
+platform-manifests-bootstrap:
+  enabled: true
+
 platform-manifests:
   enabled: true
 

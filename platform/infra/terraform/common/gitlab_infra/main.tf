@@ -114,10 +114,16 @@ resource "aws_cloudfront_vpc_origin" "gitlab" {
       quantity = 1
     }
   }
+
+  lifecycle {
+    replace_triggered_by = [
+      kubernetes_service.gitlab_nlb.id
+    ]
+  }
 }
 
 resource "aws_cloudfront_distribution" "gitlab" {
-  depends_on = [data.aws_lb.gitlab_nlb]
+  # Remove depends_on to allow VPC Origin to be replaced independently
   enabled             = true
   is_ipv6_enabled     = true
   comment             = "CloudFront distribution for GitLab"

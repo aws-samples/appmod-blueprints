@@ -11,7 +11,7 @@ spec:
   project: default
   source:
     repoURL: 'registry-1.docker.io/bitnamicharts'
-    targetRevision: 19.6.4
+    targetRevision: 25.3.2
     helm:
       values: |
         architecture: standalone

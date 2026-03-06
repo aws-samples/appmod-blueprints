@@ -429,6 +429,31 @@ spec:
             type: Ready
           type: MatchCondition
     - base:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: SecurityGroupIngressRule
+        metadata:
+          name: rds-from-eks-cluster-sg
+        spec:
+          forProvider:
+            fromPort: 3306
+            toPort: 3306
+            ipProtocol: "tcp"
+            securityGroupIdSelector:
+              matchControllerRef: true
+          providerConfigRef:
+            name: provider-aws-config
+      patches:
+        - type: PatchSet
+          patchSetName: common-fields
+        - type: FromEnvironmentFieldPath
+          fromFieldPath: clusterSecurityGroupId
+          toFieldPath: spec.forProvider.referencedSecurityGroupId
+      readinessChecks:
+        - matchCondition:
+            status: 'True'
+            type: Ready
+          type: MatchCondition
+    - base:
         apiVersion: rds.aws.upbound.io/v1beta2
         kind: Cluster
         spec:

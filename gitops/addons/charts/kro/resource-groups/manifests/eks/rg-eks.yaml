@@ -116,6 +116,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ingress-http"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of EC2 security groups that may be protecting production workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -157,6 +161,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ingress-https"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of EC2 security groups that may be protecting production workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -201,6 +209,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cluster-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -242,6 +254,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cluster-node-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -369,6 +385,10 @@ spec:
         kind: Role
         metadata:
           name: "${schema.spec.name}-argocd-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -382,7 +402,7 @@ spec:
             #force dependency on ekscluster
             eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
             #force dependency on podIdentityAddon so that we create argo cluster secret after podIdentity correctly configured
-            podIdentityAddonArn: "${ackEksPodIdentity.status.ackResourceMetadata.arn}"
+            # Pod Identity enabled by default in EKS Auto Mode
         spec:
           name: "${schema.spec.name}-argocd-role"
           assumeRolePolicyDocument: |
@@ -532,6 +552,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-access-entry"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of EKS access entries that control cluster access
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -558,6 +582,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-access-entry-admin"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of EKS access entries that control cluster access
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -588,6 +616,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-external-secrets-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -657,6 +689,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-iam"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM policies that may be referenced by other resources
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -702,6 +738,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-external-dns-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -744,6 +784,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-external-dns"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of Pod Identity associations that may be in use
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -771,6 +815,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-adot-collector-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -842,6 +890,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-kyverno-policy-reporter-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -912,6 +964,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cni-metrics-helper-policy"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM policies that may be referenced by other resources
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -946,6 +1002,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cni-metrics-helper-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -1016,6 +1076,10 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cloudwatch-observability-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -1079,148 +1143,23 @@ spec:
     ###########################################################
     # ACK IAM Pod Identity
     ###########################################################
-    - id: ackIamPolicy
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Policy
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-iam-policy"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-ack-iam-policy"
-          policyDocument: |
-            {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Action": [
-                            "iam:GetGroup",
-                            "iam:CreateGroup",
-                            "iam:DeleteGroup",
-                            "iam:UpdateGroup",
-                            "iam:GetRole",
-                            "iam:CreateRole",
-                            "iam:DeleteRole",
-                            "iam:UpdateRole",
-                            "iam:PutRolePermissionsBoundary",
-                            "iam:PutUserPermissionsBoundary",
-                            "iam:GetUser",
-                            "iam:CreateUser",
-                            "iam:DeleteUser",
-                            "iam:UpdateUser",
-                            "iam:GetPolicy",
-                            "iam:CreatePolicy",
-                            "iam:DeletePolicy",
-                            "iam:GetPolicyVersion",
-                            "iam:CreatePolicyVersion",
-                            "iam:DeletePolicyVersion",
-                            "iam:ListPolicyVersions",
-                            "iam:ListPolicyTags",
-                            "iam:ListAttachedGroupPolicies",
-                            "iam:GetGroupPolicy",
-                            "iam:PutGroupPolicy",
-                            "iam:AttachGroupPolicy",
-                            "iam:DetachGroupPolicy",
-                            "iam:DeleteGroupPolicy",
-                            "iam:ListAttachedRolePolicies",
-                            "iam:ListRolePolicies",
-                            "iam:GetRolePolicy",
-                            "iam:PutRolePolicy",
-                            "iam:AttachRolePolicy",
-                            "iam:DetachRolePolicy",
-                            "iam:DeleteRolePolicy",
-                            "iam:ListAttachedUserPolicies",
-                            "iam:ListUserPolicies",
-                            "iam:GetUserPolicy",
-                            "iam:PutUserPolicy",
-                            "iam:AttachUserPolicy",
-                            "iam:DetachUserPolicy",
-                            "iam:DeleteUserPolicy",
-                            "iam:ListRoleTags",
-                            "iam:ListUserTags",
-                            "iam:TagPolicy",
-                            "iam:UntagPolicy",
-                            "iam:TagRole",
-                            "iam:UntagRole",
-                            "iam:TagUser",
-                            "iam:UntagUser",
-                            "iam:RemoveClientIDFromOpenIDConnectProvider",
-                            "iam:ListOpenIDConnectProviderTags",
-                            "iam:UpdateOpenIDConnectProviderThumbprint",
-                            "iam:UntagOpenIDConnectProvider",
-                            "iam:AddClientIDToOpenIDConnectProvider",
-                            "iam:DeleteOpenIDConnectProvider",
-                            "iam:GetOpenIDConnectProvider",
-                            "iam:TagOpenIDConnectProvider",
-                            "iam:CreateOpenIDConnectProvider",
-                            "iam:UpdateAssumeRolePolicy"
-                        ],
-                        "Effect": "Allow",
-                        "Resource": "*",
-                        "Sid": "VisualEditor0"
-                    }
-                ]
-            }
-
-    - id: ackIAMRole
+    ###########################################################
+    # ACK Capability Role
+    # Uses direct permissions approach (AWS recommended for getting started)
+    # For production, consider IAM Role Selectors pattern:
+    # https://docs.aws.amazon.com/eks/latest/userguide/ack-permissions.html
+    ###########################################################
+    - id: ackCapabilityRole
       template:
         apiVersion: iam.services.k8s.aws/v1alpha1
         kind: Role
         metadata:
           namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-iam-role"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            policy: "${ackIamPolicy.status.ackResourceMetadata.arn}"
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-ack-iam-role"
-          policyRefs:
-            - from:
-                name: "${schema.spec.name}-ack-iam-policy"
-          assumeRolePolicyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {
-                    "Service": "pods.eks.amazonaws.com"
-                  },
-                  "Action": [
-                    "sts:AssumeRole",
-                    "sts:TagSession"
-                  ]
-                }
-              ]
-            }
-
-    - id: ackIAMPodIdentity
-      readyWhen:
-      - ${ackIAMPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")} #check on ACK condition
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-iam"
+          name: "${schema.spec.name}-ack-capability-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -1232,337 +1171,14 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          clusterName: "${schema.spec.name}"
-          namespace: ack-system
-          roleARN: "${ackIAMRole.status.ackResourceMetadata.arn}"
-          serviceAccount: ack-iam-controller
-
-    ###########################################################
-    # ACK eks Pod Identity
-    ###########################################################
-    - id: ackEksPolicy
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Policy
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-eks-policy"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-ack-eks-policy"
-          policyDocument: |
-            {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Action": [
-                            "eks:*",
-                            "iam:GetRole",
-                            "iam:PassRole",
-                            "iam:ListAttachedRolePolicies",
-                            "ec2:DescribeSubnets"
-                        ],
-                        "Effect": "Allow",
-                        "Resource": "*"
-                    }
-                ]
-            }
-
-    - id: ackEksRole
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Role
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-eks-role"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            policy: "${ackEksPolicy.status.ackResourceMetadata.arn}"
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-ack-eks-role"
-          policyRefs:
-            - from:
-                name: "${schema.spec.name}-ack-eks-policy"
-          assumeRolePolicyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {
-                    "Service": "pods.eks.amazonaws.com"
-                  },
-                  "Action": [
-                    "sts:AssumeRole",
-                    "sts:TagSession"
-                  ]
-                }
-              ]
-            }
-
-    - id: ackEksPodIdentity
-      readyWhen:
-      - ${ackEksPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")} #check on ACK condition
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-eks"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          clusterName: "${schema.spec.name}"
-          namespace: ack-system
-          roleARN: "${ackEksRole.status.ackResourceMetadata.arn}"
-          serviceAccount: ack-eks-controller
-
-    ###########################################################
-    # Crossplane Provider AWS Pod Identity
-    ###########################################################
-    - id: crossplaneProviderAwsRole
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Role
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-crossplane-provider-aws-role"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-crossplane-provider-aws-role"
+          name: "${schema.spec.resourcePrefix}-${schema.spec.name}-ack-capability-role"
           policies:
-            - arn:aws:iam::aws:policy/AdministratorAccess
-          assumeRolePolicyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {
-                    "Service": "pods.eks.amazonaws.com"
-                  },
-                  "Action": [
-                    "sts:AssumeRole",
-                    "sts:TagSession"
-                  ]
-                }
-              ]
-            }
-
-    - id: crossplaneProviderAwsPodIdentity
-      readyWhen:
-      - ${crossplaneProviderAwsPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-crossplane-provider-aws"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          clusterName: "${schema.spec.name}"
-          namespace: crossplane-system
-          roleARN: "${crossplaneProviderAwsRole.status.ackResourceMetadata.arn}"
-          serviceAccount: provider-aws
-
-    ###########################################################
-    # AWS Load Balancer Controller Pod Identity
-    ###########################################################
-    - id: awsLoadBalancerControllerRole
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Role
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-aws-load-balancer-controller-role"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-aws-load-balancer-controller-role"
-          policies:
-            - arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess
-          assumeRolePolicyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {
-                    "Service": "pods.eks.amazonaws.com"
-                  },
-                  "Action": [
-                    "sts:AssumeRole",
-                    "sts:TagSession"
-                  ]
-                }
-              ]
-            }
-
-    - id: awsLoadBalancerControllerPodIdentity
-      readyWhen:
-      - ${awsLoadBalancerControllerPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-aws-load-balancer-controller"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          clusterName: "${schema.spec.name}"
-          namespace: kube-system
-          roleARN: "${awsLoadBalancerControllerRole.status.ackResourceMetadata.arn}"
-          serviceAccount: aws-load-balancer-controller-sa
-
-    ###########################################################
-    # ACK S3 Pod Identity
-    ###########################################################
-    - id: ackS3Role
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Role
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-s3-role"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-ack-s3-role"
-          policies:
+            - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+            - arn:aws:iam::aws:policy/AmazonVPCFullAccess
+            - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+            - arn:aws:iam::aws:policy/IAMFullAccess
+            - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
             - arn:aws:iam::aws:policy/AmazonS3FullAccess
-          assumeRolePolicyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {
-                    "Service": "pods.eks.amazonaws.com"
-                  },
-                  "Action": [
-                    "sts:AssumeRole",
-                    "sts:TagSession"
-                  ]
-                }
-              ]
-            }
-
-    - id: ackS3PodIdentity
-      readyWhen:
-      - ${ackS3PodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-s3"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          clusterName: "${schema.spec.name}"
-          namespace: ack-system
-          roleARN: "${ackS3Role.status.ackResourceMetadata.arn}"
-          serviceAccount: ack-s3-controller
-
-    ###########################################################
-    # ACK DynamoDB Pod Identity
-    ###########################################################
-    - id: ackDynamodbRole
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Role
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-dynamodb-role"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-ack-dynamodb-role"
-          policies:
             - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
           assumeRolePolicyDocument: |
             {
@@ -1571,7 +1187,7 @@ spec:
                 {
                   "Effect": "Allow",
                   "Principal": {
-                    "Service": "pods.eks.amazonaws.com"
+                    "Service": "capabilities.eks.amazonaws.com"
                   },
                   "Action": [
                     "sts:AssumeRole",
@@ -1580,75 +1196,17 @@ spec:
                 }
               ]
             }
-
-    - id: ackDynamodbPodIdentity
-      readyWhen:
-      - ${ackDynamodbPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-dynamodb"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          clusterName: "${schema.spec.name}"
-          namespace: ack-system
-          roleARN: "${ackDynamodbRole.status.ackResourceMetadata.arn}"
-          serviceAccount: ack-dynamodb-controller
-
-    ###########################################################
-    # ACK ECR Pod Identity
-    ###########################################################
-    - id: ackEcrPolicy
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Policy
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-ecr-policy"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-ack-ecr-policy"
-          policyDocument: |
-            {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Action": [
-                            "ecr:*"
-                        ],
-                        "Effect": "Allow",
-                        "Resource": "*"
-                    }
-                ]
-            }
-
-    - id: ackEcrRole
+    - id: kroCapabilityRole
       template:
         apiVersion: iam.services.k8s.aws/v1alpha1
         kind: Role
         metadata:
           namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-ecr-role"
+          name: "${schema.spec.name}-kro-capability-role"
+          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+          # annotations:
+          #   services.k8s.aws/deletion-policy: retain
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -1658,13 +1216,11 @@ spec:
               controller: false
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            policy: "${ackEcrPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          name: "${schema.spec.name}-ack-ecr-role"
-          policyRefs:
-            - from:
-                name: "${schema.spec.name}-ack-ecr-policy"
+          name: "${schema.spec.resourcePrefix}-${schema.spec.name}-kro-capability-role"
+          policies:
+            - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",
@@ -1672,7 +1228,7 @@ spec:
                 {
                   "Effect": "Allow",
                   "Principal": {
-                    "Service": "pods.eks.amazonaws.com"
+                    "Service": "capabilities.eks.amazonaws.com"
                   },
                   "Action": [
                     "sts:AssumeRole",
@@ -1682,131 +1238,62 @@ spec:
               ]
             }
 
-    - id: ackEcrPodIdentity
+    # XXX Pod Identity
+    ###########################################################
+    - id: ackCapability
       readyWhen:
-      - ${ackEcrPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      - ${ackCapability.metadata.name != ""}
       template:
         apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
+        kind: Capability
         metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-ecr"
+          name: ${schema.spec.name}-ack
+          namespace: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/instance: ${schema.spec.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
+              kind: EksCluster
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
+              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+              argocd.argoproj.io/sync-options: Prune=false
         spec:
-          clusterName: "${schema.spec.name}"
-          namespace: ack-system
-          roleARN: "${ackEcrRole.status.ackResourceMetadata.arn}"
-          serviceAccount: ack-ecr-controller
-
-    ###########################################################
-    # ACK EC2 Pod Identity
-    ###########################################################
-    - id: ackEc2Policy
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Policy
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-ec2-policy"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-ack-ec2-policy"
-          policyDocument: |
-            {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Action": [
-                            "ec2:*"
-                        ],
-                        "Effect": "Allow",
-                        "Resource": "*"
-                    }
-                ]
-            }
-
-    - id: ackEc2Role
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Role
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-ec2-role"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            policy: "${ackEc2Policy.status.ackResourceMetadata.arn}"
-            services.k8s.aws/region: ${schema.spec.region}
-        spec:
-          name: "${schema.spec.name}-ack-ec2-role"
-          policyRefs:
-            - from:
-                name: "${schema.spec.name}-ack-ec2-policy"
-          assumeRolePolicyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {
-                    "Service": "pods.eks.amazonaws.com"
-                  },
-                  "Action": [
-                    "sts:AssumeRole",
-                    "sts:TagSession"
-                  ]
-                }
-              ]
-            }
-
-    - id: ackEc2PodIdentity
+          clusterName: ${schema.spec.name}
+          name: ack
+          type: ACK
+          roleARN: ${ackCapabilityRole.status.ackResourceMetadata.arn}
+          deletePropagationPolicy: RETAIN
+    - id: kroCapability
       readyWhen:
-      - ${ackEc2PodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      - ${kroCapability.metadata.name != ""}
       template:
         apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
+        kind: Capability
         metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-ec2"
+          name: ${schema.spec.name}-kro
+          namespace: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/instance: ${schema.spec.name}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
+              kind: EksCluster
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
+              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+              argocd.argoproj.io/sync-options: Prune=false
         spec:
-          clusterName: "${schema.spec.name}"
-          namespace: ack-system
-          roleARN: "${ackEc2Role.status.ackResourceMetadata.arn}"
-          serviceAccount: ack-ec2-controller
+          clusterName: ${schema.spec.name}
+          name: kro
+          type: KRO
+          roleARN: ${kroCapabilityRole.status.ackResourceMetadata.arn}
+          deletePropagationPolicy: RETAIN
 
     ###########################################################
     # XXX Pod Identity

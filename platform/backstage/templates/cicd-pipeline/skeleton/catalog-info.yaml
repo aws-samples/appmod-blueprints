@@ -51,7 +51,7 @@ metadata:
     - url: https://${{values.argocd_hostname}}/argo-workflows/workflow-templates/${{values.namespace}}/${{values.appname}}-cicd-cicd-workflow
       title: CI/CD Workflow Template
       icon: workflow
-    - url: https://${{values.argocd_hostname}}/argocd/applications/argocd/${{values.appname}}-cicd
+    - url: https://${{values.argocd_hostname}}/applications/argocd/${{values.appname}}-cicd
       title: ArgoCD Application
       icon: argocd
     - url: https://${{values.aws_region}}.console.aws.amazon.com/ecr/repositories/private/${{values.aws_account_id}}/peeks/${{values.appname}}?region=${{values.aws_region}}

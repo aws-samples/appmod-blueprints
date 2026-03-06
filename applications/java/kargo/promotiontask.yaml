@@ -20,7 +20,7 @@ spec:
     config:
       path: ./src/deployment/${{ ctx.stage }}/application.yaml
       updates:
-      - key: spec.components.0.properties.image
+      - key: spec.image
         value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
   - uses: git-commit
     config:

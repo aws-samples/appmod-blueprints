@@ -29,7 +29,7 @@ resource "aws_eks_pod_identity_association" "argocd_repo_server" {
 module "external_secrets_pod_identity" {
   for_each = { for k, v in var.clusters : k => v if try(v.addons.enable_external_secrets, false) }
   source   = "terraform-aws-modules/eks-pod-identity/aws"
-  version  = "~> 1.4.0"
+  version  = "~> 2.7"
 
   name = "external-secrets"
 
@@ -79,7 +79,7 @@ module "external_secrets_pod_identity" {
 module "aws_cloudwatch_observability_pod_identity" {
   for_each = local.spoke_clusters
   source   = "terraform-aws-modules/eks-pod-identity/aws"
-  version  = "~> 1.11.0"
+  version  = "~> 2.7"
 
   name = "aws-cloudwatch-observability"
 
@@ -103,7 +103,7 @@ module "aws_cloudwatch_observability_pod_identity" {
 module "kyverno_policy_reporter_pod_identity" {
   for_each = local.spoke_clusters
   source   = "terraform-aws-modules/eks-pod-identity/aws"
-  version  = "~> 1.11.0"
+  version  = "~> 2.7"
 
   name = "kyverno-policy-reporter"
 
@@ -129,7 +129,7 @@ module "kyverno_policy_reporter_pod_identity" {
 module "aws_ebs_csi_pod_identity" {
   for_each = local.spoke_clusters
   source   = "terraform-aws-modules/eks-pod-identity/aws"
-  version  = "~> 1.11.0"
+  version  = "~> 2.7"
 
   name = "aws-ebs-csi"
 
@@ -154,7 +154,7 @@ module "aws_ebs_csi_pod_identity" {
 module "aws_lb_controller_pod_identity" {
   for_each = local.spoke_clusters
   source   = "terraform-aws-modules/eks-pod-identity/aws"
-  version  = "~> 1.11.0"
+  version  = "~> 2.7"
 
   name = "aws-lbc"
 
@@ -200,7 +200,7 @@ resource "aws_iam_policy" "cni_metrics_helper_pod_identity_policy" {
 module "cni_metrics_helper_pod_identity" {
   for_each = local.spoke_clusters
   source   = "terraform-aws-modules/eks-pod-identity/aws"
-  version  = "~> 1.11.0"
+  version  = "~> 2.7"
   name     = "cni-metrics-helper-${each.value.name}"
 
   additional_policy_arns = {
@@ -225,7 +225,7 @@ module "cni_metrics_helper_pod_identity" {
 module "adot_collector_pod_identity" {
   for_each = local.spoke_clusters # only for spoke clusters
   source   = "terraform-aws-modules/eks-pod-identity/aws"
-  version  = "~> 1.11.0"
+  version  = "~> 2.7"
 
   name = "adot-collector"
 
@@ -438,10 +438,16 @@ resource "aws_iam_role" "ack_workload_role" {
       {
         Effect = "Allow"
         Principal = {
-          AWS = [
-            for cluster_key, cluster_value in var.clusters :
-            aws_iam_role.ack_controller["${cluster_key}-${each.key}"].arn
-          ]
+          AWS = concat(
+            [
+              for cluster_key, cluster_value in var.clusters :
+              aws_iam_role.ack_controller["${cluster_key}-${each.key}"].arn
+            ],
+            [
+              for cluster_key, cluster_value in var.clusters :
+              "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-${cluster_value.name}-ack-capability-role"
+            ]
+          )
         }
         Action = ["sts:AssumeRole", "sts:TagSession"]
       }
@@ -581,6 +587,11 @@ locals {
             "eks:DescribePodIdentityAssociation",
             "eks:ListPodIdentityAssociations",
             "eks:UpdatePodIdentityAssociation",
+            "eks:CreateCapability",
+            "eks:DeleteCapability",
+            "eks:DescribeCapability",
+            "eks:ListCapabilities",
+            "eks:UpdateCapability",
             "iam:PassRole",
             "iam:GetRole"
           ]
@@ -727,7 +738,7 @@ resource "aws_eks_pod_identity_association" "kargo_controller" {
 module "crossplane_provider_aws_pod_identity" {
   for_each = { for k, v in var.clusters : k => v if try(v.addons.enable_crossplane, false) }
   source   = "terraform-aws-modules/eks-pod-identity/aws"
-  version  = "~> 1.11.0"
+  version  = "~> 2.7"
 
   name = "crossplane-provider-aws-${each.key}"
 

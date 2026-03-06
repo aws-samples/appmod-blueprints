@@ -2,37 +2,28 @@
 # GitOps Bridge: Bootstrap
 ################################################################################
 # Creating Namespace for better cleanup of ArgoCD helm release
-resource "kubernetes_namespace" "argocd" {
-  metadata {
-    name = local.argocd_namespace
-  }
-}
+# resource "kubernetes_namespace" "argocd" {
+#   metadata {
+#     name = local.argocd_namespace
+#   }
+# }
 
 module "gitops_bridge_bootstrap" {
   source  = "gitops-bridge-dev/gitops-bridge/helm"
   version = "0.1.0"
+  
+  create  = true
+  install = false  # Skip ArgoCD installation, only create cluster secret
+  
   cluster = {
-    cluster_name = local.hub_cluster.name
+    cluster_name = local.hub_cluster.name  # Use actual cluster name like working account
     environment  = local.hub_cluster.environment
     metadata     = local.addons_metadata[local.hub_cluster_key]
     addons       = local.addons[local.hub_cluster_key]
+    server       = data.aws_eks_cluster.clusters[local.hub_cluster_key].arn
   }
 
   apps = local.argocd_apps
-  argocd = {
-    name          = "argocd"
-    namespace     = kubernetes_namespace.argocd.metadata[0].name
-    chart_version = "7.9.1"
-    values = [
-      templatefile("${path.module}/manifests/argocd-initial-values.yaml", {
-        DOMAIN_NAME     = local.ingress_domain_name
-        ADMIN_PASSWORD  = local.user_password_hash
-        RESOURCE_PREFIX = var.resource_prefix
-      })
-    ]
-    timeout          = 600
-    create_namespace = false
-  }
 }
 
 # ArgoCD Git Secret

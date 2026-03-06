@@ -1462,7 +1462,7 @@ This platform assumes the following infrastructure has been created by the Cloud
 - **CodeBuild Projects**: Automated deployment pipelines for Terraform modules
 - **S3 Terraform State Bucket**: Backend storage for Terraform state
 - **IAM Roles**: Cross-account access and service permissions
-- **VSCode IDE Environment**: Browser-based development environment with Gitea
+- **VSCode IDE Environment**: Browser-based development environment
 - **Environment Variables**: `GIT_PASSWORD`, cluster configurations, domain settings
 
 ### AWS Service Limits
@@ -1476,7 +1476,6 @@ This platform assumes the following infrastructure has been created by the Cloud
   ```
 
 ### Development Environment
-- **Gitea Service**: Local Git repository hosting with SSH access
 - **Docker Support**: Container development capabilities
 - **Git Configuration**: Automated SSH key management and repository access
 
@@ -1634,14 +1633,11 @@ platform/backstage/
 
 ### Git Repository Management
 
-#### Gitea Service (from Bootstrap)
-- **Local Git Hosting**: Repository management within the platform
-- **SSH Access**: Automated key management for Git operations
-- **API Integration**: RESTful API for repository automation
-- **User Management**: Workshop user with platform access
+#### Gitlab deployed in peeks-hub EKS cluster
+- exposed on cloudfront 
 
 #### GitHub Integration (Optional)
-- **External Repositories**: GitHub as alternative to local Gitea
+- **External Repositories**: GitHub as alternative to local Gitlab
 - **Terraform Provider**: Automated repository creation
 - **Authentication**: Personal access tokens via `git_password`
 
@@ -1658,7 +1654,7 @@ variable "git_password" {
   type        = string
 }
 
-variable "gitea_user" {
+variable "git_user" {
   description = "Git service username"
   type        = string
   default     = "user1"
@@ -1781,10 +1777,6 @@ Git Commit → ArgoCD Sync → Kubernetes Apply → Application Running
 
 ### Environment Variables (from Bootstrap)
 ```bash
-# Git service configuration
-GIT_PASSWORD=${GIT_PASSWORD}           # From IDE_PASSWORD
-GITEA_USERNAME=workshop-user           # Git service user
-GITEA_EXTERNAL_URL=https://domain/gitea # Git service URL
 
 # Deployment configuration
 WORKSHOP_GIT_URL=https://github.com/aws-samples/appmod-blueprints
@@ -1916,7 +1908,7 @@ variable "create_github_repos" {
 ### Cross-Service Dependencies
 1. **Identity Federation**: Keycloak provides SSO for all services
 2. **Secret Management**: External Secrets Operator for credential sharing
-3. **Git Integration**: Gitea/GitHub for source control
+3. **Git Integration**: Gitlab/GitHub for source control
 4. **Monitoring Integration**: Unified observability across services
 
 ### External Integrations

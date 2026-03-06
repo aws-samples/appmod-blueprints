@@ -2,6 +2,40 @@
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDatasource
 metadata:
+  name: prometheus-datasource
+  namespace: grafana-operator
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  datasource:
+    name: Prometheus
+    type: prometheus
+    access: proxy
+    url: ${AMP_ENDPOINT_URL}
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      manageAlerts: false
+      sigV4Auth: true
+      sigV4AuthType: default
+      sigV4Region: ${AWS_REGION}
+      timeInterval: "30s"
+  valuesFrom:
+    - targetPath: "url"
+      valueFrom:
+        secretKeyRef:
+          name: "grafana-amp-creds"
+          key: AMP_ENDPOINT_URL
+    - targetPath: "jsonData.sigV4Region"
+      valueFrom:
+        secretKeyRef:
+          name: "grafana-amp-creds"
+          key: AWS_REGION
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
   name: mysql-datasource
   namespace: grafana-operator
 spec:
