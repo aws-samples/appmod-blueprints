@@ -25,7 +25,7 @@ verify_cluster_infrastructure() {
     
     # Check nodes
     local node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
-    local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo "0")
+    local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | { grep -c " Ready " || true; })
     
     if [ "$node_count" -eq 0 ]; then
         print_error "No nodes found in cluster"
@@ -94,8 +94,8 @@ verify_operator_health() {
     fi
     
     local total=$(echo "$pods" | wc -l)
-    local running=$(echo "$pods" | grep -c "Running" 2>/dev/null || echo "0")
-    local completed=$(echo "$pods" | grep -c "Completed" 2>/dev/null || echo "0")
+    local running=$(echo "$pods" | { grep -c "Running" 2>/dev/null || true; })
+    local completed=$(echo "$pods" | { grep -c "Completed" 2>/dev/null || true; })
     
     # Ensure numeric values
     running=$(echo "$running" | tr -d '[:space:]')
@@ -159,7 +159,7 @@ generate_dependency_report() {
             wave: (.metadata.annotations."argocd.argoproj.io/sync-wave" // "0"),
             sync: (.status.sync.status // "Unknown"),
             health: (.status.health.status // "Unknown"),
-            message: (.status.operationState.message // .status.conditions[]?.message // "")
+            message: ((.status.operationState.message // .status.conditions[0]?.message // "") | gsub("\n"; " "))
         } | 
         "\(.wave)|\(.name)|\(.sync)|\(.health)|\(.message)"' 2>/dev/null)
     
@@ -169,7 +169,7 @@ generate_dependency_report() {
     for wave in $waves; do
         local wave_apps=$(echo "$apps_data" | grep "^${wave}|")
         local total=$(echo "$wave_apps" | wc -l)
-        local healthy=$(echo "$wave_apps" | grep -c "|Synced|Healthy|" || echo "0")
+        local healthy=$(echo "$wave_apps" | { grep -c "|Synced|Healthy|" || true; })
         
         if [ "$healthy" -eq "$total" ]; then
             print_success "Sync Wave $wave: $healthy/$total healthy"
@@ -979,7 +979,7 @@ wait_for_argocd_apps_health() {
         [ -z "$argocd_server_ready" ] && argocd_server_ready="0"
         
         # Also check actual pod status
-        argocd_pods_running=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | grep -c "1/1.*Running" || echo "0")
+        argocd_pods_running=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | { grep -c "1/1.*Running" || true; })
         
         if [ "$argocd_server_ready" -eq 0 ] || [ "$argocd_pods_running" -eq 0 ]; then
             print_warning "ArgoCD server not ready (deployment: $argocd_server_ready, running pods: $argocd_pods_running), waiting..."
