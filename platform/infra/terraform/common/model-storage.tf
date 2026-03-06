@@ -1,6 +1,7 @@
 # S3 bucket for Ray model storage
 resource "aws_s3_bucket" "ray_models" {
-  bucket = "${var.resource_prefix}-ray-models-${data.aws_caller_identity.current.account_id}"
+  bucket        = "${var.resource_prefix}-ray-models-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
 
   tags = {
     Name        = "${var.resource_prefix}-ray-models"
