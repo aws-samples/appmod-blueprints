@@ -421,11 +421,15 @@ agentGateway:
     litellmEndpoint: "http://litellm:4000"
     timeout: 30s
   
-  # Authentication
+  # Authentication — provider-agnostic, configured via hub-config identity.provider
   auth:
     enabled: true
     type: jwt
-    jwksUrl: "https://keycloak/realms/platform/protocol/openid-connect/certs"
+    # JWKS URL is templated based on identity provider from hub-config.yaml:
+    # - Keycloak: https://<keycloak-host>/realms/platform/protocol/openid-connect/certs
+    # - Cognito: https://cognito-idp.<region>.amazonaws.com/<user-pool-id>/.well-known/jwks.json
+    # - External: customer-provided JWKS URL
+    jwksUrl: ""  # Set via environment override or hub-config identity.config
   
   # Rate limiting
   rateLimit:

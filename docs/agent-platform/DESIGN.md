@@ -6,11 +6,14 @@ This document describes the design for integrating agent platform components (Ka
 
 ### Key Principles
 
-1. **Separation of Concerns**: Platform infrastructure in `appmod-blueprints`, agent components in `sample-agent-platform-on-eks`
-2. **Opt-In Model**: Agent platform is disabled by default, enabled via feature flag
-3. **GitOps Bridge**: Lightweight bridge chart references external repository
-4. **Backward Compatibility**: Platform Engineering workshop works unchanged
-5. **Single Source of Truth**: All agent component charts live in dedicated repository
+1. **Separation of Concerns**: Platform infrastructure in `appmod-blueprints`, agent components in `sample-agent-platform-on-eks` (`https://github.com/aws-samples/sample-agent-platform-on-eks`)
+2. **Opt-In Model**: Agent platform is disabled by default, enabled via feature flag (`enable_agent_platform`)
+3. **GitOps Bridge**: Lightweight bridge chart in `appmod-blueprints` references component charts in `sample-agent-platform-on-eks`
+4. **Backward Compatibility**: Core platform works unchanged when agent platform is disabled
+5. **Single Source of Truth**: All agent component charts live in the dedicated `sample-agent-platform-on-eks` repository
+6. **Modular Architecture Alignment**: This design builds on the modular, provider-agnostic architecture described in [`docs/UPGRADE-APPROACH.md`](../UPGRADE-APPROACH.md). The agent platform uses `hub-config.yaml` addons flags, works with any identity provider (Keycloak, Cognito, etc.), and does not assume workshop-specific infrastructure.
+
+> **Important**: Workshop-specific deployment orchestration (e.g., `workshop_type` variable, CloudFormation templates, GitLab initialization) lives in the internal `platform-engineering-on-eks` GitLab repo, not in `appmod-blueprints`. This document describes the solution-level agent platform integration only.
 
 ### Repository Roles
 
@@ -55,7 +58,7 @@ This document describes the design for integrating agent platform components (Ka
 │         │         ┌──────────────────────────────────────────┐          │
 │         │         │  Feature Flag: agent-platform            │          │
 │         │         │  - enabled: false (default)              │          │
-│         │         │  - enabled: true (agent workshop)        │          │
+│         │         │  - enabled: true (agent platform on)     │          │
 │         │         └──────────────────────────────────────────┘          │
 │         │                                │                              │
 │         │                                │ (if enabled)                 │
@@ -116,16 +119,16 @@ This document describes the design for integrating agent platform components (Ka
 ### Component Interaction Flow
 
 ```
-User Deploys Workshop
+User Enables Agent Platform
          │
          ▼
     Feature Flag Check
     (agent-platform: enabled?)
          │
-         ├─── NO ──▶ Platform Engineering Workshop
-         │           (Core platform only)
+         ├─── NO ──▶ Core Platform Only
+         │           (No agent components)
          │
-         └─── YES ──▶ Agent Platform Workshop
+         └─── YES ──▶ Agent Platform Enabled
                       │
                       ▼
               Bridge Chart Activated
@@ -198,7 +201,7 @@ appmod-blueprints/
 │   │       │       └── agent-platform/          # NEW
 │   │       │           └── values.yaml
 │   │       │
-│   │       └── agent-platform/                  # NEW: Agent workshop env
+│   │       └── agent-platform/                  # NEW: Agent platform env overrides
 │   │           └── addons/
 │   │               └── agent-platform/
 │   │                   └── values.yaml
@@ -213,7 +216,7 @@ appmod-blueprints/
 └── platform/
     └── infra/
         └── terraform/
-            ├── variables.tf                     # UPDATE: Add workshop_type
+            ├── variables.tf                     # UPDATE: Add enable_agent_platform
             ├── outputs.tf                       # UPDATE: Add agent platform outputs
             └── scripts/
                 └── bootstrap.sh                 # UPDATE: Add feature flag logic
@@ -231,16 +234,6 @@ agent-platform:
 **`platform/infra/terraform/variables.tf`**:
 ```hcl
 # ADD:
-variable "workshop_type" {
-  description = "Type of workshop to deploy"
-  type        = string
-  default     = "platform-engineering"
-  validation {
-    condition     = contains(["platform-engineering", "agent-platform"], var.workshop_type)
-    error_message = "workshop_type must be 'platform-engineering' or 'agent-platform'"
-  }
-}
-
 variable "enable_agent_platform" {
   description = "Enable agent platform components"
   type        = bool
@@ -251,11 +244,6 @@ variable "enable_agent_platform" {
 **`platform/infra/terraform/outputs.tf`**:
 ```hcl
 # ADD:
-output "workshop_type" {
-  description = "Workshop type deployed"
-  value       = var.workshop_type
-}
-
 output "agent_platform_enabled" {
   description = "Whether agent platform is enabled"
   value       = var.enable_agent_platform
@@ -265,15 +253,14 @@ output "agent_platform_enabled" {
 **`README.md`**:
 ```markdown
 # ADD section:
-## Workshop Types
+## Agent Platform on EKS (Extended)
 
-### Platform Engineering on EKS (Default)
-Standard workshop with core platform components.
+The platform can be extended with agent platform components (Kagent, LiteLLM, etc.).
 
-### Agent Platform on EKS (Extended)
-Includes agent platform components (Kagent, LiteLLM, etc.).
+Set `enable_agent_platform: true` in your `hub-config.yaml` addons section, or pass
+`-var="enable_agent_platform=true"` to Terraform.
 
-Set `ENABLE_AGENT_PLATFORM=true` to enable.
+See [docs/agent-platform/](docs/agent-platform/) for details.
 ```
 
 ### Changes in `sample-agent-platform-on-eks` Repository
@@ -624,32 +611,26 @@ keycloak:
 
 # Agent platform (disabled by default)
 agent-platform:
-  enabled: false  # ← Default: Platform Engineering workshop
+  enabled: false  # ← Default: agent platform disabled
 ```
 
 #### Level 2: Environment Override
 
-**Platform Engineering Workshop** (`gitops/addons/environments/control-plane/addons.yaml`):
+**Control Plane** (`gitops/addons/environments/control-plane/addons.yaml`):
 ```yaml
 # No override needed - inherits disabled state
 ```
 
-**Agent Platform Workshop** (`gitops/addons/environments/agent-platform/addons.yaml`):
+**Agent Platform Environment** (`gitops/addons/environments/agent-platform/addons.yaml`):
 ```yaml
 agent-platform:
-  enabled: true  # ← Enable for agent workshop
+  enabled: true  # ← Enable for environments that need agent platform
 ```
 
 #### Level 3: Infrastructure Parameter
 
-**Terraform** (`platform/infra/terraform/variables.tf`):
+**Terraform** (`platform/infra/terraform/common/variables.tf`):
 ```hcl
-variable "workshop_type" {
-  description = "Workshop type: platform-engineering or agent-platform"
-  type        = string
-  default     = "platform-engineering"
-}
-
 variable "enable_agent_platform" {
   description = "Enable agent platform components"
   type        = bool
@@ -657,51 +638,40 @@ variable "enable_agent_platform" {
 }
 ```
 
-**CloudFormation** (workshop template):
+> **Note**: The `workshop_type` variable (e.g., `platform-engineering` vs `agent-platform`) is a workshop concern and lives in the `platform-engineering-on-eks` internal GitLab repo, not in `appmod-blueprints`. The solution repo only knows about `enable_agent_platform`.
+
+**Hub Config** (`hub-config.yaml`):
 ```yaml
-Parameters:
-  WorkshopType:
-    Type: String
-    Default: platform-engineering
-    AllowedValues:
-      - platform-engineering
-      - agent-platform
-    
-  EnableAgentPlatform:
-    Type: String
-    Default: "false"
-    AllowedValues:
-      - "true"
-      - "false"
+clusters:
+  hub:
+    addons:
+      enable_agent_platform: true  # Enable agent platform components
 ```
 
 #### Level 4: Runtime Environment Variable
 
-**Bootstrap Script** (`platform/infra/terraform/scripts/bootstrap.sh`):
+**Deploy Script** (`platform/infra/terraform/scripts/deploy.sh` or equivalent):
 ```bash
 #!/bin/bash
 
 # Feature flag from environment
-WORKSHOP_TYPE=${WORKSHOP_TYPE:-"platform-engineering"}
 ENABLE_AGENT_PLATFORM=${ENABLE_AGENT_PLATFORM:-"false"}
 
-echo "Workshop Type: $WORKSHOP_TYPE"
 echo "Agent Platform: $ENABLE_AGENT_PLATFORM"
 
 # Deploy with appropriate configuration
 terraform apply \
-  -var="workshop_type=$WORKSHOP_TYPE" \
   -var="enable_agent_platform=$ENABLE_AGENT_PLATFORM"
 ```
 
+> **Note**: Workshop-specific orchestration (e.g., `WORKSHOP_TYPE` env var, CloudFormation parameters) lives in the `platform-engineering-on-eks` internal GitLab repo. That repo's `deploy.sh` sets `ENABLE_AGENT_PLATFORM=true` when deploying the agent platform workshop variant.
+
 ### Decision Matrix
 
-| Workshop Type | Feature Flag | Components Deployed |
-|---------------|--------------|---------------------|
-| platform-engineering | false | Core platform only |
-| platform-engineering | true | Core + Agent platform |
-| agent-platform | false | Core platform only (unusual) |
-| agent-platform | true | Core + Agent platform |
+| Feature Flag (`enable_agent_platform`) | Components Deployed |
+|----------------------------------------|---------------------|
+| false (default) | Core platform only |
+| true | Core + Agent platform (bridge chart activates, creates ArgoCD Applications pointing to `sample-agent-platform-on-eks`) |
 
 ### Conditional Logic in Bridge Chart
 
@@ -792,14 +762,13 @@ kubectl get applications -n argocd | grep agent-platform
 
 ## Deployment Flow
 
-### Scenario 1: Platform Engineering Workshop (Default)
+### Scenario 1: Core Platform Only (Default)
 
 ```
 User Deploys
      │
      ▼
-CloudFormation/Terraform
-(workshop_type=platform-engineering)
+Terraform (or modules sourced externally)
 (enable_agent_platform=false)
      │
      ▼
@@ -816,23 +785,22 @@ Bootstrap Configuration Applied
 Core Platform Addons Deployed
 - ArgoCD
 - Backstage
-- Keycloak
+- Keycloak (if identity.provider=keycloak)
 - Kro
 - etc.
      │
      ▼
-✅ Platform Engineering Workshop Ready
+✅ Core Platform Ready
 ❌ No Agent Platform Components
 ```
 
-### Scenario 2: Agent Platform Workshop
+### Scenario 2: Platform with Agent Platform
 
 ```
 User Deploys
      │
      ▼
-CloudFormation/Terraform
-(workshop_type=agent-platform)
+Terraform (or modules sourced externally)
 (enable_agent_platform=true)
      │
      ▼
@@ -850,9 +818,11 @@ Core Platform Addons Deployed
      │
      ▼
 Agent Platform Bridge Chart Activated
+(gitops/addons/charts/agent-platform/)
      │
      ▼
 Individual ArgoCD Applications Created
+(each pointing to sample-agent-platform-on-eks repo)
      │
      ├─▶ Tofu Controller Application (Wave -1)
      │   └─▶ Points to: sample-agent-platform-on-eks/gitops/tofu-controller
@@ -890,7 +860,7 @@ Individual ArgoCD Applications Created
                          └─▶ Deployed
      │
      ▼
-✅ Agent Platform Workshop Ready
+✅ Platform with Agent Platform Ready
 ✅ All Agent Components Deployed
 ```
 
@@ -907,12 +877,12 @@ Individual ArgoCD Applications Created
 
 ### Deployment Timeline
 
-**Platform Engineering Workshop**:
+**Core Platform Only**:
 - Total Time: ~15 minutes
 - EKS Cluster: 10 minutes
 - Core Addons: 5 minutes
 
-**Agent Platform Workshop**:
+**Platform with Agent Platform**:
 - Total Time: ~20 minutes
 - EKS Cluster: 10 minutes
 - Core Addons: 5 minutes
@@ -921,6 +891,8 @@ Individual ArgoCD Applications Created
   - Kagent: 1 minute
   - Other components: 2 minutes
   - Agent Core (Terraform): 3 minutes
+
+> **Note**: Spoke clusters are provisioned via CrossPlane/Kro from the hub cluster (not Terraform). Agent platform components deploy to spokes that are registered via Kro ResourceGroup instances.
 
 ---
 
@@ -964,9 +936,9 @@ externalRepo:
 
 global:
   namespace: "agent-platform"
-  resourcePrefix: "peeks"
+  resourcePrefix: ""  # Parameterized — set via hub-config.yaml resource_prefix
   awsRegion: "us-east-1"
-  eksClusterName: "dev"
+  eksClusterName: ""
 
 components:
   kagent:
@@ -1124,7 +1096,7 @@ components:
 **Day 5: Testing & Documentation**
 - [ ] Test bridge chart rendering with `helm template`
 - [ ] Validate ApplicationSet generation
-- [ ] Update main README.md with workshop types
+- [ ] Update main README.md with agent platform section
 - [ ] Create troubleshooting guide
 
 #### In `sample-agent-platform-on-eks` Repository
@@ -1281,17 +1253,15 @@ helm template kagent . | kubectl apply --dry-run=client -f -
 
 ### Integration Testing
 
-#### Test Scenario 1: Platform Engineering Workshop (Default)
+#### Test Scenario 1: Core Platform Only (Default)
 
 ```bash
 # Deploy with agent platform disabled
-export WORKSHOP_TYPE="platform-engineering"
 export ENABLE_AGENT_PLATFORM="false"
 
 # Deploy infrastructure
 cd appmod-blueprints/platform/infra/terraform
 terraform apply \
-  -var="workshop_type=$WORKSHOP_TYPE" \
   -var="enable_agent_platform=$ENABLE_AGENT_PLATFORM"
 
 # Verify no agent platform applications
@@ -1301,20 +1271,17 @@ kubectl get applications -n argocd | grep agent-platform
 # Verify core platform works
 kubectl get pods -n argocd
 kubectl get pods -n backstage
-kubectl get pods -n keycloak
 # Expected: All running
 ```
 
-#### Test Scenario 2: Agent Platform Workshop
+#### Test Scenario 2: Platform with Agent Platform
 
 ```bash
 # Deploy with agent platform enabled
-export WORKSHOP_TYPE="agent-platform"
 export ENABLE_AGENT_PLATFORM="true"
 
 # Deploy infrastructure
 terraform apply \
-  -var="workshop_type=$WORKSHOP_TYPE" \
   -var="enable_agent_platform=$ENABLE_AGENT_PLATFORM"
 
 # Verify individual applications created
@@ -1429,11 +1396,11 @@ kubectl get hpa -n agent-platform
 ### Regression Testing
 
 ```bash
-# Ensure Platform Engineering workshop still works
+# Ensure core platform still works without agent platform
 export ENABLE_AGENT_PLATFORM="false"
 terraform apply -var="enable_agent_platform=false"
 
-# Run existing workshop tests
+# Run existing platform tests
 cd appmod-blueprints
 task test-applicationsets
 task backstage-validate
@@ -1489,7 +1456,6 @@ cd platform/infra/terraform
 
 # Update terraform.tfvars
 cat >> terraform.tfvars <<EOF
-workshop_type = "agent-platform"
 enable_agent_platform = true
 EOF
 
@@ -1500,15 +1466,23 @@ terraform apply
 **Option B: Via Environment Variables**
 
 ```bash
-export WORKSHOP_TYPE="agent-platform"
 export ENABLE_AGENT_PLATFORM="true"
 
 terraform apply \
-  -var="workshop_type=$WORKSHOP_TYPE" \
   -var="enable_agent_platform=$ENABLE_AGENT_PLATFORM"
 ```
 
-**Option C: Via Bootstrap Configuration**
+**Option C: Via Hub Config**
+
+```yaml
+# Update hub-config.yaml
+clusters:
+  hub:
+    addons:
+      enable_agent_platform: true
+```
+
+**Option D: Via Bootstrap Configuration**
 
 ```bash
 # Edit bootstrap configuration
@@ -1630,7 +1604,7 @@ kubectl get pods -n agent-platform
 
 ### For New Deployments
 
-#### Quick Start: Platform Engineering Only
+#### Quick Start: Core Platform Only
 
 ```bash
 # Clone repository
@@ -1642,24 +1616,25 @@ cd platform/infra/terraform
 terraform init
 terraform apply
 
-# Workshop ready in ~15 minutes
+# Platform ready in ~15 minutes
 ```
 
-#### Quick Start: Agent Platform Enabled
+#### Quick Start: With Agent Platform
 
 ```bash
 # Clone repository
 git clone https://github.com/aws-samples/appmod-blueprints
 cd appmod-blueprints
 
-# Deploy with agent platform
+# Deploy with agent platform enabled
 cd platform/infra/terraform
 terraform init
 terraform apply \
-  -var="workshop_type=agent-platform" \
   -var="enable_agent_platform=true"
 
 # Full platform ready in ~20 minutes
+# Agent components deploy to spoke clusters via ArgoCD Applications
+# pointing to https://github.com/aws-samples/sample-agent-platform-on-eks
 ```
 
 ---
@@ -2242,9 +2217,9 @@ kubectl exec -it langfuse-postgres-0 -n agent-platform -- \
 
 ### General Questions
 
-**Q: Can I run Platform Engineering workshop without agent platform?**
+**Q: Can I run the core platform without agent platform?**
 
-A: Yes, agent platform is disabled by default. The Platform Engineering workshop works independently.
+A: Yes, agent platform is disabled by default. The core platform works independently.
 
 **Q: How do I enable agent platform for an existing deployment?**
 
@@ -2334,6 +2309,8 @@ A: The agent platform uses individual ArgoCD Applications created by the bridge 
 2. Bridge chart is deployed: `helm list -n argocd | grep agent-platform`
 3. Individual applications exist: `kubectl get applications -n argocd | grep agent-platform`
 4. Application controller logs: `kubectl logs -n argocd deployment/argocd-application-controller`
+
+> **Architecture note**: The bridge chart lives in `appmod-blueprints` at `gitops/addons/charts/agent-platform/`. Each component gets its own ArgoCD Application that points to a Helm chart in `https://github.com/aws-samples/sample-agent-platform-on-eks/gitops/<component>/`.
 
 **Q: Kagent pods are failing with "AccessDenied" errors**
 
@@ -2491,10 +2468,12 @@ A: Strategies:
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1.0 | 2024-02-18 | Initial design document |
+| 0.2.0 | 2026-03-05 | Aligned with modular architecture (UPGRADE-APPROACH.md): removed `workshop_type` variable, removed CloudFormation references, made auth provider-agnostic, parameterized resource prefix, added spoke cluster GitOps note, updated feature flag mechanism to use `hub-config.yaml` addons |
 
 ---
 
-**Document Status**: Draft  
-**Last Updated**: 2024-02-18  
+**Document Status**: Draft (updated for modular architecture alignment)  
+**Last Updated**: 2026-03-05  
 **Authors**: Platform Engineering Team  
-**Reviewers**: TBD
+**Reviewers**: TBD  
+**Related**: [`docs/UPGRADE-APPROACH.md`](../UPGRADE-APPROACH.md) — Solution upgrade approach that this design builds on

@@ -29,7 +29,6 @@ cd appmod-blueprints
 cd platform/infra/terraform
 terraform init
 terraform apply \
-  -var="workshop_type=agent-platform" \
   -var="enable_agent_platform=true"
 
 # Wait for deployment (~20 minutes)
