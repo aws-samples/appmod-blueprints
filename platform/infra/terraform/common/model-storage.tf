@@ -1,11 +1,6 @@
-# Random suffix for unique bucket name
-resource "random_id" "ray_models_suffix" {
-  byte_length = 4
-}
-
 # S3 bucket for Ray model storage
 resource "aws_s3_bucket" "ray_models" {
-  bucket = "${var.resource_prefix}-ray-models-${data.aws_caller_identity.current.account_id}-${random_id.ray_models_suffix.hex}"
+  bucket = "${var.resource_prefix}-ray-models-${data.aws_caller_identity.current.account_id}"
 
   tags = {
     Name        = "${var.resource_prefix}-ray-models"
