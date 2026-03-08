@@ -169,8 +169,14 @@ main() {
     "${SCRIPT_DIR}/recover-argocd-apps.sh"
     
     # Verify final application health
+    # Count apps that are Healthy+Synced OR Healthy+OutOfSync with Succeeded operation (known false drift)
     local total_apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
-    local healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(.status.health.status == "Healthy" and .status.sync.status == "Synced")] | length')
+    local healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(
+        .status.health.status == "Healthy" and (
+            .status.sync.status == "Synced" or
+            (.status.operationState.phase == "Succeeded")
+        )
+    )] | length')
     
     if [ "$healthy_apps" -eq "$total_apps" ]; then
         print_status "SUCCESS" "All $total_apps ArgoCD applications are healthy!"

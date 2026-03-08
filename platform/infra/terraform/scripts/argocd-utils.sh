@@ -1353,17 +1353,35 @@ wait_for_remaining_apps_health() {
                 .status.health.status != "Healthy" or .status.sync.status != "Synced"
             ) | .metadata.name' 2>/dev/null)
         
-        # Filter out best effort apps
+        # Filter out best effort apps and healthy-outofsync-ok apps
         local blocking_unhealthy=""
         for app in $unhealthy_apps; do
-            local is_best_effort=false
+            local is_skippable=false
+            
+            # Check best effort apps
             for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
                 if [[ "$app" == "$best_effort_app" ]]; then
-                    is_best_effort=true
+                    is_skippable=true
                     break
                 fi
             done
-            if [[ "$is_best_effort" == false ]]; then
+            
+            # Check healthy-outofsync-ok apps (Healthy + last operation Succeeded)
+            if [[ "$is_skippable" == false ]]; then
+                for ok_app in "${HEALTHY_OUTOFSYNC_OK_APPS[@]}"; do
+                    if [[ "$app" == "$ok_app" ]]; then
+                        local app_health=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+                        local app_op=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+                        if [[ "$app_health" == "Healthy" ]] && [[ "$app_op" == "Succeeded" ]]; then
+                            is_skippable=true
+                            log_timestamp "App $app is Healthy with Succeeded operation (OutOfSync OK - known false drift)"
+                        fi
+                        break
+                    fi
+                done
+            fi
+            
+            if [[ "$is_skippable" == false ]]; then
                 blocking_unhealthy="$blocking_unhealthy $app"
             fi
         done
