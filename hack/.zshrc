@@ -156,10 +156,12 @@ eval "$(mise activate zsh)" 2>/dev/null || true
 source <(kubectl completion zsh)
 
 # User specific aliases and functions
+# Redirect stdout to /dev/null to prevent p10k instant prompt warnings
+# from utils.sh log output (e.g. "Updating config file for workshop...")
 if [ -d ~/.bashrc.d ]; then
         for rc in ~/.bashrc.d/*; do
                 if [ -f "$rc" ]; then
-                        . "$rc"
+                        . "$rc" > /dev/null
                 fi
         done
 fi
