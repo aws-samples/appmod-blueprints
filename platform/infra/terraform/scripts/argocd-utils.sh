@@ -1534,6 +1534,17 @@ show_final_status() {
     fi
     
     echo "----------------------------------------"
+
+    # Report any security group fixes applied during init
+    if [ ${#SG_FIXED_CLUSTERS[@]} -gt 0 ]; then
+        echo ""
+        print_warning "⚠ SECURITY GROUP AUTO-FIX APPLIED"
+        print_warning "The following clusters were missing the EKS self-referencing SG ingress rule:"
+        for fixed_cluster in "${SG_FIXED_CLUSTERS[@]}"; do
+            print_warning "  - $fixed_cluster"
+        done
+        print_warning "The rule was added automatically. Investigate why EKS did not create it during cluster provisioning."
+    fi
 }
 
 # Function to force sync all ArgoCD applications
