@@ -148,8 +148,10 @@ autoload bashcompinit && bashcompinit
 autoload -Uz compinit && compinit
 complete -C '/usr/local/bin/aws_completer' aws
 
-#Activate direnv
-eval "$(direnv hook zsh)"
+# Activate mise (replaces direnv)
+# Full activation for interactive zsh — provides auto-switching on cd.
+# The 2>/dev/null suppresses cosmetic 'unset' warnings on some mise versions.
+eval "$(mise activate zsh)" 2>/dev/null || true
 
 source <(kubectl completion zsh)
 
