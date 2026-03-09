@@ -34,7 +34,7 @@ argocd:
   chartName: argo-cd
   namespace: argocd
   releaseName: argocd
-  defaultVersion: '7.9.1'
+  defaultVersion: '9.4.9'
   chartRepository: 'https://argoproj.github.io/argo-helm'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '0' # Default sync-wave for ArgoCD
