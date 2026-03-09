@@ -13,7 +13,7 @@ This guide helps you deploy and use the agent platform components.
 - AWS Account with appropriate permissions
 - AWS CLI configured
 - kubectl installed
-- Terraform installed (v1.5+)
+- An EKS cluster (created via your preferred tool — Terraform, CDK, eksctl — in your own infra repo)
 - Git
 
 ### Deploy Agent Platform
@@ -25,11 +25,9 @@ This guide helps you deploy and use the agent platform components.
 git clone https://github.com/aws-samples/appmod-blueprints
 cd appmod-blueprints
 
-# Deploy with agent platform enabled
-cd platform/infra/terraform
-terraform init
-terraform apply \
-  -var="enable_agent_platform=true"
+# Set enable_agent_platform: true in hub-config.yaml addons section
+# Apply the ArgoCD bootstrap application to your EKS cluster
+kubectl apply -f bootstrap-application.yaml
 
 # Wait for deployment (~20 minutes)
 ```
@@ -37,10 +35,8 @@ terraform apply \
 #### Option 2: Enable on Existing Platform
 
 ```bash
-# Update Terraform variables
-cd appmod-blueprints/platform/infra/terraform
-
-terraform apply -var="enable_agent_platform=true"
+# Update hub-config.yaml — set enable_agent_platform: true in addons section
+kubectl apply -f hub-config.yaml -n argocd
 
 # Or update bootstrap configuration
 vim gitops/addons/bootstrap/default/addons.yaml
@@ -49,6 +45,7 @@ vim gitops/addons/bootstrap/default/addons.yaml
 git add gitops/addons/bootstrap/default/addons.yaml
 git commit -m "Enable agent platform"
 git push
+# ArgoCD syncs automatically
 ```
 
 ### Verify Deployment
@@ -194,7 +191,7 @@ Edit `appmod-blueprints/gitops/addons/charts/agent-platform/values.yaml`:
 ```yaml
 global:
   namespace: "agent-platform"
-  resourcePrefix: "peeks"
+  resourcePrefix: ""  # Set via hub-config resource_prefix
   awsRegion: "us-east-1"
   eksClusterName: "dev"
 ```
@@ -385,8 +382,9 @@ kubectl get sa tofu-controller -n flux-system -o yaml | grep role-arn
 To disable agent platform and return to core platform only:
 
 ```bash
-# Option 1: Via Terraform
-terraform apply -var="enable_agent_platform=false"
+# Option 1: Via Hub Config
+# Set enable_agent_platform: false in hub-config.yaml
+kubectl apply -f hub-config.yaml -n argocd
 
 # Option 2: Via Bootstrap Config
 vim gitops/addons/bootstrap/default/addons.yaml
