@@ -77,10 +77,6 @@ template: {
 								value: "8083"
 							},
 							{
-								name:  "AWS_REGION"
-								value: parameter.modelConfig.region
-							},
-							{
 								name:  "LLM_GATEWAY_URL"
 								value: parameter.modelConfig.llmGatewayUrl
 							},
@@ -267,7 +263,6 @@ template: {
 		// Model configuration
 		modelConfig: {
 			modelId:          *"claude-sonnet" | string
-			region:           *"us-west-2" | string
 			llmGatewayUrl:    *"http://litellm-proxy.agentgateway-system.svc.cluster.local:4000" | string
 			llmGatewayApiKey: *"sk-1234" | string
 		}

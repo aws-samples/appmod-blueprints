@@ -5,10 +5,9 @@ WORKDIR /app
 
 # Copy dependency files
 COPY pyproject.toml ./
-COPY requirements.txt ./
 
 # Install dependencies using uv (much faster than pip)
-RUN uv pip install --system --no-cache -r requirements.txt
+RUN uv pip install --system --no-cache .
 
 # Final stage
 FROM python:3.11-slim-bookworm
