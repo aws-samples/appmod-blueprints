@@ -1651,6 +1651,7 @@ spark-operator:
         values: ['true']
   syncOptions:
     - ServerSideApply=true
+    - RespectIgnoreDifferences=true
   valuesObject:
     global:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
@@ -1666,6 +1667,12 @@ spark-operator:
       kind: Secret
       jsonPointers:
         - /metadata/managedFields
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
+        - /status
 
 airflow:
   enabled: false
