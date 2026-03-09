@@ -485,7 +485,7 @@ authenticate_argocd() {
             export ARGOCD_AUTH_TOKEN
             export ARGOCD_OPTS="${ARGOCD_OPTS:---grpc-web}"
             # Test if ArgoCD CLI is working
-            if argocd cluster list >/dev/null 2>&1; then
+            if argocd app list >/dev/null 2>&1; then
                 return 0
             fi
         fi
@@ -546,7 +546,7 @@ sync_argocd_app_in_background() {
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
         print_info "Using ArgoCD CLI to sync $app_name (background)"
-        argocd app sync "$app_name" &
+        argocd app sync "$app_name" >/dev/null 2>&1 &
     else
         print_warning "ArgoCD CLI authentication failed, using kubectl approach (background)"
         kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{}}}' &
@@ -705,7 +705,7 @@ sync_argocd_app() {
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
         print_info "Using ArgoCD CLI to sync $app_name"
-        argocd app sync "$app_name" $force_flag --timeout 200 || {
+        argocd app sync "$app_name" $force_flag --timeout 200 >/dev/null 2>&1 || {
             print_warning "ArgoCD CLI sync failed, falling back to kubectl"
             kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
         }
@@ -1670,4 +1670,147 @@ delete_argocd_apps() {
         sleep 2
         apps_to_delete=("${remaining_apps[@]}")
     done
+}
+
+# Wait for Keycloak ArgoCD application to be healthy and synced
+# Actively handles sync issues (stuck ops, revision conflicts, degraded state, CRD issues)
+# Returns 0 if healthy, 1 if timeout
+wait_for_keycloak_ready() {
+    local max_wait=${1:-900}  # 15 minutes default
+    local check_interval=${2:-30}
+    local elapsed=0
+    local recovery_attempted=false
+
+    print_info "Waiting for Keycloak ArgoCD app to be healthy (timeout: ${max_wait}s)..."
+
+    while [ $elapsed -lt $max_wait ]; do
+        local kc_app_name=""
+        local kc_app_json=""
+
+        # Try label-based lookup first
+        kc_app_name=$(kubectl get application -n argocd -l "app.kubernetes.io/instance=keycloak" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+        # Fallback to name pattern match
+        if [ -z "$kc_app_name" ]; then
+            kc_app_name=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | test("keycloak")) | .metadata.name' | head -1)
+        fi
+
+        if [ -z "$kc_app_name" ]; then
+            print_warning "Keycloak application not found yet, waiting... ($elapsed/${max_wait}s)"
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # Fetch full app JSON once for all checks
+        kc_app_json=$(kubectl get application "$kc_app_name" -n argocd -o json 2>/dev/null || echo "")
+        if [ -z "$kc_app_json" ]; then
+            print_warning "Could not fetch Keycloak app status, waiting... ($elapsed/${max_wait}s)"
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        local kc_health=$(echo "$kc_app_json" | jq -r '.status.health.status // "Unknown"')
+        local kc_sync=$(echo "$kc_app_json" | jq -r '.status.sync.status // "Unknown"')
+        local kc_operation=$(echo "$kc_app_json" | jq -r '.status.operationState.phase // "None"')
+        local kc_message=$(echo "$kc_app_json" | jq -r '.status.operationState.message // ""')
+        local kc_condition_message=$(echo "$kc_app_json" | jq -r '(.status.conditions[]?.message // "")' 2>/dev/null | head -1)
+        local kc_finished=$(echo "$kc_app_json" | jq -r '.status.operationState.finishedAt // "none"')
+
+        # Ready criteria (consistent with wait_for_sync_wave_completion and show_final_status):
+        # Healthy AND (Synced OR last operation Succeeded)
+        if [ "$kc_health" = "Healthy" ] && { [ "$kc_sync" = "Synced" ] || [ "$kc_operation" = "Succeeded" ]; }; then
+            print_success "Keycloak is healthy and ready (health=$kc_health, sync=$kc_sync, operation=$kc_operation)"
+            return 0
+        fi
+
+        print_info "Keycloak status: health=$kc_health sync=$kc_sync operation=$kc_operation ($elapsed/${max_wait}s)"
+
+        # --- Active recovery using direct kubectl patches (matching recover-argocd-apps.sh) ---
+        # Never call sync_argocd_app here — it has its own revision mismatch detection that causes loops
+
+        local combined_message="$kc_message $kc_condition_message"
+
+        # 1. Revision conflict — clear operation + status, hard refresh (no re-sync)
+        if echo "$combined_message" | grep -q "cannot reference a different revision\|ComparisonError"; then
+            print_warning "Keycloak has revision conflict, clearing state and refreshing..."
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+            kubectl patch application "$kc_app_name" -n argocd --type merge -p='{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}' 2>/dev/null || true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # 2. Stuck operation (running > 3 minutes) — terminate, clear state, hard refresh
+        if [ "$kc_operation" = "Running" ]; then
+            local op_started=$(echo "$kc_app_json" | jq -r '.status.operationState.startedAt // ""')
+            if [ -n "$op_started" ]; then
+                local op_started_epoch=$(date -d "$op_started" +%s 2>/dev/null || echo "0")
+                local now_epoch=$(date +%s)
+                local op_duration=$(( now_epoch - op_started_epoch ))
+                if [ "$op_duration" -gt 180 ]; then
+                    print_warning "Keycloak operation stuck for ${op_duration}s, clearing state..."
+                    terminate_argocd_operation "$kc_app_name"
+                    sleep 2
+                    kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+                    kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+                    sleep $check_interval
+                    elapsed=$((elapsed + check_interval))
+                    continue
+                fi
+            fi
+        fi
+
+        # 3. Stale finished operation — clear operation + status, hard refresh
+        if [ "$kc_finished" != "none" ] && [ "$kc_operation" != "Succeeded" ]; then
+            print_warning "Keycloak has stale operation state (finished=$kc_finished), clearing..."
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+            kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # 4. Degraded health — hard refresh
+        if [ "$kc_health" = "Degraded" ]; then
+            print_warning "Keycloak is Degraded, forcing hard refresh..."
+            kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # 5. OutOfSync with no active operation — one-time recovery attempt
+        if [ "$kc_sync" = "OutOfSync" ] && [ "$kc_operation" != "Running" ] && [ "$recovery_attempted" = false ]; then
+            print_info "Keycloak is OutOfSync, clearing state and triggering fresh sync..."
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+            kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            recovery_attempted=true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # 6. Progressing stuck for too long (> 5 minutes elapsed)
+        if [ "$kc_health" = "Progressing" ] && [ "$elapsed" -gt 300 ]; then
+            print_warning "Keycloak stuck in Progressing state, clearing state..."
+            terminate_argocd_operation "$kc_app_name"
+            sleep 2
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+
+    print_warning "Keycloak did not become healthy within ${max_wait}s"
+    return 1
 }

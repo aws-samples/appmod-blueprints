@@ -74,6 +74,10 @@ data:
     }
   group-admin-payload.json: |
     {"name":"admin"}
+  group-editor-payload.json: |
+    {"name":"editor"}
+  group-viewer-payload.json: |
+    {"name":"viewer"}
   group-base-user-payload.json: |
     {"name":"base-user"}
   group-mapper-payload.json: |
@@ -123,6 +127,27 @@ data:
         "requiredActions": [],
         "emailVerified": true,
         "groups": [
+          "/editor"
+        ],
+        "enabled": true,
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  user-user3.json: |
+    {
+        "username": "user3",
+        "email": "user3@example.com",
+        "firstName": "user",
+        "lastName": "three",
+        "requiredActions": [],
+        "emailVerified": true,
+        "groups": [
+          "/viewer",
           "/base-user"
         ],
         "enabled": true,
@@ -724,6 +749,12 @@ spec:
               echo "creating admin group"
               keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-admin-payload.json" "Admin group"
 
+              echo "creating editor group"
+              keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-editor-payload.json" "Editor group"
+
+              echo "creating viewer group"
+              keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-viewer-payload.json" "Viewer group"
+
               echo "creating base-user group"
               keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-base-user-payload.json" "Base-user group"
 
@@ -741,6 +772,7 @@ spec:
               echo "creating users"
               create_user "1" "${USER1_PASSWORD}" "/var/config/user-user1.json"
               create_user "2" "${USER1_PASSWORD}" "/var/config/user-user2.json"
+              create_user "3" "${USER1_PASSWORD}" "/var/config/user-user3.json"
               create_user "grafana-admin" "${USER1_PASSWORD}" "/var/config/user-grafana-admin.json"
               create_user "grafana-editor" "${USER1_PASSWORD}" "/var/config/user-grafana-editor.json"
               create_user "grafana-viewer" "${USER1_PASSWORD}" "/var/config/user-grafana-viewer.json"
