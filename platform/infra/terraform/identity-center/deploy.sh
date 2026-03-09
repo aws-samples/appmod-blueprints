@@ -33,11 +33,13 @@ echo "📋 Identity Center Configuration:"
 INSTANCE_ARN=$(terraform output -raw instance_arn 2>/dev/null || echo "")
 ADMIN_GROUP=$(terraform output -raw admin_group_id 2>/dev/null || echo "")
 DEV_GROUP=$(terraform output -raw developer_group_id 2>/dev/null || echo "")
+NON_DEV_GROUP=$(terraform output -raw non_developer_group_id 2>/dev/null || echo "")
 
 if [[ -n "$INSTANCE_ARN" && "$INSTANCE_ARN" != "null" ]]; then
   echo "export TF_VAR_identity_center_instance_arn=\"$INSTANCE_ARN\""
   echo "export TF_VAR_identity_center_admin_group_id=\"$ADMIN_GROUP\""
   echo "export TF_VAR_identity_center_developer_group_id=\"$DEV_GROUP\""
+  echo "export TF_VAR_identity_center_non_developer_group_id=\"$NON_DEV_GROUP\""
   echo ""
   echo "💡 Copy and run the above export commands before deploying clusters."
 else

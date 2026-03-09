@@ -109,6 +109,13 @@ resource "aws_eks_capability" "argocd" {
         }
         role = "EDITOR"
       }
+      rbac_role_mapping {
+        identity {
+          id   = var.identity_center_non_developer_group_id
+          type = "SSO_GROUP"
+        }
+        role = "VIEWER"
+      }
     }
   }
 }
