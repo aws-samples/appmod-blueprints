@@ -213,13 +213,6 @@ appmod-blueprints/
 │                   └── agent-platform/          # NEW
 │                       └── values.yaml
 │
-└── platform/
-    └── infra/
-        └── terraform/
-            ├── variables.tf                     # UPDATE: Add enable_agent_platform
-            ├── outputs.tf                       # UPDATE: Add agent platform outputs
-            └── scripts/
-                └── bootstrap.sh                 # UPDATE: Add feature flag logic
 ```
 
 #### 2. Files to Modify
@@ -231,23 +224,13 @@ agent-platform:
   enabled: false  # Disabled by default
 ```
 
-**`platform/infra/terraform/variables.tf`**:
-```hcl
-# ADD:
-variable "enable_agent_platform" {
-  description = "Enable agent platform components"
-  type        = bool
-  default     = false
-}
-```
-
-**`platform/infra/terraform/outputs.tf`**:
-```hcl
-# ADD:
-output "agent_platform_enabled" {
-  description = "Whether agent platform is enabled"
-  value       = var.enable_agent_platform
-}
+**`hub-config.yaml`** (at repo root or customer's config):
+```yaml
+# ADD under clusters.hub.addons:
+clusters:
+  hub:
+    addons:
+      enable_agent_platform: true  # Enable agent platform components
 ```
 
 **`README.md`**:
@@ -257,11 +240,12 @@ output "agent_platform_enabled" {
 
 The platform can be extended with agent platform components (Kagent, LiteLLM, etc.).
 
-Set `enable_agent_platform: true` in your `hub-config.yaml` addons section, or pass
-`-var="enable_agent_platform=true"` to Terraform.
+Set `enable_agent_platform: true` in your `hub-config.yaml` addons section.
 
 See [docs/agent-platform/](docs/agent-platform/) for details.
 ```
+
+> **Note**: There is no Terraform in the `appmod-blueprints` solution repo. Initial EKS cluster creation (via Terraform, CDK, eksctl, etc.) lives in the customer's own infra repo or the workshop repo (`platform-engineering-on-eks`). Once the hub cluster exists, it self-manages via Kro+ACK/CrossPlane compositions and ArgoCD.
 
 ### Changes in `sample-agent-platform-on-eks` Repository
 
@@ -627,18 +611,7 @@ agent-platform:
   enabled: true  # ← Enable for environments that need agent platform
 ```
 
-#### Level 3: Infrastructure Parameter
-
-**Terraform** (`platform/infra/terraform/common/variables.tf`):
-```hcl
-variable "enable_agent_platform" {
-  description = "Enable agent platform components"
-  type        = bool
-  default     = false
-}
-```
-
-> **Note**: The `workshop_type` variable (e.g., `platform-engineering` vs `agent-platform`) is a workshop concern and lives in the `platform-engineering-on-eks` internal GitLab repo, not in `appmod-blueprints`. The solution repo only knows about `enable_agent_platform`.
+#### Level 3: Hub Config (Primary Mechanism)
 
 **Hub Config** (`hub-config.yaml`):
 ```yaml
@@ -648,23 +621,29 @@ clusters:
       enable_agent_platform: true  # Enable agent platform components
 ```
 
-#### Level 4: Runtime Environment Variable
+The hub-config ConfigMap is the single source of truth for all feature flags. When `enable_agent_platform` is set to `true`, the bootstrap process enables the agent platform bridge chart, which creates ArgoCD Applications for each component.
 
-**Deploy Script** (`platform/infra/terraform/scripts/deploy.sh` or equivalent):
+> **Note**: Workshop-specific variables (e.g., `workshop_type`) live in the `platform-engineering-on-eks` internal GitLab repo, not in `appmod-blueprints`. The solution repo only knows about `enable_agent_platform`.
+
+#### Level 4: GitOps Commit (Declarative Toggle)
+
+To enable or disable the agent platform, update the bootstrap addons configuration and push:
+
 ```bash
-#!/bin/bash
+# Edit bootstrap configuration
+vim gitops/addons/bootstrap/default/addons.yaml
 
-# Feature flag from environment
-ENABLE_AGENT_PLATFORM=${ENABLE_AGENT_PLATFORM:-"false"}
+# Set:
+# agent-platform:
+#   enabled: true
 
-echo "Agent Platform: $ENABLE_AGENT_PLATFORM"
-
-# Deploy with appropriate configuration
-terraform apply \
-  -var="enable_agent_platform=$ENABLE_AGENT_PLATFORM"
+# Commit and push — ArgoCD syncs automatically
+git add gitops/addons/bootstrap/default/addons.yaml
+git commit -m "Enable agent platform"
+git push
 ```
 
-> **Note**: Workshop-specific orchestration (e.g., `WORKSHOP_TYPE` env var, CloudFormation parameters) lives in the `platform-engineering-on-eks` internal GitLab repo. That repo's `deploy.sh` sets `ENABLE_AGENT_PLATFORM=true` when deploying the agent platform workshop variant.
+> **Note**: Workshop-specific orchestration (e.g., `WORKSHOP_TYPE` env var, CloudFormation parameters) lives in the `platform-engineering-on-eks` internal GitLab repo. That repo's deploy scripts set `enable_agent_platform: true` in hub-config when deploying the agent platform workshop variant.
 
 ### Decision Matrix
 
@@ -765,17 +744,16 @@ kubectl get applications -n argocd | grep agent-platform
 ### Scenario 1: Core Platform Only (Default)
 
 ```
-User Deploys
+User Creates EKS Cluster
+(via Terraform/CDK/eksctl in their own infra repo)
      │
      ▼
-Terraform (or modules sourced externally)
-(enable_agent_platform=false)
+ArgoCD Bootstrap Application Applied
+(kubectl apply -f bootstrap-application.yaml)
      │
      ▼
-EKS Cluster Created
-     │
-     ▼
-ArgoCD Installed
+Hub Cluster Self-Manages via Kro+ACK
+(compositions create IAM roles, secrets, etc.)
      │
      ▼
 Bootstrap Configuration Applied
@@ -797,17 +775,16 @@ Core Platform Addons Deployed
 ### Scenario 2: Platform with Agent Platform
 
 ```
-User Deploys
+User Creates EKS Cluster
+(via Terraform/CDK/eksctl in their own infra repo)
      │
      ▼
-Terraform (or modules sourced externally)
-(enable_agent_platform=true)
+ArgoCD Bootstrap Application Applied
+(hub-config has enable_agent_platform: true)
      │
      ▼
-EKS Cluster Created
-     │
-     ▼
-ArgoCD Installed
+Hub Cluster Self-Manages via Kro+ACK
+(compositions create IAM roles, secrets, etc.)
      │
      ▼
 Bootstrap Configuration Applied
@@ -1090,8 +1067,8 @@ components:
 - [ ] Create default values in `gitops/addons/default/addons/agent-platform/`
 - [ ] Create environment overrides for control-plane
 - [ ] Create environment overrides for agent-platform
-- [ ] Update Terraform variables for feature flag
-- [ ] Update bootstrap script with conditional logic
+- [ ] Update bootstrap addons.yaml with agent-platform entry
+- [ ] Update hub-config schema with enable_agent_platform flag
 
 **Day 5: Testing & Documentation**
 - [ ] Test bridge chart rendering with `helm template`
@@ -1256,13 +1233,9 @@ helm template kagent . | kubectl apply --dry-run=client -f -
 #### Test Scenario 1: Core Platform Only (Default)
 
 ```bash
-# Deploy with agent platform disabled
-export ENABLE_AGENT_PLATFORM="false"
-
-# Deploy infrastructure
-cd appmod-blueprints/platform/infra/terraform
-terraform apply \
-  -var="enable_agent_platform=$ENABLE_AGENT_PLATFORM"
+# Deploy with agent platform disabled (default)
+# Ensure hub-config.yaml has enable_agent_platform: false (or omitted)
+kubectl apply -f bootstrap-application.yaml
 
 # Verify no agent platform applications
 kubectl get applications -n argocd | grep agent-platform
@@ -1277,12 +1250,9 @@ kubectl get pods -n backstage
 #### Test Scenario 2: Platform with Agent Platform
 
 ```bash
-# Deploy with agent platform enabled
-export ENABLE_AGENT_PLATFORM="true"
-
-# Deploy infrastructure
-terraform apply \
-  -var="enable_agent_platform=$ENABLE_AGENT_PLATFORM"
+# Enable agent platform in hub-config
+# Set enable_agent_platform: true in hub-config.yaml addons section
+# Commit and push — ArgoCD syncs automatically
 
 # Verify individual applications created
 kubectl get applications -n argocd | grep agent-platform
@@ -1308,22 +1278,24 @@ kubectl logs -n agent-platform deployment/litellm
 #### Test Scenario 3: Toggle Feature Flag
 
 ```bash
-# Start with disabled
-terraform apply -var="enable_agent_platform=false"
+# Start with disabled — set enable_agent_platform: false in hub-config addons
+# Commit and push
+git commit -am "Disable agent platform" && git push
 
 # Verify no agent components
 kubectl get applications -n argocd | grep agent-platform
 # Expected: No results
 
-# Enable agent platform
-terraform apply -var="enable_agent_platform=true"
+# Enable agent platform — set enable_agent_platform: true in hub-config addons
+# Commit and push
+git commit -am "Enable agent platform" && git push
 
 # Verify agent components deployed
 kubectl get applications -n argocd | grep agent-platform
 # Expected: Applications created
 
-# Disable again
-terraform apply -var="enable_agent_platform=false"
+# Disable again — set enable_agent_platform: false
+git commit -am "Disable agent platform" && git push
 
 # Verify clean removal
 kubectl get applications -n argocd | grep agent-platform
@@ -1338,9 +1310,8 @@ kubectl get pods -n agent-platform
 #### Test Agent Workflow
 
 ```bash
-# Deploy agent platform
-export ENABLE_AGENT_PLATFORM="true"
-terraform apply -var="enable_agent_platform=true"
+# Deploy agent platform — set enable_agent_platform: true in hub-config addons
+# Commit and push, ArgoCD syncs automatically
 
 # Wait for all components ready
 kubectl wait --for=condition=available --timeout=300s \
@@ -1397,8 +1368,7 @@ kubectl get hpa -n agent-platform
 
 ```bash
 # Ensure core platform still works without agent platform
-export ENABLE_AGENT_PLATFORM="false"
-terraform apply -var="enable_agent_platform=false"
+# Set enable_agent_platform: false in hub-config addons, commit and push
 
 # Run existing platform tests
 cd appmod-blueprints
@@ -1449,30 +1419,7 @@ ls -la gitops/addons/charts/agent-platform/
 
 #### Step 2: Enable Feature Flag
 
-**Option A: Via Terraform Variables**
-
-```bash
-cd platform/infra/terraform
-
-# Update terraform.tfvars
-cat >> terraform.tfvars <<EOF
-enable_agent_platform = true
-EOF
-
-# Apply changes
-terraform apply
-```
-
-**Option B: Via Environment Variables**
-
-```bash
-export ENABLE_AGENT_PLATFORM="true"
-
-terraform apply \
-  -var="enable_agent_platform=$ENABLE_AGENT_PLATFORM"
-```
-
-**Option C: Via Hub Config**
+**Option A: Via Hub Config (Recommended)**
 
 ```yaml
 # Update hub-config.yaml
@@ -1482,7 +1429,14 @@ clusters:
       enable_agent_platform: true
 ```
 
-**Option D: Via Bootstrap Configuration**
+```bash
+# Apply the updated ConfigMap
+kubectl apply -f hub-config.yaml -n argocd
+
+# ArgoCD will detect the change and sync the bridge chart
+```
+
+**Option B: Via Bootstrap Configuration**
 
 ```bash
 # Edit bootstrap configuration
@@ -1583,8 +1537,10 @@ kubectl port-forward -n agent-platform svc/langfuse 3000:3000
 If you need to disable agent platform:
 
 ```bash
-# Option 1: Via Terraform
-terraform apply -var="enable_agent_platform=false"
+# Option 1: Via Hub Config
+# Set enable_agent_platform: false in hub-config.yaml
+kubectl apply -f hub-config.yaml -n argocd
+# ArgoCD will sync and remove agent platform applications
 
 # Option 2: Via Bootstrap Config
 vim gitops/addons/bootstrap/default/addons.yaml
@@ -1611,12 +1567,14 @@ kubectl get pods -n agent-platform
 git clone https://github.com/aws-samples/appmod-blueprints
 cd appmod-blueprints
 
-# Deploy with defaults (agent platform disabled)
-cd platform/infra/terraform
-terraform init
-terraform apply
+# Create EKS cluster using your preferred tool (Terraform, CDK, eksctl)
+# in your own infra repo or the workshop repo
 
-# Platform ready in ~15 minutes
+# Apply the ArgoCD bootstrap application to the cluster
+kubectl apply -f bootstrap-application.yaml
+
+# The hub cluster self-manages via Kro+ACK compositions
+# Platform ready in ~15 minutes after bootstrap
 ```
 
 #### Quick Start: With Agent Platform
@@ -1626,14 +1584,14 @@ terraform apply
 git clone https://github.com/aws-samples/appmod-blueprints
 cd appmod-blueprints
 
-# Deploy with agent platform enabled
-cd platform/infra/terraform
-terraform init
-terraform apply \
-  -var="enable_agent_platform=true"
+# Set enable_agent_platform: true in hub-config.yaml addons section
+# Create EKS cluster using your preferred tool (Terraform, CDK, eksctl)
 
-# Full platform ready in ~20 minutes
-# Agent components deploy to spoke clusters via ArgoCD Applications
+# Apply the ArgoCD bootstrap application to the cluster
+kubectl apply -f bootstrap-application.yaml
+
+# Full platform ready in ~20 minutes after bootstrap
+# Agent components deploy via ArgoCD Applications
 # pointing to https://github.com/aws-samples/sample-agent-platform-on-eks
 ```
 
@@ -2083,7 +2041,7 @@ spec:
 3. **Configuration**
    - Helm values files
    - ArgoCD application definitions
-   - Terraform state
+   - Hub-config ConfigMap
 
 #### Backup Tools
 
@@ -2151,11 +2109,11 @@ spec:
 #### Scenario 1: Complete Cluster Loss
 
 ```bash
-# 1. Provision new EKS cluster
-cd appmod-blueprints/platform/infra/terraform
-terraform apply -var="enable_agent_platform=true"
+# 1. Provision new EKS cluster (via your infra tool — Terraform, CDK, eksctl)
+# 2. Apply ArgoCD bootstrap application
+kubectl apply -f bootstrap-application.yaml
 
-# 2. Restore Kubernetes resources
+# 3. Restore Kubernetes resources
 velero restore create --from-backup agent-platform-daily-20240101
 
 # 3. Restore PostgreSQL data
@@ -2223,7 +2181,7 @@ A: Yes, agent platform is disabled by default. The core platform works independe
 
 **Q: How do I enable agent platform for an existing deployment?**
 
-A: Set `enable_agent_platform=true` in Terraform variables or update the bootstrap configuration. See [Migration Guide](#migration-guide).
+A: Set `enable_agent_platform=true` in your hub-config addons section and apply the ConfigMap. See [Migration Guide](#migration-guide).
 
 **Q: Where are the agent component charts stored?**
 
