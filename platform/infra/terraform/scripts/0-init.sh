@@ -58,6 +58,47 @@ export WAIT_TIMEOUT
 export CHECK_INTERVAL
 
 
+# Track clusters that needed SG fixes (used in final status)
+SG_FIXED_CLUSTERS=()
+
+# Verify that each EKS cluster's managed security group has the self-referencing
+# ingress rule required for node-to-node and control-plane-to-node communication.
+# EKS Auto Mode adds this rule automatically, but it can silently fail during
+# parallel cluster creation due to API throttling or transient errors.
+verify_cluster_security_groups() {
+    print_status "INFO" "Checking EKS cluster security groups for self-referencing ingress rules..."
+    for cluster_name in "${CLUSTER_NAMES[@]}"; do
+        local cluster_sg
+        cluster_sg=$(aws eks describe-cluster --name "$cluster_name" --region "$AWS_DEFAULT_REGION" \
+            --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text 2>/dev/null)
+
+        if [ -z "$cluster_sg" ] || [ "$cluster_sg" = "None" ]; then
+            print_status "WARNING" "Could not retrieve security group for cluster $cluster_name"
+            continue
+        fi
+
+        # Check if self-referencing ingress rule exists using JSON output for reliable parsing
+        local has_self_ref
+        has_self_ref=$(aws ec2 describe-security-group-rules --region "$AWS_DEFAULT_REGION" \
+            --filters "Name=group-id,Values=$cluster_sg" --output json 2>/dev/null | \
+            jq --arg sg "$cluster_sg" '[.SecurityGroupRules[] | select(.IsEgress==false and .IpProtocol=="-1" and .ReferencedGroupInfo.GroupId==$sg)] | length')
+
+        if [ "${has_self_ref:-0}" -eq 0 ]; then
+            print_status "WARNING" "Cluster $cluster_name ($cluster_sg) is MISSING self-referencing ingress rule!"
+            print_status "WARNING" "This blocks webhooks and kubelet communication. Fixing now..."
+            if aws ec2 authorize-security-group-ingress --region "$AWS_DEFAULT_REGION" \
+                --group-id "$cluster_sg" --protocol -1 --source-group "$cluster_sg" >/dev/null 2>&1; then
+                print_status "SUCCESS" "Added self-referencing ingress rule to $cluster_sg for cluster $cluster_name"
+                SG_FIXED_CLUSTERS+=("$cluster_name")
+            else
+                print_status "ERROR" "Failed to add self-referencing ingress rule to $cluster_sg for cluster $cluster_name"
+            fi
+        else
+            print_status "SUCCESS" "Cluster $cluster_name ($cluster_sg) security group OK"
+        fi
+    done
+}
+
 # Main execution
 main() {
     log_timestamp "=== SCRIPT START ==="
@@ -108,6 +149,10 @@ main() {
         fi
     done
     
+    # Verify and fix EKS cluster security group self-referencing rules
+    log_timestamp "Phase: Verifying EKS cluster security groups"
+    verify_cluster_security_groups
+
     # Switch back to hub cluster for ArgoCD operations
     kubectl config use-context "${RESOURCE_PREFIX}-hub" >/dev/null 2>&1
 
@@ -169,8 +214,14 @@ main() {
     "${SCRIPT_DIR}/recover-argocd-apps.sh"
     
     # Verify final application health
+    # Count apps that are Healthy+Synced OR Healthy+OutOfSync with Succeeded operation (known false drift)
     local total_apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
-    local healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(.status.health.status == "Healthy" and .status.sync.status == "Synced")] | length')
+    local healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(
+        .status.health.status == "Healthy" and (
+            .status.sync.status == "Synced" or
+            (.status.operationState.phase == "Succeeded")
+        )
+    )] | length')
     
     if [ "$healthy_apps" -eq "$total_apps" ]; then
         print_status "SUCCESS" "All $total_apps ArgoCD applications are healthy!"

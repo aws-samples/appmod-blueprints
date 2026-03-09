@@ -1192,7 +1192,7 @@ recover_stuck_workflows() {
 wait_for_sync_wave_completion() {
     local cluster=$1
     local max_wave=$2
-    local timeout=2700  # 45 minutes per phase
+    local timeout=3600  # 60 minutes per phase (increased from 45min to handle slow ArgoCD syncs)
     
     log_timestamp "[$cluster] Waiting for sync waves 0-$max_wave to complete..."
     
@@ -1339,39 +1339,76 @@ wait_for_hub_crossplane_ready() {
 }
 
 wait_for_remaining_apps_health() {
-    print_info "Final cleanup: syncing remaining unhealthy applications..."
+    print_info "Final cleanup: waiting for remaining unhealthy applications..."
     
-    # Get apps that are not healthy (excluding best effort apps)
-    local unhealthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
-        jq -r '.items[] | select(
-            .status.health.status != "Healthy"
-        ) | .metadata.name' 2>/dev/null)
+    local timeout=900  # 15 minutes for final convergence
+    local start_time=$(date +%s)
+    local check_interval=30
     
-    if [ -n "$unhealthy_apps" ]; then
-        print_info "Found unhealthy apps, attempting final sync..."
-        echo "$unhealthy_apps" | while read -r app; do
-            if [ -n "$app" ]; then
-                local is_best_effort=false
-                for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
-                    if [[ "$app" == "$best_effort_app" ]]; then
-                        is_best_effort=true
+    while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+        # Get apps that are not healthy (excluding best effort apps)
+        local unhealthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r '.items[] | select(
+                .status.health.status != "Healthy" or .status.sync.status != "Synced"
+            ) | .metadata.name' 2>/dev/null)
+        
+        # Filter out best effort apps and healthy-outofsync-ok apps
+        local blocking_unhealthy=""
+        for app in $unhealthy_apps; do
+            local is_skippable=false
+            
+            # Check best effort apps
+            for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                if [[ "$app" == "$best_effort_app" ]]; then
+                    is_skippable=true
+                    break
+                fi
+            done
+            
+            # Check healthy-outofsync-ok apps (Healthy + last operation Succeeded)
+            if [[ "$is_skippable" == false ]]; then
+                for ok_app in "${HEALTHY_OUTOFSYNC_OK_APPS[@]}"; do
+                    if [[ "$app" == "$ok_app" ]]; then
+                        local app_health=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+                        local app_op=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+                        if [[ "$app_health" == "Healthy" ]] && [[ "$app_op" == "Succeeded" ]]; then
+                            is_skippable=true
+                            log_timestamp "App $app is Healthy with Succeeded operation (OutOfSync OK - known false drift)"
+                        fi
                         break
                     fi
                 done
-                
-                if [[ "$is_best_effort" == false ]]; then
-                    print_info "Final sync attempt for unhealthy app: $app"
-                    sync_argocd_app "$app" || true
-                    sleep 10
-                fi
+            fi
+            
+            if [[ "$is_skippable" == false ]]; then
+                blocking_unhealthy="$blocking_unhealthy $app"
             fi
         done
         
-        print_info "Waiting for final sync operations to complete..."
-        sleep 60
-    fi
+        if [ -z "$blocking_unhealthy" ]; then
+            print_success "All blocking applications are healthy and synced"
+            return 0
+        fi
+        
+        local elapsed=$(($(date +%s) - start_time))
+        print_info "Still unhealthy after ${elapsed}s: $blocking_unhealthy"
+        
+        # Attempt recovery for stuck apps
+        handle_stuck_operations
+        handle_sync_issues
+        
+        # Sync unhealthy apps
+        for app in $blocking_unhealthy; do
+            if [ -n "$app" ]; then
+                sync_argocd_app "$app" || true
+                sleep 5
+            fi
+        done
+        
+        sleep $check_interval
+    done
     
-    print_success "Final cleanup completed"
+    print_warning "Timeout waiting for remaining apps, continuing anyway..."
     return 0
 }
 
@@ -1496,6 +1533,17 @@ show_final_status() {
     fi
     
     echo "----------------------------------------"
+
+    # Report any security group fixes applied during init
+    if [ ${#SG_FIXED_CLUSTERS[@]} -gt 0 ]; then
+        echo ""
+        print_warning "⚠ SECURITY GROUP AUTO-FIX APPLIED"
+        print_warning "The following clusters were missing the EKS self-referencing SG ingress rule:"
+        for fixed_cluster in "${SG_FIXED_CLUSTERS[@]}"; do
+            print_warning "  - $fixed_cluster"
+        done
+        print_warning "The rule was added automatically. Investigate why EKS did not create it during cluster provisioning."
+    fi
 }
 
 # Function to force sync all ArgoCD applications
