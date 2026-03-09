@@ -15,7 +15,7 @@ resource "aws_identitystore_group" "admin" {
   description       = "Platform Admin group for EKS Managed Capability for ArgoCD"
 }
 
-# Create admin group
+# Create developer group
 resource "aws_identitystore_group" "editor" {
   count             = local.identity_store_id != null ? 1 : 0
   identity_store_id = local.identity_store_id
@@ -23,7 +23,7 @@ resource "aws_identitystore_group" "editor" {
   description       = "Developer group for EKS Managed Capability for ArgoCD"
 }
 
-# Create developer group
+# Create non-developer group
 resource "aws_identitystore_group" "viewer" {
   count             = local.identity_store_id != null ? 1 : 0
   identity_store_id = local.identity_store_id

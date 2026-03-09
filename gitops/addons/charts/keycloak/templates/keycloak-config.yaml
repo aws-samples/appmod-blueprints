@@ -143,7 +143,7 @@ data:
         "username": "user3",
         "email": "user3@example.com",
         "firstName": "user",
-        "lastName": "two",
+        "lastName": "three",
         "requiredActions": [],
         "emailVerified": true,
         "groups": [
