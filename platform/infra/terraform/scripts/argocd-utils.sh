@@ -588,15 +588,19 @@ check_keycloak_postsync_hook() {
     # Trigger fresh sync to execute PostSync hooks
     kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
     
-    # Wait for job to complete
+    # Wait for job to complete or fail
     print_info "Waiting for Keycloak config job to complete..."
     local timeout=300
     local elapsed=0
     while [ $elapsed -lt $timeout ]; do
-        job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
-        if [ "$job_status" = "True" ]; then
+        job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || echo "")
+        if [ "$job_status" = "Complete" ]; then
             print_success "Keycloak config job completed successfully"
             return 0
+        elif [ "$job_status" = "Failed" ]; then
+            print_warning "Keycloak config job failed"
+            kubectl logs job/config -n keycloak --tail=20 2>/dev/null || true
+            return 1
         fi
         sleep 10
         elapsed=$((elapsed + 10))
