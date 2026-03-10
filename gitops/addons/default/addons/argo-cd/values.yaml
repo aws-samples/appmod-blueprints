@@ -64,6 +64,10 @@ redis-ha:
   haproxy:
     enabled: true
     replicas: 3
+    # Pin to specific patch version to remediate CVEs
+    image:
+      repository: public.ecr.aws/docker/library/haproxy
+      tag: 3.3.5-alpine
     podDisruptionBudget:
       maxUnavailable: 1
     resources:
