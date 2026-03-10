@@ -696,11 +696,9 @@ sync_argocd_app() {
         print_info "App $app_name needs sync (health: $health, sync: $sync, operation: $operation_phase)"
     fi
     
-    # Force sync for keycloak to ensure PostSync hooks execute
-    if [[ "$app_name" == *"keycloak"* ]]; then
-        force_flag="--force"
-        print_info "Using force sync for $app_name to execute PostSync hooks"
-    fi
+    # NOTE: Do NOT use --force for keycloak (or any app with ServerSideApply=true).
+    # --force is incompatible with --server-side and causes an infinite retry loop.
+    # PostSync hooks execute on any successful sync — force is not needed.
     
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
@@ -846,8 +844,8 @@ verify_critical_resources() {
         kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
         sleep 5
         
-        # Trigger sync with force flag
-        kubectl patch application "$app_name" -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{},"apply":{"force":true}},"prune":true}}}' 2>/dev/null || true
+        # Trigger sync with prune (no force — incompatible with ServerSideApply)
+        kubectl patch application "$app_name" -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}},"prune":true}}}' 2>/dev/null || true
         
         return 1  # Signal that we fixed something
     fi
