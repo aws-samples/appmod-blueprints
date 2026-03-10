@@ -588,15 +588,19 @@ check_keycloak_postsync_hook() {
     # Trigger fresh sync to execute PostSync hooks
     kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
     
-    # Wait for job to complete
+    # Wait for job to complete or fail
     print_info "Waiting for Keycloak config job to complete..."
     local timeout=300
     local elapsed=0
     while [ $elapsed -lt $timeout ]; do
-        job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
-        if [ "$job_status" = "True" ]; then
+        job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || echo "")
+        if [ "$job_status" = "Complete" ]; then
             print_success "Keycloak config job completed successfully"
             return 0
+        elif [ "$job_status" = "Failed" ]; then
+            print_warning "Keycloak config job failed"
+            kubectl logs job/config -n keycloak --tail=20 2>/dev/null || true
+            return 1
         fi
         sleep 10
         elapsed=$((elapsed + 10))
@@ -693,14 +697,24 @@ sync_argocd_app() {
             return 0
         fi
         
+        # Clear Failed operationState so the controller accepts a new sync.
+        # With EKS ArgoCD capability, kubectl patch on /status is silently ignored,
+        # so we use raw API replace to modify the status directly.
+        if [ "$operation_phase" = "Failed" ]; then
+            print_warning "App $app_name has Failed operation, clearing via raw API replace..."
+            kubectl get application "$app_name" -n argocd -o json | \
+                jq '.status.operationState.phase = "Succeeded" | .status.operationState.message = "Cleared by init script recovery"' | \
+                kubectl replace --raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/${app_name}" -f - >/dev/null 2>&1 || \
+                print_warning "Failed to clear operationState for $app_name, sync may not proceed"
+            sleep 3
+        fi
+        
         print_info "App $app_name needs sync (health: $health, sync: $sync, operation: $operation_phase)"
     fi
     
-    # Force sync for keycloak to ensure PostSync hooks execute
-    if [[ "$app_name" == *"keycloak"* ]]; then
-        force_flag="--force"
-        print_info "Using force sync for $app_name to execute PostSync hooks"
-    fi
+    # NOTE: Do NOT use --force for keycloak (or any app with ServerSideApply=true).
+    # --force is incompatible with --server-side and causes an infinite retry loop.
+    # PostSync hooks execute on any successful sync — force is not needed.
     
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
@@ -714,8 +728,25 @@ sync_argocd_app() {
         kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
     fi
     
-    # Check Keycloak PostSync hook after sync
-    check_keycloak_postsync_hook "$app_name"
+    # Check Keycloak PostSync hook after sync, with recovery on failure
+    if [[ "$app_name" == *"keycloak"* ]]; then
+        local max_attempts=3
+        local attempt=1
+        while [ $attempt -le $max_attempts ]; do
+            if check_keycloak_postsync_hook "$app_name"; then
+                return 0
+            fi
+            print_warning "Keycloak PostSync attempt $attempt/$max_attempts failed, clearing stuck operation and retrying..."
+            # Clear stuck operation via raw API (handles EKS capability where status subresource isn't exposed)
+            kubectl get application "$app_name" -n argocd -o json | \
+                jq '.status.operationState.phase = "Failed" | .status.operationState.message = "Cleared for retry" | del(.status.operationState.operation.retry)' | \
+                kubectl replace --raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/${app_name}" -f - >/dev/null 2>&1 || true
+            sleep 10
+            attempt=$((attempt + 1))
+        done
+        print_warning "Keycloak PostSync hook failed after $max_attempts attempts"
+        return 1
+    fi
 }
 
 # Handle stuck operations (terminate if running > 3 mins)
@@ -846,8 +877,8 @@ verify_critical_resources() {
         kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
         sleep 5
         
-        # Trigger sync with force flag
-        kubectl patch application "$app_name" -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{},"apply":{"force":true}},"prune":true}}}' 2>/dev/null || true
+        # Trigger sync with prune (no force — incompatible with ServerSideApply)
+        kubectl patch application "$app_name" -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}},"prune":true}}}' 2>/dev/null || true
         
         return 1  # Signal that we fixed something
     fi
