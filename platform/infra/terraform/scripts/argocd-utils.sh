@@ -716,8 +716,25 @@ sync_argocd_app() {
         kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
     fi
     
-    # Check Keycloak PostSync hook after sync
-    check_keycloak_postsync_hook "$app_name"
+    # Check Keycloak PostSync hook after sync, with recovery on failure
+    if [[ "$app_name" == *"keycloak"* ]]; then
+        local max_attempts=3
+        local attempt=1
+        while [ $attempt -le $max_attempts ]; do
+            if check_keycloak_postsync_hook "$app_name"; then
+                return 0
+            fi
+            print_warning "Keycloak PostSync attempt $attempt/$max_attempts failed, clearing stuck operation and retrying..."
+            # Clear stuck operation via raw API (handles EKS capability where status subresource isn't exposed)
+            kubectl get application "$app_name" -n argocd -o json | \
+                jq '.status.operationState.phase = "Failed" | .status.operationState.message = "Cleared for retry" | del(.status.operationState.operation.retry)' | \
+                kubectl replace --raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/${app_name}" -f - >/dev/null 2>&1 || true
+            sleep 10
+            attempt=$((attempt + 1))
+        done
+        print_warning "Keycloak PostSync hook failed after $max_attempts attempts"
+        return 1
+    fi
 }
 
 # Handle stuck operations (terminate if running > 3 mins)
