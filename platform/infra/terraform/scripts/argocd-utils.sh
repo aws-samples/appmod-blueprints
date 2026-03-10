@@ -697,6 +697,18 @@ sync_argocd_app() {
             return 0
         fi
         
+        # Clear Failed operationState so the controller accepts a new sync.
+        # With EKS ArgoCD capability, kubectl patch on /status is silently ignored,
+        # so we use raw API replace to modify the status directly.
+        if [ "$operation_phase" = "Failed" ]; then
+            print_warning "App $app_name has Failed operation, clearing via raw API replace..."
+            kubectl get application "$app_name" -n argocd -o json | \
+                jq '.status.operationState.phase = "Succeeded" | .status.operationState.message = "Cleared by init script recovery"' | \
+                kubectl replace --raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/${app_name}" -f - >/dev/null 2>&1 || \
+                print_warning "Failed to clear operationState for $app_name, sync may not proceed"
+            sleep 3
+        fi
+        
         print_info "App $app_name needs sync (health: $health, sync: $sync, operation: $operation_phase)"
     fi
     
