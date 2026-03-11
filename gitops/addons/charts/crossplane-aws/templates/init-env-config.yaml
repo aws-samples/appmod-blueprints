@@ -62,7 +62,7 @@ spec:
         
           # Create EnvironmentConfig
           cat <<EOF | kubectl apply -f -
-          apiVersion: apiextensions.crossplane.io/v1alpha1
+          apiVersion: apiextensions.crossplane.io/v1beta1
           kind: EnvironmentConfig
           metadata:
             name: vpc-config

@@ -27,4 +27,12 @@ providers:
 compositions:
   enabled: true
 
+functions:
+  patchAndTransform:
+    enabled: true
+    package: xpkg.upbound.io/crossplane-contrib/function-patch-and-transform:v0.7.0
+  environmentConfigs:
+    enabled: true
+    package: xpkg.upbound.io/crossplane-contrib/function-environment-configs:v0.3.0
+
 namespace: crossplane-system
