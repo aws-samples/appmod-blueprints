@@ -13,9 +13,12 @@ spec:
         targetPort: 8080
         replicas: 2
         appPath: "/rust-app"
+        serviceAccount: rust-service-account-sa
         env:
           - name: APP_ENV
             value: "DEV"
+          - name: TABLE_NAME
+            value: rust-app-table
         readinessProbe:
           httpGet:
             path: /rust-app/
@@ -36,3 +39,23 @@ spec:
             rewritePath: true
             http:
               /rust-app: 8080
+
+    - name: rust-service-account-sa
+      type: dp-service-account
+      properties:
+        componentNamesForAccess:
+          - rust-dynamodb
+        clusterName: peeks-spoke-dev
+        clusterRegion: us-west-2
+
+    - name: rust-dynamodb
+      type: dynamodb-table
+      properties:
+        tableName: rust-app-table
+        partitionKeyName: partition_key
+        sortKeyName: sort_key
+        region: us-west-2
+      traits:
+        - type: component-iam-policy
+          properties:
+            service: dynamodb

@@ -49,3 +49,31 @@ trigger-devlake() {
     curl -X POST "http://localhost:9090/blueprints/$BP_ID/trigger" -H "Content-Type: application/json" -d '{"skipCollectors":false,"fullSync":false}'
     kill $PF_PID
 }
+
+argocd-refresh-token() {
+    local script_dir="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}/platform/infra/terraform/scripts"
+    local server_url
+    server_url=$(aws eks describe-capability --cluster-name "${RESOURCE_PREFIX:-peeks}-hub" --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null)
+
+    if [[ -z "$server_url" || "$server_url" == "None" ]]; then
+        echo "ERROR: Could not get ArgoCD server URL" >&2
+        return 1
+    fi
+
+    local token
+    token=$(python3 "$script_dir/argocd_token_automation.py" \
+        --url "$server_url" \
+        --username "user1" \
+        --password "${IDE_PASSWORD}" \
+        --output token 2>/dev/null)
+
+    if [[ -z "$token" ]]; then
+        echo "ERROR: Failed to retrieve ArgoCD token" >&2
+        return 1
+    fi
+
+    export ARGOCD_AUTH_TOKEN="$token"
+    export ARGOCD_SERVER=$(echo "$server_url" | sed 's|https://||;s|/.*||')
+    export ARGOCD_OPTS="--grpc-web"
+    echo "ArgoCD token refreshed. Server: $ARGOCD_SERVER"
+}
