@@ -310,28 +310,43 @@ refresh_keycloak_dependent_apps() {
         print_warning "Some ExternalSecrets still syncing after ${timeout}s, forcing refresh anyway"
     fi
     
-    # Now refresh the applications
+    # Only refresh apps that are not already Healthy
     print_info "Refreshing apps that depend on Keycloak secrets..."
     
+    local needs_refresh=false
     for app in $dependent_apps; do
         local app_name="${app}-${RESOURCE_PREFIX}-hub"
         if kubectl get application "$app_name" -n argocd >/dev/null 2>&1; then
-            print_info "  Refreshing $app_name..."
+            local health=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+            local sync=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
+            local op_phase=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+            if [ "$health" = "Healthy" ] && { [ "$sync" = "Synced" ] || [ "$op_phase" = "Succeeded" ]; }; then
+                print_success "  $app_name already Healthy ($sync), skipping"
+                continue
+            fi
+            print_info "  Refreshing $app_name (health=$health, sync=$sync)..."
             kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            needs_refresh=true
             sleep 1
         fi
     done
     
+    if [ "$needs_refresh" = false ]; then
+        print_success "All Keycloak-dependent apps already healthy, no refresh needed"
+        return 0
+    fi
+    
     # Give apps a moment to start syncing
     sleep 5
     
-    # Trigger sync for apps that are OutOfSync
+    # Trigger sync for apps that are OutOfSync and not Healthy
     print_info "Triggering sync for OutOfSync dependent apps..."
     for app in $dependent_apps; do
         local app_name="${app}-${RESOURCE_PREFIX}-hub"
         if kubectl get application "$app_name" -n argocd >/dev/null 2>&1; then
+            local health=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
             local sync_status=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
-            if [ "$sync_status" = "OutOfSync" ]; then
+            if [ "$sync_status" = "OutOfSync" ] && [ "$health" != "Healthy" ]; then
                 print_info "  Syncing $app_name..."
                 sync_argocd_app "$app_name" || true
             fi
