@@ -29,14 +29,14 @@ spec:
             memory: "256Mi"
           limits:
             memory: "512Mi"
-        # functionalGate:
-        #   pause: "20s"
-        #   image: "httpd:alpine"
-        #   extraArgs: "red"
-        # performanceGate:
-        #   pause: "10s"
-        #   image: "httpd:alpine"
-        #   extraArgs: "160"
+        functionalGate:
+          pause: "20s"
+          image: "httpd:alpine"
+          extraArgs: "red"
+        performanceGate:
+          pause: "10s"
+          image: "httpd:alpine"
+          extraArgs: "160"
       traits:
         - type: path-based-ingress
           properties:

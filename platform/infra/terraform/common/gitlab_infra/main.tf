@@ -119,6 +119,9 @@ resource "aws_cloudfront_vpc_origin" "gitlab" {
     replace_triggered_by = [
       kubernetes_service.gitlab_nlb.id
     ]
+    ignore_changes = [
+      vpc_origin_endpoint_config[0].arn
+    ]
   }
 }
 

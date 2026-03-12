@@ -205,6 +205,32 @@ main() {
         fi
     fi
 
+    # Ensure the default AppProject exists (EKS ArgoCD Capability may not create it automatically)
+    if ! kubectl get appproject default -n argocd >/dev/null 2>&1; then
+        print_status "WARNING" "default AppProject not found, creating it..."
+        kubectl apply -f - <<'APPPROJ'
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+spec:
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  destinations:
+  - namespace: '*'
+    server: '*'
+  sourceNamespaces:
+  - argocd
+  sourceRepos:
+  - '*'
+APPPROJ
+        print_status "SUCCESS" "default AppProject created"
+    else
+        print_status "INFO" "default AppProject already exists"
+    fi
+
     # ---------------------------------------------------------------------------
     # Phase: Configure IAM Identity Center + retrieve ArgoCD auth token
     # ---------------------------------------------------------------------------
