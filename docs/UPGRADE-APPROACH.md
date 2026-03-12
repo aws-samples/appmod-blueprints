@@ -6,6 +6,8 @@ This document outlines the detailed approach to transform the `appmod-blueprints
 
 The platform follows a **GitOps-native, self-managing architecture**: the hub cluster manages itself and all platform components using Kro+ACK or CrossPlane compositions — **no Terraform in the solution repo**. Terraform (or eksctl, CDK, CLI) is only used for the initial EKS cluster creation, which lives outside `appmod-blueprints` (e.g., in the customer's own infra repo or the workshop repo).
 
+To reduce friction for customers who want a turnkey solution, the project also provides an **externally consumable Terraform module** (`modules/hub-provisioning/`) that provisions the hub cluster, bootstraps ArgoCD, applies the hub-config ConfigMap, and points ArgoCD at the `appmod-blueprints` repo. After this initial bootstrap, the platform becomes fully self-managing via GitOps. This module accepts `hub-config.yaml` as input and can be used outside the workshop context.
+
 This work is also foundational for expanding the solution into an **Agent Platform on EKS**.
 
 ---
@@ -71,13 +73,15 @@ The Terraform code is already split into two phases:
 
 ### 2.1 Design Principles
 
-1. **GitOps-native self-management**: The hub cluster manages itself and all platform components using Kro+ACK or CrossPlane compositions. No Terraform in the solution repo. Initial EKS cluster creation (via Terraform, eksctl, CDK, or CLI) is the customer's responsibility and lives outside `appmod-blueprints`.
-2. **Config-external**: `hub-config.yaml` lives outside the repo; customers pass their own config. The config drives Kro/CrossPlane compositions and ArgoCD bootstrap.
-3. **Provider-agnostic**: Git provider (GitHub vs GitLab), OIDC provider, and CI/CD provider are swappable via configuration
-4. **GitOpsy spokes**: Spoke clusters provisioned and managed via CrossPlane/Kro through the hub cluster — same mechanism as hub self-management
-5. **Workshop as a pattern**: Workshop-specific code (including Terraform for cluster creation) moves to the internal `platform-engineering-on-eks` GitLab repo, keeping `appmod-blueprints` clean as the customer-facing solution
-6. **Composable components**: Keycloak, Backstage, GitLab are independently deployable addons
-7. **Practice what we preach**: Use the platform (EKS + ArgoCD) to deploy all components/connections/software wherever possible, rather than relying on Terraform for things external to the base platform
+1. **GitOps-native self-management**: The hub cluster manages itself and all platform components using Kro+ACK or CrossPlane compositions. No Terraform in the solution repo for ongoing management. Initial EKS cluster creation (via Terraform, eksctl, CDK, or CLI) is the customer's responsibility and lives outside `appmod-blueprints`.
+2. **Turnkey hub provisioning module**: An externally consumable Terraform module (`modules/hub-provisioning/`) provisions the hub cluster (EKS), bootstraps ArgoCD, applies the hub-config ConfigMap, and points ArgoCD at the `appmod-blueprints` repo. Accepts `hub-config.yaml` as input. After bootstrap, the platform is fully self-managing via GitOps. This module can be used by customers outside the workshop context.
+3. **Config-external**: `hub-config.yaml` lives outside the repo; customers pass their own config. The config drives Kro/CrossPlane compositions and ArgoCD bootstrap.
+4. **Provider-agnostic**: Git provider (GitHub vs GitLab vs CodeCommit), OIDC provider, and CI/CD provider are swappable via configuration
+5. **GitOpsy spokes**: Spoke clusters provisioned and managed via CrossPlane/Kro through the hub cluster — same mechanism as hub self-management
+6. **Workshop as a pattern, not a fork**: Workshop-specific code lives in `patterns/workshop/` within the main repo (alongside other consumption patterns like `patterns/hub-only/`, `patterns/full-platform/`). The workshop pattern includes CloudFront, GitLab integration, Identity Center setup, and workshop-specific configurations. Heavy workshop orchestration (Terraform for cluster creation, deploy scripts) lives in the internal `platform-engineering-on-eks` GitLab repo.
+7. **Composable components**: Keycloak, Backstage, GitLab are independently deployable addons
+8. **Practice what we preach**: Use the platform (EKS + ArgoCD) to deploy all components/connections/software wherever possible, rather than relying on Terraform for things external to the base platform
+9. **Hub-config schema versioning**: The `hub-config.yaml` schema includes an `apiVersion` field for forward compatibility and breaking change management
 
 ### 2.2 Target Repository Structure
 
@@ -90,11 +94,29 @@ appmod-blueprints/
 │   ├── observability/                #   Grafana, Prometheus, CloudWatch via ACK
 │   ├── spoke-cluster/                #   Spoke cluster lifecycle (create, bootstrap, destroy)
 │   └── secrets/                      #   AWS Secrets Manager via ACK/CrossPlane
-├── examples/                         # NEW: Example configurations
+├── modules/                          # NEW: Externally consumable Terraform modules
+│   └── hub-provisioning/             #   Turnkey: EKS cluster + ArgoCD + hub-config bootstrap
+│       ├── main.tf                   #   EKS cluster creation, ArgoCD install, ConfigMap apply
+│       ├── variables.tf              #   Accepts hub-config.yaml path, cluster settings
+│       ├── outputs.tf                #   Cluster endpoint, ArgoCD URL, kubeconfig
+│       ├── versions.tf               #   Provider version constraints
+│       └── README.md                 #   Usage guide for external consumers
+├── patterns/                         # NEW: Consumption patterns (replaces examples/)
 │   ├── full-platform/                #   Full deployment (hub + spokes + all addons)
+│   │   ├── hub-config.yaml           #   Example config
+│   │   ├── bootstrap-application.yaml
+│   │   └── README.md
 │   ├── hub-only/                     #   Hub cluster with minimal addons
 │   ├── existing-cluster/             #   Bootstrap on existing EKS cluster
-│   └── byog/                         #   Bring Your Own Git (GitHub, GitLab, CodeCommit)
+│   ├── byog/                         #   Bring Your Own Git (GitHub, GitLab, CodeCommit)
+│   ├── agent-platform/               #   Platform with agent platform enabled
+│   └── workshop/                     #   Workshop-specific pattern (first-class citizen)
+│       ├── hub-config.yaml           #   Workshop config (GitLab, Keycloak, all addons, peeks prefix)
+│       ├── bootstrap-application.yaml
+│       ├── cloudfront-values.yaml    #   CloudFront distribution config
+│       ├── gitlab-values.yaml        #   GitLab integration config
+│       ├── identity-center-values.yaml  # Identity Center setup
+│       └── README.md                 #   Workshop deployment guide (references platform-engineering-on-eks)
 ├── applications/                     # UNCHANGED: Sample apps
 ├── backstage/                        # UNCHANGED: Backstage IDP
 ├── gitops/                           # REFACTORED: GitOps configurations
@@ -110,7 +132,11 @@ appmod-blueprints/
 └── docs/                             # UPDATED: Architecture + consumption guides
 ```
 
-> **Key change**: The `platform/infra/terraform/` directory is removed from `appmod-blueprints`. All Terraform code (cluster creation, GitLab PATs, workshop-specific infra) moves to the `platform-engineering-on-eks` internal GitLab repo. The solution repo is purely GitOps-native.
+> **Key changes**:
+> - The `platform/infra/terraform/` directory is removed from `appmod-blueprints`. All Terraform code for cluster creation, GitLab PATs, and workshop-specific infra moves to the `platform-engineering-on-eks` internal GitLab repo. The solution repo is purely GitOps-native for ongoing management.
+> - `modules/hub-provisioning/` provides a turnkey Terraform module that customers can `source` from GitHub to provision the hub cluster and bootstrap the platform. After bootstrap, the platform is self-managing.
+> - `examples/` is renamed to `patterns/` to better reflect that these are consumption patterns, not just examples. The `workshop/` pattern is a first-class citizen alongside other patterns. Workshop-specific configuration (CloudFront, GitLab, Identity Center) lives in `patterns/workshop/`; heavy workshop orchestration (Terraform, deploy scripts) lives in `platform-engineering-on-eks`.
+> - Separate discussion needed: How to reduce GitLab's role and make it truly optional (not just conditionally deployed but architecturally unnecessary).
 
 ---
 
@@ -193,7 +219,7 @@ Replace `platform/infra/terraform/common/observability.tf`:
 
 - Kro RGD that creates Amazon Managed Grafana workspace via ACK
 - Kro RGD that creates Amazon Managed Prometheus workspace via ACK
-- Optional — controlled by `enable_grafana` and `enable_prometheus` in hub-config addons
+- Optional — controlled by `enable_observability` in hub-config addons (defaults to `false`; set to `true` in `patterns/workshop/`)
 
 #### 3.1.5 Move Terraform to `platform-engineering-on-eks` Repo
 
@@ -219,17 +245,31 @@ Current location: `platform/infra/terraform/hub-config.yaml` (embedded in TF dir
 
 Target: Moves to repo root as `hub-config.yaml` (default/example). Customers provide their own externally. The config is consumed by ArgoCD bootstrap and Kro compositions as a ConfigMap or values file.
 
-Add new top-level keys for provider configuration:
+Add new top-level keys for provider configuration and schema versioning:
 ```yaml
 # hub-config.yaml (customer's version)
+apiVersion: appmod.aws/v1alpha1       # NEW: Schema version for forward compatibility
+kind: HubConfig                        # NEW: Resource kind
+
 domain_name: mycompany.com
 resource_prefix: myplatform
 
+repo:                                  # NEW: Target GitOps repository configuration
+  url: https://github.com/aws-samples/appmod-blueprints  # Default; customers override with their fork/repo
+  revision: v1.0.0                     # Branch or tag to track
+  basepath: gitops/fleet/              # Path within the repo
+
 git:
-  provider: github                    # NEW: github | gitlab | codecommit
+  provider: github                    # NEW: github | gitlab | codecommit | generic
   url: https://github.com/myorg/myrepo
   revision: main
-  basepath: gitops/fleet/
+  credentials:
+    secretRef: git-credentials         # NEW: K8s secret name containing PAT/SSH key
+    # Secret format depends on provider:
+    #   github:     { username, password (PAT) } or { githubAppID, githubAppInstallationID, githubAppPrivateKey }
+    #   gitlab:     { username, password (PAT) }
+    #   codecommit: { username, password (IAM Git credentials) }
+    #   generic:    { sshPrivateKey } or { username, password }
 
 identity:
   provider: cognito                   # NEW: keycloak | cognito | okta | external
@@ -257,6 +297,7 @@ clusters:
       enable_keycloak: false           # Customer uses Cognito instead
       enable_backstage: true
       enable_gitlab: false             # Customer uses GitHub instead
+      enable_observability: false      # Managed Grafana + Prometheus (optional, enabled in workshop)
       # ...
 ```
 
@@ -574,12 +615,36 @@ kubectl apply -f bootstrap-application.yaml
 
 ## 5. Consumption Patterns (Post-Upgrade)
 
+### Pattern 0: Turnkey Hub Provisioning (Recommended for New Customers)
+```hcl
+# Customer's main.tf — uses the hub-provisioning module from appmod-blueprints
+module "hub" {
+  source = "github.com/aws-samples/appmod-blueprints//modules/hub-provisioning?ref=v1.0.0"
+
+  hub_config_path   = "./my-hub-config.yaml"
+  cluster_name      = "my-hub"
+  region            = "us-west-2"
+  kubernetes_version = "1.32"
+
+  # Optional: customize VPC, node groups, etc.
+  vpc_cidr          = "10.0.0.0/16"
+}
+
+# After terraform apply:
+# - EKS cluster is created
+# - ArgoCD is installed
+# - hub-config.yaml is applied as ConfigMap
+# - ArgoCD points at appmod-blueprints repo
+# - Platform is self-managing via GitOps from this point forward
+```
+
 ### Pattern 1: Full Platform (Workshop-style)
 ```bash
 # In the platform-engineering-on-eks internal GitLab repo
+# Uses patterns/workshop/ config from appmod-blueprints
 ./deploy.sh
-# Creates EKS cluster via TF, installs ArgoCD, points at appmod-blueprints
-# Platform self-manages from there
+# Creates EKS cluster via TF, installs ArgoCD, applies workshop hub-config,
+# points at appmod-blueprints — platform self-manages from there
 ```
 
 ### Pattern 2: Bootstrap on Existing Cluster
@@ -588,10 +653,15 @@ kubectl apply -f bootstrap-application.yaml
 # 1. Install ArgoCD (if not already installed)
 helm install argocd argo/argo-cd -n argocd --create-namespace
 
-# 2. Apply hub-config
+# 2. Create git credentials secret (provider-specific)
+kubectl create secret generic git-credentials -n argocd \
+  --from-literal=username=myuser \
+  --from-literal=password=ghp_xxxxxxxxxxxx
+
+# 3. Apply hub-config
 kubectl create configmap hub-config -n argocd --from-file=my-hub-config.yaml
 
-# 3. Point ArgoCD at appmod-blueprints
+# 4. Point ArgoCD at appmod-blueprints
 kubectl apply -f - <<EOF
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -612,6 +682,7 @@ EOF
 ### Pattern 3: GitOps Only (Bring Your Own Cluster + ArgoCD)
 ```yaml
 # Customer already has ArgoCD — just point at appmod-blueprints addons
+# hub-config.yaml specifies their target repo and credentials
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -635,14 +706,36 @@ clusters:
       enable_gitlab: false      # Using GitHub
       enable_kro: true
       enable_crossplane: true
+      enable_observability: false  # Managed Grafana + Prometheus (opt-in)
 ```
-metadata:
-  name: platform-addons
-spec:
-  source:
-    repoURL: https://github.com/aws-samples/appmod-blueprints
-    targetRevision: v1.0.0
-    path: gitops/addons/charts/application-sets
+
+### Pattern 5: Workshop Pattern
+```yaml
+# Uses patterns/workshop/ from appmod-blueprints
+# Workshop-specific config with all bells and whistles
+apiVersion: appmod.aws/v1alpha1
+kind: HubConfig
+resource_prefix: peeks
+git:
+  provider: gitlab
+  credentials:
+    secretRef: gitlab-credentials
+identity:
+  provider: keycloak
+ingress:
+  type: cloudfront
+clusters:
+  hub:
+    addons:
+      enable_argocd: true
+      enable_backstage: true
+      enable_keycloak: true
+      enable_gitlab: true
+      enable_kro: true
+      enable_crossplane: true
+      enable_identity_center: true
+      enable_cloudfront: true
+      enable_observability: true
 ```
 
 ---
@@ -660,12 +753,12 @@ Below is the full breakdown of tasks organized by phase, ready to be imported in
 | 1.1 | Create `compositions/hub-bootstrap/` Kro RGDs | Create Kro ResourceGraphDefinitions that replace `platform/infra/terraform/common/iam.tf` and `pod-identity.tf`. IAM roles and policies created via ACK IAM controller. Pod Identity associations as native K8s resources. All driven by `hub-config.yaml` ConfigMap. | P0 | XL | — |
 | 1.2 | Create `compositions/secrets/` Kro RGDs | Create Kro RGDs that replace `platform/infra/terraform/common/secrets.tf`. AWS Secrets Manager secrets created via ACK SecretsManager controller. External Secrets Operator syncs to K8s. Provider-agnostic: no hardcoded GitLab tokens. | P0 | L | 1.1 |
 | 1.3 | Create `compositions/ingress/` Kro RGDs | Create Kro RGDs that replace `platform/infra/terraform/common/cloudfront.tf`. CloudFront distribution via ACK CloudFront controller (optional). Conditional on `ingress.type` in hub-config. | P1 | M | 1.1 |
-| 1.4 | Create `compositions/observability/` Kro RGDs | Create Kro RGDs that replace `platform/infra/terraform/common/observability.tf`. Amazon Managed Grafana and Prometheus via ACK. | P2 | M | 1.1 |
+| 1.4 | Create `compositions/observability/` Kro RGDs | Create Kro RGDs that replace `platform/infra/terraform/common/observability.tf`. Amazon Managed Grafana and Prometheus via ACK. Configurable via `enable_observability` in hub-config addons (defaults to `false`; `patterns/workshop/` sets to `true`). | P2 | M | 1.1 |
 | 1.5 | Move ALL Terraform to `platform-engineering-on-eks` repo | Move `platform/infra/terraform/` entirely to the workshop repo. This includes cluster creation, common stack, scripts, and hub-config.yaml (copy to repo root as default). Remove `platform/infra/terraform/` from `appmod-blueprints`. | P0 | L | 1.1, 1.2 |
-| 1.6 | Create bootstrap guide for customers | Document the GitOps-native bootstrap flow: create EKS cluster (any tool) → install ArgoCD → apply hub-config ConfigMap → point ArgoCD at `appmod-blueprints`. No Terraform required. | P0 | M | 1.1–1.4 |
-| 1.7 | Create `examples/` directory with consumption examples | Create `full-platform/`, `hub-only/`, `existing-cluster/`, `byog/` example configurations showing hub-config.yaml + ArgoCD Application YAML for each pattern. | P1 | M | 1.6 |
-| 1.8 | Validate ACK controller readiness | Test ACK IAM, SecretsManager, CloudFront, Grafana controllers for production readiness. Identify gaps and document CrossPlane fallbacks. | P0 | L | — |
-| 1.8 | Create `examples/` directory with consumption examples | Create `full-platform/`, `hub-only/`, `existing-cluster/`, `byog/` example configurations. | P1 | M | 1.5, 1.6 |
+| 1.6 | Create `modules/hub-provisioning/` Terraform module | Create an externally consumable Terraform module that provisions the hub EKS cluster, installs ArgoCD, applies hub-config as ConfigMap, and points ArgoCD at `appmod-blueprints`. Accepts `hub-config.yaml` as input. Customers can `source` this module from GitHub. After bootstrap, platform is self-managing via GitOps. | P0 | XL | 1.5 |
+| 1.7 | Create bootstrap guide for customers | Document the GitOps-native bootstrap flow: create EKS cluster (any tool or use `modules/hub-provisioning/`) → install ArgoCD → apply hub-config ConfigMap → point ArgoCD at `appmod-blueprints`. Include both manual and module-based paths. | P0 | M | 1.1–1.4, 1.6 |
+| 1.8 | Create `patterns/` directory with consumption patterns | Create `full-platform/`, `hub-only/`, `existing-cluster/`, `byog/`, `workshop/`, `agent-platform/` pattern configurations showing hub-config.yaml + ArgoCD Application YAML for each pattern. Workshop pattern includes CloudFront, GitLab, Identity Center configs. | P1 | M | 1.7 |
+| 1.9 | Validate ACK controller readiness | Test ACK IAM, SecretsManager, CloudFront, Grafana controllers for production readiness. Identify gaps and document CrossPlane fallbacks. | P0 | L | — |
 
 ---
 
@@ -673,14 +766,15 @@ Below is the full breakdown of tasks organized by phase, ready to be imported in
 
 | # | Task | Description | Priority | Effort | Dependencies |
 |---|---|---|---|---|---|
-| 2.1 | Extend `hub-config.yaml` schema | Add `git`, `identity`, `cicd`, `ingress` top-level sections. Document all keys. Keep backward compatibility with current schema. Move `hub-config.yaml` from `platform/infra/terraform/` to repo root. | P0 | M | — |
+| 2.1 | Extend `hub-config.yaml` schema | Add `apiVersion: appmod.aws/v1alpha1` and `kind: HubConfig` for schema versioning. Add `repo` section (target GitOps repo URL, revision, credentials secretRef). Add `git`, `identity`, `cicd`, `ingress` top-level sections. Document all keys. Keep backward compatibility with current schema. Move `hub-config.yaml` from `platform/infra/terraform/` to repo root. | P0 | L | — |
 | 2.2 | Create hub-config ConfigMap bootstrap mechanism | Define how `hub-config.yaml` is loaded into the cluster as a ConfigMap in the `argocd` namespace. Kro compositions and addon charts consume this ConfigMap for provider-specific configuration. Document the `kubectl create configmap hub-config -n argocd --from-file=hub-config.yaml` step. | P0 | M | 2.1 |
-| 2.3 | Remove `platform/infra/terraform/` directory from solution repo | Delete the entire `platform/infra/terraform/` directory from `appmod-blueprints`. All Terraform code (cluster creation, common stack, scripts, deploy scripts) has been replaced by compositions (Epic 1) or moved to `platform-engineering-on-eks` (Epic 4). | P0 | L | 1.1–1.5, 4.1–4.3 |
+| 2.3 | Remove `platform/infra/terraform/` directory from solution repo | Delete the entire `platform/infra/terraform/` directory from `appmod-blueprints`. All Terraform code (cluster creation, common stack, scripts, deploy scripts) has been replaced by compositions (Epic 1) or moved to `platform-engineering-on-eks` (Epic 4). The only Terraform in `appmod-blueprints` is `modules/hub-provisioning/` (the externally consumable bootstrap module). | P0 | L | 1.1–1.5, 4.1–4.3 |
 | 2.4 | Update addon charts to consume hub-config ConfigMap | Refactor ArgoCD addon charts to read provider configuration (git, identity, ingress) from the `hub-config` ConfigMap instead of Terraform-injected values. Key charts: `application-sets`, `backstage`, `keycloak`, `external-secrets`. | P0 | L | 2.2 |
-| 2.5 | Create config validation script | Validate `hub-config.yaml` schema before bootstrap. Check required fields (`clusters.hub.name`, `clusters.hub.region`), valid provider values (`git.provider`, `identity.provider`, `ingress.type`). Warn on conflicting settings. | P2 | S | 2.1 |
-| 2.6 | Create lightweight bootstrap script for solution repo | Create a `bootstrap.sh` script at repo root that guides customers through: validate hub-config → create ConfigMap → apply ArgoCD bootstrap Application. No Terraform — purely kubectl/helm commands. | P1 | M | 2.2, 2.5 |
-| 2.7 | Document external config usage | Write `docs/HUB-CONFIG-GUIDE.md`: full schema reference, example configs (GitHub+Cognito, GitLab+Keycloak, GitHub+guest), how config flows to compositions and addon charts. | P1 | M | 2.1 |
-| 2.8 | Create example hub-config files | Create `examples/hub-only/hub-config.yaml`, `examples/full-platform/hub-config.yaml`, `examples/byog/hub-config.yaml` showing different provider combinations. | P1 | S | 2.1, 2.7 |
+| 2.5 | Implement hub-config schema validation | Create a validation mechanism that checks `apiVersion`, required fields (`clusters.hub.name`, `clusters.hub.region`), valid provider values (`git.provider`, `identity.provider`, `ingress.type`), and git credentials configuration. Warn on conflicting settings. Support schema version migration. | P1 | M | 2.1 |
+| 2.6 | Create lightweight bootstrap script for solution repo | Create a `bootstrap.sh` script at repo root that guides customers through: validate hub-config → create git credentials secret → create ConfigMap → apply ArgoCD bootstrap Application. No Terraform — purely kubectl/helm commands. Alternative: point customers to `modules/hub-provisioning/` for turnkey bootstrap. | P1 | M | 2.2, 2.5 |
+| 2.7 | Document external config usage | Write `docs/HUB-CONFIG-GUIDE.md`: full schema reference (with apiVersion versioning), example configs (GitHub+Cognito, GitLab+Keycloak, GitHub+guest, CodeCommit+external), git credentials setup per provider, how config flows to compositions and addon charts. | P1 | M | 2.1 |
+| 2.8 | Create pattern hub-config files | Create `patterns/hub-only/hub-config.yaml`, `patterns/full-platform/hub-config.yaml`, `patterns/byog/hub-config.yaml`, `patterns/workshop/hub-config.yaml` showing different provider combinations. | P1 | S | 2.1, 2.7 |
+| 2.9 | Implement git credentials abstraction | Create a standard mechanism for ArgoCD to authenticate with different Git providers. Support: GitHub PAT/App, GitLab PAT, CodeCommit IAM credentials, generic SSH key. Credentials referenced via `git.credentials.secretRef` in hub-config. External Secrets Operator can sync from AWS Secrets Manager. | P0 | L | 2.1, 2.4 |
 
 ---
 
@@ -705,13 +799,13 @@ Below is the full breakdown of tasks organized by phase, ready to be imported in
 
 | # | Task | Description | Priority | Effort | Dependencies |
 |---|---|---|---|---|---|
-| 4.1 | Set up workshop structure in `platform-engineering-on-eks` repo | Create `terraform/` (for cluster creation), `scripts/`, `hub-config.yaml` in the internal GitLab repo. This repo hosts ALL Terraform code (cluster creation, GitLab PATs, workshop-specific infra) that was removed from `appmod-blueprints`. | P1 | M | — |
-| 4.2 | Move ALL Terraform to `platform-engineering-on-eks` repo | Move the entire `platform/infra/terraform/` directory from `appmod-blueprints` to `platform-engineering-on-eks/terraform/`. This includes `cluster/` (EKS creation), `common/` (bootstrap — now replaced by compositions in solution repo), `database/`, `identity-center/`, `scripts/`, and `hub-config.yaml`. | P1 | L | 1.5, 4.1 |
+| 4.1 | Set up workshop structure in `platform-engineering-on-eks` repo | Create `terraform/` (for cluster creation), `scripts/`, `hub-config.yaml` in the internal GitLab repo. This repo hosts Terraform code for cluster creation and workshop orchestration scripts. Workshop-specific config patterns live in `appmod-blueprints/patterns/workshop/`. | P1 | M | — |
+| 4.2 | Move cluster creation Terraform to `platform-engineering-on-eks` repo | Move `platform/infra/terraform/cluster/` and `platform/infra/terraform/common/` from `appmod-blueprints` to `platform-engineering-on-eks/terraform/`. The common stack is replaced by compositions in the solution repo; the workshop repo keeps a copy for backward compatibility during migration. | P1 | L | 1.5, 4.1 |
 | 4.3 | Move workshop scripts to `platform-engineering-on-eks` repo | Move `2-gitlab-init.sh`, `check-workshop-setup.sh`, `utils.sh` (with workshop logic), all `deploy.sh` scripts to the workshop repo's scripts directory. | P1 | M | 4.2 |
-| 4.4 | Create workshop `deploy.sh` orchestrator in `platform-engineering-on-eks` | Single script: create EKS cluster via TF → install ArgoCD → apply hub-config ConfigMap → point ArgoCD at `appmod-blueprints` → run GitLab init. Platform self-manages from there. | P1 | M | 4.1, 4.2, 4.3 |
-| 4.5 | Create workshop `hub-config.yaml` in `platform-engineering-on-eks` | Workshop-specific config with GitLab, Keycloak, all addons enabled, `peeks` prefix. References `appmod-blueprints` via versioned tag in ArgoCD `targetRevision`. | P1 | S | 2.1 |
-| 4.6 | Validate workshop still works end-to-end | Full deployment test: TF creates cluster → ArgoCD installed → hub-config ConfigMap applied → ArgoCD points at `appmod-blueprints` → platform self-manages → GitLab init → all components running. | P0 | L | 4.1–4.5 |
-| 4.7 | Document workshop repo relationship | Document how `platform-engineering-on-eks` creates the cluster and then hands off to `appmod-blueprints` for GitOps self-management. Define sync/update strategy. | P2 | S | 4.6 |
+| 4.4 | Create workshop `deploy.sh` orchestrator in `platform-engineering-on-eks` | Single script: create EKS cluster via TF (or use `modules/hub-provisioning/`) → install ArgoCD → apply hub-config ConfigMap from `patterns/workshop/hub-config.yaml` → point ArgoCD at `appmod-blueprints` → run GitLab init. Platform self-manages from there. | P1 | M | 4.1, 4.2, 4.3 |
+| 4.5 | Create workshop pattern in `appmod-blueprints/patterns/workshop/` | Workshop-specific config with GitLab, Keycloak, CloudFront, Identity Center, all addons enabled, `peeks` prefix. Includes `hub-config.yaml`, `bootstrap-application.yaml`, CloudFront values, GitLab values, Identity Center values, and README. References `appmod-blueprints` via versioned tag in ArgoCD `targetRevision`. | P1 | M | 2.1 |
+| 4.6 | Validate workshop still works end-to-end | Full deployment test: TF creates cluster → ArgoCD installed → hub-config ConfigMap applied from `patterns/workshop/` → ArgoCD points at `appmod-blueprints` → platform self-manages → GitLab init → all components running. | P0 | L | 4.1–4.5 |
+| 4.7 | Document workshop repo relationship | Document how `platform-engineering-on-eks` creates the cluster and then hands off to `appmod-blueprints` for GitOps self-management. Document how `patterns/workshop/` in the main repo provides the workshop-specific configuration. Define sync/update strategy. | P2 | S | 4.6 |
 
 ---
 
@@ -774,37 +868,38 @@ Below is the full breakdown of tasks organized by phase, ready to be imported in
 
 | Epic | Task Count | Effort Estimate |
 |---|---|---|
-| 1. Hub Self-Management via Kro+ACK/CrossPlane | 8 | ~5-7 weeks |
-| 2. Externalize Hub Configuration | 8 | ~3-4 weeks |
+| 1. Hub Self-Management via Kro+ACK/CrossPlane | 9 | ~6-8 weeks |
+| 2. Externalize Hub Configuration | 9 | ~4-5 weeks |
 | 3. Decouple Keycloak-Backstage-GitLab | 10 | ~5-6 weeks |
 | 4. Workshop Isolation (to platform-engineering-on-eks) | 7 | ~2-3 weeks |
 | 5. GitOps for All Clusters (Hub + Spokes) | 6 | ~4-5 weeks |
 | 6. Versioning and Release | 5 | ~2 weeks |
 | 7. Documentation | 6 | ~3-4 weeks |
 | 8. Agent Platform Extension | 10 | ~5-7 weeks |
-| **Total** | **60 tasks** | **~30-38 weeks** |
+| **Total** | **62 tasks** | **~32-40 weeks** |
 
-> Note: Many tasks can be parallelized across epics. Epics 1-3 are the critical path. Epic 8 depends on Epics 1-3 (GitOps-native architecture must exist before agent platform can be built on it), but Tasks 8.1-8.2 (assessment and doc alignment) can start immediately. Tasks 8.3-8.8 (bridge chart, IAM compositions, secrets) can proceed in parallel with Epics 4-7. Realistic timeline with 2-3 engineers: **14-18 weeks**.
+> Note: Many tasks can be parallelized across epics. Epics 1-3 are the critical path. The hub provisioning module (Task 1.6) can be developed in parallel with compositions. Epic 8 depends on Epics 1-3 (GitOps-native architecture must exist before agent platform can be built on it), but Tasks 8.1-8.2 (assessment and doc alignment) can start immediately. Tasks 8.3-8.8 (bridge chart, IAM compositions, secrets) can proceed in parallel with Epics 4-7. Realistic timeline with 2-3 engineers: **14-18 weeks**.
 
 ---
 
 ## 7. Recommended Execution Order
 
 ```
-Week 1-2:   [7.5] Document current state + [2.1] Extend hub-config schema + [8.1, 8.8] Assess agent platform + update docs for GitOps-native alignment
+Week 1-2:   [7.5] Document current state + [2.1] Extend hub-config schema (with apiVersion, repo, git credentials) + [8.1, 8.8] Assess agent platform + update docs for GitOps-native alignment
 Week 3-6:   [1.1-1.4] Create all Kro+ACK compositions (parallel work)
 Week 5-7:   [1.5] Move ALL Terraform to platform-engineering-on-eks + [2.2-2.4] Hub-config ConfigMap mechanism + remove TF directory
-Week 5-8:   [1.8] Validate ACK controller readiness (parallel with composition work)
-Week 7-10:  [3.1-3.3] Decouple providers in addon charts
+Week 5-8:   [1.9] Validate ACK controller readiness (parallel with composition work)
+Week 6-9:   [1.6] Create modules/hub-provisioning/ Terraform module (parallel with compositions)
+Week 7-10:  [3.1-3.3] Decouple providers in addon charts + [2.9] Git credentials abstraction
 Week 8-12:  [3.4-3.10] Decouple providers in Backstage
-Week 9-11:  [4.1-4.6] Workshop isolation (work in platform-engineering-on-eks repo)
-Week 10-12: [1.6-1.7] Bootstrap guide + examples
+Week 9-11:  [4.1-4.6] Workshop isolation + [4.5] Create patterns/workshop/ in main repo
+Week 10-12: [1.7-1.8] Bootstrap guide + patterns/ directory
 Week 10-13: [8.3-8.5] Agent platform compositions, bridge chart, bootstrap values
 Week 11-13: [5.1-5.6] GitOps hub self-management + spoke provisioning via Kro/CrossPlane (critical path)
 Week 12-14: [6.1-6.5] Versioning and release
 Week 13-15: [8.6-8.7] Agent platform secrets compositions, hub-config example
-Week 14-16: [7.1-7.4] Documentation + [8.10] Agent platform consumption guide
-Week 15-18: [4.6, 5.6, 6.3, 8.9] End-to-end validation of all consumption patterns including agent platform
+Week 14-16: [7.1-7.4] Documentation + [2.5, 2.7] Hub-config schema validation and guide + [8.10] Agent platform consumption guide
+Week 15-18: [4.6, 5.6, 6.3, 8.9] End-to-end validation of all consumption patterns including agent platform and hub-provisioning module
 ```
 
 ---
@@ -812,13 +907,16 @@ Week 15-18: [4.6, 5.6, 6.3, 8.9] End-to-end validation of all consumption patter
 ## 8. Success Criteria
 
 1. A customer can deploy the hub platform on their existing EKS cluster by installing ArgoCD, applying their `hub-config.yaml` as a ConfigMap, and pointing ArgoCD at the `appmod-blueprints` GitHub repo with a version tag — **without forking and without Terraform**
-2. A customer can provide their own `hub-config.yaml` with GitHub (not GitLab), Cognito (not Keycloak), and GitHub Actions (not Argo Workflows) — and the platform deploys correctly via GitOps self-management
-3. The workshop continues to work end-to-end from the `platform-engineering-on-eks` internal GitLab repo, which creates the EKS cluster via Terraform and then hands off to `appmod-blueprints` for GitOps self-management
-4. Spoke clusters can be provisioned via Kro/CrossPlane from the hub — without running Terraform
-5. All Kro RGDs and CrossPlane compositions pass `kubectl apply --dry-run`, all Helm charts pass `helm lint` and `helm template`, and compositions have documented inputs/outputs
-6. The agent platform deploys correctly on the GitOps-native architecture by setting `enable_agent_platform: true` in `hub-config.yaml`, with the bridge chart creating ArgoCD Applications that reference component charts in `sample-agent-platform-on-eks` (`https://github.com/aws-samples/sample-agent-platform-on-eks`)
-7. The agent platform works with both workshop (GitLab+Keycloak) and non-workshop (GitHub+Cognito) configurations — no workshop-specific assumptions in the agent platform code path
-8. `docs/agent-platform/DESIGN.md` is fully aligned with the GitOps-native architecture — zero references to `workshop_type`, CloudFormation, `terraform apply`, or hardcoded GitLab URLs
+2. A customer can use `modules/hub-provisioning/` as a turnkey Terraform module to provision the hub cluster, bootstrap ArgoCD, and apply hub-config — after which the platform is fully self-managing via GitOps
+3. A customer can provide their own `hub-config.yaml` with GitHub (not GitLab), Cognito (not Keycloak), and GitHub Actions (not Argo Workflows) — and the platform deploys correctly via GitOps self-management
+4. A customer can configure their target GitOps repository (URL, revision, credentials) via `hub-config.yaml` `repo` and `git` sections, supporting GitHub PAT, GitLab PAT, CodeCommit IAM credentials, and generic SSH keys
+5. The workshop continues to work end-to-end from the `platform-engineering-on-eks` internal GitLab repo, using `patterns/workshop/` config from `appmod-blueprints`, which creates the EKS cluster via Terraform and then hands off to `appmod-blueprints` for GitOps self-management
+6. Spoke clusters can be provisioned via Kro/CrossPlane from the hub — without running Terraform
+7. All Kro RGDs and CrossPlane compositions pass `kubectl apply --dry-run`, all Helm charts pass `helm lint` and `helm template`, and compositions have documented inputs/outputs
+8. The `hub-config.yaml` schema includes `apiVersion` for versioning, and the validation mechanism catches breaking changes and missing required fields
+9. The agent platform deploys correctly on the GitOps-native architecture by setting `enable_agent_platform: true` in `hub-config.yaml`, with the bridge chart creating ArgoCD Applications that reference component charts in `sample-agent-platform-on-eks` (`https://github.com/aws-samples/sample-agent-platform-on-eks`)
+10. The agent platform works with both workshop (GitLab+Keycloak) and non-workshop (GitHub+Cognito) configurations — no workshop-specific assumptions in the agent platform code path
+11. `docs/agent-platform/DESIGN.md` is fully aligned with the GitOps-native architecture — zero references to `workshop_type`, CloudFormation, `terraform apply`, or hardcoded GitLab URLs
 
 
 ---
@@ -939,19 +1037,20 @@ Create Kro RGDs that replace `platform/infra/terraform/common/cloudfront.tf`. Cl
 **Doc Reference:** Section 3.1.4
 
 **Description:**
-Create Kro RGDs that replace `platform/infra/terraform/common/observability.tf`. Amazon Managed Grafana and Prometheus are created via ACK.
+Create Kro RGDs that replace `platform/infra/terraform/common/observability.tf`. Amazon Managed Grafana and Prometheus are created via ACK. Observability is configurable via `enable_observability` in hub-config addons — defaults to `false` for most patterns, set to `true` in `patterns/workshop/`.
 
 **Files to Create:**
 - `compositions/observability/grafana-rgd.yaml` — Kro RGD for Amazon Managed Grafana workspace via ACK
 - `compositions/observability/prometheus-rgd.yaml` — Kro RGD for Amazon Managed Prometheus workspace via ACK
-- `compositions/observability/README.md` — Document observability options
+- `compositions/observability/README.md` — Document observability options and how to enable via hub-config
 
 **Files to Reference:**
 - `platform/infra/terraform/common/observability.tf` — Current Managed Grafana + Prometheus setup
 
 **Acceptance Criteria:**
-- Kro RGDs create Managed Grafana + Managed Prometheus when enabled in hub-config
-- Can be disabled entirely via hub-config addons flags
+- Kro RGDs create Managed Grafana + Managed Prometheus when `enable_observability: true` in hub-config
+- When `enable_observability: false` (default), no observability resources are created
+- `patterns/workshop/hub-config.yaml` sets `enable_observability: true`
 - `kubectl apply --dry-run=client` validates all manifests
 
 ---
@@ -982,67 +1081,147 @@ Move the entire `platform/infra/terraform/` directory from `appmod-blueprints` t
 
 ---
 
-#### Task 1.6 — Create Bootstrap Guide for Customers
+#### Task 1.6 — Create `modules/hub-provisioning/` Terraform Module
+
+**Doc Reference:** Section 2.1 (Design Principle 2 — Turnkey hub provisioning module)
+
+**Description:**
+Create an externally consumable Terraform module that provisions the hub EKS cluster, bootstraps ArgoCD, applies the hub-config ConfigMap, and points ArgoCD at the `appmod-blueprints` repo. This is the turnkey path for customers who want a single `terraform apply` to get started. After bootstrap, the platform is fully self-managing via GitOps.
+
+**Files to Create:**
+- `modules/hub-provisioning/main.tf` — EKS cluster creation (using `terraform-aws-modules/eks`), ArgoCD Helm install, hub-config ConfigMap creation, ArgoCD bootstrap Application
+- `modules/hub-provisioning/variables.tf`:
+  ```hcl
+  variable "hub_config_path" {
+    description = "Path to hub-config.yaml file"
+    type        = string
+  }
+  variable "cluster_name" {
+    description = "EKS cluster name"
+    type        = string
+    default     = "hub"
+  }
+  variable "region" {
+    description = "AWS region"
+    type        = string
+    default     = "us-west-2"
+  }
+  variable "kubernetes_version" {
+    description = "EKS Kubernetes version"
+    type        = string
+    default     = "1.32"
+  }
+  variable "appmod_blueprints_repo" {
+    description = "appmod-blueprints repo URL"
+    type        = string
+    default     = "https://github.com/aws-samples/appmod-blueprints"
+  }
+  variable "appmod_blueprints_revision" {
+    description = "appmod-blueprints repo revision (tag or branch)"
+    type        = string
+    default     = "main"
+  }
+  variable "vpc_cidr" {
+    description = "VPC CIDR block"
+    type        = string
+    default     = "10.0.0.0/16"
+  }
+  ```
+- `modules/hub-provisioning/outputs.tf` — Cluster endpoint, ArgoCD URL, kubeconfig command
+- `modules/hub-provisioning/versions.tf` — Provider version constraints (AWS, Kubernetes, Helm)
+- `modules/hub-provisioning/README.md` — Usage guide for external consumers:
+  ```hcl
+  module "hub" {
+    source = "github.com/aws-samples/appmod-blueprints//modules/hub-provisioning?ref=v1.0.0"
+    hub_config_path = "./my-hub-config.yaml"
+    cluster_name    = "my-hub"
+    region          = "us-west-2"
+  }
+  ```
+
+**Key Design:**
+- Module is self-contained — customers can `source` it from GitHub with a version tag
+- Accepts `hub-config.yaml` as input (externally fed)
+- After `terraform apply`, the platform is self-managing via GitOps
+- No ongoing Terraform dependency — the module is only for initial bootstrap
+- Module does NOT manage platform components (that's ArgoCD + Kro/ACK)
+
+**Acceptance Criteria:**
+- `terraform validate` passes
+- `terraform plan` shows expected resources (EKS cluster, ArgoCD, ConfigMap, Application)
+- End-to-end test: `terraform apply` → platform self-manages → all addons deploy via ArgoCD
+- Module is externally consumable via `source = "github.com/..."`
+- README documents all variables, outputs, and usage patterns
+
+---
+
+#### Task 1.7 — Create Bootstrap Guide for Customers
 
 **Doc Reference:** Section 3.2.3
 
 **Description:**
-Document the GitOps-native bootstrap flow for customers. No Terraform required in `appmod-blueprints`.
+Document the GitOps-native bootstrap flow for customers. Two paths: (A) turnkey via `modules/hub-provisioning/`, (B) manual via kubectl/helm.
 
 **File to Create:** `docs/BOOTSTRAP-GUIDE.md`
 
 **Content:**
-```bash
-# 1. Create EKS cluster (any tool — eksctl, CDK, Terraform, CLI)
-eksctl create cluster --name hub --region us-west-2
+```markdown
+## Path A: Turnkey (Terraform Module)
+module "hub" {
+  source = "github.com/aws-samples/appmod-blueprints//modules/hub-provisioning?ref=v1.0.0"
+  hub_config_path = "./my-hub-config.yaml"
+}
 
+## Path B: Manual (kubectl/helm)
+# 1. Create EKS cluster (any tool)
 # 2. Install ArgoCD
-helm install argocd argo/argo-cd -n argocd --create-namespace
-
-# 3. Apply hub-config as ConfigMap
-kubectl create configmap hub-config -n argocd --from-file=hub-config.yaml
-
-# 4. Point ArgoCD at appmod-blueprints
-kubectl apply -f bootstrap-application.yaml
-
-# 5. Platform self-manages from here
+# 3. Create git credentials secret
+# 4. Apply hub-config as ConfigMap
+# 5. Point ArgoCD at appmod-blueprints
 ```
 
 **Acceptance Criteria:**
 - Guide is complete and testable by someone unfamiliar with the repo
-- No Terraform steps in the guide
+- Covers both turnkey (module) and manual (kubectl) paths
 - Covers prerequisites (AWS CLI, kubectl, helm, EKS cluster)
-- Links to example hub-config files
+- Links to pattern hub-config files
 
 ---
 
-#### Task 1.7 — Create `examples/` Directory with Consumption Examples
+#### Task 1.8 — Create `patterns/` Directory with Consumption Patterns
 
 **Doc Reference:** Section 5 (Consumption Patterns)
 
 **Description:**
-Create working example configurations that demonstrate each consumption pattern.
+Create working pattern configurations that demonstrate each consumption pattern. Rename `examples/` to `patterns/` to better reflect these are consumption patterns.
 
 **Files to Create:**
-- `examples/full-platform/hub-config.yaml` — Full deployment with all addons (Pattern 1)
-- `examples/full-platform/bootstrap-application.yaml` — ArgoCD Application YAML
-- `examples/full-platform/README.md` — Step-by-step guide
-- `examples/hub-only/hub-config.yaml` — Hub cluster with minimal addons (Pattern 2)
-- `examples/hub-only/bootstrap-application.yaml`
-- `examples/hub-only/README.md`
-- `examples/existing-cluster/hub-config.yaml` — Bootstrap on existing EKS cluster (Pattern 3)
-- `examples/existing-cluster/README.md`
-- `examples/byog/hub-config.yaml` — Bring Your Own Git: GitHub instead of GitLab (Pattern 4)
-- `examples/byog/README.md`
+- `patterns/full-platform/hub-config.yaml` — Full deployment with all addons
+- `patterns/full-platform/bootstrap-application.yaml` — ArgoCD Application YAML
+- `patterns/full-platform/README.md` — Step-by-step guide
+- `patterns/hub-only/hub-config.yaml` — Hub cluster with minimal addons
+- `patterns/hub-only/README.md`
+- `patterns/existing-cluster/hub-config.yaml` — Bootstrap on existing EKS cluster
+- `patterns/existing-cluster/README.md`
+- `patterns/byog/hub-config.yaml` — Bring Your Own Git: GitHub, CodeCommit, generic SSH
+- `patterns/byog/README.md`
+- `patterns/workshop/hub-config.yaml` — Workshop-specific (GitLab, Keycloak, CloudFront, Identity Center)
+- `patterns/workshop/cloudfront-values.yaml` — CloudFront distribution config
+- `patterns/workshop/gitlab-values.yaml` — GitLab integration config
+- `patterns/workshop/identity-center-values.yaml` — Identity Center setup
+- `patterns/workshop/README.md` — Workshop deployment guide (references platform-engineering-on-eks)
+- `patterns/agent-platform/hub-config.yaml` — Agent platform enabled (GitHub+Cognito)
+- `patterns/agent-platform/README.md`
 
 **Acceptance Criteria:**
-- Each example has a hub-config.yaml + ArgoCD Application YAML + README
-- Examples are copy-pasteable and deployable
-- No Terraform in any example (all GitOps-native)
+- Each pattern has a hub-config.yaml + README
+- Workshop pattern includes all workshop-specific bells and whistles (CloudFront, GitLab, Identity Center)
+- All hub-config files include `apiVersion: appmod.aws/v1alpha1`
+- Patterns are copy-pasteable and deployable
 
 ---
 
-#### Task 1.8 — Validate ACK Controller Readiness
+#### Task 1.9 — Validate ACK Controller Readiness
 
 **Doc Reference:** Section 4.2 (Risks — ACK maturity)
 
@@ -1063,18 +1242,7 @@ Test ACK IAM, SecretsManager, CloudFront, Grafana, Prometheus, S3, CodeBuild con
 **Acceptance Criteria:**
 - Each ACK controller tested for: create, update, delete of target resources
 - Gaps documented with CrossPlane fallback plan
-- Decision matrix: which controllers use ACK vs CrossPlane Example config with all addons
-- `examples/hub-only/main.tf` — Hub cluster only, minimal addons (Pattern 2)
-- `examples/hub-only/hub-config.yaml`
-- `examples/existing-cluster/main.tf` — Bootstrap on existing EKS cluster (Pattern 2 variant)
-- `examples/existing-cluster/hub-config.yaml`
-- `examples/byog/main.tf` — Bring Your Own Git: GitHub instead of GitLab (Pattern 4)
-- `examples/byog/hub-config.yaml` — Config with `git.provider: github`, `enable_gitlab: false`
-
-**Acceptance Criteria:**
-- Each example has a working `main.tf` and `hub-config.yaml`
-- Each example has a `README.md` explaining the pattern
-- `terraform validate` passes for each example
+- Decision matrix: which controllers use ACK vs CrossPlane
 
 ---
 
@@ -1087,18 +1255,29 @@ Test ACK IAM, SecretsManager, CloudFront, Grafana, Prometheus, S3, CodeBuild con
 **Doc Reference:** Section 3.2.1
 
 **Description:**
-Move `hub-config.yaml` from `platform/infra/terraform/` to the repo root and extend the schema with provider configuration sections.
+Move `hub-config.yaml` from `platform/infra/terraform/` to the repo root and extend the schema with provider configuration sections. Add schema versioning (`apiVersion`, `kind`) for forward compatibility and breaking change management. Add `repo` section for target GitOps repository configuration. Add `git.credentials.secretRef` for provider-specific credential management.
 
 **Files to Create/Change:**
 - `hub-config.yaml` (repo root) — Copy from `platform/infra/terraform/hub-config.yaml` and add:
-  - `git:` block with `provider` (github|gitlab|codecommit), `url`, `revision`, `basepath`
+  - `apiVersion: appmod.aws/v1alpha1` — Schema version for forward compatibility
+  - `kind: HubConfig` — Resource kind identifier
+  - `repo:` block with `url` (target GitOps repo, default: appmod-blueprints), `revision` (branch or tag), `basepath` (path within repo)
+  - `git:` block with `provider` (github|gitlab|codecommit|generic), `url`, `revision`, `credentials.secretRef` (K8s secret name)
   - `identity:` block with `provider` (keycloak|cognito|okta|external) and `config` map
   - `cicd:` block with `provider` (argo-workflows|gitlab-ci|github-actions)
   - `ingress:` block with `type` (cloudfront|alb|nlb|custom), `domain`, `certificate_arn`
+- Git credentials secret format depends on provider:
+  - `github`: `{ username, password (PAT) }` or `{ githubAppID, githubAppInstallationID, githubAppPrivateKey }`
+  - `gitlab`: `{ username, password (PAT) }`
+  - `codecommit`: `{ username, password (IAM Git credentials) }`
+  - `generic`: `{ sshPrivateKey }` or `{ username, password }`
 - Keep backward compatibility: existing `clusters.hub.addons` structure unchanged
 
 **Acceptance Criteria:**
 - `hub-config.yaml` exists at repo root with extended schema
+- `apiVersion: appmod.aws/v1alpha1` and `kind: HubConfig` are present at top of file
+- `repo` section with `url`, `revision`, `basepath` is present
+- `git.credentials.secretRef` is documented with provider-specific secret formats
 - All new keys are documented with YAML comments
 - Backward compatible with current addon flag structure
 - `yq` can parse the file without errors
@@ -1174,22 +1353,30 @@ Refactor ArgoCD addon charts to read provider configuration from the `hub-config
 
 ---
 
-#### Task 2.5 — Create Config Validation Script
+#### Task 2.5 — Implement Hub-Config Schema Validation
 
-**Doc Reference:** Section 3.2.3
+**Doc Reference:** Section 3.2.3, Section 2.1 (Design Principle 9 — Hub-config schema versioning)
 
 **File to Create:** `scripts/validate-config.sh`
 
 **Validation Rules:**
+- Schema version: validate `apiVersion` is present and matches a known version (`appmod.aws/v1alpha1`)
+- Schema version migration: warn if `apiVersion` is missing (pre-versioning config) and suggest adding it
 - Required keys: `clusters`, `clusters.hub`, `clusters.hub.name`, `clusters.hub.region`
-- If `git.provider` is set, validate it's one of: `github`, `gitlab`, `codecommit`
+- If `repo.url` is set, validate it's a valid Git URL
+- If `git.provider` is set, validate it's one of: `github`, `gitlab`, `codecommit`, `generic`
+- If `git.credentials.secretRef` is set, validate the referenced K8s secret exists (optional runtime check)
 - If `identity.provider` is set, validate it's one of: `keycloak`, `cognito`, `okta`, `external`
 - If `ingress.type` is set, validate it's one of: `cloudfront`, `alb`, `nlb`, `custom`
 - Warn if `enable_keycloak: true` but `identity.provider` is not `keycloak`
+- Warn if `enable_gitlab: true` but `git.provider` is not `gitlab`
+- Cross-validate: if `git.provider` is set, `git.credentials.secretRef` should also be set
 
 **Acceptance Criteria:**
 - Script exits 0 on valid config, exits 1 on invalid
 - Clear error messages for each validation failure
+- Validates `apiVersion` and warns on missing schema version
+- Supports future schema versions via version-specific validation rules
 
 ---
 
@@ -1232,21 +1419,160 @@ Refactor ArgoCD addon charts to read provider configuration from the `hub-config
 
 ---
 
-#### Task 2.8 — Create Example Hub-Config Files
+#### Task 2.8 — Create Pattern Hub-Config Files
 
 **Doc Reference:** Section 5 (Consumption Patterns)
 
 **Files to Create:**
-- `examples/hub-only/hub-config.yaml` — Minimal config: ArgoCD + Backstage only
-- `examples/full-platform/hub-config.yaml` — All addons enabled
-- `examples/byog/hub-config.yaml` — GitHub instead of GitLab, Cognito instead of Keycloak
+- `patterns/hub-only/hub-config.yaml` — Minimal config: ArgoCD + Backstage only
+- `patterns/full-platform/hub-config.yaml` — All addons enabled
+- `patterns/byog/hub-config.yaml` — GitHub instead of GitLab, Cognito instead of Keycloak
+- `patterns/workshop/hub-config.yaml` — Workshop-specific (GitLab, Keycloak, CloudFront, Identity Center)
 - Each with a `README.md` explaining the use case
+- All hub-config files include `apiVersion: appmod.aws/v1alpha1` and `kind: HubConfig`
 
 **Acceptance Criteria:**
-- Each example is valid against the schema
-- Examples are referenced from `docs/HUB-CONFIG-GUIDE.md`
-- No Terraform in any example
+- Each pattern is valid against the schema (including `apiVersion`)
+- Patterns are referenced from `docs/HUB-CONFIG-GUIDE.md`
+- No Terraform in any pattern
+- Workshop pattern includes all workshop-specific bells and whistles
 
+---
+
+#### Task 2.9 — Implement Git Credentials Abstraction
+
+**Doc Reference:** Section 3.2.1 (git.credentials.secretRef), Section 2.1 (Design Principle 4 — Provider-agnostic)
+
+**Description:**
+Create a standard mechanism for ArgoCD to authenticate with different Git providers. Credentials are referenced via `git.credentials.secretRef` in hub-config. Support multiple provider-specific credential formats. Integrate with External Secrets Operator for syncing credentials from AWS Secrets Manager.
+
+**Provider-Specific Secret Formats:**
+```yaml
+# GitHub PAT
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-credentials
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: git
+  url: https://github.com/myorg/my-repo
+  username: git
+  password: ghp_xxxxxxxxxxxx
+
+# GitHub App
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-credentials
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: git
+  url: https://github.com/myorg/my-repo
+  githubAppID: "12345"
+  githubAppInstallationID: "67890"
+  githubAppPrivateKey: |
+    <GITHUB_APP_PRIVATE_KEY_PEM>
+
+# GitLab PAT
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-credentials
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: git
+  url: https://gitlab.example.com/myorg/my-repo
+  username: oauth2
+  password: glpat-xxxxxxxxxxxx
+
+# CodeCommit IAM
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-credentials
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: git
+  url: https://git-codecommit.us-west-2.amazonaws.com/v1/repos/my-repo
+  username: <IAM-git-username>
+  password: <IAM-git-password>
+
+# Generic SSH
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-credentials
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: git
+  url: git@github.com:myorg/my-repo.git
+  sshPrivateKey: |
+    <SSH_PRIVATE_KEY>
+```
+
+**Files to Create/Change:**
+- `docs/GIT-CREDENTIALS-GUIDE.md` — Document all provider-specific credential formats, how to create secrets manually, and how to use External Secrets Operator to sync from AWS Secrets Manager
+- `gitops/addons/charts/argocd/templates/repo-secret.yaml` — Template that creates ArgoCD repo secret from `git.credentials.secretRef` in hub-config ConfigMap
+- `patterns/byog/git-credentials-github.yaml` — Example GitHub PAT secret
+- `patterns/byog/git-credentials-github-app.yaml` — Example GitHub App secret
+- `patterns/byog/git-credentials-gitlab.yaml` — Example GitLab PAT secret
+- `patterns/byog/git-credentials-codecommit.yaml` — Example CodeCommit IAM secret
+- `patterns/byog/git-credentials-ssh.yaml` — Example generic SSH secret
+- `patterns/byog/external-secret-git-credentials.yaml` — Example ExternalSecret that syncs git credentials from AWS Secrets Manager
+
+**External Secrets Integration:**
+```yaml
+# ExternalSecret that syncs git credentials from AWS Secrets Manager
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: git-credentials
+  namespace: argocd
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: git-credentials
+    labels:
+      argocd.argoproj.io/secret-type: repository
+  data:
+    - secretKey: username
+      remoteRef:
+        key: platform/git-credentials
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: platform/git-credentials
+        property: password
+```
+
+**Acceptance Criteria:**
+- ArgoCD can authenticate with GitHub using PAT or GitHub App credentials
+- ArgoCD can authenticate with GitLab using PAT
+- ArgoCD can authenticate with CodeCommit using IAM Git credentials
+- ArgoCD can authenticate with generic Git using SSH key
+- External Secrets Operator can sync git credentials from AWS Secrets Manager
+- All credential formats are documented with copy-pasteable examples
+- Bootstrap script (`bootstrap.sh`) includes git credentials secret creation step
+- `git.credentials.secretRef` in hub-config correctly references the K8s secret
 
 ---
 
@@ -1479,7 +1805,7 @@ identity:
 **Doc Reference:** Section 3.4.2
 
 **Description:**
-Create the workshop-specific directory structure in the internal `platform-engineering-on-eks` GitLab repo to host ALL Terraform code and workshop scripts removed from `appmod-blueprints`.
+Create the workshop-specific directory structure in the internal `platform-engineering-on-eks` GitLab repo to host ALL Terraform code and workshop scripts removed from `appmod-blueprints`. Workshop-specific configuration patterns (hub-config, CloudFront values, GitLab values, Identity Center values) live in `appmod-blueprints/patterns/workshop/` as a first-class citizen.
 
 **Files to Create (in `platform-engineering-on-eks` repo):**
 - `terraform/cluster/` — EKS cluster creation (moved from `appmod-blueprints`)
@@ -1487,12 +1813,12 @@ Create the workshop-specific directory structure in the internal `platform-engin
 - `terraform/database/` — RDS/Aurora (moved from `appmod-blueprints`)
 - `terraform/identity-center/` — AWS Identity Center (moved from `appmod-blueprints`)
 - `scripts/` — All deployment and utility scripts
-- `hub-config.yaml` — Workshop-specific config (populated in Task 4.5)
-- `README.md` — Workshop deployment guide
+- `hub-config.yaml` — Workshop-specific config (references `appmod-blueprints/patterns/workshop/hub-config.yaml` as canonical source)
+- `README.md` — Workshop deployment guide (references `patterns/workshop/` in `appmod-blueprints`)
 
 **Acceptance Criteria:**
 - Directory structure matches Section 3.4.2 layout
-- README explains the workshop deployment flow
+- README explains the workshop deployment flow and references `appmod-blueprints/patterns/workshop/`
 - Relationship to `appmod-blueprints` is documented
 
 ---
@@ -1549,13 +1875,13 @@ Move the entire `platform/infra/terraform/` directory from `appmod-blueprints` t
 
 **Script Flow:**
 ```bash
-# 1. Create EKS hub cluster via Terraform
+# 1. Create EKS hub cluster via Terraform (or use modules/hub-provisioning/)
 cd terraform/cluster && terraform apply
 
 # 2. Install ArgoCD on the hub
 ./scripts/bootstrap-argocd.sh
 
-# 3. Apply workshop hub-config as ConfigMap
+# 3. Apply workshop hub-config as ConfigMap (from patterns/workshop/ in appmod-blueprints)
 kubectl create configmap hub-config -n argocd --from-file=hub-config.yaml
 
 # 4. Point ArgoCD at appmod-blueprints — platform self-manages from here
@@ -1572,42 +1898,66 @@ kubectl apply -f bootstrap-application.yaml
 - `destroy.sh` cleanly tears down everything
 - Workshop deployment is identical to current behavior
 - ArgoCD `targetRevision` references a versioned tag of `appmod-blueprints`
+- Hub-config is sourced from `patterns/workshop/hub-config.yaml` in `appmod-blueprints`
 
 ---
 
-#### Task 4.5 — Create Workshop `hub-config.yaml` in `platform-engineering-on-eks`
+#### Task 4.5 — Create Workshop Pattern in `appmod-blueprints/patterns/workshop/`
 
-**Doc Reference:** Section 3.4.2, Section 3.2.1
+**Doc Reference:** Section 3.4.2, Section 3.2.1, Section 2.2 (Target Repo Structure)
 
-**File to Create:** `platform-engineering-on-eks/hub-config.yaml`
+**Description:**
+Create the workshop-specific consumption pattern in `appmod-blueprints/patterns/workshop/`. This is a first-class citizen in the main repo alongside other patterns. Includes all workshop-specific bells and whistles: CloudFront, GitLab, Identity Center, Keycloak, all addons enabled.
 
-**Content:** Based on current `appmod-blueprints/platform/infra/terraform/hub-config.yaml` with additions:
-```yaml
-resource_prefix: peeks
-domain_name: cnoe.io
-git:
-  provider: gitlab
-identity:
-  provider: keycloak
-cicd:
-  provider: argo-workflows
-ingress:
-  type: cloudfront
-clusters:
-  hub:
-    addons:
-      # All addons enabled for workshop
-      enable_argocd: true
-      enable_backstage: true
-      enable_keycloak: true
-      enable_gitlab: true
-      # ... all other addons
-```
+**Files to Create (in `appmod-blueprints/patterns/workshop/`):**
+- `hub-config.yaml` — Workshop config with `apiVersion: appmod.aws/v1alpha1`, `kind: HubConfig`:
+  ```yaml
+  apiVersion: appmod.aws/v1alpha1
+  kind: HubConfig
+  resource_prefix: peeks
+  domain_name: cnoe.io
+  repo:
+    url: https://github.com/aws-samples/appmod-blueprints
+    revision: v1.0.0
+  git:
+    provider: gitlab
+    credentials:
+      secretRef: gitlab-credentials
+  identity:
+    provider: keycloak
+  cicd:
+    provider: argo-workflows
+  ingress:
+    type: cloudfront
+  clusters:
+    hub:
+      addons:
+        enable_argocd: true
+        enable_backstage: true
+        enable_keycloak: true
+        enable_gitlab: true
+        enable_kro: true
+        enable_crossplane: true
+        enable_identity_center: true
+        enable_cloudfront: true
+        enable_observability: true
+        # ... all other addons
+  ```
+- `bootstrap-application.yaml` — ArgoCD Application YAML pointing at `appmod-blueprints`
+- `cloudfront-values.yaml` — CloudFront distribution config (NLB origin, SSL, caching)
+- `gitlab-values.yaml` — GitLab integration config (PAT, project creation, repo URLs)
+- `identity-center-values.yaml` — AWS Identity Center setup (SSO, permission sets)
+- `README.md` — Workshop deployment guide:
+  - References `platform-engineering-on-eks` for cluster creation and orchestration
+  - Explains that this pattern provides the config; the workshop repo provides the infra
+  - Step-by-step: clone workshop repo → `deploy.sh` → platform self-manages using this config
 
 **Acceptance Criteria:**
-- Workshop config is self-contained in the workshop repo
-- Includes all new schema keys from Section 3.2.1
-- Backward compatible with current deployment
+- Workshop pattern is self-contained in `patterns/workshop/`
+- Hub-config includes `apiVersion`, `kind`, `repo`, `git.credentials.secretRef`
+- All workshop-specific configs (CloudFront, GitLab, Identity Center) are present
+- README clearly explains the relationship between `patterns/workshop/` and `platform-engineering-on-eks`
+- Pattern is referenced from `platform-engineering-on-eks/deploy.sh` (Task 4.4)
 
 ---
 
@@ -1618,7 +1968,7 @@ clusters:
 **Test Steps:**
 1. Start from clean AWS account
 2. Clone `platform-engineering-on-eks` repo
-3. Run `deploy.sh` (creates cluster via TF → installs ArgoCD → applies hub-config → points at `appmod-blueprints`)
+3. Run `deploy.sh` (creates cluster via TF → installs ArgoCD → applies hub-config from `appmod-blueprints/patterns/workshop/` → points at `appmod-blueprints`)
 4. Verify hub cluster created
 5. Verify ArgoCD is running and syncing addons from `appmod-blueprints`
 6. Verify Keycloak, GitLab, Backstage are running
@@ -1630,6 +1980,7 @@ clusters:
 - All 9 steps pass
 - No regressions from current workshop behavior
 - `appmod-blueprints` repo has zero workshop-specific code or Terraform
+- Workshop config is sourced from `patterns/workshop/` in `appmod-blueprints`
 
 ---
 
@@ -1638,17 +1989,20 @@ clusters:
 **Doc Reference:** Section 3.4
 
 **Files to Create:**
-- `platform-engineering-on-eks/docs/UPSTREAM-RELATIONSHIP.md` — How the workshop repo creates the cluster and hands off to `appmod-blueprints` for GitOps self-management
-- `appmod-blueprints/docs/WORKSHOP-SEPARATION.md` — Brief note explaining that workshop code lives in `platform-engineering-on-eks`
+- `platform-engineering-on-eks/docs/UPSTREAM-RELATIONSHIP.md` — How the workshop repo creates the cluster and hands off to `appmod-blueprints` for GitOps self-management. How `patterns/workshop/` in `appmod-blueprints` provides the canonical workshop configuration.
+- `appmod-blueprints/docs/WORKSHOP-SEPARATION.md` — Brief note explaining that workshop orchestration code lives in `platform-engineering-on-eks`, while workshop config patterns live in `patterns/workshop/` within `appmod-blueprints`
 
 **Content:**
 - Version pinning strategy (which `appmod-blueprints` tag the workshop uses)
 - How to update the workshop when `appmod-blueprints` releases a new version
 - Clear boundary definition: TF for cluster creation in workshop repo, GitOps for everything else in solution repo
+- How `patterns/workshop/` in `appmod-blueprints` is the canonical source for workshop config
+- Sync strategy: workshop repo references `patterns/workshop/hub-config.yaml` from `appmod-blueprints` via versioned tag
 
 **Acceptance Criteria:**
 - Relationship is clearly documented in both repos
 - Update/sync process is defined
+- `patterns/workshop/` role is clearly explained
 
 
 ---
@@ -2103,13 +2457,17 @@ Create conditional Kro RGDs in `compositions/hub-bootstrap/` for agent platform 
 **Doc Reference:** Section 5 (Consumption Patterns), DESIGN.md Section 6
 
 **Files to Create:**
-- `examples/agent-platform/hub-config.yaml`:
+- `patterns/agent-platform/hub-config.yaml`:
   ```yaml
+  apiVersion: appmod.aws/v1alpha1
+  kind: HubConfig
   domain_name: example.com
   resource_prefix: myplatform
   git:
     provider: github
     url: https://github.com/myorg/my-platform
+    credentials:
+      secretRef: git-credentials
   identity:
     provider: cognito
   clusters:
@@ -2123,8 +2481,8 @@ Create conditional Kro RGDs in `compositions/hub-bootstrap/` for agent platform 
         enable_crossplane: true
         enable_agent_platform: true  # Agent platform enabled
   ```
-- `examples/agent-platform/bootstrap-application.yaml` — ArgoCD Application YAML
-- `examples/agent-platform/README.md` — Explains the agent platform deployment pattern
+- `patterns/agent-platform/bootstrap-application.yaml` — ArgoCD Application YAML
+- `patterns/agent-platform/README.md` — Explains the agent platform deployment pattern
 
 **Acceptance Criteria:**
 - Config is valid and deployable
@@ -2278,7 +2636,7 @@ Update `docs/agent-platform/DESIGN.md` and supporting docs to remove all Terrafo
 **Test Scenarios:**
 
 **Scenario A: Agent Platform with GitHub + Cognito (non-workshop)**
-1. Use `examples/agent-platform/hub-config.yaml`
+1. Use `patterns/agent-platform/hub-config.yaml`
 2. Bootstrap hub cluster via ArgoCD (GitOps-native, no TF in solution repo)
 3. Verify compositions create agent platform IAM roles via ACK
 4. Verify bridge chart creates 7 ArgoCD Applications
