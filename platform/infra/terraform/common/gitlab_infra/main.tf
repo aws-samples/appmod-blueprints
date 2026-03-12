@@ -115,6 +115,10 @@ resource "aws_cloudfront_vpc_origin" "gitlab" {
     }
   }
 
+  timeouts {
+    create = "30m"
+  }
+
   lifecycle {
     replace_triggered_by = [
       kubernetes_service.gitlab_nlb.id
@@ -204,7 +208,7 @@ resource "helm_release" "gitlab" {
 
   name       = "gitlab"
   chart      = "${path.module}/../../../../../gitops/addons/charts/gitlab"
-  timeout    = 600
+  timeout    = 900
   values     = [local.gitlab_values]
   create_namespace = false
   namespace  = kubernetes_namespace.gitlab.metadata[0].name
