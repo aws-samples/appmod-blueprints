@@ -1,11 +1,13 @@
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: ${{values.table_name}}
-  description: DynamoDB table ${{values.table_name}}
+  name: ddb-table-${{values.table_name}}
+  description: DynamoDB Table for ${{ values.table_name }}
   annotations:
-    argocd/app-name: ${{values.table_name}}
+    backstage.io/kubernetes-namespace: ${{values.namespace}}
+    argocd/app-name: ${{values.table_name | dump}}
 spec:
-  type: service
-  lifecycle: production
-  owner: user:guest
+  type: dynamodb-table
+  lifecycle: experimental
+  owner: guest
+  system: ${{values.table_name | dump}}
