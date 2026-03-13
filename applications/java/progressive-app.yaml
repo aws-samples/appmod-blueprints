@@ -21,3 +21,29 @@ spec:
     enabled: true
     path: /progressive
     rewrite: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: progressive-app
+  namespace: team-java
+spec:
+  selector:
+    app: progressive-app
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: progressive-app-preview
+  namespace: team-java
+spec:
+  selector:
+    app: progressive-app
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
