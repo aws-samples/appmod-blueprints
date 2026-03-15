@@ -27,3 +27,14 @@ spec:
     enabled: true
     path: /rust-app
     rewrite: true
+  ## Uncomment the sections below to enable metrics-driven progressive delivery (Module 30)
+  # functionalGate:
+  #   enabled: true
+  #   image: "httpd:alpine"
+  #   extraArgs: "{"
+  #   path: "/collection/FRONT_PAGE"
+  # performanceGate:
+  #   enabled: true
+  # metrics:
+  #   enabled: true
+  #   path: "/collection/test"

@@ -21,7 +21,7 @@ spec:
             value: rust-app-table
         readinessProbe:
           httpGet:
-            path: /rust-app/
+            path: /collection/FRONT_PAGE
             port: 8080
           initialDelaySeconds: 10
           periodSeconds: 5

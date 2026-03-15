@@ -683,7 +683,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
+                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ \"$RESULT\" -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -725,7 +725,7 @@ spec:
               provider:
                 prometheus:
                   address: "{{args.amp-workspace-url}}"
-                  query: "up{k8s_container_name=\"${schema.spec.image_name}\", k8s_namespace_name=\"${schema.metadata.namespace}\"}"
+                  query: "up{container_name=\"${schema.spec.image_name}\", namespace=\"${schema.metadata.namespace}\"}"
                   authentication:
                     sigv4:
                       region: "{{args.amp-workspace-region}}"

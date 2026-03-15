@@ -226,6 +226,46 @@ resource "aws_iam_role_policy" "eks_capability_ack_assume_workload_roles" {
   })
 }
 
+# ACK Capability Role - IAM permissions for managing IRSA roles on spoke clusters
+# Addons (e.g. argo-rollouts) use ACK iam.services.k8s.aws/Role to create IRSA roles.
+# Scoped to roles prefixed with the cluster name to prevent cross-cluster access.
+resource "aws_iam_role_policy" "eks_capability_ack_manage_irsa_roles" {
+  for_each = { for k, v in var.clusters : k => v if v.environment != "control-plane" }
+
+  name = "ManageIRSARoles"
+  role = aws_iam_role.eks_capability_ack[each.key].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:GetRole",
+          "iam:CreateRole",
+          "iam:DeleteRole",
+          "iam:TagRole",
+          "iam:UntagRole",
+          "iam:UpdateRole",
+          "iam:UpdateAssumeRolePolicy",
+          "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:ListAttachedRolePolicies",
+          "iam:ListRolePolicies",
+          "iam:ListRoleTags",
+          "iam:ListInstanceProfilesForRole",
+          "iam:PutRolePolicy",
+          "iam:DeleteRolePolicy",
+          "iam:GetRolePolicy"
+        ]
+        Resource = [
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${each.value.name}-*"
+        ]
+      }
+    ]
+  })
+}
+
 # ArgoCD Capability Role Policies (requires Identity Center)
 resource "aws_iam_role_policy_attachment" "eks_capability_argocd_secrets" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
