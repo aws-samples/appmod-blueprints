@@ -1491,7 +1491,7 @@ spec:
                     arguments:
                       parameters:
                         - name: namespace
-                          value: team-"{{workflow.parameters.appname}}"
+                          value: team-{{workflow.parameters.appname}}
                         - name: body
                           value: "{{workflow.parameters.body}}"
                 - - name: process-and-send-deployment
