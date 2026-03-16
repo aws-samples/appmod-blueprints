@@ -281,29 +281,26 @@ spec:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
               serviceAccountName: ${serviceaccountWithDynamoDB.metadata.name}
-              initContainers:
-                - name: wait-for-pod-identity
-                  image: public.ecr.aws/aws-cli/aws-cli:latest
-                  command: ["sh", "-c"]
-                  args:
-                    - |
-                      for i in $(seq 1 30); do
-                        if [ -n "$AWS_CONTAINER_CREDENTIALS_FULL_URI" ]; then
-                          CALLER=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null)
-                          if [ $? -eq 0 ] && echo "$CALLER" | grep -qv "node-group"; then
-                            echo "Pod Identity ready: $CALLER"; exit 0
-                          fi
-                        fi
-                        echo "Attempt $i/30 - waiting for Pod Identity..."; sleep 2
-                      done
-                      echo "ERROR: Pod Identity not available after 60s"; exit 1
+              volumes:
+                - name: eks-pod-identity-token
+                  projected:
+                    defaultMode: 420
+                    sources:
+                      - serviceAccountToken:
+                          audience: pods.eks.amazonaws.com
+                          expirationSeconds: 86400
+                          path: eks-pod-identity-token
               containers:
                 - name: ${schema.spec.image_name}
                   image: ${schema.spec.image}
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env.map(e, {\"name\": e.name, \"value\": e.value}) + [{\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}] : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}, {\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}]}"
+                  volumeMounts:
+                    - name: eks-pod-identity-token
+                      mountPath: /var/run/secrets/pods.eks.amazonaws.com/serviceaccount/
+                      readOnly: true
 
     - id: rolloutWithoutDynamoDB
       includeWhen:
@@ -417,29 +414,26 @@ spec:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
               serviceAccountName: ${serviceaccountWithDynamoDB.metadata.name}
-              initContainers:
-                - name: wait-for-pod-identity
-                  image: public.ecr.aws/aws-cli/aws-cli:latest
-                  command: ["sh", "-c"]
-                  args:
-                    - |
-                      for i in $(seq 1 30); do
-                        if [ -n "$AWS_CONTAINER_CREDENTIALS_FULL_URI" ]; then
-                          CALLER=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null)
-                          if [ $? -eq 0 ] && echo "$CALLER" | grep -qv "node-group"; then
-                            echo "Pod Identity ready: $CALLER"; exit 0
-                          fi
-                        fi
-                        echo "Attempt $i/30 - waiting for Pod Identity..."; sleep 2
-                      done
-                      echo "ERROR: Pod Identity not available after 60s"; exit 1
+              volumes:
+                - name: eks-pod-identity-token
+                  projected:
+                    defaultMode: 420
+                    sources:
+                      - serviceAccountToken:
+                          audience: pods.eks.amazonaws.com
+                          expirationSeconds: 86400
+                          path: eks-pod-identity-token
               containers:
                 - name: ${schema.spec.image_name}
                   image: ${schema.spec.image}
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env.map(e, {\"name\": e.name, \"value\": e.value}) + [{\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}] : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}, {\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}]}"
+                  volumeMounts:
+                    - name: eks-pod-identity-token
+                      mountPath: /var/run/secrets/pods.eks.amazonaws.com/serviceaccount/
+                      readOnly: true
 
     - id: rolloutWithGatesWithoutDynamoDB
       includeWhen:
