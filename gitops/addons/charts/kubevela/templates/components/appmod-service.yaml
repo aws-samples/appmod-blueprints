@@ -316,7 +316,7 @@ spec:
         									command: ["sh"]
         									args: [
         										"-c",
-        										"wget -qO- http://\(previewService):\(parameter.port)\(parameter.appPath)/ | grep -q '\(parameter.functionalGate.extraArgs)'"
+        										"set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://\(previewService):\(parameter.port)\(parameter.appPath)/ 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: \(parameter.functionalGate.extraArgs)'; if echo \"$RESPONSE\" | grep -q '\(parameter.functionalGate.extraArgs)'; then echo 'PASS: Found \(parameter.functionalGate.extraArgs)'; exit 0; else echo 'FAIL: \(parameter.functionalGate.extraArgs) not found'; exit 1; fi"
         									]
         								},
         							]
