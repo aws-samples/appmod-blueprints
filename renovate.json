@@ -107,7 +107,7 @@
         "/addons\\.ya?ml$/"
       ],
       "matchStrings": [
-        "chartName:\\s*(?<depName>[^\\s]+)\\s+[^]*?defaultVersion:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?\\s+chartRepository:\\s*['\"]?(?<registryUrl>https://[^'\"\\s]+)['\"]?"
+        "chartName:\\s*(?<depName>[^\\s]+)[\\s\\S]*?defaultVersion:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?[\\s\\S]*?chartRepository:\\s*['\"]?(?<registryUrl>https://[^'\"\\s]+)['\"]?"
       ],
       "datasourceTemplate": "helm"
     }
