@@ -25,6 +25,7 @@ spec:
     enabled: true
     image: "httpd:alpine"
     extraArgs: "red"
+    path: "/java-app/"
   performanceGate:
     enabled: true
     image: "httpd:alpine"

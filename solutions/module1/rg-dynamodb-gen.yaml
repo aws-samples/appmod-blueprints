@@ -13,7 +13,7 @@ spec:
       region: string
       accountId: string
       attributeName: string
-      attributeType: string
+      attributeType: string | default="S"
     status:
       tableStatus: ${dynamodbtable.status.conditions}
   resources:
@@ -34,7 +34,7 @@ spec:
             version: ""
   - id: dynamodbtable
     readyWhen:
-      - ${dynamodbtable.status.conditions[0].status == "True"}
+      - ${dynamodbtable.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
     template:
       apiVersion: dynamodb.services.k8s.aws/v1alpha1
       kind: Table

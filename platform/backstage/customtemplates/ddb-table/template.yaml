@@ -1,7 +1,7 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: dynamodb-table-template-ack-kro
+  name: ddb-table-template-ack-kro
   title: DynamoDB Table Template ACK with KRO
   description: Create DynamoDB table using KRO and ACK
 spec:
@@ -11,6 +11,7 @@ spec:
     - title: Provide DynamoDB Table Information
       required:
         - table_name
+        - environment
         - region
         - attributeName
         - attributeType
@@ -19,6 +20,11 @@ spec:
           title: Table Name
           type: string
           description: Name of the DynamoDB table
+        environment:
+          title: Environment
+          type: string
+          description: The environment (e.g., dev, prod)
+          enum: ['dev', 'prod']
         region:
           title: Region
           type: string
@@ -28,21 +34,21 @@ spec:
           title: AWS Account ID
           type: string
           description: AWS Account ID (defaults to current account)
-        attributeName:
-          title: Primary Key Attribute Name
-          type: string
-          description: Name of the primary key attribute
-          default: id
-        attributeType:
-          title: Primary Key Attribute Type
-          type: string
-          description: Type of the primary key attribute
-          enum: ['S', 'N', 'B']
-          default: S
         namespace:
           default: default
           title: Existing namespace to create this resource
           type: string
+        attributeName:
+          title: Partition Key Name
+          type: string
+          description: Name of the partition key attribute
+          default: id
+        attributeType:
+          title: Partition Key Type
+          type: string
+          description: Type of the partition key attribute
+          enum: ['S', 'N', 'B']
+          default: S
   steps:
     - id: fetchSystem
       name: Fetch System
@@ -57,6 +63,7 @@ spec:
         values:
           table_name: ${{ parameters.table_name }}
           namespace: ${{ parameters.namespace }}
+          environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
           accountId: ${{ parameters.accountId | default(steps['fetchSystem'].output.entity.spec.aws_account_id) }}
           attributeName: ${{ parameters.attributeName }}
@@ -100,7 +107,7 @@ spec:
               ignore:
               - kind: Table
     - id: create-argocd-app
-      name: Create ArgoCD App
+      name: Create ArgoCD App with Pruning Disabled
       action: kube:apply
       input:
         namespaced: true
@@ -146,6 +153,11 @@ spec:
       input:
         repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.table_name}}/-/blob/main
         catalogInfoPath: "/catalog-info.yaml"
+    - id: template-output
+      name: Template Output
+      action: debug:log
+      input:
+        listWorkspace: true
   output:
     links:
       - title: Repository
@@ -155,3 +167,11 @@ spec:
       - title: ArgoCD Application
         url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{ parameters.table_name }}?view=tree&resource=
         icon: web
+    text:
+      - title: Manual Catalog Registration
+        content: |
+          To register this component in Backstage catalog, go to:
+          /catalog-import
+          
+          And add this URL:
+          ${{ steps.publish.output.remoteUrl }}/-/blob/main/catalog-info.yaml
