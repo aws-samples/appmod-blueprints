@@ -1,6 +1,14 @@
 use rocket::serde::json::Json;
 use rocket::Responder;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
+
+fn serialize_option_vec<S, T: Serialize>(value: &Option<Vec<T>>, serializer: S) -> Result<S::Ok, S::Error>
+where S: Serializer {
+    match value {
+        Some(v) => v.serialize(serializer),
+        None => Vec::<T>::new().serialize(serializer),
+    }
+}
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Menu {
@@ -67,7 +75,9 @@ pub struct Product {
     pub name: String,
     pub description: String,
     pub inventory: usize,
+    #[serde(default, serialize_with = "serialize_option_vec")]
     pub options: Option<Vec<ProductOption>>,
+    #[serde(default, serialize_with = "serialize_option_vec")]
     pub variants: Option<Vec<ProductVariant>>,
     pub price: String,
     pub images: Vec<Image>,

@@ -47,6 +47,12 @@ spec:
       metrics:
         enabled: boolean | default=false
         path: string | default="/collection/FRONT_PAGE"
+      resources:
+        requests:
+          cpu: string | default="100m"
+          memory: string | default="128Mi"
+        limits:
+          memory: string | default="512Mi"
   resources:
     - id: iamroleselector
       includeWhen:
@@ -296,6 +302,12 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.resources.requests.cpu}
+                      memory: ${schema.spec.resources.requests.memory}
+                    limits:
+                      memory: ${schema.spec.resources.limits.memory}
                   env: "${size(schema.spec.env) > 0 ? schema.spec.env.map(e, {\"name\": e.name, \"value\": e.value}) + [{\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}] : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}, {\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}]}"
                   volumeMounts:
                     - name: eks-pod-identity-token
@@ -354,6 +366,12 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.resources.requests.cpu}
+                      memory: ${schema.spec.resources.requests.memory}
+                    limits:
+                      memory: ${schema.spec.resources.limits.memory}
                   env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
 
     - id: rolloutWithGatesAndDynamoDB
@@ -429,6 +447,12 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.resources.requests.cpu}
+                      memory: ${schema.spec.resources.requests.memory}
+                    limits:
+                      memory: ${schema.spec.resources.limits.memory}
                   env: "${size(schema.spec.env) > 0 ? schema.spec.env.map(e, {\"name\": e.name, \"value\": e.value}) + [{\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}] : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}, {\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}]}"
                   volumeMounts:
                     - name: eks-pod-identity-token
@@ -499,6 +523,12 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.resources.requests.cpu}
+                      memory: ${schema.spec.resources.requests.memory}
+                    limits:
+                      memory: ${schema.spec.resources.limits.memory}
                   env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
 
     # Services removed from Kro - Argo Rollouts will create and manage them automatically

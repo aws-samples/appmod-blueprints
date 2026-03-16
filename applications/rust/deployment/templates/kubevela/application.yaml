@@ -4,8 +4,10 @@ metadata:
   name: rust-application
 spec:
   components:
-    - name: rust-webservice
+    - name: rust-microservice
       type: appmod-service
+      dependsOn:
+        - rust-service-account-sa
       properties:
         image: <image>
         image_name: rust-app

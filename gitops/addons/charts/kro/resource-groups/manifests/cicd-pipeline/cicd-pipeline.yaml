@@ -2306,6 +2306,8 @@ spec:
              app.kubernetes.io/managed-by: kro
              triggered-by: initial-setup
        spec:
+          ttlStrategy:
+            secondsAfterCompletion: 31536000
           serviceAccountName: ${serviceaccount.metadata.name}
           workflowTemplateRef:
               name: ${cicdworkflow.metadata.name}
