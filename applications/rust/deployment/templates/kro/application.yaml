@@ -15,6 +15,8 @@ spec:
   env:
     - name: TABLE_NAME
       value: rust-app-table
+    - name: AWS_REGION
+      value: "${AWS_REGION}"
   components:
     dynamodb:
       enabled: true

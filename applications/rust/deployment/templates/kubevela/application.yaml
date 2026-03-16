@@ -21,6 +21,8 @@ spec:
             value: "DEV"
           - name: TABLE_NAME
             value: rust-app-table
+          - name: AWS_REGION
+            value: "${AWS_REGION}"
         readinessProbe:
           httpGet:
             path: /collection/FRONT_PAGE
