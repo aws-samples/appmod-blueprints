@@ -1403,6 +1403,9 @@ spec:
                        find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g"
                      fi
 
+                     # Update publishVersion for KubeVela Applications to trigger re-render (no-op for Kro manifests)
+                     find . -name "*.yaml" -o -name "*.yml" | xargs grep -l "publishVersion" 2>/dev/null | xargs -r sed -i "s|app.oam.dev/publishVersion:.*|app.oam.dev/publishVersion: \"$IMAGE_URI\"|g"
+
                      # Show what changed
                      git diff
 
