@@ -2,6 +2,7 @@ apiVersion: core.oam.dev/v1beta1
 kind: Application
 metadata:
   name: progressive-app
+  namespace: team-java
 spec:
   components:
     - name: progressive-demo

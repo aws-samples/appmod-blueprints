@@ -1387,20 +1387,12 @@ spec:
                      IMAGE_URI="${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}"
                      echo "Updating image to: $IMAGE_URI"
 
-                     # Update various deployment file formats
+                     # Update various deployment file formats - only dev environment
                      echo "Debug: Application name is: ${schema.spec.application.name}"
-                     # Update image only for java applications in deployment/dev/application.yaml
-                     if [ "${schema.spec.application.name}" = "java" ]; then
-                       if [ -f "dev/application.yaml" ]; then
-                         sed -i "s|image: <image>|image: $IMAGE_URI|g" dev/application.yaml
-                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" dev/application.yaml
-                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" dev/application.yaml
-                       fi
-                     else
-                       # Replace placeholder and existing ECR images for non-java applications
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: <image>|image: $IMAGE_URI|g"
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g"
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g"
+                     if [ -f "dev/application.yaml" ]; then
+                       sed -i "s|image: <image>|image: $IMAGE_URI|g" dev/application.yaml
+                       sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" dev/application.yaml
+                       sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" dev/application.yaml
                      fi
 
                      # Show what changed
@@ -1491,7 +1483,7 @@ spec:
                     arguments:
                       parameters:
                         - name: namespace
-                          value: team-"{{workflow.parameters.appname}}"
+                          value: team-{{workflow.parameters.appname}}
                         - name: body
                           value: "{{workflow.parameters.body}}"
                 - - name: process-and-send-deployment
@@ -2306,6 +2298,8 @@ spec:
              app.kubernetes.io/managed-by: kro
              triggered-by: initial-setup
        spec:
+          ttlStrategy:
+            secondsAfterCompletion: 31536000
           serviceAccountName: ${serviceaccount.metadata.name}
           workflowTemplateRef:
               name: ${cicdworkflow.metadata.name}

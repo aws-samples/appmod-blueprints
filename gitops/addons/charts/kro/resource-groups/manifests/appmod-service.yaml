@@ -46,7 +46,15 @@ spec:
         pause: string | default="5s"
       metrics:
         enabled: boolean | default=false
+        pause: string | default="2s"
         path: string | default="/collection/FRONT_PAGE"
+        evaluationCriteria: "[]map[string]string | default=[]"
+      resources:
+        requests:
+          cpu: string | default="100m"
+          memory: string | default="128Mi"
+        limits:
+          memory: string | default="512Mi"
   resources:
     - id: iamroleselector
       includeWhen:
@@ -281,13 +289,32 @@ spec:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
               serviceAccountName: ${serviceaccountWithDynamoDB.metadata.name}
+              volumes:
+                - name: eks-pod-identity-token
+                  projected:
+                    defaultMode: 420
+                    sources:
+                      - serviceAccountToken:
+                          audience: pods.eks.amazonaws.com
+                          expirationSeconds: 86400
+                          path: eks-pod-identity-token
               containers:
                 - name: ${schema.spec.image_name}
                   image: ${schema.spec.image}
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.resources.requests.cpu}
+                      memory: ${schema.spec.resources.requests.memory}
+                    limits:
+                      memory: ${schema.spec.resources.limits.memory}
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env.map(e, {\"name\": e.name, \"value\": e.value}) + [{\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}] : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}, {\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}]}"
+                  volumeMounts:
+                    - name: eks-pod-identity-token
+                      mountPath: /var/run/secrets/pods.eks.amazonaws.com/serviceaccount/
+                      readOnly: true
 
     - id: rolloutWithoutDynamoDB
       includeWhen:
@@ -341,6 +368,12 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.resources.requests.cpu}
+                      memory: ${schema.spec.resources.requests.memory}
+                    limits:
+                      memory: ${schema.spec.resources.limits.memory}
                   env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
 
     - id: rolloutWithGatesAndDynamoDB
@@ -392,6 +425,14 @@ spec:
                     args:
                     - name: service-name
                       value: ${schema.metadata.name}
+                - pause:
+                    duration: ${schema.spec.metrics.pause}
+                - analysis:
+                    templates:
+                    - templateName: metrics-${schema.metadata.name}
+                    args:
+                    - name: service-name
+                      value: ${schema.metadata.name}-preview
                 - setWeight: 80
           template:
             metadata:
@@ -401,13 +442,32 @@ spec:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
               serviceAccountName: ${serviceaccountWithDynamoDB.metadata.name}
+              volumes:
+                - name: eks-pod-identity-token
+                  projected:
+                    defaultMode: 420
+                    sources:
+                      - serviceAccountToken:
+                          audience: pods.eks.amazonaws.com
+                          expirationSeconds: 86400
+                          path: eks-pod-identity-token
               containers:
                 - name: ${schema.spec.image_name}
                   image: ${schema.spec.image}
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.resources.requests.cpu}
+                      memory: ${schema.spec.resources.requests.memory}
+                    limits:
+                      memory: ${schema.spec.resources.limits.memory}
+                  env: "${size(schema.spec.env) > 0 ? schema.spec.env.map(e, {\"name\": e.name, \"value\": e.value}) + [{\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}] : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}, {\"name\": \"AWS_CONTAINER_CREDENTIALS_FULL_URI\", \"value\": \"http://169.254.170.23/v1/credentials\"}, {\"name\": \"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE\", \"value\": \"/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token\"}]}"
+                  volumeMounts:
+                    - name: eks-pod-identity-token
+                      mountPath: /var/run/secrets/pods.eks.amazonaws.com/serviceaccount/
+                      readOnly: true
 
     - id: rolloutWithGatesWithoutDynamoDB
       includeWhen:
@@ -458,6 +518,14 @@ spec:
                     args:
                     - name: service-name
                       value: ${schema.metadata.name}
+                - pause:
+                    duration: ${schema.spec.metrics.pause}
+                - analysis:
+                    templates:
+                    - templateName: metrics-${schema.metadata.name}
+                    args:
+                    - name: service-name
+                      value: ${schema.metadata.name}-preview
                 - setWeight: 80
           template:
             metadata:
@@ -473,6 +541,12 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.resources.requests.cpu}
+                      memory: ${schema.spec.resources.requests.memory}
+                    limits:
+                      memory: ${schema.spec.resources.limits.memory}
                   env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
 
     # Services removed from Kro - Argo Rollouts will create and manage them automatically
@@ -683,7 +757,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
+                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ \"$RESULT\" -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -717,18 +791,7 @@ spec:
                 secretKeyRef:
                   name: ${ampsecrets.spec.target.name}
                   key: amp-workspace-region
-          metrics:
-            - name: metric0-${schema.metadata.name}
-              interval: 1s
-              count: 1
-              successCondition: "result[0] > 0"
-              provider:
-                prometheus:
-                  address: "{{args.amp-workspace-url}}"
-                  query: "up{k8s_container_name=\"${schema.spec.image_name}\", k8s_namespace_name=\"${schema.metadata.namespace}\"}"
-                  authentication:
-                    sigv4:
-                      region: "{{args.amp-workspace-region}}"
+          metrics: "${schema.spec.metrics.evaluationCriteria.map(c, c.successOrFailCondition == 'success' ? {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'successCondition': 'result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}} : {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'failureCondition': 'result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}})}"
 
     - id: benchmarkconfig
       includeWhen:

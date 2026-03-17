@@ -694,7 +694,7 @@ argo-rollouts:
         limits:
           memory: 256Mi
     serviceAccount:
-      annotations: # Using IRSA as Pod Identity is not supported
+      annotations:
         eks.amazonaws.com/role-arn: 'arn:aws:iam::{{.metadata.annotations.aws_account_id}}:role/{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
     extraObjects:
       - apiVersion: iam.services.k8s.aws/v1alpha1
@@ -702,10 +702,11 @@ argo-rollouts:
         metadata:
           name: '{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
           annotations:
-            argocd.argoproj.io/sync-wave: '-1' # Should be created before SA
+            argocd.argoproj.io/sync-wave: '-1'
+            services.k8s.aws/region: '{{.metadata.annotations.aws_region}}'
         spec:
           name: '{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
-          description: 'IRSA role for Argo Rollouts'
+          description: 'IRSA role for Argo Rollouts - managed by ACK'
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",

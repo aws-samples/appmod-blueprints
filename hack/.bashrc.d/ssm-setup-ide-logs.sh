@@ -75,5 +75,13 @@ argocd-refresh-token() {
     export ARGOCD_AUTH_TOKEN="$token"
     export ARGOCD_SERVER=$(echo "$server_url" | sed 's|https://||;s|/.*||')
     export ARGOCD_OPTS="--grpc-web"
+
+    # Persist to platform.sh so new shells pick up the refreshed token
+    local platform_sh="$HOME/.bashrc.d/platform.sh"
+    if [[ -f "$platform_sh" ]]; then
+        sed -i "s|^export ARGOCD_AUTH_TOKEN=.*|export ARGOCD_AUTH_TOKEN=\"$token\"|" "$platform_sh"
+        sed -i "s|^export ARGOCD_SERVER=.*|export ARGOCD_SERVER=\"$ARGOCD_SERVER\"|" "$platform_sh"
+    fi
+
     echo "ArgoCD token refreshed. Server: $ARGOCD_SERVER"
 }

@@ -4,8 +4,10 @@ metadata:
   name: rust-application
 spec:
   components:
-    - name: rust-webservice
+    - name: rust-microservice
       type: appmod-service
+      dependsOn:
+        - rust-service-account-sa
       properties:
         image: <image>
         image_name: rust-app
@@ -19,9 +21,11 @@ spec:
             value: "DEV"
           - name: TABLE_NAME
             value: rust-app-table
+          - name: AWS_REGION
+            value: "${AWS_REGION}"
         readinessProbe:
           httpGet:
-            path: /rust-app/
+            path: /collection/FRONT_PAGE
             port: 8080
           initialDelaySeconds: 10
           periodSeconds: 5

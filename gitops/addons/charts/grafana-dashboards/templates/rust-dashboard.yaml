@@ -286,7 +286,7 @@ spec:
                 "type": "prometheus",
                 "uid": "$datasource"
               },
-              "expr": "rate(process_cpu_seconds_total{k8s_container_name=\"rust-app\"}[1m])",
+              "expr": "rate(process_cpu_seconds_total{container_name=\"rust-app\"}[1m])",
               "legendFormat": "process",
               "refId": "A"
             },
@@ -295,7 +295,7 @@ spec:
                 "type": "prometheus",
                 "uid": "$datasource"
               },
-              "expr": "sum(rate(container_cpu_usage_seconds_total{k8s_container_name=\"rust-app\"}[1m])) by (name)",
+              "expr": "sum(rate(container_cpu_usage_seconds_total{container_name=\"rust-app\"}[1m])) by (name)",
               "legendFormat": "container",
               "refId": "B"
             }
@@ -329,7 +329,7 @@ spec:
                 "type": "prometheus",
                 "uid": "$datasource"
               },
-              "expr": "process_resident_memory_bytes{k8s_container_name=\"rust-app\"} / 1024 / 1024",
+              "expr": "process_resident_memory_bytes{container_name=\"rust-app\"} / 1024 / 1024",
               "legendFormat": "process",
               "refId": "A"
             },
@@ -338,7 +338,7 @@ spec:
                 "type": "prometheus",
                 "uid": "$datasource"
               },
-              "expr": "container_memory_usage_bytes{k8s_container_name=\"rust-app\"} / 1024 / 1024",
+              "expr": "container_memory_usage_bytes{container_name=\"rust-app\"} / 1024 / 1024",
               "legendFormat": "container",
               "refId": "B"
             }

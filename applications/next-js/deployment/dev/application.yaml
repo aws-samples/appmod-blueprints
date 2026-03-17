@@ -6,7 +6,7 @@ metadata:
 spec:
   image: public.ecr.aws/a0m0j3q7/modernengg/nextjs-ui:latest
   image_name: next-js-app
-  replicas: 1
+  replicas: 2
   port: 8080
   targetPort: 8080
   serviceAccount: nextjs-service-account
@@ -15,6 +15,12 @@ spec:
   env:
     - name: API_BASE_URL
       value: "http://rust-microservice.team-rust.svc.cluster.local:8080"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "256Mi"
+    limits:
+      memory: "512Mi"
   components:
     dynamodb:
       enabled: false

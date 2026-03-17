@@ -15,7 +15,7 @@ spec:
         let previewService = "\(context.name)-preview"
         let ampWorkspaceUrl = "{{ "{{" }}args.amp-workspace-url{{ "}}" }}" //TODO: inconsistent with cue, needs to be looked at
         let ampWorkspaceRegion = "{{ "{{" }}args.amp-workspace-region{{ "}}" }}" //TODO: inconsistent with cue, needs to be looked at
-        let prometheusTargetQuery = "k8s_container_name=\"\(parameter.image_name)\", k8s_namespace_name=\"\(context.namespace)\""
+        let prometheusTargetQuery = "container_name=\"\(parameter.image_name)\", namespace=\"\(context.namespace)\""
 
         output: {
         	apiVersion: "argoproj.io/v1alpha1"
@@ -127,6 +127,21 @@ spec:
                 }
               }
         			spec: {
+        				if parameter.serviceAccount != "default" {
+        					volumes: [{
+        						name: "eks-pod-identity-token"
+        						projected: {
+        							defaultMode: 420
+        							sources: [{
+        								serviceAccountToken: {
+        									audience:          "pods.eks.amazonaws.com"
+        									expirationSeconds: 86400
+        									path:              "eks-pod-identity-token"
+        								}
+        							}]
+        						}
+        					}]
+        				}
         				containers: [{
         					image:           parameter.image
         					imagePullPolicy: "Always"
@@ -134,9 +149,28 @@ spec:
         					ports: [{
         						containerPort: parameter.targetPort
         					}]
-        					if parameter.env != _|_ {
-        						env: parameter.env
+        					if parameter.serviceAccount != "default" {
+        						volumeMounts: [{
+        							name:      "eks-pod-identity-token"
+        							mountPath: "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/"
+        							readOnly:  true
+        						}]
         					}
+        					env: [
+        						if parameter.env != _|_ for _, e in parameter.env {e},
+        						if parameter.serviceAccount != "default" {
+        							{
+        								name:  "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"
+        								value: "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token"
+        							}
+        						},
+        						if parameter.serviceAccount != "default" {
+        							{
+        								name:  "AWS_CONTAINER_CREDENTIALS_FULL_URI"
+        								value: "http://169.254.170.23/v1/credentials"
+        							}
+        						},
+        					]
         					if parameter.readinessProbe != _|_ {
         						readinessProbe: parameter.readinessProbe
         					}
@@ -237,7 +271,7 @@ spec:
         				metrics:
         				[
         					for idx, criteria in parameter.metrics.evaluationCriteria {
-        						name: "metric[\(idx)]-\(context.name): \(criteria.metric)"
+        						name: "m\(idx)"
         						if criteria.successOrFailCondition == "success" {
         							interval:         criteria.interval
         							count:            criteria.count
@@ -272,7 +306,7 @@ spec:
         			metadata: name: "functional-gate-\(context.name)"
         			spec: metrics: [
         				{
-        					name: "\(context.name)-metrics"
+        					name: "fn-gate"
         					provider: job: spec: {
         						template: spec: {
         							containers: [
@@ -282,7 +316,7 @@ spec:
         									command: ["sh"]
         									args: [
         										"-c",
-        										"wget -qO- http://\(previewService):\(parameter.port)\(parameter.appPath)/ | grep -q '\(parameter.functionalGate.extraArgs)'"
+        										"set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://\(previewService):\(parameter.port)\(parameter.appPath)/ 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: \(parameter.functionalGate.extraArgs)'; if echo \"$RESPONSE\" | grep -q '\(parameter.functionalGate.extraArgs)'; then echo 'PASS: Found \(parameter.functionalGate.extraArgs)'; exit 0; else echo 'FAIL: \(parameter.functionalGate.extraArgs) not found'; exit 1; fi"
         									]
         								},
         							]
@@ -301,7 +335,7 @@ spec:
         			metadata: name: "performance-gate-\(context.name)"
         			spec: metrics: [
         				{
-        					name: "\(context.name)-metrics"
+        					name: "perf-gate"
         					provider: job: spec: {
         						template: spec: {
         							containers: [
