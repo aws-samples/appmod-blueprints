@@ -92,10 +92,13 @@ The Backstage template triggers two Argo Workflow pipelines in sequence:
 
 Poll until both complete:
 
+> **FIX (validated 2026-03-15):** The workflows do NOT have the label `app=rust`.
+> Use `kubectl get workflows -n team-rust` without the label selector instead.
+
 ```bash
 hub
-# Check setup workflow
-kubectl get workflows -n team-rust -l app=rust --sort-by=.metadata.creationTimestamp
+# Check setup workflow — NOTE: no -l label filter, workflows don't carry app=rust
+kubectl get workflows -n team-rust --sort-by=.metadata.creationTimestamp
 ```
 
 Wait until you see both workflows with `Succeeded` phase. This can take up to 15 minutes total.
@@ -138,6 +141,18 @@ git push origin main
 
 Wait 3-4 minutes for ArgoCD to sync and pods to start.
 
+> **FIX (validated 2026-03-15):** ArgoCD may not pick up the `AppmodService` CRD resource
+> on the first automatic sync (it only syncs the `Service` resources from `services.yaml`).
+> You must force a manual sync to make ArgoCD discover and apply the `application.yaml`:
+>
+> ```bash
+> hub
+> kubectl patch application rust-dev-cd -n argocd --type merge \
+>   -p '{"operation": {"initiatedBy": {"username": "admin"}, "sync": {"revision": "HEAD"}}}'
+> ```
+>
+> Then wait ~60s for the AppModService to be created and pods to start.
+
 **Verify**:
 
 ```bash
@@ -148,9 +163,12 @@ kubectl get pods -n team-rust
 Pods should be `Running`. If you see `CrashLoopBackOff` (Pod Identity race condition with kro),
 restart the deployment and wait:
 
+> **FIX (validated 2026-03-15):** The kro template creates an Argo `Rollout`, not a `Deployment`.
+> Use `kubectl argo rollouts restart` instead of `kubectl rollout restart deployment/`:
+
 ```bash
-kubectl rollout restart deployment/rust-microservice -n team-rust
-sleep 30
+kubectl argo rollouts restart rust-microservice -n team-rust
+sleep 60
 kubectl get pods -n team-rust
 ```
 
@@ -276,7 +294,8 @@ Wait for the `java-cicd-setup-workflow` to complete, then place the kro template
 ```bash
 hub
 # Poll for setup workflow completion (up to 10 min)
-kubectl get workflows -n team-java -l app=java --sort-by=.metadata.creationTimestamp
+# NOTE: no -l label filter, workflows don't carry app=java
+kubectl get workflows -n team-java --sort-by=.metadata.creationTimestamp
 ```
 
 Once `java-cicd-setup-workflow` shows `Succeeded`, copy the template and trigger CI:
@@ -298,7 +317,8 @@ Wait for `java-cicd-cicd-*` workflow to complete (~4 min):
 
 ```bash
 hub
-kubectl get workflows -n team-java -l app=java --sort-by=.metadata.creationTimestamp
+# NOTE: no -l label filter, workflows don't carry app=java
+kubectl get workflows -n team-java --sort-by=.metadata.creationTimestamp
 ```
 
 **Verify** — the CI pipeline updated the image tag:
@@ -348,7 +368,7 @@ Wait for the CI pipeline to build the new image (~4 min):
 
 ```bash
 hub
-kubectl get workflows -n team-java -l app=java --sort-by=.metadata.creationTimestamp --no-headers | tail -1
+kubectl get workflows -n team-java --sort-by=.metadata.creationTimestamp --no-headers | tail -1
 ```
 
 Once the latest workflow shows `Succeeded`, force sync and watch the rollout:
@@ -446,21 +466,36 @@ cd ~/environment/applications/rust
 git pull
 ```
 
-Open `deployment/dev/application.yaml` and add the following fields at the end of the `spec` block
-(after the `ingress` section, before the closing of the spec):
+The template already contains the gate sections commented out. Uncomment them in the dev manifest:
+
+```bash
+cd ~/environment/applications/rust
+sed -i 's/^  # /  /' deployment/dev/application.yaml
+sed -i '/^  ##/d' deployment/dev/application.yaml
+```
+
+This produces the following fields at the end of the `spec` block:
 
 ```yaml
   functionalGate:
     enabled: true
     image: "httpd:alpine"
     extraArgs: "{"
+    path: "/collection/FRONT_PAGE"
   performanceGate:
     enabled: true
-    image: "artilleryio/artillery:latest"
   metrics:
     enabled: true
     path: "/collection/test"
 ```
+
+> **NOTE (validated 2026-03-15):** Key values already set in the template:
+> - `functionalGate.path: "/collection/FRONT_PAGE"` — the RGD default is `"/"` which returns
+>   404 on the Rust app, causing wget to fail before the grep test runs.
+> - `performanceGate.image` is omitted — the RGD default `"httpd:alpine"` is correct
+>   (it includes `ab`). Do NOT override with `artilleryio/artillery:latest` which lacks `ab`.
+> - The performance gate shell script in the RGD now properly quotes `$RESULT` to prevent
+>   false passes when `ab` fails silently.
 
 The final file should have `functionalGate`, `performanceGate`, and `metrics` as siblings of
 `ingress` under `spec`.
@@ -519,6 +554,10 @@ kubectl argo rollouts get rollout rust-microservice -n team-rust --no-color
 
 **Expected**: Rollout should fail and roll back (metrics threshold exceeded — avg response > 3s).
 
+> **NOTE (validated 2026-03-15):** The performance gate shell script has been fixed to
+> properly quote `$RESULT`. Previously, an empty result would silently pass the gate.
+> With the fix, this phase should now reliably fail as expected.
+
 ---
 
 ## Phase 13 — Restore Rust App
@@ -538,24 +577,38 @@ git push
 
 Wait for CI, then sync and verify the rollout succeeds again.
 
+> **FIX (validated 2026-03-15):** After reverting the delay, the new image (without delay)
+> deploys as a canary. However, the **stable** pods still run the old image (with the 3s delay).
+> The performance gate at step 7 tests the main service `rust-microservice`, which routes
+> traffic to both canary (fast) and stable (slow) pods. Because the stable pods are slow,
+> `ab` measures high latency and the performance gate fails — creating a deadlock where the
+> fixed canary can never promote to stable.
+>
+> **Workaround:** Force-promote the rollout to skip the gates:
+> ```bash
+> dev
+> kubectl argo rollouts promote rust-microservice -n team-rust --full
+> ```
+> After promotion, all pods run the new (fast) image and the app responds normally.
+
 ---
 
 ## Summary of Expected Outcomes
 
 | Phase | What                           | Expected Result                              |
 |-------|--------------------------------|----------------------------------------------|
-| 1     | Next.js frontend               | Pods running, 500 on /unicorn (no backend)   |
+| 1     | Next.js frontend               | Pods running, 200 on /unicorn                |
 | 2     | Rust CI/CD via Backstage       | cicdpipeline ACTIVE                          |
-| 3     | Rust CI build                  | ECR image exists                             |
-| 4     | Rust DEV deploy (kro)          | Pods running, /rust-app returns JSON         |
+| 3     | Rust CI build                  | ECR image exists (no `-l app=rust` label)    |
+| 4     | Rust DEV deploy (kro)          | Pods running, /rust-app returns JSON (needs manual ArgoCD sync + rollout restart) |
 | 5     | Rust PROD promote              | rust-prod-cd Synced                          |
 | 6     | Progressive demo (blue→yellow) | Canary rollout completes                     |
 | 7     | Java CI/CD via Backstage       | cicdpipeline ACTIVE                          |
 | 8     | Java CI build + template       | ECR image in manifest, /java-app returns 200 |
 | 9     | Functional gate failure        | Rollout Degraded, app still red              |
 | 10    | Functional gate fix            | Rollout Healthy, app now orange              |
-| 11    | Rust metrics-driven deploy     | Rollout Healthy with metrics                 |
-| 12    | Rust metrics failure           | Rollout fails and rolls back                 |
-| 13    | Rust restore                   | Rollout succeeds again                       |
+| 11    | Rust metrics-driven deploy     | Rollout Healthy (defaults now correct)       |
+| 12    | Rust metrics failure           | Rollout fails and rolls back (shell bug fixed)|
+| 13    | Rust restore                   | Needs `--full` promote to break deadlock     |
 
 If any phase fails, stop and report the phase number, the command that failed, and the output.

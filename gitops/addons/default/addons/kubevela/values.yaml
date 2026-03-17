@@ -1,4 +1,6 @@
 vela-core:
+  controllerArgs:
+    reSyncPeriod: 30s
   nodeSelector:
     karpenter.sh/nodepool: system-peeks
   tolerations:

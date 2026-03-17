@@ -28,6 +28,13 @@ Provides a systematic approach for troubleshooting issues in the workshop enviro
 - ALWAYS check EKS cluster configuration using `describe-cluster` to confirm AutoMode status before assuming missing controllers (ID: TROUBLESHOOT_EKS_AUTOMODE)
 - After subnet tag changes (kubernetes.io/role/elb), ALWAYS recreate LoadBalancer services to trigger new AWS Load Balancer creation (ID: TROUBLESHOOT_LB_RECREATE_AFTER_SUBNET_CHANGES)
 
+### Ingress NGINX Webhook Troubleshooting
+
+- If Ingress creation fails with `x509: certificate signed by unknown authority`, check the `ingress-nginx-admission` ValidatingWebhookConfiguration for an empty `caBundle` (ID: TROUBLESHOOT_NGINX_WEBHOOK_CA)
+- Fix by patching the webhook with the CA from the existing admission secret: `CA_BUNDLE=$(kubectl get secret ingress-nginx-admission -n ingress-nginx -o jsonpath='{.data.ca}') && kubectl patch validatingwebhookconfiguration ingress-nginx-admission --type='json' -p="[{\"op\":\"replace\",\"path\":\"/webhooks/0/clientConfig/caBundle\",\"value\":\"${CA_BUNDLE}\"}]"` (ID: TROUBLESHOOT_NGINX_WEBHOOK_FIX)
+- This can occur when ArgoCD syncs wipe the caBundle during cluster disruptions or Application deletion/recreation cycles (ID: TROUBLESHOOT_NGINX_WEBHOOK_CAUSE)
+- After fixing, verify Kro AppmodService instances recover and Ingress resources are created (ID: TROUBLESHOOT_NGINX_WEBHOOK_VERIFY)
+
 ### MCP Server Troubleshooting
 
 - If EKS MCP tools fail, provide equivalent kubectl or AWS CLI commands as fallback (ID: TROUBLESHOOT_EKS_MCP_FALLBACK)
