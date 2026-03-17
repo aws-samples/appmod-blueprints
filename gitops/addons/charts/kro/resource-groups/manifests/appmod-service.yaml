@@ -46,7 +46,9 @@ spec:
         pause: string | default="5s"
       metrics:
         enabled: boolean | default=false
+        pause: string | default="2s"
         path: string | default="/collection/FRONT_PAGE"
+        evaluationCriteria: "[]map[string]string | default=[]"
       resources:
         requests:
           cpu: string | default="100m"
@@ -423,6 +425,14 @@ spec:
                     args:
                     - name: service-name
                       value: ${schema.metadata.name}
+                - pause:
+                    duration: ${schema.spec.metrics.pause}
+                - analysis:
+                    templates:
+                    - templateName: metrics-${schema.metadata.name}
+                    args:
+                    - name: service-name
+                      value: ${schema.metadata.name}-preview
                 - setWeight: 80
           template:
             metadata:
@@ -508,6 +518,14 @@ spec:
                     args:
                     - name: service-name
                       value: ${schema.metadata.name}
+                - pause:
+                    duration: ${schema.spec.metrics.pause}
+                - analysis:
+                    templates:
+                    - templateName: metrics-${schema.metadata.name}
+                    args:
+                    - name: service-name
+                      value: ${schema.metadata.name}-preview
                 - setWeight: 80
           template:
             metadata:
@@ -773,18 +791,7 @@ spec:
                 secretKeyRef:
                   name: ${ampsecrets.spec.target.name}
                   key: amp-workspace-region
-          metrics:
-            - name: metric0-${schema.metadata.name}
-              interval: 1s
-              count: 1
-              successCondition: "result[0] > 0"
-              provider:
-                prometheus:
-                  address: "{{args.amp-workspace-url}}"
-                  query: "up{container_name=\"${schema.spec.image_name}\", namespace=\"${schema.metadata.namespace}\"}"
-                  authentication:
-                    sigv4:
-                      region: "{{args.amp-workspace-region}}"
+          metrics: "${schema.spec.metrics.evaluationCriteria.map(c, c.successOrFailCondition == 'success' ? {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'successCondition': 'result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}} : {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'failureCondition': 'result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}})}"
 
     - id: benchmarkconfig
       includeWhen:

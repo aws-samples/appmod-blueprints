@@ -271,7 +271,7 @@ spec:
         				metrics:
         				[
         					for idx, criteria in parameter.metrics.evaluationCriteria {
-        						name: "metric[\(idx)]-\(context.name): \(criteria.metric)"
+        						name: "m\(idx)"
         						if criteria.successOrFailCondition == "success" {
         							interval:         criteria.interval
         							count:            criteria.count
@@ -306,7 +306,7 @@ spec:
         			metadata: name: "functional-gate-\(context.name)"
         			spec: metrics: [
         				{
-        					name: "\(context.name)-metrics"
+        					name: "fn-gate"
         					provider: job: spec: {
         						template: spec: {
         							containers: [
@@ -335,7 +335,7 @@ spec:
         			metadata: name: "performance-gate-\(context.name)"
         			spec: metrics: [
         				{
-        					name: "\(context.name)-metrics"
+        					name: "perf-gate"
         					provider: job: spec: {
         						template: spec: {
         							containers: [
