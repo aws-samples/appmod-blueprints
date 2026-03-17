@@ -41,12 +41,23 @@
     "introspect"
   ],
   "toolAliases": {},
-  "allowedTools": ["fs_read", "thinking", "introspect"],
+  "allowedTools": [
+    "fs_read",
+    "thinking",
+    "introspect",
+    "@aws-knowledge-mcp-server"
+  ],
   "toolsSettings": {
     "execute_bash": {
       "autoAllowReadonly": true
     },
     "use_aws": {
+      "autoAllowReadonly": true
+    },
+    "@eks-mcp-server": {
+      "autoAllowReadonly": true
+    },
+    "@awslabs.terraform-mcp-server": {
       "autoAllowReadonly": true
     }
   },
