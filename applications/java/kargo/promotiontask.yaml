@@ -16,16 +16,16 @@ spec:
       checkout:
       - branch: main
         path: ./src
-  # Update image for Kro AppmodService format (spec.image)
   - uses: yaml-update
+    as: yaml-update-kro
     continueOnError: true
     config:
       path: ./src/deployment/${{ ctx.stage }}/application.yaml
       updates:
       - key: spec.image
         value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
-  # Update image for KubeVela Application format (spec.components[0].properties.image)
   - uses: yaml-update
+    as: yaml-update-kubevela
     continueOnError: true
     config:
       path: ./src/deployment/${{ ctx.stage }}/application.yaml
