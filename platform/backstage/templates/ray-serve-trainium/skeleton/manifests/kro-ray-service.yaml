@@ -16,23 +16,23 @@ metadata:
     kro.run/resource-group: rayservice.kro.run
 spec:
   name: ${{values.name}}
-  modelName: ${{values.modelName}}
+  modelName: ${{values.modelName | default('tinyllama', true)}}
   s3ModelBucket: ${{values.model_s3_bucket}}
   awsRegion: ${{values.aws_region}}
   awsAccountId: "${{values.aws_account_id}}"
   resourcePrefix: ${{values.resource_prefix}}
-  maxLength: "${{values.maxLength}}"
-  rayServeFile: ${{values.rayServeFile}}
-  replicas: ${{values.replicas}}
-  acceleratorType: ${{values.acceleratorType}}
+  maxLength: "${{values.maxLength | default('100', true)}}"
+  rayServeFile: ${{values.rayServeFile | default('https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/main/gitops/workloads/ray/trainium-serve-neuron.zip', true)}}
+  replicas: ${{values.replicas | default(1, true)}}
+  acceleratorType: ${{values.acceleratorType | default('trainium', true)}}
   resources:
     head:
-      cpu: "${{values.headCpu}}"
-      memory: ${{values.headMemory}}
+      cpu: "${{values.headCpu | default('2', true)}}"
+      memory: ${{values.headMemory | default('8Gi', true)}}
     worker:
-      cpu: "${{values.workerCpu}}"
-      memory: ${{values.workerMemory}}
-      gpu: "${{values.workerGpu}}"
+      cpu: "${{values.workerCpu | default('4', true)}}"
+      memory: ${{values.workerMemory | default('20Gi', true)}}
+      gpu: "${{values.workerGpu | default('1', true)}}"
   gitlab:
     hostname: ${{values.gitlab_hostname}}
     username: ${{values.git_username}}
