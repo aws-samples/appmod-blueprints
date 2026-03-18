@@ -6,22 +6,14 @@ would perform. Verify each phase before moving to the next.
 
 ## Configuration
 
-**Abstraction tool**: `{{ABSTRACTION_TOOL}}` — set to `kro` or `kubevela` before starting.
+**Abstraction tool**: `{{ABSTRACTION_TOOL}}` — must be set to `kro` or `kubevela` before starting: Ask user the choice!
 
 The agent MUST replace `{{ABSTRACTION_TOOL}}` with the user's choice and follow ONLY the
-matching tab instructions from the workshop content files.
+matching tab instructions from the workshop content files when it applies (some other part may be using kro independently of the tab selection)
 
 ## Content Source
 
-Workshop instructions are in: `/tmp/workshop-content/content/`
-
-Download them first:
-
-```bash
-aws s3 cp s3://peeks-workshop-content-549022276298/content.tar.gz /tmp/content.tar.gz
-rm -rf /tmp/workshop-content && mkdir -p /tmp/workshop-content
-tar -xzf /tmp/content.tar.gz -C /tmp/workshop-content/ 2>/dev/null
-```
+Download the file content-$WORKSHOP_GIT_BRANCH.tgz from s3://$ASSETS_BUCKET_NAME/$ASSETS_BUCKET_PREFIX and extract to the ~/environment directory. so content will be in ~/environment/content/
 
 The content files map to phases as follows:
 
@@ -59,6 +51,7 @@ The content files map to phases as follows:
 
 ## Required env vars
 
+env var are mostrly defined in ~/.bashrc.d/workshop.sh
 ```bash
 echo "BACKSTAGE=$BACKSTAGE_URL ARGOCD=$ARGOCD_URL WORKFLOWS=$WORKFLOWS_URL"
 echo "DNS_DEV=$DNS_DEV DNS_PROD=$DNS_PROD ACCOUNT=$AWS_ACCOUNT_ID REGION=$AWS_REGION"
@@ -107,8 +100,15 @@ kubectl get workflows -n <namespace> --sort-by=.metadata.creationTimestamp --no-
 
 ### ArgoCD Sync
 
-The workshop offers kubectl/UI/CLI tabs for syncing. Always use the kubectl approach:
+The workshop offers CLI/kubectl/UI/ tabs for syncing. Always use the argocd CLI, fallback to kubectl in case of errors approach:
 
+CLI:
+```bash
+argocd app list
+```
+In case of CLI authentication errors, you may need to execute bash function `argocd-refresh-token`, that updates credentials valid for 12 hours in file `~/.bashrc.d/platform.sh`. so then you just need to source this platform.sh file.
+
+kubectl:
 ```bash
 hub
 kubectl patch application <app-name> -n argocd --type merge \
@@ -150,3 +150,4 @@ done
 | 13    | Rust restore                   | Rollout succeeds again                       |
 
 If any phase fails, stop and report the phase number, the command that failed, and the output.
+Monitore the time it take for each phases
