@@ -281,7 +281,7 @@ APPPROJ
                     --region "$AWS_REGION" \
                     --instance-id "$idc_instance_id" \
                     --keycloak-dns "$domain_name" \
-                    --keycloak-admin-password "$keycloak_admin_password"; then
+                    --keycloak-admin-password="$keycloak_admin_password"; then
                     print_status "SUCCESS" "IAM Identity Center configuration completed"
                     idc_success=true
                 else
