@@ -40,7 +40,7 @@ argocd:
   chartName: argo-cd
   namespace: argocd
   releaseName: argocd
-  defaultVersion: '7.9.1'
+  defaultVersion: '9.4.5'
   chartRepository: 'https://argoproj.github.io/argo-helm'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '0' # Default sync-wave for ArgoCD
@@ -136,7 +136,7 @@ ack-s3:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
   namespace: ack-system
   chartName: s3-chart
-  defaultVersion: '1.0.14'
+  defaultVersion: '1.3.1'
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
   releaseName: s3-chart
@@ -237,7 +237,7 @@ ack-ecr:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
   namespace: ack-system
   chartName: ecr-chart
-  defaultVersion: '1.0.19'
+  defaultVersion: '1.5.1'
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
   selector:
@@ -404,7 +404,7 @@ cert-manager:
   namespace: '{{ default "cert-manager" (index .metadata.annotations "cert-manager_namespace") }}'
   chartName: cert-manager
   chartRepository: https://charts.jetstack.io
-  defaultVersion: 'v1.15.2'
+  defaultVersion: 'v1.19.4'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '2'
   selector:
@@ -1294,7 +1294,7 @@ crossplane:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5' # Needs to be after external-secrets and before infrastructure provisioning
   namespace: crossplane-system
-  defaultVersion: '1.17.1'
+  defaultVersion: '2.2.0'
   selector:
     matchExpressions:
       - key: enable_crossplane
@@ -1306,7 +1306,6 @@ crossplane:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
-    args: ['--enable-environment-configs']
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
@@ -1347,8 +1346,15 @@ crossplane-aws:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+        - /spec/publishConnectionDetailsWithStoreConfigRef
     - group: pkg.crossplane.io
       kind: Provider
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: pkg.crossplane.io
+      kind: Function
       jsonPointers:
         - /status
         - /metadata/generation
