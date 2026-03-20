@@ -305,7 +305,7 @@ resource "aws_iam_role_policy" "eks_capability_argocd_codeconnections" {
 
 # ArgoCD Capability EKS Access Policy Association (requires Identity Center)
 resource "aws_eks_access_policy_association" "argocd" {
-  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" && var.identity_center_instance_arn != "" }
+  for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
   depends_on = [
     aws_eks_capability.argocd
   ]

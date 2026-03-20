@@ -25,14 +25,16 @@ spec:
               bucketName:
                 type: string
                 description: Name of the S3 bucket
-              region:
+              deploy:
                 type: string
-                description: AWS region for the bucket
-                default: "us-east-1"
+                description: Target environment label for EnvironmentConfig selection (e.g. peeks-hub)
               versioning:
-                type: boolean
-                description: Enable versioning on the bucket
-                default: false
+                type: string
+                description: Enable versioning on the bucket ("true" or "false")
+                default: "false"
+                enum:
+                  - "true"
+                  - "false"
           status:
             type: object
             properties:
@@ -55,6 +57,23 @@ spec:
     kind: XBucket
   mode: Pipeline
   pipeline:
+  - step: environmentConfigs
+    functionRef:
+      name: function-environment-configs
+    input:
+      apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+      kind: Input
+      spec:
+        environmentConfigs:
+        - type: Selector
+          selector:
+            mode: Single
+            sortByFieldPath: metadata.name
+            matchLabels:
+            - key: env
+              type: FromCompositeFieldPath
+              valueFromFieldPath: spec.deploy
+              fromFieldPathPolicy: Required
   - step: s3-resources
     functionRef:
       name: function-patch-and-transform
@@ -67,19 +86,15 @@ spec:
           apiVersion: s3.aws.upbound.io/v1beta1
           kind: Bucket
           spec:
-            forProvider:
-              region: us-east-1
+            forProvider: {}
             providerConfigRef:
               name: provider-aws-config
         patches:
         - type: FromCompositeFieldPath
           fromFieldPath: spec.bucketName
           toFieldPath: metadata.name
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.bucketName
-          toFieldPath: spec.forProvider.bucket
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.region
+        - type: FromEnvironmentFieldPath
+          fromFieldPath: region
           toFieldPath: spec.forProvider.region
         - type: ToCompositeFieldPath
           fromFieldPath: status.atProvider.arn
@@ -100,6 +115,9 @@ spec:
             providerConfigRef:
               name: provider-aws-config
         patches:
+        - type: FromEnvironmentFieldPath
+          fromFieldPath: region
+          toFieldPath: spec.forProvider.region
         - type: FromCompositeFieldPath
           fromFieldPath: spec.bucketName
           toFieldPath: spec.forProvider.bucket
@@ -109,8 +127,8 @@ spec:
           transforms:
           - type: map
             map:
-              true: "Enabled"
-              false: "Disabled"
+              "true": "Enabled"
+              "false": "Disabled"
         readinessChecks:
           - type: MatchCondition
             matchCondition:
@@ -142,6 +160,9 @@ spec:
               tableName:
                 type: string
                 description: Name of the DynamoDB table
+              deploy:
+                type: string
+                description: Target environment label for EnvironmentConfig selection (e.g. peeks-hub)
               hashKey:
                 type: string
                 description: Hash key for the table
@@ -172,6 +193,23 @@ spec:
     kind: XDynamoDBTable
   mode: Pipeline
   pipeline:
+  - step: environmentConfigs
+    functionRef:
+      name: function-environment-configs
+    input:
+      apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+      kind: Input
+      spec:
+        environmentConfigs:
+        - type: Selector
+          selector:
+            mode: Single
+            sortByFieldPath: metadata.name
+            matchLabels:
+            - key: env
+              type: FromCompositeFieldPath
+              valueFromFieldPath: spec.deploy
+              fromFieldPathPolicy: Required
   - step: dynamodb-resources
     functionRef:
       name: function-patch-and-transform
@@ -193,12 +231,12 @@ spec:
             providerConfigRef:
               name: provider-aws-config
         patches:
+        - type: FromEnvironmentFieldPath
+          fromFieldPath: region
+          toFieldPath: spec.forProvider.region
         - type: FromCompositeFieldPath
           fromFieldPath: spec.tableName
           toFieldPath: metadata.name
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.tableName
-          toFieldPath: spec.forProvider.name
         - type: FromCompositeFieldPath
           fromFieldPath: spec.hashKey
           toFieldPath: spec.forProvider.hashKey
