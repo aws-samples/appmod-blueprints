@@ -728,9 +728,10 @@ spec:
                         restartPolicy: Never
                     backoffLimit: 0
 
+    # Performance gate using Apache Bench (for httpd:alpine image)
     - id: performanceanalysis
       includeWhen:
-        - ${schema.spec.performanceGate.enabled}
+        - ${schema.spec.performanceGate.enabled && !schema.spec.performanceGate.image.contains('artillery')}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: AnalysisTemplate
@@ -762,6 +763,54 @@ spec:
                             args:
                               - "-c"
                               - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ \"$RESULT\" -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
+                        restartPolicy: Never
+                    backoffLimit: 0
+
+    # Performance gate using Artillery with benchmark config (for artillery image)
+    - id: performanceanalysisartillery
+      includeWhen:
+        - ${schema.spec.performanceGate.enabled && schema.spec.performanceGate.image.contains('artillery')}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: AnalysisTemplate
+        metadata:
+          name: performance-gate-${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          args:
+            - name: service-name
+          metrics:
+            - name: ${schema.metadata.name}-m
+              provider:
+                job:
+                  spec:
+                    template:
+                      spec:
+                        containers:
+                          - name: test
+                            image: ${schema.spec.performanceGate.image}
+                            command: ["run"]
+                            args:
+                              - "run"
+                              - "-t"
+                              - "http://{{args.service-name}}:${string(schema.spec.targetPort)}"
+                              - "/benchmark.yaml"
+                            volumeMounts:
+                              - name: benchmark-config
+                                mountPath: "/benchmark.yaml"
+                                subPath: "benchmark.yaml"
+                        volumes:
+                          - name: benchmark-config
+                            configMap:
+                              name: benchmark-config-${schema.metadata.name}
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -799,7 +848,7 @@ spec:
 
     - id: benchmarkconfig
       includeWhen:
-        - ${schema.spec.performanceGate.enabled}
+        - ${schema.spec.performanceGate.enabled && schema.spec.performanceGate.image.contains('artillery')}
       template:
         apiVersion: v1
         kind: ConfigMap
