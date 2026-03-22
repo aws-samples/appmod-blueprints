@@ -418,6 +418,9 @@ spec:
                     duration: 5s
                 - setWeight: 60
                 - pause:
+                    duration: 5s
+                - setWeight: 80
+                - pause:
                     duration: ${schema.spec.performanceGate.pause}
                 - analysis:
                     templates:
@@ -433,7 +436,6 @@ spec:
                     args:
                     - name: service-name
                       value: ${schema.metadata.name}-preview
-                - setWeight: 80
           template:
             metadata:
               labels:
@@ -511,6 +513,9 @@ spec:
                     duration: 5s
                 - setWeight: 60
                 - pause:
+                    duration: 5s
+                - setWeight: 80
+                - pause:
                     duration: ${schema.spec.performanceGate.pause}
                 - analysis:
                     templates:
@@ -526,7 +531,6 @@ spec:
                     args:
                     - name: service-name
                       value: ${schema.metadata.name}-preview
-                - setWeight: 80
           template:
             metadata:
               labels:
@@ -791,7 +795,7 @@ spec:
                 secretKeyRef:
                   name: ${ampsecrets.spec.target.name}
                   key: amp-workspace-region
-          metrics: "${schema.spec.metrics.evaluationCriteria.map(c, c.successOrFailCondition == 'success' ? {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'successCondition': 'result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}} : {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'failureCondition': 'result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}})}"
+          metrics: "${schema.spec.metrics.evaluationCriteria.size() == 0 ? [{'name': 'noop-' + schema.metadata.name, 'interval': '5s', 'count': 1, 'successCondition': 'result[0] >= 0', 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': 'vector(1)', 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}}] : schema.spec.metrics.evaluationCriteria.map(c, c.successOrFailCondition == 'success' ? {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'successCondition': 'result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}} : {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'failureCondition': 'result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}})}"
 
     - id: benchmarkconfig
       includeWhen:
