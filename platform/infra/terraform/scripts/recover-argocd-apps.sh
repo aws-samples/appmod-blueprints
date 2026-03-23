@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 # Fixed 2026-02-05: Added hard refresh to resolve Git revision conflicts
 # Source utilities

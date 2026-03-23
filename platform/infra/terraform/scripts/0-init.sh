@@ -16,6 +16,7 @@ fi
 # These apps may take longer to deploy or have known issues that don't block the workshop
 BEST_EFFORT_APPS=(
     "image-prepuller-${RESOURCE_PREFIX}-hub"  # Truly optional - only for performance
+    "spark-operator-${RESOURCE_PREFIX}-hub"   # CRD annotation size exceeds 262KB limit, causes sync failures
 )
 
 # Apps that are OK if Healthy but OutOfSync (known ArgoCD ignore issues)
@@ -281,7 +282,7 @@ APPPROJ
                     --region "$AWS_REGION" \
                     --instance-id "$idc_instance_id" \
                     --keycloak-dns "$domain_name" \
-                    --keycloak-admin-password "$keycloak_admin_password"; then
+                    --keycloak-admin-password="$keycloak_admin_password"; then
                     print_status "SUCCESS" "IAM Identity Center configuration completed"
                     idc_success=true
                 else
