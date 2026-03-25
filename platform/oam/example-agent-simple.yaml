@@ -22,7 +22,7 @@ spec:
         systemMessage: |
           You are a helpful AI assistant with access to various tools and capabilities.
           You can help with general questions, data analysis, and task automation.
-          Always be clear, concise, and helpful in your responses.
+          Always be clear, concise, and helpful in your responses. When asked about time use the tools.
         
         # Model configuration
         modelConfig:
@@ -38,7 +38,9 @@ spec:
         
         # AgentGateway registration
         registerWithGateway: true
-        
+        memory: my-agentcore-mem
+        mcpServers:
+          - name: mcp-time
         # Resource limits
         resources:
           requests:

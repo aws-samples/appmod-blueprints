@@ -1,12 +1,13 @@
 """FastAPI application with A2A protocol support using Strands A2AServer."""
 
 import logging
+from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 import uvicorn
 from strands.multiagent.a2a import A2AServer
 
-from .agent import agent
+from .agent import agent, shutdown_mcp
 from .config import config
 
 # Configure logging
@@ -17,6 +18,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def lifespan(app):
+    yield
+    shutdown_mcp()
+
+
 # Create A2A server with Strands agent
 # This handles all A2A protocol endpoints automatically
 a2a_server = A2AServer(
@@ -24,11 +31,11 @@ a2a_server = A2AServer(
     host=config.HOST,
     port=config.PORT,
     version="1.0.0",
-    enable_a2a_compliant_streaming=True,  # Enable A2A-compliant streaming
+    enable_a2a_compliant_streaming=True,
 )
 
-# Get the FastAPI app from A2AServer
 app = a2a_server.to_fastapi_app()
+app.router.lifespan_context = lifespan
 
 
 # Add custom endpoints to the FastAPI app

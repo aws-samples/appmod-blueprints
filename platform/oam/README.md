@@ -1,20 +1,39 @@
-# OAM Strands Agent Examples
+# OAM Components for Agents and MCP Servers
 
-This directory contains OAM (Open Application Model) component definitions and examples for deploying Strands agents with Argo Rollouts on Kubernetes.
+This directory contains OAM (Open Application Model) component definitions and examples for deploying AI agents and MCP servers with Argo Rollouts on Kubernetes.
+
+For architectural decisions and rationale, see **[DESIGN.md](DESIGN.md)**.
+
+## Components
+
+| Component | File | Description |
+|---|---|---|
+| `agent` | `agent.cue` | A2A agent with blue-green deployment and agentgateway registration |
+| `mcp-server` | `mcp-server.cue` | MCP server with blue-green deployment, agentgateway backend, and tool-level auth |
 
 ## Files
 
-- `kagent-rollout-component.yaml` - ComponentDefinition for Strands agents with Argo Rollouts support
-- `agent.cue` - Simplified agent ComponentDefinition with blue-green deployment (CUE format)
-- `example-strands-agent.yaml` - Example weather agent with canary deployment
-- `example-strands-agent-bluegreen.yaml` - Example assistant agent with blue-green deployment
-- `example-strands-agent-gateway.yaml` - Example agent using AgentGateway for LLM access
-- `example-agent-simple.yaml` - Example using agent.cue ComponentDefinition
-- `example-pdf-agent.yaml` - Example PDF processing agent
+### Agent Component
+- `agent.cue` - Agent ComponentDefinition (CUE format)
+- `agent-crd.yaml` - Agent ComponentDefinition wrapped for KubeVela registration
+- `example-agent-simple.yaml` - Basic agent example
+- `example-agent-with-mcp.yaml` - Agent with MCP tool integration
+- `example-agent-minimal.yaml` - Minimal agent example
+- `kagent-rollout-component.yaml` - Legacy ComponentDefinition with canary/blue-green support
+
+### MCP Server Component
+- `mcp-server.cue` - MCP server ComponentDefinition (CUE format)
+- `example-mcp-local.yaml` - Example: deploy mcp-time-server via KubeVela
+
+### Infrastructure
 - `agentgateway-backend.yaml` - AgentGateway backend configuration for Bedrock
 - `agentgateway-httproute.yaml` - HTTP routing configuration
 - `register-agent-with-gateway.yaml` - Examples for registering agents with AgentGateway
 - `appmod-service.cue` - Full-featured service ComponentDefinition with canary/blue-green support
+- `litellm-deployment.yaml` - LiteLLM proxy deployment
+- `kgateway-session-affinity.yaml` - Session affinity configuration
+
+### Utilities
 - `generate-component-from-cue.sh` - Helper script to generate CRD from CUE files
 - `vela-cue-commands.md` - Documentation for vela CLI commands
 

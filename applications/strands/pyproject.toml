@@ -2,14 +2,12 @@
 name = "strands-agent-a2a"
 version = "1.0.0"
 description = "Strands Agent with A2A protocol support"
-readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi~=0.115.0",
-    "uvicorn[standard]~=0.32.0",
+    "uvicorn[standard]>=0.34.2",
     "pydantic~=2.0",
     "strands-agents[a2a,litellm]~=1.0",
-    "strands-agents-tools~=1.0",
     "litellm~=1.0",
 ]
 
@@ -28,7 +26,9 @@ build-backend = "hatchling.build"
 packages = ["app"]
 
 [tool.uv]
-dev-dependencies = [
+
+[dependency-groups]
+dev = [
     "pytest~=8.0",
     "pytest-asyncio~=0.23.0",
     "httpx~=0.27.0",

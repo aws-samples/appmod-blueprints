@@ -1,0 +1,38 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: mcp-time-server
+  namespace: default
+spec:
+  components:
+    - name: mcp-time-ns
+      type: k8s-objects
+      properties:
+        objects:
+          - apiVersion: v1
+            kind: Namespace
+            metadata:
+              name: mcp-time-server
+    - name: mcp-time
+      type: mcp-server
+      dependsOn:
+        - mcp-time-ns
+      properties:
+        name: mcp-time
+        namespace: mcp-time-server
+        description: "MCP server that provides current time tools"
+        image: "498530348755.dkr.ecr.us-west-2.amazonaws.com/mcp-time-server:http"
+        containerPort: 8000
+        replicas: 1
+
+        env:
+          - name: LOCAL_TIMEZONE
+            value: "UTC"
+
+        registerWithGateway: true
+
+        autoPromotionEnabled: true
+        autoPromotionSeconds: 10
+        scaleDownDelaySeconds: 30
+        authPolicy:
+          sub: 

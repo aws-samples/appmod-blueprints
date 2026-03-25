@@ -5,6 +5,8 @@ metadata:
   namespace: default
 spec:
   components:
+    - name: memory
+      type: memory
     - name: tool-agent
       type: agent
       properties:
@@ -28,11 +30,11 @@ spec:
         # MCP tool servers
         mcpServers:
           - name: weather-tools
-            port: 3000
           - name: web-search
-            port: 3001
           - name: calculator
-            port: 3002
+        agents:
+          - name: design-agent
+          
         
         serviceAccount: default
         

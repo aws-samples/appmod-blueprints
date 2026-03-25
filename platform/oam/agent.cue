@@ -87,10 +87,8 @@ template: {
 						] + [
 							if len(parameter.mcpServers) > 0 {
 								{
-									name: "MCP_SERVERS"
-									value: strings.Join([for s in parameter.mcpServers {
-										"http://\(s.name).\(parameter.namespace).svc.cluster.local:\(s.port)"
-									}], ",")
+									name: "MCP_SERVER_NAMES"
+									value: strings.Join([for s in parameter.mcpServers {s.name}], ",")
 								}
 							},
 							for e in parameter.env {e},
@@ -270,7 +268,6 @@ template: {
 		// MCP servers
 		mcpServers: *[] | [...{
 			name: string
-			port: *3000 | int
 		}]
 
 		// Additional environment variables
