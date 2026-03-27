@@ -71,6 +71,10 @@ main() {
   if ! terraform state rm gitlab_personal_access_token.workshop || ! terraform state rm data.gitlab_user.workshop; then
     log_warning "GitLab resources not found in state"
   fi
+
+  # Remove data sources that may reference resources already deleted by ArgoCD cleanup
+  terraform state rm data.aws_lb.ingress_nginx 2>/dev/null || log_warning "data.aws_lb.ingress_nginx not found in state"
+
   cd - # Go back
 
   # Destroy Terraform resources
