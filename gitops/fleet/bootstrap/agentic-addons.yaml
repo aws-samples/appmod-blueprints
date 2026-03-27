@@ -1,0 +1,50 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: agentic-addons
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: false
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            fleet_member: control-plane
+            enable_agentgateway: "true"
+        values:
+          addonChart: application-sets
+  template:
+    metadata:
+      name: agentic-addons
+    spec:
+      project: default
+      sources:
+        - ref: values
+          repoURL: '{{.metadata.annotations.addons_repo_url}}'
+          targetRevision: '{{.metadata.annotations.addons_repo_revision}}'
+        - repoURL: '{{.metadata.annotations.addons_repo_url}}'
+          path: '{{.metadata.annotations.addons_repo_basepath}}charts/{{.values.addonChart}}'
+          targetRevision: '{{.metadata.annotations.addons_repo_revision}}'
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - $values/gitops/agentic/addons/default/addons.yaml
+      destination:
+        namespace: argocd
+        name: '{{.name}}'
+      syncPolicy:
+        automated:
+          selfHeal: false
+          allowEmpty: true
+          prune: false
+        retry:
+          limit: 100
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

@@ -1,0 +1,11 @@
+apiVersion: v2
+name: agentgateway
+description: AgentGateway with Gateway API proxy, Bedrock backend, and LiteLLM
+type: application
+version: 0.1.0
+appVersion: "v2.2.1"
+
+dependencies:
+  - name: agentgateway
+    version: v2.2.1
+    repository: oci://cr.agentgateway.dev/charts

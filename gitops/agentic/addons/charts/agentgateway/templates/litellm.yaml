@@ -1,0 +1,76 @@
+{{- if .Values.litellm.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.yaml: |
+    model_list:
+      {{- range .Values.litellm.models }}
+      - model_name: {{ .name }}
+        litellm_params:
+          model: {{ .model }}
+          aws_region_name: {{ .region }}
+      {{- end }}
+
+    general_settings:
+      master_key: {{ .Values.litellm.masterKey }}
+
+    litellm_settings:
+      drop_params: true
+      use_bedrock_converse: true
+      success_callback: []
+      failure_callback: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-proxy
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.litellm.replicas }}
+  selector:
+    matchLabels:
+      app: litellm-proxy
+  template:
+    metadata:
+      labels:
+        app: litellm-proxy
+    spec:
+      serviceAccountName: {{ .Values.gateway.name }}
+      containers:
+        - name: litellm
+          image: {{ .Values.litellm.image }}
+          command: ["litellm", "--config", "/app/config.yaml", "--port", "4000"]
+          env:
+            - name: AWS_REGION
+              value: {{ (index .Values.litellm.models 0).region | default "us-west-2" }}
+          ports:
+            - name: http
+              containerPort: 4000
+          resources:
+            {{- toYaml .Values.litellm.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: litellm-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-proxy
+  namespace: {{ .Release.Namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: litellm-proxy
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+{{- end }}

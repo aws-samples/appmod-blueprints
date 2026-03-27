@@ -1,0 +1,40 @@
+# -- AgentGateway controller settings (passed to subchart)
+agentgateway:
+  controller:
+    logLevel: info
+
+# -- Gateway proxy configuration
+gateway:
+  enabled: true
+  name: agentgateway-proxy
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+
+# -- Bedrock AI backend
+bedrockBackend:
+  enabled: true
+  model: us.anthropic.claude-3-5-sonnet-20241022-v2:0
+  region: us-west-2
+
+# -- LiteLLM proxy for centralized LLM access
+litellm:
+  enabled: true
+  image: ghcr.io/berriai/litellm:main-latest
+  replicas: 1
+  masterKey: sk-1234
+  models:
+    - name: claude-sonnet
+      model: bedrock/us.anthropic.claude-3-5-sonnet-20241022-v2:0
+      region: us-west-2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

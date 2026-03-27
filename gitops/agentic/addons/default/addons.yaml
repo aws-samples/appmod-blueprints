@@ -1,0 +1,61 @@
+syncPolicy:
+  automated:
+    selfHeal: false
+    allowEmpty: true
+    prune: false
+  retry:
+    limit: -1
+    backoff:
+      duration: 5s
+      factor: 2
+      maxDuration: 10m
+  syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+syncPolicyAppSet:
+  preserveResourcesOnDeletion: false
+useSelectors: true
+repoURLGit: '{{.metadata.annotations.addons_repo_url}}'
+repoURLGitRevision: '{{.metadata.annotations.addons_repo_revision}}'
+repoURLGitBasePath: '{{.metadata.annotations.addons_repo_basepath}}'
+valueFiles:
+  - default/addons
+useValuesFilePrefix: false
+
+########################################
+# Agentic Platform Addons
+########################################
+
+agentgateway:
+  enabled: true
+  namespace: agentgateway-system
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  defaultVersion: '0.1.0'
+  path: 'gitops/agentic/addons/charts/agentgateway'
+  selector:
+    matchExpressions:
+      - key: enable_agentgateway
+        operator: In
+        values: ['true']
+  valuesObject:
+    agentgateway:
+      controller:
+        logLevel: info
+    bedrockBackend:
+      region: '{{.metadata.annotations.aws_region}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      jsonPointers:
+        - /status
+    - group: gateway.networking.k8s.io
+      kind: GatewayClass
+      jsonPointers:
+        - /status

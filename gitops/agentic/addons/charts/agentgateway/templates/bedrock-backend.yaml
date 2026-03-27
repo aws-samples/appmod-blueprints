@@ -1,0 +1,29 @@
+{{- if .Values.bedrockBackend.enabled }}
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: bedrock
+  namespace: {{ .Release.Namespace }}
+spec:
+  ai:
+    provider:
+      bedrock:
+        model: {{ .Values.bedrockBackend.model }}
+        region: {{ .Values.bedrockBackend.region }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bedrock
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      namespace: {{ .Release.Namespace }}
+  rules:
+    - backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: bedrock
+          namespace: {{ .Release.Namespace }}
+{{- end }}

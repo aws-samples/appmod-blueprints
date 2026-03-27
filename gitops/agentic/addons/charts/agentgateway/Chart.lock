@@ -1,0 +1,6 @@
+dependencies:
+- name: agentgateway
+  repository: oci://cr.agentgateway.dev/charts
+  version: v2.2.1
+digest: sha256:8ae24b7e4d5aba98a5f0ac9f25248f3ae8541a1c9b484f0b734491833cec8749
+generated: "2026-03-26T23:13:27.625176591-04:00"
