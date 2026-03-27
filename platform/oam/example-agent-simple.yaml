@@ -38,7 +38,12 @@ spec:
         
         # AgentGateway registration
         registerWithGateway: true
-        memory: my-agentcore-mem
+        # Memory — AgentCore (native Strands session manager, not mem0)
+        memory:
+          provider: agentcore
+          config:
+            memoryId: my-agentcore-mem
+            region: us-west-2
         mcpServers:
           - name: mcp-time
         # Resource limits

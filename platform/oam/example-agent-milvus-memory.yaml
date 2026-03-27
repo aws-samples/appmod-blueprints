@@ -1,0 +1,37 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: agent-with-milvus-memory
+  namespace: default
+spec:
+  components:
+    - name: assistant
+      type: agent
+      properties:
+        name: assistant
+        namespace: agents
+        description: "AI assistant with Milvus-backed mem0 memory"
+
+        systemMessage: |
+          You are a helpful AI assistant. Use memory to recall user preferences
+          and past interactions for personalized responses.
+
+        modelConfig:
+          modelId: claude-sonnet
+
+        # Memory — mem0 with Milvus vector store
+        memory:
+          provider: milvus
+          config:
+            url: milvus.vector-system.svc.cluster.local:19530
+            collectionName: assistant-memory
+
+        registerWithGateway: true
+
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
