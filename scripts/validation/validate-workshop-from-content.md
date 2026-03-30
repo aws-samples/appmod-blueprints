@@ -1,37 +1,63 @@
-# Validate Workshop Modules 20 & 30 — From Workshop Content
+# Validate Workshop — Full End-to-End from Content Files
 
 You are a Kiro agent running on the workshop IDE instance. Your job is to execute the
 workshop instructions from the S3 content bucket, following the exact steps a participant
-would perform. Verify each phase before moving to the next.
+would perform. You validate **every module** from start to finish.
+
+## Primary Goal: Instruction Validation
+
+You are NOT just trying to make things work. You are **auditing the workshop instructions**.
+
+### Rules
+
+1. **Follow instructions literally** — execute every command exactly as written in each content file.
+   Do NOT fix, adapt, or work around problems on your own.
+2. **Flag instruction issues** — when a command fails, an expected output doesn't match, a step
+   is ambiguous, or something is missing, **log it as an issue** instead of silently fixing it.
+3. **Propose fixes** — for every issue found, propose a concrete fix (corrected command, missing
+   step, better wording) that would make the instruction work for a participant.
+4. **Continue after flagging** — after logging an issue and applying your proposed fix locally,
+   continue to the next step so you can validate the rest of the module.
+5. **Record everything** — for each phase, record: commands run, actual output (trimmed),
+   pass/fail status, and any issues found.
+
+### What Counts as an Issue
+
+- A command that fails or produces an error
+- An expected output that doesn't match reality (wrong resource name, wrong status, etc.)
+- A missing step (e.g., a `cd` or `git pull` that should be there but isn't)
+- An ambiguous instruction that a participant could misinterpret
+- A wrong file path, resource name, namespace, or label
+- An incorrect `sed` pattern that doesn't match the actual file content
+- A timing assumption that is too short or too long
+- A missing prerequisite or dependency between phases
+
+---
 
 ## Configuration
 
-**Abstraction tool**: `{{ABSTRACTION_TOOL}}` — must be set to `kro` or `kubevela` before starting: Ask user the choice!
+**Abstraction tool**: `{{ABSTRACTION_TOOL}}` — must be set to `kro` or `kubevela` before starting.
+**Ask the user for their choice!**
 
 The agent MUST replace `{{ABSTRACTION_TOOL}}` with the user's choice and follow ONLY the
-matching tab instructions from the workshop content files when it applies (some other part may be using kro independently of the tab selection)
+matching tab instructions from the workshop content files when tabs apply. Some parts use
+kro independently of the tab selection.
+
+---
 
 ## Content Source
 
-Download the file content-$WORKSHOP_GIT_BRANCH.tgz from s3://$ASSETS_BUCKET_NAME/$ASSETS_BUCKET_PREFIX and extract to the ~/environment directory. so content will be in ~/environment/content/
+Download the content archive from S3 and extract it:
 
-The content files map to phases as follows:
+```bash
+aws s3 cp s3://$ASSETS_BUCKET_NAME/$ASSETS_BUCKET_PREFIX/content-$WORKSHOP_GIT_BRANCH.tgz /tmp/
+mkdir -p ~/environment/content
+tar xzf /tmp/content-$WORKSHOP_GIT_BRANCH.tgz -C ~/environment/content/
+```
 
-| Phase | Content File | Section |
-|-------|-------------|---------|
-| 1 | `20_ApplicationDelivery/01_Rust/01_Intro/index.en.md` | "Manually deploy the frontend" |
-| 2 | `20_ApplicationDelivery/01_Rust/02_Backstage/index.en.md` | Full page (Backstage provisioning) |
-| 3 | `20_ApplicationDelivery/01_Rust/03_CI/index.en.md` | Full page (wait for CI workflows) |
-| 4 | `20_ApplicationDelivery/01_Rust/04_CD/index.en.md` | "Deploying the Application" through "Promoting to Production" |
-| 5 | `20_ApplicationDelivery/01_Rust/04_CD/index.en.md` | "Promoting to Production" |
-| 6 | `30_ProgressiveApplicationDelivery/10_progressive-delivery/index.en.md` | Full page (blue→yellow demo) |
-| 7 | `30_ProgressiveApplicationDelivery/20_create-cicd/index.en.md` | Full page (Java CI/CD via Backstage) |
-| 8 | `30_ProgressiveApplicationDelivery/20_create-cicd/index.en.md` | Steps 8-11 (copy template, trigger build, verify) |
-| 9 | `30_ProgressiveApplicationDelivery/30_function-performance-test-java/index.en.md` | "Changing the Java Application" |
-| 10 | `30_ProgressiveApplicationDelivery/30_function-performance-test-java/index.en.md` | "Fixing the Issue" |
-| 11 | `30_ProgressiveApplicationDelivery/50_metrics-driven-decisions/index.en.md` | "Implementing Metrics-Driven Decisions" |
-| 12 | `30_ProgressiveApplicationDelivery/50_metrics-driven-decisions/index.en.md` | "Exploring Errors" |
-| 13 | `30_ProgressiveApplicationDelivery/50_metrics-driven-decisions/index.en.md` | "Restoring the App" |
+Content will be in `~/environment/content/`. All content file paths below are relative to that directory.
+
+---
 
 ## Environment
 
@@ -39,7 +65,7 @@ The content files map to phases as follows:
 - Application repos: `~/environment/applications/{rust,java,next-js}`
 - Workshop repo: `~/environment/platform-on-eks-workshop`
 - Cluster contexts: `peeks-hub`, `peeks-spoke-dev`, `peeks-spoke-prod`
-- The workshop uses `hub`, `dev`, `prod` as aliases — use `kubectl config use-context peeks-{name}` instead.
+- Aliases: `hub`, `dev`, `prod` (use `kubectl config use-context peeks-{name}` as fallback)
 
 ## Credentials
 
@@ -48,16 +74,104 @@ The content files map to phases as follows:
 | Backstage | `user1`  | `$USER1_PASSWORD` |
 | GitLab    | `user1`  | `$USER1_PASSWORD` |
 | ArgoCD    | `admin`  | `$IDE_PASSWORD`   |
+| Grafana   | `user1`  | `$USER1_PASSWORD` |
 
-## Required env vars
+## Required Environment Variables
 
-env var are mostrly defined in ~/.bashrc.d/workshop.sh
+Env vars are defined in `~/.bashrc.d/platform.sh` and `~/.bashrc.d/aliases.sh`.
+
 ```bash
 echo "BACKSTAGE=$BACKSTAGE_URL ARGOCD=$ARGOCD_URL WORKFLOWS=$WORKFLOWS_URL"
 echo "DNS_DEV=$DNS_DEV DNS_PROD=$DNS_PROD ACCOUNT=$AWS_ACCOUNT_ID REGION=$AWS_REGION"
+echo "GITLAB=$GITLAB_URL GRAFANA=$GRAFANA_URL"
 ```
 
 If any are empty, stop and report.
+
+---
+
+## Content-to-Phase Mapping
+
+### Module 10 — Platform Engineering (exploration, mostly read-only)
+
+| Phase | Content File                                                                                                 | Description                      |
+|-------|--------------------------------------------------------------------------------------------------------------|----------------------------------|
+| 10.1  | `10_PlatformEngineering/11_PlatformEngineering/001_Section1_IDP_Platform/index.en.md`                        | IDP platform overview            |
+| 10.2  | `10_PlatformEngineering/11_PlatformEngineering/002_Section1_EKS_CAPABILITIES/index.en.md`                    | EKS capabilities overview        |
+| 10.2a | `10_PlatformEngineering/11_PlatformEngineering/002_Section1_EKS_CAPABILITIES/010-identity-center.md`         | Identity Center login            |
+| 10.2b | `10_PlatformEngineering/11_PlatformEngineering/002_Section1_EKS_CAPABILITIES/020-first-login-walkthrough.md` | First login walkthrough          |
+| 10.2c | `10_PlatformEngineering/11_PlatformEngineering/002_Section1_EKS_CAPABILITIES/030-kro-and-ack.md`             | KRO and ACK overview             |
+| 10.3  | `10_PlatformEngineering/11_PlatformEngineering/003_Section1_Basic_Tools/index.en.md`                         | Basic tools (kubectl, k9s, etc.) |
+| 10.4  | `10_PlatformEngineering/11_PlatformEngineering/004_Section1_GitOps_tools/index.en.md`                        | GitOps tools (ArgoCD)            |
+| 10.5  | `10_PlatformEngineering/11_PlatformEngineering/005_section1_ProvisionEnvironments/index.en.md`               | Provision environments           |
+
+### Module 10 — ACK & KRO Deep Dive
+
+| Phase | Content File                                                          | Description                          |
+|-------|-----------------------------------------------------------------------|--------------------------------------|
+| 10.6  | `10_PlatformEngineering/12_ACK_KRO/001_Section3_ACK/index.en.md`      | ACK (AWS Controllers for Kubernetes) |
+| 10.7  | `10_PlatformEngineering/12_ACK_KRO/002_Section3_KRO/index.en.md`      | KRO (Kubernetes Resource Operator)   |
+| 10.8  | `10_PlatformEngineering/12_ACK_KRO/003_Alternative_Tools/index.en.md` | Alternative tools (kubevela)         |
+
+### Module 10 — GenAI with Platform Engineering (optional)
+
+| Phase | Content File                                                                                | Description                      |
+|-------|---------------------------------------------------------------------------------------------|----------------------------------|
+| 10.9  | `10_PlatformEngineering/13_GenAIwithPlatformEng/001_Code_Gen_Usecase/index.en.md`           | Code generation use case         |
+| 10.10 | `10_PlatformEngineering/13_GenAIwithPlatformEng/002_Q_Backstage_Generation/index.en.md`     | Q Developer Backstage generation |
+| 10.11 | `10_PlatformEngineering/13_GenAIwithPlatformEng/003_Q_DDB_Backstage_Deployment/index.en.md` | DDB Backstage deployment         |
+| 10.12 | `10_PlatformEngineering/13_GenAIwithPlatformEng/005_Section4_Gitlab_Push/index.en.md`       | GitLab push                      |
+
+### Module 20 — Application Delivery (Rust)
+
+| Phase | Content File                                              | Description                        |
+|-------|-----------------------------------------------------------|------------------------------------|
+| 20.1  | `20_ApplicationDelivery/01_Rust/01_Intro/index.en.md`     | Intro + manually deploy frontend   |
+| 20.2  | `20_ApplicationDelivery/01_Rust/02_Backstage/index.en.md` | Provision Rust CI/CD via Backstage |
+| 20.3  | `20_ApplicationDelivery/01_Rust/03_CI/index.en.md`        | Wait for CI workflows              |
+| 20.4  | `20_ApplicationDelivery/01_Rust/04_CD/index.en.md`        | Deploy to DEV + promote to PROD    |
+
+### Module 20 — Rust Feature Development (optional)
+
+| Phase | Content File                                                   | Description                 |
+|-------|----------------------------------------------------------------|-----------------------------|
+| 20.5  | `20_ApplicationDelivery/01_Rust/feature-dev-rust.en.md`        | Feature development on Rust |
+| 20.6  | `20_ApplicationDelivery/01_Rust/feature-dev-deploy-rust.en.md` | Deploy Rust feature branch  |
+
+### Module 30 — Progressive Application Delivery
+
+| Phase | Content File                                                                      | Description                             |
+|-------|-----------------------------------------------------------------------------------|-----------------------------------------|
+| 30.1  | `30_ProgressiveApplicationDelivery/10_progressive-delivery/index.en.md`           | Progressive delivery demo (blue→yellow) |
+| 30.2  | `30_ProgressiveApplicationDelivery/20_create-cicd/index.en.md`                    | Java CI/CD via Backstage + build        |
+| 30.3  | `30_ProgressiveApplicationDelivery/30_function-performance-test-java/index.en.md` | Functional & performance gate tests     |
+| 30.4  | `30_ProgressiveApplicationDelivery/40_production-deploy-kargo/index.en.md`        | Production deploy with Kargo            |
+| 30.5  | `30_ProgressiveApplicationDelivery/50_metrics-driven-decisions/index.en.md`       | Metrics-driven decisions (Rust)         |
+| 30.6  | `30_ProgressiveApplicationDelivery/60_measuring_platform_success/index.en.md`     | Measuring platform success intro        |
+
+### Module 40 — AI/ML Delivery (optional)
+
+| Phase | Content File                                                            | Description                    |
+|-------|-------------------------------------------------------------------------|--------------------------------|
+| 40.1  | `40_AIMLDelivery/41_Platform Engineering_for_AIML_Delivery/index.en.md` | Platform engineering for AI/ML |
+| 40.2  | `40_AIMLDelivery/42_Using_Platform_to_build_Models/index.en.md`         | Using platform to build models |
+| 40.3  | `40_AIMLDelivery/43_ML_Model_Use_Case/index.en.md`                      | ML model use case              |
+| 40.4  | `40_AIMLDelivery/44_Using_Platform_for_Data_Engineering/index.en.md`    | Data engineering with Airflow  |
+
+### Module 70 — Measuring Platform Success / DORA Metrics (optional)
+
+| Phase | Content File                                                                              | Description                   |
+|-------|-------------------------------------------------------------------------------------------|-------------------------------|
+| 70.1  | `70_MeasuringPlatformSuccess/71_DORAOnboarding/index.en.md`                               | DORA onboarding intro         |
+| 70.1a | `70_MeasuringPlatformSuccess/71_DORAOnboarding/devlake.en.md`                             | DevLake setup                 |
+| 70.2  | `70_MeasuringPlatformSuccess/72_DeploymentFrequency/index.en.md`                          | Deployment frequency theory   |
+| 70.2a | `70_MeasuringPlatformSuccess/72_DeploymentFrequency/001_Section2_DF_Practice/index.en.md` | Deployment frequency practice |
+| 70.3  | `70_MeasuringPlatformSuccess/73_ChangeFailureRate/index.en.md`                            | Change failure rate theory    |
+| 70.3a | `70_MeasuringPlatformSuccess/73_ChangeFailureRate/001_Section3_FR_Practice/index.en.md`   | Change failure rate practice  |
+| 70.4  | `70_MeasuringPlatformSuccess/74_RecoveryTime/index.en.md`                                 | Recovery time theory          |
+| 70.4a | `70_MeasuringPlatformSuccess/74_RecoveryTime/001_Section4_RT_Practice/index.en.md`        | Recovery time practice        |
+| 70.5  | `70_MeasuringPlatformSuccess/75_LeadTimeForChanges/index.en.md`                           | Lead time for changes theory  |
+| 70.5a | `70_MeasuringPlatformSuccess/75_LeadTimeForChanges/001_Section5_LTC_Practice/index.en.md` | Lead time practice            |
 
 ---
 
@@ -65,51 +179,51 @@ If any are empty, stop and report.
 
 For each phase:
 
-1. **Read** the corresponding content file from the table above
+1. **Read** the corresponding content file from the mapping table above
 2. **Extract** the commands from the `{{ABSTRACTION_TOOL}}` tab (ignore the other tab)
 3. **Execute** the commands, adapting UI steps (like "click Create in Backstage") to their
-   CLI/API equivalents using the `backstage-auth.sh` helper for Backstage operations
+   CLI/API equivalents using the helpers below
 4. **Verify** the expected outcome described in the content
-5. **Report** the phase result (pass/fail) and time taken
-6. **If a step fails**, investigate and report — do NOT silently skip
+5. **Report** the phase result (pass/fail), time taken, and any issues
+6. **If a step fails**, log the issue, apply your proposed fix, and continue
 
 ### Backstage API Helper
 
-For phases that say "open Backstage and create...", use the scaffolder API instead:
+For phases that say "open Backstage and create...", use the scaffolder API:
 
 ```bash
 source ~/environment/platform-on-eks-workshop/scripts/validation/backstage-auth.sh
 
-# Rust CI/CD (Phase 2)
+# Rust CI/CD (Phase 20.2)
 backstage_scaffolder "template:default/cicd-pipeline-gitops" \
   '{"appname":"rust","aws_region":"us-west-2","dockerfile_path":".","deployment_path":"./deployment"}'
 
-# Java CI/CD (Phase 7)
+# Java CI/CD (Phase 30.2)
 backstage_scaffolder "template:default/cicd-pipeline-gitops" \
   '{"appname":"java","aws_region":"us-west-2","dockerfile_path":"./src","deployment_path":"./deployment"}'
 ```
 
 ### Workflow Polling
 
-The workshop says "wait for workflow to finish" with a UI link. Use CLI polling instead:
+The workshop says "wait for workflow to finish" with a UI link. Use CLI polling:
 
 ```bash
-# Workflows don't have app=<name> labels — list all in namespace
 kubectl get workflows -n <namespace> --sort-by=.metadata.creationTimestamp --no-headers
 ```
 
 ### ArgoCD Sync
 
-The workshop offers CLI/kubectl/UI/ tabs for syncing. Always use the argocd CLI, fallback to kubectl in case of errors approach:
+Prefer argocd CLI, fallback to kubectl if auth errors:
 
-CLI:
 ```bash
-argocd app list
+# CLI
+argocd app sync <app-name>
 ```
-In case of CLI authentication errors, you may need to execute bash function `argocd-refresh-token`, that updates credentials valid for 12 hours in file `~/.bashrc.d/platform.sh`. so then you just need to source this platform.sh file.
 
-kubectl:
+If CLI auth fails, run `argocd-refresh-token` then `source ~/.bashrc.d/platform.sh`.
+
 ```bash
+# kubectl fallback
 hub
 kubectl patch application <app-name> -n argocd --type merge \
   -p '{"operation": {"initiatedBy": {"username": "admin"}, "sync": {"revision": "HEAD"}}}'
@@ -117,11 +231,11 @@ kubectl patch application <app-name> -n argocd --type merge \
 
 ### Rollout Watching
 
-The workshop says `kubectl argo rollouts get rollout <name> -n <ns> -w`. Since we can't
+The workshop uses `kubectl argo rollouts get rollout <name> -n <ns> -w`. Since we can't
 use `-w` (interactive), poll instead:
 
 ```bash
-for i in $(seq 1 N); do
+for i in $(seq 1 20); do
   PHASE=$(kubectl get rollout <name> -n <ns> -o jsonpath='{.status.phase}')
   echo "[$i] Phase: $PHASE"
   [ "$PHASE" = "Healthy" ] || [ "$PHASE" = "Degraded" ] && break
@@ -129,25 +243,109 @@ for i in $(seq 1 N); do
 done
 ```
 
+### Module 10 — Exploration Phases
+
+Module 10 is mostly exploration and read-only. For these phases:
+- Execute any `kubectl` commands shown in the content
+- Verify URLs are accessible (Backstage, ArgoCD, GitLab, Grafana)
+- For Identity Center login (10.2a), verify the login flow works with `user1` credentials
+- For GenAI phases (10.9-10.12), these require Q Developer — flag if not available and skip
+
+### Module 40 — AI/ML Phases
+
+Module 40 requires JupyterHub, MLflow, and Airflow. These may not be deployed in all environments.
+Check if the addons are available before starting:
+
+```bash
+hub
+kubectl get applications -n argocd | grep -E "jupyterhub|mlflow|airflow"
+```
+
+If not deployed, skip module 40 and note it in the report.
+
+### Module 70 — DORA Metrics Phases
+
+Module 70 requires DevLake. Check availability:
+
+```bash
+hub
+kubectl get applications -n argocd | grep devlake
+```
+
+If not deployed, skip module 70 and note it in the report.
+
 ---
 
 ## Summary of Expected Outcomes
 
-| Phase | What                           | Expected Result                              |
-|-------|--------------------------------|----------------------------------------------|
-| 1     | Next.js frontend               | Pods running, /unicorn responds              |
-| 2     | Rust CI/CD via Backstage       | cicdpipeline ACTIVE                          |
-| 3     | Rust CI build                  | ECR image exists                             |
-| 4     | Rust DEV deploy                | Pods running, /rust-app returns JSON         |
-| 5     | Rust PROD promote              | rust-prod-cd Synced                          |
-| 6     | Progressive demo (blue→yellow) | Canary rollout completes                     |
-| 7     | Java CI/CD via Backstage       | cicdpipeline ACTIVE                          |
-| 8     | Java CI build + template       | ECR image in manifest, /java-app returns 200 |
-| 9     | Functional gate failure        | Rollout Degraded, app still red              |
-| 10    | Functional gate fix            | Rollout Healthy, app now orange              |
-| 11    | Rust metrics-driven deploy     | Rollout Healthy with metrics                 |
-| 12    | Rust metrics failure           | Rollout fails and rolls back                 |
-| 13    | Rust restore                   | Rollout succeeds again                       |
+| Phase | What                            | Expected Result                                     |
+|-------|---------------------------------|-----------------------------------------------------|
+| 10.x  | Platform exploration            | URLs accessible, kubectl commands work              |
+| 20.1  | Next.js frontend                | Pods running, /unicorn responds                     |
+| 20.2  | Rust CI/CD via Backstage        | cicdpipeline ACTIVE                                 |
+| 20.3  | Rust CI build                   | ECR image exists                                    |
+| 20.4  | Rust DEV deploy + PROD promote  | Pods running, /rust-app returns JSON, prod synced   |
+| 30.1  | Progressive demo (blue→yellow)  | Canary rollout completes                            |
+| 30.2  | Java CI/CD + build              | cicdpipeline ACTIVE, ECR image in manifest          |
+| 30.3  | Functional/performance gates    | Gate failure then fix, rollout healthy              |
+| 30.4  | Kargo production deploy         | Kargo freight promoted to prod                      |
+| 30.5  | Metrics-driven decisions (Rust) | Rollout with metrics passes, then fails with delay  |
+| 30.6  | Measuring success               | Read-only exploration                               |
+| 40.x  | AI/ML delivery                  | JupyterHub/MLflow/Airflow accessible and functional |
+| 70.x  | DORA metrics                    | DevLake configured, metrics visible                 |
 
-If any phase fails, stop and report the phase number, the command that failed, and the output.
-Monitore the time it take for each phases
+---
+
+## Final Output — Validation Report
+
+After completing all phases, produce a **Validation Report** with this structure:
+
+### 1. Phase Results Table
+
+| Phase | Name                  | Status                    | Duration | Notes      |
+|-------|-----------------------|---------------------------|----------|------------|
+| 10.1  | IDP Platform overview | ✅ PASS / ❌ FAIL / ⏭️ SKIP | ~Xs      | brief note |
+| ...   | ...                   | ...                       | ...      | ...        |
+
+### 2. Instruction Issues Found
+
+For each issue:
+
+```
+#### Issue #N — [Phase X] Short title
+
+**Severity**: 🔴 Blocker / 🟡 Wrong output / 🟢 Minor / 🔵 Improvement
+
+**What the instruction says**:
+> (quote the exact instruction text)
+
+**What actually happened**:
+(describe the actual behavior or error)
+
+**Root cause**:
+(why the instruction is wrong)
+
+**Proposed fix**:
+(the corrected instruction text or additional step)
+```
+
+Severity definitions:
+- 🔴 **Blocker** — instruction cannot work as written, participant is stuck
+- 🟡 **Wrong output** — command works but output doesn't match documentation
+- 🟢 **Minor** — cosmetic or confusing but participant can figure it out
+- 🔵 **Improvement** — instruction works but could be clearer or more robust
+
+### 3. Summary Statistics
+
+```
+Total phases: X
+Passed: X
+Failed: X
+Skipped: X
+Issues found: X (🔴 N blockers, 🟡 N wrong output, 🟢 N minor, 🔵 N improvements)
+Total duration: X min
+```
+
+### 4. Recommended Changes
+
+List the content files that need updates and the specific changes, grouped by file.
