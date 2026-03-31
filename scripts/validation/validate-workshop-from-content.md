@@ -211,6 +211,35 @@ The workshop says "wait for workflow to finish" with a UI link. Use CLI polling:
 kubectl get workflows -n <namespace> --sort-by=.metadata.creationTimestamp --no-headers
 ```
 
+**IMPORTANT: Only wait for the workflow that matters.** Workflows prefixed with `dora-deploy`
+or `dora-setup` are DORA metrics side-effects — they are **never blocking** for workshop
+progress. When waiting for a CI build, poll only the specific `cicd-cicd-*` or
+`setup-workflow` by name:
+
+```bash
+# Wait for the CI build only — ignore dora-* workflows
+for i in $(seq 1 20); do
+  LATEST=$(kubectl get workflows -n <ns> --sort-by=.metadata.creationTimestamp --no-headers \
+    -o custom-columns=NAME:.metadata.name,PHASE:.status.phase | grep "cicd-cicd" | tail -1)
+  echo "[$i] $LATEST"
+  echo "$LATEST" | grep -q "Succeeded" && echo "CI DONE" && break
+  echo "$LATEST" | grep -q "Failed" && echo "CI FAILED" && break
+  sleep 30
+done
+```
+
+Do NOT wait for all workflows to finish — that wastes time on non-blocking dora workflows.
+
+### Shell Environment Setup
+
+Helper functions (`argocd-sync`, `argocd-refresh-token`, `trigger-devlake`) are defined in
+`~/.bashrc.d/ssm-setup-ide-logs.sh` but may not be loaded in non-interactive shells.
+**Always source it at the start of the validation run:**
+
+```bash
+source ~/.bashrc.d/ssm-setup-ide-logs.sh
+```
+
 ### ArgoCD Sync
 
 Prefer argocd CLI, fallback to kubectl if auth errors:
@@ -229,19 +258,67 @@ kubectl patch application <app-name> -n argocd --type merge \
   -p '{"operation": {"initiatedBy": {"username": "admin"}, "sync": {"revision": "HEAD"}}}'
 ```
 
+### Backstage Scaffolder Failures
+
+If a Backstage scaffolder task fails with a 401 Unauthorized on the `kube:apply` step,
+the Backstage pod's service account token may be stale. Restart the pod:
+
+```bash
+hub
+kubectl rollout restart deployment backstage -n backstage
+kubectl rollout status deployment backstage -n backstage --timeout=120s
+sleep 15
+```
+
+Then re-source `backstage-auth.sh` and retry with a **new unique name** (the previous
+GitLab repo may already exist from the partial run).
+
+### Kargo UI Promotions
+
+Kargo promotions are designed for the UI. The IDE IAM role cannot create Promotion
+resources directly. Use service account impersonation:
+
+```bash
+FREIGHT=$(kubectl get freight -n <project-ns> -o jsonpath='{.items[0].metadata.name}')
+kubectl -n <project-ns> create --as=system:serviceaccount:kargo:kargo-admin -f - <<EOF
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Promotion
+metadata:
+  name: prod-manual
+  namespace: <project-ns>
+spec:
+  stage: prod
+  freight: $FREIGHT
+  steps:
+  - task:
+      name: update-image
+EOF
+```
+
 ### Rollout Watching
 
 The workshop uses `kubectl argo rollouts get rollout <name> -n <ns> -w`. Since we can't
-use `-w` (interactive), poll instead:
+use `-w` (interactive), **always discover the rollout name first** then poll:
 
 ```bash
+# Step 1: Discover the actual rollout name (never guess)
+kubectl get rollouts -n <ns> --no-headers
+
+# Step 2: Poll using the discovered name
+ROLLOUT_NAME=$(kubectl get rollouts -n <ns> --no-headers -o custom-columns=NAME:.metadata.name | head -1)
 for i in $(seq 1 20); do
-  PHASE=$(kubectl get rollout <name> -n <ns> -o jsonpath='{.status.phase}')
+  PHASE=$(kubectl get rollout $ROLLOUT_NAME -n <ns> -o jsonpath='{.status.phase}')
   echo "[$i] Phase: $PHASE"
   [ "$PHASE" = "Healthy" ] || [ "$PHASE" = "Degraded" ] && break
-  sleep 30
+  sleep 15
 done
 ```
+
+### Polling Safety Rule
+
+When polling for a resource status, if the first iteration returns an **empty result**,
+immediately stop and investigate (wrong name, wrong namespace, resource not yet created).
+Do NOT continue polling with empty results — that wastes time.
 
 ### Module 10 — Exploration Phases
 
@@ -258,10 +335,23 @@ Check if the addons are available before starting:
 
 ```bash
 hub
-kubectl get applications -n argocd | grep -E "jupyterhub|mlflow|airflow"
+kubectl get applications -n argocd | grep -E "jupyterhub|mlflow|airflow|ray|spark"
 ```
 
-If not deployed, skip module 40 and note it in the report.
+If not deployed, skip the affected phases and note it in the report.
+
+For phases that use Backstage templates (e.g., Ray model serving), use the `backstage_scaffolder`
+helper just like for CI/CD pipelines — do NOT skip phases just because they mention a UI.
+Read the content file, find the template name and parameters, and call the scaffolder API.
+
+For phases that require interactive notebooks (JupyterHub), execute any CLI commands shown
+in the content and verify the infrastructure is accessible. Flag notebook-only steps as
+"requires interactive session" but still validate everything around them.
+
+**Ray model warmup**: After Ray pods show `Running`, the model still needs time to load
+into memory — from ~1 minute for small models (TinyLlama) up to many minutes for larger
+ones (Mistral-7B, etc.). If the inference endpoint returns an empty `generated_text`,
+keep retrying every 30s. Do NOT flag this as a failure on empty responses during warmup.
 
 ### Module 70 — DORA Metrics Phases
 
