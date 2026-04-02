@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import { map, tap } from 'rxjs/operators';
 
 @Component({
+  standalone: false,
   selector: 'app-login-menu',
   templateUrl: './login-menu.component.html',
   styleUrls: ['./login-menu.component.css']

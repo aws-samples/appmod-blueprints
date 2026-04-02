@@ -9,6 +9,7 @@ import { LoginActions, QueryParameterNames, ApplicationPaths, ReturnUrlType } fr
 // a user can simply perform a redirect to this component with a returnUrl query parameter and
 // let the component perform the login and return back to the return url.
 @Component({
+  standalone: false,
   selector: 'app-login',
   templateUrl: './login.component.html',
   styleUrls: ['./login.component.css']

@@ -1,5 +1,5 @@
 # 1 - Build Angular App
-FROM node:18 as node
+FROM node:20 AS node
 
 WORKDIR /app
 

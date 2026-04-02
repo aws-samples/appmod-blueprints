@@ -2,6 +2,7 @@ import { Component } from '@angular/core';
 import { OrdersClient, OrdersListVm } from '../northwind-traders-api';
 
 @Component({
+  standalone: false,
   templateUrl: './orders.component.html'
 })
 export class OrdersComponent {

@@ -9,6 +9,7 @@ import { LogoutActions, ApplicationPaths, ReturnUrlType } from '../api-authoriza
 // This is the starting point for the logout process, which is usually initiated when a
 // user clicks on the logout button on the LoginMenu component.
 @Component({
+  standalone: false,
   selector: 'app-logout',
   templateUrl: './logout.component.html',
   styleUrls: ['./logout.component.css']
