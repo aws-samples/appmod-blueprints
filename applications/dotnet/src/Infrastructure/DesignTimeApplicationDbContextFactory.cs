@@ -1,7 +1,4 @@
-﻿using System.Collections.Generic;
-using Duende.IdentityServer.EntityFramework.Options;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
+﻿using Microsoft.EntityFrameworkCore;
 
 namespace Northwind.Infrastructure
 {
@@ -9,7 +6,7 @@ namespace Northwind.Infrastructure
     {
         protected override ApplicationDbContext CreateNewInstance(DbContextOptions<ApplicationDbContext> options)
         {
-            return new ApplicationDbContext(options, new OptionsManager<OperationalStoreOptions>(new OptionsFactory<OperationalStoreOptions>(new List<IConfigureOptions<OperationalStoreOptions>>(), new List<IPostConfigureOptions<OperationalStoreOptions>>())));
+            return new ApplicationDbContext(options);
         }
     }
 }

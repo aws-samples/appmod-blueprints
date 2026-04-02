@@ -15,13 +15,11 @@ using Microsoft.Extensions.Logging;
 using Northwind.Application.Common.Interfaces;
 using Northwind.Common;
 using Northwind.Infrastructure.Files;
-using static System.Formats.Asn1.AsnWriter;
 
 namespace Northwind.Infrastructure
 {
     public static class DependencyInjection
     {
-        
         public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration, IWebHostEnvironment environment)
         {
             services.AddScoped<IUserManager, UserManagerService>();
@@ -36,15 +34,12 @@ namespace Northwind.Infrastructure
                 .AddEnvironmentVariables()
                 .Build();
 
-
-
             var connectionString = configuration.GetConnectionString("NorthwindDatabase");
-           
+
             if (string.IsNullOrEmpty(connectionString))
             {
                 SqlConnectionStringBuilder sqlConnectionStringBuilder = new SqlConnectionStringBuilder()
                 {
-
                     DataSource = configurationbuilder["host"],
                     InitialCatalog = "Northwind",
                     PersistSecurityInfo = true,
@@ -53,11 +48,10 @@ namespace Northwind.Infrastructure
                     MultipleActiveResultSets = true
                 };
                 connectionString = sqlConnectionStringBuilder.ConnectionString;
-
             }
+
             var loggerfactory = services.BuildServiceProvider().GetService<ILoggerFactory>();
             loggerfactory.CreateLogger<ApplicationDbContext>().LogInformation("CONNECTION STRING: " + connectionString);
-
 
             services.AddDbContext<ApplicationDbContext>(options =>
                 options.UseSqlServer(connectionString));
@@ -65,42 +59,49 @@ namespace Northwind.Infrastructure
             services.AddDefaultIdentity<ApplicationUser>()
                 .AddEntityFrameworkStores<ApplicationDbContext>();
 
-            if (environment.IsEnvironment("Test"))
-            {
-                services.AddIdentityServer()
-                    .AddApiAuthorization<ApplicationUser, ApplicationDbContext>(options =>
-                    {
-                        options.Clients.Add(new Client
-                        {
-                            ClientId = "Northwind.IntegrationTests",
-                            AllowedGrantTypes = { GrantType.ResourceOwnerPassword },
-                            ClientSecrets = { new Secret("secret".Sha256()) },
-                            AllowedScopes = { "Northwind.WebUIAPI", "openid", "profile" }
-                        });
-                    }).AddTestUsers(new List<TestUser>
-                    {
-                        new TestUser
-                        {
-                            SubjectId = "f26da293-02fb-4c90-be75-e4aa51e0bb17",
-                            Username = "jason@northwind",
-                            Password = "Northwind1!",
-                            Claims = new List<Claim>
-                            {
-                                new Claim(JwtClaimTypes.Email, "jason@northwind")
-                            }
-                        }
-                    });
-            }
-            else
-            {
-                services.AddIdentityServer()
-                    .AddApiAuthorization<ApplicationUser, ApplicationDbContext>();
-            }
+            services.AddIdentityServer()
+                .AddAspNetIdentity<ApplicationUser>()
+                .AddInMemoryApiScopes(new List<ApiScope>
+                {
+                    new ApiScope("Northwind.WebUIAPI", "Northwind API")
+                })
+                .AddInMemoryClients(GetClients(environment));
 
             services.AddAuthentication()
-                .AddIdentityServerJwt();
+                .AddJwtBearer();
 
             return services;
+        }
+
+        private static IEnumerable<Client> GetClients(IWebHostEnvironment environment)
+        {
+            var clients = new List<Client>
+            {
+                new Client
+                {
+                    ClientId = "Northwind.WebUI",
+                    AllowedGrantTypes = GrantTypes.Code,
+                    RequirePkce = true,
+                    RequireClientSecret = false,
+                    AllowedScopes = { "openid", "profile", "Northwind.WebUIAPI" },
+                    RedirectUris = { "https://localhost/authentication/login-callback" },
+                    PostLogoutRedirectUris = { "https://localhost/authentication/logout-callback" },
+                    AllowedCorsOrigins = { "https://localhost" }
+                }
+            };
+
+            if (environment.IsEnvironment("Test"))
+            {
+                clients.Add(new Client
+                {
+                    ClientId = "Northwind.IntegrationTests",
+                    AllowedGrantTypes = { GrantType.ResourceOwnerPassword },
+                    ClientSecrets = { new Secret("secret".Sha256()) },
+                    AllowedScopes = { "Northwind.WebUIAPI", "openid", "profile" }
+                });
+            }
+
+            return clients;
         }
     }
 }

@@ -1,5 +1,5 @@
-﻿using Microsoft.AspNetCore.ApiAuthorization.IdentityServer;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Northwind.WebUI.Controllers
@@ -7,20 +7,28 @@ namespace Northwind.WebUI.Controllers
     [ApiExplorerSettings(IgnoreApi = true)]
     public class OidcConfigurationController : Controller
     {
-        private readonly ILogger<OidcConfigurationController> logger;
+        private readonly IConfiguration _configuration;
+        private readonly ILogger<OidcConfigurationController> _logger;
 
-        public OidcConfigurationController(IClientRequestParametersProvider clientRequestParametersProvider, ILogger<OidcConfigurationController> _logger)
+        public OidcConfigurationController(IConfiguration configuration, ILogger<OidcConfigurationController> logger)
         {
-            ClientRequestParametersProvider = clientRequestParametersProvider;
-            logger = _logger;
+            _configuration = configuration;
+            _logger = logger;
         }
 
-        public IClientRequestParametersProvider ClientRequestParametersProvider { get; }
-
         [HttpGet("_configuration/{clientId}")]
-        public IActionResult GetClientRequestParameters([FromRoute]string clientId)
+        public IActionResult GetClientRequestParameters([FromRoute] string clientId)
         {
-            var parameters = ClientRequestParametersProvider.GetClientParameters(HttpContext, clientId);
+            // Return basic OIDC configuration for the SPA client
+            var parameters = new
+            {
+                authority = _configuration["IdentityServer:Authority"] ?? "",
+                client_id = clientId,
+                redirect_uri = _configuration["IdentityServer:RedirectUri"] ?? "",
+                post_logout_redirect_uri = _configuration["IdentityServer:PostLogoutRedirectUri"] ?? "",
+                response_type = "code",
+                scope = "openid profile Northwind.WebUIAPI"
+            };
             return Ok(parameters);
         }
     }
