@@ -440,7 +440,7 @@ export function createPublishGitlabAction(options: {
         gitTimeout = 60,
         useCustomGit = false,
       } = ctx.input;
-      const { owner, repo, host } = parseRepoUrl(repoUrl, integrations);
+      const { owner, repo, host } = parseRepoUrl(repoUrl, integrations as any);
 
       if (!owner) {
         throw new InputError(

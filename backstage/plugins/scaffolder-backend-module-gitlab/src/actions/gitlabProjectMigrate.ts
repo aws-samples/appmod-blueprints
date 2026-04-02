@@ -86,7 +86,7 @@ export const createGitlabProjectMigrateAction = (options: {
         host: destinationHost,
         repo: destinationSlug,
         owner: destinationNamespace,
-      } = parseRepoUrl(destinationUrl, integrations);
+      } = parseRepoUrl(destinationUrl, integrations as any);
 
       if (!destinationNamespace) {
         throw new InputError(

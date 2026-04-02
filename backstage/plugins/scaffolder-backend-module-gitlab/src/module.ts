@@ -20,6 +20,8 @@ import {
 import { ScmIntegrations } from '@backstage/integration';
 import {
   scaffolderActionsExtensionPoint,
+} from '@backstage/plugin-scaffolder-node';
+import {
   scaffolderAutocompleteExtensionPoint,
 } from '@backstage/plugin-scaffolder-node/alpha';
 import {

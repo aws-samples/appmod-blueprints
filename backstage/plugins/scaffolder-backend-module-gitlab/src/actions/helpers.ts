@@ -26,7 +26,7 @@ export function createGitlabApi(options: {
 }): InstanceType<typeof Gitlab> {
   const { integrations, token: providedToken, repoUrl } = options;
 
-  const { host } = parseRepoUrl(repoUrl, integrations);
+  const { host } = parseRepoUrl(repoUrl, integrations as any);
 
   const integrationConfig = integrations.gitlab.byHost(host);
 

@@ -106,7 +106,7 @@ export const createGitlabRepoPushAction = (options: {
         commitAction,
       } = ctx.input;
 
-      const { owner, repo, project } = parseRepoUrl(repoUrl, integrations);
+      const { owner, repo, project } = parseRepoUrl(repoUrl, integrations as any);
       const repoID = project ? project : `${owner}/${repo}`;
 
       const api = createGitlabApi({
