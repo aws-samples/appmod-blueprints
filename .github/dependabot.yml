@@ -1,0 +1,5 @@
+# Dependabot is disabled in favor of Renovate
+# See .github/workflows/renovate.yml and renovate.json for dependency management configuration
+version: 2
+enable-beta-ecosystems: false
+updates: []
