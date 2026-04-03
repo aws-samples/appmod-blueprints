@@ -55,6 +55,7 @@ clusters:
       enable_mlflow: false
       enable_spark_operator: true
       enable_airflow: false
+      enable_keda: false
       enable_grafana: false
       enable_grafana_operator: true
       enable_platform_manifests_bootstrap: true
@@ -114,6 +115,7 @@ clusters:
       enable_keycloak: false
       enable_kargo: false
       enable_backstage: false
+      enable_keda: false
       enable_platform_manifests_bootstrap: true
       enable_platform_manifests_hub: false
   spoke2:
@@ -163,6 +165,7 @@ clusters:
       enable_keycloak: false
       enable_kargo: false
       enable_backstage: false
+      enable_keda: false
       enable_platform_manifests_bootstrap: true
       enable_platform_manifests_hub: false
 # Test comment 1770278611

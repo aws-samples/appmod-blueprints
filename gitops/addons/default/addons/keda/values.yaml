@@ -1,0 +1,36 @@
+# Default values for KEDA addon
+keda:
+  resources:
+    operator:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    metricServer:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    webhooks:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+  podDisruptionBudget:
+    operator:
+      enabled: true
+      maxUnavailable: 1
+    metricServer:
+      enabled: true
+      maxUnavailable: 1
+  prometheus:
+    metricServer:
+      enabled: true
+    operator:
+      enabled: true
+  serviceAccount:
+    operator:
+      annotations: {}

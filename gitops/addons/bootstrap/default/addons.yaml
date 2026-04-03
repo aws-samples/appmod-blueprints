@@ -1762,3 +1762,18 @@ platform-manifests:
       eksAutoModeRoleName: '{{.metadata.annotations.eks_auto_mode_role_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
+
+keda:
+  enabled: false
+  releaseName: keda
+  chartName: keda
+  chartRepository: 'https://kedacore.github.io/charts'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  namespace: keda
+  defaultVersion: '2.19.0'
+  selector:
+    matchExpressions:
+      - key: enable_keda
+        operator: In
+        values: ['true']
