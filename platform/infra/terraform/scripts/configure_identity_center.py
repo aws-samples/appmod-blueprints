@@ -181,8 +181,37 @@ def get_console_signin_url(destination: str) -> str:
     raise last_err
 
 
+async def dismiss_console_tutorial(page):
+    """Dismiss the AWS Console onboarding tutorial overlay if present."""
+    # The AWS Console has a multi-step tutorial (Service menu → Unified Search → etc.)
+    # We need to keep dismissing until it's gone
+    for _ in range(10):
+        dismissed = False
+        for sel in [
+            'button[data-testid="awsc-tutorial-skip-button"]',
+            'button:has-text("Skip tour")',
+            'button:has-text("Done")',
+            'button:has-text("Got it")',
+            'button:has-text("Dismiss")',
+        ]:
+            try:
+                btn = await page.wait_for_selector(sel, state="visible", timeout=2000)
+                if btn:
+                    await btn.click()
+                    await page.wait_for_timeout(500)
+                    dismissed = True
+                    break
+            except Exception:
+                continue
+        if not dismissed:
+            break
+
+
 async def wait_for_stable(page, timeout=10000):
-    await page.wait_for_load_state("networkidle")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=timeout)
+    except Exception:
+        await page.wait_for_load_state("domcontentloaded", timeout=timeout)
     await page.wait_for_timeout(2000)
     try:
         await page.wait_for_selector(".awsui-spinner", state="hidden", timeout=timeout)
@@ -426,12 +455,14 @@ async def configure_identity_center(
                 await wait_for_stable(page)
                 await context.storage_state(path=STORAGE_STATE_FILE)
                 print(f"Session saved to {STORAGE_STATE_FILE}", file=sys.stderr)
+            await dismiss_console_tutorial(page)
             await screenshot(page, "/tmp/step1.png", debug)
 
             # Step 2: Navigate to Settings → Identity source tab
             print("Navigating to Identity source settings...", file=sys.stderr)
             await page.goto(settings_url, wait_until="domcontentloaded")
             await wait_for_stable(page)
+            await dismiss_console_tutorial(page)
             await page.click('[data-testid="identity-source"]')
             await wait_for_stable(page)
             await screenshot(page, "/tmp/step2.png", debug)
@@ -449,20 +480,34 @@ async def configure_identity_center(
             print("Selecting 'External identity provider'...", file=sys.stderr)
             await page.wait_for_selector('text="External identity provider"', state="visible")
             await page.click('text="External identity provider"')
-            await page.click('button:has-text("Next")')
+            # Use a specific selector to avoid hitting the tutorial overlay's "Next" button
+            next_btn = await page.wait_for_selector(
+                '[data-testid="wizard-next-button"], form button:has-text("Next"), [class*="wizard"] button:has-text("Next"), main button:has-text("Next")',
+                state="visible", timeout=10000
+            )
+            await next_btn.click()
             await wait_for_stable(page)
             await screenshot(page, "/tmp/step4.png", debug)
 
             # Step 5: Download AWS SAML metadata
             print("Downloading AWS SAML metadata...", file=sys.stderr)
+            await screenshot(page, "/tmp/step5_pre.png", debug)
             download_btn = None
-            for sel in ['[data-testid="saml-metadata"]', 'a:has-text("Download")', 'button:has-text("Download")']:
+            for sel in [
+                '[data-testid="saml-metadata"]',
+                'a:has-text("Download metadata file")',
+                'a:has-text("Download")',
+                'button:has-text("Download metadata file")',
+                'button:has-text("Download")',
+                'a[href*="metadata"]',
+            ]:
                 try:
                     download_btn = await page.wait_for_selector(sel, state="visible", timeout=10000)
                     break
                 except Exception:
                     continue
             if not download_btn:
+                await screenshot(page, "/tmp/step5_fail.png", debug)
                 raise RuntimeError("Could not find AWS metadata download button")
             async with page.expect_download() as dl:
                 await download_btn.click()
