@@ -1764,7 +1764,7 @@ platform-manifests:
       region: '{{.metadata.annotations.aws_region}}'
 
 keda:
-  enabled: false
+  enabled: true
   releaseName: keda
   chartName: keda
   chartRepository: 'https://kedacore.github.io/charts'
