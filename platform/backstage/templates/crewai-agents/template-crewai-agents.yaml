@@ -1,0 +1,89 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  description: Run a CrewAI multi-agent crew as an Argo Workflow
+  name: crewai-agents
+  title: CrewAI Multi-Agent Crew
+spec:
+  owner: guest
+  type: service
+  parameters:
+    - title: Configuration Options
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Name of this agent crew run
+        crew_name:
+          type: string
+          default: cluster-health
+          description: Crew to run (matches crews/ module name)
+          enum:
+            - cluster-health
+        crew_input:
+          type: string
+          default: '{"cluster_info": "Cluster: peeks-hub (EKS 1.34, Auto Mode)\nNamespaces: argocd, keda, ray-system, jupyterhub\nPods in warning: backstage-0 (OOMKilled)\nCPU: 67% allocated, 34% actual\nMemory: 78% allocated, 52% actual\nNetwork policies: none"}'
+          description: JSON input for the crew
+          ui:widget: textarea
+  steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
+    - id: template
+      name: Generating component
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{parameters.name}}
+          crew_name: ${{parameters.crew_name}}
+          crew_input: ${{parameters.crew_input}}
+          crewai_image: public.ecr.aws/seb-demo/crewai-agents:v0.1.0
+          repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
+    - id: publish
+      name: Publishing to GitLab repository
+      action: publish:gitlab
+      input:
+        repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}?repo=${{parameters.name}}&owner=${{ steps['fetchSystem'].output.entity.spec.gituser }}
+        defaultBranch: main
+    - id: create-argocd-app
+      name: Create ArgoCD Application
+      action: kube:apply
+      input:
+        namespaced: true
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{parameters.name}}
+            namespace: argocd
+            finalizers:
+              - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: default
+            source:
+              repoURL: http://gitlab-webservice-default.gitlab:8181/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}.git
+              targetRevision: main
+              path: manifests
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: argo
+            syncPolicy:
+              automated:
+                selfHeal: false
+                prune: true
+              syncOptions:
+                - CreateNamespace=true
+    - id: register
+      name: Register in Backstage
+      action: catalog:register
+      input:
+        repoContentsUrl: http://gitlab-webservice-default.gitlab:8181/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}/-/blob/main
+        catalogInfoPath: /catalog-info.yaml
+  output:
+    links:
+      - title: Open in ArgoCD
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/${{parameters.name}}

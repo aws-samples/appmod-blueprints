@@ -1,0 +1,36 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: ${{values.name}}
+  namespace: argo
+  labels:
+    env: dev
+    entity-id: ${{values.name}}
+spec:
+  serviceAccountName: admin
+  entrypoint: run-crew
+  templates:
+    - name: run-crew
+      container:
+        image: ${{values.crewai_image}}
+        command: ["python", "main.py"]
+        env:
+          - name: CREW_NAME
+            value: "${{values.crew_name}}"
+          - name: CREW_INPUT
+            value: '${{values.crew_input}}'
+          - name: OUTPUT_PATH
+            value: /tmp/output/result.md
+          - name: AWS_DEFAULT_REGION
+            value: us-west-2
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            memory: 1Gi
+      outputs:
+        artifacts:
+          - name: crew-output
+            path: /tmp/output/result.md

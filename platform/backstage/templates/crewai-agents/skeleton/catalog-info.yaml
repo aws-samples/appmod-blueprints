@@ -1,0 +1,12 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{values.name}}
+  annotations:
+    argocd/app-name: ${{values.name}}
+    backstage.io/kubernetes-label-selector: entity-id=${{values.name}}
+spec:
+  type: service
+  lifecycle: experimental
+  owner: guest
+  system: system-info
