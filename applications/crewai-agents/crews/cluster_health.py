@@ -6,7 +6,7 @@ from crewai import Agent, Crew, Task, Process, LLM
 def build_crew() -> Crew:
     llm = LLM(
         model=os.environ.get(
-            "LLM_MODEL", "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0"
+            "LLM_MODEL", "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0"
         ),
         temperature=0.7,
     )

@@ -22,6 +22,8 @@ spec:
             value: '${{values.crew_input}}'
           - name: OUTPUT_PATH
             value: /tmp/output/result.md
+          - name: LLM_MODEL
+            value: "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0"
           - name: AWS_DEFAULT_REGION
             value: us-west-2
         resources:
