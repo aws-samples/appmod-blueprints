@@ -56,9 +56,9 @@ clusters:
       enable_spark_operator: true
       enable_airflow: false
       enable_keda: false
-      enable_litellm: false
-      enable_langfuse: false
-      enable_qdrant: false
+      enable_litellm: true
+      enable_langfuse: true
+      enable_qdrant: true
       enable_grafana: false
       enable_grafana_operator: true
       enable_platform_manifests_bootstrap: true
