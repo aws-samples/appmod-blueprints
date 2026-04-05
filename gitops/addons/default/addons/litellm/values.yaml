@@ -1,0 +1,14 @@
+# LiteLLM — Unified LLM Gateway
+# Proxies requests to Bedrock, self-hosted models, and external APIs
+masterkey:
+  existingSecret: ""
+  value: "sk-peeks-litellm-key"
+replicaCount: 1
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+# Bedrock integration via Pod Identity (configure separately)
+# LiteLLM auto-discovers Bedrock models when AWS credentials are available

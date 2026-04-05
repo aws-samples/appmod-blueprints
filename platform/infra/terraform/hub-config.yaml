@@ -52,10 +52,13 @@ clusters:
       enable_ray_operator: true
       enable_image_prepuller: true
       enable_kubeflow: false
-      enable_mlflow: false
+      enable_mlflow: true
       enable_spark_operator: true
       enable_airflow: false
       enable_keda: false
+      enable_litellm: false
+      enable_langfuse: false
+      enable_qdrant: false
       enable_grafana: false
       enable_grafana_operator: true
       enable_platform_manifests_bootstrap: true
@@ -116,6 +119,9 @@ clusters:
       enable_kargo: false
       enable_backstage: false
       enable_keda: false
+      enable_litellm: false
+      enable_langfuse: false
+      enable_qdrant: false
       enable_platform_manifests_bootstrap: true
       enable_platform_manifests_hub: false
   spoke2:
@@ -166,6 +172,9 @@ clusters:
       enable_kargo: false
       enable_backstage: false
       enable_keda: false
+      enable_litellm: false
+      enable_langfuse: false
+      enable_qdrant: false
       enable_platform_manifests_bootstrap: true
       enable_platform_manifests_hub: false
 # Test comment 1770278611

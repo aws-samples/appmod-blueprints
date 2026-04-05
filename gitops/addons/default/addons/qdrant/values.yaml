@@ -1,0 +1,16 @@
+# Qdrant — Vector Database for RAG
+# High-performance similarity search
+replicaCount: 1
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+persistence:
+  size: 5Gi
+service:
+  type: ClusterIP
+  ports:
+    rest: 6333
+    grpc: 6334

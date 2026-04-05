@@ -17,6 +17,7 @@ spec:
     - ./ray-serve-trainium/template.yaml
     - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
     - ./cicd-pipeline/template-cicd-pipeline.yaml
+    - ./crewai-agents/template-crewai-agents.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: System

@@ -1,0 +1,16 @@
+# Langfuse — LLM Observability & Tracing
+# Tracks LLM calls, costs, latency, and evaluations
+replicaCount: 1
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+# Uses embedded PostgreSQL by default
+# For production, configure external PostgreSQL
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "langfuse-peeks"
+    database: langfuse

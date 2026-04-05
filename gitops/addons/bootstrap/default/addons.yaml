@@ -1777,3 +1777,49 @@ keda:
       - key: enable_keda
         operator: In
         values: ['true']
+
+litellm:
+  enabled: true
+  releaseName: litellm
+  chartName: litellm-helm
+  chartRepository: ghcr.io/berriai
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  namespace: litellm
+  defaultVersion: '0.1.446'
+  selector:
+    matchExpressions:
+      - key: enable_litellm
+        operator: In
+        values: ['true']
+
+
+langfuse:
+  enabled: true
+  releaseName: langfuse
+  chartName: langfuse
+  chartRepository: 'https://langfuse.github.io/langfuse-helm'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  namespace: langfuse
+  defaultVersion: '1.2.0'
+  selector:
+    matchExpressions:
+      - key: enable_langfuse
+        operator: In
+        values: ['true']
+
+qdrant:
+  enabled: true
+  releaseName: qdrant
+  chartName: qdrant
+  chartRepository: 'https://qdrant.github.io/qdrant-helm'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  namespace: qdrant
+  defaultVersion: '0.13.0'
+  selector:
+    matchExpressions:
+      - key: enable_qdrant
+        operator: In
+        values: ['true']
