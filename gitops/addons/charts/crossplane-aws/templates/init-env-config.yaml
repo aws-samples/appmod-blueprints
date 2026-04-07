@@ -68,6 +68,7 @@ spec:
             labels:
               env: {{ .Values.global.clusterName }}
           data:
+            name: {{ .Values.environment.name | default "dev" }}
             region: {{ .Values.aws.region }}
             vpcId: "${VPC_ID}"
             privateSubnetIds:

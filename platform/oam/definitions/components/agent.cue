@@ -219,24 +219,6 @@ template: {
 			}
 		}
 
-		// ServiceAccount for agentcore memory (needs Bedrock pod identity)
-		if parameter.memory != _|_ && parameter.memory.provider == "agentcore" {
-			memoryServiceAccount: {
-				apiVersion: "v1"
-				kind:       "ServiceAccount"
-				metadata: {
-					name:      parameter.name + "-sa"
-					namespace: parameter.namespace
-					labels: "app.kubernetes.io/name": parameter.name
-					annotations: {
-						// Pod identity annotation — role ARN injected via memory.config.roleArn
-						if parameter.memory.config.roleArn != _|_ {
-							"eks.amazonaws.com/role-arn": parameter.memory.config.roleArn
-						}
-					}
-				}
-			}
-		}
 	}
 
 	parameter: {
@@ -283,7 +265,7 @@ template: {
 				// redis:      url, password?
 				// chroma:     host, port
 				// s3vectors:  bucket, region
-				// agentcore:  memoryId, region, roleArn?
+				// agentcore:  memoryId, region
 				{[string]: string}
 			}
 		}

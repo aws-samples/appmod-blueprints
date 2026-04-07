@@ -1161,6 +1161,8 @@ crossplane-aws:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
+    environment:
+      name: '{{.metadata.annotations.environment_name | default "dev"}}'
   ignoreDifferences:
     - group: apiextensions.crossplane.io
       kind: CompositeResourceDefinition

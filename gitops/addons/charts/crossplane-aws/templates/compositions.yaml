@@ -3,6 +3,123 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
+  name: xcomponentpolicies.iam.platform.aws
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+spec:
+  group: iam.platform.aws
+  names:
+    kind: XComponentPolicy
+    plural: xcomponentpolicies
+  claimNames:
+    kind: ComponentPolicy
+    plural: componentpolicies
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+              - componentName
+              - namespace
+              - policyDocument
+            properties:
+              componentName:
+                type: string
+                description: Name of the component this policy is for
+              namespace:
+                type: string
+                description: Target namespace (team name)
+              policyDocument:
+                type: string
+                description: JSON IAM policy document
+          status:
+            type: object
+            properties:
+              policyArn:
+                type: string
+              policyName:
+                type: string
+              envName:
+                type: string
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: component-policy.iam.platform.aws
+  labels:
+    provider: aws
+    service: iam
+  annotations:
+    argocd.argoproj.io/sync-wave: "25"
+spec:
+  environment:
+    environmentConfigs:
+    - type: Reference
+      ref:
+        name: vpc-config
+    patches:
+    - type: FromEnvironmentFieldPath
+      fromFieldPath: name
+      toFieldPath: status.envName
+  compositeTypeRef:
+    apiVersion: iam.platform.aws/v1alpha1
+    kind: XComponentPolicy
+  resources:
+  - name: iam-policy
+    base:
+      apiVersion: iam.aws.upbound.io/v1beta1
+      kind: Policy
+      spec:
+        providerConfigRef:
+          name: provider-aws-config
+        forProvider:
+          policy: ""
+    patches:
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: status.envName
+        - fromFieldPath: spec.namespace
+        - fromFieldPath: spec.componentName
+        strategy: string
+        string:
+          fmt: "%s-%s-%s-policy"
+      toFieldPath: metadata.name
+      policy:
+        fromFieldPath: Required
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.policyDocument
+      toFieldPath: spec.forProvider.policy
+    - type: ToCompositeFieldPath
+      fromFieldPath: status.atProvider.arn
+      toFieldPath: status.policyArn
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: status.envName
+        - fromFieldPath: spec.namespace
+        - fromFieldPath: spec.componentName
+        strategy: string
+        string:
+          fmt: "%s-%s-%s-policy"
+      toFieldPath: status.policyName
+      policy:
+        fromFieldPath: Required
+    readinessChecks:
+      - type: MatchCondition
+        matchCondition:
+          type: Ready
+          status: "True"
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
   name: xbuckets.storage.example.com
   annotations:
     argocd.argoproj.io/sync-wave: "20"
@@ -520,4 +637,116 @@ spec:
             status: 'True'
             type: Ready
           type: MatchCondition
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xpolicyattachments.iam.platform.aws
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+spec:
+  group: iam.platform.aws
+  names:
+    kind: XPolicyAttachment
+    plural: xpolicyattachments
+  claimNames:
+    kind: PolicyAttachment
+    plural: policyattachments
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+              - roleName
+              - componentName
+              - namespace
+            properties:
+              roleName:
+                type: string
+                description: Name of the IAM Role to attach the policy to
+              componentName:
+                type: string
+                description: Name of the component whose policy to attach
+              namespace:
+                type: string
+                description: Target namespace (team name)
+          status:
+            type: object
+            properties:
+              envName:
+                type: string
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: policy-attachment.iam.platform.aws
+  labels:
+    provider: aws
+    service: iam
+  annotations:
+    argocd.argoproj.io/sync-wave: "25"
+spec:
+  environment:
+    environmentConfigs:
+    - type: Reference
+      ref:
+        name: vpc-config
+    patches:
+    - type: FromEnvironmentFieldPath
+      fromFieldPath: name
+      toFieldPath: status.envName
+  compositeTypeRef:
+    apiVersion: iam.platform.aws/v1alpha1
+    kind: XPolicyAttachment
+  resources:
+  - name: role-policy-attachment
+    base:
+      apiVersion: iam.aws.upbound.io/v1beta1
+      kind: RolePolicyAttachment
+      spec:
+        providerConfigRef:
+          name: provider-aws-config
+        forProvider:
+          policyArnRef:
+            name: ""
+          roleRef:
+            name: ""
+    patches:
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: spec.roleName
+        - fromFieldPath: spec.componentName
+        strategy: string
+        string:
+          fmt: "%s-%s-attachment"
+      toFieldPath: metadata.name
+      policy:
+        fromFieldPath: Required
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: status.envName
+        - fromFieldPath: spec.namespace
+        - fromFieldPath: spec.componentName
+        strategy: string
+        string:
+          fmt: "%s-%s-%s-policy"
+      toFieldPath: spec.forProvider.policyArnRef.name
+      policy:
+        fromFieldPath: Required
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.roleName
+      toFieldPath: spec.forProvider.roleRef.name
+    readinessChecks:
+      - type: MatchCondition
+        matchCondition:
+          type: Ready
+          status: "True"
 {{- end }}

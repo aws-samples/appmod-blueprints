@@ -1,12 +1,11 @@
-// Standard KubeVela ComponentDefinition format
 import "strings"
 
 "appmod-service": {
 	alias: ""
 	annotations: {}
 	attributes: workload: definition: {
-		apiVersion: "argoproj.io/v1alpha1"
-		kind:       "Rollout"
+		apiVersion: "apps/v1"
+		kind:       "Deployment"
 	}
 	description: "Appmod deployment with canary support"
 	labels: {}
@@ -15,8 +14,8 @@ import "strings"
 
 template: {
 	let previewService = "\(context.name)-preview"
-	let ampWorkspaceUrl = "{{args.amp-workspace-url}}"
-	let ampWorkspaceRegion = "{{args.amp-workspace-region}}"
+	let ampWorkspaceUrl = "{{ \"{{\" }}args.amp-workspace-url{{ \"}}\" }}"
+	let ampWorkspaceRegion = "{{ \"{{\" }}args.amp-workspace-region{{ \"}}\" }}"
 	let prometheusTargetQuery = "k8s_container_name=\"\(parameter.image_name)\", k8s_namespace_name=\"\(context.namespace)\""
 
 	output: {
@@ -27,8 +26,7 @@ template: {
 			replicas:             parameter.replicas
 			revisionHistoryLimit: 2
 			selector: matchLabels: app: context.name
-			strategy: canary:
-			{
+			strategy: canary: {
 				canaryService: previewService
 				steps: [
 					{
@@ -42,17 +40,13 @@ template: {
 					if parameter.functionalGate != _|_ {
 						{
 							analysis: {
-								templates: [
-									{
-										templateName: "functional-gate-\(context.name)"
-									},
-								]
-								args: [
-									{
-										name:  "service-name"
-										value: previewService
-									},
-								]
+								templates: [{
+									templateName: "functional-gate-\(context.name)"
+								}]
+								args: [{
+									name:  "service-name"
+									value: previewService
+								}]
 							}
 						}
 					},
@@ -79,17 +73,13 @@ template: {
 					if parameter.performanceGate != _|_ {
 						{
 							analysis: {
-								templates: [
-									{
-										templateName: "performance-gate-\(context.name)"
-									},
-								]
-								args: [
-									{
-										name:  "service-name"
-										value: previewService
-									},
-								]
+								templates: [{
+									templateName: "performance-gate-\(context.name)"
+								}]
+								args: [{
+									name:  "service-name"
+									value: previewService
+								}]
 							}
 						}
 					},
@@ -101,24 +91,20 @@ template: {
 					if parameter.metrics != _|_ {
 						{
 							analysis: {
-								templates: [
-									{
-										templateName: "metrics-\(context.name)"
-									},
-								]
-								args: [
-									{
-										name:  "service-name"
-										value: previewService
-									},
-								]
+								templates: [{
+									templateName: "metrics-\(context.name)"
+								}]
+								args: [{
+									name:  "service-name"
+									value: previewService
+								}]
 							}
 						}
 					},
 				]
 			}
 			template: {
-				metadata: { 
+				metadata: {
 					labels: app: context.name
 					annotations: {
 						if parameter.functionalGate != _|_ {
@@ -237,8 +223,7 @@ template: {
 							key:  "amp-workspace-region"
 						}
 					}]
-					metrics:
-					[
+					metrics: [
 						for idx, criteria in parameter.metrics.evaluationCriteria {
 							name: "metric[\(idx)]-\(context.name): \(criteria.metric)"
 							if criteria.successOrFailCondition == "success" {
@@ -253,8 +238,8 @@ template: {
 							}
 							provider: prometheus: {
 								address: ampWorkspaceUrl
-								query:   [
-										if criteria.function != _|_ {
+								query: [
+									if criteria.function != _|_ {
 										"\(criteria.function)(\(criteria.metric){\(prometheusTargetQuery)})"
 									},
 									if criteria.function == _|_ {
@@ -273,28 +258,24 @@ template: {
 				kind:       "AnalysisTemplate"
 				apiVersion: "argoproj.io/v1alpha1"
 				metadata: name: "functional-gate-\(context.name)"
-				spec: metrics: [
-					{
-						name: "\(context.name)-metrics"
-						provider: job: spec: {
-							template: spec: {
-								containers: [
-									{
-										name:  "test"
-										image: parameter.functionalGate.image
-										command: ["sh"]
-										args: [
-											"-c",
-											"wget -qO- http://\(previewService):\(parameter.port)\(parameter.appPath)/ | grep -q '\(parameter.functionalGate.extraArgs)'"
-										]
-									},
+				spec: metrics: [{
+					name: "\(context.name)-metrics"
+					provider: job: spec: {
+						template: spec: {
+							containers: [{
+								name:  "test"
+								image: parameter.functionalGate.image
+								command: ["sh"]
+								args: [
+									"-c",
+									"wget -qO- http://\(previewService):\(parameter.port)\(parameter.appPath)/ | grep -q '\(parameter.functionalGate.extraArgs)'",
 								]
-								restartPolicy: "Never"
-							}
-							backoffLimit: 0
+							}]
+							restartPolicy: "Never"
 						}
-					},
-				]
+						backoffLimit: 0
+					}
+				}]
 			}
 		}
 		if parameter.performanceGate != _|_ {
@@ -302,102 +283,98 @@ template: {
 				kind:       "AnalysisTemplate"
 				apiVersion: "argoproj.io/v1alpha1"
 				metadata: name: "performance-gate-\(context.name)"
-				spec: metrics: [
-					{
-						name: "\(context.name)-metrics"
-						provider: job: spec: {
-							template: spec: {
-								containers: [
-									if strings.Contains(context.name, "java") {
-										{
-											name:  "test"
-											image: parameter.performanceGate.image
-											command: ["sh"]
-											args: [
-												"-c",
-												"RESULT=$(ab -n 1000 -c 10 http://\(previewService):\(parameter.port)\(parameter.appPath)/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt \(parameter.performanceGate.extraArgs) ] && exit 0 || exit 1"
-											]
-										}
-									},
-									if strings.Contains(context.name, "rust") {
-										{
-											name:  "test"
-											image: parameter.performanceGate.image
-											command: ["run"]
-											args: [
-												"run",
-												"-t",
-												"http://\(previewService):\(parameter.port)",
-												"/benchmark.yaml" 
-											]
-											volumeMounts: [{
-												name: "benchmark-config"
-												mountPath: "/benchmark.yaml"
-												subPath: "benchmark.yaml"
-											}]
-										}
-									},
-								]
+				spec: metrics: [{
+					name: "\(context.name)-metrics"
+					provider: job: spec: {
+						template: spec: {
+							containers: [
+								if strings.Contains(context.name, "java") {
+									{
+										name:  "test"
+										image: parameter.performanceGate.image
+										command: ["sh"]
+										args: [
+											"-c",
+											"RESULT=$(ab -n 1000 -c 10 http://\(previewService):\(parameter.port)\(parameter.appPath)/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt \(parameter.performanceGate.extraArgs) ] && exit 0 || exit 1",
+										]
+									}
+								},
 								if strings.Contains(context.name, "rust") {
-									volumes: [{
-										name: "benchmark-config"
-										configMap: name: "benchmark-config-\(context.name)"
-									}]
-								}
-								restartPolicy: "Never"
+									{
+										name:  "test"
+										image: parameter.performanceGate.image
+										command: ["run"]
+										args: [
+											"run",
+											"-t",
+											"http://\(previewService):\(parameter.port)",
+											"/benchmark.yaml",
+										]
+										volumeMounts: [{
+											name:      "benchmark-config"
+											mountPath: "/benchmark.yaml"
+											subPath:   "benchmark.yaml"
+										}]
+									}
+								},
+							]
+							if strings.Contains(context.name, "rust") {
+								volumes: [{
+									name: "benchmark-config"
+									configMap: name: "benchmark-config-\(context.name)"
+								}]
 							}
-							backoffLimit: 0
+							restartPolicy: "Never"
 						}
-					},
-				]
+						backoffLimit: 0
+					}
+				}]
 			}
 		}
 		if parameter.performanceGate != _|_ && strings.Contains(context.name, "rust") {
 			"benchmark-configmap": {
 				apiVersion: "v1"
-				kind: "ConfigMap"
+				kind:       "ConfigMap"
 				metadata: name: "benchmark-config-\(context.name)"
-				data: {
-					"benchmark.yaml": """
-						config:
-						  target: "http://127.0.0.1:80"
-						  phases:
-						    - duration: 5
-						      arrivalRate: 1
-						      rampTo: 10
-						      name: Warm up
-						    - duration: 10
-						      arrivalRate: 10
-						      rampTo: 100
-						      name: Burn
-						    - duration: 10
-						      arrivalRate: 100
-						      name: End
+				data: "benchmark.yaml": """
+					config:
+					  target: "http://127.0.0.1:80"
+					  phases:
+					    - duration: 5
+					      arrivalRate: 1
+					      rampTo: 10
+					      name: Warm up
+					    - duration: 10
+					      arrivalRate: 10
+					      rampTo: 100
+					      name: Burn
+					    - duration: 10
+					      arrivalRate: 100
+					      name: End
 
-						  plugins:
-						    ensure: {}
-						    apdex: {}
-						    metrics-by-endpoint: {}
-						  apdex:
-						    threshold: 100
-						  ensure:
-						    thresholds:
-						      - http.response_time.p99: 6000
-						      - http.response_time.p95: 6000
+					  plugins:
+					    ensure: {}
+					    apdex: {}
+					    metrics-by-endpoint: {}
+					  apdex:
+					    threshold: 100
+					  ensure:
+					    thresholds:
+					      - http.response_time.p99: 6000
+					      - http.response_time.p95: 6000
 
-						scenarios:
-						  - name: "Navigate Menus"
-						    flow:
-						      - get:
-						          url: "/collection/FRONT_PAGE"
-						      - post:
-						          url: "/products/"
-						          json: "Shirt"
-						      - post:
-						          url: "/products/"
-						          json: "Keyboard"
-						"""
-				}
+					scenarios:
+					  - name: "Navigate Menus"
+					    flow:
+					      - get:
+					          url: "/collection/FRONT_PAGE"
+					      - post:
+					          url: "/products/"
+					          json: "Shirt"
+					      - post:
+					          url: "/products/"
+					          json: "Keyboard"
+					"""
 			}
 		}
 		"appmod-service-pdb": {
@@ -411,17 +388,15 @@ template: {
 		}
 	}
 
-	// Schema definitions
 	#QualityGate: {
-		image:            string
-		pause:            string
-		extraArgs:        *"" | string
+		image:     string
+		pause:     string
+		extraArgs: *"" | string
 	}
 
 	#MetricGate: {
 		pause: *"1s" | string
-		evaluationCriteria:
-		[...{
+		evaluationCriteria: [...{
 			interval:               *"1s" | string
 			count:                  *1 | int
 			function?:              "sum" | "avg" | "max" | "min" | "count"
@@ -432,7 +407,6 @@ template: {
 		}]
 	}
 
-	// Parameter schema
 	parameter: {
 		image_name:       string
 		image:            string
@@ -443,7 +417,7 @@ template: {
 		appPath:          *"/" | string
 		env?:             [...{name: string, value: string}]
 		readinessProbe?:  {...}
-		resources?:       {
+		resources?: {
 			requests?: {
 				cpu?:    string
 				memory?: string

@@ -37,6 +37,33 @@ spec:
         	}
         }
 
+        outputs: {
+        	"\(context.name)-policy": {
+        		apiVersion: "iam.platform.aws/v1alpha1"
+        		kind:       "ComponentPolicy"
+        		metadata: {
+        			name: "\(context.name)-policy"
+        			namespace: context.namespace
+        		}
+        		spec: {
+        			componentName: context.name
+        			namespace:     context.namespace
+        			policyDocument: {"""
+        				{
+        				  "Version": "2012-10-17",
+        				  "Statement": [
+        				    {
+        				      "Effect": "Allow",
+        				      "Action": ["dynamodb:*"],
+        				      "Resource": "*"
+        				    }
+        				  ]
+        				}
+        				"""}
+        		}
+        	}
+        }
+
         parameter: {
         	// Table name
         	tableName: string

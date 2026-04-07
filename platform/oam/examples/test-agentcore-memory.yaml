@@ -1,0 +1,16 @@
+# Test: Provision AgentCore Memory in isolation
+# Usage: kubectl apply -f test-agentcore-memory.yaml
+# Check: kubectl get stack agentcore-memory-test -o yaml
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: test-memory
+  namespace: agents
+spec:
+  components:
+    - name: agentcore-memory-test
+      type: agentcore-memory
+      properties:
+        region: us-west-2
+        description: "Test memory for validation"
+        eventExpiryDuration: 7
