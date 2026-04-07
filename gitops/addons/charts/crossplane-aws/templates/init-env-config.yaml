@@ -33,6 +33,7 @@ metadata:
   namespace: {{ .Values.namespace | default "crossplane-system" }}
   annotations:
     argocd.argoproj.io/sync-wave: "26"
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   template:
     spec:
