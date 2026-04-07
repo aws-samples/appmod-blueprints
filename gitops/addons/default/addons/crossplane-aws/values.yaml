@@ -20,4 +20,7 @@ providers:
 compositions:
   enabled: true
 
+environment:
+  name: "dev"
+
 namespace: crossplane-system
