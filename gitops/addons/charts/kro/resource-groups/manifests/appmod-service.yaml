@@ -265,11 +265,11 @@ spec:
           revisionHistoryLimit: 2
           selector:
             matchLabels:
-              app: ${schema.metadata.name}
+              app: ${schema.spec.image_name}
           strategy:
             canary:
-              canaryService: ${schema.metadata.name}-preview
-              stableService: ${schema.metadata.name}
+              canaryService: ${schema.spec.image_name}-preview
+              stableService: ${schema.spec.image_name}
               steps:
                 - setWeight: 20
                 - pause:
@@ -284,7 +284,7 @@ spec:
           template:
             metadata:
               labels:
-                app: ${schema.metadata.name}
+                app: ${schema.spec.image_name}
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
@@ -338,11 +338,11 @@ spec:
           revisionHistoryLimit: 2
           selector:
             matchLabels:
-              app: ${schema.metadata.name}
+              app: ${schema.spec.image_name}
           strategy:
             canary:
-              canaryService: ${schema.metadata.name}-preview
-              stableService: ${schema.metadata.name}
+              canaryService: ${schema.spec.image_name}-preview
+              stableService: ${schema.spec.image_name}
               steps:
                 - setWeight: 20
                 - pause:
@@ -357,7 +357,7 @@ spec:
           template:
             metadata:
               labels:
-                app: ${schema.metadata.name}
+                app: ${schema.spec.image_name}
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
@@ -398,11 +398,11 @@ spec:
           revisionHistoryLimit: 2
           selector:
             matchLabels:
-              app: ${schema.metadata.name}
+              app: ${schema.spec.image_name}
           strategy:
             canary:
-              canaryService: ${schema.metadata.name}-preview
-              stableService: ${schema.metadata.name}
+              canaryService: ${schema.spec.image_name}-preview
+              stableService: ${schema.spec.image_name}
               steps:
                 - setWeight: 20
                 - pause:
@@ -412,7 +412,7 @@ spec:
                     - templateName: functional-gate-${schema.metadata.name}
                     args:
                     - name: service-name
-                      value: ${schema.metadata.name}-preview
+                      value: ${schema.spec.image_name}-preview
                 - setWeight: 40
                 - pause:
                     duration: 5s
@@ -427,7 +427,7 @@ spec:
                     - templateName: performance-gate-${schema.metadata.name}
                     args:
                     - name: service-name
-                      value: ${schema.metadata.name}
+                      value: ${schema.spec.image_name}
                 - pause:
                     duration: ${schema.spec.metrics.pause}
                 - analysis:
@@ -435,11 +435,11 @@ spec:
                     - templateName: metrics-${schema.metadata.name}
                     args:
                     - name: service-name
-                      value: ${schema.metadata.name}-preview
+                      value: ${schema.spec.image_name}-preview
           template:
             metadata:
               labels:
-                app: ${schema.metadata.name}
+                app: ${schema.spec.image_name}
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
@@ -493,11 +493,11 @@ spec:
           revisionHistoryLimit: 2
           selector:
             matchLabels:
-              app: ${schema.metadata.name}
+              app: ${schema.spec.image_name}
           strategy:
             canary:
-              canaryService: ${schema.metadata.name}-preview
-              stableService: ${schema.metadata.name}
+              canaryService: ${schema.spec.image_name}-preview
+              stableService: ${schema.spec.image_name}
               steps:
                 - setWeight: 20
                 - pause:
@@ -507,7 +507,7 @@ spec:
                     - templateName: functional-gate-${schema.metadata.name}
                     args:
                     - name: service-name
-                      value: ${schema.metadata.name}-preview
+                      value: ${schema.spec.image_name}-preview
                 - setWeight: 40
                 - pause:
                     duration: 5s
@@ -522,7 +522,7 @@ spec:
                     - templateName: performance-gate-${schema.metadata.name}
                     args:
                     - name: service-name
-                      value: ${schema.metadata.name}
+                      value: ${schema.spec.image_name}
                 - pause:
                     duration: ${schema.spec.metrics.pause}
                 - analysis:
@@ -530,11 +530,11 @@ spec:
                     - templateName: metrics-${schema.metadata.name}
                     args:
                     - name: service-name
-                      value: ${schema.metadata.name}-preview
+                      value: ${schema.spec.image_name}-preview
           template:
             metadata:
               labels:
-                app: ${schema.metadata.name}
+                app: ${schema.spec.image_name}
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
             spec:
@@ -621,7 +621,7 @@ spec:
                     pathType: ImplementationSpecific
                     backend:
                       service:
-                        name: ${schema.metadata.name}
+                        name: ${schema.spec.image_name}
                         port:
                           number: ${schema.spec.port}
 
@@ -654,7 +654,7 @@ spec:
                     pathType: ImplementationSpecific
                     backend:
                       service:
-                        name: ${schema.metadata.name}
+                        name: ${schema.spec.image_name}
                         port:
                           number: ${schema.spec.port}
 
