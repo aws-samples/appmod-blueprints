@@ -67,6 +67,13 @@
       "name": "Workshop Steering Guides",
       "indexType": "fast",
       "include": ["**/*.md"]
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://.kiro/skills",
+      "name": "Workshop Skills",
+      "indexType": "fast",
+      "include": ["**/SKILL.md"]
     }
   ]
 }
