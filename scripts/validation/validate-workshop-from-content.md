@@ -39,6 +39,8 @@ You are NOT just trying to make things work. You are **auditing the workshop ins
 **Abstraction tool**: `{{ABSTRACTION_TOOL}}` — must be set to `kro` or `kubevela` before starting.
 **Ask the user for their choice!**
 
+**Language**: Only validate and modify English content files (`.en.md`). French (`.fr.md`) and Chinese (`.zh-CN.md`) translations are maintained separately and should not be edited.
+
 The agent MUST replace `{{ABSTRACTION_TOOL}}` with the user's choice and follow ONLY the
 matching tab instructions from the workshop content files when tabs apply. Some parts use
 kro independently of the tab selection.
@@ -272,6 +274,21 @@ sleep 15
 
 Then re-source `backstage-auth.sh` and retry with a **new unique name** (the previous
 GitLab repo may already exist from the partial run).
+
+### Kiro AI Generation Exercises
+
+Some phases ask the participant to "open Kiro and create a chat session" to generate manifests.
+Since you **are already running as a Kiro agent** in a `kiro-cli chat` session, you do NOT need
+to open a new session or log in. Instead:
+
+1. **Execute the exercise directly** — read the prompt from the content, check the relevant
+   Kubernetes schemas (ComponentDefinitions, TraitDefinitions, ResourceGraphDefinitions), and
+   generate the requested manifest file.
+2. **Run the diff commands** shown in the content to compare your generated manifest against
+   the workshop reference.
+3. **Report** any differences as part of the phase validation.
+
+Do NOT skip these exercises — they validate that the schemas and prompts produce correct output.
 
 ### Kargo UI Promotions
 

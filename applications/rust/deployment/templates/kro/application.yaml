@@ -1,7 +1,7 @@
 apiVersion: kro.run/v1alpha1
 kind: AppmodService
 metadata:
-  name: rust-microservice
+  name: rust-microservice-<environment>
   namespace: team-rust
 spec:
   image: <image>
@@ -9,18 +9,18 @@ spec:
   replicas: 2
   port: 8080
   targetPort: 8080
-  serviceAccount: rust-service-account
+  serviceAccount: rust-service-account-<environment>
   clusterName: peeks-spoke-dev
   accountId: "${AWS_ACCOUNT_ID}"
   env:
     - name: TABLE_NAME
-      value: rust-app-table
+      value: rust-app-table-<environment>
     - name: AWS_REGION
       value: "${AWS_REGION}"
   components:
     dynamodb:
       enabled: true
-      tableName: rust-app-table
+      tableName: rust-app-table-<environment>
       partitionKey: partition_key
       partitionKeyType: S
       sortKey: sort_key

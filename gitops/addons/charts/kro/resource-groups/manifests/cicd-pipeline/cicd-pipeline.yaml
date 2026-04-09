@@ -1393,6 +1393,7 @@ spec:
                        sed -i "s|image: <image>|image: $IMAGE_URI|g" dev/application.yaml
                        sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" dev/application.yaml
                        sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" dev/application.yaml
+                       sed -i "s|publishVersion: .*|publishVersion: \"{{workflow.parameters.image-tag}}\"|g" dev/application.yaml
                      fi
 
                      # Show what changed
