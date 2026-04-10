@@ -60,15 +60,17 @@ argocd-refresh-token() {
         return 1
     fi
 
+    echo "Retrieving ArgoCD token via SSO (this may take ~30s)..." >&2
     local token
     token=$(python3 "$script_dir/argocd_token_automation.py" \
         --url "$server_url" \
         --username "user1" \
         --password "${IDE_PASSWORD}" \
-        --output token 2>/dev/null)
+        --output token 2>/tmp/argocd-token-debug.log)
 
-    if [[ -z "$token" ]]; then
-        echo "ERROR: Failed to retrieve ArgoCD token" >&2
+    if [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
+        echo "ERROR: Failed to retrieve ArgoCD token. Debug log:" >&2
+        cat /tmp/argocd-token-debug.log >&2
         return 1
     fi
 
@@ -79,8 +81,16 @@ argocd-refresh-token() {
     # Persist to platform.sh so new shells pick up the refreshed token
     local platform_sh="$HOME/.bashrc.d/platform.sh"
     if [[ -f "$platform_sh" ]]; then
-        sed -i "s|^export ARGOCD_AUTH_TOKEN=.*|export ARGOCD_AUTH_TOKEN=\"$token\"|" "$platform_sh"
-        sed -i "s|^export ARGOCD_SERVER=.*|export ARGOCD_SERVER=\"$ARGOCD_SERVER\"|" "$platform_sh"
+        if grep -q "^export ARGOCD_AUTH_TOKEN=" "$platform_sh"; then
+            sed -i "s|^export ARGOCD_AUTH_TOKEN=.*|export ARGOCD_AUTH_TOKEN=\"$token\"|" "$platform_sh"
+        else
+            echo "export ARGOCD_AUTH_TOKEN=\"$token\"" >> "$platform_sh"
+        fi
+        if grep -q "^export ARGOCD_SERVER=" "$platform_sh"; then
+            sed -i "s|^export ARGOCD_SERVER=.*|export ARGOCD_SERVER=\"$ARGOCD_SERVER\"|" "$platform_sh"
+        else
+            echo "export ARGOCD_SERVER=\"$ARGOCD_SERVER\"" >> "$platform_sh"
+        fi
     fi
 
     echo "ArgoCD token refreshed. Server: $ARGOCD_SERVER"
