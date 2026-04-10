@@ -179,6 +179,28 @@ If any are empty, stop and report.
 
 ## Execution Instructions
 
+### Timing
+
+Track the wall-clock time for every phase. Record start and end timestamps:
+
+```bash
+echo "⏱️ Phase X.Y START: $(date +%H:%M)"
+# ... execute phase ...
+echo "⏱️ Phase X.Y END: $(date +%H:%M)"
+```
+
+Format durations as `1h15mn`, `45mn`, or `3mn`. Use these thresholds to flag slow phases:
+
+| Module type              | Expected max | Flag as ⏰ SLOW if exceeds |
+|--------------------------|-------------|---------------------------|
+| Read-only / exploration  | 5mn         | 10mn                      |
+| CLI commands only        | 10mn        | 15mn                      |
+| Backstage + CI build     | 15mn        | 25mn                      |
+| Full deploy + promote    | 20mn        | 30mn                      |
+| Progressive rollout      | 15mn        | 25mn                      |
+
+Phases flagged as slow should be investigated — the cause is usually a wait loop polling too long, a pod stuck in pending, or an instruction that requires a manual workaround.
+
 For each phase:
 
 1. **Read** the corresponding content file from the mapping table above
@@ -409,10 +431,13 @@ After completing all phases, produce a **Validation Report** with this structure
 
 ### 1. Phase Results Table
 
-| Phase | Name                  | Status                    | Duration | Notes      |
-|-------|-----------------------|---------------------------|----------|------------|
-| 10.1  | IDP Platform overview | ✅ PASS / ❌ FAIL / ⏭️ SKIP | ~Xs      | brief note |
-| ...   | ...                   | ...                       | ...      | ...        |
+| Phase | Name                  | Status                    | Duration | Timing  | Notes      |
+|-------|-----------------------|---------------------------|----------|---------|------------|
+| 10.1  | IDP Platform overview | ✅ PASS / ❌ FAIL / ⏭️ SKIP | 3mn      | ✅ / ⏰  | brief note |
+| ...   | ...                   | ...                       | ...      | ...     | ...        |
+| **—** | **TOTAL**             |                           | **2h30mn** |       |            |
+
+Duration format: `1h15mn`, `45mn`, `3mn`. Flag with ⏰ if the phase exceeded its expected max (see timing thresholds above).
 
 ### 2. Instruction Issues Found
 
@@ -450,9 +475,26 @@ Passed: X
 Failed: X
 Skipped: X
 Issues found: X (🔴 N blockers, 🟡 N wrong output, 🟢 N minor, 🔵 N improvements)
-Total duration: X min
+
+Timing:
+  Total duration: 2h30mn
+  Phases on time: X
+  Phases slow (⏰): X
+  Slowest phase: X.Y (45mn) — reason
 ```
 
-### 4. Recommended Changes
+### 4. Slow Phases Analysis
+
+For each phase flagged ⏰:
+
+```
+#### ⏰ Phase X.Y — Name (actual: 45mn, expected max: 15mn)
+
+**Time spent on**: what consumed the time (polling, pod startup, retry, workaround)
+**Root cause**: why it was slow (image pull, resource quota, broken instruction, etc.)
+**Recommendation**: how to reduce time (fix instruction, increase timeout, pre-pull image, etc.)
+```
+
+### 5. Recommended Changes
 
 List the content files that need updates and the specific changes, grouped by file.
