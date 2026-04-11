@@ -370,28 +370,106 @@ Module 10 is mostly exploration and read-only. For these phases:
 
 ### Module 40 — AI/ML Phases
 
-Module 40 requires JupyterHub, MLflow, and Airflow. These may not be deployed in all environments.
-Check if the addons are available before starting:
+Module 40 requires JupyterHub, Ray, and Spark. Check availability before starting:
 
 ```bash
 hub
 kubectl get applications -n argocd | grep -E "jupyterhub|mlflow|airflow|ray|spark"
 ```
 
-If not deployed, skip the affected phases and note it in the report.
+If Ray or Spark operators are not deployed, skip the affected phases and note it in the report.
 
-For phases that use Backstage templates (e.g., Ray model serving), use the `backstage_scaffolder`
-helper just like for CI/CD pipelines — do NOT skip phases just because they mention a UI.
-Read the content file, find the template name and parameters, and call the scaffolder API.
+**Do NOT skip phases just because they mention a UI.** Most phases are fully automatable
+via the Backstage scaffolder API and kubectl. Only Phase 40.2 (JupyterHub notebooks)
+requires an interactive session.
 
-For phases that require interactive notebooks (JupyterHub), execute any CLI commands shown
-in the content and verify the infrastructure is accessible. Flag notebook-only steps as
-"requires interactive session" but still validate everything around them.
+**Phase 40.1 — Platform engineering for AI/ML**: Read-only. No commands to execute.
+
+**Phase 40.2 — JupyterHub notebooks**: Verify JupyterHub is accessible (`curl -s -o /dev/null
+-w '%{http_code}' $JUPYTERHUB_URL`). The notebook exercises require an interactive browser
+session — flag as "requires interactive session" but verify the infrastructure is up.
+
+**Phase 40.3 — Ray model serving**: Fully automatable. Deploy via Backstage scaffolder,
+wait for pods, test inference:
+
+```bash
+source ~/environment/platform-on-eks-workshop/scripts/validation/backstage-auth.sh
+
+# Deploy Ray CPU service
+TASK_ID=$(curl -s -X POST "$BACKSTAGE_URL/api/scaffolder/v2/tasks" \
+  -H "Authorization: Bearer $BS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "templateRef": "template:default/ray-serve-cpu",
+    "values": {
+      "name": "cpu",
+      "namespace": "ray-system",
+      "replicas": 1,
+      "modelName": "tinyllama",
+      "maxLength": "100"
+    }
+  }' | jq -r '.id')
+
+# Poll scaffolder task
+for i in $(seq 1 30); do
+  STATUS=$(curl -s -H "Authorization: Bearer $BS_TOKEN" "$BACKSTAGE_URL/api/scaffolder/v2/tasks/$TASK_ID" | jq -r '.status')
+  [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] && echo "$STATUS" && break
+  sleep 5
+done
+
+# Wait for Ray head pod (~3-5 minutes for image pull + startup)
+hub
+for i in $(seq 1 20); do
+  HEAD=$(kubectl get pods -n ray-system -l ray.io/node-type=head --no-headers 2>/dev/null | grep cpu | awk '{print $3}')
+  echo "[$i] Head: $HEAD"
+  [ "$HEAD" = "Running" ] && break
+  sleep 15
+done
+
+# Test inference (retry — model needs 30-60s warmup after pods are Running)
+for i in $(seq 1 6); do
+  RESULT=$(curl -s -X POST "https://$INGRESS_DOMAIN/ray-serve/cpu/generate" \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "What is machine learning?", "max_tokens": 50}' --max-time 60)
+  GEN=$(echo "$RESULT" | jq -r '.generated_text // empty')
+  [ -n "$GEN" ] && echo "INFERENCE OK: $GEN" && break
+  echo "[$i] Model warming up..." && sleep 30
+done
+```
 
 **Ray model warmup**: After Ray pods show `Running`, the model still needs time to load
 into memory — from ~1 minute for small models (TinyLlama) up to many minutes for larger
 ones (Mistral-7B, etc.). If the inference endpoint returns an empty `generated_text`,
 keep retrying every 30s. Do NOT flag this as a failure on empty responses during warmup.
+
+**Phase 40.4 — Spark data engineering**: Fully automatable. Deploy via Backstage scaffolder,
+verify Spark job runs:
+
+```bash
+source ~/environment/platform-on-eks-workshop/scripts/validation/backstage-auth.sh
+
+# Deploy Spark job
+TASK_ID=$(curl -s -X POST "$BACKSTAGE_URL/api/scaffolder/v2/tasks" \
+  -H "Authorization: Bearer $BS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "templateRef": "template:default/argo-workflows-spark-job",
+    "values": { "name": "spark" }
+  }' | jq -r '.id')
+
+# Poll scaffolder task
+for i in $(seq 1 30); do
+  STATUS=$(curl -s -H "Authorization: Bearer $BS_TOKEN" "$BACKSTAGE_URL/api/scaffolder/v2/tasks/$TASK_ID" | jq -r '.status')
+  [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] && echo "$STATUS" && break
+  sleep 5
+done
+
+# Verify Spark job submitted
+hub
+sleep 20
+kubectl get sparkapplications.sparkoperator.k8s.io -A --no-headers
+kubectl get pods -n argo --no-headers | grep spark
+```
 
 ### Module 70 — DORA Metrics Phases
 
@@ -403,6 +481,82 @@ kubectl get applications -n argocd | grep devlake
 ```
 
 If not deployed, skip module 70 and note it in the report.
+
+**Do NOT skip DORA practice phases.** Phases 70.1, 70.2, 70.3, 70.4, 70.5 are read-only theory.
+Phases 70.2a, 70.3a, 70.4a, 70.5a are hands-on and fully automatable via CLI and GitLab API.
+
+**Phase 70.2a — Deployment Frequency practice**: Push a code change, wait for CI, trigger DevLake:
+
+```bash
+cd ~/environment/applications/rust && git pull
+echo "# Testing Deployment Frequency" >> README.md
+git add . && git commit -m "test: trigger deployment for DORA metrics" && git push origin main
+
+# Wait for CI build (only cicd-cicd workflow, ignore dora-* workflows)
+hub
+for i in $(seq 1 20); do
+  LATEST=$(kubectl get workflows -n team-rust --sort-by=.metadata.creationTimestamp --no-headers \
+    -o custom-columns=NAME:.metadata.name,PHASE:.status.phase | grep "cicd-cicd" | tail -1)
+  echo "[$i] $LATEST"
+  echo "$LATEST" | grep -q "Succeeded" && break
+  sleep 30
+done
+
+# Trigger DevLake sync
+trigger-devlake rust
+```
+
+**Phase 70.3a — Change Failure Rate practice**: Create a GitLab issue via API:
+
+```bash
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+curl -s -X POST "$GITLAB_URL/api/v4/projects/$PROJECT_ID/issues" \
+  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Bug: Testing Change Failure Rate", "description": "Testing for CFR Section of workshop"}'
+
+sleep 15
+hub && trigger-devlake rust
+```
+
+**Phase 70.4a — Recovery Time practice**: Close the issue via API:
+
+```bash
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+# Close issue #1 (created in 70.3a)
+curl -s -X PUT "$GITLAB_URL/api/v4/projects/$PROJECT_ID/issues/1" \
+  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d '{"state_event": "close"}'
+
+sleep 15
+hub && trigger-devlake rust
+```
+
+**Phase 70.5a — Lead Time for Changes practice**: Create a branch, push, create MR, merge:
+
+```bash
+cd ~/environment/applications/rust && git checkout main && git pull
+git checkout -b ltfc-branch
+echo "# Testing Lead Time for Changes" >> README.md
+git add . && git commit -m "test: LTFC metrics" && git push -u origin ltfc-branch
+
+# Create MR via GitLab API
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+curl -s -X POST "$GITLAB_URL/api/v4/projects/$PROJECT_ID/merge_requests" \
+  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d '{"source_branch": "ltfc-branch", "target_branch": "main", "title": "Testing LTFC"}'
+```
+
+**IMPORTANT**: GitLab's merge check (`merge_status`) may stay stuck on `commits_status` for
+a long time due to Sidekiq processing delays. If the MR cannot be merged via API after 30s,
+merge via git CLI as a workaround:
+
+```bash
+git checkout main && git pull && git merge ltfc-branch --no-edit && git push origin main
+hub && trigger-devlake rust
+```
 
 ---
 
@@ -421,8 +575,8 @@ If not deployed, skip module 70 and note it in the report.
 | 30.4  | Kargo production deploy         | Kargo freight promoted to prod                      |
 | 30.5  | Metrics-driven decisions (Rust) | Rollout with metrics passes, then fails with delay  |
 | 30.6  | Measuring success               | Read-only exploration                               |
-| 40.x  | AI/ML delivery                  | JupyterHub/MLflow/Airflow accessible and functional |
-| 70.x  | DORA metrics                    | DevLake configured, metrics visible                 |
+| 40.x  | AI/ML delivery                  | JupyterHub accessible, Ray inference returns generated_text, Spark job COMPLETED |
+| 70.x  | DORA metrics                    | DevLake synced, deployment tracked, issue created/closed, MR merged              |
 
 ---
 
