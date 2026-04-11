@@ -7,7 +7,7 @@ externalSecret:
   secretStoreRefName: aws-secrets-manager
   clusterName: hub
   # EKS ArgoCD Capability requires cluster ARN as server field
-  clusterArn: "arn:aws:eks:us-west-2:REPLACE_ME:cluster/hub"
+  clusterArn: "arn:aws:eks:us-west-2:259732043995:cluster/hub"
   annotations:
     addonsRepoURL: "https://github.com/REPLACE_ME/gitops-platform.git"
     addonsRepoRevision: "main"
