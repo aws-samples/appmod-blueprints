@@ -146,7 +146,12 @@ async def get_argocd_token(
                 await _handle_idc_login(page, username, password, debug)
             else:
                 # ArgoCD login page — click SSO button
-                sso_button = await page.query_selector('button:has-text("LOG IN VIA SSO")')
+                try:
+                    sso_button = await page.wait_for_selector(
+                        'button:has-text("LOG IN VIA SSO")', state="visible", timeout=15000
+                    )
+                except Exception:
+                    sso_button = None
                 if sso_button:
                     print("Clicking SSO login button...", file=sys.stderr)
                     await sso_button.click()

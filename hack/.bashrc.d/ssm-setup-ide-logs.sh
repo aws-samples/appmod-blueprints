@@ -91,6 +91,11 @@ argocd-refresh-token() {
         else
             echo "export ARGOCD_SERVER=\"$ARGOCD_SERVER\"" >> "$platform_sh"
         fi
+        if grep -q "^export ARGOCD_OPTS=" "$platform_sh"; then
+            sed -i "s|^export ARGOCD_OPTS=.*|export ARGOCD_OPTS=\"--grpc-web\"|" "$platform_sh"
+        else
+            echo "export ARGOCD_OPTS=\"--grpc-web\"" >> "$platform_sh"
+        fi
     fi
 
     echo "ArgoCD token refreshed. Server: $ARGOCD_SERVER"
