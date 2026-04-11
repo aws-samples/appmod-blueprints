@@ -1,0 +1,55 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: clusters
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            fleet_member: control-plane
+  template:
+    metadata:
+      name: clusters
+      labels:
+        environment: '{{ .metadata.labels.environment }}'
+        tenant: '{{ .metadata.labels.tenant }}'
+    spec:
+      project: default
+      sources:
+        - repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+          targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+          ref: values
+        - repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+          path: '{{ .metadata.annotations.fleetRepoBasepath }}abstractions/resource-groups/platform-cluster'
+          targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+          helm:
+            releaseName: kro-clusters
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/default/kro-clusters/values.yaml'
+              - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/{{ .metadata.labels.tenant }}/kro-clusters/values.yaml'
+      destination:
+        namespace: argocd
+        name: '{{ .name }}'
+      syncPolicy:
+        automated:
+          selfHeal: false
+          allowEmpty: true
+          prune: true
+        retry:
+          limit: -1
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 10m
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

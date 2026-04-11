@@ -1,0 +1,9 @@
+# ProviderConfig for hub cluster — uses IRSA
+# Applied by ArgoCD as part of the crossplane addon's additionalResources
+apiVersion: aws.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: PodIdentity

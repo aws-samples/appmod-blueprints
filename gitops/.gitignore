@@ -1,0 +1,11 @@
+# Sensitive files — never commit
+private/
+*.kubeconfig
+kubeconfig
+
+# Helm dependency artifacts
+charts/*/charts/
+addons/charts/*/charts/
+
+# Local overrides
+*.local.yaml

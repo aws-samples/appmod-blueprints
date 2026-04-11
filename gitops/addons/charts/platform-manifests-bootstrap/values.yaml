@@ -1,0 +1,8 @@
+aws:
+  region: us-west-2  # overridden via overlays/environments/<env>/platform-manifests-bootstrap/values.yaml
+
+customNodepools:
+  enabled: false
+
+gpu:
+  enabled: false

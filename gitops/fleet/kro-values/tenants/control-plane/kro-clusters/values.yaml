@@ -1,0 +1,14 @@
+# Control-plane tenant cluster provisioning values.
+# Override default cluster settings for clusters in the control-plane tenant.
+# Add entries here to provision fleet member clusters via Crossplane.
+#
+# Example:
+# clusters:
+#   spoke-us-west-2:
+#     region: us-west-2
+#     clusterName: spoke-us-west-2
+#     vpcCidr: "10.1.0.0/16"
+#     kubernetesVersion: "1.32"
+#     autoMode: true
+
+clusters: {}

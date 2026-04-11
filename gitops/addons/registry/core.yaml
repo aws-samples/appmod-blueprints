@@ -1,0 +1,154 @@
+# Core infrastructure addons
+# Wave ordering: -1 (controllers) → 0 (core) → 1 (ingress) → 2 (certificates)
+
+argocd:
+  namespace: argocd
+  chartName: argo-cd
+  releaseName: argocd
+  chartRepository: https://argoproj.github.io/argo-helm
+  defaultVersion: '7.9.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '0'
+  selector:
+    matchExpressions:
+      - key: enable_argocd
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      domain: '{{.metadata.annotations.ingress_domain_name}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    configs:
+      cm:
+        url: https://{{.metadata.annotations.ingress_domain_name}}/argocd
+        oidc.config: |
+          name: Keycloak
+          issuer: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
+          clientID: argocd
+          enablePKCEAuthentication: true
+          requestedScopes: ["openid", "profile", "email", "groups"]
+
+metrics-server:
+  namespace: kube-system
+  chartName: metrics-server
+  chartRepository: https://kubernetes-sigs.github.io/metrics-server
+  defaultVersion: '3.12.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '0'
+  selector:
+    matchExpressions:
+      - key: enable_metrics_server
+        operator: In
+        values: ['true']
+
+ingress-nginx:
+  namespace: ingress-nginx
+  chartName: ingress-nginx
+  chartRepository: https://kubernetes.github.io/ingress-nginx
+  defaultVersion: '4.12.2'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '1'
+  selector:
+    matchExpressions:
+      - key: enable_ingress_nginx
+        operator: In
+        values: ['true']
+  valuesObject:
+    controller:
+      service:
+        annotations:
+          service.beta.kubernetes.io/aws-load-balancer-name: '{{.metadata.annotations.ingress_name}}'
+          service.beta.kubernetes.io/aws-load-balancer-security-groups: '{{.metadata.annotations.ingress_security_groups}}'
+          service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: 'true'
+
+cert-manager:
+  namespace: cert-manager
+  chartName: cert-manager
+  releaseName: cert-manager
+  chartRepository: https://charts.jetstack.io
+  defaultVersion: 'v1.15.2'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '2'
+  selector:
+    matchExpressions:
+      - key: enable_cert_manager
+        operator: In
+        values: ['true']
+
+external-secrets:
+  namespace: external-secrets
+  chartName: external-secrets
+  chartRepository: https://charts.external-secrets.io
+  defaultVersion: '0.19.2'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_external_secrets
+        operator: In
+        values: ['true']
+  valuesObject:
+    serviceAccount:
+      name: external-secrets-sa
+
+ingress-class-alb:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/ingress-class-alb'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '0'
+  selector:
+    matchExpressions:
+      - key: enable_ingress_class_alb
+        operator: In
+        values: ['true']
+
+image-prepuller:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/image-prepuller'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '1'
+  selector:
+    matchExpressions:
+      - key: enable_image_prepuller
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+
+aws-efs-csi-driver:
+  namespace: kube-system
+  chartName: aws-efs-csi-driver
+  chartRepository: https://kubernetes-sigs.github.io/aws-efs-csi-driver
+  defaultVersion: '3.0.7'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_aws_efs_csi_driver
+        operator: In
+        values: ['true']
+  valuesObject:
+    controller:
+      serviceAccount:
+        name: efs-csi-controller-sa
+        annotations:
+          eks.amazonaws.com/role-arn: '{{default "" (index .metadata.annotations "aws_efs_csi_driver_iam_role_arn")}}'
+    node:
+      serviceAccount:
+        name: efs-csi-node-sa
+        annotations:
+          eks.amazonaws.com/role-arn: '{{default "" (index .metadata.annotations "aws_efs_csi_driver_iam_role_arn")}}'
+
+external-dns:
+  namespace: kube-system
+  chartName: external-dns
+  chartRepository: https://kubernetes-sigs.github.io/external-dns
+  defaultVersion: '1.14.5'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_external_dns
+        operator: In
+        values: ['true']

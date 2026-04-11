@@ -1,0 +1,107 @@
+# Job: Creates EKS ArgoCD capability after cluster is ACTIVE.
+# Env vars injected from argocd-capability-config ConfigMap
+# (created by Taskfile from config.yaml + Crossplane outputs).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-argocd-capability
+  namespace: crossplane-system
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: crossplane
+      restartPolicy: OnFailure
+      volumes:
+        - name: aws-creds
+          secret:
+            secretName: aws-credentials
+      containers:
+        - name: create-capability
+          image: amazon/aws-cli:latest
+          envFrom:
+            - configMapRef:
+                name: argocd-capability-config
+          env:
+            - name: AWS_SHARED_CREDENTIALS_FILE
+              value: /tmp/.aws/credentials
+          volumeMounts:
+            - name: aws-creds
+              mountPath: /tmp/.aws
+              readOnly: true
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              echo "=== Wait for EKS cluster ACTIVE ==="
+              aws eks wait cluster-active \
+                --name "$CLUSTER_NAME" --region "$AWS_REGION"
+              echo "Cluster $CLUSTER_NAME is ACTIVE"
+
+              echo "=== Create ArgoCD capability ==="
+              EXISTING=$(aws eks describe-capability \
+                --cluster-name "$CLUSTER_NAME" \
+                --capability-name "$CAPABILITY_NAME" \
+                --region "$AWS_REGION" \
+                --query 'capability.status' \
+                --output text 2>/dev/null || echo "NOT_FOUND")
+
+              if [ "$EXISTING" = "NOT_FOUND" ]; then
+                aws eks create-capability \
+                  --region "$AWS_REGION" \
+                  --cluster-name "$CLUSTER_NAME" \
+                  --capability-name "$CAPABILITY_NAME" \
+                  --type ARGOCD \
+                  --role-arn "$CAPABILITY_ROLE_ARN" \
+                  --delete-propagation-policy RETAIN \
+                  --configuration "{
+                    \"argoCd\": {
+                      \"awsIdc\": {
+                        \"idcInstanceArn\": \"$IDC_INSTANCE_ARN\",
+                        \"idcRegion\": \"$IDC_REGION\"
+                      },
+                      \"rbacRoleMappings\": [{
+                        \"role\": \"ADMIN\",
+                        \"identities\": [{
+                          \"id\": \"$IDC_ADMIN_GROUP_ID\",
+                          \"type\": \"SSO_GROUP\"
+                        }]
+                      }]
+                    }
+                  }"
+              else
+                echo "Capability exists: $EXISTING"
+              fi
+
+              echo "=== Wait for ACTIVE ==="
+              for i in $(seq 1 60); do
+                STATUS=$(aws eks describe-capability \
+                  --cluster-name "$CLUSTER_NAME" \
+                  --capability-name "$CAPABILITY_NAME" \
+                  --region "$AWS_REGION" \
+                  --query 'capability.status' \
+                  --output text 2>/dev/null || echo "UNKNOWN")
+                echo "Status: $STATUS ($i/60)"
+                [ "$STATUS" = "ACTIVE" ] && break
+                sleep 30
+              done
+              [ "$STATUS" != "ACTIVE" ] && exit 1
+
+              echo "=== Associate access policy ==="
+              aws eks associate-access-policy \
+                --region "$AWS_REGION" \
+                --cluster-name "$CLUSTER_NAME" \
+                --principal-arn "$CAPABILITY_ROLE_ARN" \
+                --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+                --access-scope type=cluster 2>/dev/null || true
+
+              echo "=== Done ==="
+              echo "ARN: arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${CLUSTER_NAME}"
+              aws eks describe-capability \
+                --cluster-name "$CLUSTER_NAME" \
+                --capability-name "$CAPABILITY_NAME" \
+                --region "$AWS_REGION" \
+                --query 'capability.configuration.argoCd.serverUrl' \
+                --output text

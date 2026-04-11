@@ -1,0 +1,11 @@
+externalSecret:
+  enabled: true
+  secretStoreRefKind: ClusterSecretStore
+  secretStoreRefName: aws-secrets-manager
+  clusterName: ""
+  server: ""
+  annotations: {}
+  labels: {}
+
+# Addon enablement map — populated from enabled-addons.yaml via valueFiles
+enabledAddons: {}

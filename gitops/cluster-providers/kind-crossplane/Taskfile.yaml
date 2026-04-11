@@ -1,0 +1,334 @@
+version: "3"
+set: [errexit, nounset, pipefail]
+
+env:
+  KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
+
+vars:
+  GITOPS_ROOT: "{{.ROOT_DIR}}"
+  CONFIG_FILE: "{{.ROOT_DIR}}/config.yaml"
+  REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
+  KIND_CLUSTER_NAME: "gitops-bootstrap"
+  ARGOCD_VERSION:
+    sh: yq '.argocd.defaultVersion' {{.ROOT_DIR}}/addons/registry/core.yaml
+  AWS_REGION:
+    sh: yq '.aws.region' {{.ROOT_DIR}}/config.yaml
+
+tasks:
+  init:
+    desc: Verify prerequisites
+    cmds:
+      - cmd: command -v {{.ITEM}}
+        for:
+          var: REQUIRED_CLIS
+      - echo "AWS region - {{.AWS_REGION}}"
+
+  install:
+    desc: Bootstrap the platform (idempotent)
+    cmds:
+      - task: init
+      - task: kind:create
+      - task: credentials:setup
+      - task: argocd:install
+      - task: crossplane:setup
+      - task: hub:seed
+      - echo "Bootstrap complete. Run 'task status'."
+
+  credentials:setup:
+    desc: Create AWS credentials secret (auto-detects EC2 vs local, skips if exists)
+    status:
+      - kubectl -n crossplane-system get secret aws-credentials 2>/dev/null
+    cmds:
+      - task: credentials:refresh
+
+  credentials:refresh:
+    desc: Force-refresh AWS credentials secret (use when tokens expire)
+    cmds:
+      - kubectl create namespace crossplane-system --dry-run=client -o yaml | kubectl apply -f -
+      - |
+        TOKEN=$(curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)
+        if [ -n "$TOKEN" ]; then
+          echo "Detected EC2 — using instance profile"
+          ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+          CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+          echo "[default]" > /tmp/aws-creds.ini
+          echo "aws_access_key_id = $(echo $CREDS | jq -r .AccessKeyId)" >> /tmp/aws-creds.ini
+          echo "aws_secret_access_key = $(echo $CREDS | jq -r .SecretAccessKey)" >> /tmp/aws-creds.ini
+          echo "aws_session_token = $(echo $CREDS | jq -r .Token)" >> /tmp/aws-creds.ini
+        else
+          echo "Using local AWS profile"
+          AWS_PROFILE=$(yq '.aws.profile // "default"' {{.GITOPS_ROOT}}/config.yaml)
+          echo "[default]" > /tmp/aws-creds.ini
+          echo "aws_access_key_id = $(aws configure get aws_access_key_id --profile $AWS_PROFILE)" >> /tmp/aws-creds.ini
+          echo "aws_secret_access_key = $(aws configure get aws_secret_access_key --profile $AWS_PROFILE)" >> /tmp/aws-creds.ini
+          ST=$(aws configure get aws_session_token --profile $AWS_PROFILE 2>/dev/null || true)
+          [ -n "$ST" ] && echo "aws_session_token = $ST" >> /tmp/aws-creds.ini
+        fi
+      - kubectl -n crossplane-system create secret generic aws-credentials
+          --from-file=credentials=/tmp/aws-creds.ini
+          --dry-run=client -o yaml | kubectl apply -f -
+      - rm -f /tmp/aws-creds.ini
+
+  kind:create:
+    desc: Create Kind cluster (skips if exists)
+    status:
+      - kind get clusters 2>/dev/null | grep -q "^{{.KIND_CLUSTER_NAME}}$"
+    cmds:
+      - kind create cluster --config kind.yaml --kubeconfig {{.KUBECONFIG}}
+
+  argocd:install:
+    desc: Install ArgoCD (skips if deployed)
+    status:
+      - helm status argocd -n argocd 2>/dev/null | grep -q deployed
+    cmds:
+      - helm repo add argo https://argoproj.github.io/argo-helm --force-update
+      - helm upgrade --install argocd argo/argo-cd
+          --namespace argocd --create-namespace
+          --version {{.ARGOCD_VERSION}}
+          --wait --timeout 5m
+
+  crossplane:setup:
+    desc: Install Crossplane and providers (idempotent)
+    cmds:
+      - task: crossplane:helm
+      - task: crossplane:providers
+      - task: crossplane:provider-config
+      - task: crossplane:claims
+
+  crossplane:helm:
+    status:
+      - helm status crossplane -n crossplane-system 2>/dev/null | grep -q deployed
+    cmds:
+      - kubectl create namespace crossplane-system --dry-run=client -o yaml | kubectl apply -f -
+      - helm repo add crossplane-stable https://charts.crossplane.io/stable --force-update
+      - helm upgrade --install crossplane crossplane-stable/crossplane
+          --namespace crossplane-system
+          --version $(yq '.crossplane.defaultVersion' {{.GITOPS_ROOT}}/addons/registry/platform.yaml)
+          --wait --timeout 5m
+
+  crossplane:providers:
+    status:
+      - kubectl get providers.pkg.crossplane.io provider-aws-ec2 -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null | grep -q True
+    cmds:
+      - kubectl apply -f {{.GITOPS_ROOT}}/addons/configs/crossplane/manifests/providers.yaml
+      - kubectl wait --for=condition=Healthy --timeout=300s providers.pkg.crossplane.io --all
+
+  crossplane:provider-config:
+    status:
+      - kubectl get providerconfig.aws.upbound.io default 2>/dev/null
+    cmds:
+      - kubectl apply -f manifests/crossplane/provider-config-bootstrap.yaml
+
+  crossplane:claims:
+    cmds:
+      - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
+      - kubectl apply -f claims/hub-cluster.yaml
+      - kubectl apply -f claims/argocd-capability-role.yaml
+
+  hub:seed:
+    cmds:
+      - echo "Waiting for hub cluster..."
+      - kubectl wait --for=condition=Ready --timeout=1800s eksclusters.platform.gitops.io/hub-cluster -n crossplane-system 2>/dev/null || true
+      - echo "Waiting for IAM role..."
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role 2>/dev/null || true
+      - task: argocd:capability
+      - task: secrets-manager:seed
+      - task: hub:seed-secret
+      - task: hub:apply-root-appset
+
+  hub:seed-secret:
+    desc: Create minimal seed cluster secret directly on the hub cluster
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+      CLUSTER_ARN:
+        sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo ""
+      REPO_URL:
+        sh: yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml
+      REPO_REVISION:
+        sh: yq '.repo.revision' {{.GITOPS_ROOT}}/config.yaml
+      REPO_BASEPATH:
+        sh: yq '.repo.basepath' {{.GITOPS_ROOT}}/config.yaml
+      DOMAIN:
+        sh: yq '.domain' {{.GITOPS_ROOT}}/config.yaml
+      RESOURCE_PREFIX:
+        sh: yq '.resourcePrefix' {{.GITOPS_ROOT}}/config.yaml
+      INGRESS_NAME:
+        sh: yq '.ingressName // "hub-ingress"' {{.GITOPS_ROOT}}/config.yaml
+      INGRESS_SECURITY_GROUPS:
+        sh: yq '.ingressSecurityGroups // ""' {{.GITOPS_ROOT}}/config.yaml
+      AWS_ACCOUNT_ID:
+        sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
+    cmds:
+      - echo "Getting hub kubeconfig..."
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - echo "Creating seed cluster secret on hub..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f -
+      - |
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|DOMAIN_NAME|{{.DOMAIN}}|g; s|INGRESS_NAME_VAL|{{.INGRESS_NAME}}|g; s|INGRESS_SG_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_VAL|{{.AWS_ACCOUNT_ID}}|g" | KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        type: Opaque
+        metadata:
+          name: CLUSTER_NAME
+          namespace: argocd
+          annotations:
+            addonsRepoURL: "REPO_URL"
+            addonsRepoRevision: "REPO_REVISION"
+            addonsRepoBasepath: "REPO_BASEPATH"
+            fleetRepoURL: "REPO_URL"
+            fleetRepoRevision: "REPO_REVISION"
+            fleetRepoBasepath: "REPO_BASEPATH"
+            aws_region: "AWS_REGION_VAL"
+            aws_account_id: "AWS_ACCOUNT_VAL"
+            aws_cluster_name: "CLUSTER_NAME"
+            ingress_domain_name: "DOMAIN_NAME"
+            ingress_name: "INGRESS_NAME_VAL"
+            ingress_security_groups: "INGRESS_SG_VAL"
+            resource_prefix: "RESOURCE_PREFIX_VAL"
+          labels:
+            argocd.argoproj.io/secret-type: cluster
+            environment: control-plane
+            fleet_member: control-plane
+        stringData:
+          name: CLUSTER_NAME
+          server: "CLUSTER_ARN"
+          config: '{"tlsClientConfig":{"insecure":false}}'
+        EOF
+      - echo "Seed secret created on hub"
+      - rm -f /tmp/hub-kubeconfig
+
+  hub:apply-root-appset:
+    desc: Apply root-appset to the hub cluster
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - echo "Applying root-appset to hub..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
+      - rm -f /tmp/hub-kubeconfig
+      - echo "Root appset applied. Hub is now self-managing."
+
+  secrets-manager:seed:
+    desc: Seed hub cluster config into AWS Secrets Manager for ExternalSecrets
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+      AWS_ACCOUNT_ID:
+        sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
+      CLUSTER_ARN:
+        sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml):cluster/$(yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml)"
+      REPO_URL:
+        sh: yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml
+      REPO_REVISION:
+        sh: yq '.repo.revision' {{.GITOPS_ROOT}}/config.yaml
+      REPO_BASEPATH:
+        sh: yq '.repo.basepath' {{.GITOPS_ROOT}}/config.yaml
+      DOMAIN:
+        sh: yq '.domain' {{.GITOPS_ROOT}}/config.yaml
+      RESOURCE_PREFIX:
+        sh: yq '.resourcePrefix' {{.GITOPS_ROOT}}/config.yaml
+      INGRESS_NAME:
+        sh: yq '.ingressName // "hub-ingress"' {{.GITOPS_ROOT}}/config.yaml
+      INGRESS_SECURITY_GROUPS:
+        sh: yq '.ingressSecurityGroups // ""' {{.GITOPS_ROOT}}/config.yaml
+    cmds:
+      - |
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        SECRET_VALUE=$(jq -n \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg config '{"tlsClientConfig":{"insecure":false}}' \
+          --arg server '{{.CLUSTER_ARN}}' \
+          --arg addons '' \
+          '{metadata: $metadata, config: $config, server: $server, addons: $addons}')
+        aws secretsmanager create-secret \
+          --name "$SECRET_KEY" \
+          --secret-string "$SECRET_VALUE" \
+          --region {{.AWS_REGION}} 2>/dev/null \
+        || aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" \
+          --secret-string "$SECRET_VALUE" \
+          --region {{.AWS_REGION}}
+        echo "Seeded Secrets Manager: $SECRET_KEY"
+
+  argocd:capability:
+    desc: Create EKS ArgoCD Capability (skips if done)
+    status:
+      - kubectl -n crossplane-system get job create-argocd-capability -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q 1
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+      AWS_ACCOUNT_ID:
+        sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
+      CAPABILITY_NAME:
+        sh: yq '.argocdCapability.name // "argocd"' {{.GITOPS_ROOT}}/config.yaml
+      CAPABILITY_ROLE_ARN:
+        sh: kubectl -n crossplane-system get roles.iam.aws.upbound.io argocd-capability-role -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo ""
+      IDC_INSTANCE_ARN:
+        sh: yq '.identityCenter.instanceArn' {{.GITOPS_ROOT}}/config.yaml
+      IDC_REGION:
+        sh: yq '.identityCenter.region' {{.GITOPS_ROOT}}/config.yaml
+      IDC_ADMIN_GROUP_ID:
+        sh: yq '.identityCenter.adminGroupId' {{.GITOPS_ROOT}}/config.yaml
+    cmds:
+      - kubectl -n crossplane-system create configmap argocd-capability-config
+          --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
+          --from-literal=AWS_REGION={{.AWS_REGION}}
+          --from-literal=AWS_ACCOUNT_ID={{.AWS_ACCOUNT_ID}}
+          --from-literal=CAPABILITY_NAME={{.CAPABILITY_NAME}}
+          --from-literal=CAPABILITY_ROLE_ARN={{.CAPABILITY_ROLE_ARN}}
+          --from-literal=IDC_INSTANCE_ARN={{.IDC_INSTANCE_ARN}}
+          --from-literal=IDC_REGION={{.IDC_REGION}}
+          --from-literal=IDC_ADMIN_GROUP_ID={{.IDC_ADMIN_GROUP_ID}}
+          --dry-run=client -o yaml | kubectl apply -f -
+      - kubectl delete job create-argocd-capability -n crossplane-system 2>/dev/null || true
+      - kubectl apply -f manifests/argocd/create-capability.yaml
+      - kubectl -n crossplane-system wait --for=condition=Complete --timeout=2400s job/create-argocd-capability
+
+  status:
+    desc: Check bootstrap status
+    cmds:
+      - echo "=== Kind ===" && kind get clusters 2>/dev/null | grep "{{.KIND_CLUSTER_NAME}}" || echo "Not running"
+      - echo "=== Helm ===" && helm list -A 2>/dev/null || echo "None"
+      - echo "=== Providers ===" && kubectl get providers.pkg.crossplane.io 2>/dev/null || echo "None"
+      - echo "=== Managed ===" && kubectl -n crossplane-system get managed 2>/dev/null || echo "None"
+      - echo "=== Apps ===" && kubectl -n argocd get applications 2>/dev/null || echo "None"
+
+  destroy-kind:
+    desc: Delete Kind cluster only (hub persists)
+    status:
+      - "! kind get clusters 2>/dev/null | grep -q '^{{.KIND_CLUSTER_NAME}}$'"
+    cmds:
+      - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
+
+  destroy:
+    desc: Full teardown — delete AWS resources, Kind cluster, and clean up
+    cmds:
+      - echo "Deleting Crossplane claims (this triggers AWS resource deletion)..."
+      - kubectl delete platformclusters.platform.gitops.io hub -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete roles.iam.aws.upbound.io argocd-capability-role -n crossplane-system --timeout=60s 2>/dev/null || true
+      - echo "Waiting for managed resources to be deleted (up to 30 min)..."
+      - |
+        for i in $(seq 1 60); do
+          COUNT=$(kubectl get managed -n crossplane-system --no-headers 2>/dev/null | wc -l || echo "0")
+          echo "Remaining managed resources: $COUNT ($i/60)"
+          [ "$COUNT" -eq 0 ] && break
+          sleep 30
+        done
+      - task: destroy-kind
+      - rm -f {{.KUBECONFIG}}
+
+  hub:update:
+    desc: Update hub infra via Kind+Crossplane
+    cmds:
+      - task: init
+      - task: kind:create
+      - task: credentials:setup
+      - task: crossplane:helm
+      - task: crossplane:providers
+      - task: crossplane:provider-config
+      - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
+      - kubectl apply -f claims/
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s eksclusters.platform.gitops.io/hub-cluster 2>/dev/null || true
+      - task: destroy-kind

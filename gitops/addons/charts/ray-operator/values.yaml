@@ -1,0 +1,5 @@
+global:
+  resourcePrefix: ""
+modelPrestage:
+  enabled: false
+  models: []
