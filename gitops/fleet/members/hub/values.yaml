@@ -9,14 +9,14 @@ externalSecret:
   # EKS ArgoCD Capability requires cluster ARN as server field
   clusterArn: "arn:aws:eks:us-west-2:259732043995:cluster/hub"
   annotations:
-    addonsRepoURL: "https://github.com/REPLACE_ME/gitops-platform.git"
+    addonsRepoURL: "https://github.com/punkwalker/navik.git"
     addonsRepoRevision: "main"
     addonsRepoBasepath: "gitops/"
-    fleetRepoURL: "https://github.com/REPLACE_ME/gitops-platform.git"
+    fleetRepoURL: "https://github.com/punkwalker/navik.git"
     fleetRepoRevision: "main"
     fleetRepoBasepath: "gitops/"
     aws_region: "us-west-2"
-    aws_account_id: "REPLACE_ME"
+    aws_account_id: "259732043995"
     aws_cluster_name: "hub"
     ingress_domain_name: "REPLACE_ME.example.com"
     ingress_name: "hub-ingress"
