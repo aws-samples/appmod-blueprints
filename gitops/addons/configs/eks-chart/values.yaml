@@ -6,6 +6,6 @@ deployment:
   nodeSelector:
     eks.amazonaws.com/compute-type: auto
     kubernetes.io/os: linux
-    karpenter.sh/nodepool: system-peeks
+    karpenter.sh/nodepool: system
 reconcile:
   defaultResyncPeriod: 1800

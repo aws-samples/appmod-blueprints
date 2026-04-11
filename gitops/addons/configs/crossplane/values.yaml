@@ -9,7 +9,7 @@ resources:
     memory: 512Mi
 
 nodeSelector:
-  karpenter.sh/nodepool: system-peeks
+  karpenter.sh/nodepool: system
 
 tolerations:
 - key: "CriticalAddonsOnly"
@@ -38,7 +38,7 @@ rbacManager:
     limits:
       memory: 256Mi
   nodeSelector:
-    karpenter.sh/nodepool: system-peeks
+    karpenter.sh/nodepool: system
   tolerations:
   - key: "CriticalAddonsOnly"
     operator: "Exists"
