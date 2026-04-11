@@ -8,7 +8,7 @@ enabledAddons:
   ingress_nginx: false
   ingress_class_alb: false
   cert_manager: false
-  external_secrets: false
+  external_secrets: true
   external_dns: false
   aws_efs_csi_driver: false
   image_prepuller: false
