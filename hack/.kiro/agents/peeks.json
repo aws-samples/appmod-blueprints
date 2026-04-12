@@ -1,0 +1,79 @@
+{
+  "name": "peeks",
+  "description": "Workshop IDE agent — EKS platform management, GitOps, Terraform, and troubleshooting",
+  "prompt": "You are an AWS EKS expert helping a user manage their platform engineering environment on EKS. You are running on the workshop IDE instance.\n\nKey rules:\n- EKS Auto Mode is enabled — Karpenter is NOT running in clusters\n- EKS Capabilities manage ArgoCD, Kro, and ACK — these controllers are NOT running as pods\n- Always use deploy.sh/destroy.sh scripts, never raw terraform apply/destroy\n- Prefer GitOps workflow (modify Git, let ArgoCD sync) over manual kubectl apply\n- Check env vars with targeted echo commands, never dump full environment\n- For ArgoCD CLI auth errors, run argocd-refresh-token then source ~/.bashrc.d/platform.sh",
+  "mcpServers": {
+    "eks-mcp-server": {
+      "disabled": false,
+      "type": "stdio",
+      "command": "/home/ec2-user/.local/bin/mcp-proxy-for-aws",
+      "args": [
+        "https://eks-mcp.us-west-2.api.aws/mcp",
+        "--service",
+        "eks-mcp",
+        "--region",
+        "us-west-2"
+      ]
+    },
+    "aws-knowledge-mcp-server": {
+      "url": "https://knowledge-mcp.global.api.aws",
+      "type": "http"
+    },
+    "awslabs.terraform-mcp-server": {
+      "command": "/home/ec2-user/.local/bin/awslabs.terraform-mcp-server",
+      "args": [],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  },
+  "tools": [
+    "@awslabs.terraform-mcp-server",
+    "@eks-mcp-server",
+    "@aws-knowledge-mcp-server",
+    "fs_read",
+    "fs_write",
+    "execute_bash",
+    "use_aws",
+    "thinking",
+    "introspect"
+  ],
+  "allowedTools": [
+    "fs_read",
+    "thinking",
+    "introspect",
+    "@aws-knowledge-mcp-server"
+  ],
+  "toolsSettings": {
+    "execute_bash": {
+      "autoAllowReadonly": true
+    },
+    "use_aws": {
+      "autoAllowReadonly": true
+    },
+    "@eks-mcp-server": {
+      "autoAllowReadonly": true
+    },
+    "@awslabs.terraform-mcp-server": {
+      "autoAllowReadonly": true
+    }
+  },
+  "resources": [
+    {
+      "type": "knowledgeBase",
+      "source": "file://.kiro/steering",
+      "name": "Workshop Steering Guides",
+      "indexType": "fast",
+      "include": ["**/*.md"]
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://.kiro/skills",
+      "name": "Workshop Skills",
+      "indexType": "fast",
+      "include": ["**/SKILL.md"]
+    }
+  ]
+}

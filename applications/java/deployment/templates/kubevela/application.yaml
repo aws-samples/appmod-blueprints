@@ -1,6 +1,8 @@
 apiVersion: core.oam.dev/v1beta1
 kind: Application
 metadata:
+  annotations:
+    app.oam.dev/publishVersion: "<publish_version>"
   name: java-application
 spec:
   components:

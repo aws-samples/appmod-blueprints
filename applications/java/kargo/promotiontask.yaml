@@ -32,6 +32,8 @@ spec:
       updates:
       - key: spec.components.0.properties.image
         value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
+      - key: metadata.annotations.app\.oam\.dev/publishVersion
+        value: ${{ imageFrom(vars.image).Tag }}
   - uses: git-commit
     config:
       path: ./src

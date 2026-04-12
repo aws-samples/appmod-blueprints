@@ -1,13 +1,15 @@
 apiVersion: core.oam.dev/v1beta1
 kind: Application
 metadata:
+  annotations:
+    app.oam.dev/publishVersion: "<publish_version>"
   name: rust-application
 spec:
   components:
     - name: rust-microservice
       type: appmod-service
       dependsOn:
-        - rust-service-account-sa
+        - rust-service-account-<environment>
       properties:
         image: <image>
         image_name: rust-app
@@ -15,12 +17,12 @@ spec:
         targetPort: 8080
         replicas: 2
         appPath: "/rust-app"
-        serviceAccount: rust-service-account-sa
+        serviceAccount: rust-service-account-<environment>
         env:
           - name: APP_ENV
             value: "DEV"
           - name: TABLE_NAME
-            value: rust-app-table
+            value: rust-app-table-<environment>
           - name: AWS_REGION
             value: "${AWS_REGION}"
         readinessProbe:
@@ -44,18 +46,18 @@ spec:
             http:
               /rust-app: 8080
 
-    - name: rust-service-account-sa
+    - name: rust-service-account-<environment>
       type: dp-service-account
       properties:
         componentNamesForAccess:
-          - rust-dynamodb
+          - rust-dynamodb-<environment>
         clusterName: peeks-spoke-dev
         clusterRegion: us-west-2
 
-    - name: rust-dynamodb
+    - name: rust-dynamodb-<environment>
       type: dynamodb-table
       properties:
-        tableName: rust-app-table
+        tableName: rust-app-table-<environment>
         partitionKeyName: partition_key
         sortKeyName: sort_key
         region: us-west-2

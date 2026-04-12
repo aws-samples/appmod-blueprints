@@ -39,6 +39,8 @@ You are NOT just trying to make things work. You are **auditing the workshop ins
 **Abstraction tool**: `{{ABSTRACTION_TOOL}}` — must be set to `kro` or `kubevela` before starting.
 **Ask the user for their choice!**
 
+**Language**: Only validate and modify English content files (`.en.md`). French (`.fr.md`) and Chinese (`.zh-CN.md`) translations are maintained separately and should not be edited.
+
 The agent MUST replace `{{ABSTRACTION_TOOL}}` with the user's choice and follow ONLY the
 matching tab instructions from the workshop content files when tabs apply. Some parts use
 kro independently of the tab selection.
@@ -50,9 +52,10 @@ kro independently of the tab selection.
 Download the content archive from S3 and extract it:
 
 ```bash
-aws s3 cp s3://$ASSETS_BUCKET_NAME/$ASSETS_BUCKET_PREFIX/content-$WORKSHOP_GIT_BRANCH.tgz /tmp/
+CONTENT_FILE="content-$(echo $WORKSHOP_GIT_BRANCH | tr '/' '-').tgz"
+aws s3 cp "s3://$ASSETS_BUCKET_NAME/${ASSETS_BUCKET_PREFIX}${CONTENT_FILE}" /tmp/
 mkdir -p ~/environment/content
-tar xzf /tmp/content-$WORKSHOP_GIT_BRANCH.tgz -C ~/environment/content/
+tar xzf "/tmp/${CONTENT_FILE}" -C ~/environment/content/
 ```
 
 Content will be in `~/environment/content/`. All content file paths below are relative to that directory.
@@ -177,6 +180,28 @@ If any are empty, stop and report.
 
 ## Execution Instructions
 
+### Timing
+
+Track the wall-clock time for every phase. Record start and end timestamps:
+
+```bash
+echo "⏱️ Phase X.Y START: $(date +%H:%M)"
+# ... execute phase ...
+echo "⏱️ Phase X.Y END: $(date +%H:%M)"
+```
+
+Format durations as `1h15mn`, `45mn`, or `3mn`. Use these thresholds to flag slow phases:
+
+| Module type              | Expected max | Flag as ⏰ SLOW if exceeds |
+|--------------------------|-------------|---------------------------|
+| Read-only / exploration  | 5mn         | 10mn                      |
+| CLI commands only        | 10mn        | 15mn                      |
+| Backstage + CI build     | 15mn        | 25mn                      |
+| Full deploy + promote    | 20mn        | 30mn                      |
+| Progressive rollout      | 15mn        | 25mn                      |
+
+Phases flagged as slow should be investigated — the cause is usually a wait loop polling too long, a pod stuck in pending, or an instruction that requires a manual workaround.
+
 For each phase:
 
 1. **Read** the corresponding content file from the mapping table above
@@ -273,6 +298,21 @@ sleep 15
 Then re-source `backstage-auth.sh` and retry with a **new unique name** (the previous
 GitLab repo may already exist from the partial run).
 
+### Kiro AI Generation Exercises
+
+Some phases ask the participant to "open Kiro and create a chat session" to generate manifests.
+Since you **are already running as a Kiro agent** in a `kiro-cli chat` session, you do NOT need
+to open a new session or log in. Instead:
+
+1. **Execute the exercise directly** — read the prompt from the content, check the relevant
+   Kubernetes schemas (ComponentDefinitions, TraitDefinitions, ResourceGraphDefinitions), and
+   generate the requested manifest file.
+2. **Run the diff commands** shown in the content to compare your generated manifest against
+   the workshop reference.
+3. **Report** any differences as part of the phase validation.
+
+Do NOT skip these exercises — they validate that the schemas and prompts produce correct output.
+
 ### Kargo UI Promotions
 
 Kargo promotions are designed for the UI. The IDE IAM role cannot create Promotion
@@ -330,28 +370,106 @@ Module 10 is mostly exploration and read-only. For these phases:
 
 ### Module 40 — AI/ML Phases
 
-Module 40 requires JupyterHub, MLflow, and Airflow. These may not be deployed in all environments.
-Check if the addons are available before starting:
+Module 40 requires JupyterHub, Ray, and Spark. Check availability before starting:
 
 ```bash
 hub
 kubectl get applications -n argocd | grep -E "jupyterhub|mlflow|airflow|ray|spark"
 ```
 
-If not deployed, skip the affected phases and note it in the report.
+If Ray or Spark operators are not deployed, skip the affected phases and note it in the report.
 
-For phases that use Backstage templates (e.g., Ray model serving), use the `backstage_scaffolder`
-helper just like for CI/CD pipelines — do NOT skip phases just because they mention a UI.
-Read the content file, find the template name and parameters, and call the scaffolder API.
+**Do NOT skip phases just because they mention a UI.** Most phases are fully automatable
+via the Backstage scaffolder API and kubectl. Only Phase 40.2 (JupyterHub notebooks)
+requires an interactive session.
 
-For phases that require interactive notebooks (JupyterHub), execute any CLI commands shown
-in the content and verify the infrastructure is accessible. Flag notebook-only steps as
-"requires interactive session" but still validate everything around them.
+**Phase 40.1 — Platform engineering for AI/ML**: Read-only. No commands to execute.
+
+**Phase 40.2 — JupyterHub notebooks**: Verify JupyterHub is accessible (`curl -s -o /dev/null
+-w '%{http_code}' $JUPYTERHUB_URL`). The notebook exercises require an interactive browser
+session — flag as "requires interactive session" but verify the infrastructure is up.
+
+**Phase 40.3 — Ray model serving**: Fully automatable. Deploy via Backstage scaffolder,
+wait for pods, test inference:
+
+```bash
+source ~/environment/platform-on-eks-workshop/scripts/validation/backstage-auth.sh
+
+# Deploy Ray CPU service
+TASK_ID=$(curl -s -X POST "$BACKSTAGE_URL/api/scaffolder/v2/tasks" \
+  -H "Authorization: Bearer $BS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "templateRef": "template:default/ray-serve-cpu",
+    "values": {
+      "name": "cpu",
+      "namespace": "ray-system",
+      "replicas": 1,
+      "modelName": "tinyllama",
+      "maxLength": "100"
+    }
+  }' | jq -r '.id')
+
+# Poll scaffolder task
+for i in $(seq 1 30); do
+  STATUS=$(curl -s -H "Authorization: Bearer $BS_TOKEN" "$BACKSTAGE_URL/api/scaffolder/v2/tasks/$TASK_ID" | jq -r '.status')
+  [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] && echo "$STATUS" && break
+  sleep 5
+done
+
+# Wait for Ray head pod (~3-5 minutes for image pull + startup)
+hub
+for i in $(seq 1 20); do
+  HEAD=$(kubectl get pods -n ray-system -l ray.io/node-type=head --no-headers 2>/dev/null | grep cpu | awk '{print $3}')
+  echo "[$i] Head: $HEAD"
+  [ "$HEAD" = "Running" ] && break
+  sleep 15
+done
+
+# Test inference (retry — model needs 30-60s warmup after pods are Running)
+for i in $(seq 1 6); do
+  RESULT=$(curl -s -X POST "https://$INGRESS_DOMAIN/ray-serve/cpu/generate" \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "What is machine learning?", "max_tokens": 50}' --max-time 60)
+  GEN=$(echo "$RESULT" | jq -r '.generated_text // empty')
+  [ -n "$GEN" ] && echo "INFERENCE OK: $GEN" && break
+  echo "[$i] Model warming up..." && sleep 30
+done
+```
 
 **Ray model warmup**: After Ray pods show `Running`, the model still needs time to load
 into memory — from ~1 minute for small models (TinyLlama) up to many minutes for larger
 ones (Mistral-7B, etc.). If the inference endpoint returns an empty `generated_text`,
 keep retrying every 30s. Do NOT flag this as a failure on empty responses during warmup.
+
+**Phase 40.4 — Spark data engineering**: Fully automatable. Deploy via Backstage scaffolder,
+verify Spark job runs:
+
+```bash
+source ~/environment/platform-on-eks-workshop/scripts/validation/backstage-auth.sh
+
+# Deploy Spark job
+TASK_ID=$(curl -s -X POST "$BACKSTAGE_URL/api/scaffolder/v2/tasks" \
+  -H "Authorization: Bearer $BS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "templateRef": "template:default/argo-workflows-spark-job",
+    "values": { "name": "spark" }
+  }' | jq -r '.id')
+
+# Poll scaffolder task
+for i in $(seq 1 30); do
+  STATUS=$(curl -s -H "Authorization: Bearer $BS_TOKEN" "$BACKSTAGE_URL/api/scaffolder/v2/tasks/$TASK_ID" | jq -r '.status')
+  [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] && echo "$STATUS" && break
+  sleep 5
+done
+
+# Verify Spark job submitted
+hub
+sleep 20
+kubectl get sparkapplications.sparkoperator.k8s.io -A --no-headers
+kubectl get pods -n argo --no-headers | grep spark
+```
 
 ### Module 70 — DORA Metrics Phases
 
@@ -363,6 +481,82 @@ kubectl get applications -n argocd | grep devlake
 ```
 
 If not deployed, skip module 70 and note it in the report.
+
+**Do NOT skip DORA practice phases.** Phases 70.1, 70.2, 70.3, 70.4, 70.5 are read-only theory.
+Phases 70.2a, 70.3a, 70.4a, 70.5a are hands-on and fully automatable via CLI and GitLab API.
+
+**Phase 70.2a — Deployment Frequency practice**: Push a code change, wait for CI, trigger DevLake:
+
+```bash
+cd ~/environment/applications/rust && git pull
+echo "# Testing Deployment Frequency" >> README.md
+git add . && git commit -m "test: trigger deployment for DORA metrics" && git push origin main
+
+# Wait for CI build (only cicd-cicd workflow, ignore dora-* workflows)
+hub
+for i in $(seq 1 20); do
+  LATEST=$(kubectl get workflows -n team-rust --sort-by=.metadata.creationTimestamp --no-headers \
+    -o custom-columns=NAME:.metadata.name,PHASE:.status.phase | grep "cicd-cicd" | tail -1)
+  echo "[$i] $LATEST"
+  echo "$LATEST" | grep -q "Succeeded" && break
+  sleep 30
+done
+
+# Trigger DevLake sync
+trigger-devlake rust
+```
+
+**Phase 70.3a — Change Failure Rate practice**: Create a GitLab issue via API:
+
+```bash
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+curl -s -X POST "$GITLAB_URL/api/v4/projects/$PROJECT_ID/issues" \
+  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Bug: Testing Change Failure Rate", "description": "Testing for CFR Section of workshop"}'
+
+sleep 15
+hub && trigger-devlake rust
+```
+
+**Phase 70.4a — Recovery Time practice**: Close the issue via API:
+
+```bash
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+# Close issue #1 (created in 70.3a)
+curl -s -X PUT "$GITLAB_URL/api/v4/projects/$PROJECT_ID/issues/1" \
+  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d '{"state_event": "close"}'
+
+sleep 15
+hub && trigger-devlake rust
+```
+
+**Phase 70.5a — Lead Time for Changes practice**: Create a branch, push, create MR, merge:
+
+```bash
+cd ~/environment/applications/rust && git checkout main && git pull
+git checkout -b ltfc-branch
+echo "# Testing Lead Time for Changes" >> README.md
+git add . && git commit -m "test: LTFC metrics" && git push -u origin ltfc-branch
+
+# Create MR via GitLab API
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+curl -s -X POST "$GITLAB_URL/api/v4/projects/$PROJECT_ID/merge_requests" \
+  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d '{"source_branch": "ltfc-branch", "target_branch": "main", "title": "Testing LTFC"}'
+```
+
+**IMPORTANT**: GitLab's merge check (`merge_status`) may stay stuck on `commits_status` for
+a long time due to Sidekiq processing delays. If the MR cannot be merged via API after 30s,
+merge via git CLI as a workaround:
+
+```bash
+git checkout main && git pull && git merge ltfc-branch --no-edit && git push origin main
+hub && trigger-devlake rust
+```
 
 ---
 
@@ -381,8 +575,8 @@ If not deployed, skip module 70 and note it in the report.
 | 30.4  | Kargo production deploy         | Kargo freight promoted to prod                      |
 | 30.5  | Metrics-driven decisions (Rust) | Rollout with metrics passes, then fails with delay  |
 | 30.6  | Measuring success               | Read-only exploration                               |
-| 40.x  | AI/ML delivery                  | JupyterHub/MLflow/Airflow accessible and functional |
-| 70.x  | DORA metrics                    | DevLake configured, metrics visible                 |
+| 40.x  | AI/ML delivery                  | JupyterHub accessible, Ray inference returns generated_text, Spark job COMPLETED |
+| 70.x  | DORA metrics                    | DevLake synced, deployment tracked, issue created/closed, MR merged              |
 
 ---
 
@@ -392,10 +586,13 @@ After completing all phases, produce a **Validation Report** with this structure
 
 ### 1. Phase Results Table
 
-| Phase | Name                  | Status                    | Duration | Notes      |
-|-------|-----------------------|---------------------------|----------|------------|
-| 10.1  | IDP Platform overview | ✅ PASS / ❌ FAIL / ⏭️ SKIP | ~Xs      | brief note |
-| ...   | ...                   | ...                       | ...      | ...        |
+| Phase | Name                  | Status                    | Duration | Timing  | Notes      |
+|-------|-----------------------|---------------------------|----------|---------|------------|
+| 10.1  | IDP Platform overview | ✅ PASS / ❌ FAIL / ⏭️ SKIP | 3mn      | ✅ / ⏰  | brief note |
+| ...   | ...                   | ...                       | ...      | ...     | ...        |
+| **—** | **TOTAL**             |                           | **2h30mn** |       |            |
+
+Duration format: `1h15mn`, `45mn`, `3mn`. Flag with ⏰ if the phase exceeded its expected max (see timing thresholds above).
 
 ### 2. Instruction Issues Found
 
@@ -433,9 +630,26 @@ Passed: X
 Failed: X
 Skipped: X
 Issues found: X (🔴 N blockers, 🟡 N wrong output, 🟢 N minor, 🔵 N improvements)
-Total duration: X min
+
+Timing:
+  Total duration: 2h30mn
+  Phases on time: X
+  Phases slow (⏰): X
+  Slowest phase: X.Y (45mn) — reason
 ```
 
-### 4. Recommended Changes
+### 4. Slow Phases Analysis
+
+For each phase flagged ⏰:
+
+```
+#### ⏰ Phase X.Y — Name (actual: 45mn, expected max: 15mn)
+
+**Time spent on**: what consumed the time (polling, pod startup, retry, workaround)
+**Root cause**: why it was slow (image pull, resource quota, broken instruction, etc.)
+**Recommendation**: how to reduce time (fix instruction, increase timeout, pre-pull image, etc.)
+```
+
+### 5. Recommended Changes
 
 List the content files that need updates and the specific changes, grouped by file.
