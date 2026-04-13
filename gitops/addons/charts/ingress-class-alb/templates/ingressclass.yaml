@@ -1,8 +1,19 @@
+apiVersion: eks.amazonaws.com/v1
+kind: IngressClassParams
+metadata:
+  name: platform
+spec:
+  group:
+    name: platform
+  scheme: internet-facing
+---
 apiVersion: networking.k8s.io/v1
 kind: IngressClass
 metadata:
-  labels:
-    app.kubernetes.io/name: LoadBalancerController
-  name: alb
+  name: platform
 spec:
   controller: eks.amazonaws.com/alb
+  parameters:
+    apiGroup: eks.amazonaws.com
+    kind: IngressClassParams
+    name: platform

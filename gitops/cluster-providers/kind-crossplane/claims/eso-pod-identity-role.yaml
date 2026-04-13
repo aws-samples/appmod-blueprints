@@ -1,0 +1,75 @@
+# IAM Role for ESO Pod Identity
+# Created by Crossplane on Kind during bootstrap, then adopted by
+# Crossplane on the hub via crossplane.io/external-name annotation
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: eso-pod-identity-role
+  namespace: crossplane-system
+  annotations:
+    crossplane.io/external-name: ESOPodIdentityRole
+  labels:
+    platform.gitops.io/role: eso-pod-identity
+spec:
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "pods.eks.amazonaws.com"
+            },
+            "Action": [
+              "sts:AssumeRole",
+              "sts:TagSession"
+            ]
+          }
+        ]
+      }
+    tags:
+      managed-by: crossplane
+      purpose: eso-pod-identity
+---
+# IAM Policy granting SecretsManager read access
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: eso-secrets-read-policy
+  namespace: crossplane-system
+  annotations:
+    crossplane.io/external-name: ESOSecretsReadPolicy
+spec:
+  forProvider:
+    name: ESOSecretsReadPolicy
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "secretsmanager:GetSecretValue",
+              "secretsmanager:ListSecrets"
+            ],
+            "Resource": "*"
+          }
+        ]
+      }
+    tags:
+      managed-by: crossplane
+      purpose: eso-pod-identity
+---
+# Attach SecretsManager read policy to the ESO pod identity role
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: eso-secrets-read-attachment
+  namespace: crossplane-system
+spec:
+  forProvider:
+    policyArnRef:
+      name: eso-secrets-read-policy
+    roleRef:
+      name: eso-pod-identity-role

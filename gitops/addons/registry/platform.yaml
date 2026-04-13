@@ -8,7 +8,7 @@ crossplane:
   chartRepository: https://charts.crossplane.io/stable
   defaultVersion: '1.20.5'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '5'
+    argocd.argoproj.io/sync-wave: '2'
   selector:
     matchExpressions:
       - key: enable_crossplane
@@ -212,20 +212,6 @@ devlake:
       jsonPointers:
         - /status
 
-platform-manifests-bootstrap:
-  namespace: default
-  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/platform-manifests-bootstrap'
-  annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '-1'
-  selector:
-    matchExpressions:
-      - key: enable_platform_manifests_bootstrap
-        operator: In
-        values: ['true']
-  valuesObject:
-    aws:
-      region: '{{.metadata.annotations.aws_region}}'
-
 gitlab:
   namespace: gitlab
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/gitlab'
@@ -256,7 +242,7 @@ crossplane-aws:
   namespace: crossplane-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-aws'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '6'
+    argocd.argoproj.io/sync-wave: '3'
   selector:
     matchExpressions:
       - key: enable_crossplane_aws

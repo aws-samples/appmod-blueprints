@@ -5,7 +5,6 @@ enabledAddons:
   # Core
   argocd: false
   metrics_server: false
-  ingress_nginx: false
   ingress_class_alb: false
   cert_manager: false
   external_secrets: true
@@ -40,7 +39,6 @@ enabledAddons:
   kro_manifests: false
   kro_manifests_hub: false
   multi_acct: false
-  platform_manifests_bootstrap: false
   platform_manifests: false
   backstage: false
   kubevela: false

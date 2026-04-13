@@ -15,6 +15,23 @@ vars:
     sh: yq '.aws.region' {{.ROOT_DIR}}/config.yaml
 
 tasks:
+  validate:
+    desc: Pre-flight checks for kind-crossplane provider
+    cmds:
+      - echo "Checking required CLIs..."
+      - cmd: command -v {{.ITEM}} >/dev/null 2>&1 || { echo "Missing required CLI {{.ITEM}}"; exit 1; }
+        for:
+          var: REQUIRED_CLIS
+      - echo "Checking config.yaml..."
+      - test -f {{.GITOPS_ROOT}}/config.yaml || { echo "config.yaml not found"; exit 1; }
+      - yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "hub.clusterName not set in config.yaml"; exit 1; }
+      - yq '.aws.region' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "aws.region not set in config.yaml"; exit 1; }
+      - yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "aws.accountId not set in config.yaml"; exit 1; }
+      - yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "repo.url not set in config.yaml"; exit 1; }
+      - echo "Checking AWS credentials..."
+      - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
+      - echo "All pre-flight checks passed."
+
   init:
     desc: Verify prerequisites
     cmds:
@@ -124,6 +141,8 @@ tasks:
       - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
       - kubectl apply -f claims/hub-cluster.yaml
       - kubectl apply -f claims/argocd-capability-role.yaml
+      - kubectl apply -f claims/eso-pod-identity-role.yaml
+      - kubectl apply -f claims/eso-pod-identity.yaml
 
   hub:seed:
     cmds:
@@ -131,13 +150,58 @@ tasks:
       - kubectl wait --for=condition=Ready --timeout=1800s eksclusters.platform.gitops.io/hub-cluster -n crossplane-system 2>/dev/null || true
       - echo "Waiting for IAM role..."
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role 2>/dev/null || true
+      - echo "Waiting for ESO pod identity resources..."
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/eso-pod-identity-role 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/eso-pod-identity 2>/dev/null || true
       - task: argocd:capability
       - task: secrets-manager:seed
+      - task: hub:install-eso
+      - task: hub:cluster-secret-store
       - task: hub:seed-secret
       - task: hub:apply-root-appset
 
+  hub:install-eso:
+    desc: Install External Secrets Operator on the hub cluster
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+      ESO_VERSION:
+        sh: yq '.external-secrets.defaultVersion' {{.GITOPS_ROOT}}/addons/registry/core.yaml
+    status:
+      - KUBECONFIG=/tmp/hub-kubeconfig helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - KUBECONFIG=/tmp/hub-kubeconfig helm repo add external-secrets https://charts.external-secrets.io --force-update
+      - KUBECONFIG=/tmp/hub-kubeconfig helm upgrade --install external-secrets external-secrets/external-secrets
+          --namespace external-secrets --create-namespace
+          --version {{.ESO_VERSION}}
+          --set serviceAccount.name=external-secrets-sa
+          --wait --timeout 5m
+      - echo "External Secrets Operator installed on hub"
+
+  hub:cluster-secret-store:
+    desc: Apply ClusterSecretStore for AWS Secrets Manager on the hub cluster
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - |
+        cat <<'EOF' | sed "s|AWS_REGION|{{.AWS_REGION}}|g" | KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f -
+        apiVersion: external-secrets.io/v1
+        kind: ClusterSecretStore
+        metadata:
+          name: aws-secrets-manager
+        spec:
+          provider:
+            aws:
+              service: SecretsManager
+              region: AWS_REGION
+        EOF
+      - echo "ClusterSecretStore aws-secrets-manager applied on hub"
+
   hub:seed-secret:
-    desc: Create minimal seed cluster secret directly on the hub cluster
+    desc: Create minimal seed cluster secret on the hub (repo coords + fleet labels only)
     vars:
       HUB_CLUSTER_NAME:
         sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
@@ -149,23 +213,13 @@ tasks:
         sh: yq '.repo.revision' {{.GITOPS_ROOT}}/config.yaml
       REPO_BASEPATH:
         sh: yq '.repo.basepath' {{.GITOPS_ROOT}}/config.yaml
-      DOMAIN:
-        sh: yq '.domain' {{.GITOPS_ROOT}}/config.yaml
-      RESOURCE_PREFIX:
-        sh: yq '.resourcePrefix' {{.GITOPS_ROOT}}/config.yaml
-      INGRESS_NAME:
-        sh: yq '.ingressName // "hub-ingress"' {{.GITOPS_ROOT}}/config.yaml
-      INGRESS_SECURITY_GROUPS:
-        sh: yq '.ingressSecurityGroups // ""' {{.GITOPS_ROOT}}/config.yaml
-      AWS_ACCOUNT_ID:
-        sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
     cmds:
       - echo "Getting hub kubeconfig..."
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
       - echo "Creating seed cluster secret on hub..."
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f -
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|DOMAIN_NAME|{{.DOMAIN}}|g; s|INGRESS_NAME_VAL|{{.INGRESS_NAME}}|g; s|INGRESS_SG_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_VAL|{{.AWS_ACCOUNT_ID}}|g" | KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f -
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" | KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
@@ -179,13 +233,6 @@ tasks:
             fleetRepoURL: "REPO_URL"
             fleetRepoRevision: "REPO_REVISION"
             fleetRepoBasepath: "REPO_BASEPATH"
-            aws_region: "AWS_REGION_VAL"
-            aws_account_id: "AWS_ACCOUNT_VAL"
-            aws_cluster_name: "CLUSTER_NAME"
-            ingress_domain_name: "DOMAIN_NAME"
-            ingress_name: "INGRESS_NAME_VAL"
-            ingress_security_groups: "INGRESS_SG_VAL"
-            resource_prefix: "RESOURCE_PREFIX_VAL"
           labels:
             argocd.argoproj.io/secret-type: cluster
             environment: control-plane
@@ -307,6 +354,10 @@ tasks:
     cmds:
       - echo "Deleting Crossplane claims (this triggers AWS resource deletion)..."
       - kubectl delete platformclusters.platform.gitops.io hub -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete podidentityassociations.eks.aws.upbound.io eso-pod-identity -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete rolepolicyattachments.iam.aws.upbound.io eso-secrets-read-attachment -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete policies.iam.aws.upbound.io eso-secrets-read-policy -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete roles.iam.aws.upbound.io eso-pod-identity-role -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete roles.iam.aws.upbound.io argocd-capability-role -n crossplane-system --timeout=60s 2>/dev/null || true
       - echo "Waiting for managed resources to be deleted (up to 30 min)..."
       - |

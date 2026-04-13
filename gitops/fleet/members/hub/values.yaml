@@ -1,29 +1,5 @@
-# Fleet member values for the hub cluster.
-# This file defines the ExternalSecret configuration used by the fleet-secret chart
-# to generate an ArgoCD cluster secret for the hub cluster.
 externalSecret:
   enabled: true
   secretStoreRefKind: ClusterSecretStore
   secretStoreRefName: aws-secrets-manager
   clusterName: hub
-  # EKS ArgoCD Capability requires cluster ARN as server field
-  clusterArn: "arn:aws:eks:us-west-2:259732043995:cluster/hub"
-  annotations:
-    addonsRepoURL: "https://github.com/punkwalker/navik.git"
-    addonsRepoRevision: "main"
-    addonsRepoBasepath: "gitops/"
-    fleetRepoURL: "https://github.com/punkwalker/navik.git"
-    fleetRepoRevision: "main"
-    fleetRepoBasepath: "gitops/"
-    aws_region: "us-west-2"
-    aws_account_id: "259732043995"
-    aws_cluster_name: "hub"
-    ingress_domain_name: "REPLACE_ME.example.com"
-    ingress_name: "hub-ingress"
-    ingress_security_groups: "REPLACE_ME"
-    resource_prefix: "platform"
-  labels:
-    environment: control-plane
-    fleet_member: control-plane
-    tenant: control-plane
-    kubernetesVersion: "v1.32.0"

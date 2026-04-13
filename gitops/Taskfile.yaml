@@ -22,6 +22,14 @@ tasks:
     cmds:
       - task --list
 
+  validate:
+    desc: Pre-flight checks for the configured provider
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.ROOT_DIR}}/config.yaml
+    cmds:
+      - task: "{{.PROVIDER}}:validate"
+
   install:
     desc: Bootstrap the platform using the configured cluster provider
     vars:

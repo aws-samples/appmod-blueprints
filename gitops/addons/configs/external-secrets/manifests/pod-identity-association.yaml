@@ -1,0 +1,22 @@
+# EKS Pod Identity Association for External Secrets Operator
+# Created by Crossplane on Kind during bootstrap, then adopted by
+# Crossplane on the hub via crossplane.io/external-name annotation
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: PodIdentityAssociation
+metadata:
+  name: eso-pod-identity
+  annotations:
+    crossplane.io/external-name: "" # Will be set to match the association created by Kind
+spec:
+  forProvider:
+    clusterNameSelector:
+      matchLabels:
+        platform.gitops.io/cluster-name: hub
+    namespace: external-secrets
+    serviceAccount: external-secrets-sa
+    roleArnSelector:
+      matchLabels:
+        platform.gitops.io/role: eso-pod-identity
+    region: us-west-2
+  providerConfigRef:
+    name: default

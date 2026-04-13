@@ -1,70 +1,82 @@
-# Bring Your Own Cluster
+# Bring Your Own Cluster (BYOC)
 
-Use this approach when you already have a Kubernetes cluster with ArgoCD installed.
+Use this provider when you already have an EKS cluster with ArgoCD installed.
+The BYOC provider handles everything from External Secrets Operator onward --
+it does not provision infrastructure or install ArgoCD.
 
 ## Prerequisites
 
-- A running Kubernetes cluster (EKS, AKS, GKE, on-prem, etc.)
-- ArgoCD installed and accessible
+- An EKS cluster with ArgoCD installed and running
 - `kubectl` configured to access the cluster
 - `helm` 3.x installed
+- `yq` installed
+- AWS CLI configured with credentials that can access Secrets Manager
+- AWS IAM role for External Secrets (e.g., IRSA or Pod Identity) to read from Secrets Manager
 
 ## Quick Start
 
-### 1. Create the hub cluster secret
+### 1. Configure
 
-ArgoCD needs a cluster secret that identifies the hub and carries the annotations
-the addon management system uses. Apply this to your cluster:
+Edit `config.yaml` in the repository root:
 
-```bash
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-type: Opaque
-metadata:
-  name: hub
-  namespace: argocd
-  labels:
-    argocd.argoproj.io/secret-type: cluster
-    environment: control-plane
-    fleet_member: control-plane
-    tenant: control-plane
-  annotations:
-    addonsRepoURL: "https://github.com/YOUR_ORG/YOUR_REPO.git"
-    addonsRepoRevision: "main"
-    addonsRepoBasepath: "gitops/"
-    fleetRepoURL: "https://github.com/YOUR_ORG/YOUR_REPO.git"
-    fleetRepoRevision: "main"
-    fleetRepoBasepath: "gitops/"
-stringData:
-  name: hub
-  server: https://kubernetes.default.svc
-  config: '{"tlsClientConfig":{"insecure":false}}'
-EOF
+```yaml
+clusterProvider: "byoc"
+
+repo:
+  url: "https://github.com/YOUR_ORG/YOUR_REPO.git"
+  revision: "main"
+  basepath: "gitops/"
+
+hub:
+  clusterName: "your-cluster-name"
+
+aws:
+  region: "us-west-2"
+  accountId: "123456789012"
 ```
 
-Replace `YOUR_ORG/YOUR_REPO` with your actual git repository.
-
-### 2. Apply the root ApplicationSet
+### 2. Validate
 
 ```bash
-kubectl apply -f gitops/bootstrap/root-appset.yaml
+task validate
 ```
 
-This discovers the other bootstrap files (`addons.yaml`, `fleet-secrets.yaml`, `clusters.yaml`)
-and the entire addon pipeline starts automatically.
+This checks CLI tools, config.yaml fields, cluster connectivity, and ArgoCD health.
 
-### 3. Verify
+### 3. Install
 
 ```bash
-kubectl -n argocd get applicationsets
-kubectl -n argocd get applications
+task install
+```
+
+This runs the full bootstrap sequence:
+
+1. Validates prerequisites
+2. Seeds cluster config into AWS Secrets Manager
+3. Installs External Secrets Operator on the hub
+4. Applies a ClusterSecretStore for AWS Secrets Manager
+5. Creates the minimal seed cluster secret (repo coordinates + fleet labels)
+6. Applies the root ApplicationSet to start the addon pipeline
+
+### 4. Verify
+
+```bash
+task status
 ```
 
 You should see `cluster-addons`, `fleet-secrets`, and `clusters` ApplicationSets,
 and Applications being created for each enabled addon.
 
-## What happens next
+## Available Tasks
+
+| Task | Description |
+|------|-------------|
+| `task validate` | Pre-flight checks (CLIs, config, cluster, ArgoCD) |
+| `task install` | Full bootstrap sequence |
+| `task status` | Show ArgoCD apps and ESO health |
+| `task destroy` | Guidance for manual teardown |
+
+## What Happens Next
 
 1. `fleet-secrets` reads `fleet/members/hub/values.yaml` + `overlays/environments/control-plane/enabled-addons.yaml`
 2. The fleet-secret chart generates a new cluster secret with `enable_*` labels
@@ -77,4 +89,3 @@ and Applications being created for each enabled addon.
 - Edit `overlays/environments/control-plane/enabled-addons.yaml` to enable/disable addons
 - Edit `fleet/members/hub/values.yaml` to change cluster annotations
 - Edit `addons/registry/*.yaml` to add/modify addon definitions
-- Add environment overlays in `overlays/environments/<env>/`

@@ -1,0 +1,47 @@
+# Crossplane IAM Policy for ExternalDNS Route 53 permissions
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: external-dns-route53-policy
+  annotations:
+    crossplane.io/external-name: ExternalDNSRoute53Policy
+spec:
+  forProvider:
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "route53:ChangeResourceRecordSets"
+            ],
+            "Resource": "arn:aws:route53:::hostedzone/*"
+          },
+          {
+            "Effect": "Allow",
+            "Action": [
+              "route53:ListHostedZones",
+              "route53:ListHostedZonesByName",
+              "route53:ListResourceRecordSets"
+            ],
+            "Resource": "*"
+          }
+        ]
+      }
+    tags:
+      managed-by: crossplane
+      purpose: external-dns-route53
+---
+# Attach the Route 53 policy to the ExternalDNS Pod Identity role
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: external-dns-route53-attachment
+spec:
+  forProvider:
+    policyArnSelector:
+      matchControllerRef: true
+    roleSelector:
+      matchLabels:
+        platform.gitops.io/role: external-dns-pod-identity
