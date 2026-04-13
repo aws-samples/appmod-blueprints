@@ -1,3 +1,35 @@
+# Service account for Crossplane AWS providers (used by pod identity)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-aws
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+---
+# DeploymentRuntimeConfig to use the provider-aws SA for pod identity
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: aws-pod-identity-drc
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          serviceAccountName: provider-aws
+          containers:
+          - name: package-runtime
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                memory: 512Mi
+---
 # Crossplane AWS providers
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -7,6 +39,8 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-ec2:v1.20.0
+  runtimeConfigRef:
+    name: aws-pod-identity-drc
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -16,6 +50,8 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-eks:v1.20.0
+  runtimeConfigRef:
+    name: aws-pod-identity-drc
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -25,3 +61,5 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-iam:v1.20.0
+  runtimeConfigRef:
+    name: aws-pod-identity-drc

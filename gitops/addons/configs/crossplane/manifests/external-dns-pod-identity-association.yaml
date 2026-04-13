@@ -8,9 +8,7 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   forProvider:
-    clusterNameSelector:
-      matchLabels:
-        platform.gitops.io/cluster-name: hub
+    clusterName: hub
     namespace: kube-system
     serviceAccount: external-dns-sa
     roleArnSelector:

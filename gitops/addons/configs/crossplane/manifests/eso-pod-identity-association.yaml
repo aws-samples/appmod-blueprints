@@ -6,13 +6,11 @@ kind: PodIdentityAssociation
 metadata:
   name: eso-pod-identity
   annotations:
-    crossplane.io/external-name: "" # Will be set to match the association created by Kind
+    crossplane.io/external-name: a-yctoakuwrwza5tbao
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   forProvider:
-    clusterNameSelector:
-      matchLabels:
-        platform.gitops.io/cluster-name: hub
+    clusterName: hub
     namespace: external-secrets
     serviceAccount: external-secrets-sa
     roleArnSelector:

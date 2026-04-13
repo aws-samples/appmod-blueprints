@@ -10,7 +10,7 @@ spec:
   forProvider:
     clusterName: hub
     namespace: crossplane-system
-    serviceAccount: crossplane
+    serviceAccount: provider-aws
     roleArnRef:
       name: crossplane-pod-identity-role
     region: us-west-2
