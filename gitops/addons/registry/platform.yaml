@@ -28,9 +28,18 @@ crossplane:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-  additionalResources:
-    - type: manifests
-      manifestPath: manifests
+
+crossplane-manifests:
+  namespace: crossplane-system
+  type: manifest
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/configs/crossplane/manifests'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_crossplane
+        operator: In
+        values: ['true']
 
 backstage:
   namespace: backstage
@@ -242,7 +251,7 @@ crossplane-aws:
   namespace: crossplane-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-aws'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '3'
+    argocd.argoproj.io/sync-wave: '4'
   selector:
     matchExpressions:
       - key: enable_crossplane_aws
