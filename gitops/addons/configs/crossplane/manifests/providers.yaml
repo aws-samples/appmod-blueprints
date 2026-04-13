@@ -3,6 +3,8 @@ apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
   name: provider-aws-ec2
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-ec2:v1.20.0
 ---
@@ -10,6 +12,8 @@ apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
   name: provider-aws-eks
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-eks:v1.20.0
 ---
@@ -17,5 +21,7 @@ apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
   name: provider-aws-iam
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-iam:v1.20.0
