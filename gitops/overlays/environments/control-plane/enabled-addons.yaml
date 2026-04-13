@@ -18,7 +18,7 @@ enabledAddons:
   kargo: false
   flux: false
   # Security
-  keycloak: false
+  keycloak: true
   kyverno: false
   kyverno_policies: false
   kyverno_policy_reporter: false
