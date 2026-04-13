@@ -369,22 +369,10 @@ cleanup_kubernetes_resources_with_fallback() {
 }
 
 gitlab_repository_setup(){
-  log "Setting up GitLab repository..."
-  # Wait for GitLab to be accessible (5 minute timeout)
-  local timeout=300
-  local elapsed=0
-  while ! curl -sf "https://${GITLAB_DOMAIN}" > /dev/null 2>&1; do
-    sleep 5
-    elapsed=$((elapsed + 5))
-    if [ $elapsed -ge $timeout ]; then
-      log_error "GitLab not accessible after 5 minutes"
-      exit 1
-    fi
-  done
+  log "Setting up GitLab repository (skipping push - will be done by 2-gitlab-init.sh)..."
   
   cd "$GIT_ROOT_PATH"
   
-  git config --global credential.helper store
   git config --global user.name "$GIT_USERNAME"
   git config --global user.email "$GIT_USERNAME@workshop.local"
   
@@ -403,22 +391,7 @@ gitlab_repository_setup(){
   if ! git diff --quiet || ! git diff --cached --quiet; then
     git add .
     git commit -m "Updated bootstrap values in Backstag template and Created spoke cluster secret files " || true
-    
-    # Try to pull latest changes first to avoid stale info
-    if ! git pull gitlab main --rebase; then
-      log_warning "Failed to pull and rebase, trying without rebase"
-      git pull gitlab main || log_warning "Pull failed, proceeding with push"
-    fi
-    
-    if ! git push --set-upstream gitlab HEAD:main --force-with-lease; then
-      if ! git push gitlab HEAD:main --force-with-lease; then
-        # If force-with-lease still fails, try regular push
-        if ! git push gitlab HEAD:main; then
-          log_error "Failed to push repository to GitLab"
-          exit 1
-        fi
-      fi
-    fi
+    log "Changes committed locally. Run 2-gitlab-init.sh to push to GitLab."
   else
     print_info "No changes to commit"
   fi

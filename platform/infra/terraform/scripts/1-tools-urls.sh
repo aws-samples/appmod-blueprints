@@ -2,6 +2,8 @@
 
 # Source the colors script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+source "${SCRIPT_DIR}/colors.sh"
+source "${SCRIPT_DIR}/utils.sh"
 GIT_ROOT_PATH=$(git rev-parse --show-toplevel)
 
 # Source required utility scripts
