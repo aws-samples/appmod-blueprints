@@ -211,7 +211,7 @@ tasks:
       HUB_CLUSTER_NAME:
         sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
       CLUSTER_ARN:
-        sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo ""
+        sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || aws eks describe-cluster --name $(yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml) --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml):cluster/$(yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml)"
       REPO_URL:
         sh: yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml
       REPO_REVISION:
