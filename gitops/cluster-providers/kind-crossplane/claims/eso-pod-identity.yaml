@@ -6,6 +6,8 @@ kind: PodIdentityAssociation
 metadata:
   name: eso-pod-identity
   namespace: crossplane-system
+  annotations:
+    crossplane.io/external-name: a-yctoakuwrwza5tbao
 spec:
   forProvider:
     clusterName: hub
