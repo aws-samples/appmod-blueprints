@@ -4,8 +4,8 @@
 enabledAddons:
   # Core
   argocd: false
-  metrics_server: false
-  ingress_class_alb: false
+  metrics_server: true
+  ingress_class_alb: true
   cert_manager: false
   external_secrets: true
   external_dns: false
@@ -33,7 +33,7 @@ enabledAddons:
   aws_for_fluentbit: false
   cni_metrics_helper: false
   # Platform
-  crossplane: false
+  crossplane: true
   crossplane_aws: false
   kro: false
   kro_manifests: false
