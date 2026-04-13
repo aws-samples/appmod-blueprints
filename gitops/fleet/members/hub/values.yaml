@@ -3,3 +3,5 @@ externalSecret:
   secretStoreRefKind: ClusterSecretStore
   secretStoreRefName: aws-secrets-manager
   clusterName: hub
+  labels:
+    environment: control-plane
