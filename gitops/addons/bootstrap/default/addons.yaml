@@ -1823,3 +1823,18 @@ qdrant:
       - key: enable_qdrant
         operator: In
         values: ['true']
+
+sympozium:
+  enabled: true
+  releaseName: sympozium
+  chartName: sympozium
+  chartRepository: 'oci://ghcr.io/sympozium-ai/sympozium/charts'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  namespace: sympozium-system
+  defaultVersion: '0.8.25'
+  selector:
+    matchExpressions:
+      - key: enable_sympozium
+        operator: In
+        values: ['true']

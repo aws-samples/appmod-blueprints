@@ -1,0 +1,46 @@
+# Sympozium — Kubernetes-native AI Agent Management Platform
+# Agents as ephemeral Pods, policies as CRDs, executions as Jobs
+# Requires: cert-manager (sync-wave 2)
+
+# Use built-in NATS (simpler for workshop)
+nats:
+  enabled: true
+  persistence:
+    enabled: false
+
+# Web UI for demos
+apiserver:
+  webUI:
+    enabled: true
+
+# Disable node-probe (no local inference in workshop)
+nodeProbe:
+  enabled: false
+
+# OTel collector (workshop clusters have Grafana)
+observability:
+  enabled: true
+
+# Network policies for agent isolation
+networkPolicies:
+  enabled: true
+
+# Install CRDs with the chart
+crds:
+  install: true
+
+# Install default policies and skills
+defaultPolicies:
+  enabled: true
+defaultSkills:
+  enabled: true
+defaultPersonas:
+  enabled: true
+
+# Agent sandbox disabled (requires agent-sandbox CRDs)
+agentSandbox:
+  enabled: false
+
+# Gateway disabled (no external ingress needed for workshop)
+gateway:
+  enabled: false
