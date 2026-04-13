@@ -414,7 +414,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "15"
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: backstage
