@@ -7,6 +7,7 @@ metadata:
   name: eso-pod-identity
   annotations:
     crossplane.io/external-name: "" # Will be set to match the association created by Kind
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   forProvider:
     clusterNameSelector:

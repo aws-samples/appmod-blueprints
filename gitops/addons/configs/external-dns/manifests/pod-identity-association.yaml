@@ -4,6 +4,8 @@ apiVersion: eks.aws.upbound.io/v1beta1
 kind: PodIdentityAssociation
 metadata:
   name: external-dns-pod-identity
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   forProvider:
     clusterNameSelector:

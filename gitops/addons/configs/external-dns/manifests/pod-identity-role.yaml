@@ -6,6 +6,7 @@ metadata:
   name: external-dns-pod-identity-role
   annotations:
     crossplane.io/external-name: ExternalDNSPodIdentityRole
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
   labels:
     platform.gitops.io/role: external-dns-pod-identity
 spec:

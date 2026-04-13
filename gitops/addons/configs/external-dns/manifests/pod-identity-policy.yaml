@@ -5,6 +5,7 @@ metadata:
   name: external-dns-route53-policy
   annotations:
     crossplane.io/external-name: ExternalDNSRoute53Policy
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   forProvider:
     policy: |
