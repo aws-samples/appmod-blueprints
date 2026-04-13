@@ -13,7 +13,7 @@ This document describes the design for integrating agent platform components (Ka
 5. **Single Source of Truth**: All agent component charts live in the dedicated `sample-agent-platform-on-eks` repository
 6. **Modular Architecture Alignment**: This design builds on the modular, provider-agnostic architecture described in [`docs/UPGRADE-APPROACH.md`](../UPGRADE-APPROACH.md). The agent platform uses `hub-config.yaml` addons flags, works with any identity provider (Keycloak, Cognito, etc.), and does not assume workshop-specific infrastructure.
 
-> **Important**: Workshop-specific deployment orchestration (e.g., `workshop_type` variable, CloudFormation templates, GitLab initialization) lives in the internal `platform-engineering-on-eks` GitLab repo, not in `appmod-blueprints`. This document describes the solution-level agent platform integration only.
+> **Important**: Workshop-specific deployment orchestration (e.g., `workshop_type` variable, CloudFormation templates, GitLab initialization) lives in `patterns/workshop/` within `appmod-blueprints`. The internal `platform-engineering-on-eks` GitLab repo contains only workshop content and instructions. This document describes the solution-level agent platform integration only.
 
 ### Repository Roles
 
@@ -245,7 +245,7 @@ Set `enable_agent_platform: true` in your `hub-config.yaml` addons section.
 See [docs/agent-platform/](docs/agent-platform/) for details.
 ```
 
-> **Note**: There is no Terraform in the `appmod-blueprints` solution repo. Initial EKS cluster creation (via Terraform, CDK, eksctl, etc.) lives in the customer's own infra repo or the workshop repo (`platform-engineering-on-eks`). Once the hub cluster exists, it self-manages via Kro+ACK/CrossPlane compositions and ArgoCD.
+> **Note**: Workshop-specific Terraform for initial EKS cluster creation lives in `patterns/workshop/terraform/` within `appmod-blueprints`. Customers can also create clusters using their own tools (CDK, eksctl, etc.) or use the `modules/hub-provisioning/` Terraform module. Once the hub cluster exists, it self-manages via Kro+ACK/CrossPlane compositions and ArgoCD.
 
 ### Changes in `sample-agent-platform-on-eks` Repository
 
@@ -623,7 +623,7 @@ clusters:
 
 The hub-config ConfigMap is the single source of truth for all feature flags. When `enable_agent_platform` is set to `true`, the bootstrap process enables the agent platform bridge chart, which creates ArgoCD Applications for each component.
 
-> **Note**: Workshop-specific variables (e.g., `workshop_type`) live in the `platform-engineering-on-eks` internal GitLab repo, not in `appmod-blueprints`. The solution repo only knows about `enable_agent_platform`.
+> **Note**: Workshop-specific variables (e.g., `workshop_type`) live in `patterns/workshop/terraform/` within `appmod-blueprints`, not in the core solution paths. The solution repo only knows about `enable_agent_platform`.
 
 #### Level 4: GitOps Commit (Declarative Toggle)
 
@@ -643,7 +643,7 @@ git commit -m "Enable agent platform"
 git push
 ```
 
-> **Note**: Workshop-specific orchestration (e.g., `WORKSHOP_TYPE` env var, CloudFormation parameters) lives in the `platform-engineering-on-eks` internal GitLab repo. That repo's deploy scripts set `enable_agent_platform: true` in hub-config when deploying the agent platform workshop variant.
+> **Note**: Workshop-specific orchestration (e.g., `WORKSHOP_TYPE` env var, CloudFormation parameters) lives in `patterns/workshop/` within `appmod-blueprints`. The workshop deploy scripts set `enable_agent_platform: true` in hub-config when deploying the agent platform workshop variant.
 
 ### Decision Matrix
 
