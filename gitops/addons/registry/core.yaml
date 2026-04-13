@@ -141,5 +141,7 @@ external-dns:
     domainFilters:
       - '{{.metadata.annotations.ingress_domain_name}}'
     txtOwnerId: '{{.metadata.annotations.aws_cluster_name}}'
+    aws:
+      zoneMatchParent: true
     serviceAccount:
       name: external-dns-sa
