@@ -42,7 +42,6 @@ metadata:
     crossplane.io/external-name: ESOSecretsReadPolicy
 spec:
   forProvider:
-    name: ESOSecretsReadPolicy
     policy: |
       {
         "Version": "2012-10-17",
