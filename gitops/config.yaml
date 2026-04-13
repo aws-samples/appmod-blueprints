@@ -7,8 +7,8 @@ clusterProvider: "kind-crossplane"
 
 # Git repository hosting the gitops platform code
 repo:
-  url: "https://github.com/REPLACE_ME/gitops-platform.git"
-  revision: "main"
+  url: "https://github.com/aws-samples/appmod-blueprints.git"
+  revision: "feat/agents-platform"
   basepath: "gitops/"
 
 # ArgoCD version to install on Kind
@@ -27,8 +27,8 @@ aws:
   profile: "default"
 
 # Domain and networking
-domain: "REPLACE_ME.example.com"
-resourcePrefix: "platform"
+domain: "idp.advaitt.people.aws.dev"
+resourcePrefix: "peeks"
 ingressName: "hub-ingress"
 ingressSecurityGroups: "REPLACE_ME"
 
