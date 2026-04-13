@@ -1,0 +1,18 @@
+# EKS Pod Identity Association for Crossplane on hub
+# Created by Crossplane on Kind during bootstrap, then adopted by
+# Crossplane on the hub via crossplane.io/external-name annotation
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: PodIdentityAssociation
+metadata:
+  name: crossplane-pod-identity
+  namespace: crossplane-system
+spec:
+  forProvider:
+    clusterName: hub
+    namespace: crossplane-system
+    serviceAccount: crossplane
+    roleArnRef:
+      name: crossplane-pod-identity-role
+    region: us-west-2
+  providerConfigRef:
+    name: default

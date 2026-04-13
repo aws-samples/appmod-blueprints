@@ -1,0 +1,45 @@
+# IAM Role for Crossplane Pod Identity on hub
+# Created by Crossplane on Kind during bootstrap, then adopted by
+# Crossplane on the hub via crossplane.io/external-name annotation
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: crossplane-pod-identity-role
+  namespace: crossplane-system
+  annotations:
+    crossplane.io/external-name: CrossplanePodIdentityRole
+  labels:
+    platform.gitops.io/role: crossplane-pod-identity
+spec:
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "pods.eks.amazonaws.com"
+            },
+            "Action": [
+              "sts:AssumeRole",
+              "sts:TagSession"
+            ]
+          }
+        ]
+      }
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-pod-identity
+---
+# IAM Policy granting Crossplane permissions to manage AWS resources
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: crossplane-admin-attachment
+  namespace: crossplane-system
+spec:
+  forProvider:
+    policyArn: arn:aws:iam::aws:policy/AdministratorAccess
+    roleRef:
+      name: crossplane-pod-identity-role

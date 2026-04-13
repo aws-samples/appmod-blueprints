@@ -143,6 +143,8 @@ tasks:
       - kubectl apply -f claims/argocd-capability-role.yaml
       - kubectl apply -f claims/eso-pod-identity-role.yaml
       - kubectl apply -f claims/eso-pod-identity.yaml
+      - kubectl apply -f claims/crossplane-pod-identity-role.yaml
+      - kubectl apply -f claims/crossplane-pod-identity.yaml
 
   hub:seed:
     cmds:
@@ -153,6 +155,9 @@ tasks:
       - echo "Waiting for ESO pod identity resources..."
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/eso-pod-identity-role 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/eso-pod-identity 2>/dev/null || true
+      - echo "Waiting for Crossplane pod identity resources..."
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/crossplane-pod-identity-role 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity 2>/dev/null || true
       - task: argocd:capability
       - task: secrets-manager:seed
       - task: hub:install-eso
@@ -355,9 +360,12 @@ tasks:
       - echo "Deleting Crossplane claims (this triggers AWS resource deletion)..."
       - kubectl delete platformclusters.platform.gitops.io hub -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete podidentityassociations.eks.aws.upbound.io eso-pod-identity -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete podidentityassociations.eks.aws.upbound.io crossplane-pod-identity -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete rolepolicyattachments.iam.aws.upbound.io eso-secrets-read-attachment -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete rolepolicyattachments.iam.aws.upbound.io crossplane-admin-attachment -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete policies.iam.aws.upbound.io eso-secrets-read-policy -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete roles.iam.aws.upbound.io eso-pod-identity-role -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete roles.iam.aws.upbound.io crossplane-pod-identity-role -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete roles.iam.aws.upbound.io argocd-capability-role -n crossplane-system --timeout=60s 2>/dev/null || true
       - echo "Waiting for managed resources to be deleted (up to 30 min)..."
       - |
