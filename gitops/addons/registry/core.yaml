@@ -143,6 +143,3 @@ external-dns:
     txtOwnerId: '{{.metadata.annotations.aws_cluster_name}}'
     serviceAccount:
       name: external-dns-sa
-  additionalResources:
-    - type: manifests
-      manifestPath: manifests
