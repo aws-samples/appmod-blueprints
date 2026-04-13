@@ -78,7 +78,7 @@ The Terraform code is already split into two phases:
 3. **Config-external**: `hub-config.yaml` lives outside the repo; customers pass their own config. The config drives Kro/CrossPlane compositions and ArgoCD bootstrap.
 4. **Provider-agnostic**: Git provider (GitHub vs GitLab vs CodeCommit), OIDC provider, and CI/CD provider are swappable via configuration
 5. **GitOpsy spokes**: Spoke clusters provisioned and managed via CrossPlane/Kro through the hub cluster — same mechanism as hub self-management
-6. **Workshop as a pattern, not a fork**: Workshop-specific code lives in `patterns/workshop/` within the main repo (alongside other consumption patterns like `patterns/hub-only/`, `patterns/full-platform/`). The workshop pattern includes CloudFront, GitLab integration, Identity Center setup, and workshop-specific configurations. Heavy workshop orchestration (Terraform for cluster creation, deploy scripts) lives in the internal `platform-engineering-on-eks` GitLab repo.
+6. **Workshop as a pattern, not a fork**: Workshop-specific code lives in `patterns/workshop/` within the main repo (alongside other consumption patterns like `patterns/hub-only/`, `patterns/full-platform/`). The workshop pattern includes CloudFront, GitLab integration, Identity Center setup, workshop-specific configurations, Terraform for cluster creation, and deployment scripts. All code stays in `appmod-blueprints` — the internal `platform-engineering-on-eks` GitLab repo contains only workshop content and instructions, not infrastructure code.
 7. **Composable components**: Keycloak, Backstage, GitLab are independently deployable addons
 8. **Practice what we preach**: Use the platform (EKS + ArgoCD) to deploy all components/connections/software wherever possible, rather than relying on Terraform for things external to the base platform
 9. **Hub-config schema versioning**: The `hub-config.yaml` schema includes an `apiVersion` field for forward compatibility and breaking change management
@@ -117,7 +117,19 @@ appmod-blueprints/
 │       ├── cloudfront-values.yaml    #   CloudFront distribution config
 │       ├── gitlab-values.yaml        #   GitLab integration config
 │       ├── identity-center-values.yaml  # Identity Center setup
-│       └── README.md                 #   Workshop deployment guide (references platform-engineering-on-eks)
+│       ├── terraform/                #   RELOCATED: All Terraform from platform/infra/terraform/
+│       │   ├── cluster/              #     EKS cluster creation (hub + spokes)
+│       │   ├── common/               #     Platform bootstrap (ArgoCD, GitLab, secrets, IAM, etc.)
+│       │   ├── database/             #     RDS/Aurora resources
+│       │   ├── identity-center/      #     AWS Identity Center
+│       │   └── hub-config.yaml       #     Workshop-specific hub-config for Terraform
+│       ├── scripts/                  #   RELOCATED: All scripts from platform/infra/terraform/scripts/
+│       │   ├── 0-init.sh             #     Workshop initialization
+│       │   ├── utils.sh              #     Shared utilities
+│       │   ├── argocd-utils.sh       #     ArgoCD helpers
+│       │   ├── check-workshop-setup.sh  # Workshop validation
+│       │   └── recover-argocd-apps.sh   # Recovery utilities
+│       └── README.md                 #   Workshop deployment guide
 ├── applications/                     # UNCHANGED: Sample apps
 ├── backstage/                        # UNCHANGED: Backstage IDP
 ├── gitops/                           # REFACTORED: GitOps configurations
@@ -134,9 +146,10 @@ appmod-blueprints/
 ```
 
 > **Key changes**:
-> - The `platform/infra/terraform/` directory is removed from `appmod-blueprints`. All Terraform code for cluster creation, GitLab PATs, and workshop-specific infra moves to the `platform-engineering-on-eks` internal GitLab repo. The solution repo is purely GitOps-native for ongoing management.
+> - The `platform/infra/terraform/` directory is relocated to `patterns/workshop/terraform/` within `appmod-blueprints`. Terraform code for cluster creation, GitLab PATs, and workshop-specific infra stays in the repo but moves under the workshop pattern. The solution repo is GitOps-native for ongoing management; Terraform is only used for initial cluster creation.
 > - `modules/hub-provisioning/` provides a turnkey Terraform module that customers can `source` from GitHub to provision the hub cluster and bootstrap the platform. After bootstrap, the platform is self-managing.
-> - `patterns/` is a new directory for consumption patterns (there is no existing `examples/` folder to rename). The `workshop/` pattern is a first-class citizen alongside other patterns. Workshop-specific configuration (CloudFront, GitLab, Identity Center) lives in `patterns/workshop/`; heavy workshop orchestration (Terraform, deploy scripts) lives in `platform-engineering-on-eks`.
+> - `patterns/` is a new directory for consumption patterns (there is no existing `examples/` folder to rename). The `workshop/` pattern is a first-class citizen alongside other patterns. Workshop-specific configuration (CloudFront, GitLab, Identity Center), Terraform, and deployment scripts all live in `patterns/workshop/`.
+> - The internal `platform-engineering-on-eks` GitLab repo contains only workshop content and instructions — no infrastructure code or scripts.
 > - Separate discussion needed: How to reduce GitLab's role and make it truly optional (not just conditionally deployed but architecturally unnecessary).
 
 ---
@@ -162,7 +175,7 @@ Replace the functionality of `platform/infra/terraform/common/` with Kro RGDs an
 | `cloudfront.tf` | `compositions/ingress/cloudfront-rgd.yaml` — ACK CloudFront controller | Kro RGD that creates CloudFront distribution via ACK. Optional — customers can skip |
 | `ingress-nginx.tf` | Already a Helm chart in `gitops/addons/charts/` | Ingress NGINX is already deployed via ArgoCD |
 | `observability.tf` | `compositions/observability/` — ACK Grafana + Prometheus controllers | Kro RGD that creates Amazon Managed Grafana and Prometheus via ACK |
-| `gitlab.tf` | Moves to `platform-engineering-on-eks` repo | Workshop-specific, not part of the solution |
+| `gitlab.tf` | Relocates to `patterns/workshop/terraform/common/` | Workshop-specific, not part of the solution |
 | `model-storage.tf` | `compositions/hub-bootstrap/model-storage-rgd.yaml` — ACK S3 controller | Kro RGD for ML model storage S3 bucket |
 | `ray-image-build.tf` | `compositions/hub-bootstrap/ray-image-rgd.yaml` — ACK CodeBuild controller | Kro RGD for Ray image build pipeline |
 
@@ -222,18 +235,17 @@ Replace `platform/infra/terraform/common/observability.tf`:
 - Kro RGD that creates Amazon Managed Prometheus workspace via ACK
 - Optional — controlled by `enable_observability` in hub-config addons (defaults to `false`; set to `true` in `patterns/workshop/`)
 
-#### 3.1.5 Move Terraform to `platform-engineering-on-eks` Repo
+#### 3.1.5 Relocate Terraform to `patterns/workshop/`
 
-All Terraform code moves out of `appmod-blueprints`:
+All Terraform code relocates from `platform/infra/terraform/` to `patterns/workshop/terraform/` within `appmod-blueprints`. Scripts relocate to `patterns/workshop/scripts/`. Nothing moves to the internal `platform-engineering-on-eks` GitLab repo.
 
 | Current Location | Destination | Reason |
 |---|---|---|
-| `platform/infra/terraform/cluster/` | `platform-engineering-on-eks/patterns/workshop/hub-cluster.yml` | Cluster creation config expressed declaratively in workshop pattern |
-| `platform/infra/terraform/common/` | Replaced by `compositions/` in `appmod-blueprints` | Platform bootstrap is now GitOps-native |
-| `platform/infra/terraform/common/gitlab.tf` | `platform-engineering-on-eks/scripts/gitlab-init.sh` | Workshop-specific |
-| `platform/infra/terraform/database/` | `platform-engineering-on-eks/patterns/workshop/` (if needed) | Workshop-specific or replaced by ACK RDS controller |
-| `platform/infra/terraform/identity-center/` | `platform-engineering-on-eks/patterns/workshop/` (if needed) | Workshop-specific |
-| `platform/infra/terraform/scripts/` | `platform-engineering-on-eks/scripts/` | Deployment scripts are workshop-specific |
+| `platform/infra/terraform/cluster/` | `patterns/workshop/terraform/cluster/` | Cluster creation stays in repo, under workshop pattern |
+| `platform/infra/terraform/common/` | `patterns/workshop/terraform/common/` | Workshop-specific bootstrap; compositions replace this for GitOps-native path |
+| `platform/infra/terraform/database/` | `patterns/workshop/terraform/database/` | Workshop-specific |
+| `platform/infra/terraform/identity-center/` | `patterns/workshop/terraform/identity-center/` | Workshop-specific |
+| `platform/infra/terraform/scripts/` | `patterns/workshop/scripts/` | Deployment scripts are workshop-specific |
 | `platform/infra/terraform/hub-config.yaml` | `hub-config.yaml` (top-level in `appmod-blueprints`) | Config stays but moves to repo root; becomes a default/example |
 
 ### 3.2 Phase 2: Externalize Hub Configuration
@@ -322,15 +334,15 @@ This ConfigMap is created during the initial ArgoCD bootstrap (either manually o
 
 #### 3.2.3 Remove `utils.sh` and `deploy.sh` from Solution Repo
 
-Since Terraform is no longer in `appmod-blueprints`, the deployment scripts move entirely to `platform-engineering-on-eks`:
+Since Terraform relocates to `patterns/workshop/terraform/` (Section 3.1.5), the deployment scripts also relocate to `patterns/workshop/scripts/`:
 
 | Script | Action |
 |---|---|
-| `platform/infra/terraform/scripts/utils.sh` | Move to `platform-engineering-on-eks/scripts/utils.sh` |
-| `platform/infra/terraform/cluster/deploy.sh` | Integrated into `platform-engineering-on-eks/patterns/workshop/deploy.sh` |
-| `platform/infra/terraform/common/deploy.sh` | Replaced by ArgoCD bootstrap — no deploy script needed in solution repo |
-| `platform/infra/terraform/scripts/2-gitlab-init.sh` | Move to `platform-engineering-on-eks/scripts/gitlab-init.sh` |
-| `platform/infra/terraform/scripts/check-workshop-setup.sh` | Move to `platform-engineering-on-eks/scripts/check-setup.sh` |
+| `platform/infra/terraform/scripts/utils.sh` | Move to `patterns/workshop/scripts/utils.sh` |
+| `platform/infra/terraform/cluster/deploy.sh` | Move to `patterns/workshop/scripts/deploy-cluster.sh` |
+| `platform/infra/terraform/common/deploy.sh` | Move to `patterns/workshop/scripts/deploy-common.sh` (also replaced by ArgoCD bootstrap for GitOps-native path) |
+| `platform/infra/terraform/scripts/2-gitlab-init.sh` | Move to `patterns/workshop/scripts/gitlab-init.sh` |
+| `platform/infra/terraform/scripts/check-workshop-setup.sh` | Move to `patterns/workshop/scripts/check-setup.sh` |
 
 The solution repo provides a lightweight bootstrap guide instead:
 ```bash
@@ -432,49 +444,61 @@ Changes:
 
 ### 3.4 Phase 4: Workshop Isolation
 
-**Goal**: Move all workshop-specific code (including ALL Terraform) to the internal `platform-engineering-on-eks` GitLab repo. The `appmod-blueprints` repo becomes a clean, customer-facing, GitOps-native solution with zero Terraform and zero workshop concerns.
+**Goal**: Reorganize all workshop-specific code (including Terraform and scripts) into `patterns/workshop/` within `appmod-blueprints`. The `platform/infra/terraform/` directory is emptied as its contents move to `patterns/workshop/terraform/` and `patterns/workshop/scripts/`. The internal `platform-engineering-on-eks` GitLab repo contains only workshop content and instructions — no infrastructure code.
 
-#### 3.4.1 Files to Move
+#### 3.4.1 Files to Relocate
 
-| Current Location | Destination (platform-engineering-on-eks repo) | Reason |
+| Current Location | Destination (within `appmod-blueprints`) | Reason |
 |---|---|---|
-| `platform/infra/terraform/cluster/` | `platform-engineering-on-eks/patterns/workshop/hub-cluster.yml` (declarative cluster config) | Cluster creation is workshop-specific — expressed as `hub-cluster.yml` |
-| `platform/infra/terraform/` (remaining) | `platform-engineering-on-eks/patterns/workshop/` or `scripts/` | ALL Terraform is workshop/infra-specific — solution is GitOps-native |
-| `platform/infra/terraform/common/gitlab.tf` | `platform-engineering-on-eks/scripts/gitlab-init.sh` | GitLab PAT creation is workshop-specific |
-| `platform/infra/terraform/scripts/` (all scripts) | `platform-engineering-on-eks/scripts/` | Deployment scripts are workshop-specific |
-| CloudFormation bootstrap references | `platform-engineering-on-eks/cloudformation/` | Workshop Studio setup |
-| `backstage_image` default (`public.ecr.aws/seb-demo/backstage:latest`) | `platform-engineering-on-eks/config/` | Workshop-specific image |
+| `platform/infra/terraform/cluster/` | `patterns/workshop/terraform/cluster/` | Cluster creation is workshop-specific |
+| `platform/infra/terraform/common/` | `patterns/workshop/terraform/common/` | Workshop bootstrap; compositions replace this for GitOps-native path |
+| `platform/infra/terraform/database/` | `patterns/workshop/terraform/database/` | Workshop-specific |
+| `platform/infra/terraform/identity-center/` | `patterns/workshop/terraform/identity-center/` | Workshop-specific |
+| `platform/infra/terraform/scripts/` | `patterns/workshop/scripts/` | Deployment scripts are workshop-specific |
+| CloudFormation bootstrap references | `patterns/workshop/cloudformation/` | Workshop Studio setup |
+| `backstage_image` default (`public.ecr.aws/seb-demo/backstage:latest`) | `patterns/workshop/terraform/common/variables.tf` | Workshop-specific image default |
 
-#### 3.4.2 Workshop in `platform-engineering-on-eks` Repo
+#### 3.4.2 Workshop in `patterns/workshop/`
 
-The internal `platform-engineering-on-eks` GitLab repo becomes the workshop-specific layer that creates the EKS cluster and then points ArgoCD at `appmod-blueprints` for self-management:
+The workshop pattern in `appmod-blueprints` becomes a self-contained deployment pattern that includes Terraform, scripts, and configuration:
 
 ```
-platform-engineering-on-eks/          # Internal GitLab repo (workshop)
-├── patterns/
-│   └── workshop/                     # Workshop deployment pattern
-│       ├── hub-cluster.yml           # EKS hub cluster definition (declarative)
-│       ├── deploy.sh                 # Orchestrates full workshop deployment
-│       └── gitops/
-│           └── addons/               # Workshop-specific addon overrides
-├── scripts/
-│   ├── utils.sh                      # Workshop-specific utilities
-│   ├── gitlab-init.sh                # GitLab repo initialization
-│   ├── bootstrap-argocd.sh           # Install ArgoCD + apply hub-config ConfigMap
-│   └── check-setup.sh               # Workshop validation
-├── content/                          # Workshop content and instructions
-└── README.md                         # Workshop deployment guide
+appmod-blueprints/
+└── patterns/
+    └── workshop/                         # Workshop-specific pattern
+        ├── hub-config.yaml               # Workshop config (GitLab, Keycloak, all addons, peeks prefix)
+        ├── bootstrap-application.yaml    # ArgoCD Application YAML
+        ├── cloudfront-values.yaml        # CloudFront distribution config
+        ├── gitlab-values.yaml            # GitLab integration config
+        ├── identity-center-values.yaml   # Identity Center setup
+        ├── terraform/                    # RELOCATED from platform/infra/terraform/
+        │   ├── cluster/                  #   EKS cluster creation
+        │   ├── common/                   #   Platform bootstrap
+        │   ├── database/                 #   RDS/Aurora
+        │   ├── identity-center/          #   AWS Identity Center
+        │   └── hub-config.yaml           #   Workshop-specific hub-config for TF
+        ├── scripts/                      # RELOCATED from platform/infra/terraform/scripts/
+        │   ├── 0-init.sh                 #   Workshop initialization
+        │   ├── deploy.sh                 #   Workshop deployment orchestrator
+        │   ├── utils.sh                  #   Shared utilities
+        │   ├── argocd-utils.sh           #   ArgoCD helpers
+        │   ├── gitlab-init.sh            #   GitLab repo initialization
+        │   ├── check-workshop-setup.sh   #   Workshop validation
+        │   └── recover-argocd-apps.sh    #   Recovery utilities
+        └── README.md                     # Workshop deployment guide
 ```
+
+The internal `platform-engineering-on-eks` GitLab repo references `appmod-blueprints/patterns/workshop/` for deployment but does not contain infrastructure code itself. It hosts workshop content, instructions, and Workshop Studio integration.
 
 The workshop deployment flow:
 ```bash
-# platform-engineering-on-eks/patterns/workshop/deploy.sh
+# From appmod-blueprints/patterns/workshop/
 cd patterns/workshop
-./deploy.sh
+./scripts/deploy.sh
 # deploy.sh handles:
-# 1. Create EKS hub cluster from hub-cluster.yml definition
-# 2. Install ArgoCD on the hub
-# 3. Apply workshop hub-config as ConfigMap (from appmod-blueprints/patterns/workshop/hub-config.yaml)
+# 1. Create EKS hub cluster using terraform/cluster/
+# 2. Deploy platform bootstrap using terraform/common/
+# 3. Apply workshop hub-config as ConfigMap
 # 4. Point ArgoCD at appmod-blueprints — platform self-manages from here
 # 5. Run workshop-specific setup (GitLab init, etc.)
 ```
@@ -514,7 +538,7 @@ cd patterns/workshop
 | `gitops/addons/charts/kro-clusters/` | Enhance to support full spoke lifecycle (create, bootstrap, destroy) |
 | `gitops/fleet/` | Add spoke registration via Kro ResourceGroup instances |
 | `platform/backstage/templates/` | Add "Create Spoke Cluster" template that creates a PR/commit with Kro ResourceGroup manifest (GitOps-driven, not direct `kubectl apply`) |
-| `platform/infra/terraform/` | REMOVE entirely from `appmod-blueprints` — moves to `platform-engineering-on-eks` |
+| `platform/infra/terraform/` | RELOCATE to `patterns/workshop/terraform/` and `patterns/workshop/scripts/` within `appmod-blueprints` |
 
 ### 3.6 Phase 6: Tagging and Versioning
 
@@ -552,19 +576,19 @@ cd patterns/workshop
 
 | Current Terraform File | Action | Replacement |
 |---|---|---|
-| `platform/infra/terraform/common/locals.tf` | Remove from solution repo | Config logic moves to `hub-config.yaml` ConfigMap consumed by addon charts |
-| `platform/infra/terraform/common/argocd.tf` | Remove from solution repo | ArgoCD bootstrap is already GitOps-native; git credentials via External Secrets |
-| `platform/infra/terraform/common/gitlab.tf` | Move to `platform-engineering-on-eks` | Workshop-specific |
-| `platform/infra/terraform/common/secrets.tf` | Replace with `compositions/secrets/` | ACK SecretsManager + External Secrets Operator |
-| `platform/infra/terraform/common/cloudfront.tf` | Replace with `compositions/ingress/` | ACK CloudFront controller (optional) |
+| `platform/infra/terraform/common/locals.tf` | Relocate to `patterns/workshop/terraform/common/` | Config logic also moves to `hub-config.yaml` ConfigMap consumed by addon charts |
+| `platform/infra/terraform/common/argocd.tf` | Relocate to `patterns/workshop/terraform/common/` | ArgoCD bootstrap is already GitOps-native; git credentials via External Secrets |
+| `platform/infra/terraform/common/gitlab.tf` | Relocate to `patterns/workshop/terraform/common/` | Workshop-specific |
+| `platform/infra/terraform/common/secrets.tf` | Relocate to `patterns/workshop/terraform/common/`; replace with `compositions/secrets/` for GitOps-native path | ACK SecretsManager + External Secrets Operator |
+| `platform/infra/terraform/common/cloudfront.tf` | Relocate to `patterns/workshop/terraform/common/`; replace with `compositions/ingress/` for GitOps-native path | ACK CloudFront controller (optional) |
 | `platform/infra/terraform/common/ingress-nginx.tf` | Already GitOps-native | Ingress NGINX is an ArgoCD addon chart |
-| `platform/infra/terraform/common/variables.tf` | Remove from solution repo | Config via `hub-config.yaml` |
-| `platform/infra/terraform/common/iam.tf` | Replace with `compositions/hub-bootstrap/` | ACK IAM controller |
-| `platform/infra/terraform/common/pod-identity.tf` | Replace with K8s-native resources | Pod Identity associations deployed via ArgoCD |
-| `platform/infra/terraform/common/observability.tf` | Replace with `compositions/observability/` | ACK Grafana + Prometheus |
-| `platform/infra/terraform/cluster/` (entire stack) | Move to `platform-engineering-on-eks` | Cluster creation is outside the solution |
-| `platform/infra/terraform/hub-config.yaml` | Move to repo root | Becomes `hub-config.yaml` at top level |
-| `platform/infra/terraform/scripts/` (all) | Move to `platform-engineering-on-eks` | Workshop-specific deployment scripts |
+| `platform/infra/terraform/common/variables.tf` | Relocate to `patterns/workshop/terraform/common/` | Config via `hub-config.yaml` for GitOps-native path |
+| `platform/infra/terraform/common/iam.tf` | Relocate to `patterns/workshop/terraform/common/`; replace with `compositions/hub-bootstrap/` for GitOps-native path | ACK IAM controller |
+| `platform/infra/terraform/common/pod-identity.tf` | Relocate to `patterns/workshop/terraform/common/`; replace with K8s-native resources for GitOps-native path | Pod Identity associations deployed via ArgoCD |
+| `platform/infra/terraform/common/observability.tf` | Relocate to `patterns/workshop/terraform/common/`; replace with `compositions/observability/` for GitOps-native path | ACK Grafana + Prometheus |
+| `platform/infra/terraform/cluster/` (entire stack) | Relocate to `patterns/workshop/terraform/cluster/` | Cluster creation stays in repo under workshop pattern |
+| `platform/infra/terraform/hub-config.yaml` | Copy to repo root | Becomes `hub-config.yaml` at top level |
+| `platform/infra/terraform/scripts/` (all) | Relocate to `patterns/workshop/scripts/` | Workshop-specific deployment scripts |
 
 #### GitOps (Medium Impact)
 
@@ -600,7 +624,7 @@ cd patterns/workshop
 
 | Risk | Mitigation |
 |---|---|
-| Breaking existing workshop deployments | Keep `platform-engineering-on-eks` repo with `patterns/workshop/` containing `hub-cluster.yml` and `deploy.sh`; workshop creates cluster then hands off to GitOps |
+| Breaking existing workshop deployments | Workshop Terraform and scripts stay in `appmod-blueprints` under `patterns/workshop/`; workshop deploys from there and hands off to GitOps |
 | ACK controller maturity | Validate ACK IAM, SecretsManager, CloudFront controllers are production-ready; fall back to CrossPlane providers if ACK gaps exist |
 | Kro RGD complexity for IAM/secrets | Start with simple compositions; iterate. Keep Terraform as fallback in workshop repo |
 | GitOps addon charts need dual-mode support | Use Helm conditionals (`{{- if }}`) extensively; test both modes |
@@ -637,7 +661,7 @@ module "hub" {
 
 ### Pattern 1: Full Platform (Workshop-style)
 ```bash
-# In the platform-engineering-on-eks internal GitLab repo
+# In the appmod-blueprints repo, from patterns/workshop/
 # Uses patterns/workshop/ config from appmod-blueprints
 cd patterns/workshop
 ./deploy.sh
@@ -752,7 +776,7 @@ Below is the full breakdown of tasks organized by phase, ready to be imported in
 | 1.2 | Create `compositions/secrets/` Kro RGDs | Create Kro RGDs that replace `platform/infra/terraform/common/secrets.tf`. AWS Secrets Manager secrets created via ACK SecretsManager controller. External Secrets Operator syncs to K8s. Provider-agnostic: no hardcoded GitLab tokens. | P0 | L | 1.1 |
 | 1.3 | Create `compositions/ingress/` Kro RGDs | Create Kro RGDs that replace `platform/infra/terraform/common/cloudfront.tf`. CloudFront distribution via ACK CloudFront controller (optional). Conditional on `ingress.type` in hub-config. | P1 | M | 1.1 |
 | 1.4 | Create `compositions/observability/` Kro RGDs | Create Kro RGDs that replace `platform/infra/terraform/common/observability.tf`. Amazon Managed Grafana and Prometheus via ACK. Configurable via `enable_observability` in hub-config addons (defaults to `false`; `patterns/workshop/` sets to `true`). | P2 | M | 1.1 |
-| 1.5 | Move ALL Terraform to `platform-engineering-on-eks` repo | Move `platform/infra/terraform/` entirely to the workshop repo. This includes cluster creation, common stack, scripts, and hub-config.yaml (copy to repo root as default). Remove `platform/infra/terraform/` from `appmod-blueprints`. | P0 | L | 1.1, 1.2 |
+| 1.5 | Relocate ALL Terraform to `patterns/workshop/` | Relocate `platform/infra/terraform/` to `patterns/workshop/terraform/` and scripts to `patterns/workshop/scripts/` within `appmod-blueprints`. Copy hub-config.yaml to repo root as default. Remove `platform/infra/terraform/` after relocation. | P0 | L | 1.1, 1.2 |
 | 1.6 | Create `modules/hub-provisioning/` Terraform module | Create an externally consumable Terraform module that provisions the hub EKS cluster, installs ArgoCD, applies hub-config as ConfigMap, and points ArgoCD at `appmod-blueprints`. Accepts `hub-config.yaml` as input. Customers can `source` this module from GitHub. After bootstrap, platform is self-managing via GitOps. | P0 | XL | 1.5 |
 | 1.7 | Create bootstrap guide for customers | Document the GitOps-native bootstrap flow: create EKS cluster (any tool or use `modules/hub-provisioning/`) → install ArgoCD → apply hub-config ConfigMap → point ArgoCD at `appmod-blueprints`. Include both manual and module-based paths. | P0 | M | 1.1–1.4, 1.6 |
 | 1.8 | Create `patterns/` directory with consumption patterns | Create `full-platform/`, `hub-only/`, `existing-cluster/`, `byog/`, `workshop/`, `agent-platform/` pattern configurations showing hub-config.yaml + ArgoCD Application YAML for each pattern. Workshop pattern includes CloudFront, GitLab, Identity Center configs. | P1 | M | 1.7 |
@@ -766,7 +790,7 @@ Below is the full breakdown of tasks organized by phase, ready to be imported in
 |---|---|---|---|---|---|
 | 2.1 | Extend `hub-config.yaml` schema | Add `apiVersion: appmod.aws/v1alpha1` and `kind: HubConfig` for schema versioning. Add `repo` section (target GitOps repo URL, revision, credentials secretRef). Add `git`, `identity`, `cicd`, `ingress` top-level sections. Document all keys. Keep backward compatibility with current schema. Move `hub-config.yaml` from `platform/infra/terraform/` to repo root. | P0 | L | — |
 | 2.2 | Create hub-config ConfigMap bootstrap mechanism | Define how `hub-config.yaml` is loaded into the cluster as a ConfigMap in the `argocd` namespace. Kro compositions and addon charts consume this ConfigMap for provider-specific configuration. Document the `kubectl create configmap hub-config -n argocd --from-file=hub-config.yaml` step. | P0 | M | 2.1 |
-| 2.3 | Remove `platform/infra/terraform/` directory from solution repo | Delete the entire `platform/infra/terraform/` directory from `appmod-blueprints`. All Terraform code (cluster creation, common stack, scripts, deploy scripts) has been replaced by compositions (Epic 1) or moved to `platform-engineering-on-eks` (Epic 4). The only Terraform in `appmod-blueprints` is `modules/hub-provisioning/` (the externally consumable bootstrap module). | P0 | L | 1.1–1.5, 4.1–4.3 |
+| 2.3 | Remove `platform/infra/terraform/` directory | Delete the entire `platform/infra/terraform/` directory from `appmod-blueprints` after all Terraform has been relocated to `patterns/workshop/terraform/` (Task 1.5) and compositions created (Tasks 1.1-1.4). The workshop Terraform continues to work from its new location. The only other Terraform in `appmod-blueprints` is `modules/hub-provisioning/` (the externally consumable bootstrap module). | P0 | L | 1.1–1.5 |
 | 2.4 | Update addon charts to consume hub-config ConfigMap | Refactor ArgoCD addon charts to read provider configuration (git, identity, ingress) from the `hub-config` ConfigMap instead of Terraform-injected values. Key charts: `application-sets`, `backstage`, `keycloak`, `external-secrets`. | P0 | L | 2.2 |
 | 2.5 | Implement hub-config schema validation | Create a validation mechanism that checks `apiVersion`, required fields (`clusters.hub.name`, `clusters.hub.region`), valid provider values (`git.provider`, `identity.provider`, `ingress.type`), and git credentials configuration. Warn on conflicting settings. Support schema version migration. | P1 | M | 2.1 |
 | 2.6 | Create lightweight bootstrap script for solution repo | Create a `bootstrap.sh` script at repo root that guides customers through: validate hub-config → create git credentials secret → create ConfigMap → apply ArgoCD bootstrap Application. No Terraform — purely kubectl/helm commands. Alternative: point customers to `modules/hub-provisioning/` for turnkey bootstrap. | P1 | M | 2.2, 2.5 |
@@ -793,17 +817,17 @@ Below is the full breakdown of tasks organized by phase, ready to be imported in
 
 ---
 
-### Epic 4: Workshop Isolation (Move to `platform-engineering-on-eks` Repo)
+### Epic 4: Workshop Isolation (Reorganize within `appmod-blueprints`)
 
 | # | Task | Description | Priority | Effort | Dependencies |
 |---|---|---|---|---|---|
-| 4.1 | Set up workshop structure in `platform-engineering-on-eks` repo | Create `patterns/workshop/` with `hub-cluster.yml`, `deploy.sh`, and `gitops/addons/` in the internal GitLab repo. Create `scripts/` for shared utilities. This repo hosts cluster creation config and workshop orchestration. Workshop-specific config patterns live in `appmod-blueprints/patterns/workshop/`. | P1 | M | — |
-| 4.2 | Move cluster creation config to `platform-engineering-on-eks` repo | Extract cluster config from `platform/infra/terraform/cluster/` into `platform-engineering-on-eks/patterns/workshop/hub-cluster.yml`. The common stack is replaced by compositions in the solution repo. | P1 | L | 1.5, 4.1 |
-| 4.3 | Move workshop scripts to `platform-engineering-on-eks` repo | Move `2-gitlab-init.sh`, `check-workshop-setup.sh`, `utils.sh` (with workshop logic) to the workshop repo's `scripts/` directory. Integrate cluster deploy logic into `patterns/workshop/deploy.sh`. | P1 | M | 4.2 |
-| 4.4 | Create workshop `deploy.sh` orchestrator in `platform-engineering-on-eks` | Create `patterns/workshop/deploy.sh`: reads `hub-cluster.yml` to create EKS hub cluster → install ArgoCD → apply hub-config ConfigMap from `appmod-blueprints/patterns/workshop/hub-config.yaml` → point ArgoCD at `appmod-blueprints` → run GitLab init. Usage: `cd patterns/workshop && ./deploy.sh`. Platform self-manages from there. | P1 | M | 4.1, 4.2, 4.3 |
-| 4.5 | Create workshop pattern in `appmod-blueprints/patterns/workshop/` | Workshop-specific config with GitLab, Keycloak, CloudFront, Identity Center, all addons enabled, `peeks` prefix. Includes `hub-config.yaml`, `bootstrap-application.yaml`, CloudFront values, GitLab values, Identity Center values, and README. References `appmod-blueprints` via versioned tag in ArgoCD `targetRevision`. | P1 | M | 2.1 |
-| 4.6 | Validate workshop still works end-to-end | Full deployment test: `cd patterns/workshop && ./deploy.sh` → hub cluster created from `hub-cluster.yml` → ArgoCD installed → hub-config ConfigMap applied from `appmod-blueprints/patterns/workshop/` → ArgoCD points at `appmod-blueprints` → platform self-manages → GitLab init → all components running. | P0 | L | 4.1–4.5 |
-| 4.7 | Document workshop repo relationship | Document how `platform-engineering-on-eks/patterns/workshop/` creates the cluster and then hands off to `appmod-blueprints` for GitOps self-management. Document how `patterns/workshop/` in the main repo provides the workshop-specific configuration. Define sync/update strategy. | P2 | S | 4.6 |
+| 4.1 | Create workshop structure in `patterns/workshop/` | Create `patterns/workshop/terraform/` and `patterns/workshop/scripts/` directories. Move Terraform and scripts from `platform/infra/terraform/` to their new locations. Workshop-specific config (hub-config, CloudFront values, GitLab values, Identity Center values) also lives in `patterns/workshop/`. | P1 | M | 1.5 |
+| 4.2 | Relocate Terraform to `patterns/workshop/terraform/` | Move `platform/infra/terraform/cluster/`, `common/`, `database/`, `identity-center/` to `patterns/workshop/terraform/`. Update internal path references in Terraform files. | P1 | L | 4.1 |
+| 4.3 | Relocate workshop scripts to `patterns/workshop/scripts/` | Move `utils.sh`, `argocd-utils.sh`, `0-init.sh`, `check-workshop-setup.sh`, `recover-argocd-apps.sh` to `patterns/workshop/scripts/`. Update path references. | P1 | M | 4.2 |
+| 4.4 | Create workshop `deploy.sh` orchestrator | Create `patterns/workshop/scripts/deploy.sh`: runs Terraform from `patterns/workshop/terraform/cluster/` → deploys common stack → applies hub-config ConfigMap → points ArgoCD at `appmod-blueprints` → runs GitLab init. Usage: `cd patterns/workshop && ./scripts/deploy.sh`. | P1 | M | 4.1, 4.2, 4.3 |
+| 4.5 | Create workshop pattern configuration | Workshop-specific config with GitLab, Keycloak, CloudFront, Identity Center, all addons enabled, `peeks` prefix. Includes `hub-config.yaml`, `bootstrap-application.yaml`, CloudFront values, GitLab values, Identity Center values, and README. | P1 | M | 2.1 |
+| 4.6 | Validate workshop still works end-to-end | Full deployment test from `patterns/workshop/`: Terraform creates cluster → ArgoCD installed → hub-config applied → platform self-manages → all components running. | P0 | L | 4.1–4.5 |
+| 4.7 | Document workshop pattern | Document how `patterns/workshop/` is a self-contained deployment pattern with Terraform, scripts, and configuration. Document relationship with `platform-engineering-on-eks` (content/instructions only, no code). | P2 | S | 4.6 |
 
 ---
 
@@ -869,7 +893,7 @@ Below is the full breakdown of tasks organized by phase, ready to be imported in
 | 1. Hub Self-Management via Kro+ACK/CrossPlane | 9 | ~6-8 weeks |
 | 2. Externalize Hub Configuration | 9 | ~4-5 weeks |
 | 3. Decouple Keycloak-Backstage-GitLab | 10 | ~5-6 weeks |
-| 4. Workshop Isolation (to platform-engineering-on-eks) | 7 | ~2-3 weeks |
+| 4. Workshop Isolation (reorganize within appmod-blueprints) | 7 | ~2-3 weeks |
 | 5. GitOps for All Clusters (Hub + Spokes) | 6 | ~4-5 weeks |
 | 6. Versioning and Release | 5 | ~2 weeks |
 | 7. Documentation | 6 | ~3-4 weeks |
@@ -885,7 +909,7 @@ Below is the full breakdown of tasks organized by phase, ready to be imported in
 ```
 Week 1-2:   [7.5] Document current state + [2.1] Extend hub-config schema (with apiVersion, repo, git credentials) + [8.1, 8.8] Assess agent platform + update docs for GitOps-native alignment
 Week 3-6:   [1.1-1.4] Create all Kro+ACK compositions (parallel work)
-Week 5-7:   [1.5] Move ALL Terraform to platform-engineering-on-eks + [2.2-2.4] Hub-config ConfigMap mechanism + remove TF directory
+Week 5-7:   [1.5] Relocate ALL Terraform to patterns/workshop/ + [2.2-2.4] Hub-config ConfigMap mechanism + remove old TF directory
 Week 5-8:   [1.9] Validate ACK controller readiness (parallel with composition work)
 Week 6-9:   [1.6] Create modules/hub-provisioning/ Terraform module (parallel with compositions)
 Week 7-10:  [3.1-3.3] Decouple providers in addon charts + [2.9] Git credentials abstraction
@@ -908,7 +932,7 @@ Week 15-18: [4.6, 5.6, 6.3, 8.9] End-to-end validation of all consumption patter
 2. A customer can use `modules/hub-provisioning/` as a turnkey Terraform module to provision the hub cluster, bootstrap ArgoCD, and apply hub-config — after which the platform is fully self-managing via GitOps
 3. A customer can provide their own `hub-config.yaml` with GitHub (not GitLab), Cognito (not Keycloak), and GitHub Actions (not Argo Workflows) — and the platform deploys correctly via GitOps self-management
 4. A customer can configure their target GitOps repository (URL, revision, credentials) via `hub-config.yaml` `repo` and `git` sections, supporting GitHub PAT, GitLab PAT, CodeCommit IAM credentials, and generic SSH keys
-5. The workshop continues to work end-to-end from the `platform-engineering-on-eks` internal GitLab repo (`cd patterns/workshop && ./deploy.sh`), using `patterns/workshop/` config from `appmod-blueprints`, which creates the EKS hub cluster from `hub-cluster.yml` and then hands off to `appmod-blueprints` for GitOps self-management
+5. The workshop continues to work end-to-end from `patterns/workshop/` (`cd patterns/workshop && ./scripts/deploy.sh`), which runs Terraform to create the EKS hub cluster and then hands off to ArgoCD for GitOps self-management
 6. Spoke clusters can be provisioned via Kro/CrossPlane from the hub — without running Terraform
 7. All Kro RGDs and CrossPlane compositions pass `kubectl apply --dry-run`, all Helm charts pass `helm lint` and `helm template`, and compositions have documented inputs/outputs
 8. The `hub-config.yaml` schema includes `apiVersion` for versioning, and the validation mechanism catches breaking changes and missing required fields
@@ -1053,29 +1077,31 @@ Create Kro RGDs that replace `platform/infra/terraform/common/observability.tf`.
 
 ---
 
-#### Task 1.5 — Move ALL Terraform to `platform-engineering-on-eks` Repo
+#### Task 1.5 — Relocate ALL Terraform to `patterns/workshop/`
 
 **Doc Reference:** Section 3.1.5, Section 3.4.1
 
 **Description:**
-Move the entire `platform/infra/terraform/` directory from `appmod-blueprints` to the `platform-engineering-on-eks` internal GitLab repo. Copy `hub-config.yaml` to repo root as a default/example. Delete `platform/infra/terraform/` from `appmod-blueprints`.
+Relocate the entire `platform/infra/terraform/` directory to `patterns/workshop/terraform/` within `appmod-blueprints`. Relocate scripts to `patterns/workshop/scripts/`. Copy `hub-config.yaml` to repo root as a default/example. Delete `platform/infra/terraform/` after relocation.
 
-**Files to Move:**
-- `platform/infra/terraform/cluster/` → `platform-engineering-on-eks/patterns/workshop/hub-cluster.yml` (declarative cluster config)
-- `platform/infra/terraform/common/` → replaced by compositions in `appmod-blueprints`; workshop-specific parts integrated into `patterns/workshop/deploy.sh`
-- `platform/infra/terraform/database/` → `platform-engineering-on-eks/patterns/workshop/` (if needed)
-- `platform/infra/terraform/identity-center/` → `platform-engineering-on-eks/patterns/workshop/` (if needed)
-- `platform/infra/terraform/scripts/` → `platform-engineering-on-eks/scripts/`
+**Files to Relocate:**
+- `platform/infra/terraform/cluster/` → `patterns/workshop/terraform/cluster/`
+- `platform/infra/terraform/common/` → `patterns/workshop/terraform/common/`
+- `platform/infra/terraform/database/` → `patterns/workshop/terraform/database/`
+- `platform/infra/terraform/identity-center/` → `patterns/workshop/terraform/identity-center/`
+- `platform/infra/terraform/scripts/` → `patterns/workshop/scripts/`
 - `platform/infra/terraform/hub-config.yaml` → copy to `hub-config.yaml` (repo root, as default/example)
 
 **Files to Delete from `appmod-blueprints`:**
-- `platform/infra/terraform/` (entire directory after move)
+- `platform/infra/terraform/` (entire directory after relocation)
 
 **Acceptance Criteria:**
 - `platform/infra/terraform/` no longer exists in `appmod-blueprints`
+- All Terraform code is in `patterns/workshop/terraform/`
+- All scripts are in `patterns/workshop/scripts/`
 - `hub-config.yaml` exists at repo root as default/example
-- All Terraform code is in `platform-engineering-on-eks` repo
-- `appmod-blueprints` has zero `.tf` files
+- Workshop Terraform still works (`terraform validate` passes from new location)
+- The only other Terraform in `appmod-blueprints` is `modules/hub-provisioning/` (the externally consumable bootstrap module)
 
 ---
 
@@ -1312,21 +1338,23 @@ data:
 
 ---
 
-#### Task 2.3 — Remove `platform/infra/terraform/` Directory from Solution Repo
+#### Task 2.3 — Remove `platform/infra/terraform/` Directory
 
 **Doc Reference:** Section 3.1.5, Section 3.4.1
 
 **Description:**
-Delete the entire `platform/infra/terraform/` directory from `appmod-blueprints` after all Terraform has been moved to `platform-engineering-on-eks` (Task 1.5) and replaced by compositions (Tasks 1.1-1.4).
+Delete the entire `platform/infra/terraform/` directory from `appmod-blueprints` after all Terraform has been relocated to `patterns/workshop/terraform/` (Task 1.5) and replaced by compositions for the GitOps-native path (Tasks 1.1-1.4).
 
 **Files to Delete:**
 - `platform/infra/terraform/` (entire directory tree including `cluster/`, `common/`, `database/`, `identity-center/`, `scripts/`)
 
 **Acceptance Criteria:**
-- Zero `.tf` files in `appmod-blueprints`
-- Zero `deploy.sh` scripts in `appmod-blueprints`
+- `platform/infra/terraform/` no longer exists in `appmod-blueprints`
+- All workshop Terraform is in `patterns/workshop/terraform/`
+- All workshop scripts are in `patterns/workshop/scripts/`
 - No broken references from other files (docs, scripts, CI)
 - `platform/infra/` directory is either empty or removed
+- Workshop Terraform still works from `patterns/workshop/terraform/` (`terraform validate` passes)
 
 ---
 
@@ -1798,108 +1826,108 @@ identity:
 
 ---
 
-### EPIC 4: Workshop Isolation (Move to `platform-engineering-on-eks` Repo)
+### EPIC 4: Workshop Isolation (Reorganize within `appmod-blueprints`)
 
 ---
 
-#### Task 4.1 — Set Up Workshop Structure in `platform-engineering-on-eks` Repo
+#### Task 4.1 — Create Workshop Structure in `patterns/workshop/`
 
 **Doc Reference:** Section 3.4.2
 
 **Description:**
-Create the workshop-specific directory structure in the internal `platform-engineering-on-eks` GitLab repo to host ALL Terraform code and workshop scripts removed from `appmod-blueprints`. Workshop-specific configuration patterns (hub-config, CloudFront values, GitLab values, Identity Center values) live in `appmod-blueprints/patterns/workshop/` as a first-class citizen.
+Create the workshop-specific directory structure under `patterns/workshop/` to host ALL Terraform code and workshop scripts relocated from `platform/infra/terraform/`. Workshop-specific configuration patterns (hub-config, CloudFront values, GitLab values, Identity Center values) also live here.
 
-**Files to Create (in `platform-engineering-on-eks` repo):**
-- `patterns/workshop/hub-cluster.yml` — Declarative EKS hub cluster definition
-- `patterns/workshop/deploy.sh` — Workshop deployment orchestrator
-- `patterns/workshop/gitops/addons/` — Workshop-specific addon overrides
-- `scripts/` — All deployment and utility scripts (bootstrap-argocd.sh, gitlab-init.sh, etc.)
-- `README.md` — Workshop deployment guide (references `patterns/workshop/` in `appmod-blueprints`)
+**Files to Create:**
+- `patterns/workshop/terraform/` — Directory for all relocated Terraform
+- `patterns/workshop/scripts/` — Directory for all relocated scripts
+- `patterns/workshop/scripts/deploy.sh` — Workshop deployment orchestrator
+- `patterns/workshop/README.md` — Workshop deployment guide
 
 **Acceptance Criteria:**
-- Directory structure matches Section 3.4.2 layout (`patterns/workshop/` with `hub-cluster.yml`, `deploy.sh`, `gitops/addons`)
-- README explains the workshop deployment flow (`cd patterns/workshop && ./deploy.sh`) and references `appmod-blueprints/patterns/workshop/`
-- Relationship to `appmod-blueprints` is documented
+- Directory structure created under `patterns/workshop/`
+- README explains the workshop deployment flow (`cd patterns/workshop && ./scripts/deploy.sh`)
+- Structure is ready to receive relocated Terraform and scripts
 
 ---
 
-#### Task 4.2 — Move ALL Terraform to `platform-engineering-on-eks` Repo
+#### Task 4.2 — Relocate ALL Terraform to `patterns/workshop/terraform/`
 
 **Doc Reference:** Section 3.1.5, Section 3.4.1
 
 **Description:**
-Move the entire `platform/infra/terraform/` directory from `appmod-blueprints` to `platform-engineering-on-eks`. This includes cluster creation, common/bootstrap stack, database, identity-center, scripts, and hub-config.yaml.
+Relocate the entire `platform/infra/terraform/` directory to `patterns/workshop/terraform/` within `appmod-blueprints`. Update internal path references in Terraform files (backend configs, module sources, variable defaults).
 
-**Files to Move:**
-- `platform/infra/terraform/cluster/` → `platform-engineering-on-eks/patterns/workshop/` (cluster config extracted into `hub-cluster.yml`)
-- `platform/infra/terraform/common/` → replaced by compositions in `appmod-blueprints` and workshop `deploy.sh`
-- `platform/infra/terraform/common/gitlab.tf` → `platform-engineering-on-eks/scripts/gitlab-init.sh` (workshop-specific)
-- `platform/infra/terraform/database/` → `platform-engineering-on-eks/patterns/workshop/` (if needed)
-- `platform/infra/terraform/identity-center/` → `platform-engineering-on-eks/patterns/workshop/` (if needed)
-- `platform/infra/terraform/scripts/` → `platform-engineering-on-eks/scripts/`
-- `platform/infra/terraform/hub-config.yaml` → copy to `hub-config.yaml` (repo root of `appmod-blueprints` as default/example)
+**Files to Relocate:**
+- `platform/infra/terraform/cluster/` → `patterns/workshop/terraform/cluster/`
+- `platform/infra/terraform/common/` → `patterns/workshop/terraform/common/`
+- `platform/infra/terraform/database/` → `patterns/workshop/terraform/database/`
+- `platform/infra/terraform/identity-center/` → `patterns/workshop/terraform/identity-center/`
+- `platform/infra/terraform/hub-config.yaml` → `patterns/workshop/terraform/hub-config.yaml` (also copy to repo root as default/example)
 
 **Files to Delete from `appmod-blueprints`:**
-- `platform/infra/terraform/` (entire directory after move)
+- `platform/infra/terraform/` (entire directory after relocation)
 
 **Acceptance Criteria:**
 - `platform/infra/terraform/` no longer exists in `appmod-blueprints`
-- All Terraform code is in `platform-engineering-on-eks` repo
-- Workshop repo's Terraform still works (terraform validate passes)
+- All Terraform code is in `patterns/workshop/terraform/`
+- Workshop Terraform still works (`terraform validate` passes from new location)
+- Internal path references updated (backend configs, module sources)
 
 ---
 
-#### Task 4.3 — Move Workshop Scripts to `platform-engineering-on-eks` Repo
+#### Task 4.3 — Relocate Workshop Scripts to `patterns/workshop/scripts/`
 
 **Doc Reference:** Section 3.4.1
 
-**Files to Move:**
-- `platform/infra/terraform/scripts/utils.sh` → `platform-engineering-on-eks/scripts/utils.sh`
-- `platform/infra/terraform/scripts/2-gitlab-init.sh` → `platform-engineering-on-eks/scripts/gitlab-init.sh`
-- `platform/infra/terraform/scripts/check-workshop-setup.sh` → `platform-engineering-on-eks/scripts/check-setup.sh`
-- `platform/infra/terraform/cluster/deploy.sh` → integrated into `platform-engineering-on-eks/patterns/workshop/deploy.sh`
-- `platform/infra/terraform/common/deploy.sh` → replaced by ArgoCD bootstrap (no deploy script needed)
+**Files to Relocate:**
+- `platform/infra/terraform/scripts/utils.sh` → `patterns/workshop/scripts/utils.sh`
+- `platform/infra/terraform/scripts/argocd-utils.sh` → `patterns/workshop/scripts/argocd-utils.sh`
+- `platform/infra/terraform/scripts/0-init.sh` → `patterns/workshop/scripts/0-init.sh`
+- `platform/infra/terraform/scripts/check-workshop-setup.sh` → `patterns/workshop/scripts/check-setup.sh`
+- `platform/infra/terraform/scripts/recover-argocd-apps.sh` → `patterns/workshop/scripts/recover-argocd-apps.sh`
+- `platform/infra/terraform/cluster/deploy.sh` → integrated into `patterns/workshop/scripts/deploy.sh`
+- `platform/infra/terraform/common/deploy.sh` → integrated into `patterns/workshop/scripts/deploy.sh`
 
 **Acceptance Criteria:**
-- No deployment scripts remain in `appmod-blueprints`
-- Workshop scripts work when called from `platform-engineering-on-eks/patterns/workshop/`
-- Scripts reference the correct paths in the workshop repo structure
+- No deployment scripts remain in `platform/infra/terraform/`
+- Workshop scripts work when called from `patterns/workshop/scripts/`
+- Scripts reference the correct paths relative to their new location
 
 ---
 
-#### Task 4.4 — Create Workshop `deploy.sh` Orchestrator in `platform-engineering-on-eks`
+#### Task 4.4 — Create Workshop `deploy.sh` Orchestrator
 
 **Doc Reference:** Section 3.4.2
 
-**File to Create:** `platform-engineering-on-eks/patterns/workshop/deploy.sh`
+**File to Create:** `patterns/workshop/scripts/deploy.sh`
 
 **Usage:**
 ```bash
 cd patterns/workshop
-./deploy.sh
+./scripts/deploy.sh
 ```
 
 **Script Flow (inside `deploy.sh`):**
 ```bash
-# 1. Create EKS hub cluster from hub-cluster.yml definition
-# (uses hub-cluster.yml in the same directory for cluster config)
+# 1. Create EKS hub cluster using terraform/cluster/
+cd ../terraform/cluster && terraform init && terraform apply
 
-# 2. Install ArgoCD on the hub
-../../scripts/bootstrap-argocd.sh
+# 2. Deploy platform bootstrap using terraform/common/
+cd ../common && terraform init && terraform apply
 
-# 3. Apply workshop hub-config as ConfigMap (from patterns/workshop/ in appmod-blueprints)
-kubectl create configmap hub-config -n argocd --from-file=hub-config.yaml
+# 3. Apply workshop hub-config as ConfigMap
+kubectl create configmap hub-config -n argocd --from-file=../../hub-config.yaml
 
 # 4. Point ArgoCD at appmod-blueprints — platform self-manages from here
-kubectl apply -f bootstrap-application.yaml
+kubectl apply -f ../../bootstrap-application.yaml
 
 # 5. Run workshop-specific setup (GitLab init, etc.)
-../../scripts/gitlab-init.sh
+./gitlab-init.sh
 ```
 
 **Also Create:**
-- `platform-engineering-on-eks/patterns/workshop/hub-cluster.yml` — Declarative EKS hub cluster definition
-- `platform-engineering-on-eks/patterns/workshop/destroy.sh` — Reverse order teardown
+- `patterns/workshop/scripts/destroy.sh` — Workshop teardown orchestrator
+- `patterns/workshop/scripts/destroy.sh` — Reverse order teardown
 
 **Acceptance Criteria:**
 - `cd patterns/workshop && ./deploy.sh` deploys the full workshop from scratch
@@ -1956,49 +1984,49 @@ Create the workshop-specific consumption pattern in `appmod-blueprints/patterns/
 - `gitlab-values.yaml` — GitLab integration config (PAT, project creation, repo URLs)
 - `identity-center-values.yaml` — AWS Identity Center setup (SSO, permission sets)
 - `README.md` — Workshop deployment guide:
-  - References `platform-engineering-on-eks` for cluster creation and orchestration
-  - Explains that this pattern provides the config; the workshop repo provides the infra
-  - Step-by-step: clone workshop repo → `deploy.sh` → platform self-manages using this config
+  - Explains that `patterns/workshop/` is a self-contained deployment pattern
+  - Includes Terraform, scripts, and configuration all in one place
+  - Step-by-step: `cd patterns/workshop && ./scripts/deploy.sh` → platform self-manages
+  - References `platform-engineering-on-eks` for workshop content and instructions only
 
 **Acceptance Criteria:**
-- Workshop pattern is self-contained in `patterns/workshop/`
+- Workshop pattern is self-contained in `patterns/workshop/` (including Terraform and scripts)
 - Hub-config includes `apiVersion`, `kind`, `repo`, `git.credentials.secretRef`
 - All workshop-specific configs (CloudFront, GitLab, Identity Center) are present
-- README clearly explains the relationship between `patterns/workshop/` and `platform-engineering-on-eks`
-- Pattern is referenced from `platform-engineering-on-eks/patterns/workshop/deploy.sh` (Task 4.4)
+- README clearly explains the self-contained deployment flow
 
 ---
 
-#### Task 4.6 — Validate Workshop End-to-End from `platform-engineering-on-eks`
+#### Task 4.6 — Validate Workshop End-to-End from `patterns/workshop/`
 
 **Doc Reference:** Section 4.2 (Risks)
 
 **Test Steps:**
 1. Start from clean AWS account
-2. Clone `platform-engineering-on-eks` repo
-3. Run `cd patterns/workshop && ./deploy.sh` (creates hub cluster from `hub-cluster.yml` → installs ArgoCD → applies hub-config from `appmod-blueprints/patterns/workshop/` → points at `appmod-blueprints`)
+2. Clone `appmod-blueprints` repo
+3. Run `cd patterns/workshop && ./scripts/deploy.sh` (runs Terraform from `terraform/cluster/` → deploys common stack → applies hub-config → points ArgoCD at `appmod-blueprints`)
 4. Verify hub cluster created
 5. Verify ArgoCD is running and syncing addons from `appmod-blueprints`
 6. Verify Keycloak, GitLab, Backstage are running
 7. Verify platform self-manages (compositions create IAM roles, secrets, etc.)
-8. Run `./destroy.sh`
+8. Run `./scripts/destroy.sh`
 9. Verify clean teardown
 
 **Acceptance Criteria:**
 - All 9 steps pass
 - No regressions from current workshop behavior
-- `appmod-blueprints` repo has zero workshop-specific code or Terraform
-- Workshop config is sourced from `patterns/workshop/` in `appmod-blueprints`
+- Workshop Terraform and scripts are in `patterns/workshop/terraform/` and `patterns/workshop/scripts/`
+- `platform/infra/terraform/` no longer exists
 
 ---
 
-#### Task 4.7 — Document Workshop Repo Relationship
+#### Task 4.7 — Document Workshop Pattern
 
 **Doc Reference:** Section 3.4
 
 **Files to Create:**
-- `platform-engineering-on-eks/docs/UPSTREAM-RELATIONSHIP.md` — How the workshop repo creates the cluster and hands off to `appmod-blueprints` for GitOps self-management. How `patterns/workshop/` in `appmod-blueprints` provides the canonical workshop configuration.
-- `appmod-blueprints/docs/WORKSHOP-SEPARATION.md` — Brief note explaining that workshop orchestration code lives in `platform-engineering-on-eks`, while workshop config patterns live in `patterns/workshop/` within `appmod-blueprints`
+- `patterns/workshop/README.md` — How the workshop pattern is a self-contained deployment including Terraform, scripts, and configuration. How `platform-engineering-on-eks` references this pattern for workshop content/instructions but does not contain infrastructure code.
+- `appmod-blueprints/docs/WORKSHOP-SEPARATION.md` — Brief note explaining that workshop Terraform and scripts live in `patterns/workshop/` within `appmod-blueprints`, while `platform-engineering-on-eks` contains only workshop content and instructions
 
 **Content:**
 - Version pinning strategy (which `appmod-blueprints` tag the workshop uses)
@@ -2332,7 +2360,7 @@ Guide for existing users to migrate from Terraform-based to GitOps-native consum
 **Changes:**
 - Add "Quick Start" section with GitOps-native bootstrap (no Terraform)
 - Add "For Customers" section linking to CONSUMPTION-GUIDE.md
-- Add "For Workshop" section explaining that workshop code lives in `platform-engineering-on-eks`
+- Add "For Workshop" section explaining that workshop Terraform and scripts live in `patterns/workshop/`
 - Update architecture diagram to show compositions and self-management flow
 - Add version badge
 
@@ -2374,7 +2402,7 @@ Document the existing Terraform-based architecture before making changes. Serves
 
 **Files to Create:**
 - `docs/ADR-001-gitops-native-self-management.md` — Why Kro+ACK over Terraform for hub self-management
-- `docs/ADR-002-workshop-separation.md` — Workshop isolation to `platform-engineering-on-eks` repo
+- `docs/ADR-002-workshop-separation.md` — Workshop isolation to `patterns/workshop/` within `appmod-blueprints`
 - `docs/ADR-003-provider-abstraction.md` — How Git/Identity/CICD providers are abstracted
 - `docs/ADR-004-hub-config-schema.md` — Hub config schema design decisions
 
@@ -2607,7 +2635,7 @@ Update `docs/agent-platform/DESIGN.md` and supporting docs to remove all Terrafo
 **Files to Change:**
 
 **`docs/agent-platform/DESIGN.md`:**
-- Remove all `workshop_type` / `WorkshopType` references (workshop concern, lives in `platform-engineering-on-eks`)
+- Remove all `workshop_type` / `WorkshopType` references (workshop concern, lives in `patterns/workshop/terraform/`)
 - Remove CloudFormation parameter references (workshop infrastructure)
 - Remove `WORKSHOP_TYPE` environment variable references
 - Replace `terraform apply -var="enable_agent_platform=true"` with hub-config addons approach
@@ -2655,7 +2683,7 @@ Update `docs/agent-platform/DESIGN.md` and supporting docs to remove all Terrafo
 8. Disable agent platform and verify clean removal
 
 **Scenario B: Agent Platform with GitLab + Keycloak (workshop path)**
-1. Deploy from `platform-engineering-on-eks` repo (TF creates cluster → ArgoCD → hub-config → self-manages)
+1. Deploy from `patterns/workshop/` (TF creates cluster → ArgoCD → hub-config → self-manages)
 2. Verify agent platform works alongside full workshop stack
 3. Verify Agent Gateway auth works with Keycloak OIDC
 
