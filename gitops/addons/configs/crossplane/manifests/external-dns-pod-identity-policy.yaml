@@ -43,8 +43,7 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   forProvider:
-    policyArnSelector:
-      matchControllerRef: true
-    roleSelector:
-      matchLabels:
-        platform.gitops.io/role: external-dns-pod-identity
+    policyArnRef:
+      name: external-dns-route53-policy
+    roleRef:
+      name: external-dns-pod-identity-role
