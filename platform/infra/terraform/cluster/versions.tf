@@ -8,10 +8,10 @@ terraform {
     }
   }
 
-  # Backend configuration provided via CLI parameters
-  backend "s3" {
-    # bucket provided via -backend-config
-    key = "clusters/terraform.tfstate"
-    use_lockfile = true
-  }
+  # Backend configuration disabled - using local state
+  # backend "s3" {
+  #   # bucket provided via -backend-config
+  #   key = "clusters/terraform.tfstate"
+  #   use_lockfile = true
+  # }
 }

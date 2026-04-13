@@ -193,21 +193,24 @@ configure_kubectl_with_fallback() {
 
 # Validate required environment variables and backend resources
 validate_backend_config() {
-  log "Validating S3 backend configuration..."
+  log "Skipping S3 backend validation (using local state)..."
+  return 0
   
-  if [[ -z "${TFSTATE_BUCKET_NAME:-}" ]]; then
-    log_error "TFSTATE_BUCKET_NAME environment variable is required"
-    exit 1
-  fi
-  
-  # Check if S3 bucket exists and is accessible
-  if ! aws s3api head-bucket --bucket "${TFSTATE_BUCKET_NAME}" 2>/dev/null; then
-    log_error "S3 bucket '${TFSTATE_BUCKET_NAME}' does not exist or is not accessible"
-    exit 1
-  fi
-  
-  log_success "Backend configuration validated"
-  log "S3 Bucket: ${TFSTATE_BUCKET_NAME}"
+  # log "Validating S3 backend configuration..."
+  # 
+  # if [[ -z "${TFSTATE_BUCKET_NAME:-}" ]]; then
+  #   log_error "TFSTATE_BUCKET_NAME environment variable is required"
+  #   exit 1
+  # fi
+  # 
+  # # Check if S3 bucket exists and is accessible
+  # if ! aws s3api head-bucket --bucket "${TFSTATE_BUCKET_NAME}" 2>/dev/null; then
+  #   log_error "S3 bucket '${TFSTATE_BUCKET_NAME}' does not exist or is not accessible"
+  #   exit 1
+  # fi
+  # 
+  # log_success "Backend configuration validated"
+  # log "S3 Bucket: ${TFSTATE_BUCKET_NAME}"
 }
 
 # Initialize Terraform with S3 backend
@@ -218,14 +221,12 @@ initialize_terraform() {
   local attempt=1
   local delay=30
 
-  log "Initializing Terraform with S3 backend for $module_name..."
+  log "Initializing Terraform with local backend for $module_name..."
   
   while [ $attempt -le $max_attempts ]; do
     log "Attempt $attempt of $max_attempts for terraform init..."
     
-    if terraform -chdir=$script_dir init --upgrade \
-      -backend-config="bucket=${TFSTATE_BUCKET_NAME}" \
-      -backend-config="region=${AWS_REGION}"; then
+    if terraform -chdir=$script_dir init --upgrade; then
       log_success "Terraform initialized successfully on attempt $attempt"
       
       # Check for and resolve state locks before proceeding
@@ -252,7 +253,10 @@ initialize_terraform() {
 force_unlock_if_needed() {
   local script_dir=$1
   
-  log "Checking for Terraform state locks..."
+  log "Skipping state lock check (using local state)..."
+  return 0
+  
+  # log "Checking for Terraform state locks..."
   
   # Check DynamoDB lock table directly (much faster than terraform plan)
   local lock_table="${TFSTATE_BUCKET_NAME}-lock"
