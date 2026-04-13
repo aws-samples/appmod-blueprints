@@ -13,9 +13,7 @@ spec:
     clusterName: hub
     namespace: external-secrets
     serviceAccount: external-secrets-sa
-    roleArnSelector:
-      matchLabels:
-        platform.gitops.io/role: eso-pod-identity
+    roleArn: arn:aws:iam::259732043995:role/ESOPodIdentityRole
     region: us-west-2
   providerConfigRef:
     name: default
