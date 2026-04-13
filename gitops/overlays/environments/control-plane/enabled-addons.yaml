@@ -8,13 +8,13 @@ enabledAddons:
   ingress_class_alb: true
   cert_manager: false
   external_secrets: true
-  external_dns: false
+  external_dns: true
   aws_efs_csi_driver: false
   image_prepuller: false
   # GitOps
   argo_events: false
   argo_rollouts: false
-  argo_workflows: false
+  argo_workflows: true
   kargo: false
   flux: false
   # Security
