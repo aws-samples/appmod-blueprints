@@ -32,7 +32,7 @@ spec:
       managed-by: crossplane
       purpose: eso-pod-identity
 ---
-# IAM Policy granting SecretsManager read access
+# IAM Policy granting SecretsManager read/write access
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: Policy
 metadata:
@@ -50,7 +50,10 @@ spec:
             "Effect": "Allow",
             "Action": [
               "secretsmanager:GetSecretValue",
-              "secretsmanager:ListSecrets"
+              "secretsmanager:ListSecrets",
+              "secretsmanager:CreateSecret",
+              "secretsmanager:PutSecretValue",
+              "secretsmanager:DescribeSecret"
             ],
             "Resource": "*"
           }
