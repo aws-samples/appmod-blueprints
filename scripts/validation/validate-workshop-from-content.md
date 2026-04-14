@@ -70,6 +70,11 @@ Content will be in `~/environment/content/`. All content file paths below are re
 - Cluster contexts: `peeks-hub`, `peeks-spoke-dev`, `peeks-spoke-prod`
 - Aliases: `hub`, `dev`, `prod` (use `kubectl config use-context peeks-{name}` as fallback)
 
+**Note on aliases**: The `hub`, `dev`, `prod` aliases are defined dynamically in `~/.bashrc.d/platform.sh`
+using `kubectx`. They may not be available in non-interactive shells.
+You can use `kubectl config use-context peeks-hub` / `peeks-spoke-dev` / `peeks-spoke-prod` as the
+reliable fallback.
+
 ## Credentials
 
 | Service   | Username | Password          |

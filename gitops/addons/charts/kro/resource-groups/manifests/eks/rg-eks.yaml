@@ -1172,14 +1172,37 @@ spec:
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.resourcePrefix}-${schema.spec.name}-ack-capability-role"
-          policies:
-            - arn:aws:iam::aws:policy/AmazonEC2FullAccess
-            - arn:aws:iam::aws:policy/AmazonVPCFullAccess
-            - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
-            - arn:aws:iam::aws:policy/IAMFullAccess
-            - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
-            - arn:aws:iam::aws:policy/AmazonS3FullAccess
-            - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+          inlinePolicies:
+            AssumeWorkloadRoles: |
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": ["sts:AssumeRole", "sts:TagSession"],
+                    "Resource": ["arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.resourcePrefix}-cluster-mgmt-*"]
+                  }
+                ]
+              }
+            ManageIRSARoles: |
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "iam:GetRole", "iam:CreateRole", "iam:DeleteRole",
+                      "iam:TagRole", "iam:UntagRole", "iam:UpdateRole",
+                      "iam:UpdateAssumeRolePolicy",
+                      "iam:AttachRolePolicy", "iam:DetachRolePolicy",
+                      "iam:ListAttachedRolePolicies", "iam:ListRolePolicies",
+                      "iam:ListRoleTags", "iam:ListInstanceProfilesForRole",
+                      "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy"
+                    ],
+                    "Resource": ["arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.name}-*"]
+                  }
+                ]
+              }
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",
