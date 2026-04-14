@@ -155,7 +155,9 @@ Multiple approaches for creating the hub cluster. Each provider must produce: Ar
 
 Key files in `kind-crossplane/`:
 
-Taskfile.yml, config.yaml, kind.yaml, argocd-values.yaml, bootstrap-addons.yaml, hub-seed.yaml, manifests/
+Taskfile.yaml, kind.yaml, claims/, manifests/
+
+See [cluster-providers/README.md](cluster-providers/README.md) for the full provider contract, inputs/outputs, and handoff sequence.
 
 ## Common Operations
 

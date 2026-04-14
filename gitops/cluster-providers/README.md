@@ -13,24 +13,91 @@ cluster is created.
 
 ## The Contract
 
-### Infrastructure Output
+Any provider must produce a running hub cluster that satisfies the conditions below. Once met, the addon management system takes over — the provider's job is done.
 
-Any provider must produce a Kubernetes cluster with:
+### Inputs
 
-1. **ArgoCD running** — either EKS ArgoCD Capability or self-managed in the `argocd` namespace
-2. **A cluster secret** in the `argocd` namespace with:
-   - Label: `argocd.argoproj.io/secret-type: cluster`
-   - Label: `fleet_member: control-plane`
-   - Label: `environment: control-plane`
-   - Annotation: `addonsRepoURL` — git repo URL
-   - Annotation: `addonsRepoRevision` — branch/tag
-   - Annotation: `addonsRepoBasepath` — path prefix in the repo
-   - Annotation: `fleetRepoURL` — fleet repo URL (can be same as addons)
-   - Annotation: `fleetRepoRevision` — branch/tag
-   - Annotation: `fleetRepoBasepath` — path prefix
-3. **`bootstrap/root-appset.yaml` applied** — this kicks off the addon pipeline
+| Source | Fields | Purpose |
+|--------|--------|---------|
+| `config.yaml` | `hub.clusterName`, `aws.region`, `aws.accountId` | Cluster identity |
+| `config.yaml` | `repo.url`, `repo.revision`, `repo.basepath` | Git source for ArgoCD |
+| `config.yaml` | `domain`, `resourcePrefix`, `ingressName` | Ingress and naming |
+| `config.yaml` | `identityCenter.*`, `argocdCapability.*` | EKS ArgoCD Capability setup |
+| `addons/registry/core.yaml` | `argocd.defaultVersion`, `external-secrets.defaultVersion` | Versions (no hardcoding) |
+| AWS credentials | IAM permissions | EKS, VPC, IAM, Secrets Manager, Pod Identity |
+| `bootstrap/root-appset.yaml` | ApplicationSet manifest | Applied as the final step |
 
-Once these three conditions are met, the addon management system takes over.
+### Outputs
+
+When bootstrap completes, the following must exist:
+
+#### AWS Resources
+
+| Resource | Details |
+|----------|---------|
+| EKS cluster | Running, accessible via ARN |
+| VPC + subnets | Networking for the cluster |
+| IAM roles | ArgoCD capability role, ESO pod identity role, Crossplane pod identity role |
+| Pod identity associations | ESO and Crossplane mapped to their IAM roles |
+| Secrets Manager `<cluster>/config` | Cluster metadata: repo URLs, region, account ID, domain, ingress config |
+
+#### Hub Cluster Resources
+
+| Resource | Namespace | Details |
+|----------|-----------|---------|
+| ArgoCD | (managed) | EKS ArgoCD Capability running — no pods in `argocd` namespace |
+| External Secrets Operator | `external-secrets` | Installed via Helm before ArgoCD can manage it (chicken-and-egg) |
+| ClusterSecretStore `aws-secrets-manager` | cluster-scoped | ESO can read from Secrets Manager |
+| Seed cluster secret `<cluster>` | `argocd` | See below |
+| `root-appset.yaml` | `argocd` | Bootstrap ApplicationSet applied |
+
+#### Seed Cluster Secret
+
+The seed secret is intentionally minimal — just enough for the bootstrap ApplicationSet to target the hub. The fleet-secret chart enriches it later.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: <clusterName>
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    fleet_member: control-plane
+    environment: control-plane
+  annotations:
+    addonsRepoURL: <repo.url>
+    addonsRepoRevision: <repo.revision>
+    addonsRepoBasepath: <repo.basepath>
+    fleetRepoURL: <repo.url>
+    fleetRepoRevision: <repo.revision>
+    fleetRepoBasepath: <repo.basepath>
+stringData:
+  name: <clusterName>
+  server: <clusterARN>
+  config: '{"tlsClientConfig":{"insecure":false}}'
+```
+
+What the seed secret does NOT have (added later by fleet-secret chart via ExternalSecret):
+- `enable_*` labels (from `enabled-addons.yaml`)
+- `tenant` label (from `fleet/members/<cluster>/values.yaml`)
+- `aws_cluster_name`, `aws_region`, `ingress_domain_name`, `resource_prefix` annotations (from Secrets Manager `<cluster>/config`)
+
+### The Handoff
+
+Once `root-appset.yaml` is applied, ArgoCD takes over:
+
+```
+root-appset.yaml applied
+  -> ArgoCD syncs bootstrap/
+       -> addons.yaml       — renders appset-chart -> one ApplicationSet per addon
+       -> fleet-secrets.yaml — discovers fleet/members/ -> fleet-secret chart enriches seed secret
+       -> clusters.yaml     — KRO cluster provisioning (no-op until fleet members defined)
+```
+
+The fleet-secret chart reads `fleet/members/<cluster>/values.yaml` and `enabled-addons.yaml`, pulls full config from `<cluster>/config` in Secrets Manager, and overwrites the seed secret with the complete set of labels and annotations. From this point, addon ApplicationSets match clusters via `enable_*` labels and the system is fully self-managing.
+
+The bootstrap cluster (Kind) is now disposable — `task destroy-kind` removes it.
 
 ### Taskfile Interface
 
