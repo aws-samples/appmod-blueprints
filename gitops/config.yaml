@@ -11,10 +11,6 @@ repo:
   revision: "agents-platform"
   basepath: "gitops/"
 
-# ArgoCD version to install on Kind
-argocd:
-  version: "7.9.1"
-
 # Hub cluster configuration
 hub:
   clusterName: "hub"
@@ -30,7 +26,7 @@ aws:
 domain: "idp.advaitt.people.aws.dev"
 resourcePrefix: "peeks"
 ingressName: "hub-ingress"
-ingressSecurityGroups: "REPLACE_ME"
+ingressSecurityGroups: ""
 
 # AWS Identity Center (required for EKS ArgoCD Capability)
 identityCenter:
