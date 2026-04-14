@@ -67,7 +67,7 @@ redis-ha:
     # Pin to specific patch version to remediate CVEs
     image:
       repository: public.ecr.aws/docker/library/haproxy
-      tag: 3.4-dev8-alpine
+      tag: 3.4-dev
     podDisruptionBudget:
       maxUnavailable: 1
     resources:
