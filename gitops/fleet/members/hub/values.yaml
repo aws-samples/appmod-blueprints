@@ -5,3 +5,4 @@ externalSecret:
   clusterName: hub
   labels:
     environment: control-plane
+    tenant: control-plane
