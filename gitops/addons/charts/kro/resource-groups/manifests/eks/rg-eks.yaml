@@ -71,19 +71,22 @@ spec:
         enable_kube_state_metrics: string
         enable_opentelemetry_operator: string
         enable_cert_manager: string
-        enable_ack_iam: string
-        enable_ack_eks: string
-        enable_ack_ec2: string
-        enable_ack_ecr: string
-        enable_ack_s3: string
-        enable_ack_dynamodb: string
-        enable_ack_efs: string
+        enable_ack_iam: string | default="false"
+        enable_ack_eks: string | default="false"
+        enable_ack_ec2: string | default="false"
+        enable_ack_ecr: string | default="false"
+        enable_ack_s3: string | default="false"
+        enable_ack_dynamodb: string | default="false"
+        enable_ack_efs: string | default="false"
+        enable_aws_for_fluentbit: string | default="true"
         enable_aws_efs_csi_driver: string
         enable_crossplane: string
         enable_crossplane_aws: string
         enable_flux: string
         enable_ingress_nginx: string
         enable_platform_manifests: string
+        enable_kro_manifests: string | default="true"
+        enable_platform_manifests_bootstrap: string | default="true"
         enable_kubevela: string
 
         adot_collector_namespace: string
@@ -454,19 +457,15 @@ spec:
             enable_kube_state_metrics: "${schema.spec.addons.enable_kube_state_metrics}"
             enable_opentelemetry_operator: "${schema.spec.addons.enable_opentelemetry_operator}"
             enable_cert_manager: "${schema.spec.addons.enable_cert_manager}"
-            enable_ack_iam: "${schema.spec.addons.enable_ack_iam}"
-            enable_ack_eks: "${schema.spec.addons.enable_ack_eks}"
-            enable_ack_ec2: "${schema.spec.addons.enable_ack_ec2}"
-            enable_ack_ecr: "${schema.spec.addons.enable_ack_ecr}"
-            enable_ack_s3: "${schema.spec.addons.enable_ack_s3}"
-            enable_ack_dynamodb: "${schema.spec.addons.enable_ack_dynamodb}"
-            enable_ack_efs: "${schema.spec.addons.enable_ack_efs}"
             enable_aws_efs_csi_driver: "${schema.spec.addons.enable_aws_efs_csi_driver}"
             enable_crossplane: "${schema.spec.addons.enable_crossplane}"
             enable_crossplane_aws: "${schema.spec.addons.enable_crossplane_aws}"
             enable_flux: "${schema.spec.addons.enable_flux}"
             enable_ingress_nginx: "${schema.spec.addons.enable_ingress_nginx}"
             enable_platform_manifests: "${schema.spec.addons.enable_platform_manifests}"
+            enable_kro_manifests: "${schema.spec.addons.enable_kro_manifests}"
+            enable_platform_manifests_bootstrap: "${schema.spec.addons.enable_platform_manifests_bootstrap}"
+            enable_aws_for_fluentbit: "${schema.spec.addons.enable_aws_for_fluentbit}"
             enable_kubevela: "${schema.spec.addons.enable_kubevela}"
 
           # Note: Cannot use ownerReferences here as it would be cross-namespace
@@ -520,6 +519,7 @@ spec:
 
             fleet_secret_manager_secret_name: "${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}"
             ingress_name: "${schema.spec.name}-ingress"
+            ingress_domain_name: "${schema.spec.domainName}"
             ingress_security_groups: "${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}"
             resource_prefix: "${schema.spec.resourcePrefix}"
             git_username: "${schema.spec.git_username}"
@@ -597,7 +597,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          clusterName: "${schema.spec.name}"
+          clusterName: "${ekscluster.spec.name}"
           accessPolicies:
             - accessScope:
                 type: "cluster"
@@ -670,7 +670,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          clusterName: "${schema.spec.name}"
+          clusterName: "${ekscluster.spec.name}"
           namespace: external-secrets
           roleARN: "${externalSecretsRole.status.ackResourceMetadata.arn}"
           serviceAccount: external-secrets-sa
@@ -799,7 +799,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          clusterName: "${schema.spec.name}"
+          clusterName: "${ekscluster.spec.name}"
           namespace: external-dns
           roleARN: "${externalDnsRole.status.ackResourceMetadata.arn}"
           serviceAccount: external-dns
@@ -870,7 +870,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          clusterName: "${schema.spec.name}"
+          clusterName: "${ekscluster.spec.name}"
           namespace: "${schema.spec.addons.adot_collector_namespace}"
           roleARN: "${adotCollectorRole.status.ackResourceMetadata.arn}"
           serviceAccount: "${schema.spec.addons.adot_collector_service_account}"
@@ -945,7 +945,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          clusterName: "${schema.spec.name}"
+          clusterName: "${ekscluster.spec.name}"
           namespace: kyverno
           roleARN: "${kyvernoPolicyReporterRole.status.ackResourceMetadata.arn}"
           serviceAccount: policy-reporter
@@ -1057,7 +1057,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          clusterName: "${schema.spec.name}"
+          clusterName: "${ekscluster.spec.name}"
           namespace: kube-system
           roleARN: "${cniMetricsHelperRole.status.ackResourceMetadata.arn}"
           serviceAccount: cni-metrics-helper
@@ -1131,7 +1131,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          clusterName: "${schema.spec.name}"
+          clusterName: "${ekscluster.spec.name}"
           namespace: amazon-cloudwatch
           roleARN: "${cloudwatchObservabilityRole.status.ackResourceMetadata.arn}"
           serviceAccount: cloudwatch-agent
@@ -1285,7 +1285,7 @@ spec:
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
         spec:
-          clusterName: ${schema.spec.name}
+          clusterName: ${ekscluster.spec.name}
           name: ack
           type: ACK
           roleARN: ${ackCapabilityRole.status.ackResourceMetadata.arn}
@@ -1312,7 +1312,7 @@ spec:
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
         spec:
-          clusterName: ${schema.spec.name}
+          clusterName: ${ekscluster.spec.name}
           name: kro
           type: KRO
           roleARN: ${kroCapabilityRole.status.ackResourceMetadata.arn}
