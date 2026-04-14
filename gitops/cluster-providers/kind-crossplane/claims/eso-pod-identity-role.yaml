@@ -53,7 +53,8 @@ spec:
               "secretsmanager:ListSecrets",
               "secretsmanager:CreateSecret",
               "secretsmanager:PutSecretValue",
-              "secretsmanager:DescribeSecret"
+              "secretsmanager:DescribeSecret",
+              "secretsmanager:TagResource"
             ],
             "Resource": "*"
           }

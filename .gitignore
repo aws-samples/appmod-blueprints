@@ -3,4 +3,6 @@ reference-implementation-azure
 .kiro
 powers
 .claude
-kir-gateway
+kiro-gateway
+data
+recommendations.md
