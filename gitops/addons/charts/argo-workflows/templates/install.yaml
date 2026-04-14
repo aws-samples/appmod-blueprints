@@ -3110,7 +3110,7 @@ spec:
         - --configmap=workflow-controller-configmap
         - --auth-mode=client
         - --auth-mode=sso
-        - "--rootPath=/argo-workflows"
+        - "--base-href=/argo-workflows/"
         - "--secure=false"
         - "--loglevel"
         - "info"
