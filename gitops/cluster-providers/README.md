@@ -83,6 +83,18 @@ What the seed secret does NOT have (added later by fleet-secret chart via Extern
 - `tenant` label (from `fleet/members/<cluster>/values.yaml`)
 - `aws_cluster_name`, `aws_region`, `ingress_domain_name`, `resource_prefix` annotations (from Secrets Manager `<cluster>/config`)
 
+### Addon Secrets
+
+Some addons require pre-seeded secrets in Secrets Manager. These are not part of the core contract — they are conditional on which addons are enabled in `enabled-addons.yaml`. If an addon is enabled and its chart expects a Secrets Manager entry, the provider must seed it during bootstrap.
+
+| Addon | Secret Key | Required Properties | Purpose |
+|-------|-----------|---------------------|---------|
+| keycloak | `<cluster>/keycloak` | `keycloak_admin_password`, `keycloak_postgres_password`, `user_password` | Keycloak admin, database, and default user passwords |
+
+Each addon's chart documents which Secrets Manager keys it expects — see the comment block at the top of the chart's secret template (e.g., `addons/charts/keycloak/templates/secret-gen.yaml`).
+
+Providers should generate strong random passwords during bootstrap. The `kind-crossplane` provider does this in the `secrets-manager:seed-keycloak` task.
+
 ### The Handoff
 
 Once `root-appset.yaml` is applied, ArgoCD takes over:

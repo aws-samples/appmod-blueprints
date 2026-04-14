@@ -160,6 +160,7 @@ tasks:
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity 2>/dev/null || true
       - task: argocd:capability
       - task: secrets-manager:seed
+      - task: secrets-manager:seed-keycloak
       - task: hub:install-eso
       - task: hub:cluster-secret-store
       - task: hub:seed-secret
@@ -294,6 +295,34 @@ tasks:
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
           '{metadata: $metadata, config: $config, server: $server, addons: $addons}')
+        aws secretsmanager create-secret \
+          --name "$SECRET_KEY" \
+          --secret-string "$SECRET_VALUE" \
+          --region {{.AWS_REGION}} 2>/dev/null \
+        || aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" \
+          --secret-string "$SECRET_VALUE" \
+          --region {{.AWS_REGION}}
+        echo "Seeded Secrets Manager: $SECRET_KEY"
+
+  secrets-manager:seed-keycloak:
+    desc: Seed keycloak passwords into AWS Secrets Manager
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+    status:
+      - aws secretsmanager describe-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - |
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/keycloak"
+        ADMIN_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+        DB_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+        USER_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
+        SECRET_VALUE=$(jq -n \
+          --arg admin "$ADMIN_PASS" \
+          --arg db "$DB_PASS" \
+          --arg user "$USER_PASS" \
+          '{keycloak_admin_password: $admin, keycloak_postgres_password: $db, user_password: $user}')
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" \
           --secret-string "$SECRET_VALUE" \
