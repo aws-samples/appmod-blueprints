@@ -9,6 +9,15 @@ metadata:
   name: backstage
   namespace: backstage
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backstage-sa-token
+  namespace: backstage
+  annotations:
+    kubernetes.io/service-account.name: backstage
+type: kubernetes.io/service-account-token
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -246,9 +255,9 @@ data:
           authProvider: 'serviceAccount'
           skipTLSVerify: true
           serviceAccountToken:
-            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            $file: /var/run/secrets/backstage/token
           caData:
-            $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            $file: /var/run/secrets/backstage/ca.crt
         - name: workshop
           url: K8S_SERVER
           authProvider: 'serviceAccount'
@@ -300,7 +309,7 @@ data:
           authProvider: 'serviceAccount'
           skipTLSVerify: true
           serviceAccountToken:
-            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            $file: /var/run/secrets/backstage/token
         - name: workshop
           url: K8S_SERVER
           authProvider: 'serviceAccount'
@@ -334,9 +343,9 @@ stringData:
         skipTLSVerify: true
         skipMetricsLookup: true
         serviceAccountToken: 
-          $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+          $file: /var/run/secrets/backstage/token
         caData: 
-          $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          $file: /var/run/secrets/backstage/ca.crt
         # Additional configuration for Kro resources
         customResources:
           - group: 'kro.run'
@@ -527,6 +536,9 @@ spec:
             - mountPath: /app/config
               name: backstage-config
               readOnly: true
+            - mountPath: /var/run/secrets/backstage
+              name: backstage-sa-token
+              readOnly: true
       serviceAccountName: backstage
       volumes:
         - name: backstage-config
@@ -548,6 +560,9 @@ spec:
         - name: backstage-oidc-vars
           secret:
             secretName: backstage-oidc-vars
+        - name: backstage-sa-token
+          secret:
+            secretName: backstage-sa-token
 ---
 apiVersion: apps/v1
 kind: StatefulSet
