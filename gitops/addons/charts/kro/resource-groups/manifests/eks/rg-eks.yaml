@@ -71,13 +71,6 @@ spec:
         enable_kube_state_metrics: string
         enable_opentelemetry_operator: string
         enable_cert_manager: string
-        enable_ack_iam: string | default="false"
-        enable_ack_eks: string | default="false"
-        enable_ack_ec2: string | default="false"
-        enable_ack_ecr: string | default="false"
-        enable_ack_s3: string | default="false"
-        enable_ack_dynamodb: string | default="false"
-        enable_ack_efs: string | default="false"
         enable_aws_for_fluentbit: string | default="true"
         enable_aws_efs_csi_driver: string
         enable_crossplane: string
