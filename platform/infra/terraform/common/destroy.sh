@@ -78,8 +78,13 @@ main() {
   cd - # Go back
 
   # Destroy Terraform resources
+  # Use -refresh=false because we already removed stale data sources (gitlab_user,
+  # ingress_nginx LB) from state above. Without this flag, terraform re-evaluates
+  # data source blocks in the HCL and fails if the backing infrastructure (GitLab,
+  # nginx ingress) was already torn down by the ArgoCD cleanup phase.
   log "Destroying bootstrap resources..."
   if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
+    -refresh=false \
     -var-file="${GENERATED_TFVAR_FILE}" \
     -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
     -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
@@ -101,6 +106,7 @@ main() {
     
     log_warning "Retrying destroy after lock handling"
     if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
+      -refresh=false \
       -var-file="${GENERATED_TFVAR_FILE}" \
       -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
       -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
