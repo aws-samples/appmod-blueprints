@@ -1,0 +1,22 @@
+{{- range $name, $identity := .Values.identities }}
+{{- if $identity.policy }}
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: {{ $name }}-pod-identity-policy
+  annotations:
+    crossplane.io/external-name: {{ $identity.policy.name }}
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  forProvider:
+    policy: |
+{{ $identity.policy.document | indent 6 }}
+    {{- if $identity.tags }}
+    tags:
+      {{- toYaml $identity.tags | nindent 6 }}
+    {{- end }}
+  providerConfigRef:
+    name: default
+{{- end }}
+{{- end }}

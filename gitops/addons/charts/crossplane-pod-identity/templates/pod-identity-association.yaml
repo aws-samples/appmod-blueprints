@@ -1,0 +1,20 @@
+{{- range $name, $identity := .Values.identities }}
+---
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: PodIdentityAssociation
+metadata:
+  name: {{ $name }}-pod-identity
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  forProvider:
+    clusterName: {{ $.Values.aws.clusterName }}
+    namespace: {{ $identity.namespace }}
+    serviceAccount: {{ $identity.serviceAccount }}
+    roleArnSelector:
+      matchLabels:
+        platform.gitops.io/role: {{ $name }}-pod-identity
+    region: {{ $.Values.aws.region }}
+  providerConfigRef:
+    name: default
+{{- end }}

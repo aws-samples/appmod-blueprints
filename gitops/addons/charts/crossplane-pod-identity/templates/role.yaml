@@ -1,13 +1,14 @@
-# Crossplane IAM Role for AWS Load Balancer Controller Pod Identity
+{{- range $name, $identity := .Values.identities }}
+---
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: Role
 metadata:
-  name: lbc-pod-identity-role
+  name: {{ $name }}-pod-identity-role
   annotations:
-    crossplane.io/external-name: LBCPodIdentityRole
+    crossplane.io/external-name: {{ $identity.roleName }}
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
   labels:
-    platform.gitops.io/role: lbc-pod-identity
+    platform.gitops.io/role: {{ $name }}-pod-identity
 spec:
   forProvider:
     assumeRolePolicy: |
@@ -26,6 +27,10 @@ spec:
           }
         ]
       }
+    {{- if $identity.tags }}
     tags:
-      managed-by: crossplane
-      purpose: lbc-pod-identity
+      {{- toYaml $identity.tags | nindent 6 }}
+    {{- end }}
+  providerConfigRef:
+    name: default
+{{- end }}
