@@ -25,11 +25,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: progressive-app
+  name: rollout-demo
   namespace: team-java
 spec:
   selector:
-    app: progressive-app
+    app: rollout-demo
   ports:
     - port: 8080
       targetPort: 8080
@@ -38,11 +38,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: progressive-app-preview
+  name: rollout-demo-preview
   namespace: team-java
 spec:
   selector:
-    app: progressive-app
+    app: rollout-demo
   ports:
     - port: 8080
       targetPort: 8080
