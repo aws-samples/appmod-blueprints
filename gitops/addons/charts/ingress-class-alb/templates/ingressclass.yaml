@@ -1,4 +1,8 @@
+{{- if eq (default "auto" .Values.controllerMode) "oss" }}
+apiVersion: elbv2.k8s.aws/v1beta1
+{{- else }}
 apiVersion: eks.amazonaws.com/v1
+{{- end }}
 kind: IngressClassParams
 metadata:
   name: platform
@@ -12,8 +16,14 @@ kind: IngressClass
 metadata:
   name: platform
 spec:
+{{- if eq (default "auto" .Values.controllerMode) "oss" }}
+  controller: ingress.k8s.aws/alb
+  parameters:
+    apiGroup: elbv2.k8s.aws
+{{- else }}
   controller: eks.amazonaws.com/alb
   parameters:
     apiGroup: eks.amazonaws.com
+{{- end }}
     kind: IngressClassParams
     name: platform

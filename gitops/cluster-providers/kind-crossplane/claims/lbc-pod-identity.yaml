@@ -1,0 +1,16 @@
+# EKS Pod Identity Association for AWS Load Balancer Controller
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: PodIdentityAssociation
+metadata:
+  name: lbc-pod-identity
+  namespace: crossplane-system
+spec:
+  forProvider:
+    clusterName: hub
+    namespace: kube-system
+    serviceAccount: aws-load-balancer-controller-sa
+    roleArnRef:
+      name: lbc-pod-identity-role
+    region: us-west-2
+  providerConfigRef:
+    name: default

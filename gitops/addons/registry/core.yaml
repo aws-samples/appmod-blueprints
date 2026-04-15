@@ -86,6 +86,28 @@ ingress-class-alb:
       - key: enable_ingress_class_alb
         operator: In
         values: ['true']
+  valuesObject:
+    controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
+
+aws-load-balancer-controller:
+  namespace: kube-system
+  chartName: aws-load-balancer-controller
+  chartRepository: https://aws.github.io/eks-charts
+  defaultVersion: '1.14.0'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_aws_load_balancer_controller
+        operator: In
+        values: ['true']
+  valuesObject:
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    vpcId: '{{.metadata.annotations.aws_vpc_id}}'
+    region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      create: false
+      name: aws-load-balancer-controller-sa
 
 image-prepuller:
   namespace: kube-system

@@ -145,6 +145,8 @@ tasks:
       - kubectl apply -f claims/eso-pod-identity.yaml
       - kubectl apply -f claims/crossplane-pod-identity-role.yaml
       - kubectl apply -f claims/crossplane-pod-identity.yaml
+      - kubectl apply -f claims/lbc-pod-identity-role.yaml
+      - kubectl apply -f claims/lbc-pod-identity.yaml
 
   hub:seed:
     cmds:
@@ -158,6 +160,9 @@ tasks:
       - echo "Waiting for Crossplane pod identity resources..."
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/crossplane-pod-identity-role 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity 2>/dev/null || true
+      - echo "Waiting for LBC pod identity resources..."
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/lbc-pod-identity-role 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/lbc-pod-identity 2>/dev/null || true
       - task: argocd:capability
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
@@ -286,11 +291,13 @@ tasks:
         sh: yq '.ingressName // "hub-ingress"' {{.GITOPS_ROOT}}/config.yaml
       INGRESS_SECURITY_GROUPS:
         sh: yq '.ingressSecurityGroups // ""' {{.GITOPS_ROOT}}/config.yaml
+      VPC_ID:
+        sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
@@ -390,11 +397,15 @@ tasks:
       - kubectl delete platformclusters.platform.gitops.io hub -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete podidentityassociations.eks.aws.upbound.io eso-pod-identity -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete podidentityassociations.eks.aws.upbound.io crossplane-pod-identity -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete podidentityassociations.eks.aws.upbound.io lbc-pod-identity -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete rolepolicyattachments.iam.aws.upbound.io eso-secrets-read-attachment -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete rolepolicyattachments.iam.aws.upbound.io crossplane-admin-attachment -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete rolepolicyattachments.iam.aws.upbound.io lbc-controller-policy-attachment -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete policies.iam.aws.upbound.io eso-secrets-read-policy -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete policies.iam.aws.upbound.io lbc-controller-policy -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete roles.iam.aws.upbound.io eso-pod-identity-role -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete roles.iam.aws.upbound.io crossplane-pod-identity-role -n crossplane-system --timeout=60s 2>/dev/null || true
+      - kubectl delete roles.iam.aws.upbound.io lbc-pod-identity-role -n crossplane-system --timeout=60s 2>/dev/null || true
       - kubectl delete roles.iam.aws.upbound.io argocd-capability-role -n crossplane-system --timeout=60s 2>/dev/null || true
       - echo "Waiting for managed resources to be deleted (up to 30 min)..."
       - |

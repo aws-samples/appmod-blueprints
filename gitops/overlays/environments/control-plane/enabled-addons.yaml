@@ -6,6 +6,7 @@ enabledAddons:
   argocd: false
   metrics_server: true
   ingress_class_alb: true
+  aws_load_balancer_controller: true
   cert_manager: false
   external_secrets: true
   external_dns: true
