@@ -6,14 +6,14 @@ kind: PodIdentityAssociation
 metadata:
   name: lbc-pod-identity
   annotations:
+    crossplane.io/external-name: a-jif9zkyim0zx3pu3s
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   forProvider:
     clusterName: hub
     namespace: kube-system
     serviceAccount: aws-load-balancer-controller-sa
-    roleArnRef:
-      name: lbc-pod-identity-role
+    roleArn: arn:aws:iam::259732043995:role/LBCPodIdentityRole
     region: us-west-2
   providerConfigRef:
     name: default
