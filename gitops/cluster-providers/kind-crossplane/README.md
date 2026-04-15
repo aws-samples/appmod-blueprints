@@ -41,10 +41,11 @@ task install
      a. Wait for EKS cluster, IAM roles, and pod identities to become Ready
      b. argocd:capability         Create EKS ArgoCD Capability via Job
      c. secrets-manager:seed      Write hub config to AWS Secrets Manager
-     d. hub:install-eso           Helm install External Secrets on the hub
-     e. hub:cluster-secret-store  Apply ClusterSecretStore for AWS Secrets Manager
-     f. hub:seed-secret           Create the hub's ArgoCD cluster secret (with fleet_member: control-plane label)
-     g. hub:apply-root-appset     Apply bootstrap/root-appset.yaml -- hub is now self-managing
+     d. secrets-manager:seed-keycloak Seed keycloak passwords into Secrets Manager
+     e. hub:install-eso           Helm install External Secrets on the hub
+     f. hub:cluster-secret-store  Apply ClusterSecretStore for AWS Secrets Manager
+     g. hub:seed-secret           Create the hub's ArgoCD cluster secret (with fleet_member: control-plane label)
+     h. hub:apply-root-appset     Apply bootstrap/root-appset.yaml -- hub is now self-managing
 ```
 
 After step 6g, the hub's ArgoCD syncs `bootstrap/` and takes over. Run `task destroy-kind` to remove the ephemeral Kind cluster.
@@ -61,6 +62,8 @@ All claims live in `claims/` and are applied to the Kind cluster during bootstra
 | `eso-pod-identity.yaml` | PodIdentityAssociation | Binds the ESO role to the `external-secrets-sa` service account in the hub |
 | `crossplane-pod-identity-role.yaml` | Role + RolePolicyAttachment | IAM role with AdministratorAccess, for Crossplane on the hub |
 | `crossplane-pod-identity.yaml` | PodIdentityAssociation | Binds the Crossplane role to the `provider-aws` service account in the hub |
+| `lbc-pod-identity-role.yaml` | Role + Policy + RolePolicyAttachment | IAM role with ELB/EC2/WAF/Shield/ACM permissions, for AWS Load Balancer Controller |
+| `lbc-pod-identity.yaml` | PodIdentityAssociation | Binds the LBC role to the `aws-load-balancer-controller-sa` service account in the hub |
 
 ## How hub:update Works
 
@@ -81,3 +84,23 @@ Supporting manifests in `manifests/`:
 | `argocd/appproject.yaml` | ArgoCD AppProject definition |
 | `crossplane/provider-config-bootstrap.yaml` | ProviderConfig using the `aws-credentials` secret (Kind-only, not used on hub) |
 | `external-secrets/cluster-secret-store.yaml` | ClusterSecretStore for AWS Secrets Manager |
+
+## AWS Load Balancer Controller
+
+The platform uses the open-source AWS Load Balancer Controller (LBC) instead of EKS Auto Mode's built-in ALB controller. This is required for features like URL rewrite (`alb.ingress.kubernetes.io/transforms.*`) which EKS Auto Mode silently ignores.
+
+The `ingress-class-alb` chart supports both modes via the `controllerMode` value:
+
+| Mode | Controller | IngressClassParams API | When to use |
+|------|-----------|----------------------|-------------|
+| `auto` (default) | `eks.amazonaws.com/alb` | `eks.amazonaws.com/v1` | EKS Auto Mode manages ALBs natively |
+| `oss` | `ingress.k8s.aws/alb` | `elbv2.k8s.aws/v1beta1` | Need transforms, url-rewrite, or other OSS-only features |
+
+The mode is controlled by the `alb_controller_mode` annotation on the ArgoCD cluster secret, set via `secrets-manager:seed`.
+
+When using `oss` mode, the provider must also:
+1. Create the LBC IAM role + policy via Crossplane claims (`lbc-pod-identity-role.yaml`, `lbc-pod-identity.yaml`)
+2. Set `enable_aws_load_balancer_controller: true` in `enabled-addons.yaml`
+3. Include `aws_vpc_id` and `alb_controller_mode: oss` in the Secrets Manager seed metadata
+4. Create the `aws-load-balancer-controller-sa` service account in `kube-system` on the hub
+5. Add `alb.ingress.kubernetes.io/target-type: ip` to ingresses using ClusterIP services
