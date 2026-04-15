@@ -903,7 +903,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: HookFailed
 spec:
   updatePolicy: Replace
-  deletionPolicy: Delete
+  deletionPolicy: None
   refreshInterval: 30s
   secretStoreRefs:
     - name: aws-secrets-manager
