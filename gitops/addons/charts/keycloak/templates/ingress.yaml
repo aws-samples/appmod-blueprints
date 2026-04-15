@@ -4,6 +4,7 @@ metadata:
   name: keycloak
   namespace: keycloak
   annotations:
+    alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
     alb.ingress.kubernetes.io/healthcheck-path: /keycloak/health

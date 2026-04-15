@@ -4,6 +4,7 @@ metadata:
   name: argo-workflows
   namespace: argo
   annotations:
+    alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
     alb.ingress.kubernetes.io/transforms.argo-server: |
