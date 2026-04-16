@@ -445,6 +445,7 @@ tasks:
     cmds:
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
       - echo "Stopping ApplicationSet regeneration..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application cluster-addons -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>/dev/null || true
       - cmd: |
           echo "Deleting {{.ITEM}}-{{.HUB_CLUSTER_NAME}}..."
