@@ -441,6 +441,10 @@ tasks:
         sh: |
           yq -r 'to_entries | sort_by(.value.annotationsAppSet."argocd.argoproj.io/sync-wave" | tonumber) | reverse | .[].key' \
             {{.GITOPS_ROOT}}/addons/registry/core.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/gitops.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/security.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/observability.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/ml.yaml \
             {{.GITOPS_ROOT}}/addons/registry/platform.yaml
     cmds:
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
