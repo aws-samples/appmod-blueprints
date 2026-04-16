@@ -6,7 +6,7 @@ kind: ProviderConfig
 metadata:
   name: {{ .Values.providerConfig.name | default "default" }}
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
     argocd.argoproj.io/sync-wave: "-1"
 spec:
   credentials:
