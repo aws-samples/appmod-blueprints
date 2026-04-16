@@ -449,12 +449,12 @@ tasks:
       - cmd: |
           echo "Deleting {{.ITEM}}-{{.HUB_CLUSTER_NAME}}..."
           KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application {{.ITEM}}-{{.HUB_CLUSTER_NAME}} -n argocd --type merge -p '{"metadata":{"finalizers":["resources-finalizer.argocd.argoproj.io"]}}' 2>/dev/null || true
-          KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application {{.ITEM}}-{{.HUB_CLUSTER_NAME}} -n argocd --timeout=120s 2>/dev/null || true
+          KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application {{.ITEM}}-{{.HUB_CLUSTER_NAME}} -n argocd --timeout=180s 2>/dev/null || true
         for:
           var: ADDONS
       - echo "Deleting fleet-secret-{{.HUB_CLUSTER_NAME}}..."
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application fleet-secret-{{.HUB_CLUSTER_NAME}} -n argocd --type merge -p '{"metadata":{"finalizers":["resources-finalizer.argocd.argoproj.io"]}}' 2>/dev/null || true
-      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application fleet-secret-{{.HUB_CLUSTER_NAME}} -n argocd --timeout=120s 2>/dev/null || true
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application fleet-secret-{{.HUB_CLUSTER_NAME}} -n argocd --timeout=180s 2>/dev/null || true
       - echo "Cleaning up AWS resources..."
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
