@@ -18,6 +18,8 @@ spec:
   template:
     metadata:
       name: clusters
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
       labels:
         environment: '{{ .metadata.labels.environment }}'
         tenant: '{{ .metadata.labels.tenant }}'
