@@ -71,6 +71,14 @@ tasks:
     cmds:
       - task: "{{.PROVIDER}}:hub:update"
 
+  hub-destroy-addons:
+    desc: Remove all addons from the hub cluster (no git changes needed)
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.ROOT_DIR}}/config.yaml
+    cmds:
+      - task: "{{.PROVIDER}}:hub:destroy-addons"
+
   kubeconfig:
     desc: Get kubeconfig for the hub EKS cluster
     vars:
