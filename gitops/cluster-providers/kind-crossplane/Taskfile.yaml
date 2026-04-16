@@ -445,13 +445,21 @@ tasks:
     cmds:
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
       - echo "Stopping all regeneration..."
+      # 1. Delete bootstrap ApplicationSet (preserveResources) to stop recreating bootstrap App
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset bootstrap -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>/dev/null || true
       - sleep 3
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset bootstrap -n argocd --timeout=30s 2>/dev/null || true
+      # 2. Delete bootstrap Application (no cascade) to stop syncing bootstrap/ directory
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application bootstrap -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application bootstrap -n argocd --wait=false 2>/dev/null || true
+      # 3. Delete cluster-addons ApplicationSet (preserveResources) to stop generating addon ApplicationSets
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset cluster-addons -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>/dev/null || true
+      - sleep 3
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset cluster-addons -n argocd --timeout=30s 2>/dev/null || true
+      # 4. Delete cluster-addons Application (no cascade)
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application cluster-addons -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>/dev/null || true
+      # 5. Delete addon ApplicationSets in reverse sync-wave order (cascade to Apps + resources)
       - cmd: |
           if KUBECONFIG=/tmp/hub-kubeconfig kubectl get applicationset {{.ITEM}} -n argocd 2>/dev/null; then
             echo "Deleting {{.ITEM}}..."
