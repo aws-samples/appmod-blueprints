@@ -3,16 +3,6 @@ aws:
   clusterName: ""
   accountId: ""
 
-providerConfig:
-  enabled: true
-  name: default
-
-deploymentRuntimeConfig:
-  enabled: true
-  name: aws-pod-identity-drc
-  serviceAccountName: provider-aws
-  namespace: crossplane-system
-
 identities:
   eso:
     roleName: ESOPodIdentityRole
