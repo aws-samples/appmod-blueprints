@@ -448,8 +448,9 @@ tasks:
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application cluster-addons -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>/dev/null || true
       - cmd: |
-          echo "Deleting {{.ITEM}}-{{.HUB_CLUSTER_NAME}}..."
-          KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application {{.ITEM}}-{{.HUB_CLUSTER_NAME}} -n argocd --timeout=180s 2>/dev/null || true
+          echo "Deleting {{.ITEM}}..."
+          KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+          KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset {{.ITEM}} -n argocd --timeout=180s 2>/dev/null || true
         for:
           var: ADDONS
       - echo "Deleting fleet-secret-{{.HUB_CLUSTER_NAME}}..."
