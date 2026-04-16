@@ -444,18 +444,28 @@ tasks:
             {{.GITOPS_ROOT}}/addons/registry/platform.yaml
     cmds:
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
-      - echo "Stopping ApplicationSet regeneration..."
+      - echo "Stopping all regeneration..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application bootstrap -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application bootstrap -n argocd --wait=false 2>/dev/null || true
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application cluster-addons -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>/dev/null || true
       - cmd: |
-          echo "Deleting {{.ITEM}}..."
-          KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
-          sleep 3
-          KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset {{.ITEM}} -n argocd --timeout=180s 2>/dev/null || true
+          if KUBECONFIG=/tmp/hub-kubeconfig kubectl get applicationset {{.ITEM}} -n argocd 2>/dev/null; then
+            echo "Deleting {{.ITEM}}..."
+            KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+            sleep 3
+            KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset {{.ITEM}} -n argocd --timeout=180s 2>/dev/null || true
+          fi
         for:
           var: ADDONS
-      - echo "Deleting fleet-secret-{{.HUB_CLUSTER_NAME}}..."
-      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application fleet-secret-{{.HUB_CLUSTER_NAME}} -n argocd --timeout=180s 2>/dev/null || true
+      - echo "Deleting fleet-secret..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset fleet-secrets -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+      - sleep 3
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true
+      - echo "Deleting clusters..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset clusters -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+      - sleep 3
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset clusters -n argocd --timeout=60s 2>/dev/null || true
       - echo "Cleaning up AWS resources..."
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
