@@ -438,16 +438,10 @@ tasks:
       HUB_CLUSTER_NAME:
         sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
       ADDONS:
-        - argo-workflows
-        - keycloak
-        - external-dns
-        - aws-load-balancer-controller
-        - ingress-class-alb
-        - metrics-server
-        - fleet-secret
-        - external-secrets
-        - crossplane-pod-identity
-        - crossplane
+        sh: |
+          yq -r 'to_entries | sort_by(.value.annotationsAppSet."argocd.argoproj.io/sync-wave" | tonumber) | reverse | .[].key' \
+            {{.GITOPS_ROOT}}/addons/registry/core.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/platform.yaml
     cmds:
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
       - echo "Stopping ApplicationSet regeneration..."
@@ -458,6 +452,9 @@ tasks:
           KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application {{.ITEM}}-{{.HUB_CLUSTER_NAME}} -n argocd --timeout=120s 2>/dev/null || true
         for:
           var: ADDONS
+      - echo "Deleting fleet-secret-{{.HUB_CLUSTER_NAME}}..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application fleet-secret-{{.HUB_CLUSTER_NAME}} -n argocd --type merge -p '{"metadata":{"finalizers":["resources-finalizer.argocd.argoproj.io"]}}' 2>/dev/null || true
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application fleet-secret-{{.HUB_CLUSTER_NAME}} -n argocd --timeout=120s 2>/dev/null || true
       - echo "Cleaning up AWS resources..."
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
