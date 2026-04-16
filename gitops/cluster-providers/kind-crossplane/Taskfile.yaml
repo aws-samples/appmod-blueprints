@@ -481,6 +481,14 @@ tasks:
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset clusters -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
       - sleep 3
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset clusters -n argocd --timeout=60s 2>/dev/null || true
+      - echo "Cleaning up remaining applications..."
+      - cmd: |
+          for app in $(KUBECONFIG=/tmp/hub-kubeconfig kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+            echo "Deleting leftover app $app..."
+            KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application $app -n argocd --timeout=60s 2>/dev/null || \
+            (KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+             KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application $app -n argocd --wait=false 2>/dev/null) || true
+          done
       - echo "Cleaning up AWS resources..."
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
