@@ -107,6 +107,8 @@ spec:
       {{- else }}
       name: '{{ $nameNormalize }}-{{`{{ .name }}`}}'
       {{- end }}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
       labels:
         {{- if $chartConfig.path }}
         addonVersion: {{ $repoURLGitRevision | squote }}
