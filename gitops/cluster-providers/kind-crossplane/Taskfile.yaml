@@ -431,3 +431,35 @@ tasks:
       - kubectl apply -f claims/
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s eksclusters.platform.gitops.io/hub-cluster 2>/dev/null || true
       - task: destroy-kind
+
+  hub:destroy-addons:
+    desc: Remove all addons from the hub cluster (no git changes needed)
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+      ADDONS:
+        - argo-workflows
+        - keycloak
+        - external-dns
+        - aws-load-balancer-controller
+        - ingress-class-alb
+        - metrics-server
+        - fleet-secret
+        - external-secrets
+        - crossplane-pod-identity
+        - crossplane
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - echo "Stopping ApplicationSet regeneration..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>/dev/null || true
+      - cmd: |
+          echo "Deleting {{.ITEM}}-{{.HUB_CLUSTER_NAME}}..."
+          KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application {{.ITEM}}-{{.HUB_CLUSTER_NAME}} -n argocd --type merge -p '{"metadata":{"finalizers":["resources-finalizer.argocd.argoproj.io"]}}' 2>/dev/null || true
+          KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application {{.ITEM}}-{{.HUB_CLUSTER_NAME}} -n argocd --timeout=120s 2>/dev/null || true
+        for:
+          var: ADDONS
+      - echo "Cleaning up AWS resources..."
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
+      - rm -f /tmp/hub-kubeconfig
+      - echo "Hub addons destroyed."
