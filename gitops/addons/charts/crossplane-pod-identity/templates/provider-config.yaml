@@ -1,0 +1,48 @@
+# Crossplane infrastructure — deleted LAST during teardown (wave -1)
+{{- if .Values.providerConfig.enabled }}
+---
+apiVersion: aws.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: {{ .Values.providerConfig.name | default "default" }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  credentials:
+    source: PodIdentity
+{{- end }}
+{{- if .Values.deploymentRuntimeConfig.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.deploymentRuntimeConfig.serviceAccountName }}
+  namespace: {{ .Values.deploymentRuntimeConfig.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: {{ .Values.deploymentRuntimeConfig.name }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          serviceAccountName: {{ .Values.deploymentRuntimeConfig.serviceAccountName }}
+          containers:
+          - name: package-runtime
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                memory: 512Mi
+{{- end }}
