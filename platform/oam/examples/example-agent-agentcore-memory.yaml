@@ -1,8 +1,8 @@
-# Example: Agent with AgentCore memory provisioned via CloudFormation
+# Example: Agent with AgentCore memory provisioned via Crossplane managed resource
 #
 # Flow:
-#   1. agentcore-memory provisions a CloudFormation Stack that creates the Memory
-#      resource, and emits a ComponentPolicy claim for IAM permissions.
+#   1. agentcore-memory provisions a Memory via Crossplane bedrockagentcore provider,
+#      and emits a ComponentPolicy claim for IAM permissions.
 #      The memoryId is passed to the agent via outputs/inputs.
 #   2. dp-service-account creates IAM Role + ServiceAccount + PodIdentityAssociation,
 #      then emits PolicyAttachment claims to wire the permissions
@@ -19,7 +19,7 @@ spec:
       type: agentcore-memory
       outputs:
         - name: memory-id
-          valueFrom: output.status.atProvider.outputs.MemoryId
+          valueFrom: output.status.atProvider.id
       properties:
         region: us-west-2
         description: "Memory for my-agent"

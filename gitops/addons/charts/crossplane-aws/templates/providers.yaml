@@ -87,4 +87,15 @@ spec:
   package: xpkg.upbound.io/upbound/provider-aws-cloudformation:{{ .Values.providers.aws.cloudformationVersion | default .Values.providers.aws.familyVersion }}
   runtimeConfigRef:
     name: aws-pod-identity-drc
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-bedrockagentcore
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-bedrockagentcore:{{ .Values.providers.aws.bedrockagentcoreVersion | default .Values.providers.aws.familyVersion }}
+  runtimeConfigRef:
+    name: aws-pod-identity-drc
 {{- end }}
