@@ -5,7 +5,12 @@ import "strings"
 	annotations: {}
 	attributes: {
 		workload: type: "autodetects.core.oam.dev"
-		status: healthPolicy: "isHealth: *(context.output.status.atProvider.id != \"\") | false"
+		status: healthPolicy: #"""
+			isHealth: *({
+				let ready = context.output.status.conditions[0]
+				ready.type == "Ready" && ready.status == "True"
+			}) | false
+			"""#
 	}
 	description: "AgentCore Memory provisioned via Crossplane managed resource with IAM policy"
 	labels: {}
@@ -26,7 +31,10 @@ template: {
 				description:         parameter.description
 				eventExpiryDuration: parameter.eventExpiryDuration
 			}
-			providerConfigRef: name: "provider-aws-config"
+			providerConfigRef: {
+				name: "provider-aws-config"
+				kind: "ClusterProviderConfig"
+			}
 		}
 	}
 
