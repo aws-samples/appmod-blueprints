@@ -74,6 +74,10 @@ data:
     }
   group-admin-payload.json: |
     {"name":"admin"}
+  group-editor-payload.json: |
+    {"name":"editor"}
+  group-viewer-payload.json: |
+    {"name":"viewer"}
   group-base-user-payload.json: |
     {"name":"base-user"}
   group-mapper-payload.json: |
@@ -123,6 +127,27 @@ data:
         "requiredActions": [],
         "emailVerified": true,
         "groups": [
+          "/editor"
+        ],
+        "enabled": true,
+        "credentials":  [
+          {
+            "type": "password",
+            "value": "${USER1_PASSWORD}",
+            "temporary": false
+          }
+        ]
+    }
+  user-user3.json: |
+    {
+        "username": "user3",
+        "email": "user3@example.com",
+        "firstName": "user",
+        "lastName": "three",
+        "requiredActions": [],
+        "emailVerified": true,
+        "groups": [
+          "/viewer",
           "/base-user"
         ],
         "enabled": true,
@@ -724,6 +749,12 @@ spec:
               echo "creating admin group"
               keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-admin-payload.json" "Admin group"
 
+              echo "creating editor group"
+              keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-editor-payload.json" "Editor group"
+
+              echo "creating viewer group"
+              keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-viewer-payload.json" "Viewer group"
+
               echo "creating base-user group"
               keycloak_post "/admin/realms/${REALM_NAME}/groups" "/var/config/group-base-user-payload.json" "Base-user group"
 
@@ -741,6 +772,7 @@ spec:
               echo "creating users"
               create_user "1" "${USER1_PASSWORD}" "/var/config/user-user1.json"
               create_user "2" "${USER1_PASSWORD}" "/var/config/user-user2.json"
+              create_user "3" "${USER1_PASSWORD}" "/var/config/user-user3.json"
               create_user "grafana-admin" "${USER1_PASSWORD}" "/var/config/user-grafana-admin.json"
               create_user "grafana-editor" "${USER1_PASSWORD}" "/var/config/user-grafana-editor.json"
               create_user "grafana-viewer" "${USER1_PASSWORD}" "/var/config/user-grafana-viewer.json"
@@ -760,7 +792,7 @@ spec:
               create_client "Spark" "/var/config/spark-client-payload.json"
               create_client "Airflow" "/var/config/airflow-client-payload.json"
               create_client "Kargo" "/var/config/kargo-client-payload.json"
-              create_client "Argo CD" "/var/config/argocd-client-payload.json"
+              # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
               create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
 
@@ -773,7 +805,7 @@ spec:
               add_client_scope "spark" "Spark"
               add_client_scope "airflow" "Airflow"
               add_client_scope "kargo" "Kargo"
-              add_client_scope "argocd" "Argo CD"
+              # add_client_scope "argocd" "Argo CD"  # Disabled - using EKS Marina managed ArgoCD
               add_client_scope "account-console" "Account Console"
 
               echo "getting client secrets"
@@ -785,7 +817,8 @@ spec:
               get_client_secret "airflow" "AIRFLOW_CLIENT_SECRET"
               get_client_secret "argo-workflows" "ARGO_WORKFLOWS_CLIENT_SECRET"
 
-              ARGOCD_SESSION_TOKEN=$(curl -k -sS http://argocd-server.argocd.svc.cluster.local/argocd/api/v1/session -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_PASSWORD}\"}" | jq -r .token)
+              # ARGOCD_SESSION_TOKEN=$(curl -k -sS http://argocd-server.argocd.svc.cluster.local/argocd/api/v1/session -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_PASSWORD}\"}" | jq -r .token)
+              ARGOCD_SESSION_TOKEN=""  # Disabled - using EKS Marina managed ArgoCD
 
               # Create Kubernetes secret (currently required by applications)
               echo "Creating Kubernetes secret for application consumption..."
@@ -808,7 +841,6 @@ spec:
               stringData:
                 ARGO_WORKFLOWS_CLIENT_SECRET: ${ARGO_WORKFLOWS_CLIENT_SECRET}
                 ARGO_WORKFLOWS_CLIENT_ID: argo-workflows
-                ARGOCD_SESSION_TOKEN: ${ARGOCD_SESSION_TOKEN}
                 BACKSTAGE_CLIENT_SECRET: ${BACKSTAGE_CLIENT_SECRET}
                 BACKSTAGE_CLIENT_ID: backstage
                 JUPYTERHUB_CLIENT_SECRET: ${JUPYTERHUB_CLIENT_SECRET}
@@ -821,7 +853,6 @@ spec:
                 SPARK_CLIENT_ID: spark
                 AIRFLOW_CLIENT_SECRET: ${AIRFLOW_CLIENT_SECRET}
                 AIRFLOW_CLIENT_ID: airflow
-                ARGOCD_CLIENT_ID: argocd
               " > /tmp/secret.yaml
 
               ./kubectl apply -f /tmp/secret.yaml
@@ -864,7 +895,6 @@ spec:
       SPARK_CLIENT_ID: "{{ `{{.SPARK_CLIENT_ID}}` }}"
       AIRFLOW_CLIENT_SECRET: "{{ `{{.AIRFLOW_CLIENT_SECRET}}` }}"
       AIRFLOW_CLIENT_ID: "{{ `{{.AIRFLOW_CLIENT_ID}}` }}"
-      ARGOCD_SESSION_TOKEN: "{{ `{{.ARGOCD_SESSION_TOKEN}}` }}"
   data:
     - conversionStrategy: None
       match:
@@ -944,9 +974,4 @@ spec:
         remoteRef:
           remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
           property: AIRFLOW_CLIENT_ID
-    - conversionStrategy: None
-      match:
-        secretKey: ARGOCD_SESSION_TOKEN
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: ARGOCD_SESSION_TOKEN
+

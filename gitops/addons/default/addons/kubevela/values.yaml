@@ -1,6 +1,8 @@
 vela-core:
+  controllerArgs:
+    reSyncPeriod: 30s
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
     - key: "CriticalAddonsOnly"
       operator: "Exists"
@@ -14,7 +16,7 @@ vela-core:
 
 cluster-gateway:
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
     - key: "CriticalAddonsOnly"
       operator: "Exists"
@@ -22,7 +24,7 @@ cluster-gateway:
 
 workflow:
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
     - key: "CriticalAddonsOnly"
       operator: "Exists"

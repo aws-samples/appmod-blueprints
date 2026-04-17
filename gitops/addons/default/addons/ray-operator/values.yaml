@@ -1,6 +1,18 @@
 # Model prestage configuration for ray-operator
 # Controls which models are pre-loaded to S3
 
+# Kuberay operator resources
+kuberay-operator:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+
 modelPrestage:
   models:
     tinyllama:

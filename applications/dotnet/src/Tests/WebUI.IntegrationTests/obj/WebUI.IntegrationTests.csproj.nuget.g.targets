@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ImportGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <Import Project="$(NuGetPackageRoot)xunit.core/2.4.1/build/xunit.core.targets" Condition="Exists('$(NuGetPackageRoot)xunit.core/2.4.1/build/xunit.core.targets')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.extensions.options/8.0.0/buildTransitive/net6.0/Microsoft.Extensions.Options.targets" Condition="Exists('$(NuGetPackageRoot)microsoft.extensions.options/8.0.0/buildTransitive/net6.0/Microsoft.Extensions.Options.targets')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.extensions.configuration.binder/8.0.1/buildTransitive/netstandard2.0/Microsoft.Extensions.Configuration.Binder.targets" Condition="Exists('$(NuGetPackageRoot)microsoft.extensions.configuration.binder/8.0.1/buildTransitive/netstandard2.0/Microsoft.Extensions.Configuration.Binder.targets')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.extensions.logging.abstractions/8.0.0/buildTransitive/net6.0/Microsoft.Extensions.Logging.Abstractions.targets" Condition="Exists('$(NuGetPackageRoot)microsoft.extensions.logging.abstractions/8.0.0/buildTransitive/net6.0/Microsoft.Extensions.Logging.Abstractions.targets')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.aspnetcore.identity.ui/6.0.1/buildTransitive/Microsoft.AspNetCore.Identity.UI.targets" Condition="Exists('$(NuGetPackageRoot)microsoft.aspnetcore.identity.ui/6.0.1/buildTransitive/Microsoft.AspNetCore.Identity.UI.targets')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.codecoverage/17.0.0/build/netstandard1.0/Microsoft.CodeCoverage.targets" Condition="Exists('$(NuGetPackageRoot)microsoft.codecoverage/17.0.0/build/netstandard1.0/Microsoft.CodeCoverage.targets')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.net.test.sdk/17.0.0/build/netcoreapp2.1/Microsoft.NET.Test.Sdk.targets" Condition="Exists('$(NuGetPackageRoot)microsoft.net.test.sdk/17.0.0/build/netcoreapp2.1/Microsoft.NET.Test.Sdk.targets')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.aspnetcore.mvc.testing/6.0.1/buildTransitive/net6.0/Microsoft.AspNetCore.Mvc.Testing.targets" Condition="Exists('$(NuGetPackageRoot)microsoft.aspnetcore.mvc.testing/6.0.1/buildTransitive/net6.0/Microsoft.AspNetCore.Mvc.Testing.targets')" />
+  </ImportGroup>
+</Project>

@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "jf9OU89AK6lp/1Whhzmverr8yW4UlnmXbC05ug1sQCrAEBQAdZtbccEUjN0Salz4k9iH3kaRIG1MdM32eEEMjQ==",
+  "success": true,
+  "projectFilePath": "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Common/Common.csproj",
+  "expectedPackageFiles": [
+    "/Users/shapirov/.nuget/packages/swashbuckle.aspnetcore.swaggerui/6.6.2/swashbuckle.aspnetcore.swaggerui.6.6.2.nupkg.sha512"
+  ],
+  "logs": []
+}

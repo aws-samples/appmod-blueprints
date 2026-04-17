@@ -1,0 +1,11 @@
+apiVersion: kro.run/v1alpha1
+kind: DynamoDBTable
+metadata:
+  name: ${{values.table_name}}
+  namespace: ${{values.namespace}}
+spec:
+  name: ${{values.table_name}}
+  region: ${{values.region}}
+  accountId: "${{values.accountId}}"
+  attributeName: ${{values.attributeName}}
+  attributeType: ${{values.attributeType}}

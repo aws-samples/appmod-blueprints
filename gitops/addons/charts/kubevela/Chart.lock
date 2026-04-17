@@ -3,4 +3,4 @@ dependencies:
   repository: https://kubevela.github.io/charts
   version: 1.10.7
 digest: sha256:3ff3247d6ddea70d1ba6b1ffaf138d2b5faad290641497e838e30512b4352f50
-generated: "2026-04-07T12:45:10.238047-04:00"
+generated: "2026-03-13T11:03:45.320853-05:00"

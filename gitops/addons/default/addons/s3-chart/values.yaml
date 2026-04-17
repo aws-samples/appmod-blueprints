@@ -7,7 +7,7 @@ aws:
 
 deployment:
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
     - key: "CriticalAddonsOnly"
       operator: "Exists"

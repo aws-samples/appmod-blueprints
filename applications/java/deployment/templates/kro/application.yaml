@@ -1,0 +1,34 @@
+apiVersion: kro.run/v1alpha1
+kind: AppmodService
+metadata:
+  name: java-webservice
+  namespace: team-java
+spec:
+  image: <image>
+  image_name: java-app
+  replicas: 2
+  port: 8080
+  targetPort: 8080
+  serviceAccount: java-service-account
+  clusterName: peeks-spoke-dev
+  env:
+    - name: APP_ENV
+      value: "DEV"
+  components:
+    dynamodb:
+      enabled: false
+  ingress:
+    enabled: true
+    path: /java-app
+    rewrite: true
+  functionalGate:
+    enabled: true
+    image: "httpd:alpine"
+    extraArgs: "red"
+    path: "/java-app/"
+  performanceGate:
+    enabled: true
+    image: "httpd:alpine"
+    extraArgs: "160"
+  metrics:
+    enabled: true

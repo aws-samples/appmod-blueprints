@@ -124,16 +124,22 @@ check_and_create_repo() {
 }
 
 set_gitlab_remote_for_peeks() {
-  rm -rf ~/environment/$WORKING_REPO
-  mkdir -p ~/environment/$WORKING_REPO
   pushd ~/environment/$WORKING_REPO
   
   git config user.email "participants@workshops.aws"
   git config user.name "Workshop Participant"
-  git clone https://$USERNAME:$GITLAB_TOKEN@$GITLAB_HOSTNAME/$USERNAME/$WORKING_REPO.git .
+  
+  # Fetch from GitLab (origin now points to GitLab)
+  if git fetch origin 2>/dev/null; then
+    # Switch to main branch from GitLab (creates if doesn't exist)
+    git checkout -B main origin/main
+  else
+    echo "GitLab repository not accessible yet, staying on current branch"
+    git checkout -B main 2>/dev/null || true
+  fi
   
   popd
-  echo "GitLab remote set for ~/environment/$WORKING_REPO"
+  echo "GitLab remote set for ~/environment/$WORKING_REPO - switched to main branch"
 }
 
 # Main execution

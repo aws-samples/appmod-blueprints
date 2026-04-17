@@ -26,6 +26,7 @@ spec:
     region: ${{values.aws_region}}
     clusterName: ${{values.cluster_name}}
     resourcePrefix: "${{values.aws_resource_prefix}}"
+    accountId: "${{values.aws_account_id}}"
   application:
     name: ${{values.appname}}
     dockerfilePath: ${{values.dockerfile_path}}
@@ -34,4 +35,4 @@ spec:
     hostname: ${{values.gitlab_hostname}}
     username: ${{values.git_username}}
   hub:
-    hostname: ${{values.argocd_hostname}}
+    hostname: ${{values.ingress_hostname}}

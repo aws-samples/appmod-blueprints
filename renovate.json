@@ -2,21 +2,21 @@
   "extends": [
     "config:recommended"
   ],
-  "baseBranches": [
-    "main", 
-    "feature/oam-for-agents"
+  "baseBranchPatterns": [
+    "main"
   ],
   "enabledManagers": [
     "custom.regex",
-    "github-actions"
+    "github-actions",
+    "npm"
   ],
   "customManagers": [
     {
       "customType": "regex",
       "description": "Update Helm chart versions in ArgoCD Application files",
-      "fileMatch": [
-        "applications/.+\\.ya?ml$",
-        "gitops/.+\\.ya?ml$"
+      "managerFilePatterns": [
+        "/applications/.+\\.ya?ml$/",
+        "/gitops/.+\\.ya?ml$/"
       ],
       "matchStrings": [
         "repoURL:\\s*['\"]?(?<registryUrl>registry-1\\.docker\\.io/bitnamicharts)['\"]?\\s*\\n\\s*targetRevision:\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?\\s*\\n(?:[^\\n]*\\n)*?\\s*chart:\\s*['\"]?(?<depName>[^'\"\\s]+)['\"]?"
@@ -27,9 +27,9 @@
     {
       "customType": "regex",
       "description": "Update Helm chart versions for other OCI registries",
-      "fileMatch": [
-        "applications/.+\\.ya?ml$",
-        "gitops/.+\\.ya?ml$"
+      "managerFilePatterns": [
+        "/applications/.+\\.ya?ml$/",
+        "/gitops/.+\\.ya?ml$/"
       ],
       "matchStrings": [
         "repoURL:\\s*['\"]?(?<registryUrl>ghcr\\.io/[^'\"\\s]+)['\"]?\\s*\\n\\s*targetRevision:\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?\\s*\\n(?:[^\\n]*\\n)*?\\s*chart:\\s*['\"]?(?<depName>[^'\"\\s]+)['\"]?"
@@ -40,9 +40,9 @@
     {
       "customType": "regex",
       "description": "Update Helm chart versions for AWS ECR Public",
-      "fileMatch": [
-        "applications/.+\\.ya?ml$",
-        "gitops/.+\\.ya?ml$"
+      "managerFilePatterns": [
+        "/applications/.+\\.ya?ml$/",
+        "/gitops/.+\\.ya?ml$/"
       ],
       "matchStrings": [
         "repoURL:\\s*['\"]?(?<registryUrl>public\\.ecr\\.aws/[^'\"\\s]+)['\"]?\\s*\\n\\s*targetRevision:\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?\\s*\\n(?:[^\\n]*\\n)*?\\s*chart:\\s*['\"]?(?<depName>[^'\"\\s]+)['\"]?"
@@ -53,9 +53,9 @@
     {
       "customType": "regex",
       "description": "Update Helm chart versions for standard Helm repositories",
-      "fileMatch": [
-        "applications/.+\\.ya?ml$",
-        "gitops/.+\\.ya?ml$"
+      "managerFilePatterns": [
+        "/applications/.+\\.ya?ml$/",
+        "/gitops/.+\\.ya?ml$/"
       ],
       "matchStrings": [
         "repoURL:\\s*['\"]?(?<registryUrl>https://[^'\"\\s]+)['\"]?\\s*\\n\\s*targetRevision:\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?\\s*\\n(?:[^\\n]*\\n)*?\\s*chart:\\s*['\"]?(?<depName>[^'\"\\s]+)['\"]?"
@@ -65,9 +65,9 @@
     {
       "customType": "regex",
       "description": "Update chart versions in values.yaml files",
-      "fileMatch": [
-        "values\\.ya?ml$",
-        ".+/values\\.ya?ml$"
+      "managerFilePatterns": [
+        "/values\\.ya?ml$/",
+        "/.+/values\\.ya?ml$/"
       ],
       "matchStrings": [
         "chart:\\s*(?<depName>[^\\s]+)\\s+repoUrl:\\s*(?<registryUrl>https://[^\\s]+)\\s+targetRevision:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?"
@@ -77,9 +77,9 @@
     {
       "customType": "regex",
       "description": "Update chart versions in values.yaml files for OCI registries",
-      "fileMatch": [
-        "values\\.ya?ml$",
-        ".+/values\\.ya?ml$"
+      "managerFilePatterns": [
+        "/values\\.ya?ml$/",
+        "/.+/values\\.ya?ml$/"
       ],
       "matchStrings": [
         "chart:\\s*(?<depName>[^\\s]+)\\s+repoUrl:\\s*(?<registryUrl>ghcr\\.io)\\s+targetRevision:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?"
@@ -90,15 +90,26 @@
     {
       "customType": "regex",
       "description": "Update chart versions in values.yaml files for AWS ECR Public",
-      "fileMatch": [
-        "values\\.ya?ml$",
-        ".+/values\\.ya?ml$"
+      "managerFilePatterns": [
+        "/values\\.ya?ml$/",
+        "/.+/values\\.ya?ml$/"
       ],
       "matchStrings": [
         "chart:\\s*(?<depName>[^\\s]+)\\s+repoUrl:\\s*(?<registryUrl>public\\.ecr\\.aws)\\s+targetRevision:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?"
       ],
       "datasourceTemplate": "docker",
       "registryUrlTemplate": "https://public.ecr.aws"
+    },
+    {
+      "customType": "regex",
+      "description": "Update Helm chart versions in addons.yaml defaultVersion fields",
+      "managerFilePatterns": [
+        "/addons\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "chartName:\\s*(?<depName>[^\\s]+)[\\s\\S]*?defaultVersion:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?[\\s\\S]*?chartRepository:\\s*['\"]?(?<registryUrl>https://[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "helm"
     }
   ],
   "hostRules": [

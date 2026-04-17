@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 4.67.0, < 6.0.0"
+      version = ">= 6.23.0, <= 6.34.0"
     }
     helm = {
       source  = "hashicorp/helm"
@@ -19,14 +19,14 @@ terraform {
       version = ">= 2.1.3"
     }
     gitlab = {
-      source = "gitlabhq/gitlab"
+      source  = "gitlabhq/gitlab"
       version = "18.3.0"
     }
   }
   # Backend configuration provided via CLI parameters
   backend "s3" {
     # bucket provided via -backend-config
-    key = "common/terraform.tfstate"
+    key          = "common/terraform.tfstate"
     use_lockfile = true
   }
 }

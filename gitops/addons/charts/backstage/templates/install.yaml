@@ -245,10 +245,6 @@ data:
           url: https://kubernetes.default.svc.cluster.local
           authProvider: 'serviceAccount'
           skipTLSVerify: true
-          serviceAccountToken:
-            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
-          caData:
-            $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
         - name: workshop
           url: K8S_SERVER
           authProvider: 'serviceAccount'
@@ -299,8 +295,6 @@ data:
           url: https://kubernetes.default.svc.cluster.local
           authProvider: 'serviceAccount'
           skipTLSVerify: true
-          serviceAccountToken:
-            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
         - name: workshop
           url: K8S_SERVER
           authProvider: 'serviceAccount'
@@ -333,10 +327,6 @@ stringData:
         authProvider: 'serviceAccount'
         skipTLSVerify: true
         skipMetricsLookup: true
-        serviceAccountToken: 
-          $file: /var/run/secrets/kubernetes.io/serviceaccount/token
-        caData: 
-          $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
         # Additional configuration for Kro resources
         customResources:
           - group: 'kro.run'
@@ -424,7 +414,7 @@ spec:
         app: backstage
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system
+        karpenter.sh/nodepool: system-peeks
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
@@ -570,7 +560,7 @@ spec:
         app: postgresql
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system
+        karpenter.sh/nodepool: system-peeks
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
@@ -642,15 +632,15 @@ spec:
       mergePolicy: Replace
       data:
         KEYCLOAK_CLIENT_SECRET: "{{ `{{.BACKSTAGE_CLIENT_SECRET}}` }}"
-        ARGOCD_AUTH_TOKEN: "argocd.token={{ `{{.ARGOCD_SESSION_TOKEN}}` }}"
+        # ARGOCD_AUTH_TOKEN: "argocd.token={{ `{{.ARGOCD_AUTH_TOKEN}}` }}"
   data:
-    - secretKey: ARGOCD_SESSION_TOKEN
-      remoteRef:
-        conversionStrategy: Default
-        decodingStrategy: None
-        key: {{ .Values.global.aws_cluster_name }}/keycloak-clients
-        metadataPolicy: None
-        property: ARGOCD_SESSION_TOKEN
+    # - secretKey: ARGOCD_AUTH_TOKEN
+    #   remoteRef:
+    #     conversionStrategy: Default
+    #     decodingStrategy: None
+    #     key: {{ .Values.global.aws_cluster_name }}/secrets
+    #     metadataPolicy: None
+    #     property: argocd_auth_token
     - secretKey: BACKSTAGE_CLIENT_SECRET
       remoteRef:
         conversionStrategy: Default

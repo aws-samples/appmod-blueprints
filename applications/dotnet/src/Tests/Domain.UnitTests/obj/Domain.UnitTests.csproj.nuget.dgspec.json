@@ -1,0 +1,146 @@
+{
+  "format": 1,
+  "restore": {
+    "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Tests/Domain.UnitTests/Domain.UnitTests.csproj": {}
+  },
+  "projects": {
+    "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Domain/Domain.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Domain/Domain.csproj",
+        "projectName": "Northwind.Domain",
+        "projectPath": "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Domain/Domain.csproj",
+        "packagesPath": "/Users/shapirov/.nuget/packages/",
+        "outputPath": "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Domain/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/NuGet.Config",
+          "/Users/shapirov/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net6.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net6.0": {
+            "targetAlias": "net6.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        }
+      },
+      "frameworks": {
+        "net6.0": {
+          "targetAlias": "net6.0",
+          "dependencies": {
+            "Swashbuckle.AspNetCore.SwaggerUI": {
+              "target": "Package",
+              "version": "[6.6.2, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/6.0.414/RuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Tests/Domain.UnitTests/Domain.UnitTests.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Tests/Domain.UnitTests/Domain.UnitTests.csproj",
+        "projectName": "Northwind.Domain.UnitTests",
+        "projectPath": "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Tests/Domain.UnitTests/Domain.UnitTests.csproj",
+        "packagesPath": "/Users/shapirov/.nuget/packages/",
+        "outputPath": "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Tests/Domain.UnitTests/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/NuGet.Config",
+          "/Users/shapirov/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net6.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net6.0": {
+            "targetAlias": "net6.0",
+            "projectReferences": {
+              "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Domain/Domain.csproj": {
+                "projectPath": "/Users/shapirov/projects/appmod-blueprints/applications/dotnet/src/Domain/Domain.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        }
+      },
+      "frameworks": {
+        "net6.0": {
+          "targetAlias": "net6.0",
+          "dependencies": {
+            "Microsoft.NET.Test.Sdk": {
+              "target": "Package",
+              "version": "[17.0.0, )"
+            },
+            "Swashbuckle.AspNetCore.SwaggerUI": {
+              "target": "Package",
+              "version": "[6.6.2, )"
+            },
+            "xunit": {
+              "target": "Package",
+              "version": "[2.4.1, )"
+            },
+            "xunit.runner.visualstudio": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[2.4.3, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/6.0.414/RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

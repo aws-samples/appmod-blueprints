@@ -41,15 +41,6 @@ spec:
             - ap-southeast-2
             - ap-northeast-1
           ui:help: 'Select the AWS region for your resources'
-        cluster_name:
-          title: EKS Cluster Name
-          description: Name of the EKS cluster where the pipeline will run
-          type: string
-          default: peeks-hub
-          pattern: '^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$'
-          minLength: 1
-          maxLength: 100
-          ui:help: 'EKS cluster name where workloads will be deployed'
     - title: Application Paths
       description: Configure paths for your application build and deployment
       properties:
@@ -98,8 +89,9 @@ spec:
           aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
+          ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
           git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
-          cluster_name: ${{ parameters.cluster_name }}
+          cluster_name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
           aws_resource_prefix: peeks
           dockerfile_path: ${{parameters.dockerfile_path}}
           deployment_path: ${{parameters.deployment_path}}
@@ -136,10 +128,12 @@ spec:
             destinations:
               - name: local
                 namespace: team-${{ parameters.appname }}
-                server: https://kubernetes.default.svc
+                server: '*'
               - name: argocd
                 namespace: argocd
-                server: https://kubernetes.default.svc
+                server: '*'
+            sourceNamespaces:
+              - argocd
             sourceRepos:
               - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.appname}}-cicd.git
             namespaceResourceWhitelist:
@@ -178,7 +172,7 @@ spec:
               path: manifests
               targetRevision: HEAD
             destination:
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
               namespace: team-${{ parameters.appname }}
             syncPolicy:
               automated:
@@ -241,19 +235,19 @@ spec:
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
       - title: ArgoCD Application (GitOps)
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.appname }}-cicd?view=tree&resource=
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{ parameters.appname }}-cicd?view=tree&resource=
         icon: web
       - title: GitLab Repository (GitOps Source)
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.appname }}-cicd
         icon: git
       - title: ArgoCD Project
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/settings/projects/${{ parameters.appname }}-project
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/settings/projects/${{ parameters.appname }}-project
         icon: web
       - title: Argo Workflows templates (After Sync)
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/argo-workflows/workflow-templates/team-${{ parameters.appname }}
         icon: web
       - title: Argo Workflows (After Sync)
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflows/team-${{ parameters.appname }}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/argo-workflows/workflows/team-${{ parameters.appname }}
         icon: web
       - title: ECR Main Repository (After Provisioning)
         url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks/${{ parameters.appname }}?region=${{ parameters.aws_region }}

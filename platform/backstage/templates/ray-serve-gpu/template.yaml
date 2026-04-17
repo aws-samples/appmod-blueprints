@@ -228,7 +228,7 @@ spec:
               targetRevision: HEAD
               path: manifests
             destination:
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
               namespace: ${{ parameters.namespace }}
             syncPolicy:
               automated:
@@ -262,7 +262,7 @@ spec:
       - title: Repository
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service
       - title: ArgoCD Application
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/${{parameters.name}}-ray-service
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{parameters.name}}-ray-service
       - title: Ray Dashboard
         url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/ray-dashboard/${{parameters.name}}/
       - title: Ray Serve Endpoint
