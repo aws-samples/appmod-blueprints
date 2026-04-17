@@ -1,13 +1,21 @@
+import "strings"
+
 "agentcore-memory": {
 	alias: ""
 	annotations: {}
-	attributes: workload: type: "autodetects.core.oam.dev"
+	attributes: {
+		workload: type: "autodetects.core.oam.dev"
+		status: healthPolicy: "isHealth: *(context.output.status.atProvider.outputs.MemoryId != \"\") | false"
+	}
 	description: "AgentCore Memory provisioned via CloudFormation with IAM policy"
 	labels: {}
 	type: "component"
 }
 
 template: {
+	let _autoName = strings.Replace(context.namespace + "_" + context.name, "-", "_", -1)
+	let _memoryName = *parameter.memoryNameOverride | _autoName
+
 	output: {
 		apiVersion: "cloudformation.aws.upbound.io/v1beta1"
 		kind:       "Stack"
@@ -24,7 +32,7 @@ template: {
 					    "Memory": {
 					      "Type": "AWS::BedrockAgentCore::Memory",
 					      "Properties": {
-					        "Name": "\(context.name)",
+					        "Name": "\(_memoryName)",
 					        "Description": "\(parameter.description)",
 					        "EventExpiryDuration": \(parameter.eventExpiryDuration)
 					      }
@@ -32,10 +40,10 @@ template: {
 					  },
 					  "Outputs": {
 					    "MemoryId": {
-					      "Value": {"Ref": "Memory"}
+					      "Value": {"Fn::GetAtt": ["Memory", "MemoryId"]}
 					    },
 					    "MemoryArn": {
-					      "Value": {"Fn::GetAtt": ["Memory", "Arn"]}
+					      "Value": {"Fn::GetAtt": ["Memory", "MemoryArn"]}
 					    }
 					  }
 					}
@@ -81,6 +89,8 @@ template: {
 	}
 
 	parameter: {
+		// +usage=Override memory name in AWS (must match ^[a-zA-Z][a-zA-Z0-9_]{0,47}$). If not set, auto-generates <namespace>_<componentName>
+		memoryNameOverride?: string
 		// +usage=AWS region
 		region: *"us-west-2" | string
 		// +usage=Description of the memory

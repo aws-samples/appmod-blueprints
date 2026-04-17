@@ -24,6 +24,31 @@ logger = logging.getLogger(__name__)
 mcp_exit_stack: Optional[ExitStack] = None
 
 
+def build_session_manager():
+    """Build a session manager based on MEMORY_PROVIDER config."""
+    if config.MEMORY_PROVIDER != "agentcore":
+        return None
+
+    mem_config = config.MEMORY_CONFIG
+    memory_id = mem_config.get("memoryId")
+    region = mem_config.get("region", config.AWS_REGION)
+
+    if not memory_id:
+        logger.warning("MEMORY_PROVIDER=agentcore but no memoryId in MEMORY_CONFIG")
+        return None
+
+    from bedrock_agentcore.memory.integrations.strands.config import AgentCoreMemoryConfig
+    from bedrock_agentcore.memory.integrations.strands.session_manager import AgentCoreMemorySessionManager
+
+    agentcore_config = AgentCoreMemoryConfig(memory_id=memory_id)
+    session_manager = AgentCoreMemorySessionManager(
+        agentcore_memory_config=agentcore_config,
+        region_name=region,
+    )
+    logger.info(f"AgentCore memory session manager created (memory_id={memory_id})")
+    return session_manager
+
+
 def build_mcp_tools() -> tuple[list, Optional[ExitStack]]:
     """Initialize MCP clients for all configured servers.
 
@@ -88,6 +113,8 @@ def create_agent() -> Agent:
     if mcp_tools:
         logger.info(f"Agent equipped with {len(mcp_tools)} MCP tool(s)")
 
+    session_manager = build_session_manager()
+
     agent = Agent(
         model=model,
         system_prompt=config.SYSTEM_PROMPT,
@@ -95,6 +122,7 @@ def create_agent() -> Agent:
         agent_id=config.AGENT_NAME,
         name=config.AGENT_NAME,
         description=config.AGENT_DESCRIPTION,
+        session_manager=session_manager,
     )
 
     logger.info(f"Agent created successfully: {config.AGENT_NAME}")

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: config-platform-env
+  namespace: {{ .Release.Namespace }}
+  labels:
+    config.oam.dev/catalog: velacore-config
+    config.oam.dev/type: platform-env
+    config.oam.dev/identifier: platform-env
+type: Opaque
+stringData:
+  envName: {{ .Values.platformEnv.envName | default "dev" | quote }}
+  clusterName: {{ .Values.platformEnv.clusterName | default "" | quote }}
+  region: {{ .Values.platformEnv.region | default "us-west-2" | quote }}

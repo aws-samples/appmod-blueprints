@@ -2,23 +2,24 @@
 #
 # Flow:
 #   1. agentcore-memory provisions a CloudFormation Stack that creates the Memory
-#      resource, and emits a ComponentPolicy claim for IAM permissions
+#      resource, and emits a ComponentPolicy claim for IAM permissions.
+#      The memoryId is passed to the agent via outputs/inputs.
 #   2. dp-service-account creates IAM Role + ServiceAccount + PodIdentityAssociation,
 #      then emits PolicyAttachment claims to wire the permissions
 #   3. agent references the ServiceAccount and gets AWS credentials via pod identity
 #
-# After deployment, get the memoryId from the CloudFormation stack outputs:
-#   kubectl get stack agentcore-memory -o jsonpath='{.status.atProvider.outputs}'
-#
 apiVersion: core.oam.dev/v1beta1
 kind: Application
 metadata:
-  name: my-agent-app
+  name: agent-with-agentcore-memory-app
   namespace: agents
 spec:
   components:
-    - name: agentcore-memory
+    - name: agentcore-short-memory
       type: agentcore-memory
+      outputs:
+        - name: memory-id
+          valueFrom: output.status.atProvider.outputs.MemoryId
       properties:
         region: us-west-2
         description: "Memory for my-agent"
@@ -28,15 +29,18 @@ spec:
       type: dp-service-account
       properties:
         componentNamesForAccess:
-          - agentcore-memory
-        clusterName: peeks-spoke-dev
+          - agentcore-short-memory
+        clusterName: hub
         clusterRegion: us-west-2
 
-    - name: my-agent
+    - name: my-agent-with-mem
       type: agent
       dependsOn:
         - my-agent-sa
-        - agentcore-memory
+        - agentcore-short-memory
+      inputs:
+        - from: memory-id
+          parameterKey: properties.memory.config.memoryId
       properties:
         name: my-agent
         namespace: agents
@@ -46,7 +50,5 @@ spec:
         memory:
           provider: agentcore
           config:
-            memoryId: "<from stack output>"
+            memoryId: "injected-from-agentcore-memory-output"
             region: us-west-2
-        mcpServers:
-          - name: filesystem

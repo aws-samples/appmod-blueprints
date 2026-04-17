@@ -1,5 +1,6 @@
 """Configuration management for Strands agent."""
 
+import json
 import os
 from typing import Optional
 
@@ -60,6 +61,17 @@ For example, always use the time tool when asked about the current time or date.
             for name in self.MCP_SERVER_NAMES
         ]
     
+    # Memory configuration
+    MEMORY_PROVIDER: Optional[str] = os.getenv("MEMORY_PROVIDER")
+    _MEMORY_CONFIG_RAW: Optional[str] = os.getenv("MEMORY_CONFIG")
+
+    @property
+    def MEMORY_CONFIG(self) -> dict:
+        """Parse MEMORY_CONFIG from JSON string."""
+        if not self._MEMORY_CONFIG_RAW:
+            return {}
+        return json.loads(self._MEMORY_CONFIG_RAW)
+
     # Server configuration
     PORT: int = int(os.getenv("PORT", "8083"))
     HOST: str = os.getenv("HOST", "0.0.0.0")
