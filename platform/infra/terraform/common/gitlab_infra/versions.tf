@@ -19,10 +19,10 @@ terraform {
       version = ">= 2.0"
     }
   }
-  # Backend configuration provided via CLI parameters
-  backend "s3" {
-    # bucket and provided via -backend-config
-    key = "gitlabinfra/terraform.tfstate"
-    use_lockfile = true
-  }
+  # Backend configuration disabled - using local state
+  # backend "s3" {
+  #   # bucket and provided via -backend-config
+  #   key = "gitlabinfra/terraform.tfstate"
+  #   use_lockfile = true
+  # }
 }

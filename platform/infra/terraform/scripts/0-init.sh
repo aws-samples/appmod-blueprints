@@ -234,6 +234,10 @@ main() {
                 if [ "${ready_nodes:-0}" -gt 0 ] 2>/dev/null; then
                     print_status "SUCCESS" "Cluster $cluster_name is ready with $ready_nodes nodes"
                     cluster_ready=true
+                elif [ $cluster_wait -ge 60 ]; then
+                    # After 60 seconds, if no nodes, assume Auto Mode cluster with no workloads yet
+                    print_status "WARNING" "Cluster $cluster_name has no nodes (Auto Mode - nodes created on demand). Skipping."
+                    cluster_ready=true
                 else
                     print_status "INFO" "Cluster $cluster_name has no ready nodes yet, waiting..."
                     sleep 15
