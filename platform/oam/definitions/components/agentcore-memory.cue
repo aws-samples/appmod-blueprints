@@ -5,12 +5,7 @@ import "strings"
 	annotations: {}
 	attributes: {
 		workload: type: "autodetects.core.oam.dev"
-		status: healthPolicy: #"""
-			isHealth: *({
-				let ready = context.output.status.conditions[0]
-				ready.type == "Ready" && ready.status == "True"
-			}) | false
-			"""#
+		status: healthPolicy: "isHealth: *( context.output.status.atProvider.id != \"\" ) | false"
 	}
 	description: "AgentCore Memory provisioned via Crossplane managed resource with IAM policy"
 	labels: {}
