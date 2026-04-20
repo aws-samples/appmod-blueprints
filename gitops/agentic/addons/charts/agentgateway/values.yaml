@@ -18,7 +18,7 @@ gateway:
 # -- Bedrock AI backend
 bedrockBackend:
   enabled: true
-  model: anthropic.claude-opus-4-5-20251101-v1:0
+  model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
   region: us-west-2
 
 # -- LiteLLM proxy for centralized LLM access
@@ -29,7 +29,7 @@ litellm:
   masterKey: sk-1234
   models:
     - name: claude-sonnet
-      model: bedrock/anthropic.claude-opus-4-5-20251101-v1:0
+      model: bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0
       region: us-west-2
   resources:
     requests:
