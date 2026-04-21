@@ -8,6 +8,7 @@ metadata:
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
     alb.ingress.kubernetes.io/healthcheck-path: /keycloak/health
+    external-dns.alpha.kubernetes.io/aws-evaluate-target-health: 'false'
 spec:
   ingressClassName: platform
   rules:
