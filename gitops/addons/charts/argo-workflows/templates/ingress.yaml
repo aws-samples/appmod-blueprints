@@ -7,7 +7,6 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
-    external-dns.alpha.kubernetes.io/aws-evaluate-target-health: 'false'
     alb.ingress.kubernetes.io/transforms.argo-server: |
       [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/argo-workflows\\/?(.*)$","replace":"/$1"}]}}]
 spec:
