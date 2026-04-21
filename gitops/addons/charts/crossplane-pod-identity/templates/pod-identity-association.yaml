@@ -6,6 +6,7 @@ metadata:
   name: {{ $name }}-pod-identity
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   forProvider:
     clusterName: {{ $.Values.aws.clusterName }}
