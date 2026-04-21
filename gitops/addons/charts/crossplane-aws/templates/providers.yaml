@@ -5,7 +5,7 @@ kind: Provider
 metadata:
   name: upbound-provider-family-aws
   annotations:
-    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-wave: "5"
 spec:
   package: xpkg.upbound.io/upbound/provider-family-aws:{{ .Values.providers.aws.familyVersion }}
   runtimeConfigRef:
