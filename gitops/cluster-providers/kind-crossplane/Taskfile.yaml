@@ -155,7 +155,7 @@ tasks:
         sh: |
           if [ "$(yq '.hub.managedNodeGroup.enabled // false' {{.GITOPS_ROOT}}/config.yaml)" = "true" ]; then
             SETS="--set clusters.hub.managedNodeGroup.enabled=true"
-            TYPES=$(yq '.hub.managedNodeGroup.instanceTypes // ["m5.large"]' {{.GITOPS_ROOT}}/config.yaml -o json)
+            TYPES=$(yq '.hub.managedNodeGroup.instanceTypes // ["m5.large"]' {{.GITOPS_ROOT}}/config.yaml -o json -I 0)
             SETS="$SETS --set-json clusters.hub.managedNodeGroup.instanceTypes=$TYPES"
             SETS="$SETS --set clusters.hub.managedNodeGroup.desiredSize=$(yq '.hub.managedNodeGroup.desiredSize // 2' {{.GITOPS_ROOT}}/config.yaml)"
             SETS="$SETS --set clusters.hub.managedNodeGroup.minSize=$(yq '.hub.managedNodeGroup.minSize // 1' {{.GITOPS_ROOT}}/config.yaml)"
@@ -520,7 +520,7 @@ tasks:
         sh: |
           if [ "$(yq '.hub.managedNodeGroup.enabled // false' {{.GITOPS_ROOT}}/config.yaml)" = "true" ]; then
             SETS="--set clusters.hub.managedNodeGroup.enabled=true"
-            TYPES=$(yq '.hub.managedNodeGroup.instanceTypes // ["m5.large"]' {{.GITOPS_ROOT}}/config.yaml -o json)
+            TYPES=$(yq '.hub.managedNodeGroup.instanceTypes // ["m5.large"]' {{.GITOPS_ROOT}}/config.yaml -o json -I 0)
             SETS="$SETS --set-json clusters.hub.managedNodeGroup.instanceTypes=$TYPES"
             SETS="$SETS --set clusters.hub.managedNodeGroup.desiredSize=$(yq '.hub.managedNodeGroup.desiredSize // 2' {{.GITOPS_ROOT}}/config.yaml)"
             SETS="$SETS --set clusters.hub.managedNodeGroup.minSize=$(yq '.hub.managedNodeGroup.minSize // 1' {{.GITOPS_ROOT}}/config.yaml)"
