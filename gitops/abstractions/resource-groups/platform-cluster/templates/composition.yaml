@@ -699,8 +699,6 @@ spec:
                     matchControllerRef: true
                   resolveConflictsOnCreate: OVERWRITE
                   resolveConflictsOnUpdate: OVERWRITE
-                  configurationValues: |
-                    {"tolerations":[{"key":"workload","value":"managednodes","effect":"NoSchedule"},{"key":"workload","value":"managednodes","effect":"NoExecute"}]}
             patches:
               - type: PatchSet
                 patchSetName: common
