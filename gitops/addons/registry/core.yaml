@@ -106,7 +106,7 @@ aws-load-balancer-controller:
     vpcId: '{{.metadata.annotations.aws_vpc_id}}'
     region: '{{.metadata.annotations.aws_region}}'
     serviceAccount:
-      create: false
+      create: true
       name: aws-load-balancer-controller-sa
 
 image-prepuller:
