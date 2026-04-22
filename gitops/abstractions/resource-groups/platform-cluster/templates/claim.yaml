@@ -16,6 +16,16 @@ spec:
   {{- if $cluster.resourcePrefix }}
   resourcePrefix: {{ $cluster.resourcePrefix }}
   {{- end }}
+  {{- if and $cluster.managedNodeGroup $cluster.managedNodeGroup.enabled }}
+  managedNodeGroup:
+    enabled: true
+    instanceTypes: {{ $cluster.managedNodeGroup.instanceTypes | default (list "m5.large") | toJson }}
+    desiredSize: {{ $cluster.managedNodeGroup.desiredSize | default 2 }}
+    minSize: {{ $cluster.managedNodeGroup.minSize | default 1 }}
+    maxSize: {{ $cluster.managedNodeGroup.maxSize | default 5 }}
+    diskSize: {{ $cluster.managedNodeGroup.diskSize | default 50 }}
+    capacityType: {{ $cluster.managedNodeGroup.capacityType | default "ON_DEMAND" }}
+  {{- end }}
   writeConnectionSecretToRef:
     name: {{ $cluster.clusterName }}-kubeconfig
 {{- end }}

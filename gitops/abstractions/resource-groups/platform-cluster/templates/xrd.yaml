@@ -47,6 +47,34 @@ spec:
                 resourcePrefix:
                   type: string
                   description: Prefix for resource tagging and identification
+                managedNodeGroup:
+                  type: object
+                  description: Optional managed node group alongside Auto Mode
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    instanceTypes:
+                      type: array
+                      items:
+                        type: string
+                      default: ["m5.large"]
+                    desiredSize:
+                      type: integer
+                      default: 2
+                    minSize:
+                      type: integer
+                      default: 1
+                    maxSize:
+                      type: integer
+                      default: 5
+                    diskSize:
+                      type: integer
+                      default: 50
+                    capacityType:
+                      type: string
+                      description: ON_DEMAND or SPOT
+                      default: "ON_DEMAND"
               required:
                 - region
                 - clusterName
