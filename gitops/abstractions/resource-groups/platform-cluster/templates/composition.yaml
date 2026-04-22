@@ -682,6 +682,8 @@ spec:
                     matchControllerRef: true
                   resolveConflictsOnCreate: OVERWRITE
                   resolveConflictsOnUpdate: OVERWRITE
+                  configurationValues: |
+                    {"tolerations":[{"key":"workload","value":"managednodes","effect":"NoSchedule"},{"key":"workload","value":"managednodes","effect":"NoExecute"}]}
             patches:
               - type: PatchSet
                 patchSetName: common
@@ -697,6 +699,25 @@ spec:
                     matchControllerRef: true
                   resolveConflictsOnCreate: OVERWRITE
                   resolveConflictsOnUpdate: OVERWRITE
+                  configurationValues: |
+                    {"tolerations":[{"key":"workload","value":"managednodes","effect":"NoSchedule"},{"key":"workload","value":"managednodes","effect":"NoExecute"}]}
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: addon-coredns
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Addon
+              spec:
+                forProvider:
+                  addonName: coredns
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  resolveConflictsOnCreate: OVERWRITE
+                  resolveConflictsOnUpdate: OVERWRITE
+                  configurationValues: |
+                    {"tolerations":[{"key":"workload","value":"managednodes","effect":"NoSchedule"},{"key":"workload","value":"managednodes","effect":"NoExecute"}]}
             patches:
               - type: PatchSet
                 patchSetName: common
@@ -727,6 +748,13 @@ spec:
                   instanceTypes:
                     - m5.large
                   capacityType: ON_DEMAND
+                  taint:
+                    - effect: NO_SCHEDULE
+                      key: workload
+                      value: managednodes
+                    - effect: NO_EXECUTE
+                      key: workload
+                      value: managednodes
             patches:
               - type: PatchSet
                 patchSetName: common
