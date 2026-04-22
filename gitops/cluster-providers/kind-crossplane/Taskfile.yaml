@@ -391,6 +391,11 @@ tasks:
       CAPABILITY_NAME:
         sh: yq '.argocdCapability.name // "argocd"' {{.GITOPS_ROOT}}/config.yaml
     cmds:
+      - kubectl -n crossplane-system create configmap argocd-capability-config
+          --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
+          --from-literal=AWS_REGION={{.AWS_REGION}}
+          --from-literal=CAPABILITY_NAME={{.CAPABILITY_NAME}}
+          --dry-run=client -o yaml | kubectl apply -f -
       - kubectl delete job delete-argocd-capability -n crossplane-system 2>/dev/null || true
       - kubectl apply -f manifests/argocd/delete-capability.yaml
       - kubectl -n crossplane-system wait --for=condition=Complete --timeout=2400s job/delete-argocd-capability
