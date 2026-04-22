@@ -720,6 +720,23 @@ spec:
               - type: PatchSet
                 patchSetName: common
 
+          - name: addon-pod-identity-agent
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Addon
+              spec:
+                forProvider:
+                  addonName: eks-pod-identity-agent
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  resolveConflictsOnCreate: OVERWRITE
+                  resolveConflictsOnUpdate: OVERWRITE
+                  configurationValues: |
+                    {"tolerations":[{"key":"workload","value":"managednodes","effect":"NoSchedule"},{"key":"workload","value":"managednodes","effect":"NoExecute"}]}
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
           # ===== MANAGED NODE GROUP (optional) =====
 
           - name: managed-nodegroup
