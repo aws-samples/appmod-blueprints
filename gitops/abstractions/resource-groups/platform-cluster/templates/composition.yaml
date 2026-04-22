@@ -301,6 +301,83 @@ spec:
               - type: PatchSet
                 patchSetName: common
 
+          # Route Table Associations
+          - name: public-rta-a
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                      zone: a
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: public-rta-b
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                      zone: b
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: private-rta-a
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                      zone: a
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: private-rta-b
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                      zone: b
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
           # ===== EKS CLUSTER (Auto Mode) =====
 
           # EKS Cluster IAM Role
