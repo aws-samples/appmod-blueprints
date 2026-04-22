@@ -281,6 +281,14 @@ spec:
                   "Action": ["sts:AssumeRole", "sts:TagSession"]
                 }]
               }
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.clusterName
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-cluster-role"
 
     - name: cluster-policy
       base:
@@ -362,6 +370,13 @@ spec:
                 }]
               }
       patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.clusterName
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-node-role"
         - type: ToCompositeFieldPath
           fromFieldPath: status.atProvider.arn
           toFieldPath: status.nodeRoleArn
