@@ -438,6 +438,11 @@ tasks:
           --set deploymentRuntimeConfig.enabled=false
           | kubectl apply -f -
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s eksclusters.platform.gitops.io/hub-cluster 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/crossplane-pod-identity-role 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io -l platform.gitops.io/role 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role 2>/dev/null || true
       # Phase 1: Clean hub addons
       - task: credentials:refresh
       - task: hub:destroy-addons
@@ -449,15 +454,23 @@ tasks:
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
           --set providerConfig.enabled=false
           --set deploymentRuntimeConfig.enabled=false
-          | kubectl delete --wait --timeout=600s --ignore-not-found -f -
+          | kubectl delete --ignore-not-found -f -
+      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role --timeout=600s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete rolepolicyattachments.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete policies.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
       # Phase 3: Delete crossplane pod identity (uses managed AdministratorAccess policy)
-      - kubectl delete -f claims/crossplane-pod-identity.yaml --wait --timeout=600s --ignore-not-found
-      - kubectl delete -f claims/crossplane-pod-identity-role.yaml --wait --timeout=300s --ignore-not-found
+      - kubectl delete -f claims/crossplane-pod-identity.yaml --ignore-not-found
+      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity --timeout=600s 2>/dev/null || true
+      - kubectl delete -f claims/crossplane-pod-identity-role.yaml --ignore-not-found
+      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/crossplane-pod-identity-role --timeout=300s 2>/dev/null || true
       # Phase 4: Delete ArgoCD capability via Job, then its IAM role
       - task: argocd:delete-capability
-      - kubectl delete -f claims/argocd-capability-role.yaml --wait --timeout=300s --ignore-not-found
-      # Phase 5: Delete EKS cluster + VPC
-      - kubectl delete -f claims/hub-cluster.yaml --wait --timeout=1800s --ignore-not-found
+      - kubectl delete -f claims/argocd-capability-role.yaml --ignore-not-found
+      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
+      # Phase 5: Delete EKS cluster + VPC (composition cascades all networking + IAM)
+      - kubectl delete -f claims/hub-cluster.yaml --ignore-not-found
+      - kubectl -n crossplane-system wait --for=delete eksclusters.platform.gitops.io/hub-cluster --timeout=1800s 2>/dev/null || true
       # Phase 6: Clean up
       - task: destroy-kind
       - rm -f {{.KUBECONFIG}}
