@@ -520,6 +520,11 @@ spec:
           fromFieldPath: spec.clusterName
           toFieldPath: metadata.annotations[crossplane.io/external-name]
         - type: FromCompositeFieldPath
+          fromFieldPath: spec.managedNodeGroup.enabled
+          toFieldPath: spec.forProvider.bootstrapSelfManagedAddons
+          policy:
+            fromFieldPath: Optional
+        - type: FromCompositeFieldPath
           fromFieldPath: status.nodeRoleArn
           toFieldPath: spec.forProvider.computeConfig.nodeRoleArn
           policy:
