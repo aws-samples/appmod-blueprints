@@ -14,8 +14,17 @@ repo:
 # Hub cluster configuration
 hub:
   clusterName: "hub"
-  kubernetesVersion: "1.32"
+  kubernetesVersion: "1.35"
   vpcCidr: "10.0.0.0/16"
+  # Optional: managed node group alongside Auto Mode
+  # managedNodeGroup:
+  #   enabled: true
+  #   instanceTypes: ["m5.large"]    # Multiple types recommended for Spot
+  #   desiredSize: 2
+  #   minSize: 1
+  #   maxSize: 5
+  #   diskSize: 50                   # GB
+  #   capacityType: "ON_DEMAND"      # ON_DEMAND or SPOT
 
 # AWS configuration
 aws:

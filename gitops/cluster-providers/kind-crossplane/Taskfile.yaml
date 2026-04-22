@@ -475,7 +475,7 @@ tasks:
       - task: credentials:refresh
       # Phase 1: Clean hub addons
       - task: credentials:refresh
-      # - task: hub:destroy-addons
+      - task: hub:destroy-addons
       # Phase 2: Delete pod identities and IAM resources (chart-managed)
       - task: credentials:refresh
       - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
