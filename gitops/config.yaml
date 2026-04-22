@@ -15,6 +15,7 @@ repo:
 hub:
   clusterName: "hub"
   kubernetesVersion: "1.32"
+  vpcCidr: "10.0.0.0/16"
 
 # AWS configuration
 aws:

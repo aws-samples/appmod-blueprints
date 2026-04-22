@@ -18,6 +18,16 @@ spec:
         - type: FromCompositeFieldPath
           fromFieldPath: spec.region
           toFieldPath: spec.forProvider.region
+    - name: tags
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.resourcePrefix
+          toFieldPath: spec.forProvider.tags[platform.gitops.io/prefix]
+          policy:
+            fromFieldPath: Optional
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.clusterName
+          toFieldPath: spec.forProvider.tags[platform.gitops.io/cluster]
   resources:
 
     # ===== NETWORKING =====
@@ -34,6 +44,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
         - type: FromCompositeFieldPath
           fromFieldPath: spec.vpcCidr
           toFieldPath: spec.forProvider.cidrBlock
@@ -53,6 +65,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
 
     # Elastic IP for NAT Gateway
     - name: eip
@@ -65,6 +79,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
 
     # Public Subnet AZ-a
     - name: public-subnet-a
@@ -86,6 +102,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
         - type: FromCompositeFieldPath
           fromFieldPath: spec.region
           toFieldPath: spec.forProvider.availabilityZone
@@ -114,6 +132,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
         - type: FromCompositeFieldPath
           fromFieldPath: spec.region
           toFieldPath: spec.forProvider.availabilityZone
@@ -141,6 +161,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
         - type: FromCompositeFieldPath
           fromFieldPath: spec.region
           toFieldPath: spec.forProvider.availabilityZone
@@ -168,6 +190,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
         - type: FromCompositeFieldPath
           fromFieldPath: spec.region
           toFieldPath: spec.forProvider.availabilityZone
@@ -193,6 +217,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
 
     # Public Route Table + Route
     - name: public-rt
@@ -209,6 +235,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
 
     - name: public-route
       base:
@@ -242,6 +270,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
 
     - name: private-route
       base:
@@ -289,6 +319,8 @@ spec:
             - type: string
               string:
                 fmt: "%s-cluster-role"
+        - type: PatchSet
+          patchSetName: tags
 
     - name: cluster-policy
       base:
@@ -377,6 +409,8 @@ spec:
             - type: string
               string:
                 fmt: "%s-node-role"
+        - type: PatchSet
+          patchSetName: tags
         - type: ToCompositeFieldPath
           fromFieldPath: status.atProvider.arn
           toFieldPath: status.nodeRoleArn
@@ -441,6 +475,8 @@ spec:
       patches:
         - type: PatchSet
           patchSetName: common
+        - type: PatchSet
+          patchSetName: tags
         - type: FromCompositeFieldPath
           fromFieldPath: spec.kubernetesVersion
           toFieldPath: spec.forProvider.version

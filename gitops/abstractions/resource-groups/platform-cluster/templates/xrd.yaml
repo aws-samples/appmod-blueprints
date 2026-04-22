@@ -44,6 +44,9 @@ spec:
                   type: boolean
                   description: Enable EKS Auto Mode (manages compute, storage, networking)
                   default: true
+                resourcePrefix:
+                  type: string
+                  description: Prefix for resource tagging and identification
               required:
                 - region
                 - clusterName
