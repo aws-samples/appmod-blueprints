@@ -129,7 +129,9 @@ tasks:
     cmds:
       - kubectl apply -f manifests/crossplane/drc-stub.yaml
       - kubectl apply -f {{.GITOPS_ROOT}}/addons/configs/crossplane/manifests/providers.yaml
+      - kubectl apply -f {{.GITOPS_ROOT}}/addons/configs/crossplane/manifests/functions.yaml
       - kubectl wait --for=condition=Healthy --timeout=300s providers.pkg.crossplane.io --all
+      - kubectl wait --for=condition=Healthy --timeout=300s functions.pkg.crossplane.io --all
 
   crossplane:provider-config:
     status:

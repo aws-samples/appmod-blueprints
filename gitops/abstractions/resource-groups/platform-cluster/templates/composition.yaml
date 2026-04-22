@@ -8,592 +8,599 @@ metadata:
   labels:
     provider: aws
 spec:
-  writeConnectionSecretsToNamespace: crossplane-system
   compositeTypeRef:
     apiVersion: platform.gitops.io/v1alpha1
     kind: XPlatformCluster
-  patchSets:
-    - name: common
-      patches:
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.region
-          toFieldPath: spec.forProvider.region
-    - name: tags
-      patches:
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.resourcePrefix
-          toFieldPath: spec.forProvider.tags[platform.gitops.io/prefix]
-          policy:
-            fromFieldPath: Optional
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.clusterName
-          toFieldPath: spec.forProvider.tags[platform.gitops.io/cluster]
-  resources:
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        patchSets:
+          - name: common
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.region
+          - name: tags
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourcePrefix
+                toFieldPath: spec.forProvider.tags[platform.gitops.io/prefix]
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.forProvider.tags[platform.gitops.io/cluster]
+        resources:
 
-    # ===== NETWORKING =====
+          # ===== NETWORKING =====
 
-    # VPC
-    - name: vpc
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: VPC
-        spec:
-          forProvider:
-            enableDnsHostnames: true
-            enableDnsSupport: true
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.vpcCidr
-          toFieldPath: spec.forProvider.cidrBlock
-        - type: ToCompositeFieldPath
-          fromFieldPath: status.atProvider.id
-          toFieldPath: status.vpcId
+          # VPC
+          - name: vpc
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: VPC
+              spec:
+                forProvider:
+                  enableDnsHostnames: true
+                  enableDnsSupport: true
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.vpcId
 
-    # Internet Gateway
-    - name: igw
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: InternetGateway
-        spec:
-          forProvider:
-            vpcIdSelector:
-              matchControllerRef: true
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
+          # Internet Gateway
+          - name: igw
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: InternetGateway
+              spec:
+                forProvider:
+                  vpcIdSelector:
+                    matchControllerRef: true
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
 
-    # Elastic IP for NAT Gateway
-    - name: eip
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: EIP
-        spec:
-          forProvider:
-            domain: vpc
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
+          # Elastic IP for NAT Gateway
+          - name: eip
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: EIP
+              spec:
+                forProvider:
+                  domain: vpc
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
 
-    # Public Subnet AZ-a
-    - name: public-subnet-a
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: Subnet
-        metadata:
-          labels:
-            access: public
-            zone: a
-        spec:
-          forProvider:
-            mapPublicIpOnLaunch: true
-            cidrBlock: "10.0.0.0/19"
-            vpcIdSelector:
-              matchControllerRef: true
-            tags:
-              "kubernetes.io/role/elb": "1"
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.region
-          toFieldPath: spec.forProvider.availabilityZone
-          transforms:
-            - type: string
-              string:
-                fmt: "%sa"
+          # Public Subnet AZ-a
+          - name: public-subnet-a
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              metadata:
+                labels:
+                  access: public
+                  zone: a
+              spec:
+                forProvider:
+                  mapPublicIpOnLaunch: true
+                  cidrBlock: "10.0.0.0/19"
+                  vpcIdSelector:
+                    matchControllerRef: true
+                  tags:
+                    "kubernetes.io/role/elb": "1"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.availabilityZone
+                transforms:
+                  - type: string
+                    string:
+                      fmt: "%sa"
 
-    # Public Subnet AZ-b
-    - name: public-subnet-b
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: Subnet
-        metadata:
-          labels:
-            access: public
-            zone: b
-        spec:
-          forProvider:
-            mapPublicIpOnLaunch: true
-            cidrBlock: "10.0.32.0/19"
-            vpcIdSelector:
-              matchControllerRef: true
-            tags:
-              "kubernetes.io/role/elb": "1"
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.region
-          toFieldPath: spec.forProvider.availabilityZone
-          transforms:
-            - type: string
-              string:
-                fmt: "%sb"
+          # Public Subnet AZ-b
+          - name: public-subnet-b
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              metadata:
+                labels:
+                  access: public
+                  zone: b
+              spec:
+                forProvider:
+                  mapPublicIpOnLaunch: true
+                  cidrBlock: "10.0.32.0/19"
+                  vpcIdSelector:
+                    matchControllerRef: true
+                  tags:
+                    "kubernetes.io/role/elb": "1"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.availabilityZone
+                transforms:
+                  - type: string
+                    string:
+                      fmt: "%sb"
 
-    # Private Subnet AZ-a
-    - name: private-subnet-a
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: Subnet
-        metadata:
-          labels:
-            access: private
-            zone: a
-        spec:
-          forProvider:
-            cidrBlock: "10.0.128.0/19"
-            vpcIdSelector:
-              matchControllerRef: true
-            tags:
-              "kubernetes.io/role/internal-elb": "1"
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.region
-          toFieldPath: spec.forProvider.availabilityZone
-          transforms:
-            - type: string
-              string:
-                fmt: "%sa"
+          # Private Subnet AZ-a
+          - name: private-subnet-a
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              metadata:
+                labels:
+                  access: private
+                  zone: a
+              spec:
+                forProvider:
+                  cidrBlock: "10.0.128.0/19"
+                  vpcIdSelector:
+                    matchControllerRef: true
+                  tags:
+                    "kubernetes.io/role/internal-elb": "1"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.availabilityZone
+                transforms:
+                  - type: string
+                    string:
+                      fmt: "%sa"
 
-    # Private Subnet AZ-b
-    - name: private-subnet-b
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: Subnet
-        metadata:
-          labels:
-            access: private
-            zone: b
-        spec:
-          forProvider:
-            cidrBlock: "10.0.160.0/19"
-            vpcIdSelector:
-              matchControllerRef: true
-            tags:
-              "kubernetes.io/role/internal-elb": "1"
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.region
-          toFieldPath: spec.forProvider.availabilityZone
-          transforms:
-            - type: string
-              string:
-                fmt: "%sb"
+          # Private Subnet AZ-b
+          - name: private-subnet-b
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              metadata:
+                labels:
+                  access: private
+                  zone: b
+              spec:
+                forProvider:
+                  cidrBlock: "10.0.160.0/19"
+                  vpcIdSelector:
+                    matchControllerRef: true
+                  tags:
+                    "kubernetes.io/role/internal-elb": "1"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.availabilityZone
+                transforms:
+                  - type: string
+                    string:
+                      fmt: "%sb"
 
-    # NAT Gateway
-    - name: natgw
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: NATGateway
-        spec:
-          forProvider:
-            allocationIdSelector:
-              matchControllerRef: true
-            subnetIdSelector:
-              matchControllerRef: true
-              matchLabels:
-                access: public
-                zone: a
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
+          # NAT Gateway
+          - name: natgw
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: NATGateway
+              spec:
+                forProvider:
+                  allocationIdSelector:
+                    matchControllerRef: true
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                      zone: a
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
 
-    # Public Route Table + Route
-    - name: public-rt
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: RouteTable
-        metadata:
-          labels:
-            access: public
-        spec:
-          forProvider:
-            vpcIdSelector:
-              matchControllerRef: true
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
+          # Public Route Table + Route
+          - name: public-rt
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTable
+              metadata:
+                labels:
+                  access: public
+              spec:
+                forProvider:
+                  vpcIdSelector:
+                    matchControllerRef: true
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
 
-    - name: public-route
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: Route
-        spec:
-          forProvider:
-            destinationCidrBlock: "0.0.0.0/0"
-            gatewayIdSelector:
-              matchControllerRef: true
-            routeTableIdSelector:
-              matchControllerRef: true
-              matchLabels:
-                access: public
-      patches:
-        - type: PatchSet
-          patchSetName: common
+          - name: public-route
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: "0.0.0.0/0"
+                  gatewayIdSelector:
+                    matchControllerRef: true
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+            patches:
+              - type: PatchSet
+                patchSetName: common
 
-    # Private Route Table + Route
-    - name: private-rt
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: RouteTable
-        metadata:
-          labels:
-            access: private
-        spec:
-          forProvider:
-            vpcIdSelector:
-              matchControllerRef: true
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
+          # Private Route Table + Route
+          - name: private-rt
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTable
+              metadata:
+                labels:
+                  access: private
+              spec:
+                forProvider:
+                  vpcIdSelector:
+                    matchControllerRef: true
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
 
-    - name: private-route
-      base:
-        apiVersion: ec2.aws.upbound.io/v1beta1
-        kind: Route
-        spec:
-          forProvider:
-            destinationCidrBlock: "0.0.0.0/0"
-            natGatewayIdSelector:
-              matchControllerRef: true
-            routeTableIdSelector:
-              matchControllerRef: true
-              matchLabels:
-                access: private
-      patches:
-        - type: PatchSet
-          patchSetName: common
+          - name: private-route
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: "0.0.0.0/0"
+                  natGatewayIdSelector:
+                    matchControllerRef: true
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+            patches:
+              - type: PatchSet
+                patchSetName: common
 
-    # ===== EKS CLUSTER (Auto Mode) =====
+          # ===== EKS CLUSTER (Auto Mode) =====
 
-    # EKS Cluster IAM Role
-    - name: cluster-role
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: Role
-        metadata:
-          labels:
-            role: cluster
-        spec:
-          forProvider:
-            assumeRolePolicy: |
-              {
-                "Version": "2012-10-17",
-                "Statement": [{
-                  "Effect": "Allow",
-                  "Principal": {"Service": "eks.amazonaws.com"},
-                  "Action": ["sts:AssumeRole", "sts:TagSession"]
-                }]
-              }
-      patches:
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.clusterName
-          toFieldPath: metadata.annotations[crossplane.io/external-name]
-          transforms:
-            - type: string
-              string:
-                fmt: "%s-cluster-role"
-        - type: PatchSet
-          patchSetName: tags
+          # EKS Cluster IAM Role
+          - name: cluster-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels:
+                  role: cluster
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"Service": "eks.amazonaws.com"},
+                        "Action": ["sts:AssumeRole", "sts:TagSession"]
+                      }]
+                    }
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      fmt: "%s-cluster-role"
+              - type: PatchSet
+                patchSetName: tags
 
-    - name: cluster-policy
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: cluster
+          - name: cluster-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
 
-    - name: cluster-compute-policy
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEKSComputePolicy"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: cluster
+          - name: cluster-compute-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSComputePolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
 
-    - name: cluster-networking-policy
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEKSNetworkingPolicy"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: cluster
+          - name: cluster-networking-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSNetworkingPolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
 
-    - name: cluster-block-storage-policy
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicy"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: cluster
+          - name: cluster-block-storage-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
 
-    - name: cluster-lb-policy
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: cluster
+          - name: cluster-lb-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
 
-    # EKS Auto Mode Node Role
-    - name: node-role
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: Role
-        metadata:
-          labels:
-            role: node
-        spec:
-          forProvider:
-            assumeRolePolicy: |
-              {
-                "Version": "2012-10-17",
-                "Statement": [{
-                  "Effect": "Allow",
-                  "Principal": {"Service": "ec2.amazonaws.com"},
-                  "Action": "sts:AssumeRole"
-                }]
-              }
-      patches:
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.clusterName
-          toFieldPath: metadata.annotations[crossplane.io/external-name]
-          transforms:
-            - type: string
-              string:
-                fmt: "%s-node-role"
-        - type: PatchSet
-          patchSetName: tags
-        - type: ToCompositeFieldPath
-          fromFieldPath: status.atProvider.arn
-          toFieldPath: status.nodeRoleArn
+          # EKS Auto Mode Node Role
+          - name: node-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels:
+                  role: node
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"Service": "ec2.amazonaws.com"},
+                        "Action": "sts:AssumeRole"
+                      }]
+                    }
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      fmt: "%s-node-role"
+              - type: PatchSet
+                patchSetName: tags
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.arn
+                toFieldPath: status.nodeRoleArn
 
-    - name: node-policy-worker
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: node
+          - name: node-policy-worker
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: node
 
-    - name: node-policy-ecr
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: node
+          - name: node-policy-ecr
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: node
 
-    - name: node-policy-worker-full
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: node
+          - name: node-policy-worker-full
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: node
 
-    - name: node-policy-cni
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: node
+          - name: node-policy-cni
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: node
 
-    - name: node-policy-ecr-readonly
-      base:
-        apiVersion: iam.aws.upbound.io/v1beta1
-        kind: RolePolicyAttachment
-        spec:
-          forProvider:
-            policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-            roleSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: node
+          - name: node-policy-ecr-readonly
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: node
 
-    # EKS Cluster with Auto Mode enabled
-    - name: eks-cluster
-      base:
-        apiVersion: eks.aws.upbound.io/v1beta2
-        kind: Cluster
-        spec:
-          forProvider:
-            roleArnSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: cluster
-            bootstrapSelfManagedAddons: false
-            accessConfig:
-              authenticationMode: API
-            vpcConfig:
-              endpointPrivateAccess: true
-              endpointPublicAccess: true
-              subnetIdSelector:
-                matchControllerRef: true
-            computeConfig:
-              enabled: true
-              nodePools:
-                - general-purpose
-                - system
-            storageConfig:
-              blockStorage:
-                enabled: true
-            kubernetesNetworkConfig:
-              elasticLoadBalancing:
-                enabled: true
-          writeConnectionSecretToRef:
-            name: hub-eks-connection
-            namespace: crossplane-system
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.kubernetesVersion
-          toFieldPath: spec.forProvider.version
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.clusterName
-          toFieldPath: metadata.annotations[crossplane.io/external-name]
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.managedNodeGroup.enabled
-          toFieldPath: spec.forProvider.bootstrapSelfManagedAddons
-          policy:
-            fromFieldPath: Optional
-        - type: FromCompositeFieldPath
-          fromFieldPath: status.nodeRoleArn
-          toFieldPath: spec.forProvider.computeConfig.nodeRoleArn
-          policy:
-            fromFieldPath: Optional
-        - type: ToCompositeFieldPath
-          fromFieldPath: status.atProvider.endpoint
-          toFieldPath: status.clusterEndpoint
-        - type: ToCompositeFieldPath
-          fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
-          toFieldPath: status.oidcIssuer
+          # EKS Cluster with Auto Mode enabled
+          - name: eks-cluster
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta2
+              kind: Cluster
+              spec:
+                forProvider:
+                  roleArnSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
+                  bootstrapSelfManagedAddons: false
+                  accessConfig:
+                    authenticationMode: API
+                  vpcConfig:
+                    endpointPrivateAccess: true
+                    endpointPublicAccess: true
+                    subnetIdSelector:
+                      matchControllerRef: true
+                  computeConfig:
+                    enabled: true
+                    nodePools:
+                      - general-purpose
+                      - system
+                  storageConfig:
+                    blockStorage:
+                      enabled: true
+                  kubernetesNetworkConfig:
+                    elasticLoadBalancing:
+                      enabled: true
+                writeConnectionSecretToRef:
+                  name: hub-eks-connection
+                  namespace: crossplane-system
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.kubernetesVersion
+                toFieldPath: spec.forProvider.version
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.enabled
+                toFieldPath: spec.forProvider.bootstrapSelfManagedAddons
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.nodeRoleArn
+                toFieldPath: spec.forProvider.computeConfig.nodeRoleArn
+                policy:
+                  fromFieldPath: Optional
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.endpoint
+                toFieldPath: status.clusterEndpoint
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
+                toFieldPath: status.oidcIssuer
 
-    # ===== MANAGED NODE GROUP (optional) =====
+          # ===== MANAGED NODE GROUP (optional) =====
 
-    - name: managed-nodegroup
-      base:
-        apiVersion: eks.aws.upbound.io/v1beta1
-        kind: NodeGroup
-        spec:
-          forProvider:
-            clusterNameSelector:
-              matchControllerRef: true
-            nodeRoleArnSelector:
-              matchControllerRef: true
-              matchLabels:
-                role: node
-            subnetIdSelector:
-              matchControllerRef: true
-              matchLabels:
-                access: private
-            scalingConfig:
-              - desiredSize: 0
-                minSize: 0
-                maxSize: 0
-            diskSize: 50
-            instanceTypes:
-              - m5.large
-            capacityType: ON_DEMAND
-      patches:
-        - type: PatchSet
-          patchSetName: common
-        - type: PatchSet
-          patchSetName: tags
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.managedNodeGroup.desiredSize
-          toFieldPath: spec.forProvider.scalingConfig[0].desiredSize
-          policy:
-            fromFieldPath: Optional
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.managedNodeGroup.minSize
-          toFieldPath: spec.forProvider.scalingConfig[0].minSize
-          policy:
-            fromFieldPath: Optional
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.managedNodeGroup.maxSize
-          toFieldPath: spec.forProvider.scalingConfig[0].maxSize
-          policy:
-            fromFieldPath: Optional
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.managedNodeGroup.diskSize
-          toFieldPath: spec.forProvider.diskSize
-          policy:
-            fromFieldPath: Optional
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.managedNodeGroup.instanceTypes
-          toFieldPath: spec.forProvider.instanceTypes
-          policy:
-            fromFieldPath: Optional
-        - type: FromCompositeFieldPath
-          fromFieldPath: spec.managedNodeGroup.capacityType
-          toFieldPath: spec.forProvider.capacityType
-          policy:
-            fromFieldPath: Optional
+          - name: managed-nodegroup
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: NodeGroup
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  nodeRoleArnSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: node
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                  scalingConfig:
+                    - desiredSize: 0
+                      minSize: 0
+                      maxSize: 0
+                  diskSize: 50
+                  instanceTypes:
+                    - m5.large
+                  capacityType: ON_DEMAND
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.desiredSize
+                toFieldPath: spec.forProvider.scalingConfig[0].desiredSize
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.minSize
+                toFieldPath: spec.forProvider.scalingConfig[0].minSize
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.maxSize
+                toFieldPath: spec.forProvider.scalingConfig[0].maxSize
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.diskSize
+                toFieldPath: spec.forProvider.diskSize
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.instanceTypes
+                toFieldPath: spec.forProvider.instanceTypes
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.capacityType
+                toFieldPath: spec.forProvider.capacityType
+                policy:
+                  fromFieldPath: Optional
