@@ -418,10 +418,8 @@ tasks:
 
   destroy:
     desc: >-
-      Full teardown — addons, AWS resources, Kind cluster.
-      All AWS resources created by bootstrap must still exist.
-      If Kind was deleted, it will be recreated to adopt and clean up AWS resources via Crossplane.
-      Pass CLEANUP_KIND=true to also remove the Kind cluster.
+      Full teardown — addons, AWS resources. Kind cluster must be alive.
+      Pass CLEANUP_KIND=true to also remove the Kind cluster after cleanup.
     vars:
       HUB_CLUSTER_NAME:
         sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
@@ -429,28 +427,9 @@ tasks:
         sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
     cmds:
-      # Ensure Kind+Crossplane is ready (no-op if already running)
-      - task: kind:create
+      # Refresh kubeconfig and credentials
       - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
       - task: credentials:refresh
-      - task: crossplane:helm
-      - task: crossplane:providers
-      - task: crossplane:provider-config
-      - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
-      - kubectl apply -f claims/
-      - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
-          --set aws.region={{.AWS_REGION}}
-          --set aws.clusterName={{.HUB_CLUSTER_NAME}}
-          --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set providerConfig.enabled=false
-          --set deploymentRuntimeConfig.enabled=false
-          | kubectl apply -f -
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s platformclusters.platform.gitops.io/hub 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/crossplane-pod-identity-role 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io -l platform.gitops.io/role 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role 2>/dev/null || true
       # Phase 1: Clean hub addons
       - task: credentials:refresh
       - task: hub:destroy-addons
@@ -463,10 +442,10 @@ tasks:
           --set providerConfig.enabled=false
           --set deploymentRuntimeConfig.enabled=false
           | kubectl delete --ignore-not-found -f -
-      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role --timeout=600s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete rolepolicyattachments.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete policies.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role,platform.gitops.io/role!=crossplane-pod-identity --timeout=600s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete rolepolicyattachments.iam.aws.upbound.io -l platform.gitops.io/role,platform.gitops.io/role!=crossplane-pod-identity --timeout=300s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete policies.iam.aws.upbound.io -l platform.gitops.io/role,platform.gitops.io/role!=crossplane-pod-identity --timeout=300s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role,platform.gitops.io/role!=crossplane-pod-identity --timeout=300s 2>/dev/null || true
       # Phase 3: Delete crossplane pod identity (uses managed AdministratorAccess policy)
       - kubectl delete -f claims/crossplane-pod-identity.yaml --ignore-not-found
       - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity --timeout=600s 2>/dev/null || true
