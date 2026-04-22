@@ -6,7 +6,7 @@ crossplane:
   chartName: crossplane
   releaseName: crossplane
   chartRepository: https://charts.crossplane.io/stable
-  defaultVersion: '1.20.5'
+  defaultVersion: '2.2.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '2'
   selector:
