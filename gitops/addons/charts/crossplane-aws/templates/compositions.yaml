@@ -379,6 +379,7 @@ spec:
                     string:
                       fmt: "%s-mysql"
                       type: Format
+                      type: Format
                 type: FromCompositeFieldPath
               - fromFieldPath: "spec.writeConnectionSecretToRef.namespace"
                 toFieldPath: "spec.writeConnectionSecretToRef.namespace"
@@ -426,6 +427,7 @@ spec:
                   - type: string
                     string:
                       fmt: "rds-mysql-sg-%s"
+                      type: Format
                       type: Format
                 type: FromCompositeFieldPath
               - type: FromEnvironmentFieldPath
@@ -520,6 +522,7 @@ spec:
                     string:
                       fmt: "%s-cluster-mysql-master-password"
                       type: Format
+                      type: Format
                 type: FromCompositeFieldPath
               - fromFieldPath: "metadata.name"
                 toFieldPath: "spec.writeConnectionSecretToRef.name"
@@ -528,6 +531,7 @@ spec:
                     string:
                       fmt: "%s-cluster-mysql-connection"
                       type: Format
+                      type: Format
                 type: FromCompositeFieldPath
               - fromFieldPath: "metadata.name"
                 toFieldPath: "spec.forProvider.finalDBSnapshotIdentifier"
@@ -535,6 +539,7 @@ spec:
                   - type: string
                     string:
                       fmt: "%s-final-snapshot"
+                      type: Format
                       type: Format
                 type: FromCompositeFieldPath
               - fromFieldPath: "spec.engineVersion"
