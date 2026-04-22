@@ -529,7 +529,38 @@ spec:
                     matchLabels:
                       role: node
 
-          - name: node-policy-worker-full
+          # Managed Node Group IAM Role (separate from Auto Mode)
+          - name: mng-node-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels:
+                  role: mng-node
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"Service": "ec2.amazonaws.com"},
+                        "Action": "sts:AssumeRole"
+                      }]
+                    }
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-mng-node-role"
+              - type: PatchSet
+                patchSetName: tags
+
+          - name: mng-node-policy-worker
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
               kind: RolePolicyAttachment
@@ -539,9 +570,9 @@ spec:
                   roleSelector:
                     matchControllerRef: true
                     matchLabels:
-                      role: node
+                      role: mng-node
 
-          - name: node-policy-cni
+          - name: mng-node-policy-cni
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
               kind: RolePolicyAttachment
@@ -551,13 +582,36 @@ spec:
                   roleSelector:
                     matchControllerRef: true
                     matchLabels:
-                      role: node
+                      role: mng-node
 
-          - name: node-policy-ecr-readonly
+          - name: mng-node-policy-ecr
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
               kind: RolePolicyAttachment
               spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: mng-node
+
+          - name: mng-access-entry
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessEntry
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  principalArnSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: mng-node
+                  type: EC2_LINUX
+            patches:
+              - type: PatchSet
+                patchSetName: common
                 forProvider:
                   policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
                   roleSelector:
@@ -634,7 +688,7 @@ spec:
                   nodeRoleArnSelector:
                     matchControllerRef: true
                     matchLabels:
-                      role: node
+                      role: mng-node
                   subnetIdSelector:
                     matchControllerRef: true
                     matchLabels:
