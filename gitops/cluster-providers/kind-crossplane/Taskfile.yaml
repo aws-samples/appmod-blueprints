@@ -412,13 +412,32 @@ tasks:
       - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
 
   destroy:
-    desc: Full teardown — addons, AWS resources, Kind cluster
+    desc: >-
+      Full teardown — addons, AWS resources, Kind cluster.
+      All AWS resources created by bootstrap must still exist.
+      If Kind was deleted, it will be recreated to adopt and clean up AWS resources via Crossplane.
     vars:
       HUB_CLUSTER_NAME:
         sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
       AWS_ACCOUNT_ID:
         sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
     cmds:
+      # Ensure Kind+Crossplane is ready (no-op if already running)
+      - task: kind:create
+      - task: credentials:refresh
+      - task: crossplane:helm
+      - task: crossplane:providers
+      - task: crossplane:provider-config
+      - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
+      - kubectl apply -f claims/
+      - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
+          --set aws.region={{.AWS_REGION}}
+          --set aws.clusterName={{.HUB_CLUSTER_NAME}}
+          --set aws.accountId={{.AWS_ACCOUNT_ID}}
+          --set providerConfig.enabled=false
+          --set deploymentRuntimeConfig.enabled=false
+          | kubectl apply -f -
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s eksclusters.platform.gitops.io/hub-cluster 2>/dev/null || true
       # Phase 1: Clean hub addons
       - task: credentials:refresh
       - task: hub:destroy-addons
@@ -527,8 +546,8 @@ tasks:
              KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application $app -n argocd --wait=false 2>/dev/null) || true
           done
       - echo "Cleaning up AWS resources..."
-      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
-      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
-      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
       - rm -f /tmp/hub-kubeconfig
       - echo "Hub addons destroyed."
