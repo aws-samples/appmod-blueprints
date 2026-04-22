@@ -421,11 +421,13 @@ tasks:
       Full teardown — addons, AWS resources, Kind cluster.
       All AWS resources created by bootstrap must still exist.
       If Kind was deleted, it will be recreated to adopt and clean up AWS resources via Crossplane.
+      Pass CLEANUP_KIND=true to also remove the Kind cluster.
     vars:
       HUB_CLUSTER_NAME:
         sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
       AWS_ACCOUNT_ID:
         sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
+      CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
     cmds:
       # Ensure Kind+Crossplane is ready (no-op if already running)
       - task: kind:create
@@ -482,9 +484,15 @@ tasks:
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
       # Phase 5: Delete EKS cluster + VPC (composition cascades all networking + IAM)
       - kubectl delete -f claims/hub-cluster.yaml --ignore-not-found
-      - kubectl -n crossplane-system wait --for=delete platformclusters.platform.gitops.io/hub --timeout=1800s 2>/dev/null || true
-      # Phase 6: Clean up
-      - task: destroy-kind
+      - kubectl -n crossplane-system wait --for=delete clusters.eks.aws.upbound.io --all --timeout=1800s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete vpc.ec2.aws.upbound.io --all --timeout=600s 2>/dev/null || true
+      # Phase 6: Clean up Kind (pass CLEANUP_KIND=true to remove)
+      - cmd: |
+          if [ "{{.CLEANUP_KIND}}" = "true" ]; then
+            kind delete cluster --name {{.KIND_CLUSTER_NAME}}
+          else
+            echo "Kind cluster preserved. Run 'task destroy-kind' or re-run with CLEANUP_KIND=true."
+          fi
       - rm -f {{.KUBECONFIG}}
 
   hub:update:
