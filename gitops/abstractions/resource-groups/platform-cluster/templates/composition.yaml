@@ -669,53 +669,6 @@ spec:
                 fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
                 toFieldPath: status.oidcIssuer
 
-          # ===== EKS MANAGED ADD-ONS =====
-
-          - name: addon-vpc-cni
-            base:
-              apiVersion: eks.aws.upbound.io/v1beta1
-              kind: Addon
-              spec:
-                forProvider:
-                  addonName: vpc-cni
-                  clusterNameSelector:
-                    matchControllerRef: true
-                  resolveConflictsOnCreate: OVERWRITE
-                  resolveConflictsOnUpdate: OVERWRITE
-            patches:
-              - type: PatchSet
-                patchSetName: common
-
-          - name: addon-kube-proxy
-            base:
-              apiVersion: eks.aws.upbound.io/v1beta1
-              kind: Addon
-              spec:
-                forProvider:
-                  addonName: kube-proxy
-                  clusterNameSelector:
-                    matchControllerRef: true
-                  resolveConflictsOnCreate: OVERWRITE
-                  resolveConflictsOnUpdate: OVERWRITE
-            patches:
-              - type: PatchSet
-                patchSetName: common
-
-          - name: addon-coredns
-            base:
-              apiVersion: eks.aws.upbound.io/v1beta1
-              kind: Addon
-              spec:
-                forProvider:
-                  addonName: coredns
-                  clusterNameSelector:
-                    matchControllerRef: true
-                  resolveConflictsOnCreate: OVERWRITE
-                  resolveConflictsOnUpdate: OVERWRITE
-            patches:
-              - type: PatchSet
-                patchSetName: common
-
           # ===== MANAGED NODE GROUP (optional) =====
 
           - name: managed-nodegroup
