@@ -149,6 +149,20 @@ tasks:
         sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.GITOPS_ROOT}}/config.yaml
       RESOURCE_PREFIX:
         sh: yq '.resourcePrefix // ""' {{.GITOPS_ROOT}}/config.yaml
+      MNG_ENABLED:
+        sh: yq '.hub.managedNodeGroup.enabled // false' {{.GITOPS_ROOT}}/config.yaml
+      MNG_SETS:
+        sh: |
+          if [ "$(yq '.hub.managedNodeGroup.enabled // false' {{.GITOPS_ROOT}}/config.yaml)" = "true" ]; then
+            echo "--set clusters.hub.managedNodeGroup.enabled=true"
+            yq '.hub.managedNodeGroup.instanceTypes // ["m5.large"]' {{.GITOPS_ROOT}}/config.yaml -o json | \
+              xargs -I{} echo "--set-json clusters.hub.managedNodeGroup.instanceTypes={}"
+            echo "--set clusters.hub.managedNodeGroup.desiredSize=$(yq '.hub.managedNodeGroup.desiredSize // 2' {{.GITOPS_ROOT}}/config.yaml)"
+            echo "--set clusters.hub.managedNodeGroup.minSize=$(yq '.hub.managedNodeGroup.minSize // 1' {{.GITOPS_ROOT}}/config.yaml)"
+            echo "--set clusters.hub.managedNodeGroup.maxSize=$(yq '.hub.managedNodeGroup.maxSize // 5' {{.GITOPS_ROOT}}/config.yaml)"
+            echo "--set clusters.hub.managedNodeGroup.diskSize=$(yq '.hub.managedNodeGroup.diskSize // 50' {{.GITOPS_ROOT}}/config.yaml)"
+            echo "--set clusters.hub.managedNodeGroup.capacityType=$(yq '.hub.managedNodeGroup.capacityType // "ON_DEMAND"' {{.GITOPS_ROOT}}/config.yaml)"
+          fi
     cmds:
       - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
       - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
@@ -157,6 +171,7 @@ tasks:
           --set clusters.hub.kubernetesVersion={{.HUB_K8S_VERSION}}
           --set clusters.hub.vpcCidr={{.HUB_VPC_CIDR}}
           --set clusters.hub.resourcePrefix={{.RESOURCE_PREFIX}}
+          {{.MNG_SETS}}
           | kubectl apply -f -
       - kubectl apply -f claims/argocd-capability-role.yaml
       - kubectl apply -f claims/crossplane-pod-identity-role.yaml
@@ -500,6 +515,18 @@ tasks:
         sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.GITOPS_ROOT}}/config.yaml
       RESOURCE_PREFIX:
         sh: yq '.resourcePrefix // ""' {{.GITOPS_ROOT}}/config.yaml
+      MNG_SETS:
+        sh: |
+          if [ "$(yq '.hub.managedNodeGroup.enabled // false' {{.GITOPS_ROOT}}/config.yaml)" = "true" ]; then
+            echo "--set clusters.hub.managedNodeGroup.enabled=true"
+            yq '.hub.managedNodeGroup.instanceTypes // ["m5.large"]' {{.GITOPS_ROOT}}/config.yaml -o json | \
+              xargs -I{} echo "--set-json clusters.hub.managedNodeGroup.instanceTypes={}"
+            echo "--set clusters.hub.managedNodeGroup.desiredSize=$(yq '.hub.managedNodeGroup.desiredSize // 2' {{.GITOPS_ROOT}}/config.yaml)"
+            echo "--set clusters.hub.managedNodeGroup.minSize=$(yq '.hub.managedNodeGroup.minSize // 1' {{.GITOPS_ROOT}}/config.yaml)"
+            echo "--set clusters.hub.managedNodeGroup.maxSize=$(yq '.hub.managedNodeGroup.maxSize // 5' {{.GITOPS_ROOT}}/config.yaml)"
+            echo "--set clusters.hub.managedNodeGroup.diskSize=$(yq '.hub.managedNodeGroup.diskSize // 50' {{.GITOPS_ROOT}}/config.yaml)"
+            echo "--set clusters.hub.managedNodeGroup.capacityType=$(yq '.hub.managedNodeGroup.capacityType // "ON_DEMAND"' {{.GITOPS_ROOT}}/config.yaml)"
+          fi
     cmds:
       - task: init
       - task: kind:create
@@ -514,6 +541,7 @@ tasks:
           --set clusters.hub.kubernetesVersion={{.HUB_K8S_VERSION}}
           --set clusters.hub.vpcCidr={{.HUB_VPC_CIDR}}
           --set clusters.hub.resourcePrefix={{.RESOURCE_PREFIX}}
+          {{.MNG_SETS}}
           | kubectl apply -f -
       - kubectl apply -f claims/
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/hub 2>/dev/null || true

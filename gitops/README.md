@@ -226,6 +226,71 @@ enabledAddons:
 - yq
 - aws CLI (configured with credentials)
 
+## Configuration Reference (`config.yaml`)
+
+All platform settings are centralized in `config.yaml`. Edit before running `task install`.
+
+```yaml
+# Cluster provider — which approach to use for hub cluster provisioning
+clusterProvider: "kind-crossplane"   # Options: kind-crossplane, byoc
+
+# Git repository hosting the gitops platform code
+repo:
+  url: "https://github.com/your-org/your-repo.git"
+  revision: "main"
+  basepath: "gitops/"
+
+# Hub cluster configuration
+hub:
+  clusterName: "hub"                 # EKS cluster name
+  kubernetesVersion: "1.32"          # EKS Kubernetes version
+  vpcCidr: "10.0.0.0/16"            # VPC CIDR block
+
+  # Optional: managed node group alongside Auto Mode
+  # managedNodeGroup:
+  #   enabled: true
+  #   instanceTypes: ["m5.large"]    # Multiple types recommended for Spot
+  #   desiredSize: 2
+  #   minSize: 1
+  #   maxSize: 5
+  #   diskSize: 50                   # GB
+  #   capacityType: "ON_DEMAND"      # ON_DEMAND or SPOT
+
+# AWS configuration
+aws:
+  region: "us-west-2"
+  accountId: "123456789012"
+  profile: "default"                 # AWS CLI profile (local dev only)
+
+# Domain and networking
+domain: "idp.example.com"
+resourcePrefix: "myplatform"         # Tags all AWS resources for identification
+ingressName: "hub-ingress"
+ingressSecurityGroups: ""
+
+# AWS Identity Center (required for EKS ArgoCD Capability)
+identityCenter:
+  instanceArn: "arn:aws:sso:::instance/ssoins-xxx"
+  region: "us-east-1"
+  adminGroupId: "group-id-here"
+
+# EKS ArgoCD Capability
+argocdCapability:
+  name: "argocd"
+```
+
+### Hub cluster defaults
+
+By default, the hub runs EKS Auto Mode only — no managed node groups. Auto Mode handles compute, storage, networking, and load balancing with zero node management.
+
+To add a managed node group (e.g., for workloads needing custom instance types or SSH access), add the `managedNodeGroup` block under `hub:` and set `enabled: true`. The node group runs in private subnets only, reuses the Auto Mode node IAM role, and supports both On-Demand and Spot capacity.
+
+### Resource tagging
+
+All composition resources (VPC, subnets, IGW, NAT, EIP, route tables, IAM roles, EKS cluster) are tagged with:
+- `platform.gitops.io/cluster: <clusterName>`
+- `platform.gitops.io/prefix: <resourcePrefix>`
+
 ## Hub Infrastructure Lifecycle
 
 The hub cluster's AWS infrastructure (VPC, EKS, IAM roles, node groups) is created by Crossplane on the ephemeral Kind cluster during bootstrap. Once the hub is self-managing and Kind is deleted, these resources become unmanaged — they persist in AWS but nothing reconciles them.
@@ -239,11 +304,11 @@ Hub Crossplane (installed as an addon) manages fleet member clusters and applica
 
 If you need to modify hub infrastructure after bootstrap (e.g., change node group size, update Kubernetes version), use the AWS console or CLI directly.
 
-Alternatively, re-run the Kind+Crossplane flow with updated claims:
+Alternatively, re-run the Kind+Crossplane flow with updated config:
 
 ```bash
-# 1. Edit the claim
-vim gitops/cluster-providers/kind-crossplane/claims/hub-cluster.yaml
+# 1. Edit config.yaml with new values (e.g., kubernetesVersion, vpcCidr, managedNodeGroup)
+vim gitops/config.yaml
 
 # 2. Run hub:update — spins up Kind, Crossplane adopts existing resources, applies changes, tears down
 task hub:update
