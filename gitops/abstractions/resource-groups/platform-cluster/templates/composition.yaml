@@ -604,7 +604,7 @@ spec:
                 forProvider:
                   clusterNameSelector:
                     matchControllerRef: true
-                  principalArnSelector:
+                  principalArnFromRoleSelector:
                     matchControllerRef: true
                     matchLabels:
                       role: mng-node
@@ -612,12 +612,6 @@ spec:
             patches:
               - type: PatchSet
                 patchSetName: common
-                forProvider:
-                  policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-                  roleSelector:
-                    matchControllerRef: true
-                    matchLabels:
-                      role: node
 
           # EKS Cluster with Auto Mode enabled
           - name: eks-cluster
