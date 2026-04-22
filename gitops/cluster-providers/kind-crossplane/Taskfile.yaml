@@ -469,6 +469,12 @@ tasks:
       - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity --timeout=600s 2>/dev/null || true
       - kubectl delete -f claims/crossplane-pod-identity-role.yaml --ignore-not-found
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/crossplane-pod-identity-role --timeout=300s 2>/dev/null || true
+      # Safety net: delete any orphaned pod identity associations via AWS CLI
+      - cmd: |
+          for ASSOC_ID in $(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'associations[].associationId' --output text 2>/dev/null); do
+            echo "Deleting orphaned pod identity association $ASSOC_ID..."
+            aws eks delete-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --association-id $ASSOC_ID --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          done
       # Phase 4: Delete ArgoCD capability via Job, then its IAM role
       - task: argocd:delete-capability
       - kubectl delete -f claims/argocd-capability-role.yaml --ignore-not-found
