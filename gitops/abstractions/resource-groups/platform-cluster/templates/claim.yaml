@@ -1,0 +1,18 @@
+{{- range $name, $cluster := .Values.clusters }}
+---
+apiVersion: platform.gitops.io/v1alpha1
+kind: PlatformCluster
+metadata:
+  name: {{ $cluster.clusterName }}
+  namespace: crossplane-system
+  annotations:
+    crossplane.io/external-name: {{ $cluster.clusterName }}
+spec:
+  region: {{ $cluster.region }}
+  clusterName: {{ $cluster.clusterName }}
+  vpcCidr: {{ $cluster.vpcCidr | default "10.0.0.0/16" | quote }}
+  kubernetesVersion: {{ $cluster.kubernetesVersion | default "1.32" | quote }}
+  autoMode: {{ $cluster.autoMode | default true }}
+  writeConnectionSecretToRef:
+    name: {{ $cluster.clusterName }}-kubeconfig
+{{- end }}

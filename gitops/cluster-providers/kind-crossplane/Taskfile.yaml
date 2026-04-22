@@ -143,9 +143,18 @@ tasks:
         sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
       AWS_ACCOUNT_ID:
         sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
+      HUB_K8S_VERSION:
+        sh: yq '.hub.kubernetesVersion // "1.32"' {{.GITOPS_ROOT}}/config.yaml
+      HUB_VPC_CIDR:
+        sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.GITOPS_ROOT}}/config.yaml
     cmds:
       - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
-      - kubectl apply -f claims/hub-cluster.yaml
+      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
+          --set clusters.hub.region={{.AWS_REGION}}
+          --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
+          --set clusters.hub.kubernetesVersion={{.HUB_K8S_VERSION}}
+          --set clusters.hub.vpcCidr={{.HUB_VPC_CIDR}}
+          | kubectl apply -f -
       - kubectl apply -f claims/argocd-capability-role.yaml
       - kubectl apply -f claims/crossplane-pod-identity-role.yaml
       - kubectl apply -f claims/crossplane-pod-identity.yaml
@@ -462,7 +471,10 @@ tasks:
       - kubectl delete -f claims/argocd-capability-role.yaml --ignore-not-found
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
       # Phase 5: Delete EKS cluster + VPC (composition cascades all networking + IAM)
-      - kubectl delete -f claims/hub-cluster.yaml --ignore-not-found
+      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
+          --set clusters.hub.region={{.AWS_REGION}}
+          --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
+          | kubectl delete --ignore-not-found -f -
       - kubectl -n crossplane-system wait --for=delete clusters.eks.aws.upbound.io --all --timeout=1800s 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=delete vpc.ec2.aws.upbound.io --all --timeout=600s 2>/dev/null || true
       # Phase 6: Clean up Kind (pass CLEANUP_KIND=true to remove)
@@ -476,6 +488,13 @@ tasks:
 
   hub:update:
     desc: Update hub infra via Kind+Crossplane
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+      HUB_K8S_VERSION:
+        sh: yq '.hub.kubernetesVersion // "1.32"' {{.GITOPS_ROOT}}/config.yaml
+      HUB_VPC_CIDR:
+        sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.GITOPS_ROOT}}/config.yaml
     cmds:
       - task: init
       - task: kind:create
@@ -484,6 +503,12 @@ tasks:
       - task: crossplane:providers
       - task: crossplane:provider-config
       - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
+      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
+          --set clusters.hub.region={{.AWS_REGION}}
+          --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
+          --set clusters.hub.kubernetesVersion={{.HUB_K8S_VERSION}}
+          --set clusters.hub.vpcCidr={{.HUB_VPC_CIDR}}
+          | kubectl apply -f -
       - kubectl apply -f claims/
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/hub 2>/dev/null || true
       - task: destroy-kind
