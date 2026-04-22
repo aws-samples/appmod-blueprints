@@ -191,9 +191,19 @@ tasks:
           | kubectl apply -f -
 
   hub:seed:
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
     cmds:
       - echo "Waiting for hub cluster..."
       - kubectl wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/hub -n crossplane-system 2>/dev/null || true
+      - echo "Creating cluster admin access entry for caller..."
+      - cmd: |
+          CALLER_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
+          ROLE_ARN=$(echo "$CALLER_ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||')
+          aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$ROLE_ARN" --type STANDARD --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$ROLE_ARN" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          echo "Access entry created for $ROLE_ARN"
       - echo "Waiting for IAM role..."
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role 2>/dev/null || true
       - echo "Waiting for ESO pod identity resources..."
@@ -508,7 +518,6 @@ tasks:
           else
             echo "Kind cluster preserved. Run 'task destroy-kind' or re-run with CLEANUP_KIND=true."
           fi
-      - rm -f {{.KUBECONFIG}}
 
   hub:update:
     desc: Update hub infra via Kind+Crossplane
