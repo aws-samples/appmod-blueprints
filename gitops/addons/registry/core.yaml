@@ -1,5 +1,5 @@
 # Core infrastructure addons
-# Wave ordering: -1 (controllers) → 0 (core) → 1 (ingress) → 2 (certificates)
+# Wave ordering: -1 (external-secrets) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (lbc, efs-csi) → 5 (ingress-class-alb)
 
 argocd:
   namespace: argocd
@@ -80,7 +80,7 @@ ingress-class-alb:
   namespace: kube-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/ingress-class-alb'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-wave: '5'
   selector:
     matchExpressions:
       - key: enable_ingress_class_alb
@@ -95,7 +95,7 @@ aws-load-balancer-controller:
   chartRepository: https://aws.github.io/eks-charts
   defaultVersion: '1.14.1'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '-1'
+    argocd.argoproj.io/sync-wave: '4'
   selector:
     matchExpressions:
       - key: enable_aws_load_balancer_controller
