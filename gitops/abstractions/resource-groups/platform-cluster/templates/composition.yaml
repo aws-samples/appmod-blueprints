@@ -533,11 +533,6 @@ spec:
                 fromFieldPath: spec.clusterName
                 toFieldPath: metadata.annotations[crossplane.io/external-name]
               - type: FromCompositeFieldPath
-                fromFieldPath: spec.managedNodeGroup.enabled
-                toFieldPath: spec.forProvider.bootstrapSelfManagedAddons
-                policy:
-                  fromFieldPath: Optional
-              - type: FromCompositeFieldPath
                 fromFieldPath: status.nodeRoleArn
                 toFieldPath: spec.forProvider.computeConfig.nodeRoleArn
                 policy:
@@ -548,6 +543,53 @@ spec:
               - type: ToCompositeFieldPath
                 fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
                 toFieldPath: status.oidcIssuer
+
+          # ===== EKS MANAGED ADD-ONS (required for managed node groups) =====
+
+          - name: addon-vpc-cni
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Addon
+              spec:
+                forProvider:
+                  addonName: vpc-cni
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  resolveConflictsOnCreate: OVERWRITE
+                  resolveConflictsOnUpdate: OVERWRITE
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: addon-kube-proxy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Addon
+              spec:
+                forProvider:
+                  addonName: kube-proxy
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  resolveConflictsOnCreate: OVERWRITE
+                  resolveConflictsOnUpdate: OVERWRITE
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: addon-coredns
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Addon
+              spec:
+                forProvider:
+                  addonName: coredns
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  resolveConflictsOnCreate: OVERWRITE
+                  resolveConflictsOnUpdate: OVERWRITE
+            patches:
+              - type: PatchSet
+                patchSetName: common
 
           # ===== MANAGED NODE GROUP (optional) =====
 
