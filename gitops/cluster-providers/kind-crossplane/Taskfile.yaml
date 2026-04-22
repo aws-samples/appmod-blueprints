@@ -160,7 +160,7 @@ tasks:
   hub:seed:
     cmds:
       - echo "Waiting for hub cluster..."
-      - kubectl wait --for=condition=Ready --timeout=1800s eksclusters.platform.gitops.io/hub-cluster -n crossplane-system 2>/dev/null || true
+      - kubectl wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/hub -n crossplane-system 2>/dev/null || true
       - echo "Waiting for IAM role..."
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role 2>/dev/null || true
       - echo "Waiting for ESO pod identity resources..."
@@ -429,6 +429,7 @@ tasks:
     cmds:
       # Ensure Kind+Crossplane is ready (no-op if already running)
       - task: kind:create
+      - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
       - task: credentials:refresh
       - task: crossplane:helm
       - task: crossplane:providers
@@ -442,7 +443,7 @@ tasks:
           --set providerConfig.enabled=false
           --set deploymentRuntimeConfig.enabled=false
           | kubectl apply -f -
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s eksclusters.platform.gitops.io/hub-cluster 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s platformclusters.platform.gitops.io/hub 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/crossplane-pod-identity-role 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity 2>/dev/null || true
@@ -481,7 +482,7 @@ tasks:
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
       # Phase 5: Delete EKS cluster + VPC (composition cascades all networking + IAM)
       - kubectl delete -f claims/hub-cluster.yaml --ignore-not-found
-      - kubectl -n crossplane-system wait --for=delete eksclusters.platform.gitops.io/hub-cluster --timeout=1800s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete platformclusters.platform.gitops.io/hub --timeout=1800s 2>/dev/null || true
       # Phase 6: Clean up
       - task: destroy-kind
       - rm -f {{.KUBECONFIG}}
@@ -497,7 +498,7 @@ tasks:
       - task: crossplane:provider-config
       - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
       - kubectl apply -f claims/
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s eksclusters.platform.gitops.io/hub-cluster 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/hub 2>/dev/null || true
       - task: destroy-kind
 
   hub:destroy-addons:
