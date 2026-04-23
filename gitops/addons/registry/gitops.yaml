@@ -1,5 +1,5 @@
 # GitOps tooling addons
-# Wave ordering: 3 (rollouts/events) → 4 (kargo/flux) → 6 (argo-workflows, needs Ingress/LBC)
+# Wave ordering: 3 (rollouts/events) → 4 (kargo/flux) → 7 (argo-workflows, after keycloak)
 
 argo-rollouts:
   namespace: argo-rollouts
@@ -43,7 +43,7 @@ argo-workflows:
   namespace: argo
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/argo-workflows'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '6'
+    argocd.argoproj.io/sync-wave: '7'
   selector:
     matchExpressions:
       - key: enable_argo_workflows
