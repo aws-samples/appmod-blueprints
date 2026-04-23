@@ -1,11 +1,11 @@
 # Security and policy addons
-# Wave ordering: 3 (keycloak/kyverno) → 4 (policies/reporter)
+# Wave ordering: 3 (kyverno) → 4 (policies/reporter) → 6 (keycloak, needs Ingress/LBC)
 
 keycloak:
   namespace: keycloak
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/keycloak'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '3'
+    argocd.argoproj.io/sync-wave: '6'
   selector:
     matchExpressions:
       - key: enable_keycloak
