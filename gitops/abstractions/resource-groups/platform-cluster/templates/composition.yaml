@@ -756,9 +756,9 @@ spec:
                     matchLabels:
                       access: private
                   scalingConfig:
-                    - desiredSize: 0
-                      minSize: 0
-                      maxSize: 0
+                    - desiredSize: 2
+                      minSize: 1
+                      maxSize: 5
                   diskSize: 50
                   instanceTypes:
                     - m5.large
@@ -805,3 +805,22 @@ spec:
                 toFieldPath: spec.forProvider.capacityType
                 policy:
                   fromFieldPath: Optional
+    - step: filter-mng-resources
+      functionRef:
+        name: function-cel-filter
+      input:
+        apiVersion: cel.fn.crossplane.io/v1beta1
+        kind: Filters
+        filters:
+          - name: "^mng-.*"
+            expression: >-
+              has(observed.composite.resource.spec.managedNodeGroup) &&
+              observed.composite.resource.spec.managedNodeGroup.enabled == true
+          - name: "^managed-nodegroup$"
+            expression: >-
+              has(observed.composite.resource.spec.managedNodeGroup) &&
+              observed.composite.resource.spec.managedNodeGroup.enabled == true
+          - name: "^addon-.*"
+            expression: >-
+              has(observed.composite.resource.spec.managedNodeGroup) &&
+              observed.composite.resource.spec.managedNodeGroup.enabled == true
