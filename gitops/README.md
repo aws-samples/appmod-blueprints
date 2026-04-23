@@ -190,9 +190,95 @@ cert-manager:
 
 ### Add a new fleet member cluster
 
-1. Create `fleet/members/<cluster>/values.yaml`
-2. Ensure `enabled-addons.yaml` exists for the cluster's environment
-3. Commit
+Adding a spoke cluster is a two-part process: provision the infrastructure, then register it as a fleet member so addons get deployed.
+
+**Step 1: Provision the cluster via KRO values**
+
+Add an entry to the appropriate tenant values file. For example, `fleet/kro-values/tenants/control-plane/kro-clusters/values.yaml`:
+
+```yaml
+clusters:
+  spoke-us-west-2:
+    region: us-west-2
+    clusterName: spoke-us-west-2
+    vpcCidr: "10.1.0.0/16"
+    kubernetesVersion: "1.35"
+    autoMode: true
+    resourcePrefix: peeks
+    # Optional managed node group:
+    # managedNodeGroup:
+    #   enabled: true
+    #   instanceTypes: ["m5.large"]
+    #   desiredSize: 2
+    #   minSize: 1
+    #   maxSize: 5
+```
+
+The `bootstrap/clusters.yaml` ApplicationSet picks this up and renders a `PlatformCluster` Crossplane claim. Crossplane provisions the VPC, subnets, EKS cluster, IAM roles, and all networking.
+
+**Step 2: Seed the cluster's connection credentials in AWS Secrets Manager**
+
+Before the fleet-secret ExternalSecret can pull connection details, you need to create the secret in AWS Secrets Manager:
+
+```bash
+SECRET_KEY="spoke-us-west-2/config"
+CLUSTER_ARN=$(aws eks describe-cluster --name spoke-us-west-2 --region us-west-2 --query 'cluster.arn' --output text)
+SECRET_VALUE=$(jq -n \
+  --arg server "$CLUSTER_ARN" \
+  --arg config '{"tlsClientConfig":{"insecure":false}}' \
+  --arg metadata '{"addonsRepoURL":"<repo-url>","addonsRepoRevision":"<branch>","addonsRepoBasepath":"gitops/","fleetRepoURL":"<repo-url>","fleetRepoRevision":"<branch>","fleetRepoBasepath":"gitops/","aws_region":"us-west-2","aws_account_id":"<account-id>","aws_cluster_name":"spoke-us-west-2"}' \
+  '{metadata: $metadata, config: $config, server: $server}')
+aws secretsmanager create-secret --name "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region us-west-2
+```
+
+Wait for the EKS cluster to be ready before running this — you need the cluster ARN.
+
+**Step 3: Register as a fleet member**
+
+Create `fleet/members/spoke-us-west-2/values.yaml`:
+
+```yaml
+externalSecret:
+  enabled: true
+secretStoreRefKind: ClusterSecretStore
+secretStoreRefName: aws-secrets-manager
+clusterName: spoke-us-west-2
+labels:
+  environment: production
+  tenant: control-plane
+```
+
+The `bootstrap/fleet-secrets.yaml` matrix generator detects the new file and creates an ExternalSecret that produces an ArgoCD cluster secret with `enable_*` labels.
+
+**Step 4: Create the environment's enabled-addons (if new)**
+
+If the environment doesn't exist yet, create `overlays/environments/production/enabled-addons.yaml`:
+
+```yaml
+enabledAddons:
+  metrics_server: true
+  external_secrets: true
+  ingress_class_alb: true
+  aws_load_balancer_controller: true
+  # ... add other addons as needed
+```
+
+If the environment already exists, this step is not needed.
+
+**Step 5: Commit and push**
+
+```bash
+git add fleet/ overlays/
+git commit -m "Add spoke-us-west-2 fleet member"
+git push
+```
+
+ArgoCD picks up the changes automatically:
+- `clusters.yaml` → Crossplane provisions the EKS cluster
+- `fleet-secrets.yaml` → creates the cluster secret with `enable_*` labels
+- `addons.yaml` → deploys enabled addons to the spoke
+
+See [fleet/README.md](fleet/README.md) for detailed field reference and value layering.
 
 ### Per-cluster addon exception
 
