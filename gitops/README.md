@@ -190,7 +190,7 @@ cert-manager:
 
 ### Add a new fleet member cluster
 
-Adding a spoke cluster is a two-part process: provision the infrastructure, then register it as a fleet member so addons get deployed.
+Adding a spoke cluster is a three-part process: provision the infrastructure, register it as a fleet member, and ensure its environment has addon enablement configured.
 
 **Step 1: Provision the cluster via KRO values**
 
@@ -216,24 +216,7 @@ clusters:
 
 The `bootstrap/clusters.yaml` ApplicationSet picks this up and renders a `PlatformCluster` Crossplane claim. Crossplane provisions the VPC, subnets, EKS cluster, IAM roles, and all networking.
 
-**Step 2: Seed the cluster's connection credentials in AWS Secrets Manager**
-
-Before the fleet-secret ExternalSecret can pull connection details, you need to create the secret in AWS Secrets Manager:
-
-```bash
-SECRET_KEY="spoke-us-west-2/config"
-CLUSTER_ARN=$(aws eks describe-cluster --name spoke-us-west-2 --region us-west-2 --query 'cluster.arn' --output text)
-SECRET_VALUE=$(jq -n \
-  --arg server "$CLUSTER_ARN" \
-  --arg config '{"tlsClientConfig":{"insecure":false}}' \
-  --arg metadata '{"addonsRepoURL":"<repo-url>","addonsRepoRevision":"<branch>","addonsRepoBasepath":"gitops/","fleetRepoURL":"<repo-url>","fleetRepoRevision":"<branch>","fleetRepoBasepath":"gitops/","aws_region":"us-west-2","aws_account_id":"<account-id>","aws_cluster_name":"spoke-us-west-2"}' \
-  '{metadata: $metadata, config: $config, server: $server}')
-aws secretsmanager create-secret --name "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region us-west-2
-```
-
-Wait for the EKS cluster to be ready before running this — you need the cluster ARN.
-
-**Step 3: Register as a fleet member**
+**Step 2: Register as a fleet member**
 
 Create `fleet/members/spoke-us-west-2/values.yaml`:
 
@@ -250,7 +233,7 @@ labels:
 
 The `bootstrap/fleet-secrets.yaml` matrix generator detects the new file and creates an ExternalSecret that produces an ArgoCD cluster secret with `enable_*` labels.
 
-**Step 4: Create the environment's enabled-addons (if new)**
+**Step 3: Create the environment's enabled-addons (if new)**
 
 If the environment doesn't exist yet, create `overlays/environments/production/enabled-addons.yaml`:
 
@@ -265,7 +248,13 @@ enabledAddons:
 
 If the environment already exists, this step is not needed.
 
-**Step 5: Commit and push**
+**Step 4: Seed cluster credentials and commit**
+
+The spoke's connection credentials must be seeded in AWS Secrets Manager before the ExternalSecret can pull them. This step is provider-specific — see your cluster provider's README for the exact commands:
+- [kind-crossplane](cluster-providers/kind-crossplane/README.md#spoke-cluster-provisioning)
+- [byoc](cluster-providers/byoc/README.md)
+
+Then commit and push:
 
 ```bash
 git add fleet/ overlays/

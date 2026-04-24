@@ -104,3 +104,42 @@ When using `oss` mode, the provider must also:
 3. Include `aws_vpc_id` and `alb_controller_mode: oss` in the Secrets Manager seed metadata
 4. Create the `aws-load-balancer-controller-sa` service account in `kube-system` on the hub
 5. Add `alb.ingress.kubernetes.io/target-type: ip` to ingresses using ClusterIP services
+
+## Spoke Cluster Provisioning
+
+With the kind-crossplane provider, spoke clusters are provisioned by Crossplane on the hub. The hub's `bootstrap/clusters.yaml` ApplicationSet renders PlatformCluster claims from KRO values. The only manual step is seeding the spoke's connection credentials in Secrets Manager.
+
+### Seed a spoke cluster's credentials
+
+After the spoke's EKS cluster is ready (Crossplane has provisioned it), seed its connection details:
+
+```bash
+CLUSTER_NAME="spoke-us-west-2"
+AWS_REGION="us-west-2"
+
+# Wait for the cluster to be ready
+aws eks wait cluster-active --name $CLUSTER_NAME --region $AWS_REGION
+
+# Seed Secrets Manager
+CLUSTER_ARN=$(aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION --query 'cluster.arn' --output text)
+VPC_ID=$(aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+SECRET_VALUE=$(jq -n \
+  --arg server "$CLUSTER_ARN" \
+  --arg config '{"tlsClientConfig":{"insecure":false}}' \
+  --arg metadata "$(jq -n \
+    --arg region "$AWS_REGION" \
+    --arg cluster "$CLUSTER_NAME" \
+    --arg vpc "$VPC_ID" \
+    '{aws_region: $region, aws_cluster_name: $cluster, aws_vpc_id: $vpc}')" \
+  '{metadata: $metadata, config: $config, server: $server}')
+aws secretsmanager create-secret \
+  --name "$CLUSTER_NAME/config" \
+  --secret-string "$SECRET_VALUE" \
+  --region $AWS_REGION 2>/dev/null \
+|| aws secretsmanager put-secret-value \
+  --secret-id "$CLUSTER_NAME/config" \
+  --secret-string "$SECRET_VALUE" \
+  --region $AWS_REGION
+```
+
+The spoke's Secrets Manager entry only contains cluster-specific values (ARN, region, name, VPC ID). Platform-wide values (repo URLs, domain, resourcePrefix) are sourced from the hub's cluster secret annotations — they don't need to be duplicated per spoke.
