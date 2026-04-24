@@ -80,7 +80,7 @@ tasks:
           echo "aws_access_key_id = $(aws configure get aws_access_key_id --profile $AWS_PROFILE)" >> /tmp/aws-creds.ini
           echo "aws_secret_access_key = $(aws configure get aws_secret_access_key --profile $AWS_PROFILE)" >> /tmp/aws-creds.ini
           ST=$(aws configure get aws_session_token --profile $AWS_PROFILE 2>/dev/null || true)
-          [ -n "$ST" ] && echo "aws_session_token = $ST" >> /tmp/aws-creds.ini
+          if [ -n "$ST" ]; then echo "aws_session_token = $ST" >> /tmp/aws-creds.ini; fi
         fi
       - kubectl -n crossplane-system create secret generic aws-credentials
           --from-file=credentials=/tmp/aws-creds.ini
