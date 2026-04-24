@@ -683,7 +683,7 @@ spec:
                   resolveConflictsOnCreate: OVERWRITE
                   resolveConflictsOnUpdate: OVERWRITE
                   configurationValues: |
-                    {"tolerations":[{"key":"workload","value":"managednodes","effect":"NoSchedule"},{"key":"workload","value":"managednodes","effect":"NoExecute"}]}
+                    {"tolerations":[{"operator":"Exists"}]}
             patches:
               - type: PatchSet
                 patchSetName: common
@@ -715,7 +715,7 @@ spec:
                   resolveConflictsOnCreate: OVERWRITE
                   resolveConflictsOnUpdate: OVERWRITE
                   configurationValues: |
-                    {"tolerations":[{"key":"workload","value":"managednodes","effect":"NoSchedule"},{"key":"workload","value":"managednodes","effect":"NoExecute"}]}
+                    {"tolerations":[{"operator":"Exists"}]}
             patches:
               - type: PatchSet
                 patchSetName: common
@@ -732,7 +732,7 @@ spec:
                   resolveConflictsOnCreate: OVERWRITE
                   resolveConflictsOnUpdate: OVERWRITE
                   configurationValues: |
-                    {"tolerations":[{"key":"workload","value":"managednodes","effect":"NoSchedule"},{"key":"workload","value":"managednodes","effect":"NoExecute"}]}
+                    {"tolerations":[{"operator":"Exists"}]}
             patches:
               - type: PatchSet
                 patchSetName: common
