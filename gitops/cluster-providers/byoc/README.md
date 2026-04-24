@@ -89,3 +89,36 @@ and Applications being created for each enabled addon.
 - Edit `overlays/environments/control-plane/enabled-addons.yaml` to enable/disable addons
 - Edit `fleet/members/hub/values.yaml` to change cluster annotations
 - Edit `addons/registry/*.yaml` to add/modify addon definitions
+
+## Spoke Cluster Provisioning
+
+With BYOC, spoke clusters are provisioned externally (console, CLI, Terraform, etc.). The hub's ArgoCD manages addon deployment to spokes, but does not create the clusters themselves. You need to seed each spoke's connection credentials in Secrets Manager so the fleet-secret ExternalSecret can produce an ArgoCD cluster secret.
+
+### Seed a spoke cluster's credentials
+
+```bash
+CLUSTER_NAME="spoke-us-west-2"
+AWS_REGION="us-west-2"
+
+CLUSTER_ARN=$(aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION --query 'cluster.arn' --output text)
+VPC_ID=$(aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+SECRET_VALUE=$(jq -n \
+  --arg server "$CLUSTER_ARN" \
+  --arg config '{"tlsClientConfig":{"insecure":false}}' \
+  --arg metadata "$(jq -n \
+    --arg region "$AWS_REGION" \
+    --arg cluster "$CLUSTER_NAME" \
+    --arg vpc "$VPC_ID" \
+    '{aws_region: $region, aws_cluster_name: $cluster, aws_vpc_id: $vpc}')" \
+  '{metadata: $metadata, config: $config, server: $server}')
+aws secretsmanager create-secret \
+  --name "$CLUSTER_NAME/config" \
+  --secret-string "$SECRET_VALUE" \
+  --region $AWS_REGION 2>/dev/null \
+|| aws secretsmanager put-secret-value \
+  --secret-id "$CLUSTER_NAME/config" \
+  --secret-string "$SECRET_VALUE" \
+  --region $AWS_REGION
+```
+
+Then register the spoke as a fleet member (see [main README](../../README.md#add-a-new-fleet-member-cluster) for the GitOps steps).
