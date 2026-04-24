@@ -499,7 +499,11 @@ tasks:
       - kubectl -n crossplane-system wait --for=delete rolepolicyattachments.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=delete policies.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
-      # Phase 3: Delete crossplane-base provider pod identities and IAM provider
+      # Phase 3: Delete ArgoCD capability via Job, then its IAM role (needs IAM provider alive)
+      - task: argocd:delete-capability
+      - kubectl delete -f claims/argocd-capability-role.yaml --ignore-not-found
+      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
+      # Phase 4: Delete crossplane-base provider pod identities and providers
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
           --set aws.region={{.AWS_REGION}}
@@ -518,10 +522,6 @@ tasks:
             echo "Deleting orphaned pod identity association $ASSOC_ID..."
             aws eks delete-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --association-id $ASSOC_ID --region {{.AWS_REGION}} --output text 2>/dev/null || true
           done
-      # Phase 4: Delete ArgoCD capability via Job, then its IAM role
-      - task: argocd:delete-capability
-      - kubectl delete -f claims/argocd-capability-role.yaml --ignore-not-found
-      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
       # Phase 5: Delete EKS cluster + VPC (composition cascades all networking + IAM)
       - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
           --set clusters.hub.region={{.AWS_REGION}}
