@@ -96,15 +96,15 @@ When `type: manifest` is set, the Helm rendering block is skipped entirely -- Ar
 | -5 | Multi-account | multi-acct |
 | -3 | Abstractions | kro |
 | -2 | KRO Resource Groups | kro-manifests, kro-manifests-hub |
-| -1 | Controllers | external-secrets, ACK controllers (iam, eks, ec2, ecr, s3, dynamodb) |
-| 0 | Core | argocd, metrics-server, ingress-class-alb, ack-efs |
-| 1 | Ingress | image-prepuller |
-| 2 | Certificates | cert-manager, crossplane, gitlab |
-| 3 | Security / Monitoring | keycloak, kyverno, external-dns, kube-state-metrics, otel, fluentbit, kubevela |
-| 4 | Platform / GitOps tools | argo-workflows, kargo, backstage, grafana, grafana-operator, crossplane-aws, ack-efs |
-| 5 | ML/AI / Dashboards | jupyterhub, kubeflow, mlflow, ray-operator, spark-operator, airflow, grafana-dashboards, cw-prometheus, cni-metrics-helper |
-| 6 | Late platform | platform-manifests |
-| 7 | Data | devlake |
+| -1 | Controllers | external-secrets, crossplane-pod-identity, ACK controllers (iam, eks, ec2, ecr, s3, dynamodb, efs) |
+| 0 | Core | argocd, metrics-server |
+| 1 | Ingress | ingress-class-alb |
+| 2 | Certificates | cert-manager |
+| 3 | Security / Observability | kyverno, argo-rollouts, argo-events, grafana-operator, kube-state-metrics, otel, cni-metrics-helper, aws-for-fluentbit |
+| 4 | Platform / GitOps | lbc, efs-csi, grafana, kyverno-policies, kyverno-policy-reporter, kargo, flux, crossplane-aws |
+| 5 | ML/AI / Dashboards | jupyterhub, kubeflow, mlflow, ray-operator, spark-operator, airflow, grafana-dashboards, cw-prometheus |
+| 6 | Security (late) | keycloak |
+| 7 | GitOps (late) | argo-workflows |
 
 ## How to Add a New Addon Entry
 
