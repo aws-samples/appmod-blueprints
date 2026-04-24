@@ -199,6 +199,8 @@ tasks:
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
+          --set identities.lbc.enabled=false
+          --set identities.external-dns.enabled=false
           | kubectl apply -f -
 
   hub:seed:

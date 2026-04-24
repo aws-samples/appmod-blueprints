@@ -1,4 +1,5 @@
 {{- range $name, $identity := .Values.identities }}
+{{- if not (eq (toString $identity.enabled) "false") }}
 ---
 apiVersion: eks.aws.upbound.io/v1beta1
 kind: PodIdentityAssociation
@@ -18,4 +19,5 @@ spec:
     region: {{ $.Values.aws.region }}
   providerConfigRef:
     name: default
+{{- end }}
 {{- end }}

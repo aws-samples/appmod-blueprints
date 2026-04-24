@@ -1,5 +1,5 @@
 {{- range $name, $identity := .Values.identities }}
-{{- if $identity.policy }}
+{{- if and $identity.policy (not (eq (toString $identity.enabled) "false")) }}
 ---
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: RolePolicyAttachment

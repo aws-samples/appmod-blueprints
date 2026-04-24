@@ -1,4 +1,5 @@
 {{- range $name, $identity := .Values.identities }}
+{{- if not (eq (toString $identity.enabled) "false") }}
 ---
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: Role
@@ -33,4 +34,5 @@ spec:
     {{- end }}
   providerConfigRef:
     name: default
+{{- end }}
 {{- end }}
