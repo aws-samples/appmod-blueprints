@@ -1,0 +1,49 @@
+aws:
+  region: ""
+  clusterName: ""
+  accountId: ""
+
+providerConfig:
+  enabled: true
+  name: default
+
+# All functions disabled by default. Set version to enable.
+functions:
+  patchAndTransform:
+    version: ""
+  environmentConfigs:
+    version: ""
+  celFilter:
+    version: ""
+
+# All providers disabled by default. Set version to enable.
+# Each enabled provider (except family) gets its own SA, DRC, IAM role, and pod identity.
+providers:
+  family:
+    version: ""
+  iam:
+    version: ""
+    serviceAccount: provider-aws-iam
+    roleName: CrossplaneIAMProviderRole
+  ec2:
+    version: ""
+    serviceAccount: provider-aws-ec2
+    roleName: CrossplaneEC2ProviderRole
+  eks:
+    version: ""
+    serviceAccount: provider-aws-eks
+    roleName: CrossplaneEKSProviderRole
+  s3:
+    version: ""
+    serviceAccount: provider-aws-s3
+    roleName: CrossplaneS3ProviderRole
+  dynamodb:
+    version: ""
+    serviceAccount: provider-aws-dynamodb
+    roleName: CrossplaneDynamoDBProviderRole
+  rds:
+    version: ""
+    serviceAccount: provider-aws-rds
+    roleName: CrossplaneRDSProviderRole
+
+namespace: crossplane-system

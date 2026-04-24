@@ -1,0 +1,5 @@
+apiVersion: v2
+name: aws-resources
+description: Crossplane XRDs and Compositions for S3, DynamoDB, and RDS Aurora
+type: application
+version: 0.1.0

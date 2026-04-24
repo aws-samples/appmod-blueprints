@@ -126,11 +126,25 @@ tasks:
 
   crossplane:providers:
     status:
-      - kubectl get providers.pkg.crossplane.io provider-aws-ec2 -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null | grep -q True
+      - kubectl get providers.pkg.crossplane.io provider-aws-iam -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null | grep -q True
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
+      AWS_ACCOUNT_ID:
+        sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
     cmds:
       - kubectl apply -f manifests/crossplane/drc-stub.yaml
-      - kubectl apply -f {{.GITOPS_ROOT}}/addons/configs/crossplane/manifests/providers.yaml
-      - kubectl apply -f {{.GITOPS_ROOT}}/addons/configs/crossplane/manifests/functions.yaml
+      - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
+          --set providerConfig.enabled=false
+          --set aws.region={{.AWS_REGION}}
+          --set aws.clusterName={{.HUB_CLUSTER_NAME}}
+          --set aws.accountId={{.AWS_ACCOUNT_ID}}
+          --set functions.patchAndTransform.version=v0.10.0
+          --set functions.environmentConfigs.version=v0.3.0
+          --set functions.celFilter.version=v0.2.0
+          --set providers.family.version=v2.5.3
+          --set providers.iam.version=v2.5.3
+          | kubectl apply -f -
       - kubectl wait --for=condition=Healthy --timeout=300s providers.pkg.crossplane.io --all
       - kubectl wait --for=condition=Healthy --timeout=300s functions.pkg.crossplane.io --all
 
@@ -181,14 +195,10 @@ tasks:
           {{.MNG_SETS}}
           | kubectl apply -f -
       - kubectl apply -f claims/argocd-capability-role.yaml
-      - kubectl apply -f claims/crossplane-pod-identity-role.yaml
-      - kubectl apply -f claims/crossplane-pod-identity.yaml
       - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set providerConfig.enabled=false
-          --set deploymentRuntimeConfig.enabled=false
           | kubectl apply -f -
 
   hub:seed:
@@ -207,15 +217,9 @@ tasks:
           echo "Access entry created for $ROLE_ARN"
       - echo "Waiting for IAM role..."
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role 2>/dev/null || true
-      - echo "Waiting for ESO pod identity resources..."
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/eso-pod-identity-role 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/eso-pod-identity 2>/dev/null || true
-      - echo "Waiting for Crossplane pod identity resources..."
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/crossplane-pod-identity-role 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity 2>/dev/null || true
-      - echo "Waiting for LBC pod identity resources..."
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/lbc-pod-identity-role 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s podidentityassociations.eks.aws.upbound.io/lbc-pod-identity 2>/dev/null || true
+      - echo "Waiting for pod identity resources..."
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io --all 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s podidentityassociations.eks.aws.upbound.io --all 2>/dev/null || true
       - task: argocd:capability
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
@@ -483,18 +487,22 @@ tasks:
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set providerConfig.enabled=false
-          --set deploymentRuntimeConfig.enabled=false
           | kubectl delete --ignore-not-found -f -
-      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role,platform.gitops.io/role!=crossplane-pod-identity --timeout=600s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete rolepolicyattachments.iam.aws.upbound.io -l platform.gitops.io/role,platform.gitops.io/role!=crossplane-pod-identity --timeout=300s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete policies.iam.aws.upbound.io -l platform.gitops.io/role,platform.gitops.io/role!=crossplane-pod-identity --timeout=300s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role,platform.gitops.io/role!=crossplane-pod-identity --timeout=300s 2>/dev/null || true
-      # Phase 3: Delete crossplane pod identity (uses managed AdministratorAccess policy)
-      - kubectl delete -f claims/crossplane-pod-identity.yaml --ignore-not-found
-      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io/crossplane-pod-identity --timeout=600s 2>/dev/null || true
-      - kubectl delete -f claims/crossplane-pod-identity-role.yaml --ignore-not-found
-      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/crossplane-pod-identity-role --timeout=300s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role --timeout=600s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete rolepolicyattachments.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete policies.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
+      # Phase 3: Delete crossplane-base provider pod identities and IAM provider
+      - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
+          --set providerConfig.enabled=false
+          --set aws.region={{.AWS_REGION}}
+          --set aws.clusterName={{.HUB_CLUSTER_NAME}}
+          --set aws.accountId={{.AWS_ACCOUNT_ID}}
+          --set providers.family.version=v2.5.3
+          --set providers.iam.version=v2.5.3
+          | kubectl delete --ignore-not-found -f -
+      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=600s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
       # Safety net: delete any orphaned pod identity associations via AWS CLI
       - cmd: |
           for ASSOC_ID in $(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'associations[].associationId' --output text 2>/dev/null); do
