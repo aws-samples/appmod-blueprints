@@ -85,7 +85,7 @@ crossplane-pod-identity:
   namespace: crossplane-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '3'
+    argocd.argoproj.io/sync-wave: '4'
   selector:
     matchExpressions:
       - key: enable_crossplane
