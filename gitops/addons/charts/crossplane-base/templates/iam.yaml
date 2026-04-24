@@ -1,3 +1,4 @@
+{{- if not (eq (toString .Values.createIdentities) "false") }}
 {{- range $name, $provider := .Values.providers }}
 {{- if and $provider.version $provider.serviceAccount $provider.roleName }}
 ---
@@ -8,7 +9,7 @@ metadata:
   annotations:
     crossplane.io/external-name: {{ $provider.roleName }}
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-wave: "4"
   labels:
     platform.gitops.io/role: {{ $name }}-provider
 spec:
@@ -38,7 +39,7 @@ metadata:
   name: {{ $name }}-provider-admin-attachment
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "5"
 spec:
   forProvider:
     policyArn: "arn:aws:iam::aws:policy/AdministratorAccess"
@@ -57,7 +58,7 @@ metadata:
   name: {{ $name }}-provider-pod-identity
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/sync-wave: "5"
 spec:
   forProvider:
     clusterName: {{ $.Values.aws.clusterName }}
@@ -69,5 +70,6 @@ spec:
     region: {{ $.Values.aws.region }}
   providerConfigRef:
     name: default
+{{- end }}
 {{- end }}
 {{- end }}

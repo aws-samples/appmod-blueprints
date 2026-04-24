@@ -47,3 +47,6 @@ providers:
     roleName: CrossplaneRDSProviderRole
 
 namespace: crossplane-system
+
+# Set to false during Kind bootstrap — pod identities are created explicitly via claims
+createIdentities: true

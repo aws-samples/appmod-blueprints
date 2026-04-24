@@ -1,0 +1,37 @@
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: PodIdentityAssociation
+metadata:
+  name: iam-provider-pod-identity
+  namespace: crossplane-system
+spec:
+  forProvider:
+    clusterNameSelector:
+      matchControllerRef: false
+    clusterName: CLUSTER_NAME
+    namespace: crossplane-system
+    serviceAccount: provider-aws-iam
+    roleArnSelector:
+      matchLabels:
+        platform.gitops.io/role: iam-provider
+    region: REGION
+  providerConfigRef:
+    name: default
+---
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: PodIdentityAssociation
+metadata:
+  name: eks-provider-pod-identity
+  namespace: crossplane-system
+spec:
+  forProvider:
+    clusterNameSelector:
+      matchControllerRef: false
+    clusterName: CLUSTER_NAME
+    namespace: crossplane-system
+    serviceAccount: provider-aws-eks
+    roleArnSelector:
+      matchLabels:
+        platform.gitops.io/role: eks-provider
+    region: REGION
+  providerConfigRef:
+    name: default
