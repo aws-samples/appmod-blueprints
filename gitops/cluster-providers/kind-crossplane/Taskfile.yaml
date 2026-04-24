@@ -3,6 +3,7 @@ set: [errexit, nounset, pipefail]
 
 env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
+  AWS_PAGER: ""
 
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}"
