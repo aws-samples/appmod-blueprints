@@ -60,16 +60,15 @@ template: {
 		if parameter.componentNamesForAccess != _|_ {
 			for _, c in parameter.componentNamesForAccess {
 				"\(context.name)-\(c)-policy-attachment": {
-					apiVersion: "iam.platform.aws/v1alpha1"
-					kind:       "PolicyAttachment"
-					metadata: {
-						name:      "\(context.name)-\(c)-attachment"
-						namespace: context.namespace
-					}
+					apiVersion: "iam.aws.upbound.io/v1beta1"
+					kind:       "RolePolicyAttachment"
+					metadata: name: "\(context.name)-\(c)-attachment"
 					spec: {
-						roleName:      "\(context.name)-iam-role"
-						componentName: "\(c)"
-						namespace:     context.namespace
+						forProvider: {
+							policyArnRef: name: "\(context.appName)-\(c)-iam-policy"
+							roleRef: name: "\(context.name)-iam-role"
+						}
+						providerConfigRef: name: "provider-aws-config"
 					}
 				}
 			}

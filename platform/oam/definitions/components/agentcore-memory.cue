@@ -33,18 +33,14 @@ template: {
 		}
 	}
 
-	outputs: {
-		"\(context.name)-policy": {
-			apiVersion: "iam.platform.aws/v1alpha1"
-			kind:       "ComponentPolicy"
-			metadata: {
-				name:      "\(context.name)-policy"
-				namespace: context.namespace
-			}
-			spec: {
-				componentName: context.name
-				namespace:     context.namespace
-				policyDocument: {"""
+	outputs: "\(context.name)-iam-policy": {
+		apiVersion: "iam.aws.upbound.io/v1beta1"
+		kind:       "Policy"
+		metadata: name: "\(context.appName)-\(context.name)-iam-policy"
+		spec: {
+			forProvider: {
+				name: "\(context.appName)-\(context.name)-iam-policy"
+				policy: """
 					{
 					  "Version": "2012-10-17",
 					  "Statement": [
@@ -63,8 +59,9 @@ template: {
 					    }
 					  ]
 					}
-					"""}
+					"""
 			}
+			providerConfigRef: name: "provider-aws-config"
 		}
 	}
 
