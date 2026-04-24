@@ -144,6 +144,8 @@ tasks:
           --set functions.celFilter.version=v0.2.0
           --set providers.family.version=v2.5.3
           --set providers.iam.version=v2.5.3
+          --set providers.eks.version=v2.5.3
+          --set providers.ec2.version=v2.5.3
           | kubectl apply -f -
       - kubectl wait --for=condition=Healthy --timeout=300s providers.pkg.crossplane.io --all
       - kubectl wait --for=condition=Healthy --timeout=300s functions.pkg.crossplane.io --all
@@ -502,6 +504,8 @@ tasks:
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
           --set providers.family.version=v2.5.3
           --set providers.iam.version=v2.5.3
+          --set providers.eks.version=v2.5.3
+          --set providers.ec2.version=v2.5.3
           | kubectl delete --ignore-not-found -f -
       - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=600s 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
