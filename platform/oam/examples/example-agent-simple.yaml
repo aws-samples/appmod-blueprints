@@ -44,8 +44,8 @@ spec:
         #   config:
         #     memoryId: my-agentcore-mem
         #     region: us-west-2
-#        mcpServers:
-#          - name: mcp-time
+        mcpServers:
+          - name: mcp-time
         # Resource limits
         resources:
           requests:
