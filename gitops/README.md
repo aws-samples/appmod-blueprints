@@ -284,14 +284,15 @@ enabledAddons:
 | -5 | Multi-account | multi-acct |
 | -3 | Abstractions | kro |
 | -2 | KRO Resource Groups | kro-manifests, kro-manifests-hub |
-| -1 | Controllers | external-secrets, ACK controllers |
+| -1 | Controllers | external-secrets, ACK controllers, crossplane-pod-identity |
 | 0 | Core | argocd, metrics-server |
-| 1 | Ingress | ingress-nginx |
+| 1 | Ingress | ingress-class-alb |
 | 2 | Certificates | cert-manager |
-| 3 | Security | keycloak, kyverno, otel |
-| 4 | Platform | argo-workflows, kargo, backstage, grafana |
-| 5 | ML/AI | jupyterhub, kubeflow, mlflow |
-| 7 | Data | devlake |
+| 3 | Security/Observability | kyverno, argo-rollouts, argo-events, grafana-operator, kube-state-metrics, otel, cni-metrics-helper |
+| 4 | Platform | lbc, efs-csi, grafana, kyverno-policies, kyverno-policy-reporter, kargo, flux |
+| 5 | ML/AI | jupyterhub, kubeflow, mlflow, ray-operator, spark-operator, airflow, grafana-dashboards, cw-prometheus |
+| 6 | Security | keycloak |
+| 7 | GitOps | argo-workflows |
 
 ## Prerequisites
 

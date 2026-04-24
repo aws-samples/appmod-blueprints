@@ -32,6 +32,14 @@ Composite kind: `XPlatformCluster`
 | `vpcCidr` | string | `10.0.0.0/16` | VPC CIDR block |
 | `kubernetesVersion` | string | `1.32` | EKS Kubernetes version |
 | `autoMode` | boolean | `true` | Enable EKS Auto Mode (managed compute, storage, networking) |
+| `resourcePrefix` | string | | Prefix for resource tagging and identification |
+| `managedNodeGroup.enabled` | boolean | `false` | Create a managed node group alongside Auto Mode |
+| `managedNodeGroup.instanceTypes` | string[] | `["m5.large"]` | EC2 instance types for the node group |
+| `managedNodeGroup.desiredSize` | integer | `2` | Desired number of nodes |
+| `managedNodeGroup.minSize` | integer | `1` | Minimum number of nodes |
+| `managedNodeGroup.maxSize` | integer | `5` | Maximum number of nodes |
+| `managedNodeGroup.diskSize` | integer | `50` | Root volume size in GB |
+| `managedNodeGroup.capacityType` | string | `ON_DEMAND` | `ON_DEMAND` or `SPOT` |
 
 ### Status Fields
 
@@ -62,6 +70,14 @@ A single `PlatformCluster` claim creates 20+ AWS resources:
 - EKS cluster with Auto Mode enabled (general-purpose + system node pools, block storage, elastic load balancing)
 - Public and private API endpoint access
 - Connection secret written to `crossplane-system`
+
+**Conditional: Managed Node Group** (only when `managedNodeGroup.enabled: true`)
+- MNG node IAM role with policies: EKSWorkerNodePolicy, EKS_CNI_Policy, EC2ContainerRegistryReadOnly
+- MNG access entry (EC2_LINUX type)
+- NodeGroup in private subnets with `workload=managednodes` taints (NoSchedule + NoExecute)
+- EKS managed addons: vpc-cni, kube-proxy, coredns, eks-pod-identity-agent (required for MNG nodes, not needed by Auto Mode)
+
+The conditional creation uses `function-cel-filter` in the composition pipeline. When `managedNodeGroup.enabled` is false or absent, the CEL filter removes all `mng-*`, `managed-nodegroup`, and `addon-*` resources from the desired state — no unnecessary AWS resources are created.
 
 All resources use `matchControllerRef` for cross-referencing -- no manual wiring between resources.
 
