@@ -9,7 +9,7 @@ This directory makes the hub cluster self-managing. Once ArgoCD is running on th
 | `root-appset.yaml` | -- | Entry point. Applied once by the cluster provider. Syncs the rest of this directory to the hub. |
 | `addons.yaml` | -1 | Renders the appset-chart on the hub, producing one ApplicationSet per enabled addon. |
 | `fleet-secrets.yaml` | 1 | Creates a fleet-secret Application per member cluster, generating cluster secrets with `enable_*` labels. |
-| `clusters.yaml` | 1 | Deploys the `platform-cluster` Helm chart to provision fleet member clusters via Crossplane/KRO. |
+| `clusters.yaml` | 5 | Deploys the `platform-cluster` Helm chart to provision fleet member clusters via Crossplane/KRO. |
 
 ## Bootstrap Sequence
 
@@ -18,7 +18,7 @@ This directory makes the hub cluster self-managing. Once ArgoCD is running on th
 3. ArgoCD applies the remaining three ApplicationSets in sync-wave order:
    - Wave -1: `addons.yaml` -- installs the addon pipeline on the hub.
    - Wave 1: `fleet-secrets.yaml` -- generates cluster secrets for each fleet member.
-   - Wave 1: `clusters.yaml` -- provisions fleet member infrastructure.
+   - Wave 5: `clusters.yaml` -- provisions fleet member infrastructure.
 
 ## How root-appset.yaml Works
 
