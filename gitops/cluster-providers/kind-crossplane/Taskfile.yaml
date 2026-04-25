@@ -198,15 +198,45 @@ tasks:
           {{.MNG_SETS}}
           | kubectl apply -f -
       - kubectl apply -f claims/argocd-capability-role.yaml
-      - kubectl apply -f claims/provider-iam-roles.yaml
-      - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|REGION|{{.AWS_REGION}}|g" claims/provider-pod-identities.yaml | kubectl apply -f -
-      - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
-          --set aws.region={{.AWS_REGION}}
-          --set aws.clusterName={{.HUB_CLUSTER_NAME}}
-          --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set identities.lbc.enabled=false
-          --set identities.external-dns.enabled=false
-          | kubectl apply -f -
+      - cmd: |
+          echo "Creating IAM provider role and pod identity..."
+          aws iam create-role --role-name CrossplaneIAMProviderRole \
+            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}' \
+            --tags Key=managed-by,Value=crossplane Key=purpose,Value=iam-provider \
+            --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          aws iam attach-role-policy --role-name CrossplaneIAMProviderRole \
+            --policy-arn arn:aws:iam::aws:policy/AdministratorAccess 2>/dev/null || true
+          aws eks create-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} \
+            --namespace crossplane-system --service-account provider-aws-iam \
+            --role-arn arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/CrossplaneIAMProviderRole \
+            --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          echo "Creating EKS provider role and pod identity..."
+          aws iam create-role --role-name CrossplaneEKSProviderRole \
+            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}' \
+            --tags Key=managed-by,Value=crossplane Key=purpose,Value=eks-provider \
+            --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          aws iam attach-role-policy --role-name CrossplaneEKSProviderRole \
+            --policy-arn arn:aws:iam::aws:policy/AdministratorAccess 2>/dev/null || true
+          aws eks create-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} \
+            --namespace crossplane-system --service-account provider-aws-eks \
+            --role-arn arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/CrossplaneEKSProviderRole \
+            --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          echo "Creating ESO pod identity..."
+          aws iam create-role --role-name ESOPodIdentityRole \
+            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}' \
+            --tags Key=managed-by,Value=crossplane Key=purpose,Value=eso-pod-identity \
+            --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          ESO_POLICY_ARN=$(aws iam create-policy --policy-name ESOSecretsManagerPolicy \
+            --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["secretsmanager:GetSecretValue","secretsmanager:ListSecrets","secretsmanager:CreateSecret","secretsmanager:PutSecretValue","secretsmanager:DescribeSecret","secretsmanager:TagResource"],"Resource":"*"}]}' \
+            --query 'Policy.Arn' --output text --region {{.AWS_REGION}} 2>/dev/null || \
+            aws iam list-policies --query 'Policies[?PolicyName==`ESOSecretsManagerPolicy`].Arn' --output text 2>/dev/null)
+          aws iam attach-role-policy --role-name ESOPodIdentityRole \
+            --policy-arn "$ESO_POLICY_ARN" 2>/dev/null || true
+          aws eks create-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} \
+            --namespace external-secrets --service-account external-secrets-sa \
+            --role-arn arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/ESOPodIdentityRole \
+            --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          echo "Bootstrap pod identities created."
 
   hub:seed:
     vars:
@@ -516,11 +546,21 @@ tasks:
           | kubectl delete --ignore-not-found -f -
       - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=600s 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
-      # Safety net: delete any orphaned pod identity associations via AWS CLI
+      # Safety net: delete any orphaned pod identity associations and IAM roles via AWS CLI
       - cmd: |
           for ASSOC_ID in $(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'associations[].associationId' --output text 2>/dev/null); do
             echo "Deleting orphaned pod identity association $ASSOC_ID..."
             aws eks delete-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --association-id $ASSOC_ID --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          done
+          for ROLE in CrossplaneIAMProviderRole CrossplaneEKSProviderRole CrossplaneEC2ProviderRole ESOPodIdentityRole LBCPodIdentityRole ExternalDNSPodIdentityRole; do
+            for POLICY_ARN in $(aws iam list-attached-role-policies --role-name $ROLE --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
+              aws iam detach-role-policy --role-name $ROLE --policy-arn $POLICY_ARN 2>/dev/null || true
+            done
+            aws iam delete-role --role-name $ROLE 2>/dev/null || true
+          done
+          for POLICY in ESOSecretsManagerPolicy LBCControllerPolicy ExternalDNSRoute53Policy; do
+            POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName==\`$POLICY\`].Arn" --output text 2>/dev/null)
+            [ -n "$POLICY_ARN" ] && aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null || true
           done
       # Phase 5: Delete EKS cluster + VPC (composition cascades all networking + IAM)
       - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
