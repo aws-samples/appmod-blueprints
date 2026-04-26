@@ -144,8 +144,11 @@ tasks:
           --set functions.celFilter.version=v0.2.0
           --set providers.family.version=v2.5.3
           --set providers.iam.version=v2.5.3
+          --set providers.iam.createIdentity=false
           --set providers.eks.version=v2.5.3
+          --set providers.eks.createIdentity=false
           --set providers.ec2.version=v2.5.3
+          --set providers.ec2.createIdentity=false
           | kubectl apply -f -
       - kubectl wait --for=condition=Healthy --timeout=300s providers.pkg.crossplane.io --all
       - kubectl wait --for=condition=Healthy --timeout=300s functions.pkg.crossplane.io --all
