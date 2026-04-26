@@ -240,12 +240,6 @@ tasks:
       - task: hub:install-eso
       - task: hub:cluster-secret-store
       - task: hub:seed-secret
-      - echo "Cleaning up bootstrap pod identity associations for hub handover..."
-      - cmd: |
-          for ASSOC_ID in $(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'associations[].associationId' --output text 2>/dev/null); do
-            echo "Deleting bootstrap association $ASSOC_ID..."
-            aws eks delete-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --association-id $ASSOC_ID --region {{.AWS_REGION}} --output text 2>/dev/null || true
-          done
       - task: hub:apply-root-appset
 
   hub:install-eso:
