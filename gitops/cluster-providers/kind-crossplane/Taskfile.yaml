@@ -637,29 +637,45 @@ tasks:
       # 4. Delete cluster-addons Application (no cascade)
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application cluster-addons -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>/dev/null || true
-      # 5. Delete addon ApplicationSets in reverse sync-wave order (cascade to Apps + resources)
+      # 5. Delete non-Crossplane addon ApplicationSets in reverse sync-wave order
       - cmd: |
-          if [ "{{.ITEM}}" = "argocd" ]; then
-            echo "Skipping argocd (must survive teardown)"
+          if [ "{{.ITEM}}" = "argocd" ] || [ "{{.ITEM}}" = "crossplane" ] || [ "{{.ITEM}}" = "crossplane-base" ] || [ "{{.ITEM}}" = "crossplane-pod-identity" ] || [ "{{.ITEM}}" = "crossplane-aws" ]; then
+            echo "Skipping {{.ITEM}} (Crossplane stack — deleted after clusters)"
           elif KUBECONFIG=/tmp/hub-kubeconfig kubectl get applicationset {{.ITEM}} -n argocd 2>/dev/null; then
             echo "Deleting {{.ITEM}}..."
             KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
             sleep 3
             KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset {{.ITEM}} -n argocd --timeout=180s 2>/dev/null || true
-            # Wait for all child Applications to be fully deleted before moving on
             KUBECONFIG=/tmp/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName={{.ITEM}} --timeout=600s 2>/dev/null || true
           fi
         for:
           var: ADDONS
-      - echo "Deleting fleet-secret..."
-      - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset fleet-secrets -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
-      - sleep 3
-      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true
+      # 6. Delete clusters (spoke + hub claims cleaned up before Crossplane providers are removed)
       - echo "Deleting clusters..."
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset clusters -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
       - sleep 3
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset clusters -n argocd --timeout=60s 2>/dev/null || true
-      - echo "Cleaning up remaining applications..."
+      - cmd: |
+          KUBECONFIG=/tmp/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l app.kubernetes.io/instance=clusters --timeout=600s 2>/dev/null || \
+          (KUBECONFIG=/tmp/hub-kubeconfig kubectl patch application clusters -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+           KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application clusters -n argocd --wait=false 2>/dev/null) || true
+      # 7. Delete Crossplane stack in reverse wave order (providers still alive for cluster cleanup)
+      - cmd: |
+          for ADDON in crossplane-aws crossplane-pod-identity crossplane-base crossplane; do
+            if KUBECONFIG=/tmp/hub-kubeconfig kubectl get applicationset $ADDON -n argocd 2>/dev/null; then
+              echo "Deleting $ADDON..."
+              KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+              sleep 3
+              KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset $ADDON -n argocd --timeout=180s 2>/dev/null || true
+              KUBECONFIG=/tmp/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName=$ADDON --timeout=600s 2>/dev/null || true
+            fi
+          done
+      # 8. Delete fleet-secrets
+      - echo "Deleting fleet-secrets..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset fleet-secrets -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+      - sleep 3
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true
+      # 9. Cleanup remaining applications
       - cmd: |
           for app in $(KUBECONFIG=/tmp/hub-kubeconfig kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
             echo "Deleting leftover app $app..."
