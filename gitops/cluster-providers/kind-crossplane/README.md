@@ -34,9 +34,9 @@ task install
   4. argocd:install     Helm install ArgoCD (version from addons/registry/core.yaml)
   5. crossplane:setup
      a. crossplane:helm           Install Crossplane (version from addons/registry/platform.yaml)
-     b. crossplane:providers      Apply AWS providers, wait for Healthy
-     c. crossplane:provider-config Apply bootstrap ProviderConfig
-     d. crossplane:claims         Apply XRD/Composition + all claims (see below)
+     b. crossplane:providers      Render crossplane-base chart (providers + functions only, no ProviderConfig)
+     c. crossplane:provider-config Apply bootstrap ProviderConfig (aws-credentials secret)
+     d. crossplane:claims         Apply XRD/Composition, PlatformCluster claim, pod identities (see below)
   6. hub:seed
      a. Wait for EKS cluster, IAM roles, and pod identities to become Ready
      b. argocd:capability         Create EKS ArgoCD Capability via Job
@@ -48,22 +48,41 @@ task install
      h. hub:apply-root-appset     Apply bootstrap/root-appset.yaml -- hub is now self-managing
 ```
 
-After step 6g, the hub's ArgoCD syncs `bootstrap/` and takes over. Run `task destroy-kind` to remove the ephemeral Kind cluster.
+After step 6h, the hub's ArgoCD syncs `bootstrap/` and takes over. Run `task destroy-kind` to remove the ephemeral Kind cluster.
 
-## Crossplane Claims
+## Crossplane Bootstrap and Hub Handover
 
-All claims live in `claims/` and are applied to the Kind cluster during bootstrap. They create AWS resources that persist after Kind is deleted.
+### What bootstrap creates
 
-| Claim | Kind | What it creates |
-|-------|------|-----------------|
-| `hub-cluster.yaml` | PlatformCluster | VPC + subnets + IGW + NAT + EKS Auto Mode cluster (uses the shared XRD/Composition from `abstractions/`) |
-| `argocd-capability-role.yaml` | Role | IAM role for the EKS ArgoCD Capability (trusted by `capabilities.eks.amazonaws.com`) |
-| `eso-pod-identity-role.yaml` | Role + Policy + RolePolicyAttachment | IAM role with SecretsManager read/write access, for External Secrets Operator |
-| `eso-pod-identity.yaml` | PodIdentityAssociation | Binds the ESO role to the `external-secrets-sa` service account in the hub |
-| `crossplane-pod-identity-role.yaml` | Role + RolePolicyAttachment | IAM role with AdministratorAccess, for Crossplane on the hub |
-| `crossplane-pod-identity.yaml` | PodIdentityAssociation | Binds the Crossplane role to the `provider-aws` service account in the hub |
-| `lbc-pod-identity-role.yaml` | Role + Policy + RolePolicyAttachment | IAM role with ELB/EC2/WAF/Shield/ACM permissions, for AWS Load Balancer Controller |
-| `lbc-pod-identity.yaml` | PodIdentityAssociation | Binds the LBC role to the `aws-load-balancer-controller-sa` service account in the hub |
+The bootstrap uses the same Helm charts that run on the hub, ensuring consistent resource naming:
+
+| Chart | Bootstrap flags | What it creates |
+|-------|----------------|-----------------|
+| `crossplane-base` | `providerConfig.enabled=false`, only iam+eks+ec2+family versions set | SAs, DRCs, functions, family+iam+eks+ec2 providers, IAM+EKS roles + pod identities |
+| `crossplane-pod-identity` | `identities.lbc.enabled=false`, `identities.external-dns.enabled=false` | ESO IAM role + policy + pod identity only |
+
+### What the hub manages (after ArgoCD takes over)
+
+| Chart | Registry flags | What it creates | What it skips |
+|-------|---------------|-----------------|---------------|
+| `crossplane-base` | `providers.iam.createIdentity=false`, `providers.eks.createIdentity=false` | ProviderConfig, SAs, DRCs, all providers, ec2 role + pod identity | IAM+EKS roles + pod identities (bootstrap-managed) |
+| `crossplane-pod-identity` | `identities.eso.enabled=false` | LBC + external-dns roles + policies + pod identities | ESO role + policy + pod identity (bootstrap-managed) |
+
+### Why this split exists
+
+PodIdentityAssociations use an opaque AWS-generated association ID as their external identifier. Crossplane can only adopt existing resources via `crossplane.io/external-name`, but the association ID is unknown until creation. When Kind is deleted, the Crossplane managed resources are lost but the AWS associations persist. If the hub tries to create new associations for the same (cluster, namespace, serviceAccount) combo, AWS returns 409 ResourceInUseException.
+
+IAM Roles don't have this problem — they use human-readable names as external identifiers and are adopted cleanly via `crossplane.io/external-name`.
+
+The solution: bootstrap-created pod identities (IAM, EKS, ESO) are permanent infrastructure. The hub's ArgoCD never attempts to recreate them.
+
+## Claims
+
+The `claims/` directory contains Crossplane resources applied directly to Kind during bootstrap:
+
+| Claim | What it creates |
+|-------|-----------------|
+| `argocd-capability-role.yaml` | IAM role for the EKS ArgoCD Capability (trusted by `capabilities.eks.amazonaws.com`) |
 
 ## How hub:update Works
 
