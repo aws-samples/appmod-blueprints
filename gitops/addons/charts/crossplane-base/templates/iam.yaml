@@ -1,6 +1,5 @@
-{{- if not (eq (toString .Values.createIdentities) "false") }}
 {{- range $name, $provider := .Values.providers }}
-{{- if and $provider.version $provider.serviceAccount $provider.roleName }}
+{{- if and $provider.version $provider.serviceAccount $provider.roleName (not (eq (toString $provider.createIdentity) "false")) }}
 ---
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: Role
@@ -31,7 +30,7 @@ spec:
 {{- end }}
 {{- end }}
 {{- range $name, $provider := .Values.providers }}
-{{- if and $provider.version $provider.serviceAccount $provider.roleName }}
+{{- if and $provider.version $provider.serviceAccount $provider.roleName (not (eq (toString $provider.createIdentity) "false")) }}
 ---
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: RolePolicyAttachment
@@ -50,7 +49,7 @@ spec:
 {{- end }}
 {{- end }}
 {{- range $name, $provider := .Values.providers }}
-{{- if and $provider.version $provider.serviceAccount $provider.roleName }}
+{{- if and $provider.version $provider.serviceAccount $provider.roleName (not (eq (toString $provider.createIdentity) "false")) }}
 ---
 apiVersion: eks.aws.upbound.io/v1beta1
 kind: PodIdentityAssociation
@@ -70,6 +69,5 @@ spec:
     region: {{ $.Values.aws.region }}
   providerConfigRef:
     name: default
-{{- end }}
 {{- end }}
 {{- end }}

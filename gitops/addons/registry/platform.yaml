@@ -51,10 +51,12 @@ crossplane-base:
         version: "v2.5.3"
       iam:
         version: "v2.5.3"
+        createIdentity: false
       ec2:
         version: "v2.5.3"
       eks:
         version: "v2.5.3"
+        createIdentity: false
   ignoreDifferences:
     - group: pkg.crossplane.io
       kind: Provider
@@ -96,6 +98,9 @@ crossplane-pod-identity:
       region: '{{.metadata.annotations.aws_region}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
+    identities:
+      eso:
+        enabled: false
   ignoreDifferences:
     - group: iam.aws.upbound.io
       kind: Role

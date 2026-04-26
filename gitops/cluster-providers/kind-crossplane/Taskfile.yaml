@@ -136,7 +136,6 @@ tasks:
       - kubectl apply -f manifests/crossplane/drc-stub.yaml
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
-          --set createIdentities=false
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
@@ -200,7 +199,6 @@ tasks:
       - kubectl apply -f claims/argocd-capability-role.yaml
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
-          --set createIdentities=true
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
