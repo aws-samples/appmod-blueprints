@@ -64,24 +64,51 @@ tasks:
     cmds:
       - kubectl create namespace crossplane-system --dry-run=client -o yaml | kubectl apply -f -
       - |
+        set -e
         TOKEN=$(curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)
         if [ -n "$TOKEN" ]; then
           echo "Detected EC2 — using instance profile"
           ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
           CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
-          echo "[default]" > /tmp/aws-creds.ini
-          echo "aws_access_key_id = $(echo $CREDS | jq -r .AccessKeyId)" >> /tmp/aws-creds.ini
-          echo "aws_secret_access_key = $(echo $CREDS | jq -r .SecretAccessKey)" >> /tmp/aws-creds.ini
-          echo "aws_session_token = $(echo $CREDS | jq -r .Token)" >> /tmp/aws-creds.ini
+          AKI=$(echo "$CREDS" | jq -r .AccessKeyId)
+          SAK=$(echo "$CREDS" | jq -r .SecretAccessKey)
+          ST=$(echo  "$CREDS" | jq -r .Token)
         else
-          echo "Using local AWS profile"
-          AWS_PROFILE=$(yq '.aws.profile // "default"' {{.GITOPS_ROOT}}/config.yaml)
-          echo "[default]" > /tmp/aws-creds.ini
-          echo "aws_access_key_id = $(aws configure get aws_access_key_id --profile $AWS_PROFILE)" >> /tmp/aws-creds.ini
-          echo "aws_secret_access_key = $(aws configure get aws_secret_access_key --profile $AWS_PROFILE)" >> /tmp/aws-creds.ini
-          ST=$(aws configure get aws_session_token --profile $AWS_PROFILE 2>/dev/null || true)
-          if [ -n "$ST" ]; then echo "aws_session_token = $ST" >> /tmp/aws-creds.ini; fi
+          # Resolve credentials via the full AWS credential provider chain
+          # (env vars, SSO, assume-role, credential_process, static profile).
+          # `aws configure get` only reads static keys from ~/.aws/credentials
+          # and silently returns empty for SSO / Isengard / assumed-role sessions,
+          # producing an empty secret and silent reconcile failures.
+          AWS_PROFILE_NAME=$(yq '.aws.profile // "default"' {{.GITOPS_ROOT}}/config.yaml)
+          echo "Resolving AWS credentials via credential provider chain (profile: $AWS_PROFILE_NAME)"
+          if ! EXPORTED=$(aws configure export-credentials --profile "$AWS_PROFILE_NAME" --format env-no-export 2>&1); then
+            echo "ERROR: Unable to resolve AWS credentials for profile '$AWS_PROFILE_NAME'."
+            echo "       Run 'aws sts get-caller-identity --profile $AWS_PROFILE_NAME' to verify."
+            echo "       If using Isengard / SSO, refresh your session first"
+            echo "       (isengardcli, ada, aws sso login, etc.)."
+            echo "       CLI output: $EXPORTED"
+            exit 1
+          fi
+          AKI=$(echo "$EXPORTED" | sed -n 's/^AWS_ACCESS_KEY_ID=//p')
+          SAK=$(echo "$EXPORTED" | sed -n 's/^AWS_SECRET_ACCESS_KEY=//p')
+          ST=$(echo  "$EXPORTED" | sed -n 's/^AWS_SESSION_TOKEN=//p')
         fi
+        if [ -z "$AKI" ] || [ -z "$SAK" ]; then
+          echo "ERROR: Resolved credentials are empty (access key or secret missing)."
+          echo "       Refusing to write an empty aws-credentials secret."
+          exit 1
+        fi
+        # Create the file with 0600 up front so creds are never world-readable,
+        # even briefly. (Task's embedded shell doesn't support `umask` as a
+        # builtin, so we set the mode explicitly.)
+        rm -f /tmp/aws-creds.ini
+        install -m 600 /dev/null /tmp/aws-creds.ini
+        {
+          echo "[default]"
+          echo "aws_access_key_id = $AKI"
+          echo "aws_secret_access_key = $SAK"
+          [ -n "$ST" ] && echo "aws_session_token = $ST"
+        } > /tmp/aws-creds.ini
       - kubectl -n crossplane-system create secret generic aws-credentials
           --from-file=credentials=/tmp/aws-creds.ini
           --dry-run=client -o yaml | kubectl apply -f -
