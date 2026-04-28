@@ -58,15 +58,18 @@ The bootstrap uses the same Helm charts that run on the hub, ensuring consistent
 
 | Chart | Bootstrap flags | What it creates |
 |-------|----------------|-----------------|
-| `crossplane-base` | `providerConfig.enabled=false`, only iam+eks+ec2+family versions set | SAs, DRCs, functions, family+iam+eks+ec2 providers, IAM+EKS roles + pod identities |
-| `crossplane-pod-identity` | `identities.lbc.enabled=false`, `identities.external-dns.enabled=false` | ESO IAM role + policy + pod identity only |
+| `crossplane-base` | `providerConfig.enabled=false`, only iam+eks+ec2+family versions set, `createIdentity=false` for all | SAs, DRCs, functions, family+iam+eks+ec2 providers (no pod identities in this step) |
+| `crossplane-base` (claims step) | iam+eks+ec2 with `createIdentity=true` (default) | IAM+EKS+EC2 roles + pod identities |
+| `crossplane-pod-identity` | `identities.eso.enabled=true` | ESO IAM role + policy + pod identity only |
 
 ### What the hub manages (after ArgoCD takes over)
 
 | Chart | Registry flags | What it creates | What it skips |
 |-------|---------------|-----------------|---------------|
-| `crossplane-base` | `providers.iam.createIdentity=false`, `providers.eks.createIdentity=false` | ProviderConfig, SAs, DRCs, all providers, ec2 role + pod identity | IAM+EKS roles + pod identities (bootstrap-managed) |
-| `crossplane-pod-identity` | `identities.eso.enabled=false` | LBC + external-dns roles + policies + pod identities | ESO role + policy + pod identity (bootstrap-managed) |
+| `crossplane-base` | `createIdentity=false` for iam, eks, ec2 | ProviderConfig, SAs, DRCs, all providers | IAM+EKS+EC2 roles + pod identities (bootstrap-managed) |
+| `aws-load-balancer-controller` | `additionalResources` → crossplane-pod-identity with `identities.lbc.enabled=true` | LBC role + policy + pod identity (wave -3 to -1), then LBC controller (wave 0) | — |
+| `external-dns` | `additionalResources` → crossplane-pod-identity with `identities.external-dns.enabled=true` | external-dns role + policy + pod identity (wave -3 to -1), then external-dns controller (wave 0) | — |
+| ESO pod identity | Not referenced by any hub addon | — | ESO role + policy + pod identity (bootstrap-permanent) |
 
 ### Why this split exists
 
@@ -118,9 +121,8 @@ The `ingress-class-alb` chart supports both modes via the `controllerMode` value
 The mode is controlled by the `alb_controller_mode` annotation on the ArgoCD cluster secret, set via `secrets-manager:seed`.
 
 When using `oss` mode, the provider must also:
-1. Create the LBC IAM role + policy via Crossplane claims (`lbc-pod-identity-role.yaml`, `lbc-pod-identity.yaml`)
-2. Set `enable_aws_load_balancer_controller: true` in `enabled-addons.yaml`
-3. Include `aws_vpc_id` and `alb_controller_mode: oss` in the Secrets Manager seed metadata
+1. Set `enable_aws_load_balancer_controller: true` in `enabled-addons.yaml` (LBC pod identity is created automatically via `additionalResources`)
+2. Include `aws_vpc_id` and `alb_controller_mode: oss` in the Secrets Manager seed metadata
 4. Create the `aws-load-balancer-controller-sa` service account in `kube-system` on the hub
 5. Add `alb.ingress.kubernetes.io/target-type: ip` to ingresses using ClusterIP services
 
