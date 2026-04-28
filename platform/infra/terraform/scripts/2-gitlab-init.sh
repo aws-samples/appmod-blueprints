@@ -132,9 +132,10 @@ set_gitlab_remote_for_peeks() {
   # Create main branch from current HEAD (already on correct tag from clone)
   # No fetch needed — 0-init.sh already set up the remotes
   git checkout -B main
+  git push -u origin main
   
   popd
-  echo "GitLab remote set for ~/environment/$WORKING_REPO - switched to main branch"
+  echo "GitLab remote set for ~/environment/$WORKING_REPO - pushed to GitLab"
 }
 
 # Main execution

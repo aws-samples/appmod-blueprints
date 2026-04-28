@@ -388,8 +388,6 @@ APPPROJ
     GITLAB_URL="https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
     
     # Preserve GitHub as 'github' remote if origin points to GitHub
-    # Use --no-tags to avoid fetching all GitHub refs (dependabot branches
-    # have long names that fail on NFS-backed filesystems)
     if git remote get-url origin 2>/dev/null | grep -q "github.com"; then
         if ! git remote get-url github >/dev/null 2>&1; then
             git remote rename origin github
