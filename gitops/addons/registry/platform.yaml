@@ -54,6 +54,7 @@ crossplane-base:
         createIdentity: false
       ec2:
         version: "v2.5.3"
+        createIdentity: false
       eks:
         version: "v2.5.3"
         createIdentity: false
