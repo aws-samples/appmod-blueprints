@@ -5,6 +5,7 @@ aws:
 
 identities:
   eso:
+    enabled: false
     roleName: ESOPodIdentityRole
     namespace: external-secrets
     serviceAccount: external-secrets-sa
@@ -33,6 +34,7 @@ identities:
         }
 
   lbc:
+    enabled: false
     roleName: LBCPodIdentityRole
     namespace: kube-system
     serviceAccount: aws-load-balancer-controller-sa
@@ -279,6 +281,7 @@ identities:
         }
 
   external-dns:
+    enabled: false
     roleName: ExternalDNSPodIdentityRole
     namespace: kube-system
     serviceAccount: external-dns-sa

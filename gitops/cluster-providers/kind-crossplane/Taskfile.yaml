@@ -239,8 +239,7 @@ tasks:
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set identities.lbc.enabled=false
-          --set identities.external-dns.enabled=false
+          --set identities.eso.enabled=true
           | kubectl apply -f -
 
   hub:seed:
@@ -530,6 +529,9 @@ tasks:
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
+          --set identities.eso.enabled=true
+          --set identities.lbc.enabled=true
+          --set identities.external-dns.enabled=true
           | kubectl delete --ignore-not-found -f -
       - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role --timeout=600s 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=delete rolepolicyattachments.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
@@ -670,7 +672,7 @@ tasks:
       - KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>/dev/null || true
       # 5. Delete non-Crossplane addon ApplicationSets in reverse sync-wave order
       - cmd: |
-          if [ "{{.ITEM}}" = "argocd" ] || [ "{{.ITEM}}" = "crossplane" ] || [ "{{.ITEM}}" = "crossplane-base" ] || [ "{{.ITEM}}" = "crossplane-pod-identity" ] || [ "{{.ITEM}}" = "crossplane-aws" ]; then
+          if [ "{{.ITEM}}" = "argocd" ] || [ "{{.ITEM}}" = "crossplane" ] || [ "{{.ITEM}}" = "crossplane-base" ] || [ "{{.ITEM}}" = "crossplane-aws" ]; then
             echo "Skipping {{.ITEM}} (Crossplane stack — deleted after clusters)"
           elif KUBECONFIG=/tmp/hub-kubeconfig kubectl get applicationset {{.ITEM}} -n argocd 2>/dev/null; then
             echo "Deleting {{.ITEM}}..."
@@ -692,7 +694,7 @@ tasks:
            KUBECONFIG=/tmp/hub-kubeconfig kubectl delete application clusters -n argocd --wait=false 2>/dev/null) || true
       # 7. Delete Crossplane stack in reverse wave order (providers still alive for cluster cleanup)
       - cmd: |
-          for ADDON in crossplane-aws crossplane-pod-identity crossplane-base crossplane; do
+          for ADDON in crossplane-aws crossplane-base crossplane; do
             if KUBECONFIG=/tmp/hub-kubeconfig kubectl get applicationset $ADDON -n argocd 2>/dev/null; then
               echo "Deleting $ADDON..."
               KUBECONFIG=/tmp/hub-kubeconfig kubectl patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true

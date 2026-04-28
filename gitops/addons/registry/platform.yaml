@@ -84,42 +84,6 @@ crossplane-base:
       jsonPointers:
         - /status
 
-crossplane-pod-identity:
-  namespace: crossplane-system
-  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
-  annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '4'
-  selector:
-    matchExpressions:
-      - key: enable_crossplane
-        operator: In
-        values: ['true']
-  valuesObject:
-    aws:
-      region: '{{.metadata.annotations.aws_region}}'
-      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
-      accountId: '{{.metadata.annotations.aws_account_id}}'
-    identities:
-      eso:
-        enabled: false
-  ignoreDifferences:
-    - group: iam.aws.upbound.io
-      kind: Role
-      jsonPointers:
-        - /status
-    - group: iam.aws.upbound.io
-      kind: Policy
-      jsonPointers:
-        - /status
-    - group: iam.aws.upbound.io
-      kind: RolePolicyAttachment
-      jsonPointers:
-        - /status
-    - group: eks.aws.upbound.io
-      kind: PodIdentityAssociation
-      jsonPointers:
-        - /status
-
 backstage:
   namespace: backstage
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/backstage'
