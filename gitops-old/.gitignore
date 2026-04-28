@@ -1,0 +1,18 @@
+# Sensitive files — never commit
+private/
+*.kubeconfig
+kubeconfig
+
+# Helm dependency artifacts
+charts/*/charts/
+addons/charts/*/charts/
+
+# Local overrides
+*.local.yaml
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.playwright-mcp
+.beads

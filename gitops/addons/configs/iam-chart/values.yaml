@@ -1,0 +1,21 @@
+# Activating cross-account feature only for control-plane
+featureGates:
+  ServiceLevelCARM: true
+  TeamLevelCARM: true
+
+deployment:
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+reconcile:
+  defaultResyncPeriod: 1800

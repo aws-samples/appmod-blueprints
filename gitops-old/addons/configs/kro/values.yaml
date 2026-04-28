@@ -1,0 +1,13 @@
+# values for the addon
+deployment:  
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+  nodeSelector:
+    eks.amazonaws.com/compute-type: auto
+    kubernetes.io/os: linux
+    karpenter.sh/nodepool: system
+
+#image:
+#  repository: public.ecr.aws/seb-demo/kro
+#  tag: v0.5.0

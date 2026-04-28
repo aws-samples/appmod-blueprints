@@ -1,0 +1,190 @@
+# BYOC (Bring Your Own Cluster) provider
+# Assumes an EKS cluster with ArgoCD already exists.
+# Handles: ESO install, ClusterSecretStore, Secrets Manager seed, seed secret, root-appset.
+version: "3"
+set: [errexit, nounset, pipefail]
+
+vars:
+  GITOPS_ROOT: "{{.ROOT_DIR}}"
+  CONFIG_FILE: "{{.ROOT_DIR}}/config.yaml"
+  REQUIRED_CLIS: [kubectl, helm, yq, aws]
+  AWS_REGION:
+    sh: yq '.aws.region' {{.ROOT_DIR}}/config.yaml
+  HUB_CLUSTER_NAME:
+    sh: yq '.hub.clusterName' {{.ROOT_DIR}}/config.yaml
+
+tasks:
+  validate:
+    desc: Pre-flight checks for byoc provider
+    cmds:
+      - echo "Checking required CLIs..."
+      - cmd: command -v {{.ITEM}} >/dev/null 2>&1 || { echo "Missing required CLI {{.ITEM}}"; exit 1; }
+        for:
+          var: REQUIRED_CLIS
+      - echo "Checking config.yaml..."
+      - test -f {{.GITOPS_ROOT}}/config.yaml || { echo "config.yaml not found"; exit 1; }
+      - yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "hub.clusterName not set in config.yaml"; exit 1; }
+      - yq '.aws.region' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "aws.region not set in config.yaml"; exit 1; }
+      - yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "aws.accountId not set in config.yaml"; exit 1; }
+      - yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "repo.url not set in config.yaml"; exit 1; }
+      - echo "Checking AWS credentials..."
+      - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
+      - echo "Checking cluster connectivity..."
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl cluster-info >/dev/null || { echo "Cannot connect to cluster {{.HUB_CLUSTER_NAME}}"; exit 1; }
+      - echo "Checking ArgoCD is available..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl -n argocd get applicationsets >/dev/null 2>&1 || { echo "ArgoCD not available on cluster (checked for ApplicationSet CRD)"; exit 1; }
+      - echo "All pre-flight checks passed."
+
+  install:
+    desc: Bootstrap the platform on an existing EKS cluster with ArgoCD
+    cmds:
+      - task: validate
+      - task: secrets-manager:seed
+      - task: hub:install-eso
+      - task: hub:cluster-secret-store
+      - task: hub:seed-secret
+      - task: hub:apply-root-appset
+      - echo "Bootstrap complete. Run 'task status'."
+
+  secrets-manager:seed:
+    desc: Seed hub cluster config into AWS Secrets Manager for ExternalSecrets
+    vars:
+      AWS_ACCOUNT_ID:
+        sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
+      REPO_URL:
+        sh: yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml
+      REPO_REVISION:
+        sh: yq '.repo.revision' {{.GITOPS_ROOT}}/config.yaml
+      REPO_BASEPATH:
+        sh: yq '.repo.basepath' {{.GITOPS_ROOT}}/config.yaml
+      DOMAIN:
+        sh: yq '.domain' {{.GITOPS_ROOT}}/config.yaml
+      RESOURCE_PREFIX:
+        sh: yq '.resourcePrefix' {{.GITOPS_ROOT}}/config.yaml
+    cmds:
+      - |
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        SECRET_VALUE=$(jq -n \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","ingress_domain_name":"{{.DOMAIN}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg config '{"tlsClientConfig":{"insecure":false}}' \
+          --arg server 'https://kubernetes.default.svc' \
+          --arg addons '' \
+          '{metadata: $metadata, config: $config, server: $server, addons: $addons}')
+        aws secretsmanager create-secret \
+          --name "$SECRET_KEY" \
+          --secret-string "$SECRET_VALUE" \
+          --region {{.AWS_REGION}} 2>/dev/null \
+        || aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" \
+          --secret-string "$SECRET_VALUE" \
+          --region {{.AWS_REGION}}
+        echo "Seeded Secrets Manager: $SECRET_KEY"
+
+  hub:install-eso:
+    desc: Install External Secrets Operator on the hub cluster
+    vars:
+      ESO_VERSION:
+        sh: yq '.external-secrets.defaultVersion' {{.GITOPS_ROOT}}/addons/registry/core.yaml
+    status:
+      - KUBECONFIG=/tmp/hub-kubeconfig helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - KUBECONFIG=/tmp/hub-kubeconfig helm repo add external-secrets https://charts.external-secrets.io --force-update
+      - KUBECONFIG=/tmp/hub-kubeconfig helm upgrade --install external-secrets external-secrets/external-secrets
+          --namespace external-secrets --create-namespace
+          --version {{.ESO_VERSION}}
+          --set serviceAccount.name=external-secrets-sa
+          --wait --timeout 5m
+      - echo "External Secrets Operator installed on hub"
+
+  hub:cluster-secret-store:
+    desc: Apply ClusterSecretStore for AWS Secrets Manager on the hub cluster
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - |
+        cat <<'EOF' | sed "s|AWS_REGION|{{.AWS_REGION}}|g" | KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f -
+        apiVersion: external-secrets.io/v1
+        kind: ClusterSecretStore
+        metadata:
+          name: aws-secrets-manager
+        spec:
+          provider:
+            aws:
+              service: SecretsManager
+              region: AWS_REGION
+        EOF
+      - echo "ClusterSecretStore aws-secrets-manager applied on hub"
+
+  hub:seed-secret:
+    desc: Create minimal seed cluster secret on the hub (repo coords + fleet labels only)
+    vars:
+      REPO_URL:
+        sh: yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml
+      REPO_REVISION:
+        sh: yq '.repo.revision' {{.GITOPS_ROOT}}/config.yaml
+      REPO_BASEPATH:
+        sh: yq '.repo.basepath' {{.GITOPS_ROOT}}/config.yaml
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - echo "Creating seed cluster secret on hub..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f -
+      - |
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" | KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        type: Opaque
+        metadata:
+          name: CLUSTER_NAME
+          namespace: argocd
+          annotations:
+            addonsRepoURL: "REPO_URL"
+            addonsRepoRevision: "REPO_REVISION"
+            addonsRepoBasepath: "REPO_BASEPATH"
+            fleetRepoURL: "REPO_URL"
+            fleetRepoRevision: "REPO_REVISION"
+            fleetRepoBasepath: "REPO_BASEPATH"
+          labels:
+            argocd.argoproj.io/secret-type: cluster
+            environment: control-plane
+            fleet_member: control-plane
+        stringData:
+          name: CLUSTER_NAME
+          server: "https://kubernetes.default.svc"
+          config: '{"tlsClientConfig":{"insecure":false}}'
+        EOF
+      - echo "Seed secret created on hub"
+      - rm -f /tmp/hub-kubeconfig
+
+  hub:apply-root-appset:
+    desc: Apply root-appset to the hub cluster
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - echo "Applying root-appset to hub..."
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
+      - rm -f /tmp/hub-kubeconfig
+      - echo "Root appset applied. Hub is now self-managing."
+
+  status:
+    desc: Check bootstrap and addon status
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
+      - echo "=== ArgoCD Applications ==="
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl -n argocd get applications 2>/dev/null || echo "None"
+      - echo "=== ArgoCD ApplicationSets ==="
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl -n argocd get applicationsets 2>/dev/null || echo "None"
+      - echo "=== External Secrets Operator ==="
+      - KUBECONFIG=/tmp/hub-kubeconfig helm status external-secrets -n external-secrets 2>/dev/null || echo "Not installed"
+      - echo "=== ClusterSecretStores ==="
+      - KUBECONFIG=/tmp/hub-kubeconfig kubectl get clustersecretstores 2>/dev/null || echo "None"
+      - rm -f /tmp/hub-kubeconfig
+
+  destroy:
+    desc: Guidance for teardown (user manages their own cluster)
+    cmds:
+      - echo "The byoc provider does not manage cluster lifecycle."
+      - echo "To remove platform components from your cluster:"
+      - echo "  1. Delete ArgoCD Applications and ApplicationSets in the argocd namespace"
+      - echo "  2. Uninstall External Secrets Operator - helm uninstall external-secrets -n external-secrets"
+      - echo "  3. Delete the seed secret - kubectl -n argocd delete secret {{.HUB_CLUSTER_NAME}}"
+      - echo "  4. Clean up AWS Secrets Manager - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --region {{.AWS_REGION}}"

@@ -1,0 +1,66 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eks-capabilities-kro
+rules:
+# Core Kubernetes resources
+- apiGroups: [""]
+  resources: ["services", "configmaps", "secrets", "serviceaccounts"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Batch resources
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# RBAC resources
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Networking resources
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Policy resources
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Argo Workflows
+- apiGroups: ["argoproj.io"]
+  resources: ["workflows", "workflowtemplates", "eventsources", "sensors"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# External Secrets
+- apiGroups: ["external-secrets.io"]
+  resources: ["externalsecrets", "clustersecretstores"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK EC2
+- apiGroups: ["ec2.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK EKS
+- apiGroups: ["eks.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK IAM
+- apiGroups: ["iam.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK ECR
+- apiGroups: ["ecr.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Kro custom resources
+- apiGroups: ["kro.run"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eks-capabilities-kro
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: eks-capabilities-kro
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: capabilities.eks.amazonaws.com
