@@ -7,7 +7,7 @@ metadata:
   name: {{ $name }}-pod-identity-policy
   annotations:
     crossplane.io/external-name: {{ $identity.policy.name }}
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
 spec:
   forProvider:
     policy: |

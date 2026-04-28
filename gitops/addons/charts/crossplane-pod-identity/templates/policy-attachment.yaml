@@ -6,7 +6,7 @@ kind: RolePolicyAttachment
 metadata:
   name: {{ $name }}-pod-identity-attachment
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
     argocd.argoproj.io/sync-wave: "1"
 spec:
   forProvider:

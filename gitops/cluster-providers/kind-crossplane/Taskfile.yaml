@@ -248,6 +248,7 @@ tasks:
       HUB_CLUSTER_NAME:
         sh: yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml
     cmds:
+      - task: credentials:refresh
       - echo "Waiting for hub cluster..."
       - kubectl wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/hub -n crossplane-system 2>/dev/null || true
       - echo "Creating cluster admin access entry for caller..."
