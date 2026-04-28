@@ -1,0 +1,5 @@
+apiVersion: v2
+name: backstage
+description: A Helm chart for Backstage
+type: application
+version: 0.1.0

@@ -1,0 +1,35 @@
+{{- if .Values.functions.patchAndTransform.version }}
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-patch-and-transform
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/function-patch-and-transform:{{ .Values.functions.patchAndTransform.version }}
+{{- end }}
+{{- if .Values.functions.environmentConfigs.version }}
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-environment-configs
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  package: xpkg.upbound.io/crossplane-contrib/function-environment-configs:{{ .Values.functions.environmentConfigs.version }}
+{{- end }}
+{{- if .Values.functions.celFilter.version }}
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-cel-filter
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/function-cel-filter:{{ .Values.functions.celFilter.version }}
+{{- end }}

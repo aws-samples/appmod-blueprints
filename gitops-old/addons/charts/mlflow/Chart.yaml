@@ -1,0 +1,9 @@
+apiVersion: v2
+name: mlflow
+description: A Helm chart for MLFlow with OIDC authentication
+type: application
+version: 0.1.0
+dependencies:
+  - name: mlflow
+    version: '0.7.19'
+    repository: https://community-charts.github.io/helm-charts

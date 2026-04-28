@@ -1,0 +1,123 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources-config
+  namespace: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        url: http://prometheus-server.prometheus.svc.cluster.local:80
+        isDefault: true
+        editable: true
+        jsonData:
+          httpMethod: POST
+          manageAlerts: true
+          prometheusType: Prometheus
+          prometheusVersion: 2.40.0
+          cacheLevel: 'High'
+          disableRecordingRules: false
+          incrementalQueryOverlapWindow: 10m
+          queryTimeout: 60s
+          timeInterval: 30s
+        secureJsonData: {}
+      - name: CloudWatch
+        type: cloudwatch
+        uid: cloudwatch
+        access: proxy
+        jsonData:
+          authType: default
+          defaultRegion: {{ .Values.aws.region | default "us-west-2" }}
+          customMetricsNamespaces: 'AWS/EKS,AWS/ApplicationELB,AWS/NetworkELB,AWS/RDS,AWS/Lambda'
+          assumeRoleArn: ''
+        editable: true
+        secureJsonData: {}
+      - name: X-Ray
+        type: grafana-x-ray-datasource
+        uid: xray
+        access: proxy
+        jsonData:
+          authType: default
+          defaultRegion: {{ .Values.aws.region | default "us-west-2" }}
+          assumeRoleArn: ''
+        editable: true
+        secureJsonData: {}
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki-gateway.loki.svc.cluster.local:80
+        editable: true
+        jsonData:
+          maxLines: 1000
+          derivedFields:
+            - datasourceUid: 'xray'
+              matcherRegex: 'traceID=(\w+)'
+              name: 'TraceID'
+              url: '$${__value.raw}'
+        secureJsonData: {}
+      - name: Jaeger
+        type: jaeger
+        uid: jaeger
+        access: proxy
+        url: http://jaeger-query.jaeger.svc.cluster.local:16686
+        editable: true
+        jsonData:
+          tracesToLogs:
+            datasourceUid: 'loki'
+            tags: ['job', 'instance', 'pod', 'namespace']
+            mappedTags: [
+              { key: 'service.name', value: 'service' },
+              { key: 'service.namespace', value: 'namespace' }
+            ]
+            mapTagNamesEnabled: false
+            spanStartTimeShift: '1h'
+            spanEndTimeShift: '1h'
+            filterByTraceID: false
+            filterBySpanID: false
+        secureJsonData: {}
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        access: proxy
+        url: http://tempo-query-frontend.tempo.svc.cluster.local:3100
+        editable: true
+        jsonData:
+          tracesToLogs:
+            datasourceUid: 'loki'
+            tags: ['job', 'instance', 'pod', 'namespace']
+            mappedTags: [
+              { key: 'service.name', value: 'service' },
+              { key: 'service.namespace', value: 'namespace' }
+            ]
+            mapTagNamesEnabled: false
+            spanStartTimeShift: '1h'
+            spanEndTimeShift: '1h'
+            filterByTraceID: false
+            filterBySpanID: false
+          tracesToMetrics:
+            datasourceUid: 'prometheus'
+            tags: [
+              { key: 'service.name', value: 'service' },
+              { key: 'job' }
+            ]
+            queries: [
+              {
+                name: 'Sample query',
+                query: 'sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m]))'
+              }
+            ]
+          serviceMap:
+            datasourceUid: 'prometheus'
+          nodeGraph:
+            enabled: true
+          search:
+            hide: false
+          lokiSearch:
+            datasourceUid: 'loki'
+        secureJsonData: {}

@@ -61,7 +61,7 @@ spec:
         app: keycloak
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system-peeks
+        karpenter.sh/nodepool: system
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
@@ -209,7 +209,7 @@ spec:
         app: postgresql
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system-peeks
+        karpenter.sh/nodepool: system
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"

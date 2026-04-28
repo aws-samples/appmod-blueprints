@@ -1,0 +1,72 @@
+{{- if .Values.modelPrestage.enabled }}
+{{- range $modelName, $modelConfig := .Values.modelPrestage.models }}
+{{- if $modelConfig.enabled }}
+---
+# Model prestage job for {{ $modelName }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $.Values.global.resourcePrefix | default "peeks" }}-{{ $modelName }}-prestage
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ray
+    app.kubernetes.io/component: model-prestage
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    model: {{ $modelName }}
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        app: model-prestage
+        model: {{ $modelName }}
+    spec:
+      serviceAccountName: model-prestage-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: upload-model
+        image: amazon/aws-cli:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "Installing dependencies..."
+          yum install -y python3-pip tar gzip
+          pip3 install huggingface_hub
+          
+          echo "Downloading {{ $modelName }} from {{ $modelConfig.repoId }}..."
+          python3 << 'PYTHON'
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id="{{ $modelConfig.repoId }}",
+              local_dir="/tmp/{{ $modelName }}",
+              local_dir_use_symlinks=False
+          )
+          PYTHON
+          
+          echo "Uploading to S3..."
+          aws s3 sync /tmp/{{ $modelName }}/ s3://{{ $.Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/{{ $modelName }}/ --no-progress
+          
+          echo "Upload complete!"
+          aws s3 ls s3://{{ $.Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/{{ $modelName }}/
+        resources:
+          requests:
+            cpu: "4"
+            memory: {{ $modelConfig.memory | quote }}
+            ephemeral-storage: {{ $modelConfig.storageSize }}
+          limits:
+            cpu: "4"
+            memory: {{ $modelConfig.memory | quote }}
+            ephemeral-storage: {{ $modelConfig.storageSize }}
+        volumeMounts:
+        - name: model-storage
+          mountPath: /tmp
+      volumes:
+      - name: model-storage
+        emptyDir:
+          sizeLimit: {{ $modelConfig.storageSize }}
+{{- end }}
+{{- end }}
+{{- end }}

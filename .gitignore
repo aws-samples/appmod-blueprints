@@ -167,3 +167,8 @@ prodplan
 devplan
 devdbplan
 .playwright-mcp/
+
+# Claude Code local config
+.claude/
+.beads/
+private/

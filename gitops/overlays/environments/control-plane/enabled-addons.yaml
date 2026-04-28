@@ -1,0 +1,62 @@
+# Enabled addons map for the control-plane (hub) environment.
+# All addon keys use underscores matching the enable_<addon> label convention.
+# All values are boolean. Every known addon is listed explicitly.
+enabledAddons:
+  # Core
+  argocd: false
+  metrics_server: true
+  ingress_class_alb: true
+  aws_load_balancer_controller: true
+  cert_manager: false
+  external_secrets: true
+  external_dns: true
+  aws_efs_csi_driver: false
+  image_prepuller: false
+  # GitOps
+  argo_events: false
+  argo_rollouts: false
+  argo_workflows: true
+  kargo: false
+  flux: false
+  # Security
+  keycloak: true
+  kyverno: false
+  kyverno_policies: false
+  kyverno_policy_reporter: false
+  # Observability
+  grafana: false
+  grafana_operator: false
+  grafana_dashboards: false
+  kube_state_metrics: false
+  prometheus_node_exporter: false
+  opentelemetry_operator: false
+  cw_prometheus: false
+  aws_for_fluentbit: false
+  cni_metrics_helper: false
+  # Platform
+  crossplane: true
+  crossplane_aws: false
+  kro: false
+  kro_manifests: false
+  kro_manifests_hub: false
+  multi_acct: false
+  platform_manifests: false
+  backstage: false
+  kubevela: false
+  devlake: false
+  gitlab: false
+  # ACK controllers
+  ack_iam: false
+  ack_eks: false
+  ack_ec2: false
+  ack_ecr: false
+  ack_s3: false
+  ack_dynamodb: false
+  ack_efs: false
+  # ML/AI
+  jupyterhub: false
+  kubeflow: false
+  mlflow: false
+  ray_operator: false
+  spark_operator: false
+  airflow: false

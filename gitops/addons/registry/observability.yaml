@@ -1,0 +1,160 @@
+# Observability and monitoring addons
+# Wave ordering: 3 (metrics/otel) → 4 (grafana) → 5 (dashboards/cw)
+
+grafana:
+  namespace: grafana
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/grafana'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_grafana
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields
+    - group: networking.k8s.io
+      kind: Ingress
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+
+grafana-operator:
+  namespace: grafana-operator
+  chartName: grafana-operator
+  releaseName: grafana-operator
+  chartRepository: 'ghcr.io/grafana/helm-charts'
+  defaultVersion: 'v5.19.0'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_grafana_operator
+        operator: In
+        values: ['true']
+  valuesObject:
+    livenessProbe:
+      timeoutSeconds: 5
+    readinessProbe:
+      timeoutSeconds: 5
+
+grafana-dashboards:
+  namespace: grafana-operator
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/grafana-dashboards'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_grafana_dashboards
+        operator: In
+        values: ['true']
+  valuesObject:
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    namespace: grafana-operator
+    grafana_url: '{{.metadata.annotations.ingress_domain_name}}/grafana'
+
+kube-state-metrics:
+  namespace: kube-prometheus-stack
+  chartName: kube-state-metrics
+  releaseName: kube-state-metrics
+  chartRepository: https://prometheus-community.github.io/helm-charts
+  defaultVersion: '5.25.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_kube_state_metrics
+        operator: In
+        values: ['true']
+
+prometheus-node-exporter:
+  namespace: kube-prometheus-stack
+  chartName: prometheus-node-exporter
+  releaseName: prometheus-node-exporter
+  chartRepository: https://prometheus-community.github.io/helm-charts
+  defaultVersion: '4.39.0'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_prometheus_node_exporter
+        operator: In
+        values: ['true']
+
+opentelemetry-operator:
+  namespace: opentelemetry-operator-system
+  chartName: opentelemetry-operator
+  releaseName: opentelemetry-operator
+  chartRepository: https://open-telemetry.github.io/opentelemetry-helm-charts
+  defaultVersion: '0.71.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_opentelemetry_operator
+        operator: In
+        values: ['true']
+
+cw-prometheus:
+  namespace: amazon-cloudwatch
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/cw-prometheus'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_cw_prometheus
+        operator: In
+        values: ['true']
+
+aws-for-fluentbit:
+  namespace: kube-system
+  chartName: aws-for-fluent-bit
+  chartRepository: https://aws.github.io/eks-charts
+  defaultVersion: '0.1.34'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_aws_for_fluentbit
+        operator: In
+        values: ['true']
+
+cni-metrics-helper:
+  namespace: kube-system
+  chartName: cni-metrics-helper
+  chartRepository: https://aws.github.io/eks-charts
+  defaultVersion: '1.19.2'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_cni_metrics_helper
+        operator: In
+        values: ['true']
+  valuesObject:
+    env:
+      AWS_CLUSTER_ID: '{{.metadata.annotations.aws_cluster_name}}'
+      AWS_REGION: '{{.metadata.annotations.aws_region}}'
