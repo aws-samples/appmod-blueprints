@@ -388,6 +388,8 @@ APPPROJ
     GITLAB_URL="https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
     
     # Preserve GitHub as 'github' remote if origin points to GitHub
+    # Use --no-tags to avoid fetching all GitHub refs (dependabot branches
+    # have long names that fail on NFS-backed filesystems)
     if git remote get-url origin 2>/dev/null | grep -q "github.com"; then
         if ! git remote get-url github >/dev/null 2>&1; then
             git remote rename origin github
@@ -401,14 +403,8 @@ APPPROJ
         git remote add origin "$GITLAB_URL"
     fi
     
-    # Try to fetch from GitLab, but don't fail if repository doesn't exist yet
-    if git fetch origin 2>/dev/null; then
-        print_status "INFO" "Fetched from GitLab repository"
-        git checkout -B main origin/main 2>/dev/null || git checkout -B main
-    else
-        print_status "WARNING" "GitLab repository not accessible yet, will be initialized by 2-gitlab-init.sh"
-        git checkout -B main 2>/dev/null || true
-    fi
+    # Create main branch from current HEAD (already on the correct tag/commit from clone)
+    git checkout -B main
     cd -
 
     # Initialize GitLab configuration
