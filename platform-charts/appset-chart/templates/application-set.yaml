@@ -111,7 +111,7 @@ spec:
         - resources-finalizer.argocd.argoproj.io
       labels:
         {{- if $chartConfig.path }}
-        addonVersion: {{ $repoURLGitRevision | squote }}
+        addonVersion: '{{`{{ .metadata.annotations.addonsRepoRevision | replace "/" "-" }}`}}'
         {{- else }}
         addonVersion: '{{`{{.values.addonChartVersion }}`}}'
         {{- end }}
