@@ -375,6 +375,14 @@ APPPROJ
     
     # Create main branch from current HEAD (already on the correct tag/commit from clone)
     git checkout -B main
+
+    # Create fleet member values for spoke clusters (required for fleet-secrets ApplicationSet)
+    # and update Backstage catalog-info.yaml with environment-specific values.
+    # These were previously only called by deploy.sh (CodeBuild), but since 0-init.sh
+    # now owns the GitLab push, the content must be prepared here before pushing.
+    create_spoke_cluster_secret_values
+    update_backstage_defaults
+
     cd -
 
     # Initialize GitLab configuration (creates app repos and pushes platform repo)
