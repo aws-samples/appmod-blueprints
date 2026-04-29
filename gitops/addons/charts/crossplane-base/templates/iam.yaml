@@ -6,7 +6,7 @@ kind: Role
 metadata:
   name: {{ $name }}-provider-role
   annotations:
-    crossplane.io/external-name: {{ $provider.roleName }}
+    crossplane.io/external-name: {{ $.Values.aws.clusterName }}-{{ $provider.roleName }}
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
     argocd.argoproj.io/sync-wave: "4"
   labels:

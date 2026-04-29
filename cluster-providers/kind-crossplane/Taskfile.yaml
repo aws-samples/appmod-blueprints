@@ -238,7 +238,7 @@ tasks:
           --set clusters.hub.resourcePrefix={{.RESOURCE_PREFIX}}
           {{.MNG_SETS}}
           | kubectl apply -f -
-      - kubectl apply -f claims/argocd-capability-role.yaml
+      - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl apply -f -
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
           --set aws.region={{.AWS_REGION}}
@@ -588,7 +588,7 @@ tasks:
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
       # Phase 3: Delete ArgoCD capability via Job, then its IAM role (needs IAM provider alive)
       - task: argocd:delete-capability
-      - kubectl delete -f claims/argocd-capability-role.yaml --ignore-not-found
+      - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl delete --ignore-not-found -f -
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
       # Phase 4: Delete crossplane-base provider pod identities and providers
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
@@ -609,13 +609,13 @@ tasks:
             echo "Deleting orphaned pod identity association $ASSOC_ID..."
             aws eks delete-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --association-id $ASSOC_ID --region {{.AWS_REGION}} --output text 2>/dev/null || true
           done
-          for ROLE in CrossplaneIAMProviderRole CrossplaneEKSProviderRole CrossplaneEC2ProviderRole ESOPodIdentityRole LBCPodIdentityRole ExternalDNSPodIdentityRole; do
+          for ROLE in {{.HUB_CLUSTER_NAME}}-CrossplaneIAMProviderRole {{.HUB_CLUSTER_NAME}}-CrossplaneEKSProviderRole {{.HUB_CLUSTER_NAME}}-CrossplaneEC2ProviderRole {{.HUB_CLUSTER_NAME}}-ESOPodIdentityRole {{.HUB_CLUSTER_NAME}}-LBCPodIdentityRole {{.HUB_CLUSTER_NAME}}-ExternalDNSPodIdentityRole {{.HUB_CLUSTER_NAME}}-ArgoCDCapabilityRole; do
             for POLICY_ARN in $(aws iam list-attached-role-policies --role-name $ROLE --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
               aws iam detach-role-policy --role-name $ROLE --policy-arn $POLICY_ARN 2>/dev/null || true
             done
             aws iam delete-role --role-name $ROLE 2>/dev/null || true
           done
-          for POLICY in ESOSecretsManagerPolicy LBCControllerPolicy ExternalDNSRoute53Policy; do
+          for POLICY in {{.HUB_CLUSTER_NAME}}-ESOSecretsManagerPolicy {{.HUB_CLUSTER_NAME}}-LBCControllerPolicy {{.HUB_CLUSTER_NAME}}-ExternalDNSRoute53Policy; do
             POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName==\`$POLICY\`].Arn" --output text 2>/dev/null)
             [ -n "$POLICY_ARN" ] && aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null || true
           done
