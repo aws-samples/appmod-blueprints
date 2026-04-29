@@ -1,5 +1,0 @@
-apiVersion: v2
-name: backstage
-description: A Helm chart for Argo Workflows
-type: application
-version: 0.1.0
