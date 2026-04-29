@@ -334,39 +334,11 @@ APPPROJ
         print_status "INFO" "default AppProject already exists"
     fi
 
-    # Dependency-aware ArgoCD app synchronization
-    # NOTE: IDC configuration + ArgoCD token retrieval is deferred to AFTER app sync
-    # because Keycloak must be healthy first (it often takes longer than the initial wait)
-    wait_for_argocd_apps_with_dependencies
-
-    # Run enhanced recovery to handle any remaining issues
-    log_timestamp "Phase: Enhanced ArgoCD Recovery"
-    print_status "INFO" "Running enhanced ArgoCD recovery to ensure all apps are healthy..."
-    "${SCRIPT_DIR}/recover-argocd-apps.sh"
-    
-    # Verify final application health
-    # Count apps that are Healthy+Synced OR Healthy+OutOfSync with Succeeded operation (known false drift)
-    local total_apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
-    local healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(
-        .status.health.status == "Healthy" and (
-            .status.sync.status == "Synced" or
-            (.status.operationState.phase == "Succeeded")
-        )
-    )] | length')
-    
-    if [ "$healthy_apps" -eq "$total_apps" ]; then
-        print_status "SUCCESS" "All $total_apps ArgoCD applications are healthy!"
-    else
-        print_status "WARNING" "$healthy_apps/$total_apps applications are healthy. Some apps may still be deploying."
-    fi
-
     # ---------------------------------------------------------------------------
-    # Phase: Configure IAM Identity Center + retrieve ArgoCD auth token
-    # Runs AFTER app sync so Keycloak is healthy (it needs time to stabilize)
+    # Phase: GitLab repos setup (must happen BEFORE ArgoCD sync wait)
+    # The bootstrap ArgoCD app points at the GitLab repo — if it's empty,
+    # ArgoCD will loop with "remote repository is empty" for ~15 minutes.
     # ---------------------------------------------------------------------------
-    log_timestamp "Phase: IAM Identity Center configuration and ArgoCD token retrieval"
-    configure_idc_and_argocd_token
-
     # Get GitLab domain from CloudFront distribution
     if [ -z "$GITLAB_DOMAIN" ]; then
         print_status "INFO" "Retrieving GitLab domain from CloudFront..."
@@ -405,8 +377,40 @@ APPPROJ
     git checkout -B main
     cd -
 
-    # Initialize GitLab configuration
+    # Initialize GitLab configuration (creates app repos and pushes platform repo)
     bash "$SCRIPT_DIR/2-gitlab-init.sh"
+
+    # Dependency-aware ArgoCD app synchronization
+    # NOTE: IDC configuration is deferred to AFTER app sync because Keycloak must be healthy first
+    wait_for_argocd_apps_with_dependencies
+
+    # Run enhanced recovery to handle any remaining issues
+    log_timestamp "Phase: Enhanced ArgoCD Recovery"
+    print_status "INFO" "Running enhanced ArgoCD recovery to ensure all apps are healthy..."
+    "${SCRIPT_DIR}/recover-argocd-apps.sh"
+    
+    # Verify final application health
+    # Count apps that are Healthy+Synced OR Healthy+OutOfSync with Succeeded operation (known false drift)
+    local total_apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
+    local healthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | jq '[.items[] | select(
+        .status.health.status == "Healthy" and (
+            .status.sync.status == "Synced" or
+            (.status.operationState.phase == "Succeeded")
+        )
+    )] | length')
+    
+    if [ "$healthy_apps" -eq "$total_apps" ]; then
+        print_status "SUCCESS" "All $total_apps ArgoCD applications are healthy!"
+    else
+        print_status "WARNING" "$healthy_apps/$total_apps applications are healthy. Some apps may still be deploying."
+    fi
+
+    # ---------------------------------------------------------------------------
+    # Phase: Configure IAM Identity Center + retrieve ArgoCD auth token
+    # Runs AFTER app sync so Keycloak is healthy (it needs time to stabilize)
+    # ---------------------------------------------------------------------------
+    log_timestamp "Phase: IAM Identity Center configuration and ArgoCD token retrieval"
+    configure_idc_and_argocd_token
     
     # Wait for Backstage build to complete if it has started
     # Uncomment this if you want to build backstage locally
