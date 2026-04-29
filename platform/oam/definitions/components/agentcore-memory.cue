@@ -5,7 +5,13 @@ import "strings"
 	annotations: {}
 	attributes: {
 		workload: type: "autodetects.core.oam.dev"
-		status: healthPolicy: "isHealth: *( context.output.status.atProvider.id != \"\" ) | false"
+		status: {
+			healthPolicy: "isHealth: *( context.output.status.atProvider.id != \"\" ) | false"
+			customStatus: #"""
+				message: *("memoryId: " + context.output.status.atProvider.id) | "provisioning"
+				memoryId: *context.output.status.atProvider.id | ""
+				"""#
+		}
 	}
 	description: "AgentCore Memory provisioned via Crossplane managed resource with IAM policy"
 	labels: {}

@@ -76,6 +76,9 @@ spec:
         	eventExpiryDuration: *30 | int
         }
   status:
+    customStatus: |-
+      message: *("memoryId: " + context.output.status.atProvider.id) | "provisioning"
+      memoryId: *context.output.status.atProvider.id | ""
     healthPolicy: 'isHealth: *( context.output.status.atProvider.id != "" ) | false'
   workload:
     type: autodetects.core.oam.dev
