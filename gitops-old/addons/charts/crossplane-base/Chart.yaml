@@ -1,5 +1,0 @@
-apiVersion: v2
-name: crossplane-base
-description: Crossplane functions, AWS providers with per-provider pod identities, and ProviderConfig
-type: application
-version: 0.1.0

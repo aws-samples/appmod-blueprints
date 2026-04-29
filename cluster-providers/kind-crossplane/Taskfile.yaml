@@ -126,6 +126,14 @@ tasks:
           --dry-run=client -o yaml | kubectl apply -f -
       - rm -f /tmp/aws-creds.ini
 
+  hub:kubeconfig:
+    desc: Fetch hub EKS kubeconfig
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>&1 >/dev/null
+
   kind:create:
     desc: Create Kind cluster (skips if exists)
     status:
@@ -292,7 +300,7 @@ tasks:
     status:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm repo add external-secrets https://charts.external-secrets.io --force-update
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm upgrade --install external-secrets external-secrets/external-secrets
           --namespace external-secrets --create-namespace
@@ -307,7 +315,7 @@ tasks:
       HUB_CLUSTER_NAME:
         sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - |
         cat <<'EOF' | sed "s|AWS_REGION|{{.AWS_REGION}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: external-secrets.io/v1
@@ -337,7 +345,7 @@ tasks:
         sh: yq '.repo.basepath' {{.CONFIG_FILE}}
     cmds:
       - printf '{{.C_STEP}}▸ Getting hub kubeconfig...{{.C_RESET}}\n'
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Creating seed cluster secret on hub...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
       - |
@@ -373,10 +381,9 @@ tasks:
       HUB_CLUSTER_NAME:
         sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Applying root-appset to hub...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
-      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Root appset applied. Hub is now self-managing.{{.C_RESET}}\n'
 
   hub:wait-for-sync:
@@ -386,7 +393,7 @@ tasks:
         sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
       MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "2"}}'
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Waiting for hub apps to sync (max %s OutOfSync tolerated)...{{.C_RESET}}\n' "{{.MAX_OUTOFSYNC}}"
       - |
         TIMEOUT=1800
@@ -540,13 +547,60 @@ tasks:
       - kubectl -n crossplane-system wait --for=condition=Complete --timeout=2400s job/delete-argocd-capability
 
   status:
-    desc: Check bootstrap status
+    desc: Check bootstrap and hub cluster status
+    vars:
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
     cmds:
-      - printf '{{.C_INFO}}=== Kind ==={{.C_RESET}}\n' && kind get clusters 2>/dev/null | grep "{{.KIND_CLUSTER_NAME}}" || echo "Not running"
-      - printf '{{.C_INFO}}=== Helm ==={{.C_RESET}}\n' && helm list -A 2>/dev/null || echo "None"
-      - printf '{{.C_INFO}}=== Providers ==={{.C_RESET}}\n' && kubectl get providers.pkg.crossplane.io 2>/dev/null || echo "None"
-      - printf '{{.C_INFO}}=== Managed ==={{.C_RESET}}\n' && kubectl -n crossplane-system get managed 2>/dev/null || echo "None"
-      - printf '{{.C_INFO}}=== Apps ==={{.C_RESET}}\n' && kubectl -n argocd get applications 2>/dev/null || echo "None"
+      - printf '{{.C_INFO}}=== Kind Bootstrap ==={{.C_RESET}}\n'
+      - kind get clusters 2>/dev/null | grep "{{.KIND_CLUSTER_NAME}}" || printf '  Not running\n'
+      - printf '\n{{.C_INFO}}=== Crossplane Providers (Kind) ==={{.C_RESET}}\n'
+      - kubectl get providers.pkg.crossplane.io 2>/dev/null || printf '  None\n'
+      - printf '\n{{.C_INFO}}=== Crossplane Managed Resources (Kind) ==={{.C_RESET}}\n'
+      - kubectl -n crossplane-system get managed 2>/dev/null || printf '  None\n'
+      - printf '\n{{.C_INFO}}=== Hub EKS Cluster ==={{.C_RESET}}\n'
+      - |
+        CLUSTER=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} 2>/dev/null)
+        if [ -z "$CLUSTER" ]; then
+          printf '  Cluster {{.HUB_CLUSTER_NAME}} not found\n'
+        else
+          STATUS=$(echo "$CLUSTER" | jq -r '.cluster.status')
+          VERSION=$(echo "$CLUSTER" | jq -r '.cluster.version')
+          ENDPOINT=$(echo "$CLUSTER" | jq -r '.cluster.endpoint // "N/A"')
+          printf '  Name:     {{.HUB_CLUSTER_NAME}}\n'
+          printf '  Status:   %s\n' "$STATUS"
+          printf '  Version:  %s\n' "$VERSION"
+          printf '  Endpoint: %s\n' "$ENDPOINT"
+          printf '\n{{.C_INFO}}--- ArgoCD Capability ---{{.C_RESET}}\n'
+          CAPS=$(aws eks list-access-entries --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} 2>/dev/null | jq -r '.accessEntries[]' | grep -i argocd || true)
+          if [ -n "$CAPS" ]; then
+            printf '  ArgoCD Capability: Active\n'
+          else
+            printf '  ArgoCD Capability: Not found\n'
+          fi
+        fi
+      - printf '\n{{.C_INFO}}=== Hub ArgoCD Applications ==={{.C_RESET}}\n'
+      - task: hub:kubeconfig
+      - |
+        if ! APPS=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null); then
+          printf '  Unable to connect to hub cluster\n'
+        else
+          TOTAL=$(echo "$APPS" | grep -c . || true)
+          SYNCED=$(echo "$APPS" | awk '{print $2}' | grep -c "Synced" || true)
+          HEALTHY=$(echo "$APPS" | awk '{print $3}' | grep -c "Healthy" || true)
+          DEGRADED=$(echo "$APPS" | awk '{print $3}' | grep -c "Degraded" || true)
+          PROGRESSING=$(echo "$APPS" | awk '{print $3}' | grep -c "Progressing" || true)
+          MISSING=$(echo "$APPS" | awk '{print $3}' | grep -c "Missing" || true)
+          OUTOFSYNC=$((TOTAL - SYNCED))
+          printf '  Total: %s  Synced: %s  OutOfSync: %s\n' "$TOTAL" "$SYNCED" "$OUTOFSYNC"
+          printf '  Healthy: %s  Degraded: %s  Progressing: %s  Missing: %s\n\n' "$HEALTHY" "$DEGRADED" "$PROGRESSING" "$MISSING"
+          if [ "$OUTOFSYNC" -gt 0 ] || [ "$DEGRADED" -gt 0 ] || [ "$MISSING" -gt 0 ]; then
+            printf '{{.C_STEP}}  Apps needing attention:{{.C_RESET}}\n'
+            echo "$APPS" | awk '$2 != "Synced" || $3 != "Healthy" {printf "  - %-40s %s/%s\n", $1, $3, $2}'
+          else
+            printf '{{.C_OK}}  All apps are Synced and Healthy.{{.C_RESET}}\n'
+          fi
+        fi
 
   destroy-kind:
     desc: Delete Kind cluster only (hub persists)
@@ -590,7 +644,14 @@ tasks:
       - task: argocd:delete-capability
       - kubectl delete -f claims/argocd-capability-role.yaml --ignore-not-found
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
-      # Phase 4: Delete crossplane-base provider pod identities and providers
+      # Phase 4: Delete EKS cluster + VPC (needs providers alive to reconcile deletion)
+      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
+          --set clusters.hub.region={{.AWS_REGION}}
+          --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
+          | kubectl delete --ignore-not-found -f -
+      - kubectl -n crossplane-system wait --for=delete clusters.eks.aws.upbound.io --all --timeout=1800s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete vpc.ec2.aws.upbound.io --all --timeout=600s 2>/dev/null || true
+      # Phase 5: Delete crossplane-base provider pod identities and providers (safe now — no managed resources left)
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
           --set aws.region={{.AWS_REGION}}
@@ -603,7 +664,7 @@ tasks:
           | kubectl delete --ignore-not-found -f -
       - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=600s 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
-      # Safety net: delete any orphaned pod identity associations and IAM roles via AWS CLI
+      # Phase 6: Safety net — clean up any orphaned AWS resources
       - cmd: |
           for ASSOC_ID in $(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'associations[].associationId' --output text 2>/dev/null); do
             echo "Deleting orphaned pod identity association $ASSOC_ID..."
@@ -619,14 +680,7 @@ tasks:
             POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName==\`$POLICY\`].Arn" --output text 2>/dev/null)
             [ -n "$POLICY_ARN" ] && aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null || true
           done
-      # Phase 5: Delete EKS cluster + VPC (composition cascades all networking + IAM)
-      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
-          --set clusters.hub.region={{.AWS_REGION}}
-          --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
-          | kubectl delete --ignore-not-found -f -
-      - kubectl -n crossplane-system wait --for=delete clusters.eks.aws.upbound.io --all --timeout=1800s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete vpc.ec2.aws.upbound.io --all --timeout=600s 2>/dev/null || true
-      # Phase 6: Clean up Kind (pass CLEANUP_KIND=true to remove)
+      # Phase 7: Clean up Kind (pass CLEANUP_KIND=true to remove)
       - cmd: |
           if [ "{{.CLEANUP_KIND}}" = "true" ]; then
             kind delete cluster --name {{.KIND_CLUSTER_NAME}}
@@ -703,7 +757,7 @@ tasks:
             fi
           done | sort -rn | awk '{print $2}'
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - printf '{{.C_ERR}}▸ Stopping all regeneration...{{.C_RESET}}\n'
       # 1. Delete bootstrap ApplicationSet (preserveResources) to stop recreating bootstrap App
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset bootstrap -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>/dev/null || true

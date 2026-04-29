@@ -1,7 +1,0 @@
-# Backstage configuration
-# Override these in overlays/environments/<env>/backstage/values.yaml
-
-backstage_image: "ghcr.io/backstage/backstage:latest"
-git_username: ""        # Git username for repo access
-working_repo: ""        # Working repository URL
-gitlab_domain_name: ""  # GitLab domain (defaults to ingress_domain_name if same host)

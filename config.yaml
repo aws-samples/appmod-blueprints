@@ -8,7 +8,7 @@ clusterProvider: "kind-crossplane"
 # Git repository hosting the gitops platform code
 repo:
   url: "https://github.com/aws-samples/appmod-blueprints.git"
-  revision: "agents-platform"
+  revision: "agents-platform-pr"
   basepath: "gitops/"
 
 # Hub cluster configuration

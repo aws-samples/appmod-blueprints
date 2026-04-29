@@ -1,5 +1,0 @@
-apiVersion: v2
-name: grafana-dashboards
-description: A Helm chart for Grafana dashboards for the platform
-type: application
-version: 0.1.0
