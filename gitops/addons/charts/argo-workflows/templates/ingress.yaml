@@ -4,16 +4,19 @@ metadata:
   name: argo-workflows
   namespace: argo
   annotations:
-    nginx.ingress.kubernetes.io/use-regex: "true"
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/transforms.argo-server: |
+      [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/argo-workflows\\/?(.*)$","replace":"/$1"}]}}]
 spec:
-  ingressClassName: "nginx"
+  ingressClassName: "platform"
   rules:
     - host: {{ .Values.ingress_domain_name }}
       http:
         paths:
-          - path: /argo-workflows(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /argo-workflows
+            pathType: Prefix
             backend:
               service:
                 name: argo-server

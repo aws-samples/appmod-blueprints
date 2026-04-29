@@ -1,0 +1,13 @@
+# Default values — no clusters provisioned by default.
+# Override per-environment via fleet/kro-values/default/kro-clusters/values.yaml
+# or per-tenant via fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml
+#
+# clusters:
+#   spoke-us-west-2:
+#     region: us-west-2
+#     clusterName: spoke-us-west-2
+#     vpcCidr: "10.1.0.0/16"
+#     kubernetesVersion: "1.32"
+#     autoMode: true
+
+clusters: {}

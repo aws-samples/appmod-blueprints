@@ -1,0 +1,7 @@
+# GitLab configuration
+# Override sensitive values in overlays/environments/<env>/gitlab/values.yaml
+# initial_root_password should be sourced from ExternalSecret in production
+
+git_username: ""          # Git username for repo access
+working_repo: ""          # Working repository URL
+initial_root_password: "" # Set via environment overlay or ExternalSecret

@@ -1,0 +1,91 @@
+# Unified PlatformCluster XRD
+# Creates VPC + subnets + IGW + NAT + EKS + IAM + node groups in a single claim.
+# Used by both Kind bootstrap (hub) and hub Crossplane (spokes).
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xplatformclusters.platform.gitops.io
+spec:
+  group: platform.gitops.io
+  names:
+    kind: XPlatformCluster
+    plural: xplatformclusters
+  claimNames:
+    kind: PlatformCluster
+    plural: platformclusters
+  connectionSecretKeys:
+    - kubeconfig
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                region:
+                  type: string
+                  description: AWS region
+                clusterName:
+                  type: string
+                  description: Cluster name (used for tagging and external-name)
+                vpcCidr:
+                  type: string
+                  description: VPC CIDR block
+                  default: "10.0.0.0/16"
+                kubernetesVersion:
+                  type: string
+                  description: EKS Kubernetes version
+                  default: "1.32"
+                autoMode:
+                  type: boolean
+                  description: Enable EKS Auto Mode (manages compute, storage, networking)
+                  default: true
+                resourcePrefix:
+                  type: string
+                  description: Prefix for resource tagging and identification
+                managedNodeGroup:
+                  type: object
+                  description: Optional managed node group alongside Auto Mode
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    instanceTypes:
+                      type: array
+                      items:
+                        type: string
+                      default: ["m5.large"]
+                    desiredSize:
+                      type: integer
+                      default: 2
+                    minSize:
+                      type: integer
+                      default: 1
+                    maxSize:
+                      type: integer
+                      default: 5
+                    diskSize:
+                      type: integer
+                      default: 50
+                    capacityType:
+                      type: string
+                      description: ON_DEMAND or SPOT
+                      default: "ON_DEMAND"
+              required:
+                - region
+                - clusterName
+            status:
+              type: object
+              properties:
+                vpcId:
+                  type: string
+                clusterEndpoint:
+                  type: string
+                oidcIssuer:
+                  type: string
+                nodeRoleArn:
+                  type: string

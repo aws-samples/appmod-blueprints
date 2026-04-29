@@ -245,6 +245,10 @@ data:
           url: https://kubernetes.default.svc.cluster.local
           authProvider: 'serviceAccount'
           skipTLSVerify: true
+          serviceAccountToken:
+            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+          caData:
+            $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
         - name: workshop
           url: K8S_SERVER
           authProvider: 'serviceAccount'
@@ -295,6 +299,8 @@ data:
           url: https://kubernetes.default.svc.cluster.local
           authProvider: 'serviceAccount'
           skipTLSVerify: true
+          serviceAccountToken:
+            $file: /var/run/secrets/kubernetes.io/serviceaccount/token
         - name: workshop
           url: K8S_SERVER
           authProvider: 'serviceAccount'
@@ -327,6 +333,10 @@ stringData:
         authProvider: 'serviceAccount'
         skipTLSVerify: true
         skipMetricsLookup: true
+        serviceAccountToken: 
+          $file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        caData: 
+          $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
         # Additional configuration for Kro resources
         customResources:
           - group: 'kro.run'

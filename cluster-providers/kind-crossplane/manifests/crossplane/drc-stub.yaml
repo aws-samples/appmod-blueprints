@@ -1,0 +1,5 @@
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: aws-pod-identity-drc
+spec: {}
