@@ -383,6 +383,10 @@ APPPROJ
     create_spoke_cluster_secret_values
     update_backstage_defaults
 
+    # Commit the generated content so 2-gitlab-init.sh push includes it
+    git add .
+    git commit -m "Bootstrap: add fleet member values and backstage defaults" || true
+
     cd -
 
     # Initialize GitLab configuration (creates app repos and pushes platform repo)

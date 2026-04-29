@@ -108,12 +108,9 @@ main() {
   export GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
   GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
 
-  # Create spoke cluster secret values
-  create_spoke_cluster_secret_values
+  # Note: create_spoke_cluster_secret_values and gitlab push are handled by 0-init.sh
+  # (which runs on the IDE via SSM and owns the GitLab push in Workshop Studio mode)
 
-  # Push repo to Gitlab
-  gitlab_repository_setup
-  
   # Initialize Terraform with S3 backend
   initialize_terraform "bootstrap" "$DEPLOY_SCRIPTDIR"
   
@@ -177,12 +174,6 @@ main() {
   # Get Ingress domain from Terraform output
   export INGRESS_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
 
-  # Update backstage default values now that both domains are available
-  update_backstage_defaults
-  
-  # Push repo to Gitlab
-  gitlab_repository_setup
-  
   log_success "Bootstrap stack deployment completed successfully"
 }
 
