@@ -4,7 +4,7 @@ kind: ProviderConfig
 metadata:
   name: {{ .Values.providerConfig.name | default "default" }}
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "2"
 spec:
   credentials:
@@ -19,7 +19,7 @@ metadata:
   name: {{ $provider.serviceAccount }}
   namespace: {{ $.Values.namespace }}
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-1"
 ---
 apiVersion: pkg.crossplane.io/v1beta1
@@ -27,7 +27,7 @@ kind: DeploymentRuntimeConfig
 metadata:
   name: {{ $name }}-drc
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-1"
 spec:
   deploymentTemplate:
