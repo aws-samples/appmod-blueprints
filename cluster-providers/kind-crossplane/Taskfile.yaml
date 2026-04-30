@@ -8,14 +8,39 @@ env:
 
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
-  CONFIG_FILE: "{{.ROOT_DIR}}/config.yaml"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   HUB_CLUSTER_NAME:
-    sh: yq '.hub.clusterName' {{.ROOT_DIR}}/config.yaml
+    sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
+  HUB_K8S_VERSION:
+    sh: yq '.hub.kubernetesVersion // "1.35"' {{.CONFIG_FILE}}
+  HUB_VPC_CIDR:
+    sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}}
   AWS_ACCOUNT_ID:
-    sh: yq '.aws.accountId' {{.ROOT_DIR}}/config.yaml
+    sh: yq '.aws.accountId' {{.CONFIG_FILE}}
   AWS_REGION:
-    sh: yq '.aws.region' {{.ROOT_DIR}}/config.yaml
+    sh: yq '.aws.region' {{.CONFIG_FILE}}
+  REPO_URL:
+    sh: yq '.repo.url' {{.CONFIG_FILE}}
+  REPO_REVISION:
+    sh: yq '.repo.revision' {{.CONFIG_FILE}}
+  REPO_BASEPATH:
+    sh: yq '.repo.basepath' {{.CONFIG_FILE}}
+  DOMAIN:
+    sh: yq '.domain' {{.CONFIG_FILE}}
+  RESOURCE_PREFIX:
+    sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
+  INGRESS_NAME:
+    sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
+  INGRESS_SECURITY_GROUPS:
+    sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  CAPABILITY_NAME:
+    sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
+  IDC_INSTANCE_ARN:
+    sh: yq '.identityCenter.instanceArn' {{.CONFIG_FILE}}
+  IDC_REGION:
+    sh: yq '.identityCenter.region' {{.CONFIG_FILE}}
+  IDC_ADMIN_GROUP_ID:
+    sh: yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}}
   KIND_CLUSTER_NAME: "{{.HUB_CLUSTER_NAME}}-bootstrap"
   C_INFO:
     sh: printf '\033[1;36m'
@@ -38,12 +63,12 @@ tasks:
       - cmd: command -v {{.ITEM}} >/dev/null 2>&1 || { echo "Missing required CLI {{.ITEM}}"; exit 1; }
         for:
           var: REQUIRED_CLIS
-      - printf '{{.C_STEP}}▸ Checking config.yaml...{{.C_RESET}}\n'
-      - test -f {{.CONFIG_FILE}} || { echo "config.yaml not found"; exit 1; }
-      - yq '.hub.clusterName' {{.CONFIG_FILE}} | grep -qv null || { echo "hub.clusterName not set in config.yaml"; exit 1; }
-      - yq '.aws.region' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.region not set in config.yaml"; exit 1; }
-      - yq '.aws.accountId' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.accountId not set in config.yaml"; exit 1; }
-      - yq '.repo.url' {{.CONFIG_FILE}} | grep -qv null || { echo "repo.url not set in config.yaml"; exit 1; }
+      - printf '{{.C_STEP}}▸ Checking config.local.yaml...{{.C_RESET}}\n'
+      - test -f {{.CONFIG_FILE}} || { echo "config.local.yaml not found"; exit 1; }
+      - yq '.hub.clusterName' {{.CONFIG_FILE}} | grep -qv null || { echo "hub.clusterName not set in config.local.yaml"; exit 1; }
+      - yq '.aws.region' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.region not set in config.local.yaml"; exit 1; }
+      - yq '.aws.accountId' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.accountId not set in config.local.yaml"; exit 1; }
+      - yq '.repo.url' {{.CONFIG_FILE}} | grep -qv null || { echo "repo.url not set in config.local.yaml"; exit 1; }
       - printf '{{.C_STEP}}▸ Checking AWS credentials...{{.C_RESET}}\n'
       - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
       - printf '{{.C_OK}}✓ All pre-flight checks passed.{{.C_RESET}}\n'
@@ -204,12 +229,6 @@ tasks:
 
   crossplane:claims:
     vars:
-      HUB_K8S_VERSION:
-        sh: yq '.hub.kubernetesVersion // "1.32"' {{.CONFIG_FILE}}
-      HUB_VPC_CIDR:
-        sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}}
-      RESOURCE_PREFIX:
-        sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
       MNG_ENABLED:
         sh: yq '.hub.managedNodeGroup.enabled // false' {{.CONFIG_FILE}}
       MNG_SETS:
@@ -319,12 +338,6 @@ tasks:
     vars:
       CLUSTER_ARN:
         sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.CONFIG_FILE}}):cluster/$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
-      REPO_URL:
-        sh: yq '.repo.url' {{.CONFIG_FILE}}
-      REPO_REVISION:
-        sh: yq '.repo.revision' {{.CONFIG_FILE}}
-      REPO_BASEPATH:
-        sh: yq '.repo.basepath' {{.CONFIG_FILE}}
     cmds:
       - printf '{{.C_STEP}}▸ Getting hub kubeconfig...{{.C_RESET}}\n'
       - task: hub:kubeconfig
@@ -420,20 +433,6 @@ tasks:
     vars:
       CLUSTER_ARN:
         sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.CONFIG_FILE}}):cluster/$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
-      REPO_URL:
-        sh: yq '.repo.url' {{.CONFIG_FILE}}
-      REPO_REVISION:
-        sh: yq '.repo.revision' {{.CONFIG_FILE}}
-      REPO_BASEPATH:
-        sh: yq '.repo.basepath' {{.CONFIG_FILE}}
-      DOMAIN:
-        sh: yq '.domain' {{.CONFIG_FILE}}
-      RESOURCE_PREFIX:
-        sh: yq '.resourcePrefix' {{.CONFIG_FILE}}
-      INGRESS_NAME:
-        sh: yq '.ingressName // "'$(yq '.hub.clusterName' {{.CONFIG_FILE}})'-ingress"' {{.CONFIG_FILE}}
-      INGRESS_SECURITY_GROUPS:
-        sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
       VPC_ID:
         sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
     cmds:
@@ -485,16 +484,8 @@ tasks:
     status:
       - kubectl -n crossplane-system get job create-argocd-capability -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q 1
     vars:
-      CAPABILITY_NAME:
-        sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
       CAPABILITY_ROLE_ARN:
         sh: kubectl -n crossplane-system get roles.iam.aws.upbound.io argocd-capability-role -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo ""
-      IDC_INSTANCE_ARN:
-        sh: yq '.identityCenter.instanceArn' {{.CONFIG_FILE}}
-      IDC_REGION:
-        sh: yq '.identityCenter.region' {{.CONFIG_FILE}}
-      IDC_ADMIN_GROUP_ID:
-        sh: yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}}
     cmds:
       - kubectl -n crossplane-system create configmap argocd-capability-config
           --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
@@ -513,8 +504,6 @@ tasks:
   argocd:delete-capability:
     desc: Delete EKS ArgoCD Capability via Job
     vars:
-      CAPABILITY_NAME:
-        sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
     cmds:
       - kubectl -n crossplane-system create configmap argocd-capability-config
           --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
@@ -622,12 +611,6 @@ tasks:
   hub:update:
     desc: Update hub infra via Kind+Crossplane
     vars:
-      HUB_K8S_VERSION:
-        sh: yq '.hub.kubernetesVersion // "1.32"' {{.CONFIG_FILE}}
-      HUB_VPC_CIDR:
-        sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}}
-      RESOURCE_PREFIX:
-        sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
       MNG_SETS:
         sh: |
           if [ "$(yq '.hub.managedNodeGroup.enabled // false' {{.CONFIG_FILE}})" = "true" ]; then

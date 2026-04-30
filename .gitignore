@@ -172,3 +172,6 @@ devdbplan
 .claude/
 .beads/
 private/
+
+# Local platform config (user-specific, not committed)
+config.local.yaml
