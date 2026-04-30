@@ -648,7 +648,8 @@ sync_argocd_app() {
             local start_epoch=$(date -d "$operation_started" +%s 2>/dev/null || echo "0")
             local now_epoch=$(date +%s)
             local elapsed=$((now_epoch - start_epoch))
-            if [ $elapsed -gt 300 ]; then  # 5 minutes
+            # Skip keycloak — its PostSync hook (config job + PushSecret) needs 10+ minutes
+            if [ $elapsed -gt 300 ] && [[ "$app_name" != *"keycloak"* ]]; then
                 print_warning "App $app_name stuck in Running state for ${elapsed}s (>5min)"
                 stuck_running=true
             fi

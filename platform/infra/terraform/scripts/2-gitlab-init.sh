@@ -129,13 +129,13 @@ set_gitlab_remote_for_peeks() {
   git config user.email "participants@workshops.aws"
   git config user.name "Workshop Participant"
   
-  # Create main branch from current HEAD (already on correct tag from clone)
-  # No fetch needed — 0-init.sh already set up the remotes
+  # deploy.sh already pushed to GitLab with fleet/backstage content.
+  # Pull that commit so the IDE is in sync, then set tracking branch.
   git checkout -B main
-  git push -u origin main
+  git pull --rebase origin main || git push -u origin main
   
   popd
-  echo "GitLab remote set for ~/environment/$WORKING_REPO - pushed to GitLab"
+  echo "GitLab remote set for ~/environment/$WORKING_REPO - synced with GitLab"
 }
 
 # Main execution
