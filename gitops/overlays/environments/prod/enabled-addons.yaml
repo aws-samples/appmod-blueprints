@@ -1,0 +1,14 @@
+enabledAddons:
+  # Core
+  metrics_server: true
+  ingress_class_alb: true
+  aws_load_balancer_controller: true
+  external_secrets: true
+  external_dns: true
+  cert_manager: true
+  # Security
+  kyverno: true
+  kyverno_policies: true
+  # Observability
+  kube_state_metrics: true
+  aws_for_fluentbit: true

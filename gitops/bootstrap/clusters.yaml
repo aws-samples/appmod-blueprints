@@ -11,18 +11,22 @@ spec:
   syncPolicy:
     preserveResourcesOnDeletion: true
   generators:
-    - clusters:
-        selector:
-          matchLabels:
-            fleet_member: control-plane
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  fleet_member: control-plane
+          - git:
+              repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+              revision: '{{ .metadata.annotations.fleetRepoRevision }}'
+              files:
+                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/*/kro-clusters/values.yaml'
   template:
     metadata:
-      name: clusters
+      name: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
       finalizers:
         - resources-finalizer.argocd.argoproj.io
-      labels:
-        environment: '{{ .metadata.labels.environment }}'
-        tenant: '{{ .metadata.labels.tenant }}'
     spec:
       project: default
       sources:
@@ -33,11 +37,16 @@ spec:
           path: '{{ .metadata.annotations.fleetRepoBasepath }}abstractions/resource-groups/platform-cluster'
           targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
           helm:
-            releaseName: kro-clusters
+            releaseName: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
             ignoreMissingValueFiles: true
+            valuesObject:
+              xrd:
+                enabled: false
+              global:
+                argoCDRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/default/kro-clusters/values.yaml'
-              - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/{{ .metadata.labels.tenant }}/kro-clusters/values.yaml'
+              - '$values/{{ .path.path }}/values.yaml'
       destination:
         namespace: argocd
         name: '{{ .name }}'

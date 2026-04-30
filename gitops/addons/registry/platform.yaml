@@ -58,6 +58,8 @@ crossplane-base:
       eks:
         version: "v2.5.3"
         createIdentity: false
+      secretsmanager:
+        version: "v2.5.3"
   ignoreDifferences:
     - group: pkg.crossplane.io
       kind: Provider
@@ -288,35 +290,6 @@ gitlab:
     - group: ''
       kind: Secret
       jsonPointers:
-        - /metadata/managedFields
-
-crossplane-aws:
-  namespace: crossplane-system
-  path: '{{.metadata.annotations.addonsRepoBasepath}}abstractions/resource-groups/aws-resources'
-  annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '4'
-  selector:
-    matchExpressions:
-      - key: enable_crossplane_aws
-        operator: In
-        values: ['true']
-  valuesObject:
-    aws:
-      region: '{{.metadata.annotations.aws_region}}'
-    global:
-      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
-  ignoreDifferences:
-    - group: apiextensions.crossplane.io
-      kind: CompositeResourceDefinition
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-    - group: apiextensions.crossplane.io
-      kind: Composition
-      jsonPointers:
-        - /status
-        - /metadata/generation
         - /metadata/managedFields
 
 ack-iam:

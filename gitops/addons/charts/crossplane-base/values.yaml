@@ -52,5 +52,10 @@ providers:
     serviceAccount: provider-aws-rds
     roleName: CrossplaneRDSProviderRole
     createIdentity: true
+  secretsmanager:
+    version: ""
+    serviceAccount: provider-aws-secretsmanager
+    roleName: CrossplaneSecretsManagerProviderRole
+    createIdentity: true
 
 namespace: crossplane-system

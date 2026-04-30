@@ -1,3 +1,4 @@
+{{- if .Values.xrd.enabled }}
 # Unified PlatformCluster Composition
 # Creates complete infrastructure: VPC + networking + EKS + IAM + node groups
 # All resources use matchControllerRef for cross-referencing (no manual wiring)
@@ -112,6 +113,20 @@ spec:
               - type: PatchSet
                 patchSetName: tags
               - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+                transforms:
+                  - type: string
+                    string:
+                      type: Regexp
+                      regexp:
+                        match: '^(\d+\.\d+)\.'
+                        group: 1
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s.0.0/19"
+              - type: FromCompositeFieldPath
                 fromFieldPath: spec.region
                 toFieldPath: spec.forProvider.availabilityZone
                 transforms:
@@ -143,6 +158,20 @@ spec:
               - type: PatchSet
                 patchSetName: tags
               - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+                transforms:
+                  - type: string
+                    string:
+                      type: Regexp
+                      regexp:
+                        match: '^(\d+\.\d+)\.'
+                        group: 1
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s.32.0/19"
+              - type: FromCompositeFieldPath
                 fromFieldPath: spec.region
                 toFieldPath: spec.forProvider.availabilityZone
                 transforms:
@@ -173,6 +202,20 @@ spec:
               - type: PatchSet
                 patchSetName: tags
               - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+                transforms:
+                  - type: string
+                    string:
+                      type: Regexp
+                      regexp:
+                        match: '^(\d+\.\d+)\.'
+                        group: 1
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s.128.0/19"
+              - type: FromCompositeFieldPath
                 fromFieldPath: spec.region
                 toFieldPath: spec.forProvider.availabilityZone
                 transforms:
@@ -202,6 +245,20 @@ spec:
                 patchSetName: common
               - type: PatchSet
                 patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+                transforms:
+                  - type: string
+                    string:
+                      type: Regexp
+                      regexp:
+                        match: '^(\d+\.\d+)\.'
+                        group: 1
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s.160.0/19"
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.region
                 toFieldPath: spec.forProvider.availabilityZone
@@ -613,6 +670,41 @@ spec:
               - type: PatchSet
                 patchSetName: common
 
+          # ArgoCD Capability Access Entry (allows hub ArgoCD to manage spoke)
+          - name: argocd-access-entry
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessEntry
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  type: STANDARD
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
+          - name: argocd-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+                  accessScope:
+                    type: cluster
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
           # EKS Cluster with Auto Mode enabled
           - name: eks-cluster
             base:
@@ -644,13 +736,21 @@ spec:
                     elasticLoadBalancing:
                       enabled: true
                 writeConnectionSecretToRef:
-                  name: hub-eks-connection
+                  name: eks-connection
                   namespace: crossplane-system
             patches:
               - type: PatchSet
                 patchSetName: common
               - type: PatchSet
                 patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.writeConnectionSecretToRef.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-eks-connection"
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.kubernetesVersion
                 toFieldPath: spec.forProvider.version
@@ -824,3 +924,4 @@ spec:
             expression: >-
               has(observed.composite.resource.spec.managedNodeGroup) &&
               observed.composite.resource.spec.managedNodeGroup.enabled == true
+{{- end }}

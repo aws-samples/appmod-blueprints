@@ -249,3 +249,55 @@ Validate the full spoke lifecycle:
 **Blocked by:** #1, #13
 
 Once all resources use `clusterName` and KRO resources are aligned, remove `resourcePrefix` from `config.yaml` and schema. Only remains in KRO ResourceGroup schemas if they keep using it.
+
+---
+
+### 16. Create PlatformCluster abstraction using KRO + ACK
+
+**Priority:** Medium
+**Labels:** enhancement, infrastructure
+
+Create an alternative PlatformCluster implementation using KRO ResourceGroups and ACK controllers instead of Crossplane. The existing `kro/resource-groups/manifests/eks/` already has `rg-eks.yaml` and `rg-eks-vpc.yaml` as a starting point.
+
+**Scope:**
+- VPC + subnets + NAT + IGW + route tables (ACK EC2 controller)
+- EKS cluster with Auto Mode (ACK EKS controller)
+- IAM roles for cluster and nodes (ACK IAM controller)
+- Conditional managed node group support
+- ArgoCD Capability creation (if ACK EKS supports it, otherwise keep Job)
+- Pod identity associations for providers
+
+**Advantages over Crossplane:**
+- AWS-native controllers (first-party, no Upbound dependency)
+- Simpler orchestration (KRO ResourceGroups vs Crossplane Compositions + pipeline functions)
+- No provider DRC/CRD ownership issues
+- ACK uses Pod Identity natively
+
+**Challenges to investigate:**
+- ACK EKS controller support for Auto Mode and ArgoCD Capability
+- KRO maturity for complex multi-resource orchestration
+- VPC networking dependency ordering in KRO
+- Migration path for existing Crossplane-provisioned clusters
+
+---
+
+### 17. Pluggable composition backends (Crossplane vs KRO+ACK)
+
+**Priority:** Low
+**Labels:** enhancement, architecture
+**Blocked by:** #16
+
+Allow users to choose between Crossplane and KRO+ACK for infrastructure provisioning, similar to how `cluster-providers/` offers pluggable bootstrap approaches.
+
+**Design:**
+- `abstractions/resource-groups/platform-cluster/` becomes the Crossplane backend
+- `abstractions/resource-groups/platform-cluster-kro/` becomes the KRO+ACK backend
+- `config.local.yaml` gets a `compositionBackend: crossplane | kro` field
+- Bootstrap Taskfile selects the correct abstraction based on config
+- Both backends produce the same outputs (EKS cluster, VPC, IAM roles)
+- `bootstrap/clusters.yaml` ApplicationSet works with either backend
+
+**Acceptance criteria:**
+- Both backends can provision and destroy a hub cluster
+- Spoke provisioning works with either backend
+- Switching backends on a new install requires only a config change

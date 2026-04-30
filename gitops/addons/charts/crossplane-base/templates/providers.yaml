@@ -95,3 +95,17 @@ spec:
   runtimeConfigRef:
     name: rds-drc
 {{- end }}
+{{- if .Values.providers.secretsmanager.version }}
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-secretsmanager
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-secretsmanager:{{ .Values.providers.secretsmanager.version }}
+  runtimeConfigRef:
+    name: secretsmanager-drc
+{{- end }}

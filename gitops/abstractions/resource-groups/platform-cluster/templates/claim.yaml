@@ -15,6 +15,13 @@ spec:
   autoMode: {{ $cluster.autoMode | default true }}
   {{- if $cluster.resourcePrefix }}
   resourcePrefix: {{ $cluster.resourcePrefix }}
+  {{- else if $.Values.global.resourcePrefix }}
+  resourcePrefix: {{ $.Values.global.resourcePrefix }}
+  {{- end }}
+  {{- if $cluster.argoCDRoleArn }}
+  argoCDRoleArn: {{ $cluster.argoCDRoleArn }}
+  {{- else if $.Values.global.argoCDRoleArn }}
+  argoCDRoleArn: {{ $.Values.global.argoCDRoleArn }}
   {{- end }}
   {{- if and $cluster.managedNodeGroup $cluster.managedNodeGroup.enabled }}
   managedNodeGroup:

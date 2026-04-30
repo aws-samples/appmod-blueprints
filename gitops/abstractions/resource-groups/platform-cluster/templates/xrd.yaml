@@ -1,3 +1,4 @@
+{{- if .Values.xrd.enabled }}
 # Unified PlatformCluster XRD
 # Creates VPC + subnets + IGW + NAT + EKS + IAM + node groups in a single claim.
 # Used by both Kind bootstrap (hub) and hub Crossplane (spokes).
@@ -47,6 +48,9 @@ spec:
                 resourcePrefix:
                   type: string
                   description: Prefix for resource tagging and identification
+                argoCDRoleArn:
+                  type: string
+                  description: ARN of the hub ArgoCD capability role for spoke access
                 managedNodeGroup:
                   type: object
                   description: Optional managed node group alongside Auto Mode
@@ -89,3 +93,4 @@ spec:
                   type: string
                 nodeRoleArn:
                   type: string
+{{- end }}

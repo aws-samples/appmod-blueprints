@@ -1,0 +1,74 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: abstractions
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  fleet_member: control-plane
+          - git:
+              repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+              revision: '{{ .metadata.annotations.addonsRepoRevision }}'
+              directories:
+                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/resource-groups/*'
+  template:
+    metadata:
+      name: '{{ .path.basename }}-{{ .name }}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      sources:
+        - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+          targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+          ref: values
+        - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+          targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+          path: '{{ .path.path }}'
+          helm:
+            releaseName: '{{ .path.basename }}'
+            valuesObject:
+              aws:
+                region: '{{ .metadata.annotations.aws_region }}'
+              global:
+                clusterName: '{{ .metadata.annotations.aws_cluster_name }}'
+      destination:
+        namespace: crossplane-system
+        name: '{{ .name }}'
+      syncPolicy:
+        automated:
+          selfHeal: false
+          allowEmpty: true
+        retry:
+          limit: -1
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 10m
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+      ignoreDifferences:
+        - group: apiextensions.crossplane.io
+          kind: CompositeResourceDefinition
+          jsonPointers:
+            - /status
+            - /metadata/generation
+            - /metadata/managedFields
+        - group: apiextensions.crossplane.io
+          kind: Composition
+          jsonPointers:
+            - /status
+            - /metadata/generation
+            - /metadata/managedFields

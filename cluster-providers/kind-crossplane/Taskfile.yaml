@@ -651,8 +651,9 @@ tasks:
     vars:
       ADDONS:
         sh: |
-          ENABLED_LABELS=$(yq -r '.enabledAddons | to_entries[] | select(.value == true) | "enable_" + .key' \
-            {{.GITOPS_ROOT}}/overlays/environments/control-plane/enabled-addons.yaml)
+          ENABLED_LABELS=$(for f in {{.GITOPS_ROOT}}/overlays/environments/*/enabled-addons.yaml; do
+            [ -f "$f" ] && yq -r '.enabledAddons | to_entries[] | select(.value == true) | "enable_" + .key' "$f"
+          done | sort -u)
           REGISTRY=$(yq eval-all '. as $item ireduce ({}; . * $item)' \
             {{.GITOPS_ROOT}}/addons/registry/core.yaml \
             {{.GITOPS_ROOT}}/addons/registry/gitops.yaml \

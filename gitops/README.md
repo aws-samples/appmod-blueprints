@@ -5,10 +5,11 @@ A complete GitOps-based addon management system for Kubernetes clusters using Ar
 ## Quick Start
 
 ```bash
-# 1. Edit config with your environment values
-vim config.yaml
+# 1. Copy config template and fill in your values
+cp config.yaml config.local.yaml
+vim config.local.yaml
 
-# 2. Bootstrap the platform (reads clusterProvider from config.yaml)
+# 2. Bootstrap the platform
 task install
 
 # 3. Monitor progress
@@ -16,6 +17,12 @@ task status
 
 # 4. Once hub is self-managing, remove Kind
 task destroy-kind
+
+# 5. Add spoke clusters (optional)
+# Edit fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml
+# Edit fleet/members/<cluster>/values.yaml
+# Edit overlays/environments/<env>/enabled-addons.yaml
+# Commit and push — Crossplane provisions, ArgoCD deploys addons
 ```
 
 ## Directory Structure
@@ -189,73 +196,64 @@ cert-manager:
 
 ### Add a new fleet member cluster
 
-Adding a spoke cluster is a three-part process: provision the infrastructure, register it as a fleet member, and ensure its environment has addon enablement configured.
+Adding a spoke cluster is a three-step process: provision the infrastructure, register it as a fleet member, and ensure its environment has addon enablement configured. No manual seeding is required — the fleet-secret chart creates the ArgoCD cluster secret directly from hub annotations and fleet member values.
 
-**Step 1: Provision the cluster via KRO values**
+**Step 1: Provision the cluster**
 
-Add an entry to the appropriate tenant values file. For example, `gitops/fleet/kro-values/tenants/control-plane/kro-clusters/values.yaml`:
+Add an entry to the appropriate tenant values file. For example, `gitops/fleet/kro-values/tenants/workshop/kro-clusters/values.yaml`:
 
 ```yaml
 clusters:
-  spoke-us-west-2:
+  spoke-dev:
     region: us-west-2
-    clusterName: spoke-us-west-2
+    clusterName: spoke-dev
     vpcCidr: "10.1.0.0/16"
     kubernetesVersion: "1.35"
     autoMode: true
     resourcePrefix: peeks
 ```
 
-The `bootstrap/clusters.yaml` ApplicationSet picks this up and renders a `PlatformCluster` Crossplane claim. Crossplane provisions the VPC, subnets, EKS cluster, IAM roles, and all networking.
+The `bootstrap/clusters.yaml` ApplicationSet picks this up and renders a `PlatformCluster` Crossplane claim. Crossplane provisions the VPC, subnets, EKS cluster, IAM roles, and all networking. The composition also creates an ArgoCD AccessEntry on the spoke for the hub's ArgoCD capability role.
 
 **Step 2: Register as a fleet member**
 
-Create `gitops/fleet/members/spoke-us-west-2/values.yaml`:
+Create `gitops/fleet/members/spoke-dev/values.yaml`:
 
 ```yaml
-externalSecret:
-  enabled: true
-secretStoreRefKind: ClusterSecretStore
-secretStoreRefName: aws-secrets-manager
-clusterName: spoke-us-west-2
+clusterName: spoke-dev
+region: us-west-2
 labels:
-  environment: production
-  tenant: control-plane
+  environment: dev
+  tenant: workshop
 ```
 
-The `bootstrap/fleet-secrets.yaml` matrix generator detects the new file and creates an ExternalSecret that produces an ArgoCD cluster secret with `enable_*` labels.
+The `bootstrap/fleet-secrets.yaml` matrix generator detects the new file and creates an ArgoCD cluster secret directly on the hub with the correct annotations and `enable_*` labels. The cluster ARN is constructed from the account ID, region, and cluster name — no Secrets Manager seeding needed.
 
 **Step 3: Create the environment's enabled-addons (if new)**
 
-If the environment doesn't exist yet, create `gitops/overlays/environments/production/enabled-addons.yaml`:
+If the environment doesn't exist yet, create `gitops/overlays/environments/dev/enabled-addons.yaml`:
 
 ```yaml
 enabledAddons:
   metrics_server: true
   external_secrets: true
-  ingress_class_alb: true
-  aws_load_balancer_controller: true
+  kyverno: true
+  kyverno_policies: true
 ```
 
 If the environment already exists, this step is not needed.
 
-**Step 4: Seed cluster credentials and commit**
-
-The spoke's connection credentials must be seeded in AWS Secrets Manager before the ExternalSecret can pull them. This step is provider-specific — see your cluster provider's README:
-- [kind-crossplane](cluster-providers/kind-crossplane/README.md#spoke-cluster-provisioning)
-- [byoc](cluster-providers/byoc/README.md)
-
-Then commit and push:
+**Step 4: Commit and push**
 
 ```bash
 git add gitops/fleet/ gitops/overlays/
-git commit -m "Add spoke-us-west-2 fleet member"
+git commit -m "Add spoke-dev fleet member"
 git push
 ```
 
 ArgoCD picks up the changes automatically:
 - `clusters.yaml` → Crossplane provisions the EKS cluster
-- `fleet-secrets.yaml` → creates the cluster secret with `enable_*` labels
+- `fleet-secrets.yaml` → creates the ArgoCD cluster secret with `enable_*` labels
 - `addons.yaml` → deploys enabled addons to the spoke
 
 See [gitops/fleet/README.md](gitops/fleet/README.md) for detailed field reference and value layering.
