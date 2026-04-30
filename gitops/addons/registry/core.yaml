@@ -113,11 +113,12 @@ aws-load-balancer-controller:
       helm:
         releaseName: lbc-pod-identity
         valuesObject:
-          resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
           aws:
             region: '{{.metadata.annotations.aws_region}}'
             clusterName: '{{.metadata.annotations.aws_cluster_name}}'
             accountId: '{{.metadata.annotations.aws_account_id}}'
+          restartHook:
+            enabled: true
           identities:
             lbc:
               enabled: true
@@ -206,6 +207,8 @@ external-dns:
             region: '{{.metadata.annotations.aws_region}}'
             clusterName: '{{.metadata.annotations.aws_cluster_name}}'
             accountId: '{{.metadata.annotations.aws_account_id}}'
+          restartHook:
+            enabled: true
           identities:
             external-dns:
               enabled: true
