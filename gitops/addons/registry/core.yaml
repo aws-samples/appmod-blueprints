@@ -17,7 +17,7 @@ argocd:
   valuesObject:
     global:
       domain: '{{.metadata.annotations.ingress_domain_name}}'
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     configs:
       cm:
         url: https://{{.metadata.annotations.ingress_domain_name}}/argocd
@@ -152,7 +152,7 @@ image-prepuller:
         values: ['true']
   valuesObject:
     global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
 
 aws-efs-csi-driver:
   namespace: kube-system

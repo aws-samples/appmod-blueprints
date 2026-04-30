@@ -5,4 +5,4 @@ working_repo: ""
 ingress_domain_name: ""
 global:
   aws_cluster_name: ""
-  resourcePrefix: ""
+  clusterName: ""

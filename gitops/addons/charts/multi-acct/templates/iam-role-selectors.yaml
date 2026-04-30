@@ -5,7 +5,7 @@ kind: IAMRoleSelector
 metadata:
   name: ec2-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-ec2"
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-ec2"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -19,7 +19,7 @@ kind: IAMRoleSelector
 metadata:
   name: eks-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-eks"
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-eks"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -33,7 +33,7 @@ kind: IAMRoleSelector
 metadata:
   name: iam-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-iam"
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-iam"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -47,7 +47,7 @@ kind: IAMRoleSelector
 metadata:
   name: ecr-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-ecr"
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-ecr"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -61,7 +61,7 @@ kind: IAMRoleSelector
 metadata:
   name: s3-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-s3"
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-s3"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -75,7 +75,7 @@ kind: IAMRoleSelector
 metadata:
   name: dynamodb-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-dynamodb"
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-dynamodb"
   namespaceSelector:
     names:
       - {{ $key }}

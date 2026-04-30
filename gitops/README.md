@@ -285,6 +285,43 @@ enabledAddons:
 | 6 | Security | keycloak |
 | 7 | GitOps | argo-workflows |
 
+## Running Multiple Stacks
+
+Multiple platform instances can coexist in the same AWS account. Each stack must have unique values for:
+
+| Setting | Why | Example |
+|---------|-----|---------|
+| `hub.clusterName` | EKS cluster names are region-scoped. IAM roles, policies, and Secrets Manager keys are prefixed with clusterName. | `hub`, `hub-staging` |
+| `domain` | Ingress hostnames, Route53 records, TLS certificates, and OIDC issuer URLs are derived from domain. | `dev.idp.example.com`, `staging.idp.example.com` |
+| `hub.vpcCidr` | VPC CIDRs must not overlap if VPC peering is needed. | `10.0.0.0/16`, `10.1.0.0/16` |
+
+Resources automatically isolated by clusterName (no manual action):
+- IAM roles: `{clusterName}-CrossplaneIAMProviderRole`, `{clusterName}-ESOPodIdentityRole`, etc.
+- IAM policies: `{clusterName}-ESOSecretsManagerPolicy`, `{clusterName}-LBCControllerPolicy`, etc.
+- Secrets Manager: `{clusterName}/config`, `{clusterName}/keycloak`
+- EKS Pod Identity Associations: scoped to EKS cluster
+- Kind bootstrap cluster: named `{clusterName}-bootstrap`
+
+Resources that require unique config.yaml values:
+- EKS cluster name (from `hub.clusterName`)
+- DNS records and ingress hostnames (from `domain`)
+- TLS certificates (from `domain`)
+- OIDC issuer URL (from `domain`)
+
+Example for two stacks in the same account:
+
+```yaml
+# Stack 1: config.yaml
+hub:
+  clusterName: "hub-dev"
+domain: "dev.idp.example.com"
+
+# Stack 2: config.yaml
+hub:
+  clusterName: "hub-staging"
+domain: "staging.idp.example.com"
+```
+
 ## Prerequisites
 
 - kind

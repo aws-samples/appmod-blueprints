@@ -98,7 +98,7 @@ backstage:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     global:
       aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -186,7 +186,7 @@ multi-acct:
         values: ['true']
   valuesObject:
     global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
 
 kubevela:
   namespace: vela-system
@@ -499,7 +499,7 @@ platform-manifests:
         values: ['true']
   valuesObject:
     global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       region: '{{.metadata.annotations.aws_region}}'
