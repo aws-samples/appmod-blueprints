@@ -648,9 +648,13 @@ sync_argocd_app() {
             local start_epoch=$(date -d "$operation_started" +%s 2>/dev/null || echo "0")
             local now_epoch=$(date +%s)
             local elapsed=$((now_epoch - start_epoch))
-            # Skip keycloak — its PostSync hook (config job + PushSecret) needs 10+ minutes
-            if [ $elapsed -gt 300 ] && [[ "$app_name" != *"keycloak"* ]]; then
-                print_warning "App $app_name stuck in Running state for ${elapsed}s (>5min)"
+            # Keycloak PostSync hook (config job + PushSecret) needs 10+ minutes — use 20min timeout
+            local stuck_threshold=300
+            if [[ "$app_name" == *"keycloak"* ]]; then
+                stuck_threshold=1200
+            fi
+            if [ $elapsed -gt $stuck_threshold ]; then
+                print_warning "App $app_name stuck in Running state for ${elapsed}s (>${stuck_threshold}s)"
                 stuck_running=true
             fi
         fi
@@ -782,10 +786,14 @@ handle_stuck_operations() {
     if [ -n "$all_stuck_apps" ]; then
         echo "$all_stuck_apps" | while read -r app; do
             if [ -n "$app" ]; then
-                # Skip keycloak — its PostSync hook (config job + PushSecret) needs 10+ minutes
+                # Keycloak PostSync hook needs 10+ minutes — only intervene after 20min
                 if [[ "$app" == *"keycloak"* ]]; then
-                    print_info "Skipping stuck operation termination for $app (keycloak PostSync needs time)"
-                    continue
+                    local kc_started=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.operationState.startedAt}' 2>/dev/null)
+                    local kc_elapsed=$(( $(date +%s) - $(date -d "$kc_started" +%s 2>/dev/null || echo "0") ))
+                    if [ $kc_elapsed -lt 1200 ]; then
+                        print_info "Keycloak $app running for ${kc_elapsed}s, allowing up to 20min for PostSync"
+                        continue
+                    fi
                 fi
                 print_warning "Terminating stuck operation for $app (running > 3 minutes)"
                 terminate_argocd_operation "$app"
