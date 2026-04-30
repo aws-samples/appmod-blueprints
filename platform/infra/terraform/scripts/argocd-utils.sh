@@ -698,7 +698,7 @@ sync_argocd_app() {
         fi
         
         # Skip if already healthy and synced with no running operations (unless we just fixed revision mismatch)
-        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ] && [ "$revision_mismatch" = false ]; then
+        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ] && [ "$operation_phase" != "Failed" ] && [ "$revision_mismatch" = false ]; then
             print_info "App $app_name already healthy and synced, skipping sync"
             
             # Check Keycloak PostSync hook even if app is synced
@@ -764,7 +764,7 @@ sync_argocd_app() {
     fi
 }
 
-# Handle stuck operations (terminate if running > 3 mins)
+# Handle stuck operations (terminate if running > 3 mins, except keycloak which needs longer for PostSync)
 handle_stuck_operations() {
     # Get stuck operations using both methods for better detection
     local stuck_apps_jq=$(kubectl get applications -n argocd -o json 2>/dev/null | \
@@ -781,6 +781,11 @@ handle_stuck_operations() {
     if [ -n "$all_stuck_apps" ]; then
         echo "$all_stuck_apps" | while read -r app; do
             if [ -n "$app" ]; then
+                # Skip keycloak — its PostSync hook (config job + PushSecret) needs 10+ minutes
+                if [[ "$app" == *"keycloak"* ]]; then
+                    print_info "Skipping stuck operation termination for $app (keycloak PostSync needs time)"
+                    continue
+                fi
                 print_warning "Terminating stuck operation for $app (running > 3 minutes)"
                 terminate_argocd_operation "$app"
                 sleep 2

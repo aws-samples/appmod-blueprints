@@ -174,6 +174,34 @@ main() {
   # Get Ingress domain from Terraform output
   export INGRESS_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
 
+  # Push platform repo to GitLab so ArgoCD can start syncing immediately.
+  # This gives ArgoCD a ~15-20 min head start while the IDE SSM script starts.
+  log "Pushing platform repo to GitLab..."
+  cd "$ROOTDIR"
+  git config --global credential.helper store
+  git config --global user.name "${GIT_USERNAME}"
+  git config --global user.email "${GIT_USERNAME}@workshop.local"
+
+  GITLAB_PUSH_URL="https://${GIT_USERNAME}:${GIT_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+
+  # Preserve GitHub as 'github' remote
+  if git remote get-url origin 2>/dev/null | grep -q "github.com"; then
+      git remote rename origin github 2>/dev/null || true
+  fi
+  if git remote get-url origin >/dev/null 2>&1; then
+      git remote set-url origin "$GITLAB_PUSH_URL"
+  else
+      git remote add origin "$GITLAB_PUSH_URL"
+  fi
+
+  create_spoke_cluster_secret_values
+  update_backstage_defaults
+  git add .
+  git commit -m "Bootstrap: add fleet member values and backstage defaults" || true
+  git checkout -B main
+  git push -u origin main
+  cd -
+
   log_success "Bootstrap stack deployment completed successfully"
 }
 

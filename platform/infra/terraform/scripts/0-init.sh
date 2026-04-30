@@ -335,9 +335,10 @@ APPPROJ
     fi
 
     # ---------------------------------------------------------------------------
-    # Phase: GitLab repos setup (must happen BEFORE ArgoCD sync wait)
-    # The bootstrap ArgoCD app points at the GitLab repo — if it's empty,
-    # ArgoCD will loop with "remote repository is empty" for ~15 minutes.
+    # Phase: GitLab repos setup
+    # The platform repo was already pushed to GitLab by deploy.sh (CodeBuild),
+    # giving ArgoCD a head start while the IDE boots. Here we just set up the
+    # local git remote and create the application repos.
     # ---------------------------------------------------------------------------
     # Get GitLab domain from CloudFront distribution
     if [ -z "$GITLAB_DOMAIN" ]; then
@@ -351,7 +352,7 @@ APPPROJ
         update_workshop_var "GITLAB_DOMAIN" "$GITLAB_DOMAIN"
     fi
 
-    # Setup GitLab remote for local environment
+    # Setup GitLab remote for local environment (deploy.sh already pushed, just configure the remote)
     cd "$GIT_ROOT_PATH"
     git config --global credential.helper store
     git config --global user.name "$GIT_USERNAME"
@@ -373,23 +374,10 @@ APPPROJ
         git remote add origin "$GITLAB_URL"
     fi
     
-    # Create main branch from current HEAD (already on the correct tag/commit from clone)
     git checkout -B main
-
-    # Create fleet member values for spoke clusters (required for fleet-secrets ApplicationSet)
-    # and update Backstage catalog-info.yaml with environment-specific values.
-    # These were previously only called by deploy.sh (CodeBuild), but since 0-init.sh
-    # now owns the GitLab push, the content must be prepared here before pushing.
-    create_spoke_cluster_secret_values
-    update_backstage_defaults
-
-    # Commit the generated content so 2-gitlab-init.sh push includes it
-    git add .
-    git commit -m "Bootstrap: add fleet member values and backstage defaults" || true
-
     cd -
 
-    # Initialize GitLab configuration (creates app repos and pushes platform repo)
+    # Initialize GitLab configuration (creates app repos — platform repo already pushed by deploy.sh)
     bash "$SCRIPT_DIR/2-gitlab-init.sh"
 
     # Dependency-aware ArgoCD app synchronization
