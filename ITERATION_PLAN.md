@@ -1,113 +1,233 @@
-# Platform Iteration: Resource Isolation and Operational Improvements
+# Platform Iteration: Operational Improvements and Addon Enablement
 
 ## Parent Issue
 
-**Title:** Improve resource isolation, destroy reliability, and operational tooling
+**Title:** Platform operational improvements, addon enablement, and extensibility
 
 **Description:**
-This iteration focuses on completing clusterName-based resource isolation across all platform components and fixing remaining operational issues.
-
-### Already completed (this session):
-- clusterName-based prefixing for Crossplane IAM roles/policies
-- PostSync restart hook for pod identity credential injection
-- Sanitized addonVersion label for branch names with `/`
-- Removed SkipHealthCheck (confirmed null health on EKS Capability)
-- Centralized hub:kubeconfig task
-- Colored task output, hub:wait-for-sync, app generation wait
-- Destroy ordering fix (cluster deletion before provider deletion)
+This iteration covers hardcoded value cleanup, addon verification, new cluster providers, and future extensibility.
 
 ---
 
 ## Sub-Issues
 
-### 1. Align addon charts to use clusterName instead of resourcePrefix
+### 1. Remove hardcoded static values from addon charts
 
 **Priority:** High
-**Labels:** enhancement, breaking-change
+**Labels:** bug, cleanup
 
-All addon charts currently use `global.resourcePrefix` for AWS resource naming. Replace with `global.clusterName` (from `aws_cluster_name` annotation) for natural per-deployment isolation.
+Several addon charts contain hardcoded values (`peeks`, `us-west-2`, `system-peeks`) that should be parameterized via `global.clusterName`, `global.region`, or chart values.
 
-**Charts to update:**
-- `airflow/templates/external-secret.yaml` — `{resourcePrefix}-hub/keycloak-clients` → `{clusterName}/keycloak-clients`
-- `jupyterhub/templates/external-secret.yaml` — same
-- `kubeflow/templates/external-secret.yaml` — same
-- `mlflow/templates/external-secret.yaml` — same
-- `spark-operator/templates/external-secret.yaml` — same
-- `image-prepuller/templates/daemonset.yaml` — DaemonSet name
-- `platform-manifests/templates/huggingface-models.yaml` — S3 bucket name
-- `ray-operator/templates/model-prestage-job.yaml` — Job name
-- `multi-acct/templates/configmap.yaml` — cross-account IAM role names
-- `multi-acct/templates/iam-role-selectors.yaml` — cross-account IAM role ARNs
+**Hardcoded values found:**
 
-**Registry to update:**
-- `core.yaml`, `observability.yaml`, `ml.yaml` — change `resource_prefix` to `aws_cluster_name` in valuesObject
-
-**Also update:**
-- Addon chart `values.yaml` files — rename `global.resourcePrefix` to `global.clusterName`
-- Secrets Manager keycloak key to use `{clusterName}/keycloak-clients` consistently
+| File | Value | Fix |
+|------|-------|-----|
+| `devlake/templates/external-secret.yaml` | `peeks-devlake/mysql-connection` | Use `{{ .Values.global.clusterName }}-devlake/mysql-connection` |
+| `grafana-dashboards/templates/external-secret.yaml` | `peeks-devlake/mysql-connection` | Same |
+| `backstage/templates/install.yaml` | `karpenter.sh/nodepool: system-peeks` | Use `{{ .Values.global.clusterName }}` or make configurable |
+| `platform-manifests/templates/huggingface-models.yaml` | `default "peeks"`, `default "peeks-hub"` | Already uses `global.clusterName` with fallback — remove hardcoded defaults |
+| `platform-manifests/templates/ray-system-iamroleselectors.yaml` | `peeks-cluster-mgmt-iam`, `peeks-cluster-mgmt-eks` | Use `{{ .Values.global.clusterName }}-cluster-mgmt-*` |
+| `ray-operator/templates/model-prestage-job.yaml` | `peeks-ray-models` | Use `{{ .Values.modelPrestage.s3Bucket }}` with `clusterName`-based default |
+| `kro/resource-groups/manifests/appmod-service.yaml` | `peeks-cluster-mgmt-*`, `peeks/platform/amp` | Parameterize via schema `resourcePrefix` or `clusterName` |
+| `kro/resource-groups/manifests/ray-service/ray-service.yaml` | `peeks-ray-models`, `us-west-2` | Use schema fields |
+| `kro/resource-groups/manifests/eks/rg-eks-vpc.yaml` | `default="us-west-2"`, `default="peeks"` | Acceptable as schema defaults, but document |
+| `grafana/templates/datasources.yaml` | `default "us-west-2"` | Use `{{ .Values.aws.region }}` without hardcoded default |
+| `keycloak/templates/keycloak-config.yaml` | `s3.us-west-2.amazonaws.com`, kubectl 1.32.0 | Parameterize region, pin kubectl version via values |
+| `addons/configs/image-prepuller/values.yaml` | `general-purpose-peeks` | Use `general-purpose-{{ clusterName }}` or make configurable |
 
 **Acceptance criteria:**
-- All AWS resources created by addons are prefixed with clusterName
-- Two platform instances with different clusterNames have zero collisions
-- `resourcePrefix` only used for KRO tenant-facing resources
+- No `peeks` string in any template outside KRO schema defaults
+- No hardcoded `us-west-2` in templates (use chart values with fallback)
+- All nodepool references are parameterized
 
 ---
 
-### 2. Fix provider DRC mismatch on Kind during destroy/reinstall
+### 2. Enable and verify core addons (core.yaml)
 
 **Priority:** High
-**Labels:** bug
+**Labels:** testing, addons
 
-Per-provider DRCs (ec2-drc, eks-drc, iam-drc) assign custom SAs designed for hub pod identity. On Kind, providers need the `default` DRC. After provider reinstall, providers start but never initialize controllers.
+Verify each addon in `core.yaml` deploys correctly and reaches Healthy/Synced:
+- argocd
+- metrics-server
+- cert-manager
+- external-secrets
+- ingress-class-alb
+- aws-load-balancer-controller (with pod identity via additionalResources)
+- image-prepuller
+- aws-efs-csi-driver
+- external-dns (with pod identity via additionalResources)
 
-**Also:** Stale CRD ownerReferences — when providers are recreated, the family provider's CRD retains the old revision's UID, blocking the new revision.
-
-**Fix needed:**
-- Destroy task should switch providers to `default` DRC before deletion on Kind
-- Add CRD ownerReference repair step after provider reinstall
-- Consider a `crossplane:repair` task for manual recovery
-
-**Acceptance criteria:**
-- `task destroy` completes without stuck providers
-- Provider reinstall on Kind works without manual intervention
+**Test:** Enable all in `enabled-addons.yaml`, run `task install`, verify all apps Healthy/Synced.
 
 ---
 
-### 3. Fix VPC deletion stuck on DependencyViolation
+### 3. Enable and verify gitops addons (gitops.yaml)
 
 **Priority:** Medium
-**Labels:** bug
+**Labels:** testing, addons
 
-After EKS cluster deletion, VPC deletion fails with `DependencyViolation` for 15-20+ minutes due to EKS Auto Mode cleanup lag.
-
-**Proposed fix:**
-- Add retry loop with timeout to VPC deletion in destroy task
-- Add explicit cleanup of EKS-managed ENIs before VPC deletion
-
-**Acceptance criteria:**
-- Destroy task handles VPC deletion delay gracefully
-- No manual AWS Console intervention needed
+- argo-rollouts
+- argo-events
+- argo-workflows
+- kargo
+- flux
 
 ---
 
-### 4. KRO resource groups — align naming with clusterName or appName
+### 4. Enable and verify security addons (security.yaml)
+
+**Priority:** Medium
+**Labels:** testing, addons
+
+- keycloak
+- kyverno
+- kyverno-policies
+- kyverno-policy-reporter
+
+---
+
+### 5. Enable and verify observability addons (observability.yaml)
+
+**Priority:** Medium
+**Labels:** testing, addons
+
+- grafana + grafana-operator
+- grafana-dashboards
+- kube-state-metrics
+- prometheus-node-exporter
+- opentelemetry-operator
+- cw-prometheus
+- aws-for-fluentbit
+- cni-metrics-helper
+
+---
+
+### 6. Enable and verify platform addons (platform.yaml)
+
+**Priority:** Medium
+**Labels:** testing, addons
+
+- crossplane + crossplane-base + crossplane-aws
+- backstage
+- kro + kro-manifests
+- multi-acct
+- kubevela
+- devlake
+- gitlab
+- ACK controllers (iam, eks, ec2, ecr, s3, dynamodb, efs)
+- platform-manifests
+
+---
+
+### 7. Enable and verify ML/AI addons (ml.yaml)
+
+**Priority:** Medium
+**Labels:** testing, addons
+
+- jupyterhub
+- kubeflow
+- mlflow
+- ray-operator
+- spark-operator
+- airflow
+
+---
+
+### 8. Add Terraform cluster provider
+
+**Priority:** Medium
+**Labels:** enhancement, new-provider
+
+Add `cluster-providers/terraform/` as an alternative to kind-crossplane. Should follow the same bootstrap contract:
+- Produce an EKS cluster with ArgoCD running
+- Create cluster secret with correct labels/annotations
+- Apply `bootstrap/root-appset.yaml`
+- Support `task install`, `task destroy`, `task status`
+
+Standardize the provider contract in `cluster-providers/README.md` so new providers are plug-and-play.
+
+---
+
+### 9. Standardize root Taskfile bootstrap contract
+
+**Priority:** Medium
+**Labels:** enhancement, dx
+
+The root Taskfile delegates to providers but each provider implements tasks differently. Standardize:
+- Required tasks: `install`, `destroy`, `status`, `validate`, `hub:update`, `hub:destroy-addons`
+- Required vars: `CONFIG_FILE` (passed from root), `HUB_CLUSTER_NAME`, `AWS_REGION`
+- Required outputs: Kind/EKS kubeconfig in `private/`, hub-kubeconfig in `private/`
+- Document the contract in `cluster-providers/README.md`
+
+---
+
+### 10. Remove ArgoCD capability create/delete Job when Crossplane supports it
+
+**Priority:** Low
+**Labels:** enhancement, tech-debt
+**Ref:** https://github.com/crossplane-contrib/provider-upjet-aws/pull/2015
+
+The `create-capability.yaml` and `delete-capability.yaml` Jobs use AWS CLI to manage the EKS ArgoCD Capability because Crossplane's EKS provider doesn't support it yet. Once `provider-upjet-aws` adds `EKSCapability` support:
+- Replace Jobs with Crossplane managed resources
+- Remove `manifests/argocd/create-capability.yaml` and `delete-capability.yaml`
+- Remove `argocd:capability` and `argocd:delete-capability` tasks
+- Add capability to the PlatformCluster composition or as a separate claim
+
+---
+
+### 11. Agentic AI addons
+
+**Priority:** Medium
+**Labels:** enhancement, addons, ai
+
+Add addon registry entries and charts for agentic AI workloads:
+- Amazon Bedrock Agent runtime integration
+- LangChain/LangGraph operator
+- Vector database (pgvector, Milvus, or Weaviate)
+- Model serving infrastructure (vLLM, TGI)
+- Agent orchestration (CrewAI, AutoGen)
+- Evaluation and observability (LangSmith, Phoenix)
+
+Define as a new registry file `ai.yaml` or extend `ml.yaml`.
+
+---
+
+### 12. Create dedicated EKS Auto Mode nodepools for addons
+
+**Priority:** Medium
+**Labels:** enhancement, infrastructure
+
+EKS Auto Mode uses a default nodepool for all workloads. Create dedicated nodepools for platform addons to:
+- Isolate platform workloads from application workloads
+- Set resource limits and instance types per addon category
+- Support GPU nodepools for ML/AI addons
+- Allow cost attribution per nodepool
+
+Implementation:
+- Add nodepool definitions to the PlatformCluster composition or as separate Crossplane resources
+- Configure addon charts to use `nodeSelector` or `nodeAffinity` targeting the dedicated nodepool
+- Parameterize nodepool name via `global.clusterName` (e.g., `system-{clusterName}`)
+
+---
+
+### 13. KRO resource groups — align naming with clusterName or appName
 
 **Priority:** Medium
 **Labels:** enhancement
 
-KRO ResourceGroups use `resourcePrefix` for ECR repos, S3 buckets, IAM roles, capability roles.
-
-**Decision needed:** Use `appName` only, `clusterName-appName`, or keep `resourcePrefix`.
+KRO ResourceGroups use `resourcePrefix` for ECR repos, S3 buckets, IAM roles, capability roles. Align with the clusterName-based naming convention used by infrastructure resources.
 
 **Files:**
 - `kro/resource-groups/manifests/cicd-pipeline/cicd-pipeline.yaml`
 - `kro/resource-groups/manifests/ray-service/ray-service.yaml`
 - `kro/resource-groups/manifests/eks/rg-eks.yaml`
 - `kro/resource-groups/manifests/eks/rg-eks-vpc.yaml`
+- `kro/resource-groups/manifests/appmod-service.yaml`
 
 ---
 
-### 5. Spoke cluster end-to-end validation
+### 14. Spoke cluster end-to-end validation
 
 **Priority:** Medium
 **Labels:** testing
@@ -122,10 +242,10 @@ Validate the full spoke lifecycle:
 
 ---
 
-### 6. Remove resourcePrefix from config.yaml
+### 15. Remove resourcePrefix from config.yaml
 
 **Priority:** Low
 **Labels:** cleanup
-**Blocked by:** #1, #4
+**Blocked by:** #1, #13
 
-Once all resources use `clusterName` and KRO resources are aligned, remove `resourcePrefix` from `config.yaml`.
+Once all resources use `clusterName` and KRO resources are aligned, remove `resourcePrefix` from `config.yaml` and schema. Only remains in KRO ResourceGroup schemas if they keep using it.

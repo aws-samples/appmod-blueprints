@@ -503,7 +503,6 @@ tasks:
 
   argocd:delete-capability:
     desc: Delete EKS ArgoCD Capability via Job
-    vars:
     cmds:
       - kubectl -n crossplane-system create configmap argocd-capability-config
           --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
