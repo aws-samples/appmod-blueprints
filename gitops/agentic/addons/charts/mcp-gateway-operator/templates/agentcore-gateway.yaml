@@ -51,6 +51,8 @@ spec:
           {{- toYaml .Values.agentcoreGateway.authorizer.allowedClients | nindent 10 }}
         allowedAudience:
           {{- toYaml .Values.agentcoreGateway.authorizer.allowedAudience | nindent 10 }}
+    {{- else }}
+    authorizerType: NONE
     {{- end }}
   providerConfigRef:
     name: provider-aws-config
