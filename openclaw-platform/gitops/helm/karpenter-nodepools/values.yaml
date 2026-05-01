@@ -1,7 +1,7 @@
 # Set by Terraform at install time via ArgoCD helm parameters
 clusterName: openclaw-eks
 nodeRole: KarpenterNodeRole-openclaw-eks
-kataAmiId: "" # required; comes from Packer output via SSM
+kataAmiId: "ami-0d8883d5d5f9702e4"
 
 # Nested-virt pool (default): cheaper, more reliable than bare metal
 kataNested:
