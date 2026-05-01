@@ -3,7 +3,7 @@
 
 # -- Container image
 image:
-  repository: public.ecr.aws/mcp-gateway-operator/controller
+  repository: 498530348755.dkr.ecr.us-west-2.amazonaws.com/mcp-gateway-operator
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
