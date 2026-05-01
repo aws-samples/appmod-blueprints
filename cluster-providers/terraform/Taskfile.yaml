@@ -1,0 +1,68 @@
+version: "3"
+set: [errexit, nounset, pipefail]
+silent: true
+
+vars:
+  TF_DIR: "{{.ROOT_DIR}}/cluster-providers/terraform"
+  TFVARS: "{{.TF_DIR}}/terraform.tfvars"
+  HUB_CLUSTER_NAME:
+    sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
+  AWS_REGION:
+    sh: yq '.aws.region' {{.CONFIG_FILE}}
+
+tasks:
+  generate-tfvars:
+    desc: Generate terraform.tfvars from config.local.yaml
+    cmds:
+      - |
+        cat > {{.TFVARS}} <<EOF
+        cluster_name            = "$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
+        kubernetes_version      = "$(yq '.hub.kubernetesVersion // "1.35"' {{.CONFIG_FILE}})"
+        vpc_cidr                = "$(yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}})"
+        aws_region              = "$(yq '.aws.region' {{.CONFIG_FILE}})"
+        aws_account_id          = "$(yq '.aws.accountId' {{.CONFIG_FILE}})"
+        repo_url                = "$(yq '.repo.url' {{.CONFIG_FILE}})"
+        repo_revision           = "$(yq '.repo.revision // "main"' {{.CONFIG_FILE}})"
+        repo_basepath           = "$(yq '.repo.basepath // "gitops/"' {{.CONFIG_FILE}})"
+        domain                  = "$(yq '.domain' {{.CONFIG_FILE}})"
+        resource_prefix         = "$(yq '.resourcePrefix // ""' {{.CONFIG_FILE}})"
+        ingress_name            = "$(yq '.ingressName // ""' {{.CONFIG_FILE}})"
+        ingress_security_groups = "$(yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}})"
+        idc_instance_arn        = "$(yq '.identityCenter.instanceArn' {{.CONFIG_FILE}})"
+        idc_region              = "$(yq '.identityCenter.region' {{.CONFIG_FILE}})"
+        idc_admin_group_id      = "$(yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}})"
+        argocd_capability_name  = "$(yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}})"
+        eso_version             = "$(yq '.external-secrets.defaultVersion' {{.ROOT_DIR}}/gitops/addons/registry/core.yaml)"
+        root_appset_path        = "{{.ROOT_DIR}}/gitops/bootstrap/root-appset.yaml"
+        EOF
+
+  init:
+    desc: Initialize Terraform
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - terraform init
+
+  install:
+    desc: Full bootstrap — VPC, EKS, IAM, ArgoCD capability, ESO, seed, root-appset
+    cmds:
+      - task: generate-tfvars
+      - task: init
+      - cmd: cd {{.TF_DIR}} && terraform apply -auto-approve
+      - echo "✓ Bootstrap complete. Run 'task status'"
+
+  status:
+    desc: Show current state
+    cmds:
+      - aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query '{status:cluster.status, endpoint:cluster.endpoint, version:cluster.version}' --output table 2>/dev/null || echo "Cluster not found"
+
+  destroy:
+    desc: Full teardown
+    cmds:
+      - task: generate-tfvars
+      - cmd: cd {{.TF_DIR}} && terraform destroy -auto-approve
+
+  hub:update:
+    desc: Update hub infrastructure
+    cmds:
+      - task: generate-tfvars
+      - cmd: cd {{.TF_DIR}} && terraform apply -auto-approve
