@@ -410,8 +410,7 @@ gitlab_repository_setup(){
       if ! git push gitlab HEAD:main --force-with-lease; then
         # If force-with-lease still fails, try regular push
         if ! git push gitlab HEAD:main; then
-          log_error "Failed to push repository to GitLab"
-          exit 1
+          log_warning "Failed to push repository to GitLab (may be handled by 0-init.sh in Workshop Studio)"
         fi
       fi
     fi

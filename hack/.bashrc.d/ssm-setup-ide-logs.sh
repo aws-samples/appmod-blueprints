@@ -15,6 +15,8 @@ argocd-sync() {
     # Source colors
     source "$script_dir/colors.sh"
     
+    kubectl config use-context peeks-hub > /dev/null 2>&1
+    
     print_info "Running ArgoCD recovery..."
     bash "$script_dir/recover-argocd-apps.sh"
     

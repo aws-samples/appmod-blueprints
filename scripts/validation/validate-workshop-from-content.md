@@ -98,6 +98,124 @@ If any are empty, stop and report.
 
 ---
 
+## Pre-Flight Architecture Check (Phase 0)
+
+**Run this BEFORE any module.** This phase is **diagnostic only** — it checks whether
+the platform bootstrap deployed everything correctly. **Do NOT fix issues manually**
+(no `helm install`, no `argocd cluster add`, no `kubectl apply` of addons). Instead:
+
+1. **Identify** what is missing or broken.
+2. **Trace the root cause** back to the bootstrap scripts (`deploy.sh`, SSM documents,
+   Terraform, GitOps ApplicationSets) to understand *why* it wasn't deployed.
+3. **Log each issue** with the specific bootstrap script/step that should have handled it.
+4. **Stop and report** — the platform build scripts need fixing, not manual workarounds.
+
+Everything in the workshop is deployed via GitOps (ArgoCD ApplicationSets syncing from
+the platform Git repo). If something is missing on a spoke cluster, the fix belongs in
+the bootstrap pipeline — not in a manual `helm install` or `kubectl apply`.
+
+```bash
+echo "⏱️ Phase 0 (pre-flight) START: $(date +%H:%M)"
+source ~/.bashrc.d/platform.sh 2>/dev/null
+source ~/.bashrc.d/ssm-setup-ide-logs.sh 2>/dev/null
+```
+
+### 0.1 — ArgoCD cluster registrations
+
+The workshop deploys to `peeks-spoke-dev` and `peeks-spoke-prod` via ArgoCD CD apps.
+These apps set `destination.name` to the spoke cluster name, so **ArgoCD must have
+cluster secrets for both spoke clusters**.
+
+```bash
+argocd cluster list 2>/dev/null
+kubectl config use-context peeks-hub
+kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster \
+  -o custom-columns=NAME:.metadata.name --no-headers
+```
+
+**Expected**: Three clusters — `peeks-hub`, `peeks-spoke-dev`, `peeks-spoke-prod`.
+
+If spoke clusters are missing, trace the root cause:
+- Which bootstrap step registers spoke clusters with ArgoCD?
+- Check the SSM document / `deploy.sh` / Terraform that creates cluster secrets.
+- Check the `clusters` ApplicationSet and the GitOps fleet config.
+- Flag as 🔴 Blocker with the specific script that failed.
+
+### 0.2 — Spoke cluster addons (deployed via GitOps)
+
+Spoke clusters need addons deployed by ArgoCD ApplicationSets. Check what actually landed:
+
+```bash
+for CLUSTER in peeks-spoke-dev peeks-spoke-prod; do
+  echo "=== $CLUSTER ==="
+  kubectl config use-context $CLUSTER
+
+  echo "  NodePools (need a general pool without CriticalAddonsOnly taint):"
+  kubectl get nodepools.karpenter.sh --no-headers 2>/dev/null
+
+  echo "  Argo Rollouts CRD:"
+  kubectl get crd rollouts.argoproj.io --no-headers 2>/dev/null || echo "    MISSING"
+
+  echo "  External Secrets CRD:"
+  kubectl get crd externalsecrets.external-secrets.io --no-headers 2>/dev/null || echo "    MISSING"
+
+  echo "  Ingress NGINX pods:"
+  kubectl get pods -n ingress-nginx --no-headers 2>/dev/null || echo "    MISSING"
+
+  echo "  kro RGDs (need AppmodService in Active state):"
+  kubectl get resourcegraphdefinitions --no-headers -o wide 2>/dev/null || echo "    NONE"
+done
+```
+
+**Expected per spoke cluster**:
+- NodePool without `CriticalAddonsOnly` taint (for workload pods)
+- Argo Rollouts, External Secrets, Ingress NGINX — all deployed via ArgoCD
+- `AppmodService` RGD in Active/Ready state
+
+If any are missing, **do NOT install them manually**. Instead:
+- Check which ArgoCD ApplicationSet should deploy this addon to spoke clusters.
+- Check the cluster secret labels (`enable_argo_rollouts`, `enable_external_secrets`, etc.).
+- Check if the spoke cluster secrets exist at all (see 0.1).
+- The root cause is almost always: spoke clusters not registered → ApplicationSets
+  don't generate apps for them → addons never deployed.
+- Flag each missing addon as 🔴 Blocker with the bootstrap gap that caused it.
+
+### 0.3 — Backstage system-info entity
+
+```bash
+source ~/environment/platform-on-eks-workshop/scripts/validation/backstage-auth.sh 2>/dev/null
+curl -s -H "Authorization: Bearer $BS_TOKEN" \
+  "$BACKSTAGE_URL/api/catalog/entities/by-name/system/default/system-info" \
+  | jq '.spec.gitlab_hostname'
+```
+
+**Expected**: A real hostname (e.g., `d3asb3i2t94xpq.cloudfront.net`).
+
+If it shows `{{ values.gitlabDomain }}`, the `catalog-info.yaml` was never rendered
+by the bootstrap. Trace to `platform/infra/terraform/scripts/utils.sh` →
+`update_backstage_templates()` which does the `yq` substitution and git push.
+Flag as 🔴 Blocker — identify which deploy step should have called this function.
+
+### 0.4 — DNS_DEV / DNS_PROD
+
+```bash
+echo "DNS_DEV=$DNS_DEV DNS_PROD=$DNS_PROD"
+```
+
+If empty, trace to the SSM setup script or `platform.sh` that should populate these
+from the spoke cluster ingress LB hostnames. Flag as 🟡 Wrong output.
+
+```bash
+echo "⏱️ Phase 0 (pre-flight) END: $(date +%H:%M)"
+```
+
+**If any 🔴 Blocker is found in Phase 0, STOP.** Do not proceed to Module 10.
+Report the blockers with root-cause analysis pointing to the specific bootstrap
+scripts that need fixing. The goal is to fix the platform build, not to paper over
+gaps with manual commands.
+
+---
+
 ## Content-to-Phase Mapping
 
 ### Module 10 — Platform Engineering (exploration, mostly read-only)
@@ -272,21 +390,47 @@ source ~/.bashrc.d/ssm-setup-ide-logs.sh
 
 ### ArgoCD Sync
 
-Prefer argocd CLI, fallback to kubectl if auth errors:
+Prefer argocd CLI, fallback to kubectl if auth errors.
+
+**IMPORTANT: Always use `timeout` to prevent hanging indefinitely.** The `argocd app sync`
+command can block forever if the app never reaches a healthy state. Wrap every sync call:
 
 ```bash
-# CLI
-argocd app sync <app-name>
+# CLI — with 120s timeout (adjust per phase if needed)
+timeout 120 argocd app sync <app-name> || echo "argocd sync timed out or failed"
+```
+
+If the sync times out, check the app status and events before retrying:
+
+```bash
+argocd app get <app-name> --refresh 2>/dev/null | head -20
 ```
 
 If CLI auth fails, run `argocd-refresh-token` then `source ~/.bashrc.d/platform.sh`.
 
 ```bash
-# kubectl fallback
+# kubectl fallback (non-blocking — patches and returns immediately)
 hub
 kubectl patch application <app-name> -n argocd --type merge \
   -p '{"operation": {"initiatedBy": {"username": "admin"}, "sync": {"revision": "HEAD"}}}'
 ```
+
+### General Timeout Rule
+
+**Every long-running CLI command must be wrapped with `timeout`** to prevent the agent from
+getting stuck. Apply these defaults:
+
+| Command type                        | Timeout |
+|-------------------------------------|---------|
+| `argocd app sync`                   | 120s    |
+| `kubectl rollout status`            | 180s    |
+| `kubectl wait --for=condition`      | 120s    |
+| `helm install/upgrade --wait`       | 300s    |
+| `curl` to external endpoints        | 30s     |
+| Any polling loop                    | max 20 iterations with `sleep 15–30` |
+
+If a command times out, log it as a potential issue, check the underlying resource state,
+and continue to the next step.
 
 ### Backstage Scaffolder Failures
 
