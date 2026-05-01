@@ -1,27 +1,28 @@
 {{- if .Values.agentcoreGateway.create }}
 ---
-apiVersion: iam.services.k8s.aws/v1alpha1
+apiVersion: iam.aws.upbound.io/v1beta1
 kind: Role
 metadata:
   name: {{ include "mcp-gateway-operator.fullname" . }}-gateway
   annotations:
     argocd.argoproj.io/sync-wave: "-5"
 spec:
-  name: {{ include "mcp-gateway-operator.fullname" . }}-gateway
-  description: "IAM role for AgentCore Gateway"
-  assumeRolePolicyDocument: |
-    {
-      "Version": "2012-10-17",
-      "Statement": [
-        {
-          "Effect": "Allow",
-          "Principal": {
-            "Service": "bedrock-agentcore.amazonaws.com"
-          },
-          "Action": "sts:AssumeRole"
-        }
-      ]
-    }
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "bedrock-agentcore.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      }
+  providerConfigRef:
+    name: provider-aws-config
 ---
 apiVersion: bedrockagentcore.aws.upbound.io/v1beta1
 kind: Gateway
