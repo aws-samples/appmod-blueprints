@@ -16,9 +16,10 @@ spec:
     helm:
       releaseName: karpenter
       valuesObject:
+        # Cluster name is ${project_name}-eks from Terraform; project_name default is "openclaw".
         settings:
-          clusterName: __CLUSTER_NAME__
-          interruptionQueue: __CLUSTER_NAME__-karpenter
+          clusterName: openclaw-eks
+          interruptionQueue: openclaw-eks-karpenter
         replicas: 2
         serviceAccount:
           name: karpenter

@@ -88,7 +88,18 @@ source "amazon-ebs" "kata_nested" {
   security_group_id           = var.security_group_id != "" ? var.security_group_id : null
   associate_public_ip_address = true
 
-  ssh_username = "ec2-user"
+  # Account enforces httpTokensEnforced — build instance must use IMDSv2.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+  # Mark resulting AMI as IMDSv2-required.
+  imds_support = "v2.0"
+
+  ssh_username     = "ec2-user"
+  ssh_timeout      = "15m"
+  ssh_keep_alive_interval = "30s"
 
   # Standard instance polling (faster than bare metal)
   aws_polling {
@@ -135,6 +146,13 @@ source "amazon-ebs" "kata_baremetal" {
   subnet_id                   = var.subnet_id != "" ? var.subnet_id : null
   security_group_id           = var.security_group_id != "" ? var.security_group_id : null
   associate_public_ip_address = true
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+  imds_support = "v2.0"
 
   ssh_username = "ec2-user"
 

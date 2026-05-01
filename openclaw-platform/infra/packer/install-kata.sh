@@ -58,7 +58,9 @@ ls -lh kata-static.tar
 
 echo ">>> Extracting tar..."
 sudo tar -xvf kata-static.tar -C /
-sudo sync
+# NOTE: A mid-script `sudo sync` here flushes ~4.7GB and can exceed SSH idle
+# timeout, killing the provisioner. The final `sync` at the end does this
+# once extraction + config writes are all done.
 
 # Verify binaries are not empty
 echo ">>> Verifying Kata installation..."
