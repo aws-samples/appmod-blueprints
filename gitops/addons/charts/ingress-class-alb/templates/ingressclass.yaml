@@ -1,5 +1,5 @@
 {{- if eq (default "auto" .Values.controllerMode) "oss" }}
-apiVersion: elbv2.k8s.aws/v1beta1
+apiVersion: elbv2.k8s.aws/v1
 {{- else }}
 apiVersion: eks.amazonaws.com/v1
 {{- end }}

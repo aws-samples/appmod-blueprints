@@ -60,6 +60,7 @@ crossplane-base:
         createIdentity: false
       secretsmanager:
         version: "v2.5.3"
+        createIdentity: false
   ignoreDifferences:
     - group: pkg.crossplane.io
       kind: Provider

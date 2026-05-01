@@ -110,3 +110,56 @@ resource "aws_eks_pod_identity_association" "eso" {
   role_arn        = aws_iam_role.eso.arn
   tags            = local.common_tags
 }
+
+# ===== Crossplane Provider Roles + Pod Identity =====
+# These must exist before ArgoCD installs crossplane-base (createIdentity: false in registry)
+
+locals {
+  crossplane_providers = {
+    iam = {
+      role_name       = "${var.cluster_name}-CrossplaneIAMProviderRole"
+      service_account = "provider-aws-iam"
+    }
+    eks = {
+      role_name       = "${var.cluster_name}-CrossplaneEKSProviderRole"
+      service_account = "provider-aws-eks"
+    }
+    ec2 = {
+      role_name       = "${var.cluster_name}-CrossplaneEC2ProviderRole"
+      service_account = "provider-aws-ec2"
+    }
+    secretsmanager = {
+      role_name       = "${var.cluster_name}-CrossplaneSecretsManagerProviderRole"
+      service_account = "provider-aws-secretsmanager"
+    }
+  }
+}
+
+resource "aws_iam_role" "crossplane_provider" {
+  for_each = local.crossplane_providers
+  name     = each.value.role_name
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "pods.eks.amazonaws.com" }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+    }]
+  })
+  tags = merge(local.common_tags, { purpose = "${each.key}-provider" })
+}
+
+resource "aws_iam_role_policy_attachment" "crossplane_provider" {
+  for_each   = local.crossplane_providers
+  role       = aws_iam_role.crossplane_provider[each.key].name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+resource "aws_eks_pod_identity_association" "crossplane_provider" {
+  for_each        = local.crossplane_providers
+  cluster_name    = aws_eks_cluster.hub.name
+  namespace       = "crossplane-system"
+  service_account = each.value.service_account
+  role_arn        = aws_iam_role.crossplane_provider[each.key].arn
+  tags            = local.common_tags
+}

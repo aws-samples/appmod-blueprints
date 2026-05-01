@@ -59,12 +59,20 @@ resource "kubectl_manifest" "seed_secret" {
         environment                      = "control-plane"
       }
       annotations = {
-        addonsRepoURL      = var.repo_url
-        addonsRepoRevision = var.repo_revision
-        addonsRepoBasepath = var.repo_basepath
-        fleetRepoURL       = var.repo_url
-        fleetRepoRevision  = var.repo_revision
-        fleetRepoBasepath  = var.repo_basepath
+        addonsRepoURL           = var.repo_url
+        addonsRepoRevision      = var.repo_revision
+        addonsRepoBasepath      = var.repo_basepath
+        fleetRepoURL            = var.repo_url
+        fleetRepoRevision       = var.repo_revision
+        fleetRepoBasepath       = var.repo_basepath
+        aws_cluster_name        = var.cluster_name
+        aws_region              = var.aws_region
+        aws_account_id          = var.aws_account_id
+        aws_vpc_id              = aws_vpc.hub.id
+        ingress_domain_name     = var.domain
+        ingress_name            = var.ingress_name
+        ingress_security_groups = var.ingress_security_groups
+        resource_prefix         = var.resource_prefix
       }
     }
     stringData = {
