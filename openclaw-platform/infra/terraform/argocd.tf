@@ -34,7 +34,7 @@ resource "kubectl_manifest" "argocd_app_of_apps" {
       source:
         repoURL: ${var.gitops_repo_url}
         targetRevision: ${var.gitops_target_revision}
-        path: gitops/apps
+        path: openclaw-platform/gitops/apps
       destination:
         server: https://kubernetes.default.svc
         namespace: argocd

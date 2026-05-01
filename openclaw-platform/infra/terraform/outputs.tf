@@ -85,6 +85,21 @@ output "finance_cognito_domain" {
   value       = aws_cognito_user_pool_domain.finance.domain
 }
 
+output "finance_cognito_user_pool_id" {
+  description = "Cognito user pool ID (used by finance-ui)"
+  value       = aws_cognito_user_pool.finance.id
+}
+
+output "route53_zone_id" {
+  description = "Route53 hosted zone ID (for external-dns rendering)"
+  value       = var.route53_zone_id
+}
+
+output "route53_zone_name" {
+  description = "Route53 hosted zone name (for external-dns rendering)"
+  value       = var.route53_zone_name
+}
+
 output "docker_ecr_login_cmd" {
   description = "Authenticate Docker to ECR before pushing the UI image"
   value       = "aws ecr get-login-password --region ${var.region} | docker login --username AWS --password-stdin ${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com"
