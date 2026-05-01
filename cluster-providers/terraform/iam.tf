@@ -119,18 +119,22 @@ locals {
     iam = {
       role_name       = "${var.cluster_name}-CrossplaneIAMProviderRole"
       service_account = "provider-aws-iam"
+      namespace       = "crossplane-system"
     }
     eks = {
       role_name       = "${var.cluster_name}-CrossplaneEKSProviderRole"
       service_account = "provider-aws-eks"
+      namespace       = "crossplane-system"
     }
     ec2 = {
       role_name       = "${var.cluster_name}-CrossplaneEC2ProviderRole"
       service_account = "provider-aws-ec2"
+      namespace       = "crossplane-system"
     }
     secretsmanager = {
       role_name       = "${var.cluster_name}-CrossplaneSecretsManagerProviderRole"
       service_account = "provider-aws-secretsmanager"
+      namespace       = "crossplane-system"
     }
   }
 }
@@ -158,7 +162,7 @@ resource "aws_iam_role_policy_attachment" "crossplane_provider" {
 resource "aws_eks_pod_identity_association" "crossplane_provider" {
   for_each        = local.crossplane_providers
   cluster_name    = aws_eks_cluster.hub.name
-  namespace       = "crossplane-system"
+  namespace       = each.value.namespace
   service_account = each.value.service_account
   role_arn        = aws_iam_role.crossplane_provider[each.key].arn
   tags            = local.common_tags
