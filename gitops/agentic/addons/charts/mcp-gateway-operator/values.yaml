@@ -9,7 +9,7 @@ image:
 
 # -- AWS configuration
 aws:
-  gatewayId: ""    # Optional when agentcoreGateway.create is true; set per-MCPServer via spec.gatewayId instead
+  gatewayId: "mcp-gateway-operator-mqo6pgtvtu"    # Optional when agentcoreGateway.create is true; set per-MCPServer via spec.gatewayId instead
   region: us-west-2
 
 # -- Service account
