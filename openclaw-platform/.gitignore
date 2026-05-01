@@ -3,7 +3,9 @@
 terraform.tfstate
 terraform.tfstate.backup
 terraform.tfvars
+*.auto.tfvars
 tfplan
+tfplan.out
 *.zip
 node_modules/
 .next/
