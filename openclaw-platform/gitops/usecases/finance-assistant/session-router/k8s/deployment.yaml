@@ -1,0 +1,160 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: finance-session-router
+  namespace: finance-assistant
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: finance-session-router
+  namespace: finance-assistant
+rules:
+  # Narrow: only the three resources the router needs, only in this ns.
+  # Nothing about secrets, pods/exec, or cluster-scoped objects.
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: finance-session-router
+  namespace: finance-assistant
+subjects:
+  - kind: ServiceAccount
+    name: finance-session-router
+    namespace: finance-assistant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: finance-session-router
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: finance-session-router-src
+  namespace: finance-assistant
+data:
+  # The router source lives as a ConfigMap so it follows the same pattern
+  # as the adapter (inline, easy to patch). For production-grade, bake it
+  # into an image built from examples/finance-assistant/session-router/.
+  server.js: |
+    REPLACE_WITH_ROUTER_SERVER_JS
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: finance-session-router
+  namespace: finance-assistant
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: finance-session-router
+  template:
+    metadata:
+      labels:
+        app: finance-session-router
+    spec:
+      serviceAccountName: finance-session-router
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: router
+          # Base image has node + npm. Production path: bake router + deps
+          # into a purpose-built image rather than npm-install at start.
+          image: public.ecr.aws/docker/library/node:22-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PORT
+              value: "18790"
+            - name: NAMESPACE
+              value: finance-assistant
+            - name: SANDBOX_TEMPLATE
+              value: /etc/router/sandbox-template.json
+            - name: IDLE_TTL_SECONDS
+              value: "1800"
+            - name: SANDBOX_READY_TIMEOUT_MS
+              value: "300000"
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              mkdir -p /tmp/router && cd /tmp/router
+              cp /src/server.js ./server.js
+              cp /src/package.json ./package.json
+              npm install --omit=dev --no-audit --no-fund --loglevel=error
+              exec node server.js
+          ports:
+            - containerPort: 18790
+              name: http
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: src,      mountPath: /src, readOnly: true }
+            - { name: template, mountPath: /etc/router }
+            - { name: tmp,      mountPath: /tmp }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 18790 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 18790 }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+      volumes:
+        - name: src
+          projected:
+            sources:
+              - configMap:
+                  name: finance-session-router-src
+              - configMap:
+                  name: finance-session-router-pkg
+        - name: template
+          configMap:
+            name: finance-sandbox-template
+            items:
+              - key: sandbox-template.json
+                path: sandbox-template.json
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: finance-session-router-pkg
+  namespace: finance-assistant
+data:
+  package.json: |
+    REPLACE_WITH_PACKAGE_JSON
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: finance-session-router
+  namespace: finance-assistant
+spec:
+  selector:
+    app: finance-session-router
+  ports:
+    - name: http
+      port: 18790
+      targetPort: 18790

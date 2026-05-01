@@ -1,0 +1,9 @@
+apiVersion: v2
+name: external-dns
+description: external-dns — Route53 records from Kubernetes Ingress annotations
+type: application
+version: 0.1.0
+dependencies:
+  - name: external-dns
+    version: "1.15.0"
+    repository: https://kubernetes-sigs.github.io/external-dns/

@@ -1,0 +1,13 @@
+{
+  "name": "finance-session-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Per-user Sandbox router for finance-assistant. Lazily provisions a dedicated kata-qemu Sandbox + PVC per authenticated Cognito user, then proxies the chat stream.",
+  "main": "server.js",
+  "dependencies": {
+    "@kubernetes/client-node": "0.22.3"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

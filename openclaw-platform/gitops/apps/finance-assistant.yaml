@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: finance-assistant-sandbox
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/aws-samples/appmod-blueprints
+    targetRevision: feature/openclaw-platform
+    path: openclaw-platform/gitops/usecases/finance-assistant
+    directory:
+      include: '{workspace-pvc.yaml,networkpolicy.yaml,system-prompt-configmap.yaml,adapter-configmap.yaml,sandbox.yaml}'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: finance-assistant
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: finance-assistant-ui
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/aws-samples/appmod-blueprints
+    targetRevision: feature/openclaw-platform
+    path: openclaw-platform/gitops/usecases/finance-assistant/web-ui/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: finance-assistant
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ServerSideApply=true]

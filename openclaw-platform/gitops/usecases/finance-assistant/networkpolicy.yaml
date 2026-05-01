@@ -1,0 +1,131 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: finance-sandbox-egress
+  namespace: finance-assistant
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: finance.x-k8s.io/user-suffix, operator: Exists }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: litellm
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: litellm
+      ports:
+        - port: 4000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# Sandbox ingress: only the session-router can reach per-user sandboxes.
+# Direct UI→sandbox access is blocked so one user can't target another
+# user's service name.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: finance-sandbox-ingress
+  namespace: finance-assistant
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: finance.x-k8s.io/user-suffix, operator: Exists }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: finance-session-router
+      ports:
+        - port: 18790
+          protocol: TCP
+---
+# Session-router egress: talks to kube-apiserver (for create/patch) and
+# to any pod with a user-suffix label (the per-user sandboxes).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: finance-session-router-egress
+  namespace: finance-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app: finance-session-router
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchExpressions:
+              - { key: finance.x-k8s.io/user-suffix, operator: Exists }
+      ports:
+        - port: 18790
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # kube-apiserver egress: the podSelector form can't reach the
+    # synthetic "kubernetes" service, so allow all TCP 443 out. Combined
+    # with the narrow RBAC, blast radius stays small.
+    - ports:
+        - port: 443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: finance-ui-ingress
+  namespace: finance-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app: finance-ui
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: finance-session-router
+      ports:
+        - port: 18790
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP

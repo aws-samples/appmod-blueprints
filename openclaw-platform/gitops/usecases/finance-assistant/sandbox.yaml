@@ -1,0 +1,244 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: finance-sandbox
+  namespace: finance-assistant
+---
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: finance-assistant
+  namespace: finance-assistant
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        app: finance-sandbox
+    spec:
+      runtimeClassName: kata-qemu
+      serviceAccountName: finance-sandbox
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      nodeSelector:
+        katacontainers.io/kata-runtime: "true"
+      tolerations:
+        - key: kata
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: system-prompt
+          configMap:
+            name: finance-system-prompt
+        - name: openclaw-config
+          emptyDir: {}
+        - name: adapter-src
+          configMap:
+            name: finance-adapter-src
+            defaultMode: 0555
+        - name: adapter-tmp
+          emptyDir: {}
+        # Tmpfs-backed secret mounts with mode 0400. Keeps keys out of env
+        # so an `env` dump through the agent can't leak them, and out of
+        # etcd-disk paths on node. Projected per-container below.
+        - name: secrets
+          projected:
+            defaultMode: 0400
+            sources:
+              - secret:
+                  name: finance-litellm-key
+                  items:
+                    - key: api-key
+                      path: litellm-api-key
+              - secret:
+                  name: openclaw-gateway-auth
+                  items:
+                    - key: token
+                      path: gateway-auth-token
+      containers:
+        - name: openclaw
+          image: ghcr.io/openclaw/openclaw:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2
+              memory: 4Gi
+          env:
+            - name: WORKSPACE_DIR
+              value: /workspace
+            - name: SYSTEM_PROMPT_FILE
+              value: /etc/openclaw/system-prompt.md
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              # Secrets come from tmpfs files mounted at /var/run/openclaw,
+              # not env vars. They live in shell locals only long enough to
+              # render openclaw.json; a `env` dump via the agent shows
+              # nothing useful.
+              LITELLM_API_KEY=$(cat /var/run/openclaw/litellm-api-key)
+              GATEWAY_AUTH_TOKEN=$(cat /var/run/openclaw/gateway-auth-token)
+              mkdir -p /workspace/scenarios /workspace/inbox
+              [ -f /workspace/goals.md ]    || touch /workspace/goals.md
+              [ -f /workspace/snapshot.md ] || touch /workspace/snapshot.md
+              [ -f /workspace/decisions.md ] || touch /workspace/decisions.md
+              [ -f /workspace/questions.md ] || touch /workspace/questions.md
+              # boot-md hook will load this into the agent on gateway startup,
+              # so the finance persona is injected once per gateway life, not
+              # per turn. Refresh on every restart in case the ConfigMap changed.
+              cp /etc/openclaw/system-prompt.md /workspace/BOOT.md
+              cat > /home/node/.openclaw/openclaw.json <<EOF
+              {
+                "models": {
+                  "providers": {
+                    "litellm": {
+                      "baseUrl": "http://litellm.litellm.svc.cluster.local:4000",
+                      "apiKey": "${LITELLM_API_KEY}",
+                      "api": "openai-completions",
+                      "models": [
+                        {
+                          "id": "claude-haiku-4-5",
+                          "name": "Claude Haiku 4.5 (Bedrock)",
+                          "reasoning": true,
+                          "input": ["text", "image"],
+                          "contextWindow": 200000,
+                          "maxTokens": 3072
+                        }
+                      ]
+                    }
+                  }
+                },
+                "agents": {
+                  "defaults": {
+                    "model": { "primary": "litellm/claude-haiku-4-5" },
+                    "workspace": "/workspace"
+                  }
+                },
+                "gateway": {
+                  "port": 18789,
+                  "mode": "local",
+                  "bind": "lan",
+                  "auth": {
+                    "mode": "token",
+                    "token": "${GATEWAY_AUTH_TOKEN}"
+                  },
+                  "controlUi": {
+                    "dangerouslyAllowHostHeaderOriginFallback": true
+                  }
+                }
+              }
+              EOF
+              # Drop the locals before exec — the openclaw gateway reads
+              # the rendered config file, not env.
+              unset LITELLM_API_KEY GATEWAY_AUTH_TOKEN
+              exec node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
+          ports:
+            - name: gateway
+              containerPort: 18789
+              protocol: TCP
+          volumeMounts:
+            - { name: workspace,       mountPath: /workspace }
+            - { name: system-prompt,   mountPath: /etc/openclaw, readOnly: true }
+            - { name: openclaw-config, mountPath: /home/node/.openclaw }
+            - { name: secrets,         mountPath: /var/run/openclaw, readOnly: true }
+          readinessProbe:
+            tcpSocket: { port: 18789 }
+            initialDelaySeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 18789 }
+            initialDelaySeconds: 30
+        - name: adapter
+          image: ghcr.io/openclaw/openclaw:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            capabilities: { drop: [ALL] }
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          env:
+            - name: PORT
+              value: "18790"
+            - name: SYSTEM_PROMPT_FILE
+              value: /etc/openclaw/system-prompt.md
+            - name: OPENCLAW_CMD
+              value: openclaw
+            - name: OPENCLAW_ARGS
+              value: ""
+            - name: HOME
+              value: /tmp/adapter-home
+          command:
+            - sh
+            - -c
+            - |
+              # Wait for openclaw sidecar to have written its config
+              for i in $(seq 1 60); do
+                [ -f /home/node/.openclaw/openclaw.json ] && break
+                sleep 1
+              done
+              mkdir -p "$HOME/.openclaw"
+              # Reuse the openclaw sibling config so both containers talk
+              # to the same agent, same workspace, same auth.
+              cp /home/node/.openclaw/openclaw.json "$HOME/.openclaw/openclaw.json"
+              exec node /adapter/server.js
+          ports:
+            - { name: adapter, containerPort: 18790, protocol: TCP }
+          volumeMounts:
+            - { name: workspace,       mountPath: /workspace }
+            - { name: system-prompt,   mountPath: /etc/openclaw, readOnly: true }
+            - { name: openclaw-config, mountPath: /home/node/.openclaw }
+            - { name: adapter-src,     mountPath: /adapter, readOnly: true }
+            - { name: adapter-tmp,     mountPath: /tmp/adapter-home }
+            # Adapter reads secrets via the same tmpfs file path; if ever
+            # spawning a subprocess, log-redact scrubs stdout/stderr as
+            # belt-and-braces.
+            - { name: secrets,         mountPath: /var/run/openclaw, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 18790 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 18790 }
+            initialDelaySeconds: 20
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: finance-sandbox
+  namespace: finance-assistant
+spec:
+  selector:
+    app: finance-sandbox
+  ports:
+    - name: gateway
+      port: 18789
+      targetPort: 18789
+    - name: adapter
+      port: 18790
+      targetPort: 18790

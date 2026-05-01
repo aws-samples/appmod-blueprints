@@ -1,0 +1,162 @@
+{{- if .Values.kataNested.enabled }}
+---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: kata-nested
+spec:
+  amiFamily: AL2023
+  amiSelectorTerms:
+    - id: {{ .Values.kataAmiId | quote }}
+  role: {{ .Values.nodeRole | quote }}
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ .Values.clusterName | quote }}
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ .Values.clusterName | quote }}
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 250Gi
+        volumeType: gp3
+        deleteOnTermination: true
+        encrypted: true
+  metadataOptions:
+    httpEndpoint: enabled
+    httpTokens: required
+  userData: |
+    apiVersion: node.eks.aws/v1alpha1
+    kind: NodeConfig
+    spec:
+      cluster:
+        name: {{ .Values.clusterName }}
+      containerd:
+        config: |
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-qemu]
+          runtime_type = "io.containerd.kata.v2"
+          privileged_without_host_devices = true
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-qemu.options]
+          ConfigPath = "/etc/kata-containers/configuration-qemu.toml"
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: kata-nested
+spec:
+  template:
+    metadata:
+      labels:
+        katacontainers.io/kata-runtime: "true"
+        node-type: kata-nested
+        kata-enabled: "true"
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: kata-nested
+      taints:
+        - key: kata
+          value: "true"
+          effect: NoSchedule
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+{{ toYaml .Values.kataNested.instanceTypes | indent 12 }}
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+{{ toYaml .Values.kataNested.capacityTypes | indent 12 }}
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+      expireAfter: 720h
+  limits:
+    cpu: {{ .Values.kataNested.cpuLimit }}
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: {{ .Values.kataNested.consolidateAfter }}
+{{- end }}
+{{- if .Values.kataMetal.enabled }}
+---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: kata-metal
+spec:
+  amiFamily: AL2023
+  amiSelectorTerms:
+    - id: {{ .Values.kataAmiId | quote }}
+  role: {{ .Values.nodeRole | quote }}
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ .Values.clusterName | quote }}
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ .Values.clusterName | quote }}
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 250Gi
+        volumeType: gp3
+        deleteOnTermination: true
+        encrypted: true
+  metadataOptions:
+    httpEndpoint: enabled
+    httpTokens: required
+  userData: |
+    apiVersion: node.eks.aws/v1alpha1
+    kind: NodeConfig
+    spec:
+      cluster:
+        name: {{ .Values.clusterName }}
+      containerd:
+        config: |
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-qemu]
+          runtime_type = "io.containerd.kata.v2"
+          privileged_without_host_devices = true
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-qemu.options]
+          ConfigPath = "/etc/kata-containers/configuration-qemu.toml"
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: kata-metal
+spec:
+  template:
+    metadata:
+      labels:
+        katacontainers.io/kata-runtime: "true"
+        node-type: kata-metal
+        kata-enabled: "true"
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: kata-metal
+      taints:
+        - key: kata
+          value: "true"
+          effect: NoSchedule
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+{{ toYaml .Values.kataMetal.instanceTypes | indent 12 }}
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+{{ toYaml .Values.kataMetal.capacityTypes | indent 12 }}
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+      expireAfter: 720h
+  # Weight is lower than kata-nested → Karpenter prefers nested when both can satisfy a pod
+  weight: 10
+  limits:
+    cpu: {{ .Values.kataMetal.cpuLimit }}
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: {{ .Values.kataMetal.consolidateAfter }}
+{{- end }}

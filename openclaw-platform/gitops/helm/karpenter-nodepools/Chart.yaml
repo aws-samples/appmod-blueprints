@@ -1,0 +1,4 @@
+apiVersion: v2
+name: karpenter-nodepools
+description: Karpenter NodePools and EC2NodeClass for openclaw kata workloads
+version: 0.1.0

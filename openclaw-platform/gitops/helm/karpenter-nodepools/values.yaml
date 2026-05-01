@@ -1,0 +1,27 @@
+# Set by Terraform at install time via ArgoCD helm parameters
+clusterName: openclaw-eks
+nodeRole: KarpenterNodeRole-openclaw-eks
+kataAmiId: "" # required; comes from Packer output via SSM
+
+# Nested-virt pool (default): cheaper, more reliable than bare metal
+kataNested:
+  enabled: true
+  instanceTypes:
+    - c8i.4xlarge
+    - c8i.8xlarge
+    - m8i.4xlarge
+    - m8i.8xlarge
+  capacityTypes: ["spot", "on-demand"]
+  cpuLimit: 500
+  consolidateAfter: 5m
+
+# Bare-metal pool (fallback): only when nested capacity unavailable
+kataMetal:
+  enabled: true
+  instanceTypes:
+    - c5.metal
+    - i3.metal
+    - m5.metal
+  capacityTypes: ["on-demand"] # spot has been unreliable
+  cpuLimit: 200
+  consolidateAfter: 10m

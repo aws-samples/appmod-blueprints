@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-sitecustomize
+  namespace: litellm
+data:
+  sitecustomize.py: |
+    # Monkey-patch AmazonConverseConfig to strip OpenAI-only params (store, logprobs)
+    # that Bedrock rejects via additionalModelRequestFields.
+    def _patch():
+        try:
+            from litellm.llms.bedrock.chat.converse_transformation import AmazonConverseConfig
+            _orig = AmazonConverseConfig._prepare_request_params
+            _STRIP = {"store", "logprobs", "top_logprobs"}
+            def _patched(self, *args, **kwargs):
+                inf, add, meta = _orig(self, *args, **kwargs)
+                for k in _STRIP:
+                    add.pop(k, None)
+                return inf, add, meta
+            AmazonConverseConfig._prepare_request_params = _patched
+        except Exception:
+            pass
+    _patch()

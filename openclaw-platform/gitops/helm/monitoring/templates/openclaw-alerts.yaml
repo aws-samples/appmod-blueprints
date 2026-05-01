@@ -1,0 +1,110 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: openclaw-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: bedrock
+      interval: 60s
+      rules:
+        - alert: BedrockHighErrorRate
+          expr: |
+            (
+              sum(rate(litellm_request_total{status="failure"}[5m]))
+              /
+              sum(rate(litellm_request_total[5m]))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Bedrock error rate above 5%"
+            description: "{{`{{ $value | humanizePercentage }}`}} of Bedrock requests are failing over the last 5 minutes."
+
+        - alert: BedrockCriticalErrorRate
+          expr: |
+            (
+              sum(rate(litellm_request_total{status="failure"}[5m]))
+              /
+              sum(rate(litellm_request_total[5m]))
+            ) > 0.20
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Bedrock error rate above 20%"
+            description: "{{`{{ $value | humanizePercentage }}`}} of Bedrock requests are failing — possible Bedrock service disruption or Guardrail misconfiguration."
+
+    - name: litellm
+      interval: 30s
+      rules:
+        - alert: LiteLLMQueueDepthHigh
+          expr: litellm_queue_size > 50
+          for: 3m
+          labels:
+            severity: warning
+          annotations:
+            summary: "LiteLLM request queue depth is high"
+            description: "LiteLLM queue has {{`{{ $value }}`}} pending requests. Consider scaling replicas."
+
+        - alert: LiteLLMQueueDepthCritical
+          expr: litellm_queue_size > 200
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "LiteLLM request queue critically backed up"
+            description: "LiteLLM queue has {{`{{ $value }}`}} pending requests. Agents may be timing out."
+
+        - alert: LiteLLMDown
+          expr: up{job="litellm"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "LiteLLM proxy is down"
+            description: "LiteLLM has been unreachable for 2 minutes. All agent sandboxes will fail."
+
+    - name: kata-nodepool
+      interval: 60s
+      rules:
+        - alert: KataNodePoolCPUNearExhaustion
+          expr: |
+            (
+              sum(karpenter_nodes_allocatable{nodepool="kata-bare-metal", resource="cpu"})
+              - sum(karpenter_nodes_total_daemon_requests{nodepool="kata-bare-metal", resource="cpu"})
+            ) < 20
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Kata node pool has fewer than 20 allocatable CPUs remaining"
+            description: "Only {{`{{ $value }}`}} CPUs remain in the kata-bare-metal pool. New sandboxes may not schedule."
+
+        - alert: KataNodePoolMemoryNearExhaustion
+          expr: |
+            (
+              sum(karpenter_nodes_allocatable{nodepool="kata-bare-metal", resource="memory"})
+              - sum(karpenter_nodes_total_daemon_requests{nodepool="kata-bare-metal", resource="memory"})
+            ) < 10737418240
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Kata node pool has fewer than 10Gi memory remaining"
+            description: "Only {{`{{ $value | humanize1024 }}`}}B of memory remains in the kata-bare-metal pool."
+
+        - alert: KataNodePoolAtCapacityLimit
+          expr: |
+            karpenter_nodepool_usage{nodepool="kata-bare-metal", resource="cpu"}
+            /
+            karpenter_nodepool_limit{nodepool="kata-bare-metal", resource="cpu"} > 0.90
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Kata node pool is at 90%+ of its CPU limit"
+            description: "The kata-bare-metal NodePool is {{`{{ $value | humanizePercentage }}`}} full. Increase the CPU limit in kata-nodepool.yaml or new sandboxes will be unschedulable."

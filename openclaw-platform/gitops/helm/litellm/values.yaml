@@ -1,0 +1,177 @@
+litellm-helm:
+  # Two replicas + PDB removes the single-pod stall: every chat was blocked
+  # until the one pod restarted. Requests/limits were empty — it competed
+  # for CPU with whatever else landed on the node and got restarted 8 times.
+  replicaCount: 2
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # Spread the replicas across nodes so one node eviction doesn't take the
+  # whole proxy down.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: litellm
+            topologyKey: kubernetes.io/hostname
+
+  # Inject guardrail ID/version and AWS region from litellm-secrets K8s secret
+  # LiteLLM supports os.environ/VAR_NAME substitution in model config
+  extraEnvVars:
+    - name: BEDROCK_GUARDRAIL_ID
+      valueFrom:
+        secretKeyRef:
+          name: litellm-secrets
+          key: bedrock_guardrail_id
+    - name: BEDROCK_GUARDRAIL_VERSION
+      valueFrom:
+        secretKeyRef:
+          name: litellm-secrets
+          key: bedrock_guardrail_version
+    - name: AWS_REGION
+      valueFrom:
+        secretKeyRef:
+          name: litellm-secrets
+          key: aws_region
+    - name: LITELLM_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: litellm-secrets
+          key: api_key
+    - name: LITELLM_DROP_PARAMS
+      value: "true"
+
+  volumes:
+    - name: sitecustomize
+      configMap:
+        name: litellm-sitecustomize
+
+  volumeMounts:
+    - name: sitecustomize
+      mountPath: /usr/lib/python3.13/sitecustomize.py
+      subPath: sitecustomize.py
+
+  proxy_config:
+    model_list:
+      # Sonnet — default for scenario math and multi-step reasoning.
+      # cache_control on the system block turns on Bedrock prompt caching:
+      # the 4KB persona + workspace files are cached for ~5min, cutting
+      # input-token cost ~70% and TTFT ~40% on warm turns.
+      - model_name: claude-sonnet-4-6
+        litellm_params:
+          model: bedrock/us.anthropic.claude-sonnet-4-6
+          aws_region_name: "os.environ/AWS_REGION"
+          drop_params: true
+          cache_control_injection_points:
+            - location: message
+              role: system
+          max_tokens: 3072
+
+      - model_name: claude-opus-4-6
+        litellm_params:
+          model: bedrock/us.anthropic.claude-opus-4-20250514-v1:0
+          aws_region_name: "os.environ/AWS_REGION"
+          drop_params: true
+          cache_control_injection_points:
+            - location: message
+              role: system
+          max_tokens: 3072
+
+      # Haiku — fast tier for clarifying/short turns. 3–5x faster TTFT.
+      - model_name: claude-haiku-4-5
+        litellm_params:
+          model: bedrock/us.anthropic.claude-3-5-haiku-20241022-v1:0
+          aws_region_name: "os.environ/AWS_REGION"
+          drop_params: true
+          cache_control_injection_points:
+            - location: message
+              role: system
+          max_tokens: 2048
+
+      # Alias consumed by the openclaw agent. Resolves to Haiku by default;
+      # Sonnet via model_group_alias fallback when output is truncated or
+      # the agent picks the heavier model explicitly.
+      - model_name: claude-fast
+        litellm_params:
+          model: bedrock/us.anthropic.claude-3-5-haiku-20241022-v1:0
+          aws_region_name: "os.environ/AWS_REGION"
+          drop_params: true
+          cache_control_injection_points:
+            - location: message
+              role: system
+          max_tokens: 2048
+
+    general_settings:
+      default_model: claude-sonnet-4-6
+      store_model_in_db: false
+      master_key: "os.environ/PROXY_MASTER_KEY"
+
+    environment_variables:
+      OPENCLAW_API_KEY: "os.environ/LITELLM_API_KEY"
+
+    router_settings:
+      allowed_fails: 3
+      # Fall back fast→deep so a Haiku failure doesn't drop the user.
+      fallbacks:
+        - claude-fast: ["claude-sonnet-4-6"]
+        - claude-haiku-4-5: ["claude-sonnet-4-6"]
+
+    key_management_settings:
+      store_virtual_keys: true
+
+    keys:
+      - key: "os.environ/LITELLM_API_KEY"
+        models:
+          - claude-sonnet-4-6
+          - claude-opus-4-6
+          - claude-haiku-4-5
+          - claude-fast
+
+    litellm_settings:
+      drop_params: true
+      additional_drop_params:
+        - store
+        - logprobs
+        - top_logprobs
+      success_callback: ["prometheus"]
+      failure_callback: ["prometheus"]
+      prometheus_url: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+      # In-proxy response cache: identical prompts (e.g. retried turns,
+      # reload-spam) return from Redis without a Bedrock call. 5-min TTL.
+      cache: true
+      cache_params:
+        type: local
+        ttl: 300
+
+  db_url: "postgresql://litellm:NoTaGrEaTpAsSwOrD@litellm-postgresql:5432/litellm"
+
+  postgresql:
+    enabled: true
+    primary:
+      persistence:
+        storageClass: ebs-gp3
+      resources:
+        limits:
+          memory: 512Mi
+        requests:
+          memory: 256Mi
+
+  migrations:
+    enabled: false
+
+  serviceAccount:
+    create: true
+    name: litellm

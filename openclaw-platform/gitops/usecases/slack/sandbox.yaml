@@ -1,0 +1,124 @@
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: openclaw-slack-sandbox
+  namespace: openclaw
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        sandbox: openclaw-slack-sandbox
+    spec:
+      runtimeClassName: kata-qemu
+      serviceAccountName: openclaw-sandbox
+      automountServiceAccountToken: true
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      nodeSelector:
+        katacontainers.io/kata-runtime: "true"
+      tolerations:
+        - key: kata
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      volumes:
+        - name: workspaces-vol
+          emptyDir: {}
+      containers:
+        - name: openclaw
+          image: ghcr.io/openclaw/openclaw:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: slack-tokens
+                  key: bot-token
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: slack-tokens
+                  key: app-token
+            - name: LITELLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openclaw-litellm-key
+                  key: api-key
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /home/node/.openclaw/workspace
+              if [ ! -f /home/node/.openclaw/openclaw.json ]; then
+                cat > /home/node/.openclaw/openclaw.json <<EOF
+              {
+                "models": {
+                  "providers": {
+                    "litellm": {
+                      "baseUrl": "http://litellm.litellm.svc.cluster.local:4000",
+                      "apiKey": "${LITELLM_API_KEY}",
+                      "api": "openai-completions",
+                      "models": [
+                        {
+                          "id": "claude-sonnet-4-6",
+                          "name": "Claude Sonnet 4.6 (Bedrock)",
+                          "reasoning": true,
+                          "input": ["text", "image"],
+                          "contextWindow": 200000,
+                          "maxTokens": 8192
+                        }
+                      ]
+                    }
+                  }
+                },
+                "agents": {
+                  "defaults": {
+                    "model": {
+                      "primary": "litellm/claude-sonnet-4-6"
+                    },
+                    "workspace": "/home/node/.openclaw/workspace"
+                  }
+                },
+                "channels": {
+                  "slack": {
+                    "enabled": true,
+                    "botToken": "${SLACK_BOT_TOKEN}",
+                    "appToken": "${SLACK_APP_TOKEN}",
+                    "dmPolicy": "open",
+                    "allowFrom": ["*"]
+                  }
+                },
+                "gateway": {
+                  "port": 18789,
+                  "mode": "local",
+                  "bind": "lan",
+                  "controlUi": {
+                    "dangerouslyAllowHostHeaderOriginFallback": true
+                  }
+                },
+                "plugins": {
+                  "entries": {
+                    "slack": {
+                      "enabled": true
+                    }
+                  }
+                }
+              }
+              EOF
+              fi
+              exec node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured --verbose
+          ports:
+            - containerPort: 18789
+            - containerPort: 18790
+          volumeMounts:
+            - mountPath: /home/node/.openclaw
+              name: workspaces-vol

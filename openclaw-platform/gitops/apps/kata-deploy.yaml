@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kata-deploy
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/aws-samples/appmod-blueprints
+    targetRevision: feature/openclaw-platform
+    path: openclaw-platform/gitops/helm/kata-deploy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  ignoreDifferences:
+    - group: node.k8s.io
+      kind: RuntimeClass
+      name: kata-qemu
+    - group: ""
+      kind: ServiceAccount
+      name: kata-deploy
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: kata-deploy
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+      name: kata-deploy
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
