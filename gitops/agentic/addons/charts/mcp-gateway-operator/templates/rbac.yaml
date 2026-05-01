@@ -1,0 +1,44 @@
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "mcp-gateway-operator.serviceAccountName" . }}
+  labels:
+    {{- include "mcp-gateway-operator.labels" . | nindent 4 }}
+  {{- with .Values.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mcp-gateway-operator.fullname" . }}-manager-role
+  labels:
+    {{- include "mcp-gateway-operator.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["mcpgateway.bedrock.aws"]
+  resources: ["mcpservers"]
+  verbs: ["create","delete","get","list","patch","update","watch"]
+- apiGroups: ["mcpgateway.bedrock.aws"]
+  resources: ["mcpservers/finalizers"]
+  verbs: ["update"]
+- apiGroups: ["mcpgateway.bedrock.aws"]
+  resources: ["mcpservers/status"]
+  verbs: ["get","patch","update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mcp-gateway-operator.fullname" . }}-manager-rolebinding
+  labels:
+    {{- include "mcp-gateway-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "mcp-gateway-operator.fullname" . }}-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "mcp-gateway-operator.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}

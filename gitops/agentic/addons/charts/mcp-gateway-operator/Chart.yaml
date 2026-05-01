@@ -1,0 +1,6 @@
+apiVersion: v2
+name: mcp-gateway-operator
+description: Kubernetes operator that syncs MCPServer CRs to AWS Bedrock AgentCore gateway targets
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,71 @@
+# MCP Gateway Operator - Helm values
+# Deploys the operator + CRD + AgentCore gateway + OAuth2 provider + MCPServer resources
+
+# -- Container image
+image:
+  repository: public.ecr.aws/mcp-gateway-operator/controller
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# -- AWS configuration
+aws:
+  gatewayId: ""    # Optional when agentcoreGateway.create is true; set per-MCPServer via spec.gatewayId instead
+  region: us-west-2
+
+# -- Service account
+serviceAccount:
+  create: true
+  annotations: {}
+
+# -- EKS Pod Identity (creates IAM Role + Policy + PodIdentityAssociation via ACK)
+podIdentity:
+  create: true
+  clusterName: ""
+  accountId: ""
+
+# -- AgentCore Gateway (Crossplane)
+agentcoreGateway:
+  create: true
+  name: ""          # defaults to release fullname
+  description: ""   # defaults to "AgentCore MCP Gateway"
+  # protocolConfiguration:  # optional MCP protocol settings
+  #   supportedVersions: ["2025-06-18"]
+  #   searchType: SEMANTIC
+  authorizer:
+    enabled: false
+    discoveryUrl: ""       # e.g. https://keycloak.example.com/realms/agentcore/.well-known/openid-configuration
+    allowedClients: []
+    allowedAudience: []
+
+# -- OAuth2 Credential Provider (Crossplane)
+oauth2Provider:
+  create: true
+  vendor: CustomOauth2
+  discoveryUrl: ""         # OIDC discovery URL, e.g. https://<domain>/keycloak/realms/platform/.well-known/openid-configuration
+  clientSecretName: ""     # K8s Secret with keys: client-id, client-secret (defaults to ExternalSecret-created secret)
+
+# -- Operator settings
+operator:
+  leaderElection: false
+  metrics:
+    secure: true
+    bindAddress: "0"
+  healthProbeBindAddress: ":8081"
+
+# -- Resources
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+# -- MCPServer CRs to deploy
+mcpServers: []
+  # - name: my-mcp-server
+  #   endpoint: https://mcp-server.example.com
+  #   capabilities: [tools]
+  #   oauthProviderArn: arn:aws:bedrock-agentcore:us-west-2:123456789012:token-vault/default/oauth2credentialprovider/my-provider
+  #   oauthScopes: [openid, profile]
+  #   description: "My MCP server"

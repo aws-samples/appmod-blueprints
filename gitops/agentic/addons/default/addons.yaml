@@ -59,3 +59,29 @@ agentgateway:
       kind: GatewayClass
       jsonPointers:
         - /status
+
+mcp-gateway-operator:
+  enabled: true
+  namespace: mcp-gateway-operator-system
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  defaultVersion: '0.1.0'
+  path: 'gitops/agentic/addons/charts/mcp-gateway-operator'
+  selector:
+    matchExpressions:
+      - key: enable_mcp_gateway_operator
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    podIdentity:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+    oauth2Provider:
+      discoveryUrl: 'https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/.well-known/openid-configuration'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version

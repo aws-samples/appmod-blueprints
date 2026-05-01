@@ -1,0 +1,40 @@
+{{- range .Values.mcpServers }}
+---
+apiVersion: mcpgateway.bedrock.aws/v1alpha1
+kind: MCPServer
+metadata:
+  name: {{ .name }}
+  {{- if .namespace }}
+  namespace: {{ .namespace }}
+  {{- end }}
+spec:
+  endpoint: {{ .endpoint }}
+  oauthProviderArn: {{ .oauthProviderArn }}
+  oauthScopes:
+    {{- toYaml .oauthScopes | nindent 4 }}
+  {{- with .capabilities }}
+  capabilities:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .description }}
+  description: {{ . | quote }}
+  {{- end }}
+  {{- with .targetName }}
+  targetName: {{ . }}
+  {{- end }}
+  {{- with .gatewayId }}
+  gatewayId: {{ . }}
+  {{- end }}
+  {{- with .allowedRequestHeaders }}
+  allowedRequestHeaders:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .allowedQueryParameters }}
+  allowedQueryParameters:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .allowedResponseHeaders }}
+  allowedResponseHeaders:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

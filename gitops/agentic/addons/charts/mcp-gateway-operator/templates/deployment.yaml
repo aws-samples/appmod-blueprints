@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-gateway-operator.fullname" . }}
+  labels:
+    {{- include "mcp-gateway-operator.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "mcp-gateway-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-gateway-operator.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "mcp-gateway-operator.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+      - name: manager
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - --leader-elect={{ .Values.operator.leaderElection }}
+        - --metrics-bind-address={{ .Values.operator.metrics.bindAddress }}
+        - --metrics-secure={{ .Values.operator.metrics.secure }}
+        - --health-probe-bind-address={{ .Values.operator.healthProbeBindAddress }}
+        {{- if .Values.aws.gatewayId }}
+        - --gateway-id={{ .Values.aws.gatewayId }}
+        {{- end }}
+        {{- if .Values.aws.region }}
+        - --aws-region={{ .Values.aws.region }}
+        {{- end }}
+        env:
+        {{- if .Values.aws.gatewayId }}
+        - name: GATEWAY_ID
+          value: {{ .Values.aws.gatewayId | quote }}
+        {{- end }}
+        {{- if .Values.aws.region }}
+        - name: AWS_REGION
+          value: {{ .Values.aws.region | quote }}
+        {{- end }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          readOnlyRootFilesystem: true
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+        - mountPath: /tmp
+          name: tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}

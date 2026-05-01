@@ -1,0 +1,26 @@
+{{- if .Values.oauth2Provider.create }}
+apiVersion: bedrockagentcore.aws.upbound.io/v1beta1
+kind: Oauth2CredentialProvider
+metadata:
+  name: {{ include "mcp-gateway-operator.fullname" . }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    credentialProviderVendor: {{ .Values.oauth2Provider.vendor | default "CustomOauth2" }}
+    oauth2ProviderConfig:
+      customOauth2ProviderConfig:
+        oauthDiscovery:
+          discoveryUrl: {{ .Values.oauth2Provider.discoveryUrl | quote }}
+        clientIdSecretRef:
+          name: {{ .Values.oauth2Provider.clientSecretName | default (printf "%s-keycloak-oidc" (include "mcp-gateway-operator.fullname" .)) }}
+          namespace: {{ .Release.Namespace }}
+          key: client-id
+        clientSecretSecretRef:
+          name: {{ .Values.oauth2Provider.clientSecretName | default (printf "%s-keycloak-oidc" (include "mcp-gateway-operator.fullname" .)) }}
+          namespace: {{ .Release.Namespace }}
+          key: client-secret
+  providerConfigRef:
+    name: provider-aws-config
+{{- end }}

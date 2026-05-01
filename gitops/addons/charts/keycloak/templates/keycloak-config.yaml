@@ -500,6 +500,25 @@ data:
         "/*"
       ]
     }
+  agentcore-gateway-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "agentcore-gateway",
+      "name": "AgentCore Gateway Client",
+      "description": "Used for Bedrock AgentCore Gateway outbound OAuth2 (client_credentials)",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "frontchannelLogout": false,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false
+    }
   grafana-client-payload.json: |
     {
       "clientId": "https://${GRAFANAURL}/saml/metadata",
@@ -795,6 +814,7 @@ spec:
               # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
               create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
+              create_client "AgentCore Gateway" "/var/config/agentcore-gateway-client-payload.json"
 
               echo "adding client scopes to clients"
               add_client_scope "argo-workflows" "Argo Workflows"
@@ -807,6 +827,7 @@ spec:
               add_client_scope "kargo" "Kargo"
               # add_client_scope "argocd" "Argo CD"  # Disabled - using EKS Marina managed ArgoCD
               add_client_scope "account-console" "Account Console"
+              add_client_scope "agentcore-gateway" "AgentCore Gateway"
 
               echo "getting client secrets"
               get_client_secret "backstage" "BACKSTAGE_CLIENT_SECRET"
@@ -816,6 +837,7 @@ spec:
               get_client_secret "spark" "SPARK_CLIENT_SECRET"
               get_client_secret "airflow" "AIRFLOW_CLIENT_SECRET"
               get_client_secret "argo-workflows" "ARGO_WORKFLOWS_CLIENT_SECRET"
+              get_client_secret "agentcore-gateway" "AGENTCORE_CLIENT_SECRET"
 
               # ARGOCD_SESSION_TOKEN=$(curl -k -sS http://argocd-server.argocd.svc.cluster.local/argocd/api/v1/session -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_PASSWORD}\"}" | jq -r .token)
               ARGOCD_SESSION_TOKEN=""  # Disabled - using EKS Marina managed ArgoCD
@@ -853,6 +875,8 @@ spec:
                 SPARK_CLIENT_ID: spark
                 AIRFLOW_CLIENT_SECRET: ${AIRFLOW_CLIENT_SECRET}
                 AIRFLOW_CLIENT_ID: airflow
+                AGENTCORE_CLIENT_SECRET: ${AGENTCORE_CLIENT_SECRET}
+                AGENTCORE_CLIENT_ID: agentcore-gateway
               " > /tmp/secret.yaml
 
               ./kubectl apply -f /tmp/secret.yaml
@@ -895,6 +919,8 @@ spec:
       SPARK_CLIENT_ID: "{{ `{{.SPARK_CLIENT_ID}}` }}"
       AIRFLOW_CLIENT_SECRET: "{{ `{{.AIRFLOW_CLIENT_SECRET}}` }}"
       AIRFLOW_CLIENT_ID: "{{ `{{.AIRFLOW_CLIENT_ID}}` }}"
+      AGENTCORE_CLIENT_SECRET: "{{ `{{.AGENTCORE_CLIENT_SECRET}}` }}"
+      AGENTCORE_CLIENT_ID: "{{ `{{.AGENTCORE_CLIENT_ID}}` }}"
   data:
     - conversionStrategy: None
       match:
@@ -974,4 +1000,16 @@ spec:
         remoteRef:
           remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
           property: AIRFLOW_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: AGENTCORE_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: AGENTCORE_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: AGENTCORE_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: AGENTCORE_CLIENT_ID
 

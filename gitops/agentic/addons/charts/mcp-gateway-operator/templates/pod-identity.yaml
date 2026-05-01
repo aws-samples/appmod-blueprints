@@ -1,0 +1,74 @@
+{{- if .Values.podIdentity.create }}
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: Policy
+metadata:
+  name: {{ include "mcp-gateway-operator.fullname" . }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  name: {{ include "mcp-gateway-operator.fullname" . }}
+  description: "IAM policy for MCP Gateway Operator to manage Bedrock AgentCore gateway targets"
+  policyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "bedrock-agentcore-control:CreateGatewayTarget",
+            "bedrock-agentcore-control:GetGatewayTarget",
+            "bedrock-agentcore-control:UpdateGatewayTarget",
+            "bedrock-agentcore-control:DeleteGatewayTarget",
+            "bedrock-agentcore-control:ListGatewayTargets"
+          ],
+          "Resource": [
+            "arn:aws:bedrock-agentcore:{{ .Values.aws.region }}:{{ .Values.podIdentity.accountId }}:gateway/*",
+            "arn:aws:bedrock-agentcore:{{ .Values.aws.region }}:{{ .Values.podIdentity.accountId }}:gateway-target/*"
+          ]
+        }
+      ]
+    }
+---
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: Role
+metadata:
+  name: {{ include "mcp-gateway-operator.fullname" . }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  name: {{ include "mcp-gateway-operator.fullname" . }}
+  description: "IAM role for MCP Gateway Operator pod identity"
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "Service": "pods.eks.amazonaws.com"
+          },
+          "Action": [
+            "sts:AssumeRole",
+            "sts:TagSession"
+          ]
+        }
+      ]
+    }
+  policyRefs:
+    - from:
+        name: {{ include "mcp-gateway-operator.fullname" . }}
+---
+apiVersion: eks.services.k8s.aws/v1alpha1
+kind: PodIdentityAssociation
+metadata:
+  name: {{ include "mcp-gateway-operator.fullname" . }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  clusterName: {{ .Values.podIdentity.clusterName }}
+  namespace: {{ .Release.Namespace }}
+  roleRef:
+    from:
+      name: {{ include "mcp-gateway-operator.fullname" . }}
+  serviceAccount: {{ include "mcp-gateway-operator.serviceAccountName" . }}
+{{- end }}
