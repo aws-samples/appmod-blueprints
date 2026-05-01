@@ -16,7 +16,7 @@ spec:
         {
           "Effect": "Allow",
           "Principal": {
-            "Service": "gateway.bedrock-agentcore.amazonaws.com"
+            "Service": "bedrock-agentcore.amazonaws.com"
           },
           "Action": "sts:AssumeRole"
         }
