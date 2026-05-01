@@ -4,7 +4,7 @@ kind: Provider
 metadata:
   name: upbound-provider-family-aws
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "1"
 spec:
   package: xpkg.upbound.io/upbound/provider-family-aws:{{ .Values.providers.family.version }}
@@ -18,7 +18,7 @@ kind: Provider
 metadata:
   name: provider-aws-iam
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "3"
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-iam:{{ .Values.providers.iam.version }}
@@ -32,7 +32,7 @@ kind: Provider
 metadata:
   name: provider-aws-ec2
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "6"
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-ec2:{{ .Values.providers.ec2.version }}
@@ -46,7 +46,7 @@ kind: Provider
 metadata:
   name: provider-aws-eks
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "3"
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-eks:{{ .Values.providers.eks.version }}
@@ -60,7 +60,7 @@ kind: Provider
 metadata:
   name: provider-aws-s3
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "6"
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-s3:{{ .Values.providers.s3.version }}
@@ -74,7 +74,7 @@ kind: Provider
 metadata:
   name: provider-aws-dynamodb
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "6"
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-dynamodb:{{ .Values.providers.dynamodb.version }}
@@ -88,10 +88,24 @@ kind: Provider
 metadata:
   name: provider-aws-rds
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "6"
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-rds:{{ .Values.providers.rds.version }}
   runtimeConfigRef:
     name: rds-drc
+{{- end }}
+{{- if .Values.providers.secretsmanager.version }}
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-secretsmanager
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-secretsmanager:{{ .Values.providers.secretsmanager.version }}
+  runtimeConfigRef:
+    name: secretsmanager-drc
 {{- end }}

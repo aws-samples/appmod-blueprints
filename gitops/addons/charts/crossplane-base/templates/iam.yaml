@@ -6,8 +6,8 @@ kind: Role
 metadata:
   name: {{ $name }}-provider-role
   annotations:
-    crossplane.io/external-name: {{ $provider.roleName }}
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    crossplane.io/external-name: {{ $.Values.aws.clusterName }}-{{ $provider.roleName }}
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "4"
   labels:
     platform.gitops.io/role: {{ $name }}-provider
@@ -37,7 +37,7 @@ kind: RolePolicyAttachment
 metadata:
   name: {{ $name }}-provider-admin-attachment
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "5"
 spec:
   forProvider:
@@ -56,7 +56,7 @@ kind: PodIdentityAssociation
 metadata:
   name: {{ $name }}-provider-pod-identity
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "5"
 spec:
   forProvider:

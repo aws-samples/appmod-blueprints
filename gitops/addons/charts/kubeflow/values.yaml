@@ -1,6 +1,6 @@
 global:
   ingress_domain_name: ""
-  resourcePrefix: ""
+  clusterName: ""
 kubeflow:
   centralDashboard:
     oidc:

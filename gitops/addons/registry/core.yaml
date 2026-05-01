@@ -17,7 +17,7 @@ argocd:
   valuesObject:
     global:
       domain: '{{.metadata.annotations.ingress_domain_name}}'
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     configs:
       cm:
         url: https://{{.metadata.annotations.ingress_domain_name}}/argocd
@@ -117,6 +117,8 @@ aws-load-balancer-controller:
             region: '{{.metadata.annotations.aws_region}}'
             clusterName: '{{.metadata.annotations.aws_cluster_name}}'
             accountId: '{{.metadata.annotations.aws_account_id}}'
+          restartHook:
+            enabled: true
           identities:
             lbc:
               enabled: true
@@ -150,7 +152,7 @@ image-prepuller:
         values: ['true']
   valuesObject:
     global:
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
 
 aws-efs-csi-driver:
   namespace: kube-system
@@ -205,6 +207,8 @@ external-dns:
             region: '{{.metadata.annotations.aws_region}}'
             clusterName: '{{.metadata.annotations.aws_cluster_name}}'
             accountId: '{{.metadata.annotations.aws_account_id}}'
+          restartHook:
+            enabled: true
           identities:
             external-dns:
               enabled: true

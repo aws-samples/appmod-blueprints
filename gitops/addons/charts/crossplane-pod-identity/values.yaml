@@ -3,6 +3,9 @@ aws:
   clusterName: ""
   accountId: ""
 
+restartHook:
+  enabled: false
+
 identities:
   eso:
     enabled: false

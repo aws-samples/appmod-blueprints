@@ -8,9 +8,40 @@ env:
 
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
-  CONFIG_FILE: "{{.ROOT_DIR}}/config.yaml"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
-  KIND_CLUSTER_NAME: "gitops-bootstrap"
+  HUB_CLUSTER_NAME:
+    sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
+  HUB_K8S_VERSION:
+    sh: yq '.hub.kubernetesVersion // "1.35"' {{.CONFIG_FILE}}
+  HUB_VPC_CIDR:
+    sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}}
+  AWS_ACCOUNT_ID:
+    sh: yq '.aws.accountId' {{.CONFIG_FILE}}
+  AWS_REGION:
+    sh: yq '.aws.region' {{.CONFIG_FILE}}
+  REPO_URL:
+    sh: yq '.repo.url' {{.CONFIG_FILE}}
+  REPO_REVISION:
+    sh: yq '.repo.revision' {{.CONFIG_FILE}}
+  REPO_BASEPATH:
+    sh: yq '.repo.basepath' {{.CONFIG_FILE}}
+  DOMAIN:
+    sh: yq '.domain' {{.CONFIG_FILE}}
+  RESOURCE_PREFIX:
+    sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
+  INGRESS_NAME:
+    sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
+  INGRESS_SECURITY_GROUPS:
+    sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  CAPABILITY_NAME:
+    sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
+  IDC_INSTANCE_ARN:
+    sh: yq '.identityCenter.instanceArn' {{.CONFIG_FILE}}
+  IDC_REGION:
+    sh: yq '.identityCenter.region' {{.CONFIG_FILE}}
+  IDC_ADMIN_GROUP_ID:
+    sh: yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}}
+  KIND_CLUSTER_NAME: "{{.HUB_CLUSTER_NAME}}-bootstrap"
   C_INFO:
     sh: printf '\033[1;36m'
   C_OK:
@@ -23,8 +54,6 @@ vars:
     sh: printf '\033[0m'
   ARGOCD_VERSION:
     sh: yq '.argocd.defaultVersion' {{.ROOT_DIR}}/gitops/addons/registry/core.yaml
-  AWS_REGION:
-    sh: yq '.aws.region' {{.ROOT_DIR}}/config.yaml
 
 tasks:
   validate:
@@ -34,12 +63,12 @@ tasks:
       - cmd: command -v {{.ITEM}} >/dev/null 2>&1 || { echo "Missing required CLI {{.ITEM}}"; exit 1; }
         for:
           var: REQUIRED_CLIS
-      - printf '{{.C_STEP}}▸ Checking config.yaml...{{.C_RESET}}\n'
-      - test -f {{.CONFIG_FILE}} || { echo "config.yaml not found"; exit 1; }
-      - yq '.hub.clusterName' {{.CONFIG_FILE}} | grep -qv null || { echo "hub.clusterName not set in config.yaml"; exit 1; }
-      - yq '.aws.region' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.region not set in config.yaml"; exit 1; }
-      - yq '.aws.accountId' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.accountId not set in config.yaml"; exit 1; }
-      - yq '.repo.url' {{.CONFIG_FILE}} | grep -qv null || { echo "repo.url not set in config.yaml"; exit 1; }
+      - printf '{{.C_STEP}}▸ Checking config.local.yaml...{{.C_RESET}}\n'
+      - test -f {{.CONFIG_FILE}} || { echo "config.local.yaml not found"; exit 1; }
+      - yq '.hub.clusterName' {{.CONFIG_FILE}} | grep -qv null || { echo "hub.clusterName not set in config.local.yaml"; exit 1; }
+      - yq '.aws.region' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.region not set in config.local.yaml"; exit 1; }
+      - yq '.aws.accountId' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.accountId not set in config.local.yaml"; exit 1; }
+      - yq '.repo.url' {{.CONFIG_FILE}} | grep -qv null || { echo "repo.url not set in config.local.yaml"; exit 1; }
       - printf '{{.C_STEP}}▸ Checking AWS credentials...{{.C_RESET}}\n'
       - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
       - printf '{{.C_OK}}✓ All pre-flight checks passed.{{.C_RESET}}\n'
@@ -113,25 +142,30 @@ tasks:
         # Create the file with 0600 up front so creds are never world-readable,
         # even briefly. (Task's embedded shell doesn't support `umask` as a
         # builtin, so we set the mode explicitly.)
-        rm -f /tmp/aws-creds.ini
-        install -m 600 /dev/null /tmp/aws-creds.ini
+        rm -f {{.ROOT_DIR}}/private/aws-creds.ini
+        install -m 600 /dev/null {{.ROOT_DIR}}/private/aws-creds.ini
         {
           echo "[default]"
           echo "aws_access_key_id = $AKI"
           echo "aws_secret_access_key = $SAK"
           [ -n "$ST" ] && echo "aws_session_token = $ST"
-        } > /tmp/aws-creds.ini
+        } > {{.ROOT_DIR}}/private/aws-creds.ini
       - kubectl -n crossplane-system create secret generic aws-credentials
-          --from-file=credentials=/tmp/aws-creds.ini
+          --from-file=credentials={{.ROOT_DIR}}/private/aws-creds.ini
           --dry-run=client -o yaml | kubectl apply -f -
-      - rm -f /tmp/aws-creds.ini
+      - rm -f {{.ROOT_DIR}}/private/aws-creds.ini
+
+  hub:kubeconfig:
+    desc: Fetch hub EKS kubeconfig
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>&1 >/dev/null
 
   kind:create:
     desc: Create Kind cluster (skips if exists)
     status:
       - kind get clusters 2>/dev/null | grep -q "^{{.KIND_CLUSTER_NAME}}$"
     cmds:
-      - kind create cluster --config kind.yaml --kubeconfig {{.KUBECONFIG}}
+      - kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind.yaml --kubeconfig {{.KUBECONFIG}}
 
   argocd:install:
     desc: Install ArgoCD (skips if deployed)
@@ -166,11 +200,6 @@ tasks:
   crossplane:providers:
     status:
       - kubectl get providers.pkg.crossplane.io provider-aws-iam -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null | grep -q True
-    vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
-      AWS_ACCOUNT_ID:
-        sh: yq '.aws.accountId' {{.CONFIG_FILE}}
     cmds:
       - kubectl apply -f manifests/crossplane/drc-stub.yaml
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
@@ -200,16 +229,6 @@ tasks:
 
   crossplane:claims:
     vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
-      AWS_ACCOUNT_ID:
-        sh: yq '.aws.accountId' {{.CONFIG_FILE}}
-      HUB_K8S_VERSION:
-        sh: yq '.hub.kubernetesVersion // "1.32"' {{.CONFIG_FILE}}
-      HUB_VPC_CIDR:
-        sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}}
-      RESOURCE_PREFIX:
-        sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
       MNG_ENABLED:
         sh: yq '.hub.managedNodeGroup.enabled // false' {{.CONFIG_FILE}}
       MNG_SETS:
@@ -238,7 +257,7 @@ tasks:
           --set clusters.hub.resourcePrefix={{.RESOURCE_PREFIX}}
           {{.MNG_SETS}}
           | kubectl apply -f -
-      - kubectl apply -f claims/argocd-capability-role.yaml
+      - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl apply -f -
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
           --set aws.region={{.AWS_REGION}}
@@ -255,9 +274,6 @@ tasks:
           | kubectl apply -f -
 
   hub:seed:
-    vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
     cmds:
       - task: credentials:refresh
       - printf '{{.C_STEP}}▸ Waiting for hub cluster...{{.C_RESET}}\n'
@@ -285,14 +301,12 @@ tasks:
   hub:install-eso:
     desc: Install External Secrets Operator on the hub cluster
     vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
       ESO_VERSION:
         sh: yq '.external-secrets.defaultVersion' {{.GITOPS_ROOT}}/addons/registry/core.yaml
     status:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm repo add external-secrets https://charts.external-secrets.io --force-update
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm upgrade --install external-secrets external-secrets/external-secrets
           --namespace external-secrets --create-namespace
@@ -303,11 +317,8 @@ tasks:
 
   hub:cluster-secret-store:
     desc: Apply ClusterSecretStore for AWS Secrets Manager on the hub cluster
-    vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - |
         cat <<'EOF' | sed "s|AWS_REGION|{{.AWS_REGION}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: external-secrets.io/v1
@@ -325,19 +336,11 @@ tasks:
   hub:seed-secret:
     desc: Create minimal seed cluster secret on the hub (repo coords + fleet labels only)
     vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
       CLUSTER_ARN:
         sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.CONFIG_FILE}}):cluster/$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
-      REPO_URL:
-        sh: yq '.repo.url' {{.CONFIG_FILE}}
-      REPO_REVISION:
-        sh: yq '.repo.revision' {{.CONFIG_FILE}}
-      REPO_BASEPATH:
-        sh: yq '.repo.basepath' {{.CONFIG_FILE}}
     cmds:
       - printf '{{.C_STEP}}▸ Getting hub kubeconfig...{{.C_RESET}}\n'
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Creating seed cluster secret on hub...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
       - |
@@ -369,11 +372,8 @@ tasks:
 
   hub:apply-root-appset:
     desc: Apply root-appset to the hub cluster
-    vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Applying root-appset to hub...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
@@ -382,11 +382,23 @@ tasks:
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to reach Synced state
     vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
       MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "2"}}'
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Waiting for root-appset to generate apps...{{.C_RESET}}\n'
+      - |
+        TIMEOUT=300
+        ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
+          if [ "$TOTAL" -gt 3 ]; then
+            printf '{{.C_INFO}}  %s apps detected, proceeding to sync check{{.C_RESET}}\n' "$TOTAL"
+            break
+          fi
+          printf '{{.C_INFO}}  %s apps so far, waiting...{{.C_RESET}}\n' "$TOTAL"
+          sleep 10
+          ELAPSED=$((ELAPSED + 10))
+        done
       - printf '{{.C_STEP}}▸ Waiting for hub apps to sync (max %s OutOfSync tolerated)...{{.C_RESET}}\n' "{{.MAX_OUTOFSYNC}}"
       - |
         TIMEOUT=1800
@@ -419,26 +431,8 @@ tasks:
   secrets-manager:seed:
     desc: Seed hub cluster config into AWS Secrets Manager for ExternalSecrets
     vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
-      AWS_ACCOUNT_ID:
-        sh: yq '.aws.accountId' {{.CONFIG_FILE}}
       CLUSTER_ARN:
         sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.CONFIG_FILE}}):cluster/$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
-      REPO_URL:
-        sh: yq '.repo.url' {{.CONFIG_FILE}}
-      REPO_REVISION:
-        sh: yq '.repo.revision' {{.CONFIG_FILE}}
-      REPO_BASEPATH:
-        sh: yq '.repo.basepath' {{.CONFIG_FILE}}
-      DOMAIN:
-        sh: yq '.domain' {{.CONFIG_FILE}}
-      RESOURCE_PREFIX:
-        sh: yq '.resourcePrefix' {{.CONFIG_FILE}}
-      INGRESS_NAME:
-        sh: yq '.ingressName // "hub-ingress"' {{.CONFIG_FILE}}
-      INGRESS_SECURITY_GROUPS:
-        sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
       VPC_ID:
         sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
     cmds:
@@ -462,9 +456,6 @@ tasks:
 
   secrets-manager:seed-keycloak:
     desc: Seed keycloak passwords into AWS Secrets Manager
-    vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
     status:
       - aws secretsmanager describe-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} 2>/dev/null
     cmds:
@@ -493,20 +484,8 @@ tasks:
     status:
       - kubectl -n crossplane-system get job create-argocd-capability -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q 1
     vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
-      AWS_ACCOUNT_ID:
-        sh: yq '.aws.accountId' {{.CONFIG_FILE}}
-      CAPABILITY_NAME:
-        sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
       CAPABILITY_ROLE_ARN:
         sh: kubectl -n crossplane-system get roles.iam.aws.upbound.io argocd-capability-role -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo ""
-      IDC_INSTANCE_ARN:
-        sh: yq '.identityCenter.instanceArn' {{.CONFIG_FILE}}
-      IDC_REGION:
-        sh: yq '.identityCenter.region' {{.CONFIG_FILE}}
-      IDC_ADMIN_GROUP_ID:
-        sh: yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}}
     cmds:
       - kubectl -n crossplane-system create configmap argocd-capability-config
           --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
@@ -524,11 +503,6 @@ tasks:
 
   argocd:delete-capability:
     desc: Delete EKS ArgoCD Capability via Job
-    vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
-      CAPABILITY_NAME:
-        sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
     cmds:
       - kubectl -n crossplane-system create configmap argocd-capability-config
           --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
@@ -560,20 +534,16 @@ tasks:
       Full teardown — addons, AWS resources. Kind cluster must be alive.
       Pass CLEANUP_KIND=true to also remove the Kind cluster after cleanup.
     vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
-      AWS_ACCOUNT_ID:
-        sh: yq '.aws.accountId' {{.CONFIG_FILE}}
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
     cmds:
-      # Refresh kubeconfig and credentials
+      # Refresh kubeconfig and credentials, restart providers to pick up new creds
       - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
       - task: credentials:refresh
+      - kubectl -n crossplane-system rollout restart deploy -l pkg.crossplane.io/revision 2>/dev/null || true
+      - kubectl -n crossplane-system rollout status deploy -l pkg.crossplane.io/revision --timeout=120s 2>/dev/null || true
       # Phase 1: Clean hub addons
-      - task: credentials:refresh
       - task: hub:destroy-addons
       # Phase 2: Delete pod identities and IAM resources (chart-managed)
-      - task: credentials:refresh
       - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
@@ -588,9 +558,19 @@ tasks:
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
       # Phase 3: Delete ArgoCD capability via Job, then its IAM role (needs IAM provider alive)
       - task: argocd:delete-capability
-      - kubectl delete -f claims/argocd-capability-role.yaml --ignore-not-found
+      - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl delete --ignore-not-found -f -
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
-      # Phase 4: Delete crossplane-base provider pod identities and providers
+      # Phase 4: Delete EKS cluster + VPC (needs providers alive to reconcile deletion)
+      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
+          --set clusters.hub.region={{.AWS_REGION}}
+          --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
+          --show-only templates/claim.yaml
+          | kubectl delete --ignore-not-found -f -
+      - kubectl -n crossplane-system wait --for=delete clusters.eks.aws.upbound.io --all --timeout=1800s 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=delete vpc.ec2.aws.upbound.io --all --timeout=600s 2>/dev/null || true
+      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/composition.yaml --ignore-not-found
+      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/xrd.yaml --ignore-not-found
+      # Phase 5: Delete crossplane-base provider pod identities and providers (safe — no managed resources left)
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
           --set aws.region={{.AWS_REGION}}
@@ -603,30 +583,23 @@ tasks:
           | kubectl delete --ignore-not-found -f -
       - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=600s 2>/dev/null || true
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
-      # Safety net: delete any orphaned pod identity associations and IAM roles via AWS CLI
+      # Phase 6: Safety net — clean up any orphaned AWS resources
       - cmd: |
           for ASSOC_ID in $(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'associations[].associationId' --output text 2>/dev/null); do
             echo "Deleting orphaned pod identity association $ASSOC_ID..."
             aws eks delete-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --association-id $ASSOC_ID --region {{.AWS_REGION}} --output text 2>/dev/null || true
           done
-          for ROLE in CrossplaneIAMProviderRole CrossplaneEKSProviderRole CrossplaneEC2ProviderRole ESOPodIdentityRole LBCPodIdentityRole ExternalDNSPodIdentityRole; do
+          for ROLE in {{.HUB_CLUSTER_NAME}}-CrossplaneIAMProviderRole {{.HUB_CLUSTER_NAME}}-CrossplaneEKSProviderRole {{.HUB_CLUSTER_NAME}}-CrossplaneEC2ProviderRole {{.HUB_CLUSTER_NAME}}-ESOPodIdentityRole {{.HUB_CLUSTER_NAME}}-LBCPodIdentityRole {{.HUB_CLUSTER_NAME}}-ExternalDNSPodIdentityRole {{.HUB_CLUSTER_NAME}}-ArgoCDCapabilityRole; do
             for POLICY_ARN in $(aws iam list-attached-role-policies --role-name $ROLE --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
               aws iam detach-role-policy --role-name $ROLE --policy-arn $POLICY_ARN 2>/dev/null || true
             done
             aws iam delete-role --role-name $ROLE 2>/dev/null || true
           done
-          for POLICY in ESOSecretsManagerPolicy LBCControllerPolicy ExternalDNSRoute53Policy; do
+          for POLICY in {{.HUB_CLUSTER_NAME}}-ESOSecretsManagerPolicy {{.HUB_CLUSTER_NAME}}-LBCControllerPolicy {{.HUB_CLUSTER_NAME}}-ExternalDNSRoute53Policy; do
             POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName==\`$POLICY\`].Arn" --output text 2>/dev/null)
             [ -n "$POLICY_ARN" ] && aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null || true
           done
-      # Phase 5: Delete EKS cluster + VPC (composition cascades all networking + IAM)
-      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
-          --set clusters.hub.region={{.AWS_REGION}}
-          --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
-          | kubectl delete --ignore-not-found -f -
-      - kubectl -n crossplane-system wait --for=delete clusters.eks.aws.upbound.io --all --timeout=1800s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete vpc.ec2.aws.upbound.io --all --timeout=600s 2>/dev/null || true
-      # Phase 6: Clean up Kind (pass CLEANUP_KIND=true to remove)
+      # Phase 7: Clean up Kind (pass CLEANUP_KIND=true to remove)
       - cmd: |
           if [ "{{.CLEANUP_KIND}}" = "true" ]; then
             kind delete cluster --name {{.KIND_CLUSTER_NAME}}
@@ -637,14 +610,6 @@ tasks:
   hub:update:
     desc: Update hub infra via Kind+Crossplane
     vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
-      HUB_K8S_VERSION:
-        sh: yq '.hub.kubernetesVersion // "1.32"' {{.CONFIG_FILE}}
-      HUB_VPC_CIDR:
-        sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}}
-      RESOURCE_PREFIX:
-        sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
       MNG_SETS:
         sh: |
           if [ "$(yq '.hub.managedNodeGroup.enabled // false' {{.CONFIG_FILE}})" = "true" ]; then
@@ -684,12 +649,11 @@ tasks:
   hub:destroy-addons:
     desc: Remove all addons from the hub cluster (no git changes needed)
     vars:
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
       ADDONS:
         sh: |
-          ENABLED_LABELS=$(yq -r '.enabledAddons | to_entries[] | select(.value == true) | "enable_" + .key' \
-            {{.GITOPS_ROOT}}/overlays/environments/control-plane/enabled-addons.yaml)
+          ENABLED_LABELS=$(for f in {{.GITOPS_ROOT}}/overlays/environments/*/enabled-addons.yaml; do
+            [ -f "$f" ] && yq -r '.enabledAddons | to_entries[] | select(.value == true) | "enable_" + .key' "$f"
+          done | sort -u)
           REGISTRY=$(yq eval-all '. as $item ireduce ({}; . * $item)' \
             {{.GITOPS_ROOT}}/addons/registry/core.yaml \
             {{.GITOPS_ROOT}}/addons/registry/gitops.yaml \
@@ -703,7 +667,7 @@ tasks:
             fi
           done | sort -rn | awk '{print $2}'
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig
+      - task: hub:kubeconfig
       - printf '{{.C_ERR}}▸ Stopping all regeneration...{{.C_RESET}}\n'
       # 1. Delete bootstrap ApplicationSet (preserveResources) to stop recreating bootstrap App
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset bootstrap -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>/dev/null || true

@@ -5,10 +5,10 @@
 #   namespace: ack-system
 # data:
 #   {{- range $key, $value := .Values.clusters }}
-#   ec2.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-ec2"
-#   eks.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-eks"
-#   iam.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-iam"
-#   ecr.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-ecr"
-#   s3.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-s3"
-#   dynamodb.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-dynamodb"
+#   ec2.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-ec2"
+#   eks.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-eks"
+#   iam.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-iam"
+#   ecr.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-ecr"
+#   s3.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-s3"
+#   dynamodb.{{ $key }}: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.clusterName }}-cluster-mgmt-dynamodb"
 #   {{- end }}

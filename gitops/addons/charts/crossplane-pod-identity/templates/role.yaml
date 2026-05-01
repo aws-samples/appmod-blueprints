@@ -6,8 +6,8 @@ kind: Role
 metadata:
   name: {{ $name }}-pod-identity-role
   annotations:
-    crossplane.io/external-name: {{ $identity.roleName }}
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,SkipHealthCheck=true
+    crossplane.io/external-name: {{ $.Values.aws.clusterName }}-{{ $identity.roleName }}
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-3"
   labels:
     platform.gitops.io/role: {{ $name }}-pod-identity

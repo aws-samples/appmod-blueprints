@@ -67,8 +67,8 @@ The bootstrap uses the same Helm charts that run on the hub, ensuring consistent
 | Chart | Registry flags | What it creates | What it skips |
 |-------|---------------|-----------------|---------------|
 | `crossplane-base` | `createIdentity=false` for iam, eks, ec2 | ProviderConfig, SAs, DRCs, all providers | IAM+EKS+EC2 roles + pod identities (bootstrap-managed) |
-| `aws-load-balancer-controller` | `additionalResources` → crossplane-pod-identity with `identities.lbc.enabled=true` | LBC role + policy + pod identity (wave -3 to -1), then LBC controller (wave 0) | — |
-| `external-dns` | `additionalResources` → crossplane-pod-identity with `identities.external-dns.enabled=true` | external-dns role + policy + pod identity (wave -3 to -1), then external-dns controller (wave 0) | — |
+| `aws-load-balancer-controller` | `additionalResources` → crossplane-pod-identity with `identities.lbc.enabled=true` | LBC role + policy + pod identity (wave -3 to -1), LBC controller (wave 0), PostSync restart hook if credentials missing | — |
+| `external-dns` | `additionalResources` → crossplane-pod-identity with `identities.external-dns.enabled=true` | external-dns role + policy + pod identity (wave -3 to -1), external-dns controller (wave 0), PostSync restart hook if credentials missing | — |
 | ESO pod identity | Not referenced by any hub addon | — | ESO role + policy + pod identity (bootstrap-permanent) |
 
 ### Why this split exists

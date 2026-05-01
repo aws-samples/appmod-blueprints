@@ -6,12 +6,11 @@ set: [errexit, nounset, pipefail]
 
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}"
-  CONFIG_FILE: "{{.ROOT_DIR}}/config.yaml"
   REQUIRED_CLIS: [kubectl, helm, yq, aws]
   AWS_REGION:
-    sh: yq '.aws.region' {{.ROOT_DIR}}/config.yaml
+    sh: yq '.aws.region' {{.CONFIG_FILE}}
   HUB_CLUSTER_NAME:
-    sh: yq '.hub.clusterName' {{.ROOT_DIR}}/config.yaml
+    sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
 
 tasks:
   validate:
@@ -21,12 +20,12 @@ tasks:
       - cmd: command -v {{.ITEM}} >/dev/null 2>&1 || { echo "Missing required CLI {{.ITEM}}"; exit 1; }
         for:
           var: REQUIRED_CLIS
-      - echo "Checking config.yaml..."
-      - test -f {{.GITOPS_ROOT}}/config.yaml || { echo "config.yaml not found"; exit 1; }
-      - yq '.hub.clusterName' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "hub.clusterName not set in config.yaml"; exit 1; }
-      - yq '.aws.region' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "aws.region not set in config.yaml"; exit 1; }
-      - yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "aws.accountId not set in config.yaml"; exit 1; }
-      - yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml | grep -qv null || { echo "repo.url not set in config.yaml"; exit 1; }
+      - echo "Checking config.local.yaml..."
+      - test -f {{.CONFIG_FILE}} || { echo "config.local.yaml not found"; exit 1; }
+      - yq '.hub.clusterName' {{.CONFIG_FILE}} | grep -qv null || { echo "hub.clusterName not set in config.local.yaml"; exit 1; }
+      - yq '.aws.region' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.region not set in config.local.yaml"; exit 1; }
+      - yq '.aws.accountId' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.accountId not set in config.local.yaml"; exit 1; }
+      - yq '.repo.url' {{.CONFIG_FILE}} | grep -qv null || { echo "repo.url not set in config.local.yaml"; exit 1; }
       - echo "Checking AWS credentials..."
       - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
       - echo "Checking cluster connectivity..."
@@ -51,17 +50,17 @@ tasks:
     desc: Seed hub cluster config into AWS Secrets Manager for ExternalSecrets
     vars:
       AWS_ACCOUNT_ID:
-        sh: yq '.aws.accountId' {{.GITOPS_ROOT}}/config.yaml
+        sh: yq '.aws.accountId' {{.CONFIG_FILE}}
       REPO_URL:
-        sh: yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml
+        sh: yq '.repo.url' {{.CONFIG_FILE}}
       REPO_REVISION:
-        sh: yq '.repo.revision' {{.GITOPS_ROOT}}/config.yaml
+        sh: yq '.repo.revision' {{.CONFIG_FILE}}
       REPO_BASEPATH:
-        sh: yq '.repo.basepath' {{.GITOPS_ROOT}}/config.yaml
+        sh: yq '.repo.basepath' {{.CONFIG_FILE}}
       DOMAIN:
-        sh: yq '.domain' {{.GITOPS_ROOT}}/config.yaml
+        sh: yq '.domain' {{.CONFIG_FILE}}
       RESOURCE_PREFIX:
-        sh: yq '.resourcePrefix' {{.GITOPS_ROOT}}/config.yaml
+        sh: yq '.resourcePrefix' {{.CONFIG_FILE}}
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
@@ -120,11 +119,11 @@ tasks:
     desc: Create minimal seed cluster secret on the hub (repo coords + fleet labels only)
     vars:
       REPO_URL:
-        sh: yq '.repo.url' {{.GITOPS_ROOT}}/config.yaml
+        sh: yq '.repo.url' {{.CONFIG_FILE}}
       REPO_REVISION:
-        sh: yq '.repo.revision' {{.GITOPS_ROOT}}/config.yaml
+        sh: yq '.repo.revision' {{.CONFIG_FILE}}
       REPO_BASEPATH:
-        sh: yq '.repo.basepath' {{.GITOPS_ROOT}}/config.yaml
+        sh: yq '.repo.basepath' {{.CONFIG_FILE}}
     cmds:
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
       - echo "Creating seed cluster secret on hub..."
