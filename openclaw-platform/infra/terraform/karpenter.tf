@@ -182,8 +182,8 @@ resource "aws_eks_pod_identity_association" "karpenter" {
 # find where to launch nodes. The subnets already get tagged by the EKS module;
 # add karpenter.sh/discovery explicitly here.
 resource "aws_ec2_tag" "karpenter_subnet" {
-  for_each    = toset(module.vpc.private_subnets)
-  resource_id = each.value
+  count       = length(module.vpc.private_subnets)
+  resource_id = module.vpc.private_subnets[count.index]
   key         = "karpenter.sh/discovery"
   value       = local.cluster_name
 }

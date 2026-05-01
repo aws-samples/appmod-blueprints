@@ -28,10 +28,10 @@ resource "aws_efs_file_system" "workspaces" {
 }
 
 resource "aws_efs_mount_target" "workspaces" {
-  for_each = toset(module.vpc.private_subnets)
+  count = length(module.vpc.private_subnets)
 
   file_system_id  = aws_efs_file_system.workspaces.id
-  subnet_id       = each.value
+  subnet_id       = module.vpc.private_subnets[count.index]
   security_groups = [aws_security_group.efs.id]
 }
 
