@@ -21,7 +21,7 @@ resource "aws_secretsmanager_secret_version" "cluster_config" {
       aws_account_id          = var.aws_account_id
       aws_cluster_name        = var.cluster_name
       aws_vpc_id              = aws_vpc.hub.id
-      alb_controller_mode     = "oss"
+      alb_controller_mode     = "auto"
       ingress_domain_name     = var.domain
       ingress_name            = var.ingress_name
       ingress_security_groups = var.ingress_security_groups
