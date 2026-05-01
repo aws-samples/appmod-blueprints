@@ -1,0 +1,9 @@
+apiVersion: v2
+name: monitoring
+description: kube-prometheus-stack with OpenClaw alerting rules
+type: application
+version: 0.1.0
+dependencies:
+  - name: kube-prometheus-stack
+    version: "~65.0"
+    repository: https://prometheus-community.github.io/helm-charts

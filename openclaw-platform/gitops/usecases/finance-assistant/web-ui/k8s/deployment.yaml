@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: finance-ui
+  namespace: finance-assistant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: finance-ui
+  template:
+    metadata:
+      labels:
+        app: finance-ui
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        runAsNonRoot: true
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ui
+          # Image, Cognito values, and certificate ARN are substituted by
+          # openclaw-platform/scripts/render-finance-ui.sh from terraform outputs.
+          # The __PLACEHOLDERS__ below are NOT real values.
+          image: __ACCOUNT_ID__.dkr.ecr.us-west-2.amazonaws.com/finance-ui:v0.8.9
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: APP_URL
+              value: https://__FINANCE_UI_HOST__
+            - name: COGNITO_REGION
+              value: us-west-2
+            - name: COGNITO_USER_POOL_ID
+              value: __COGNITO_USER_POOL_ID__
+            - name: COGNITO_CLIENT_ID
+              value: __COGNITO_CLIENT_ID__
+            - name: COGNITO_DOMAIN_PREFIX
+              value: __COGNITO_DOMAIN_PREFIX__
+            - name: COGNITO_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: finance-ui-auth
+                  key: cognito-client-secret
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: finance-ui-auth
+                  key: session-secret
+            - name: USE_SESSION_ROUTER
+              value: "true"
+            - name: LEGACY_ADAPTER_URL
+              value: http://finance-sandbox.finance-assistant.svc.cluster.local:18790
+            - name: ROUTER_URL
+              value: http://finance-session-router.finance-assistant.svc.cluster.local:18790
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits:   { cpu: "1",  memory: 1536Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: [ALL] }
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - { name: cache, mountPath: /app/.next/cache }
+            - { name: tmp,   mountPath: /tmp }
+          readinessProbe:
+            httpGet: { path: /, port: 3000 }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /, port: 3000 }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+      volumes:
+        - { name: cache, emptyDir: {} }
+        - { name: tmp,   emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: finance-ui
+  namespace: finance-assistant
+spec:
+  selector:
+    app: finance-ui
+  ports:
+    - port: 80
+      targetPort: 3000
+---
+# Single ingress, NO ALB-level auth. The Next.js app owns the Cognito
+# OAuth flow via /api/auth/* routes and gates /app + /api/chat via
+# middleware. This lets / (the landing page) stay public on the same
+# hostname as the authenticated app — something ALB action-split auth
+# could not do on EKS Auto Mode's bundled controller.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: finance-ui
+  namespace: finance-assistant
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/certificate-arn: __ACM_CERTIFICATE_ARN__
+    external-dns.alpha.kubernetes.io/hostname: __FINANCE_UI_HOST__
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=300
+spec:
+  ingressClassName: alb
+  rules:
+    - host: __FINANCE_UI_HOST__
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: finance-ui
+                port:
+                  number: 80

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: litellm
+description: LiteLLM proxy with Bedrock Guardrail config
+type: application
+version: 0.1.0
+dependencies:
+  - name: litellm-helm
+    version: "0.1.837"
+    repository: oci://ghcr.io/berriai

@@ -1,0 +1,148 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: finance-sandbox-template
+  namespace: finance-assistant
+data:
+  # Template consumed by session-router. Three top-level keys (sandbox,
+  # pvc, service) — the router deep-clones this per request and rewrites
+  # names/selectors/labels with the user's suffix before POSTing to the
+  # API server. No secrets here; the sandbox's env still references the
+  # namespace-scoped secrets that only the kata VM mounts.
+  sandbox-template.json: |
+    {
+      "sandbox": {
+        "apiVersion": "agents.x-k8s.io/v1alpha1",
+        "kind": "Sandbox",
+        "metadata": {
+          "name": "finance-sandbox-REPLACE",
+          "namespace": "finance-assistant",
+          "labels": {}
+        },
+        "spec": {
+          "podTemplate": {
+            "metadata": { "labels": {} },
+            "spec": {
+              "runtimeClassName": "kata-qemu",
+              "serviceAccountName": "finance-sandbox",
+              "automountServiceAccountToken": false,
+              "securityContext": {
+                "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000,
+                "runAsNonRoot": true,
+                "seccompProfile": { "type": "RuntimeDefault" }
+              },
+              "nodeSelector": { "katacontainers.io/kata-runtime": "true" },
+              "tolerations": [
+                { "key": "kata", "operator": "Equal", "value": "true", "effect": "NoSchedule" }
+              ],
+              "volumes": [
+                { "name": "workspace", "emptyDir": { "sizeLimit": "2Gi" } },
+                { "name": "system-prompt", "configMap": { "name": "finance-system-prompt" } },
+                { "name": "openclaw-config", "emptyDir": {} },
+                { "name": "adapter-src", "configMap": { "name": "finance-adapter-src", "defaultMode": 365 } },
+                { "name": "adapter-tmp", "emptyDir": {} },
+                { "name": "secrets", "projected": { "defaultMode": 256, "sources": [
+                  { "secret": { "name": "finance-litellm-key", "items": [{ "key": "api-key", "path": "litellm-api-key" }] } },
+                  { "secret": { "name": "openclaw-gateway-auth", "items": [{ "key": "token", "path": "gateway-auth-token" }] } }
+                ] } }
+              ],
+              "containers": [
+                {
+                  "name": "openclaw",
+                  "image": "ghcr.io/openclaw/openclaw:latest",
+                  "imagePullPolicy": "IfNotPresent",
+                  "securityContext": {
+                    "allowPrivilegeEscalation": false,
+                    "readOnlyRootFilesystem": false,
+                    "runAsNonRoot": true,
+                    "capabilities": { "drop": ["ALL"] },
+                    "seccompProfile": { "type": "RuntimeDefault" }
+                  },
+                  "resources": {
+                    "requests": { "cpu": "500m", "memory": "1Gi" },
+                    "limits": { "cpu": "2", "memory": "4Gi" }
+                  },
+                  "env": [
+                    { "name": "WORKSPACE_DIR", "value": "/workspace" },
+                    { "name": "SYSTEM_PROMPT_FILE", "value": "/etc/openclaw/system-prompt.md" }
+                  ],
+                  "command": ["sh","-c","set -eu; LITELLM_API_KEY=$(cat /var/run/openclaw/litellm-api-key); GATEWAY_AUTH_TOKEN=$(cat /var/run/openclaw/gateway-auth-token); mkdir -p /workspace/scenarios /workspace/inbox; for f in goals.md snapshot.md decisions.md questions.md; do [ -f /workspace/$f ] || touch /workspace/$f; done; cp /etc/openclaw/system-prompt.md /workspace/BOOT.md; mkdir -p /home/node/.openclaw; cat > /home/node/.openclaw/openclaw.json <<EOF\n{\"models\":{\"providers\":{\"litellm\":{\"baseUrl\":\"http://litellm.litellm.svc.cluster.local:4000\",\"apiKey\":\"${LITELLM_API_KEY}\",\"api\":\"openai-completions\",\"models\":[{\"id\":\"claude-haiku-4-5\",\"name\":\"Claude Haiku 4.5\",\"reasoning\":true,\"input\":[\"text\",\"image\"],\"contextWindow\":200000,\"maxTokens\":3072}]}}},\"agents\":{\"defaults\":{\"model\":{\"primary\":\"litellm/claude-haiku-4-5\"},\"workspace\":\"/workspace\"}},\"gateway\":{\"port\":18789,\"mode\":\"local\",\"bind\":\"lan\",\"auth\":{\"mode\":\"token\",\"token\":\"${GATEWAY_AUTH_TOKEN}\"},\"controlUi\":{\"dangerouslyAllowHostHeaderOriginFallback\":true}}}\nEOF\nunset LITELLM_API_KEY GATEWAY_AUTH_TOKEN; exec node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured"],
+                  "ports": [{ "name": "gateway", "containerPort": 18789, "protocol": "TCP" }],
+                  "volumeMounts": [
+                    { "name": "workspace", "mountPath": "/workspace" },
+                    { "name": "system-prompt", "mountPath": "/etc/openclaw", "readOnly": true },
+                    { "name": "openclaw-config", "mountPath": "/home/node/.openclaw" },
+                    { "name": "secrets", "mountPath": "/var/run/openclaw", "readOnly": true }
+                  ],
+                  "readinessProbe": { "tcpSocket": { "port": 18789 }, "initialDelaySeconds": 10 },
+                  "livenessProbe": { "tcpSocket": { "port": 18789 }, "initialDelaySeconds": 30 }
+                },
+                {
+                  "name": "adapter",
+                  "image": "ghcr.io/openclaw/openclaw:latest",
+                  "imagePullPolicy": "IfNotPresent",
+                  "securityContext": {
+                    "allowPrivilegeEscalation": false,
+                    "readOnlyRootFilesystem": false,
+                    "runAsNonRoot": true,
+                    "capabilities": { "drop": ["ALL"] },
+                    "seccompProfile": { "type": "RuntimeDefault" }
+                  },
+                  "resources": {
+                    "requests": { "cpu": "100m", "memory": "128Mi" },
+                    "limits": { "cpu": "500m", "memory": "512Mi" }
+                  },
+                  "env": [
+                    { "name": "PORT", "value": "18790" },
+                    { "name": "SYSTEM_PROMPT_FILE", "value": "/etc/openclaw/system-prompt.md" },
+                    { "name": "OPENCLAW_CMD", "value": "openclaw" },
+                    { "name": "OPENCLAW_ARGS", "value": "" },
+                    { "name": "HOME", "value": "/tmp/adapter-home" }
+                  ],
+                  "command": ["sh","-c","for i in $(seq 1 60); do [ -f /home/node/.openclaw/openclaw.json ] && break; sleep 1; done; mkdir -p \"$HOME/.openclaw\"; cp /home/node/.openclaw/openclaw.json \"$HOME/.openclaw/openclaw.json\"; exec node /adapter/server.js"],
+                  "ports": [{ "name": "adapter", "containerPort": 18790, "protocol": "TCP" }],
+                  "volumeMounts": [
+                    { "name": "workspace", "mountPath": "/workspace" },
+                    { "name": "system-prompt", "mountPath": "/etc/openclaw", "readOnly": true },
+                    { "name": "openclaw-config", "mountPath": "/home/node/.openclaw" },
+                    { "name": "adapter-src", "mountPath": "/adapter", "readOnly": true },
+                    { "name": "adapter-tmp", "mountPath": "/tmp/adapter-home" },
+                    { "name": "secrets", "mountPath": "/var/run/openclaw", "readOnly": true }
+                  ],
+                  "readinessProbe": { "httpGet": { "path": "/healthz", "port": 18790 }, "initialDelaySeconds": 5, "periodSeconds": 10 },
+                  "livenessProbe": { "httpGet": { "path": "/healthz", "port": 18790 }, "initialDelaySeconds": 20, "periodSeconds": 30 }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "pvc": {
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {
+          "name": "finance-workspace-REPLACE",
+          "namespace": "finance-assistant"
+        },
+        "spec": {
+          "accessModes": ["ReadWriteMany"],
+          "storageClassName": "efs-workspaces",
+          "resources": { "requests": { "storage": "2Gi" } }
+        }
+      },
+      "service": {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "finance-sandbox-REPLACE",
+          "namespace": "finance-assistant"
+        },
+        "spec": {
+          "selector": { "app": "finance-sandbox-REPLACE" },
+          "ports": [
+            { "name": "gateway", "port": 18789, "targetPort": 18789 },
+            { "name": "adapter", "port": 18790, "targetPort": 18790 }
+          ]
+        }
+      }
+    }

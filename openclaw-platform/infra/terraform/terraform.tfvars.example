@@ -1,0 +1,11 @@
+region           = "us-west-2"
+bedrock_region   = "us-west-2"
+project_name     = "openclaw"
+cluster_version  = "1.32"
+enable_kata_nodes = true
+
+# Required: Git repo ArgoCD watches for app-of-apps
+gitops_repo_url  = "https://github.com/YOUR_ORG/eks-platform-openclaw"
+
+# Optional: additional IAM roles granted cluster-admin via access entries
+# admin_role_arns = ["arn:aws:iam::123456789012:role/my-admin-role"]

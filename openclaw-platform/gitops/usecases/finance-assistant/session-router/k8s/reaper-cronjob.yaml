@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: finance-session-reaper
+  namespace: finance-assistant
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: finance-session-reaper
+  namespace: finance-assistant
+rules:
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: finance-session-reaper
+  namespace: finance-assistant
+subjects:
+  - kind: ServiceAccount
+    name: finance-session-reaper
+    namespace: finance-assistant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: finance-session-reaper
+---
+# Runs every 10 min; deletes per-user Sandbox + Service + PVC when the
+# finance.x-k8s.io/last-seen annotation is older than IDLE_TTL_SECONDS.
+# PVC deletion releases the workspace — set retain=true on the storage
+# class first if you want to keep the EBS volume after sandbox removal.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: finance-session-reaper
+  namespace: finance-assistant
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: finance-session-reaper
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: reaper
+              image: public.ecr.aws/aws-cli/aws-cli:2.17.0
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  TTL=${IDLE_TTL_SECONDS:-1800}
+                  NS=finance-assistant
+
+                  # Base64-less kubectl via the in-cluster API + a tiny
+                  # jq+curl loop. Busybox date handles the ISO math.
+                  apk add --no-cache kubectl jq >/dev/null 2>&1 || true
+
+                  now_ts=$(date -u +%s)
+                  kubectl get sandboxes.agents.x-k8s.io -n "$NS" -o json | jq -r '
+                    .items[]
+                    | select(.metadata.labels["finance.x-k8s.io/user-suffix"])
+                    | [.metadata.name,
+                       .metadata.labels["finance.x-k8s.io/user-suffix"],
+                       .metadata.annotations["finance.x-k8s.io/last-seen"] // ""] | @tsv' \
+                  | while IFS=$(printf '\t') read -r name suffix last_seen; do
+                      [ -z "$last_seen" ] && continue
+                      last_ts=$(date -d "$last_seen" -u +%s 2>/dev/null || echo 0)
+                      age=$((now_ts - last_ts))
+                      if [ "$age" -gt "$TTL" ]; then
+                        echo "reaping $name (suffix=$suffix, idle=${age}s) — keeping PVC for workspace persistence"
+                        kubectl delete sandbox.agents.x-k8s.io "$name" -n "$NS" --wait=false || true
+                        kubectl delete svc "$name" -n "$NS" --ignore-not-found --wait=false || true
+                        # NOTE: PVC finance-workspace-$suffix is intentionally preserved
+                        # so the user's goals.md / snapshot.md / decisions.md survive
+                        # across idle-reap cycles. Router re-mounts it on next chat.
+                      fi
+                    done
+              env:
+                - name: IDLE_TTL_SECONDS
+                  value: "1800"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits:   { cpu: 200m, memory: 256Mi }
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+                - { name: var, mountPath: /var/cache/apk }
+          volumes:
+            - { name: tmp, emptyDir: {} }
+            - { name: var, emptyDir: {} }

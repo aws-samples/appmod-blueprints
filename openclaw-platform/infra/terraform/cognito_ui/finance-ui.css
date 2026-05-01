@@ -1,0 +1,118 @@
+/*
+ * Cognito hosted-UI theme for finance-assistant.
+ * Palette pulled from examples/finance-assistant/web-ui/tailwind.config.ts
+ * so the sign-in experience feels continuous with the app.
+ *
+ * Cognito's allowlist accepts the bare "-customizable" classes only.
+ * :hover / :focus / :active / ::placeholder all fail validation with
+ * "not in the list of allowed classes", so no pseudo-selectors here.
+ */
+
+.background-customizable {
+  background-color: #020617;
+  background-image:
+    radial-gradient(ellipse at top, rgba(34,211,238,0.10), transparent 60%),
+    radial-gradient(ellipse at bottom right, rgba(251,191,36,0.08), transparent 50%);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+.banner-customizable {
+  padding: 32px 0 8px 0;
+  background-color: transparent;
+}
+
+.logo-customizable {
+  max-width: 220px;
+  max-height: 72px;
+}
+
+.textDescription-customizable {
+  color: #cbd5e1;
+  padding-top: 8px;
+  padding-bottom: 16px;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.idpDescription-customizable {
+  color: #94a3b8;
+  padding-top: 16px;
+  padding-bottom: 12px;
+  font-size: 13px;
+}
+
+.legalText-customizable {
+  color: #64748b;
+  font-size: 12px;
+  padding-top: 16px;
+}
+
+.label-customizable {
+  color: #e2e8f0;
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+
+.inputField-customizable {
+  background-color: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #f1f5f9;
+  padding: 12px 14px;
+  font-size: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.submitButton-customizable {
+  background-color: #06b6d4;
+  color: #020617;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 18px;
+  margin-top: 12px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.socialButton-customizable {
+  background-color: #1e293b;
+  color: #f1f5f9;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  font-weight: 500;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+
+.redirect-customizable {
+  color: #22d3ee;
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.passwordCheck-notValid-customizable {
+  color: #f87171;
+  font-size: 12px;
+}
+
+.passwordCheck-valid-customizable {
+  color: #fbbf24;
+  font-size: 12px;
+}
+
+.errorMessage-customizable {
+  background-color: rgba(248,113,113,0.08);
+  border: 1px solid rgba(248,113,113,0.35);
+  border-radius: 8px;
+  color: #fecaca;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}

@@ -4,6 +4,14 @@ A comprehensive platform engineering solution that provides application moderniz
 
 This code is used in associated Workshop: https://catalog.workshops.aws/platform-engineering-on-eks/en-US
 
+## AI Agent Platform (openclaw-platform)
+
+A production-grade AI agent platform on EKS with hardware-level sandbox isolation via Kata Containers — **one sandbox per user**, GitOps-managed, Karpenter-driven, persistent workspaces on EFS. See [openclaw-platform/docs/README.md](openclaw-platform/docs/README.md).
+
+Usecases:
+- [Finance Assistant](openclaw-platform/docs/usecases/finance-assistant.md) — per-user financial reasoning assistant (ALB + Cognito + SSE chat)
+- [Slack](openclaw-platform/docs/usecases/slack.md) — openclaw agent on Slack via Socket Mode (no public ingress)
+
 ## Overview
 
 This repository implements a complete platform engineering solution on Amazon EKS, enabling organizations to modernize applications and adopt cloud-native practices. It provides a production-ready platform with integrated developer portals, GitOps workflows, and progressive delivery capabilities.

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: agent-sandbox
+description: Agent Sandbox controller and CRDs for OpenClaw
+type: application
+version: 0.1.0

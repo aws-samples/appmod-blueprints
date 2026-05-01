@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: finance-assistant
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+# Per-user workspace PVCs are provisioned on demand by the session-router
+# with names like finance-workspace-<hash>. The old shared "finance-workspace"
+# PVC from the pre-PR3 setup is no longer needed.

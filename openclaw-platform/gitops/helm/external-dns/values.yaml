@@ -1,0 +1,54 @@
+external-dns:
+  provider: aws
+  policy: upsert-only
+
+  # Scoped to the one hosted zone external-dns should touch.
+  # Replaced by scripts/render-finance-ui.sh from terraform outputs.
+  domainFilters:
+    - __ROUTE53_ZONE_NAME__
+  zoneIdFilters:
+    - __ROUTE53_ZONE_ID__
+
+  # Watch Ingresses only (no Services of type LoadBalancer needed).
+  sources:
+    - ingress
+
+  # TXT ownership record so external-dns only manages records it created.
+  txtOwnerId: openclaw-eks
+  txtPrefix: "_externaldns."
+
+  registry: txt
+
+  # Pod Identity provides credentials — do not attach IRSA annotations.
+  serviceAccount:
+    create: true
+    name: external-dns
+    annotations: {}
+
+  env:
+    - name: AWS_REGION
+      value: us-west-2
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+
+  # Lower the reconcile interval — this is a low-churn environment.
+  interval: 2m
+  triggerLoopOnEvent: true
+
+  logLevel: info

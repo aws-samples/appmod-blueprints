@@ -1,0 +1,179 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: finance-adapter-src
+  namespace: finance-assistant
+data:
+  server.js: |
+    // Adapter sidecar — injected via ConfigMap; lives in the same Kata VM
+    // as the openclaw gateway. Calls `openclaw agent --local` per turn.
+
+    // Log redactor: belt-and-braces scrub of stdout/stderr for secret-
+    // shaped strings. Primary defense is still tmpfs-mounted secrets +
+    // env-strip below.
+    (function installLogRedact() {
+      const PATTERNS = [
+        /\bsk-[A-Za-z0-9_-]{16,64}\b/g,
+        /\b(AKIA|ASIA)[A-Z0-9]{16}\b/g,
+        /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+        /\b[a-f0-9]{48,}\b/g,
+        /\b[A-Za-z0-9/+=]{40}\b/g,
+      ];
+      function scrub(c) {
+        if (c == null) return c;
+        let s = typeof c === "string" ? c : c.toString("utf8");
+        for (const re of PATTERNS) s = s.replace(re, "[REDACTED]");
+        return typeof c === "string" ? s : Buffer.from(s, "utf8");
+      }
+      for (const stream of [process.stdout, process.stderr]) {
+        const orig = stream.write.bind(stream);
+        stream.write = (c, e, cb) => orig(scrub(c), e, cb);
+      }
+    })();
+
+    const http = require("http");
+    const fs = require("fs");
+    const { spawn } = require("child_process");
+
+    const PORT = parseInt(process.env.PORT || "18790", 10);
+    const OPENCLAW_CMD = process.env.OPENCLAW_CMD || "openclaw";
+    const rawArgs = process.env.OPENCLAW_ARGS || "";
+    const OPENCLAW_ARGS = rawArgs.trim() ? rawArgs.trim().split(/\s+/) : [];
+    const SYSTEM_PROMPT_FILE = process.env.SYSTEM_PROMPT_FILE || "/etc/openclaw/system-prompt.md";
+    // 15 min. Cold-start on a fresh per-user sandbox installs openclaw's
+    // bundled plugins (amazon-bedrock SDK, acpx, etc.) before the first
+    // response; that can take 60-120s on top of normal LLM time. Short
+    // timeouts truncate the response and make the UI look frozen.
+    const DEFAULT_TIMEOUT_MS = parseInt(process.env.ADAPTER_TIMEOUT_MS || "900000", 10);
+
+    // Secrets are tmpfs-mounted as files, not env vars. Read at startup
+    // and drop from env so any downstream `env` dump leaks nothing.
+    function readSecret(p) { try { return fs.readFileSync(p, "utf8").trim(); } catch { return ""; } }
+    const LITELLM_API_KEY = readSecret("/var/run/openclaw/litellm-api-key") || process.env.LITELLM_API_KEY || "";
+    const GATEWAY_AUTH_TOKEN = readSecret("/var/run/openclaw/gateway-auth-token") || process.env.GATEWAY_AUTH_TOKEN || "";
+    delete process.env.LITELLM_API_KEY;
+    delete process.env.GATEWAY_AUTH_TOKEN;
+
+    // System prompt is no longer injected per-turn — it lives in
+    // /workspace/BOOT.md and is loaded into the gateway on startup by the
+    // openclaw boot-md hook. Adapter sends only the user message.
+    const primedSessions = new Set(); // retained for future use
+
+    function runOpenclaw(sessionId, message) {
+      return new Promise((resolve, reject) => {
+        // Use warm gateway (omit --local) so we skip the agent cold start.
+        const args = [
+          ...OPENCLAW_ARGS,
+          "agent",
+          "--session-id", sessionId,
+          "--thinking", "off",
+          "--json",
+          "-m", message,
+        ];
+        const child = spawn(OPENCLAW_CMD, args, {
+          env: { ...process.env },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        let stdout = "";
+        let stderr = "";
+        const timer = setTimeout(() => {
+          child.kill("SIGTERM");
+          reject(new Error(`openclaw timeout after ${DEFAULT_TIMEOUT_MS}ms`));
+        }, DEFAULT_TIMEOUT_MS);
+
+        child.stdout.on("data", (d) => { stdout += d.toString(); });
+        child.stderr.on("data", (d) => { stderr += d.toString(); });
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          // Try stdout first (warm gateway path), then stderr (--local path).
+          // Warm path: {result:{payloads:[{text}]},status:"ok"}
+          // --local:   {payloads:[{text}],meta:{...}}
+          const candidates = [stdout, stderr];
+          for (const src of candidates) {
+            const jsonStart = src.indexOf("{\n");
+            if (jsonStart < 0) continue;
+            try {
+              const parsed = JSON.parse(src.slice(jsonStart));
+              const payloads = parsed?.result?.payloads ?? parsed?.payloads;
+              if (!payloads) continue;
+              const text = payloads?.[0]?.text ?? "";
+              const stopReason = parsed?.result?.meta?.stopReason
+                ?? parsed?.meta?.stopReason
+                ?? parsed?.status
+                ?? "unknown";
+              return resolve({ text, stopReason });
+            } catch { continue; }
+          }
+          console.error(`[adapter] openclaw exit ${code}`);
+          console.error(`[adapter] stdout(${stdout.length}):`, stdout.slice(0, 500));
+          console.error(`[adapter] stderr(${stderr.length}):`, stderr.slice(0, 500));
+          reject(new Error(`openclaw exit ${code}; stdout=${stdout.length}B stderr=${stderr.length}B`));
+        });
+      });
+    }
+
+    function sseWrite(res, data) { res.write(`data: ${JSON.stringify(data)}\n\n`); }
+
+    async function streamReplyAsSse(res, text) {
+      // openclaw currently returns the whole reply synchronously, so there
+      // is no token stream to forward. Emit once — the previous 8-char
+      // chunk + 10ms sleep loop added ~2s of pointless latency *after*
+      // the model was already done. True per-token streaming is a
+      // follow-up (needs the openclaw WS client).
+      sseWrite(res, { delta: text });
+      sseWrite(res, { done: true });
+      res.write("data: [DONE]\n\n");
+      res.end();
+    }
+
+    const server = http.createServer(async (req, res) => {
+      if (req.method === "GET" && req.url === "/healthz") {
+        res.writeHead(200); return res.end("ok\n");
+      }
+      if (req.method === "POST" && req.url === "/chat") {
+        let body = "";
+        req.on("data", (c) => { body += c; });
+        req.on("end", async () => {
+          let heartbeat;
+          try {
+            const { message, sessionId = "web" } = JSON.parse(body || "{}");
+            if (!message) {
+              res.writeHead(400, { "Content-Type": "application/json" });
+              return res.end(JSON.stringify({ error: "message required" }));
+            }
+            let payload = message;
+            // System prompt is in BOOT.md; don't prepend on every turn.
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache, no-transform",
+              "Connection": "keep-alive",
+              "X-Accel-Buffering": "no",
+            });
+            sseWrite(res, { status: "thinking" });
+            // Heartbeats every 10s prevent ALB 60s idle timeout from killing
+            // the stream while openclaw is still computing.
+            heartbeat = setInterval(() => {
+              try { res.write(": ping\n\n"); } catch {}
+            }, 10000);
+
+            const { text, stopReason } = await runOpenclaw(sessionId, payload);
+            clearInterval(heartbeat);
+            if (stopReason === "error" || !text) {
+              sseWrite(res, { error: text || "agent error", stopReason });
+              res.write("data: [DONE]\n\n");
+              return res.end();
+            }
+            await streamReplyAsSse(res, text);
+          } catch (e) {
+            clearInterval(heartbeat);
+            console.error("[adapter]", e.message);
+            try { sseWrite(res, { error: e.message }); res.write("data: [DONE]\n\n"); res.end(); } catch {}
+          }
+        });
+        return;
+      }
+      res.writeHead(404); res.end();
+    });
+
+    server.listen(PORT, "0.0.0.0", () => console.log(`[adapter] listening on :${PORT}`));

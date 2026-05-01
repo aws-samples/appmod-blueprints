@@ -1,0 +1,16 @@
+openclaw-operator:
+  image:
+    repository: public.ecr.aws/t6v6o5d5/kube-prometheus
+    tag: openclaw-operator-v0.22.2
+
+  litellm:
+    endpoint: http://litellm.litellm.svc.cluster.local:4000
+    # apiKey injected at deploy time from Kubernetes secret
+
+  sandbox:
+    runtimeClassName: kata-qemu
+    tolerations:
+      - key: kata
+        operator: Equal
+        value: "true"
+        effect: NoSchedule

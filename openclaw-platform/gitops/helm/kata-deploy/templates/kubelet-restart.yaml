@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kata-kubelet-restart
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: kata-kubelet-restart
+  template:
+    metadata:
+      labels:
+        app: kata-kubelet-restart
+    spec:
+      hostPID: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+      nodeSelector:
+        katacontainers.io/kata-runtime: "true"
+      initContainers:
+        - name: restart-kubelet
+          image: nicolaka/netshoot
+          securityContext:
+            privileged: true
+          command:
+            - sh
+            - -c
+            - |
+              echo "Restarting kubelet to reconnect CRI after kata-deploy containerd restart..."
+              nsenter -t 1 -m -u -i -n -p -- systemctl restart kubelet
+              echo "Kubelet restarted, waiting 30s for it to stabilize..."
+              sleep 30
+              echo "Done"
+      containers:
+        - name: sleep
+          image: nicolaka/netshoot
+          command: ["sh", "-c", "sleep infinity"]
+          resources:
+            requests:
+              cpu: 1m
+              memory: 8Mi

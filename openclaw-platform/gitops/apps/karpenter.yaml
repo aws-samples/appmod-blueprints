@@ -1,0 +1,40 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: public.ecr.aws/karpenter
+    chart: karpenter
+    targetRevision: "1.9.0"
+    helm:
+      releaseName: karpenter
+      valuesObject:
+        # Cluster name is ${project_name}-eks from Terraform; project_name default is "openclaw".
+        settings:
+          clusterName: openclaw-eks
+          interruptionQueue: openclaw-eks-karpenter
+        replicas: 2
+        serviceAccount:
+          name: karpenter
+        tolerations:
+          - key: role
+            operator: Equal
+            value: system
+            effect: NoSchedule
+        nodeSelector:
+          role: system
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

@@ -1,0 +1,17 @@
+kata-deploy:
+  image:
+    reference: quay.io/kata-containers/kata-deploy
+    tag: "3.27.0"
+  nodeSelector:
+    katacontainers.io/kata-runtime: "true"
+  tolerations:
+    - key: kata
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+  shims:
+    disableAll: true
+    qemu:
+      enabled: true
+    clh:
+      enabled: true

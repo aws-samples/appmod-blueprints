@@ -1,0 +1,6 @@
+# Exclude nothing extra — we're packaging a prebuilt .next.
+# (No .git, no Dockerfile* to avoid self-include.)
+.git
+Dockerfile*
+.dockerignore
+README.md

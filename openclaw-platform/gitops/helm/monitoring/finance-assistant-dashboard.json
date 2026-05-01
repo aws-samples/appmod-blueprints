@@ -1,0 +1,149 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "title": "Finance Assistant",
+  "uid": "finance-assistant",
+  "tags": ["finance-assistant", "openclaw"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Active per-user sandboxes",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "count(kube_pod_info{namespace=\"finance-assistant\", pod=~\"finance-sandbox-.+\"})",
+          "legendFormat": "sandboxes",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{"color":"green","value":null},{"color":"yellow","value":20},{"color":"red","value":50}] } } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Session router replicas ready",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "kube_deployment_status_replicas_ready{namespace=\"finance-assistant\", deployment=\"finance-session-router\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{"color":"red","value":null},{"color":"yellow","value":1},{"color":"green","value":2}] } } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "LiteLLM replicas ready",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "kube_deployment_status_replicas_ready{namespace=\"litellm\", deployment=\"litellm\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{"color":"red","value":null},{"color":"yellow","value":1},{"color":"green","value":2}] } } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Chat error rate (5m)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(litellm_proxy_failed_requests_metric_total[5m])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{"color":"green","value":null},{"color":"yellow","value":0.1},{"color":"red","value":1}] } } }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "TTFT — LiteLLM request latency p50/p95",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(litellm_request_total_latency_metric_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(litellm_request_total_latency_metric_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Requests/sec by model",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "sum(rate(litellm_proxy_total_requests_metric_total[5m])) by (model)",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Cache hit rate — Bedrock prompt cache",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "sum(rate(litellm_proxy_total_requests_metric_total{status_code=~\"2..\",cache_hit=\"True\"}[5m])) / (sum(rate(litellm_proxy_total_requests_metric_total{status_code=~\"2..\"}[5m])) > 0)",
+          "legendFormat": "hit rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Session router pod CPU",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"finance-assistant\", pod=~\"finance-session-router-.+\"}[5m]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Per-user sandbox memory (per pod)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "container_memory_working_set_bytes{namespace=\"finance-assistant\", pod=~\"finance-sandbox-.+\", container=\"openclaw\"}",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    }
+  ]
+}

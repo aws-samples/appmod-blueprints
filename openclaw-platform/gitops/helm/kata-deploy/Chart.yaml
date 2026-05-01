@@ -1,0 +1,9 @@
+apiVersion: v2
+name: kata-deploy
+description: Kata Containers installer using official Helm chart
+type: application
+version: 0.1.0
+dependencies:
+  - name: kata-deploy
+    version: "3.27.0"
+    repository: oci://ghcr.io/kata-containers/kata-deploy-charts
