@@ -39,6 +39,7 @@ spec:
               - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/observability.yaml
               - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/platform.yaml
               - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/ml.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/agents.yaml
               - $values/{{ .metadata.annotations.addonsRepoBasepath }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml
               - $values/{{ .metadata.annotations.addonsRepoBasepath }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
       destination:

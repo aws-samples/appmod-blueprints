@@ -315,3 +315,79 @@ identities:
             }
           ]
         }
+
+  litellm:
+    enabled: false
+    roleName: LiteLLMBedrockRole
+    namespace: kagent
+    serviceAccount: litellm
+    tags:
+      managed-by: crossplane
+      purpose: litellm-bedrock-access
+    policy:
+      name: LiteLLMBedrockPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "bedrock:InvokeModel",
+                "bedrock:InvokeModelWithResponseStream"
+              ],
+              "Resource": [
+                "arn:aws:bedrock:*::foundation-model/*",
+                "arn:aws:bedrock:*:*:inference-profile/*"
+              ]
+            }
+          ]
+        }
+
+  tofu-runner:
+    enabled: false
+    roleName: AgentCoreTofuRunner
+    namespace: agent-core-infra
+    serviceAccount: tf-runner
+    tags:
+      managed-by: crossplane
+      purpose: tofu-controller-agent-core
+    policy:
+      name: AgentCoreTofuRunnerPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "bedrock:*",
+                "bedrock-agentcore:*",
+                "s3:*",
+                "iam:CreateRole",
+                "iam:DeleteRole",
+                "iam:GetRole",
+                "iam:PassRole",
+                "iam:AttachRolePolicy",
+                "iam:DetachRolePolicy",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:GetRolePolicy",
+                "iam:ListAttachedRolePolicies",
+                "iam:ListRolePolicies",
+                "iam:UpdateAssumeRolePolicy",
+                "iam:ListInstanceProfilesForRole",
+                "aoss:*",
+                "ec2:DescribeVpcs",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeSecurityGroups",
+                "eks:DescribeCluster",
+                "eks:CreatePodIdentityAssociation",
+                "eks:DeletePodIdentityAssociation",
+                "eks:DescribePodIdentityAssociation",
+                "eks:ListPodIdentityAssociations"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }

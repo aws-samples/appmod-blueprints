@@ -1,0 +1,25 @@
+# Agent Platform configuration
+# These values are injected from the cluster secret annotations via the registry valuesObject
+
+agentPlatform:
+  repoURL: "https://github.com/aws-samples/sample-agent-platform-on-eks.git"
+  revision: "feature/gitops-agent-platform"
+  basepath: "gitops/addons/"
+  environment: "dev"
+
+# Cluster identity (injected from cluster secret annotations)
+cluster:
+  name: ""
+  server: ""
+  region: ""
+  accountId: ""
+  clusterName: ""
+
+# Agent-core specific (optional)
+agentCore:
+  projectName: "agent-core"
+  networkMode: "PUBLIC"
+  mcpImage: ""
+  mcpImageTag: "latest"
+  terraformRepoUrl: ""
+  terraformRepoRevision: "main"
