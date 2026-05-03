@@ -1,100 +1,71 @@
 {{/*
   Agent Platform Bootstrap
-  Creates a cluster secret and ApplicationSet that bootstraps the entire
-  agent platform from the sample-agent-platform-on-eks repo.
-  The sample repo's own application-sets chart generates per-addon ApplicationSets.
-*/}}
+  Creates an ApplicationSet that deploys the sample-agent-platform-on-eks
+  repo's application-sets chart to the hub cluster.
 
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: agent-platform
-  namespace: argocd
-  labels:
-    argocd.argoproj.io/secret-type: cluster
-    platform: agent-platform
-    environment: {{ .Values.agentPlatform.environment }}
-    tenant: default
-    enable_kagent: "true"
-    enable_litellm: "true"
-    enable_langfuse: "true"
-    enable_jaeger: "true"
-    enable_kagent_monitoring: "true"
-    {{- $mcpImage := .Values.agentCore.mcpImage | default (printf "%s.dkr.ecr.%s.amazonaws.com/agent-core-mcp" .Values.cluster.accountId .Values.cluster.region) }}
-    {{- if and .Values.cluster.accountId .Values.cluster.region }}
-    enable_flux: "true"
-    enable_tofu_controller: "true"
-    enable_agent_core: "true"
-    {{- end }}
-  annotations:
-    addons_repo_url: {{ .Values.agentPlatform.repoURL | quote }}
-    addons_repo_revision: {{ .Values.agentPlatform.revision | quote }}
-    addons_repo_basepath: {{ .Values.agentPlatform.basepath | quote }}
-    aws_region: {{ .Values.cluster.region | quote }}
-    aws_account_id: {{ .Values.cluster.accountId | quote }}
-    aws_cluster_name: {{ .Values.cluster.clusterName | quote }}
-    {{- if and .Values.cluster.accountId .Values.cluster.region }}
-    agent_core_project_name: {{ .Values.agentCore.projectName | default "agent-core" | quote }}
-    agent_core_network_mode: {{ .Values.agentCore.networkMode | default "PUBLIC" | quote }}
-    agent_core_mcp_image: {{ $mcpImage | quote }}
-    agent_core_mcp_image_tag: {{ .Values.agentCore.mcpImageTag | default "latest" | quote }}
-    agent_core_terraform_repo_url: {{ .Values.agentCore.terraformRepoUrl | default .Values.agentPlatform.repoURL | quote }}
-    agent_core_terraform_repo_revision: {{ .Values.agentCore.terraformRepoRevision | default .Values.agentPlatform.revision | quote }}
-    {{- end }}
-type: Opaque
-stringData:
-  name: agent-platform
-  server: {{ .Values.cluster.server | quote }}
-  config: |
-    {}
+  Uses the existing hub cluster secret (no duplicate cluster registration).
+  All generated ApplicationSets match the hub secret via the
+  enable_agent_platform label (globalSelectors), with individual
+  enable_* selectors disabled (useSelectors: false).
+*/}}
+{{- $mcpImage := .Values.agentCore.mcpImage | default (printf "%s.dkr.ecr.%s.amazonaws.com/agent-core-mcp" .Values.cluster.accountId .Values.cluster.region) }}
+{{- $tfRepoUrl := .Values.agentCore.terraformRepoUrl | default .Values.agentPlatform.repoURL }}
+{{- $tfRepoRevision := .Values.agentCore.terraformRepoRevision | default .Values.agentPlatform.revision }}
 ---
 apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
+kind: Application
 metadata:
   name: agent-platform-addons
   namespace: argocd
 spec:
+  project: default
+  sources:
+    - ref: values
+      repoURL: {{ .Values.agentPlatform.repoURL | quote }}
+      targetRevision: {{ .Values.agentPlatform.revision | quote }}
+    - repoURL: {{ .Values.agentPlatform.repoURL | quote }}
+      path: {{ .Values.agentPlatform.basepath }}charts/application-sets
+      targetRevision: {{ .Values.agentPlatform.revision | quote }}
+      helm:
+        releaseName: agent-platform-addons
+        ignoreMissingValueFiles: true
+        valueFiles:
+          - $values/{{ .Values.agentPlatform.basepath }}bootstrap/default/addons.yaml
+          - $values/{{ .Values.agentPlatform.basepath }}environments/{{ .Values.agentPlatform.environment }}/addons.yaml
+        valuesObject:
+          useSelectors: false
+          globalSelectors:
+            enable_agent_platform: "true"
+          repoURLGit: {{ .Values.agentPlatform.repoURL | quote }}
+          repoURLGitRevision: {{ .Values.agentPlatform.revision | quote }}
+          repoURLGitBasePath: {{ .Values.agentPlatform.basepath | quote }}
+          agent-core:
+            valuesObject:
+              global:
+                awsRegion: {{ .Values.cluster.region | quote }}
+                eksClusterName: {{ .Values.cluster.clusterName | quote }}
+                projectName: {{ .Values.agentCore.projectName | default "agent-core" | quote }}
+                networkMode: {{ .Values.agentCore.networkMode | default "PUBLIC" | quote }}
+                terraformRepoUrl: {{ $tfRepoUrl | quote }}
+                terraformRepoRevision: {{ $tfRepoRevision | quote }}
+              mcpServer:
+                image:
+                  repository: {{ $mcpImage | quote }}
+                  tag: {{ .Values.agentCore.mcpImageTag | default "latest" | quote }}
+          litellm:
+            valuesObject:
+              global:
+                awsRegion: {{ .Values.cluster.region | quote }}
+  destination:
+    namespace: argocd
+    name: {{ .Values.cluster.name | quote }}
   syncPolicy:
-    preserveResourcesOnDeletion: false
-  goTemplate: true
-  goTemplateOptions:
-    - missingkey=error
-  generators:
-    - clusters:
-        selector:
-          matchLabels:
-            platform: agent-platform
-        values:
-          addonChart: application-sets
-  template:
-    metadata:
-      name: agent-platform-addons
-    spec:
-      project: default
-      sources:
-        - ref: values
-          repoURL: '{{`{{.metadata.annotations.addons_repo_url}}`}}'
-          targetRevision: '{{`{{.metadata.annotations.addons_repo_revision}}`}}'
-        - repoURL: '{{`{{.metadata.annotations.addons_repo_url}}`}}'
-          path: '{{`{{.metadata.annotations.addons_repo_basepath}}`}}charts/{{`{{.values.addonChart}}`}}'
-          targetRevision: '{{`{{.metadata.annotations.addons_repo_revision}}`}}'
-          helm:
-            releaseName: agent-platform-addons
-            ignoreMissingValueFiles: true
-            valueFiles:
-              - $values/{{`{{.metadata.annotations.addons_repo_basepath}}`}}bootstrap/default/addons.yaml
-              - $values/{{`{{.metadata.annotations.addons_repo_basepath}}`}}environments/{{`{{ .metadata.labels.environment }}`}}/addons.yaml
-      destination:
-        namespace: argocd
-        name: '{{`{{.name}}`}}'
-      syncPolicy:
-        automated:
-          selfHeal: true
-          allowEmpty: true
-          prune: true
-        retry:
-          limit: 100
-        syncOptions:
-          - CreateNamespace=true
-          - ServerSideApply=true
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: true
+    retry:
+      limit: 100
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
