@@ -36,7 +36,7 @@ agent-platform:
       mcpImage: '{{default "" (index .metadata.annotations "agent_core_mcp_image")}}'
       mcpImageTag: '{{default "latest" (index .metadata.annotations "agent_core_mcp_image_tag")}}'
       terraformRepoUrl: '{{default "" (index .metadata.annotations "agent_core_terraform_repo_url")}}'
-      terraformRepoRevision: '{{default "main" (index .metadata.annotations "agent_core_terraform_repo_revision")}}'
+      terraformRepoRevision: '{{default "" (index .metadata.annotations "agent_core_terraform_repo_revision")}}'
   additionalResources:
     - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
       helm:
