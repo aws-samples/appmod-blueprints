@@ -167,3 +167,11 @@ prodplan
 devplan
 devdbplan
 .playwright-mcp/
+
+# AI local config
+.claude/
+.beads/
+private/
+
+# Local platform config (user-specific, not committed)
+config.local.yaml

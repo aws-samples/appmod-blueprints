@@ -1,0 +1,52 @@
+# RBAC for the PostSync restart hook.
+# Grants permission to list deployments, get pods, and restart deployments
+# in the target namespace so the hook can detect missing credentials and
+# trigger a rollout restart.
+{{- if .Values.restartHook.enabled }}
+{{- range $name, $identity := .Values.identities }}
+{{- if not (eq (toString $identity.enabled) "false") }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}-restart-sa
+  namespace: {{ $identity.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-restart-role
+  namespace: {{ $identity.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-restart-binding
+  namespace: {{ $identity.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-restart-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}-restart-sa
+    namespace: {{ $identity.namespace }}
+{{- end }}
+{{- end }}
+{{- end }}

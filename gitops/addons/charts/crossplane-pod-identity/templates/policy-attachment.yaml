@@ -1,0 +1,20 @@
+{{- range $name, $identity := .Values.identities }}
+{{- if and $identity.policy (not (eq (toString $identity.enabled) "false")) }}
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: {{ $name }}-pod-identity-attachment
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  forProvider:
+    policyArnRef:
+      name: {{ $name }}-pod-identity-policy
+    roleRef:
+      name: {{ $name }}-pod-identity-role
+  providerConfigRef:
+    name: default
+{{- end }}
+{{- end }}

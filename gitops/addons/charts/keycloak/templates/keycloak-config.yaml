@@ -330,6 +330,35 @@ data:
         "https://${DOMAIN_NAME}"
       ]
     }
+  gitlab-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "gitlab",
+      "name": "GitLab Client",
+      "description": "Used for GitLab SSO with PKCE",
+      "publicClient": true,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml_idp_initiated_sso_url_name": "",
+        "oauth2.device.authorization.grant.enabled": false,
+        "oidc.ciba.grant.enabled": false,
+        "pkce.code.challenge.method": "S256"
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "https://${DOMAIN_NAME}",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/users/auth/openid_connect/callback"
+      ],
+      "webOrigins": [
+        "/*"
+      ]
+    }
   argocd-client-payload.json: |
     {
       "protocol": "openid-connect",
@@ -795,6 +824,7 @@ spec:
               # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
               create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
+              create_client "GitLab" "/var/config/gitlab-client-payload.json"
 
               echo "adding client scopes to clients"
               add_client_scope "argo-workflows" "Argo Workflows"
@@ -807,6 +837,7 @@ spec:
               add_client_scope "kargo" "Kargo"
               # add_client_scope "argocd" "Argo CD"  # Disabled - using EKS Marina managed ArgoCD
               add_client_scope "account-console" "Account Console"
+              add_client_scope "gitlab" "GitLab"
 
               echo "getting client secrets"
               get_client_secret "backstage" "BACKSTAGE_CLIENT_SECRET"
@@ -872,7 +903,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: HookFailed
 spec:
   updatePolicy: Replace
-  deletionPolicy: Delete
+  deletionPolicy: None
   refreshInterval: 30s
   secretStoreRefs:
     - name: aws-secrets-manager

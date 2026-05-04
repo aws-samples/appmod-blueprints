@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: bootstrap
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: false
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            fleet_member: control-plane
+  template:
+    metadata:
+      name: bootstrap
+    spec:
+      project: default
+      source:
+        repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+        path: '{{ .metadata.annotations.fleetRepoBasepath }}bootstrap'
+        targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+        directory:
+          recurse: false
+          exclude: '{root-appset.yaml}'
+      destination:
+        namespace: argocd
+        name: '{{ .name }}'
+      syncPolicy:
+        automated: {}

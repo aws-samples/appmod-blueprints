@@ -1,0 +1,20 @@
+# Workshop tenant cluster provisioning values.
+# Uncomment to provision spoke clusters via Crossplane.
+
+# clusters:
+#   spoke-dev:
+#     region: us-west-2
+#     clusterName: spoke-dev
+#     vpcCidr: "10.1.0.0/16"
+#     kubernetesVersion: "1.35"
+#     autoMode: true
+#     resourcePrefix: peeks
+#   spoke-prod:
+#     region: us-west-2
+#     clusterName: spoke-prod
+#     vpcCidr: "10.2.0.0/16"
+#     kubernetesVersion: "1.35"
+#     autoMode: true
+#     resourcePrefix: peeks
+
+clusters: {}

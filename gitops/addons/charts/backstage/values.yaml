@@ -1,0 +1,8 @@
+backstage_image: ""
+git_username: ""
+gitlab_domain_name: ""
+working_repo: ""
+ingress_domain_name: ""
+global:
+  aws_cluster_name: ""
+  clusterName: ""

@@ -1,0 +1,61 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cluster-addons
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: false
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            fleet_member: control-plane
+  template:
+    metadata:
+      name: cluster-addons
+    spec:
+      project: default
+      sources:
+        - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+          targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+          ref: values
+        - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+          path: 'platform-charts/appset-chart'
+          targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+          helm:
+            releaseName: cluster-addons
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - values.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/_defaults.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/core.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/gitops.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/security.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/observability.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/platform.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/ml.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/agents.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml
+              - $values/{{ .metadata.annotations.addonsRepoBasepath }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
+      destination:
+        namespace: argocd
+        name: '{{ .name }}'
+      syncPolicy:
+        automated:
+          selfHeal: false
+          allowEmpty: true
+          prune: false
+        retry:
+          limit: -1
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 10m
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

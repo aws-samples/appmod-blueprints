@@ -1,0 +1,29 @@
+# Mode: "externalSecret" (hub) or "direct" (spokes)
+mode: "direct"
+
+# Common fields
+clusterName: ""
+region: ""
+labels: {}
+
+# External Secret mode (hub only)
+externalSecret:
+  enabled: false
+  creationPolicy: Owner
+  secretStoreRefKind: ClusterSecretStore
+  secretStoreRefName: aws-secrets-manager
+
+# Direct mode fields — populated from hub cluster secret annotations
+hub:
+  accountId: ""
+  addonsRepoURL: ""
+  addonsRepoRevision: ""
+  addonsRepoBasepath: ""
+  fleetRepoURL: ""
+  fleetRepoRevision: ""
+  fleetRepoBasepath: ""
+  domain: ""
+  resourcePrefix: ""
+
+# Addon enablement map — populated from enabled-addons.yaml via valueFiles
+enabledAddons: {}

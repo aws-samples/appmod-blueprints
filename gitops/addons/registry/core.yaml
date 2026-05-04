@@ -1,0 +1,231 @@
+# Core infrastructure addons
+# Wave ordering: -1 (external-secrets) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (lbc, efs-csi) → 5 (ingress-class-alb)
+
+argocd:
+  namespace: argocd
+  chartName: argo-cd
+  releaseName: argocd
+  chartRepository: https://argoproj.github.io/argo-helm
+  defaultVersion: '7.9.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '0'
+  selector:
+    matchExpressions:
+      - key: enable_argocd
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      domain: '{{.metadata.annotations.ingress_domain_name}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    configs:
+      cm:
+        url: https://{{.metadata.annotations.ingress_domain_name}}/argocd
+        oidc.config: |
+          name: Keycloak
+          issuer: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
+          clientID: argocd
+          enablePKCEAuthentication: true
+          requestedScopes: ["openid", "profile", "email", "groups"]
+
+metrics-server:
+  namespace: kube-system
+  chartName: metrics-server
+  chartRepository: https://kubernetes-sigs.github.io/metrics-server
+  defaultVersion: '3.12.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '0'
+  selector:
+    matchExpressions:
+      - key: enable_metrics_server
+        operator: In
+        values: ['true']
+
+cert-manager:
+  namespace: cert-manager
+  chartName: cert-manager
+  releaseName: cert-manager
+  chartRepository: https://charts.jetstack.io
+  defaultVersion: 'v1.15.2'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '2'
+  selector:
+    matchExpressions:
+      - key: enable_cert_manager
+        operator: In
+        values: ['true']
+
+external-secrets:
+  namespace: external-secrets
+  chartName: external-secrets
+  chartRepository: https://charts.external-secrets.io
+  defaultVersion: '0.19.2'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_external_secrets
+        operator: In
+        values: ['true']
+  valuesObject:
+    serviceAccount:
+      name: external-secrets-sa
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+  additionalResources:
+    - type: manifests
+      manifestPath: manifests
+
+ingress-class-alb:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/ingress-class-alb'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_ingress_class_alb
+        operator: In
+        values: ['true']
+  valuesObject:
+    controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
+
+aws-load-balancer-controller:
+  namespace: kube-system
+  chartName: aws-load-balancer-controller
+  chartRepository: https://aws.github.io/eks-charts
+  defaultVersion: '1.14.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_aws_load_balancer_controller
+        operator: In
+        values: ['true']
+  valuesObject:
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    vpcId: '{{.metadata.annotations.aws_vpc_id}}'
+    region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      create: true
+      name: aws-load-balancer-controller-sa
+  additionalResources:
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
+      helm:
+        releaseName: lbc-pod-identity
+        valuesObject:
+          aws:
+            region: '{{.metadata.annotations.aws_region}}'
+            clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+            accountId: '{{.metadata.annotations.aws_account_id}}'
+          restartHook:
+            enabled: true
+          identities:
+            lbc:
+              enabled: true
+  ignoreDifferences:
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: Policy
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /status
+    - group: eks.aws.upbound.io
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status
+
+image-prepuller:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/image-prepuller'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '1'
+  selector:
+    matchExpressions:
+      - key: enable_image_prepuller
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+
+aws-efs-csi-driver:
+  namespace: kube-system
+  chartName: aws-efs-csi-driver
+  chartRepository: https://kubernetes-sigs.github.io/aws-efs-csi-driver
+  defaultVersion: '3.0.7'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_aws_efs_csi_driver
+        operator: In
+        values: ['true']
+  valuesObject:
+    controller:
+      serviceAccount:
+        name: efs-csi-controller-sa
+        annotations:
+          eks.amazonaws.com/role-arn: '{{default "" (index .metadata.annotations "aws_efs_csi_driver_iam_role_arn")}}'
+    node:
+      serviceAccount:
+        name: efs-csi-node-sa
+        annotations:
+          eks.amazonaws.com/role-arn: '{{default "" (index .metadata.annotations "aws_efs_csi_driver_iam_role_arn")}}'
+
+external-dns:
+  namespace: kube-system
+  chartName: external-dns
+  chartRepository: https://kubernetes-sigs.github.io/external-dns
+  defaultVersion: '1.14.5'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_external_dns
+        operator: In
+        values: ['true']
+  valuesObject:
+    domainFilters:
+      - '{{.metadata.annotations.ingress_domain_name}}'
+    txtOwnerId: '{{.metadata.annotations.aws_cluster_name}}'
+    extraArgs:
+      - --aws-zone-match-parent
+    serviceAccount:
+      name: external-dns-sa
+  additionalResources:
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
+      helm:
+        releaseName: external-dns-pod-identity
+        valuesObject:
+          aws:
+            region: '{{.metadata.annotations.aws_region}}'
+            clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+            accountId: '{{.metadata.annotations.aws_account_id}}'
+          restartHook:
+            enabled: true
+          identities:
+            external-dns:
+              enabled: true
+  ignoreDifferences:
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: Policy
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /status
+    - group: eks.aws.upbound.io
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status

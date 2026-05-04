@@ -1,0 +1,22 @@
+controller:
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+dashboard:
+  enabled: true
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"

@@ -1,0 +1,11 @@
+# Default values — no clusters provisioned by default.
+# Override per-environment via fleet/kro-values/default/kro-clusters/values.yaml
+# or per-tenant via fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml
+
+global:
+  argoCDRoleArn: ""
+
+xrd:
+  enabled: true
+
+clusters: {}

@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Verify Spec Alignment",
+  "description": "After each spec task is completed, verify the implementation aligns with the design document and requirements. Check that the correct patterns are used (namespace key iteration, list-based additionalResources, no enabled field in registry, etc.)",
+  "version": "1",
+  "when": {
+    "type": "postTaskExecution"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review the just-completed task against the design doc at .kiro/specs/gitops-addon-management/design.md and requirements at .kiro/specs/gitops-addon-management/requirements.md. Verify: (1) appset-chart uses namespace key check not enabled, (2) additionalResources is list-based, (3) ignoreDifferences uses with block only (no duplicate), (4) registry files have no enabled field, (5) fleet-secret generates enable_* labels from enabledAddons map, (6) bootstrap ApplicationSets use correct valueFiles layering order. Report any deviations."
+  }
+}

@@ -1,0 +1,103 @@
+# Root Taskfile — delegates to the cluster provider specified in config.yaml
+# Usage: task install / task status / task destroy-kind / task hub:update
+version: "3"
+set: [errexit, nounset, pipefail]
+
+vars:
+  CONFIG_FILE: "{{.ROOT_DIR}}/config.local.yaml"
+
+includes:
+  kind-crossplane:
+    taskfile: ./cluster-providers/kind-crossplane/Taskfile.yaml
+    dir: ./cluster-providers/kind-crossplane
+    vars:
+      CONFIG_FILE: "{{.CONFIG_FILE}}"
+    optional: true
+  byoc:
+    taskfile: ./cluster-providers/byoc/Taskfile.yaml
+    dir: ./cluster-providers/byoc
+    vars:
+      CONFIG_FILE: "{{.CONFIG_FILE}}"
+    optional: true
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  validate:
+    desc: Pre-flight checks for the configured provider
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:validate"
+
+  install:
+    desc: Bootstrap the platform using the configured cluster provider
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - echo "Using cluster provider {{.PROVIDER}}"
+      - task: "{{.PROVIDER}}:install"
+
+  status:
+    desc: Check bootstrap and cluster status
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:status"
+
+  destroy-kind:
+    desc: Delete the Kind cluster (hub persists)
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:destroy-kind"
+
+  destroy:
+    desc: Full teardown
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:destroy"
+
+  hub-update:
+    desc: Update hub infrastructure via the cluster provider
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:hub:update"
+
+  hub-destroy-addons:
+    desc: Remove all addons from the hub cluster (no git changes needed)
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:hub:destroy-addons"
+
+  kubeconfig:
+    desc: Get kubeconfig for the hub EKS cluster
+    vars:
+      RESOURCE_PREFIX:
+        sh: yq '.resourcePrefix' {{.CONFIG_FILE}}
+      HUB_CLUSTER_NAME:
+        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
+      AWS_REGION:
+        sh: yq '.aws.region' {{.CONFIG_FILE}}
+    cmds:
+      - aws eks update-kubeconfig
+          --name {{.HUB_CLUSTER_NAME}}
+          --region {{.AWS_REGION}}
+          --alias {{.RESOURCE_PREFIX}}-{{.HUB_CLUSTER_NAME}}
+      - echo ""
+      - echo "Kubeconfig written to ~/.kube/config"
+      - echo "Context alias {{.RESOURCE_PREFIX}}-{{.HUB_CLUSTER_NAME}}"
+      - echo ""

@@ -1,0 +1,14 @@
+# ProviderConfig for Kind bootstrap — uses Secret (static credentials)
+# Only used during bootstrap on the Kind cluster.
+# The hub cluster uses IRSA via addons/configs/crossplane/manifests/provider-config.yaml
+apiVersion: aws.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: aws-credentials
+      key: credentials

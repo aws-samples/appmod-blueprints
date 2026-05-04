@@ -1,0 +1,82 @@
+crds:
+  enabled: true
+global:
+  leaderElection:
+    namespace: cert-manager
+
+# Cert-Manager Controller HA
+replicaCount: 2
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 128Mi
+nodeSelector:
+  karpenter.sh/nodepool: system
+tolerations:
+- key: "CriticalAddonsOnly"
+  operator: "Exists"
+  effect: "NoSchedule"
+topologySpreadConstraints:
+- maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: DoNotSchedule
+  labelSelector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# CA Injector HA
+cainjector:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 128Mi
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+    effect: "NoSchedule"
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: cainjector
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+
+# Webhook HA
+webhook:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 64Mi
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+    effect: "NoSchedule"
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: webhook
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1

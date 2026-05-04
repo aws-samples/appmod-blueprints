@@ -1,0 +1,38 @@
+{{- range $name, $cluster := .Values.clusters }}
+---
+apiVersion: platform.gitops.io/v1alpha1
+kind: PlatformCluster
+metadata:
+  name: {{ $cluster.clusterName }}
+  namespace: crossplane-system
+  annotations:
+    crossplane.io/external-name: {{ $cluster.clusterName }}
+spec:
+  region: {{ $cluster.region }}
+  clusterName: {{ $cluster.clusterName }}
+  vpcCidr: {{ $cluster.vpcCidr | default "10.0.0.0/16" | quote }}
+  kubernetesVersion: {{ $cluster.kubernetesVersion | default "1.32" | quote }}
+  autoMode: {{ $cluster.autoMode | default true }}
+  {{- if $cluster.resourcePrefix }}
+  resourcePrefix: {{ $cluster.resourcePrefix }}
+  {{- else if $.Values.global.resourcePrefix }}
+  resourcePrefix: {{ $.Values.global.resourcePrefix }}
+  {{- end }}
+  {{- if $cluster.argoCDRoleArn }}
+  argoCDRoleArn: {{ $cluster.argoCDRoleArn }}
+  {{- else if $.Values.global.argoCDRoleArn }}
+  argoCDRoleArn: {{ $.Values.global.argoCDRoleArn }}
+  {{- end }}
+  {{- if and $cluster.managedNodeGroup $cluster.managedNodeGroup.enabled }}
+  managedNodeGroup:
+    enabled: true
+    instanceTypes: {{ $cluster.managedNodeGroup.instanceTypes | default (list "m5.large") | toJson }}
+    desiredSize: {{ $cluster.managedNodeGroup.desiredSize | default 2 }}
+    minSize: {{ $cluster.managedNodeGroup.minSize | default 1 }}
+    maxSize: {{ $cluster.managedNodeGroup.maxSize | default 5 }}
+    diskSize: {{ $cluster.managedNodeGroup.diskSize | default 50 }}
+    capacityType: {{ $cluster.managedNodeGroup.capacityType | default "ON_DEMAND" }}
+  {{- end }}
+  writeConnectionSecretToRef:
+    name: {{ $cluster.clusterName }}-kubeconfig
+{{- end }}
