@@ -122,45 +122,65 @@ function renderForUser(suffix, sub) {
   return { name, pvcName, rendered: tpl };
 }
 
+// Retry transient k8s API errors. The kubernetes client raises plain
+// Error("HTTP request failed") for ECONN/EAI/socket-closed — those are
+// retriable. 404 / 409 / 422 are intentional flow-control and must pass
+// through unchanged.
+async function withRetry(label, fn, { attempts = 4, baseMs = 500 } = {}) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try { return await fn(); }
+    catch (e) {
+      const status = e?.response?.statusCode;
+      if (status === 404 || status === 409 || status === 422) throw e;
+      lastErr = e;
+      const wait = baseMs * Math.pow(2, i);
+      console.warn(`[router] ${label} failed (attempt ${i + 1}/${attempts}): ${e?.message || e}; retry in ${wait}ms`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
+}
+
 async function ensureUserSandbox(suffix, sub) {
   const { name, pvcName, rendered } = renderForUser(suffix, sub);
 
   // PVC — created once and kept. The per-user workspace survives pod
   // restarts but is deleted when the user is de-provisioned.
   try {
-    await coreApi.readNamespacedPersistentVolumeClaim(pvcName, NAMESPACE);
+    await withRetry("PVC get", () => coreApi.readNamespacedPersistentVolumeClaim(pvcName, NAMESPACE));
   } catch (e) {
     if (e?.response?.statusCode === 404) {
-      await coreApi.createNamespacedPersistentVolumeClaim(NAMESPACE, rendered.pvc);
+      await withRetry("PVC create", () => coreApi.createNamespacedPersistentVolumeClaim(NAMESPACE, rendered.pvc));
     } else { throw e; }
   }
 
   // Sandbox — created lazily. If present, patch last-seen so the reaper
   // keeps it.
   try {
-    await customApi.getNamespacedCustomObject(
+    await withRetry("Sandbox get", () => customApi.getNamespacedCustomObject(
       SANDBOX_GROUP, SANDBOX_VERSION, NAMESPACE, SANDBOX_PLURAL, name,
-    );
-    await customApi.patchNamespacedCustomObject(
+    ));
+    await withRetry("Sandbox patch", () => customApi.patchNamespacedCustomObject(
       SANDBOX_GROUP, SANDBOX_VERSION, NAMESPACE, SANDBOX_PLURAL, name,
       { metadata: { annotations: { "finance.x-k8s.io/last-seen": new Date().toISOString() } } },
       undefined, undefined, undefined,
       { headers: { "Content-Type": "application/merge-patch+json" } },
-    );
+    ));
   } catch (e) {
     if (e?.response?.statusCode === 404) {
-      await customApi.createNamespacedCustomObject(
+      await withRetry("Sandbox create", () => customApi.createNamespacedCustomObject(
         SANDBOX_GROUP, SANDBOX_VERSION, NAMESPACE, SANDBOX_PLURAL, rendered.sandbox,
-      );
+      ));
     } else { throw e; }
   }
 
   // Service — so the sandbox gets a per-user DNS name.
   try {
-    await coreApi.readNamespacedService(name, NAMESPACE);
+    await withRetry("Service get", () => coreApi.readNamespacedService(name, NAMESPACE));
   } catch (e) {
     if (e?.response?.statusCode === 404) {
-      await coreApi.createNamespacedService(NAMESPACE, rendered.service);
+      await withRetry("Service create", () => coreApi.createNamespacedService(NAMESPACE, rendered.service));
     } else { throw e; }
   }
 
@@ -185,6 +205,52 @@ async function waitForPodReady(name, deadlineMs) {
 }
 
 function sseWrite(res, data) { res.write(`data: ${JSON.stringify(data)}\n\n`); }
+
+// Per-suffix prime-in-flight map + last-primed-at cache. openclaw's
+// adapter spawns a fresh agent subprocess per /chat and cannot tolerate
+// two concurrent runs against the same sandbox — the second exits 1.
+// So we dedupe: concurrent warmups for the same user share one promise,
+// and the user's real /chat await the same promise before proxying.
+const inflightPrime = new Map();      // suffix -> Promise
+const lastPrimedAt = new Map();       // suffix -> ms epoch
+const PRIME_TTL_MS = 60_000;          // skip re-prime if <60s since last
+
+function runPrime(sandboxName, suffix) {
+  const host = `${sandboxName}.${NAMESPACE}.svc.cluster.local`;
+  const body = JSON.stringify({ message: "ok", sessionId: `prime-${suffix}` });
+  return new Promise((resolve) => {
+    const req = http.request(
+      { host, port: 18790, path: "/chat", method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+      (r) => { r.on("data", () => {}); r.on("end", resolve); r.on("error", resolve); },
+    );
+    req.on("error", resolve);
+    req.setTimeout(120000, () => { try { req.destroy(); } catch {} resolve(); });
+    req.write(body); req.end();
+  });
+}
+
+// Fire a throwaway chat at the user's adapter so the gateway pays the
+// per-session init tax (runtime-plugins, model-resolution, auth) before
+// the user asks their real first question. Deduped per-suffix so
+// concurrent warmups don't double-fire and crash the adapter.
+async function primeAgent(sandboxName, suffix) {
+  const lastAt = lastPrimedAt.get(suffix) || 0;
+  if (Date.now() - lastAt < PRIME_TTL_MS) return; // recently primed, skip
+  let p = inflightPrime.get(suffix);
+  if (p) { await p; return; }
+  p = runPrime(sandboxName, suffix)
+    .finally(() => { inflightPrime.delete(suffix); lastPrimedAt.set(suffix, Date.now()); });
+  inflightPrime.set(suffix, p);
+  await p;
+}
+
+// Await any in-flight prime for this suffix before proxying user chat.
+// Returning early if nothing pending keeps the hot path cheap.
+async function waitForNoPrime(suffix) {
+  const p = inflightPrime.get(suffix);
+  if (p) await p;
+}
 
 async function proxyChat(req, res, backendHost, bodyBuf) {
   return new Promise((resolve) => {
@@ -220,6 +286,49 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/healthz") {
     res.writeHead(200); return res.end("ok\n");
   }
+
+  // /warmup — idempotent "ensure sandbox is provisioned and ready" for
+  // this authenticated user. Called from the UI sign-in path so the pod
+  // is up by the time the user asks their first question. No proxy to
+  // the adapter, no chat body required. Returns JSON status.
+  if (req.method === "POST" && req.url === "/warmup") {
+    const sub = extractUserSub(req);
+    if (!sub) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: "no authenticated user" }));
+    }
+    if (READ_ONLY) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ status: "skipped", reason: "router in read-only mode" }));
+    }
+    const suffix = userSuffix(sub);
+    try {
+      const { name } = await ensureUserSandbox(suffix, sub);
+      const ready = await waitForPodReady(name, SANDBOX_READY_TIMEOUT_MS);
+      if (!ready) {
+        res.writeHead(504, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ status: "timeout", sandbox: name }));
+      }
+      // Pod is ready. We deliberately DO NOT prime the agent runtime
+      // here — priming spawns a subprocess in the adapter that takes
+      // ~18s and blocks any user chat that arrives during that window.
+      // For realistic flows (user types within 30s of login), priming
+      // makes first-chat latency WORSE by forcing the user to wait for
+      // the prime + their own chat sequentially. Better to let the
+      // user's real first question be the one that pays the init cost.
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ status: "ready", sandbox: name }));
+    } catch (e) {
+      const detail = e?.message || String(e);
+      console.error("[router/warmup]", detail);
+      const friendly = /HTTP request failed|ECONN|ETIMEDOUT|EAI_AGAIN/i.test(detail)
+        ? "Could not reach your workspace — please retry in a moment."
+        : `Could not start your session: ${detail}`;
+      res.writeHead(502, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: friendly }));
+    }
+  }
+
   if (req.method !== "POST" || req.url !== "/chat") {
     res.writeHead(404); return res.end();
   }
@@ -268,15 +377,25 @@ const server = http.createServer(async (req, res) => {
       sseWrite(res, { error: "sandbox not ready within timeout" });
       res.write("data: [DONE]\n\n"); return res.end();
     }
+    // If a prime is running right now (warmup fired + user typed fast),
+    // await it so we don't spawn two concurrent openclaw runs against
+    // the same adapter — it can't handle that and exits 1.
+    await waitForNoPrime(suffix);
     sseWrite(res, { status: "ready" });
     clearInterval(heartbeat);
     const backend = `${name}.${NAMESPACE}.svc.cluster.local`;
     await proxyChat(req, res, backend, bodyBuf);
   } catch (e) {
     clearInterval(heartbeat);
-    console.error("[router]", e.message);
+    const detail = e?.message || String(e);
+    console.error("[router]", detail);
+    // Friendlier message — the raw k8s client error "HTTP request failed"
+    // is useless to the user. Map known cases.
+    const friendly = /HTTP request failed|ECONN|ETIMEDOUT|EAI_AGAIN/i.test(detail)
+      ? "Could not reach your workspace — please retry in a moment."
+      : `Could not start your session: ${detail}`;
     try {
-      sseWrite(res, { error: e.message });
+      sseWrite(res, { error: friendly });
       res.write("data: [DONE]\n\n"); res.end();
     } catch {}
   }

@@ -26,7 +26,7 @@ spec:
           # Image, Cognito values, and certificate ARN are substituted by
           # openclaw-platform/scripts/render-finance-ui.sh from terraform outputs.
           # The __PLACEHOLDERS__ below are NOT real values.
-          image: __ACCOUNT_ID__.dkr.ecr.us-west-2.amazonaws.com/finance-ui:v0.8.9
+          image: __ACCOUNT_ID__.dkr.ecr.us-west-2.amazonaws.com/finance-ui:v0.9.7
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000

@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   const r = await signIn(email, password);
   if (r.kind === "ok") {
     const res = NextResponse.json({ ok: true, email: r.email });
-    return setSessionCookie(res, { sub: r.sub, email: r.email, idToken: r.idToken, refreshToken: r.refreshToken });
+    return setSessionCookie(res, { sub: r.sub, email: r.email });
   }
   return NextResponse.json({ ok: true });
 }

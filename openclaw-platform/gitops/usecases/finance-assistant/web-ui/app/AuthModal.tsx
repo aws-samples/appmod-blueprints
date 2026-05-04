@@ -58,11 +58,25 @@ export default function AuthModal({ open, onClose, initialTab = "signin" }: {
     return { ok: r.ok, status: r.status, ...j };
   }
 
+  // Fire-and-forget warmup so the per-user Kata sandbox is provisioned
+  // in the background while we play the success animation and the
+  // browser navigates to /chat. By the time the user types their first
+  // question, the pod is usually up. Three fences against non-@amazon.com
+  // provisioning: (1) Cognito pre-signup Lambda, (2) this client check,
+  // (3) server-side /api/warmup domain check.
+  function kickWarmup() {
+    const domain = (email || "").toLowerCase().split("@").pop();
+    if (domain !== "amazon.com") return;
+    try {
+      fetch("/api/warmup", { method: "POST", keepalive: true }).catch(() => {});
+    } catch { /* fire-and-forget */ }
+  }
+
   async function submitSignIn(e: React.FormEvent) {
     e.preventDefault(); setErr(null); setLoading(true);
     const j = await post("/api/auth/signin", { email, password });
     setLoading(false);
-    if (j.ok) { setStage({ k: "success", to: "/app" }); setTimeout(() => { window.location.href = "/app"; }, 600); return; }
+    if (j.ok) { kickWarmup(); setStage({ k: "success", to: "/chat" }); setTimeout(() => { window.location.href = "/chat"; }, 600); return; }
     if (j.challenge === "mfa") { setStage({ k: "mfa", session: j.session }); return; }
     setErr(friendly(j));
   }
@@ -70,16 +84,22 @@ export default function AuthModal({ open, onClose, initialTab = "signin" }: {
   async function submitSignUp(e: React.FormEvent) {
     e.preventDefault(); setErr(null); setLoading(true);
     const j = await post("/api/auth/signup", { email, password, name });
+    if (!j.ok) { setLoading(false); setErr(friendly(j)); return; }
+    // Amazon-domain users are auto-confirmed by the pre-signup Lambda, so
+    // try signing in immediately. Only show the "check your inbox" stage
+    // when signin reports the account is still unconfirmed.
+    const s = await post("/api/auth/signin", { email, password });
     setLoading(false);
-    if (j.ok) { setStage({ k: "confirm_email" }); return; }
-    setErr(friendly(j));
+    if (s.ok) { kickWarmup(); setStage({ k: "success", to: "/chat" }); setTimeout(() => { window.location.href = "/chat"; }, 600); return; }
+    if (s.code === "UserNotConfirmedException") { setStage({ k: "confirm_email" }); return; }
+    setErr(friendly(s));
   }
 
   async function submitConfirm(e: React.FormEvent) {
     e.preventDefault(); setErr(null); setLoading(true);
     const j = await post("/api/auth/confirm", { email, code, password });
     setLoading(false);
-    if (j.ok) { setStage({ k: "success", to: "/app" }); setTimeout(() => { window.location.href = "/app"; }, 600); return; }
+    if (j.ok) { kickWarmup(); setStage({ k: "success", to: "/chat" }); setTimeout(() => { window.location.href = "/chat"; }, 600); return; }
     setErr(friendly(j));
   }
 
@@ -88,7 +108,7 @@ export default function AuthModal({ open, onClose, initialTab = "signin" }: {
     const session = (stage.k === "mfa") ? stage.session : "";
     const j = await post("/api/auth/mfa", { email, session, code });
     setLoading(false);
-    if (j.ok) { setStage({ k: "success", to: "/app" }); setTimeout(() => { window.location.href = "/app"; }, 600); return; }
+    if (j.ok) { kickWarmup(); setStage({ k: "success", to: "/chat" }); setTimeout(() => { window.location.href = "/chat"; }, 600); return; }
     setErr(friendly(j));
   }
 
@@ -107,7 +127,7 @@ export default function AuthModal({ open, onClose, initialTab = "signin" }: {
     if (j.ok) {
       // Sign the user in with the new password for a smooth handoff.
       const s = await post("/api/auth/signin", { email, password: newPassword });
-      if (s.ok) { setStage({ k: "success", to: "/app" }); setTimeout(() => { window.location.href = "/app"; }, 600); return; }
+      if (s.ok) { setStage({ k: "success", to: "/chat" }); setTimeout(() => { window.location.href = "/chat"; }, 600); return; }
       setTab("signin"); setStage({ k: "creds" }); setPassword("");
       return;
     }
@@ -323,6 +343,7 @@ function SubmitBtn({ loading, children }: { loading: boolean; children: React.Re
 
 function friendly(j: { error?: string; code?: string }): string {
   const code = j?.code || "";
+  const msg = j?.error || "";
   if (code === "NotAuthorizedException")      return "Incorrect email or password.";
   if (code === "UserNotConfirmedException")   return "Your email isn't confirmed yet — check your inbox for the code.";
   if (code === "UsernameExistsException")     return "That email is already registered — try signing in.";
@@ -331,5 +352,12 @@ function friendly(j: { error?: string; code?: string }): string {
   if (code === "ExpiredCodeException")        return "Code expired — request a new one.";
   if (code === "LimitExceededException")      return "Too many attempts. Wait a minute and try again.";
   if (code === "UserNotFoundException")       return "No account found for that email.";
-  return j?.error || "Something went wrong. Try again.";
+  // Pre-signup Lambda rejects non-@amazon.com. Cognito wraps the error as
+  // "PreSignUp failed with error <python exception>." so we don't parse
+  // the wrapped string — just show the policy directly.
+  if (code === "UserLambdaValidationException") {
+    if (/amazon\.com/i.test(msg)) return "Signup is restricted to @amazon.com email addresses.";
+    return "This email address isn't allowed to sign up.";
+  }
+  return msg || "Something went wrong. Try again.";
 }

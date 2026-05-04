@@ -15,3 +15,4 @@ build/
 .env.local
 *.log
 .DS_Store
+deployment.rendered.yaml

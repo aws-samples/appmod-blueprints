@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   const r = await respondMfa(email, session, code);
   if (r.kind === "ok") {
     const res = NextResponse.json({ ok: true, email: r.email });
-    return setSessionCookie(res, { sub: r.sub, email: r.email, idToken: r.idToken, refreshToken: r.refreshToken });
+    return setSessionCookie(res, { sub: r.sub, email: r.email });
   }
   return NextResponse.json({ error: r.kind === "error" ? r.message : "MFA failed", code: r.kind === "error" ? r.code : "" }, { status: 401 });
 }

@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   const r = await signIn(email, password);
   if (r.kind === "ok") {
     const res = NextResponse.json({ ok: true, email: r.email });
-    return setSessionCookie(res, { sub: r.sub, email: r.email, idToken: r.idToken, refreshToken: r.refreshToken });
+    return setSessionCookie(res, { sub: r.sub, email: r.email });
   }
   if (r.kind === "mfa") return NextResponse.json({ challenge: "mfa", session: r.session, email: r.email });
   if (r.kind === "new_password") return NextResponse.json({ challenge: "new_password", session: r.session, email: r.email });

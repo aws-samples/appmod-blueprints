@@ -27,7 +27,7 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const token = req.cookies.get(SESSION_COOKIE)?.value;
 
-  if (pathname.startsWith("/app")) {
+  if (pathname.startsWith("/chat")) {
     if (!(await sessionOk(token))) {
       // No redirect loop — send them to landing with a hash that the
       // client picks up to auto-open the auth modal.
@@ -49,5 +49,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/app/:path*", "/api/chat"],
+  matcher: ["/chat/:path*", "/api/chat"],
 };

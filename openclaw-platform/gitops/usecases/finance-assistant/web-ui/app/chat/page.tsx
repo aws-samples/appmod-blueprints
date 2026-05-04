@@ -8,7 +8,13 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { cn } from "@/lib/cn";
 
-type Msg = { id: string; role: "user" | "assistant"; content: string };
+type Msg = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;            // epoch ms
+  responseMs?: number;          // assistant-only: end-to-end response time
+};
 
 const SUGGESTIONS = [
   { icon: TrendingUp, title: "Savings framework", body: "I earn $250k combined, max 401ks, have $3k/mo extra. How should I think about splitting it between a 529, taxable brokerage, backdoor Roth, and HSA?" },
@@ -17,22 +23,98 @@ const SUGGESTIONS = [
   { icon: Target, title: "Retirement math",        body: "I want to retire at 55 with $2M in today's dollars. I'm 38 with $400k saved. Walk me through what assumptions matter and how to stress-test my plan." },
 ];
 
-const SESSION_ID = typeof window !== "undefined"
-  ? (localStorage.getItem("finassist.session") || (() => { const s = `web-${Date.now().toString(36)}`; localStorage.setItem("finassist.session", s); return s; })())
-  : "web";
+// Client-only session id resolution — pulling from localStorage at module
+// scope yields different values on the Next SSR pass vs hydration, which
+// trips React hydration error #418. Resolve on mount instead.
+function useSessionId(): string {
+  const [id, setId] = useState<string>("web");
+  useEffect(() => {
+    try {
+      const existing = localStorage.getItem("finassist.session");
+      if (existing) { setId(existing); return; }
+      const fresh = `web-${Date.now().toString(36)}`;
+      localStorage.setItem("finassist.session", fresh);
+      setId(fresh);
+    } catch { /* no localStorage — leave as "web" */ }
+  }, []);
+  return id;
+}
+
+// Per-user history key. Keyed on Cognito sub so different accounts on the
+// same browser don't cross-contaminate. Falls back to a shared key
+// pre-login; gets migrated after /api/auth/me resolves.
+function historyKey(sub?: string) {
+  return sub ? `finassist.history.${sub}` : `finassist.history`;
+}
+
+function loadHistory(sub?: string): Msg[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(historyKey(sub));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Msg[];
+    if (!Array.isArray(parsed)) return [];
+    // Trim to last 200 messages so localStorage doesn't blow past 5MB.
+    return parsed.slice(-200);
+  } catch { return []; }
+}
+
+function saveHistory(sub: string | undefined, msgs: Msg[]) {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(historyKey(sub), JSON.stringify(msgs.slice(-200))); } catch {}
+}
+
+function fmtTime(ms: number): string {
+  const d = new Date(ms);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const hh = d.getHours() % 12 || 12;
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ampm = d.getHours() < 12 ? "AM" : "PM";
+  if (sameDay) return `${hh}:${mm} ${ampm}`;
+  const mon = d.toLocaleString(undefined, { month: "short" });
+  return `${mon} ${d.getDate()} · ${hh}:${mm} ${ampm}`;
+}
+
+function fmtElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`;
+  const m = Math.floor(s / 60); const rem = Math.round(s - m * 60);
+  return `${m}m ${rem}s`;
+}
 
 export default function Page() {
+  const sessionId = useSessionId();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [me, setMe] = useState<{ email?: string; sub?: string } | null>(null);
   useEffect(() => {
-    // Populate the signed-in user badge. If /me returns 401 the
-    // middleware already redirected, so getting here means we have a
-    // valid session — any 401 from /me is a real mismatch worth showing.
-    fetch("/api/auth/me").then((r) => r.ok ? r.json() : null).then(setMe).catch(() => setMe(null));
+    fetch("/api/auth/me").then((r) => r.ok ? r.json() : null).then((profile) => {
+      setMe(profile);
+      if (profile?.sub) {
+        setMessages(loadHistory(profile.sub));
+      }
+      // Defensive warmup: if the user landed on /chat with a valid cookie
+      // but their sandbox was reaped after 30 min idle, this re-provisions
+      // it while they're still deciding what to ask. The server-side
+      // /api/warmup enforces the @amazon.com gate; we also check here to
+      // avoid the roundtrip for non-matching domains.
+      const domain = (profile?.email || "").toLowerCase().split("@").pop();
+      if (domain === "amazon.com") {
+        fetch("/api/warmup", { method: "POST", keepalive: true }).catch(() => {});
+      }
+    }).catch(() => setMe(null));
   }, []);
+
+  // Persist on every message change
+  useEffect(() => {
+    if (me?.sub && messages.length > 0) saveHistory(me.sub, messages);
+  }, [messages, me?.sub]);
+
   const [thinking, setThinking] = useState(false);
+  const [statusLabel, setStatusLabel] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -52,8 +134,9 @@ export default function Page() {
     const content = (body ?? input).trim();
     if (!content || streaming) return;
     setInput("");
-    const userMsg: Msg = { id: crypto.randomUUID(), role: "user", content };
-    const asstMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: "" };
+    const sendStart = Date.now();
+    const userMsg: Msg = { id: crypto.randomUUID(), role: "user", content, createdAt: sendStart };
+    const asstMsg: Msg = { id: crypto.randomUUID(), role: "assistant", content: "", createdAt: sendStart };
     setMessages((m) => [...m, userMsg, asstMsg]);
     setStreaming(true);
     setThinking(true);
@@ -62,7 +145,7 @@ export default function Page() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content, sessionId: SESSION_ID }),
+        body: JSON.stringify({ message: content, sessionId }),
       });
       if (!res.body) throw new Error("no body");
       const reader = res.body.getReader();
@@ -82,8 +165,11 @@ export default function Page() {
           if (data === "[DONE]") continue;
           try {
             const j = JSON.parse(data);
-            if (j.status === "thinking") setThinking(true);
+            if (j.status === "provisioning") setStatusLabel("Starting your private Kata VM…");
+            if (j.status === "ready") setStatusLabel("Loading your workspace…");
+            if (j.status === "thinking") { setStatusLabel(null); setThinking(true); }
             if (j.delta) {
+              setStatusLabel(null);
               setThinking(false);
               acc += j.delta;
               setMessages((m) => {
@@ -103,6 +189,16 @@ export default function Page() {
           } catch {}
         }
       }
+      // Stamp the final assistant message with response time
+      const elapsed = Date.now() - sendStart;
+      setMessages((m) => {
+        const copy = m.slice();
+        const last = copy[copy.length - 1];
+        if (last && last.role === "assistant") {
+          copy[copy.length - 1] = { ...last, responseMs: elapsed, createdAt: Date.now() };
+        }
+        return copy;
+      });
     } catch (e) {
       setMessages((m) => {
         const copy = m.slice();
@@ -112,11 +208,22 @@ export default function Page() {
     } finally {
       setStreaming(false);
       setThinking(false);
+      setStatusLabel(null);
     }
   }
 
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  }
+
+  function clearHistory() {
+    if (streaming) return;
+    if (!confirm("Clear this chat history? This cannot be undone.")) return;
+    setMessages([]);
+    if (me?.sub) { try { localStorage.removeItem(historyKey(me.sub)); } catch {} }
+    const s = `web-${Date.now().toString(36)}`;
+    try { localStorage.setItem("finassist.session", s); } catch {}
+    window.location.reload();
   }
 
   const empty = messages.length === 0;
@@ -151,7 +258,7 @@ export default function Page() {
 
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-ink-500 font-semibold mb-3">Session</div>
-                <div className="text-xs text-ink-400 font-mono">{SESSION_ID}</div>
+                <div className="text-xs text-ink-400 font-mono">{sessionId}</div>
                 <div className="text-[11px] text-ink-500 mt-2">Persists across page reloads. Clear localStorage to reset.</div>
               </div>
             </div>
@@ -192,17 +299,9 @@ export default function Page() {
           <h1 className="text-sm font-semibold tracking-tight">Personal Finance Assistant</h1>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-accent-500/10 border border-accent-500/30 text-accent-400 uppercase tracking-wider">OpenClaw · Kata VM</span>
           <button
-            onClick={() => {
-              if (streaming) return;
-              setMessages([]);
-              // Rotate sessionId so the agent starts fresh, but keep the
-              // localStorage cache so a reload of the *same* tab resumes.
-              const s = `web-${Date.now().toString(36)}`;
-              try { localStorage.setItem("finassist.session", s); } catch {}
-              window.location.reload();
-            }}
+            onClick={clearHistory}
             disabled={streaming}
-            title="Start a new chat"
+            title="Clear history and start a new chat"
             className="ml-4 flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] text-ink-300 hover:text-ink-50 hover:bg-ink-900/80 border border-ink-800 hover:border-accent-500/40 transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Plus size={12}/>
@@ -224,10 +323,10 @@ export default function Page() {
                 // Suppress the trailing empty assistant bubble while
                 // ThinkingIndicator is rendering its own F avatar —
                 // otherwise users see two F avatars stacked.
-                if (thinking && i === messages.length - 1 && m.role === "assistant" && !m.content) return null;
+                if ((thinking || statusLabel) && i === messages.length - 1 && m.role === "assistant" && !m.content) return null;
                 return <Message key={m.id} msg={m} />;
               })}
-              {thinking && <ThinkingIndicator/>}
+              {(thinking || statusLabel) && <ThinkingIndicator label={statusLabel}/>}
             </div>
           )}
         </div>
@@ -329,27 +428,35 @@ function Message({ msg }: { msg: Msg }) {
           F
         </div>
       )}
-      <div className={cn(
-        "max-w-[85%] rounded-2xl px-4 py-3",
-        isUser
-          ? "bg-gradient-to-br from-accent-500 to-accent-600 text-white shadow-lg shadow-accent-500/20"
-          : "bg-ink-900/80 border border-ink-800"
-      )}>
-        {isUser ? (
-          <div className="text-sm whitespace-pre-wrap">{msg.content}</div>
-        ) : (
-          <div className="prose-finance text-sm">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-              {msg.content || "…"}
-            </ReactMarkdown>
-          </div>
-        )}
+      <div className={cn("flex flex-col", isUser ? "items-end" : "items-start", "max-w-[85%] gap-1")}>
+        <div className={cn(
+          "rounded-2xl px-4 py-3",
+          isUser
+            ? "bg-gradient-to-br from-accent-500 to-accent-600 text-white shadow-lg shadow-accent-500/20"
+            : "bg-ink-900/80 border border-ink-800"
+        )}>
+          {isUser ? (
+            <div className="text-sm whitespace-pre-wrap">{msg.content}</div>
+          ) : (
+            <div className="prose-finance text-sm">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                {msg.content || "…"}
+              </ReactMarkdown>
+            </div>
+          )}
+        </div>
+        <div className={cn("text-[10px] text-ink-500 font-mono px-1 flex items-center gap-2", isUser ? "justify-end" : "justify-start")}>
+          <span>{fmtTime(msg.createdAt)}</span>
+          {!isUser && typeof msg.responseMs === "number" && (
+            <span className="text-accent-500/70">· {fmtElapsed(msg.responseMs)}</span>
+          )}
+        </div>
       </div>
     </motion.div>
   );
 }
 
-function ThinkingIndicator() {
+function ThinkingIndicator({ label }: { label?: string | null }) {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
       <div className="w-8 h-8 shrink-0 rounded-lg bg-gradient-to-br from-accent-400 to-gold-500 flex items-center justify-center text-ink-950 font-bold text-xs mt-1">F</div>
@@ -359,7 +466,7 @@ function ThinkingIndicator() {
           <span className="w-1.5 h-1.5 rounded-full bg-accent-400 animate-bounce" style={{animationDelay:"150ms"}}/>
           <span className="w-1.5 h-1.5 rounded-full bg-accent-400 animate-bounce" style={{animationDelay:"300ms"}}/>
         </div>
-        <span className="text-xs">Reasoning inside the Kata VM…</span>
+        <span className="text-xs">{label || "Reasoning inside the Kata VM…"}</span>
       </div>
     </motion.div>
   );

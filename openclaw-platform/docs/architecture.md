@@ -29,25 +29,42 @@ ArgoCD reconciles in wave order. Within a wave, Applications sync in parallel.
 ### Finance Assistant (web UI)
 
 ```
-Browser ──HTTPS──▶ ALB ──HTTP──▶ finance-ui ──▶ finance-session-router
-                                                         │ kubectl create Sandbox+PVC
-                                                         ▼
-                                             finance-sandbox-<suffix>
-                                             ┌─────────────────────────┐
-                                             │ openclaw (:18789)       │
-                                             │    ▲ loopback           │
-                                             │ adapter (:18790)        │
-                                             │    │ SSE                │
-                                             │    ▼                    │
-                                             └─────────────────────────┘
-                                                         │ HTTP :4000
-                                                         ▼
-                                             LiteLLM (Pod Identity)
-                                                         │
-                                                         ▼
-                                             Bedrock Guardrail + Claude
+Browser ──HTTPS──▶ ALB ──HTTP──▶ finance-ui (Next.js)
+                                   │  /api/auth/* → Cognito (direct API)
+                                   │  /api/warmup → finance-session-router
+                                   │  /api/chat   → finance-session-router (SSE)
+                                   ▼
+                            finance-session-router
+                                   │ hash(sub) → user-suffix
+                                   │ kubectl ensure PVC+Sandbox+Service (with retry)
+                                   ▼
+                       finance-sandbox-<suffix>
+                       ┌─────────────────────────┐
+                       │ openclaw (:18789)       │
+                       │    ▲ loopback           │
+                       │ adapter (:18790)        │
+                       │    │ SSE               │
+                       │    ▼                    │
+                       └─────────────────────────┘
+                                   │ HTTP :4000
+                                   ▼
+                            LiteLLM (Pod Identity)
+                                   │
+                                   ▼
+                       Bedrock Guardrail + Claude Haiku 4.5
 
-/workspace mounts from EFS subPath=<user-suffix>. Reaper deletes Sandbox; EFS data persists.
+Auth: Cognito User Pool, direct API (not ALB OIDC). Pre-signup Lambda blocks
+non-@amazon.com and auto-confirms amazon emails. Session cookie `fa_session`
+is a JWT carrying only {sub, email} (under 1.5KB so Chromium doesn't drop it).
+
+Warmup: finance-ui fires /api/warmup on sign-in success so the per-user Kata
+pod is provisioned in the background while the user is deciding what to ask.
+Three @amazon.com fences: Cognito pre-signup Lambda, client-side domain
+check, server-side check in /api/warmup.
+
+/workspace mounts from EFS subPath=<user-suffix>. Reaper deletes Sandbox
+after 30m idle; EFS data persists; next sign-in triggers warmup → Sandbox
+re-mounts the same subPath.
 ```
 
 ### Slack

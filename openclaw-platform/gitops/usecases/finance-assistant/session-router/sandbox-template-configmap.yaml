@@ -49,7 +49,7 @@ data:
               "containers": [
                 {
                   "name": "openclaw",
-                  "image": "ghcr.io/openclaw/openclaw:latest",
+                  "image": "ghcr.io/openclaw/openclaw:2026.5.2",
                   "imagePullPolicy": "IfNotPresent",
                   "securityContext": {
                     "allowPrivilegeEscalation": false,
@@ -66,7 +66,7 @@ data:
                     { "name": "WORKSPACE_DIR", "value": "/workspace" },
                     { "name": "SYSTEM_PROMPT_FILE", "value": "/etc/openclaw/system-prompt.md" }
                   ],
-                  "command": ["sh","-c","set -eu; LITELLM_API_KEY=$(cat /var/run/openclaw/litellm-api-key); GATEWAY_AUTH_TOKEN=$(cat /var/run/openclaw/gateway-auth-token); mkdir -p /workspace/scenarios /workspace/inbox; for f in goals.md snapshot.md decisions.md questions.md; do [ -f /workspace/$f ] || touch /workspace/$f; done; cp /etc/openclaw/system-prompt.md /workspace/BOOT.md; mkdir -p /home/node/.openclaw; cat > /home/node/.openclaw/openclaw.json <<EOF\n{\"models\":{\"providers\":{\"litellm\":{\"baseUrl\":\"http://litellm.litellm.svc.cluster.local:4000\",\"apiKey\":\"${LITELLM_API_KEY}\",\"api\":\"openai-completions\",\"models\":[{\"id\":\"claude-haiku-4-5\",\"name\":\"Claude Haiku 4.5\",\"reasoning\":true,\"input\":[\"text\",\"image\"],\"contextWindow\":200000,\"maxTokens\":3072}]}}},\"agents\":{\"defaults\":{\"model\":{\"primary\":\"litellm/claude-haiku-4-5\"},\"workspace\":\"/workspace\"}},\"gateway\":{\"port\":18789,\"mode\":\"local\",\"bind\":\"lan\",\"auth\":{\"mode\":\"token\",\"token\":\"${GATEWAY_AUTH_TOKEN}\"},\"controlUi\":{\"dangerouslyAllowHostHeaderOriginFallback\":true}}}\nEOF\nunset LITELLM_API_KEY GATEWAY_AUTH_TOKEN; exec node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured"],
+                  "command": ["sh","-c","set -eu; LITELLM_API_KEY=$(cat /var/run/openclaw/litellm-api-key); GATEWAY_AUTH_TOKEN=$(cat /var/run/openclaw/gateway-auth-token); mkdir -p /workspace/scenarios /workspace/inbox; for f in goals.md snapshot.md decisions.md questions.md; do [ -f /workspace/$f ] || touch /workspace/$f; done; rm -f /workspace/BOOT.md /workspace/AGENTS.md /workspace/BOOTSTRAP.md /workspace/HEARTBEAT.md /workspace/IDENTITY.md /workspace/SOUL.md /workspace/TOOLS.md /workspace/USER.md; mkdir -p /home/node/.openclaw; LITELLM_API_KEY=\"${LITELLM_API_KEY}\" GATEWAY_AUTH_TOKEN=\"${GATEWAY_AUTH_TOKEN}\" python3 -c 'import json,os; prompt=open(\"/etc/openclaw/system-prompt.md\").read(); cfg={\"models\":{\"providers\":{\"litellm\":{\"baseUrl\":\"http://litellm.litellm.svc.cluster.local:4000\",\"apiKey\":os.environ[\"LITELLM_API_KEY\"],\"api\":\"openai-completions\",\"models\":[{\"id\":\"claude-opus-4-6\",\"name\":\"Claude Opus 4.6\",\"reasoning\":True,\"input\":[\"text\",\"image\"],\"contextWindow\":200000,\"maxTokens\":4096},{\"id\":\"claude-haiku-4-5\",\"name\":\"Claude Haiku 4.5\",\"reasoning\":True,\"input\":[\"text\",\"image\"],\"contextWindow\":200000,\"maxTokens\":3072}]}}},\"agents\":{\"defaults\":{\"model\":{\"primary\":\"litellm/claude-haiku-4-5\",\"fallbacks\":[\"litellm/claude-opus-4-6\"]},\"workspace\":\"/workspace\",\"systemPromptOverride\":prompt,\"skipBootstrap\":True}},\"gateway\":{\"port\":18789,\"mode\":\"local\",\"bind\":\"lan\",\"auth\":{\"mode\":\"token\",\"token\":os.environ[\"GATEWAY_AUTH_TOKEN\"]},\"controlUi\":{\"dangerouslyAllowHostHeaderOriginFallback\":True}}}; json.dump(cfg,open(\"/home/node/.openclaw/openclaw.json\",\"w\"),indent=2)'; unset LITELLM_API_KEY GATEWAY_AUTH_TOKEN; exec node dist/index.js gateway --bind=lan --port 18789 --allow-unconfigured"],
                   "ports": [{ "name": "gateway", "containerPort": 18789, "protocol": "TCP" }],
                   "volumeMounts": [
                     { "name": "workspace", "mountPath": "/workspace" },
@@ -79,7 +79,7 @@ data:
                 },
                 {
                   "name": "adapter",
-                  "image": "ghcr.io/openclaw/openclaw:latest",
+                  "image": "ghcr.io/openclaw/openclaw:2026.5.2",
                   "imagePullPolicy": "IfNotPresent",
                   "securityContext": {
                     "allowPrivilegeEscalation": false,

@@ -38,14 +38,12 @@ export type Session = {
   sub: string;
   email?: string;
   exp: number;
-  id_token: string;
-  refresh_token?: string;
 };
 
 export async function signSession(s: Omit<Session, "exp"> & { ttlSeconds?: number }): Promise<string> {
   const ttl = s.ttlSeconds ?? 3600;
   return await new SignJWT({
-    sub: s.sub, email: s.email, id_token: s.id_token, refresh_token: s.refresh_token,
+    sub: s.sub, email: s.email,
   } as JWTPayload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -60,8 +58,6 @@ export async function verifySession(token: string): Promise<Session | null> {
       sub: payload.sub as string,
       email: payload.email as string | undefined,
       exp: payload.exp as number,
-      id_token: payload.id_token as string,
-      refresh_token: payload.refresh_token as string | undefined,
     };
   } catch { return null; }
 }

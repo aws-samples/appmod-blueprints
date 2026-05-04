@@ -66,7 +66,7 @@ spec:
                       path: gateway-auth-token
       containers:
         - name: openclaw
-          image: ghcr.io/openclaw/openclaw:latest
+          image: ghcr.io/openclaw/openclaw:2026.5.2
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -169,7 +169,7 @@ spec:
             tcpSocket: { port: 18789 }
             initialDelaySeconds: 30
         - name: adapter
-          image: ghcr.io/openclaw/openclaw:latest
+          image: ghcr.io/openclaw/openclaw:2026.5.2
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
