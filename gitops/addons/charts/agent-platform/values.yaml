@@ -3,7 +3,7 @@
 
 agentPlatform:
   repoURL: "https://github.com/aws-samples/sample-agent-platform-on-eks.git"
-  revision: "feature/gitops-agent-platform"
+  revision: "main"
   basepath: "gitops/addons/"
   environment: "dev"
 

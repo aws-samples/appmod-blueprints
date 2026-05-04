@@ -21,7 +21,7 @@ agent-platform:
   valuesObject:
     agentPlatform:
       repoURL: '{{default "https://github.com/aws-samples/sample-agent-platform-on-eks.git" (index .metadata.annotations "agent_platform_repo_url")}}'
-      revision: '{{default "feature/gitops-agent-platform" (index .metadata.annotations "agent_platform_repo_revision")}}'
+      revision: '{{default "main" (index .metadata.annotations "agent_platform_repo_revision")}}'
       basepath: '{{default "gitops/addons/" (index .metadata.annotations "agent_platform_repo_basepath")}}'
       environment: '{{.metadata.labels.environment}}'
     cluster:

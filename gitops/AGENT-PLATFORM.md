@@ -1,6 +1,6 @@
 # Agent Platform on appmod-blueprints
 
-Enable an AI agent platform on the appmod-blueprints hub cluster with a single toggle. All agent platform charts and configurations live in the [sample-agent-platform-on-eks](https://github.com/aws-samples/sample-agent-platform-on-eks) repo (`feature/gitops-agent-platform` branch).
+Enable an AI agent platform on the appmod-blueprints hub cluster with a single toggle. All agent platform charts and configurations live in the [sample-agent-platform-on-eks](https://github.com/aws-samples/sample-agent-platform-on-eks) repo (`main` branch).
 
 ## How It Works
 
@@ -115,7 +115,7 @@ externalSecret:
     agent_core_mcp_image: "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/agent-core-mcp"
     agent_core_mcp_image_tag: "latest"
     agent_core_terraform_repo_url: "https://github.com/aws-samples/sample-agent-platform-on-eks.git"
-    agent_core_terraform_repo_revision: "feature/gitops-agent-platform"
+    agent_core_terraform_repo_revision: "main"
 ```
 
 Commit and push. ArgoCD deploys everything automatically.
