@@ -13,38 +13,40 @@ appmod-blueprints                          sample-agent-platform-on-eks
 │                     │                    │   charts/                    │
 │ charts/             │                    │     application-sets/        │
 │   agent-platform/   │──creates──────────▶│     kagent-setup/            │
-│     bootstrap.yaml  │  cluster secret    │     litellm/                 │
-│                     │  + ApplicationSet  │     langfuse/                │
+│     bootstrap.yaml  │  ArgoCD            │     litellm/                 │
+│                     │  Application       │     langfuse/                │
 │                     │  pointing to ──────│     kagent-monitoring/       │
 │                     │  sample repo       │     agent-core/              │
-└─────────────────────┘                    │   environments/dev/          │
-                                           │     addons.yaml              │
+└─────────────────────┘                    │   environments/              │
+                                           │     control-plane/           │
+                                           │       addons.yaml            │
                                            └──────────────────────────────┘
 ```
 
 1. Setting `agent_platform: true` in appmod-blueprints `enabled-addons.yaml` triggers the `agent-platform` addon
-2. The addon deploys a thin bootstrap chart that creates a cluster secret and ApplicationSet pointing to the sample repo
-3. The sample repo's `application-sets` chart generates one ApplicationSet per enabled addon
+2. The addon deploys a thin bootstrap chart that creates an ArgoCD **Application** pointing to the sample repo's `application-sets` chart
+3. The Application renders the sample repo's `application-sets` chart with `useSelectors: false` and `globalSelectors: {enable_agent_platform: "true"}`, so all generated ApplicationSets match the existing hub cluster secret — no duplicate cluster secret is created
 4. Each addon deploys via the ArgoCD EKS Capability to the cluster
-5. The cluster uses EKS Auto Mode with Pod Identity for AWS credentials
+5. Agent-core config (MCP image, Terraform repo URL, region) is auto-derived from the cluster's account ID and region via the bootstrap chart's `valuesObject` — no manual annotations needed
+6. The cluster uses EKS Auto Mode with Pod Identity for AWS credentials
 
 ## What Gets Deployed
 
 All addons are defined in the sample repo and deploy in sync-wave order:
 
-| Wave | Addon | Source | Selector | Namespace |
-|------|-------|--------|----------|-----------|
-| 0 | flux (source-controller) | Helm: `fluxcd-community/flux2:2.12.4` | `enable_flux` | flux-system |
-| 1 | tofu-controller | Helm: `flux-iac/tf-controller:0.16.0-rc.4` | `enable_tofu_controller` | flux-system |
-| 2 | kagent-crds | OCI: `ghcr.io/kagent-dev/kagent/helm/kagent-crds:0.7.9` | `enable_kagent` | kagent |
-| 3 | kagent (operator + UI) | OCI: `ghcr.io/kagent-dev/kagent/helm/kagent:0.7.9` | `enable_kagent` | kagent |
-| 3 | kagent-setup (ModelConfig) | Git path chart | `enable_kagent` | kagent |
-| 3 | litellm (LLM gateway) | Git path chart | `enable_litellm` | kagent |
-| 4 | agent-core (Terraform + MCP + Agent) | Git path chart | `enable_agent_core` | agent-core-infra |
-| 5 | langfuse (LLM tracing + PostgreSQL) | Git path chart | `enable_langfuse` | langfuse |
-| 5 | jaeger (distributed tracing) | Helm: `jaegertracing/jaeger:3.4.1` | `enable_jaeger` | jaeger |
-| 5 | prometheus-operator-crds | Helm: `prometheus-community/prometheus-operator-crds:28.0.1` | `enable_kagent_monitoring` | kagent |
-| 6 | kagent-monitoring (ServiceMonitor) | Git path chart | `enable_kagent_monitoring` | kagent |
+| Wave | Addon | Source | Namespace |
+|------|-------|--------|-----------|
+| 0 | flux (source-controller) | Helm: `fluxcd-community/flux2:2.12.4` | flux-system |
+| 1 | tofu-controller | Helm: `flux-iac/tf-controller:0.16.0-rc.4` | flux-system |
+| 2 | kagent-crds | OCI: `ghcr.io/kagent-dev/kagent/helm/kagent-crds:0.7.9` | kagent |
+| 3 | kagent (operator + UI) | OCI: `ghcr.io/kagent-dev/kagent/helm/kagent:0.7.9` | kagent |
+| 3 | kagent-setup (ModelConfig) | Git path chart | kagent |
+| 3 | litellm (LLM gateway) | Git path chart | kagent |
+| 4 | agent-core (Terraform + MCP + Agent) | Git path chart | agent-core-infra |
+| 5 | langfuse (LLM tracing + PostgreSQL) | Git path chart | langfuse |
+| 5 | jaeger (distributed tracing) | Helm: `jaegertracing/jaeger:3.4.1` | jaeger |
+| 5 | prometheus-operator-crds | Helm: `prometheus-community/prometheus-operator-crds:28.0.1` | kagent |
+| 6 | kagent-monitoring (ServiceMonitor) | Git path chart | kagent |
 
 Flux and tofu-controller are prerequisites for agent-core only. The prometheus-operator-crds chart deploys automatically before kagent-monitoring — no manual CRD installation needed.
 
@@ -88,35 +90,30 @@ docker push ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/agent-core-mcp:latest
 
 ## Enable the Agent Platform
 
-### Basic (no agent-core)
-
 Edit `gitops/overlays/environments/control-plane/enabled-addons.yaml`:
 
 ```yaml
   agent_platform: true
 ```
 
-### Full (with agent-core)
+That's it. The bootstrap chart auto-derives all agent-core configuration from the hub cluster secret's existing annotations (`aws_region`, `aws_account_id`, `aws_cluster_name`):
 
-Same as above, plus add annotations to `gitops/fleet/members/hub/values.yaml`:
+- **MCP image**: `{accountId}.dkr.ecr.{region}.amazonaws.com/agent-core-mcp:latest`
+- **Terraform repo**: defaults to the sample repo URL and revision
+- **Region/cluster**: read from the cluster secret
 
-```yaml
-externalSecret:
-  enabled: true
-  secretStoreRefKind: ClusterSecretStore
-  secretStoreRefName: aws-secrets-manager
-  clusterName: hub
-  labels:
-    environment: control-plane
-    tenant: control-plane
-  annotations:
-    agent_core_project_name: "agent-core"
-    agent_core_network_mode: "PUBLIC"
-    agent_core_mcp_image: "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/agent-core-mcp"
-    agent_core_mcp_image_tag: "latest"
-    agent_core_terraform_repo_url: "https://github.com/aws-samples/sample-agent-platform-on-eks.git"
-    agent_core_terraform_repo_revision: "main"
-```
+To override any of these defaults, add annotations to the hub cluster secret (via the fleet member values):
+
+| Annotation | Default | Purpose |
+|---|---|---|
+| `agent_core_project_name` | `agent-core` | AgentCore project name |
+| `agent_core_network_mode` | `PUBLIC` | AgentCore network mode |
+| `agent_core_mcp_image` | `{accountId}.dkr.ecr.{region}.amazonaws.com/agent-core-mcp` | MCP server ECR image |
+| `agent_core_mcp_image_tag` | `latest` | MCP server image tag |
+| `agent_core_terraform_repo_url` | sample repo URL | Terraform module source |
+| `agent_core_terraform_repo_revision` | sample repo revision | Terraform module branch |
+| `agent_platform_repo_url` | `https://github.com/aws-samples/sample-agent-platform-on-eks.git` | Agent platform repo |
+| `agent_platform_repo_revision` | `main` | Agent platform branch |
 
 Commit and push. ArgoCD deploys everything automatically.
 
@@ -148,6 +145,7 @@ kubectl run test --rm -i --restart=Never --image=curlimages/curl -n kagent -- \
 
 ## EKS ArgoCD Capability Notes
 
+- **No duplicate cluster secrets**: The bootstrap chart uses an Application (not ApplicationSet) with `useSelectors: false` and `globalSelectors` to match the existing hub cluster secret. EKS managed ArgoCD rejects duplicate secrets with the same ARN.
 - **Custom Lua health checks not supported**: The agent-core chart includes a Terraform health check ConfigMap that is ignored by the managed capability. Terraform resources may show as "Progressing" or "Unknown" in the ArgoCD UI but function correctly.
 - **Sync timeout fixed at 120 seconds**: Long-running Terraform applies may appear to time out but continue in the background via the tofu-controller.
 - **Git cache refresh**: The managed capability polls git repos every 3-10 minutes. Changes to the sample repo may take time to propagate.
