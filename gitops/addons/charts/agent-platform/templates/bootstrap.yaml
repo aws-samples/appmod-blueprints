@@ -1,0 +1,71 @@
+{{/*
+  Agent Platform Bootstrap
+  Creates an ApplicationSet that deploys the sample-agent-platform-on-eks
+  repo's application-sets chart to the hub cluster.
+
+  Uses the existing hub cluster secret (no duplicate cluster registration).
+  All generated ApplicationSets match the hub secret via the
+  enable_agent_platform label (globalSelectors), with individual
+  enable_* selectors disabled (useSelectors: false).
+*/}}
+{{- $mcpImage := .Values.agentCore.mcpImage | default (printf "%s.dkr.ecr.%s.amazonaws.com/agent-core-mcp" .Values.cluster.accountId .Values.cluster.region) }}
+{{- $tfRepoUrl := .Values.agentCore.terraformRepoUrl | default .Values.agentPlatform.repoURL }}
+{{- $tfRepoRevision := .Values.agentCore.terraformRepoRevision | default .Values.agentPlatform.revision }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agent-platform-addons
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - ref: values
+      repoURL: {{ .Values.agentPlatform.repoURL | quote }}
+      targetRevision: {{ .Values.agentPlatform.revision | quote }}
+    - repoURL: {{ .Values.agentPlatform.repoURL | quote }}
+      path: {{ .Values.agentPlatform.basepath }}charts/application-sets
+      targetRevision: {{ .Values.agentPlatform.revision | quote }}
+      helm:
+        releaseName: agent-platform-addons
+        ignoreMissingValueFiles: true
+        valueFiles:
+          - $values/{{ .Values.agentPlatform.basepath }}bootstrap/default/addons.yaml
+          - $values/{{ .Values.agentPlatform.basepath }}environments/{{ .Values.agentPlatform.environment }}/addons.yaml
+        valuesObject:
+          useSelectors: false
+          globalSelectors:
+            enable_agent_platform: "true"
+          repoURLGit: {{ .Values.agentPlatform.repoURL | quote }}
+          repoURLGitRevision: {{ .Values.agentPlatform.revision | quote }}
+          repoURLGitBasePath: {{ .Values.agentPlatform.basepath | quote }}
+          agent-core:
+            valuesObject:
+              global:
+                awsRegion: {{ .Values.cluster.region | quote }}
+                eksClusterName: {{ .Values.cluster.clusterName | quote }}
+                projectName: {{ .Values.agentCore.projectName | default "agent-core" | quote }}
+                networkMode: {{ .Values.agentCore.networkMode | default "PUBLIC" | quote }}
+                terraformRepoUrl: {{ $tfRepoUrl | quote }}
+                terraformRepoRevision: {{ $tfRepoRevision | quote }}
+              mcpServer:
+                image:
+                  repository: {{ $mcpImage | quote }}
+                  tag: {{ .Values.agentCore.mcpImageTag | default "latest" | quote }}
+          litellm:
+            valuesObject:
+              global:
+                awsRegion: {{ .Values.cluster.region | quote }}
+  destination:
+    namespace: argocd
+    name: {{ .Values.cluster.name | quote }}
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: true
+    retry:
+      limit: 100
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
