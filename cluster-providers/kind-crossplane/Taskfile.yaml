@@ -536,11 +536,9 @@ tasks:
     vars:
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
     cmds:
-      # Refresh kubeconfig and credentials, restart providers to pick up new creds
+      # Refresh kubeconfig and credentials
       - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
       - task: credentials:refresh
-      - kubectl -n crossplane-system rollout restart deploy -l pkg.crossplane.io/revision 2>/dev/null || true
-      - kubectl -n crossplane-system rollout status deploy -l pkg.crossplane.io/revision --timeout=120s 2>/dev/null || true
       # Phase 1: Clean hub addons
       - task: hub:destroy-addons
       # Phase 2: Delete pod identities and IAM resources (chart-managed)
@@ -561,6 +559,7 @@ tasks:
       - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl delete --ignore-not-found -f -
       - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
       # Phase 4: Delete EKS cluster + VPC (needs providers alive to reconcile deletion)
+      - task: credentials:refresh
       - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
           --set clusters.hub.region={{.AWS_REGION}}
           --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
@@ -643,6 +642,7 @@ tasks:
           {{.MNG_SETS}}
           | kubectl apply -f -
       - kubectl apply -f claims/
+      - task: credentials:refresh
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/hub 2>/dev/null || true
       - task: destroy-kind
 
