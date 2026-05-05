@@ -44,7 +44,8 @@ async fn main() -> Result<(), rocket::Error> {
 
     let rocket_config = rocket::Config::figment()
         .merge(("address", rocket_address))
-        .merge(("port", rocket_port.parse::<u16>().unwrap()));
+        .merge(("port", rocket_port.parse::<u16>().unwrap()))
+        .merge(("workers", 4));
 
     let prometheus = PrometheusMetrics::new();
 

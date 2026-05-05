@@ -11,6 +11,10 @@ ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
 
 # Save the current script directory before sourcing utils.sh
 DEPLOY_SCRIPTDIR="$SCRIPTDIR"
+
+# Force regeneration of CONFIG_FILE to pick up latest hub-config.yaml changes
+unset CONFIG_FILE
+
 source $SCRIPTDIR/../scripts/utils.sh
 
 # Check if clusters are created through Workshop
@@ -104,12 +108,9 @@ main() {
   export GITLAB_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_domain_name)
   GITLAB_SG_ID=$(terraform -chdir=$DEPLOY_SCRIPTDIR/gitlab_infra output -raw gitlab_security_groups)
 
-  # Create spoke cluster secret values
-  create_spoke_cluster_secret_values
+  # Note: create_spoke_cluster_secret_values and gitlab push are handled by 0-init.sh
+  # (which runs on the IDE via SSM and owns the GitLab push in Workshop Studio mode)
 
-  # Push repo to Gitlab
-  gitlab_repository_setup
-  
   # Initialize Terraform with S3 backend
   initialize_terraform "bootstrap" "$DEPLOY_SCRIPTDIR"
   
@@ -170,16 +171,37 @@ main() {
     exit 1
   fi
 
-  # Get ArgoCD domain from Terraform output
-  export ARGOCD_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
-  export INGRESS_DOMAIN=$ARGOCD_DOMAIN
+  # Get Ingress domain from Terraform output
+  export INGRESS_DOMAIN=$(terraform -chdir=$DEPLOY_SCRIPTDIR output -raw ingress_domain_name)
 
-  # Update backstage default values now that both domains are available
+  # Push platform repo to GitLab so ArgoCD can start syncing immediately.
+  # This gives ArgoCD a ~15-20 min head start while the IDE SSM script starts.
+  log "Pushing platform repo to GitLab..."
+  cd "$ROOTDIR"
+  git config --global credential.helper store
+  git config --global user.name "${GIT_USERNAME}"
+  git config --global user.email "${GIT_USERNAME}@workshop.local"
+
+  GITLAB_PUSH_URL="https://${GIT_USERNAME}:${GIT_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+
+  # Preserve GitHub as 'github' remote
+  if git remote get-url origin 2>/dev/null | grep -q "github.com"; then
+      git remote rename origin github 2>/dev/null || true
+  fi
+  if git remote get-url origin >/dev/null 2>&1; then
+      git remote set-url origin "$GITLAB_PUSH_URL"
+  else
+      git remote add origin "$GITLAB_PUSH_URL"
+  fi
+
+  create_spoke_cluster_secret_values
   update_backstage_defaults
-  
-  # Push repo to Gitlab
-  gitlab_repository_setup
-  
+  git add .
+  git commit -m "Bootstrap: add fleet member values and backstage defaults" || true
+  git checkout -B main
+  git push -u origin main
+  cd -
+
   log_success "Bootstrap stack deployment completed successfully"
 }
 

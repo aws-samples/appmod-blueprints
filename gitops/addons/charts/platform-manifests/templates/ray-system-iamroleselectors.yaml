@@ -1,0 +1,37 @@
+{{- if .Values.global }}
+{{- $accountId := .Values.global.accountId | default "123456789012" }}
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: ray-system-iam
+  annotations:
+    services.k8s.aws/adoption-policy: adopt-or-create
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  arn: arn:aws:iam::{{ $accountId }}:role/peeks-cluster-mgmt-iam
+  namespaceSelector:
+    names:
+      - ray-system
+  resourceTypeSelector:
+    - group: iam.services.k8s.aws
+      kind: ""
+      version: ""
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: ray-system-eks
+  annotations:
+    services.k8s.aws/adoption-policy: adopt-or-create
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  arn: arn:aws:iam::{{ $accountId }}:role/peeks-cluster-mgmt-eks
+  namespaceSelector:
+    names:
+      - ray-system
+  resourceTypeSelector:
+    - group: eks.services.k8s.aws
+      kind: ""
+      version: ""
+{{- end }}

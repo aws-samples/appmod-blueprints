@@ -48,6 +48,12 @@ spec:
       containers:
       - name: devlake-wait-crds
         image: alpine/k8s:1.32.8
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
         command: ["/bin/sh", "-c"]
         args:
         - |

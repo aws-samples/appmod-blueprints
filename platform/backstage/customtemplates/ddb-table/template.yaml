@@ -1,12 +1,11 @@
-# template.yaml
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: ddb-table-template-ack
-  title: DynamoDB Table Template ACK
-  description: Create DynamoDB table using OAM and ACK
+  name: ddb-table-template-ack-kro
+  title: DynamoDB Table Template ACK with KRO
+  description: Create DynamoDB table using KRO and ACK
 spec:
-  owner: guest
+  owner: user:guest
   type: service
   parameters:
     - title: Provide DynamoDB Table Information
@@ -14,8 +13,8 @@ spec:
         - table_name
         - environment
         - region
-        - attribute_name
-        - attribute_type
+        - attributeName
+        - attributeType
       properties:
         table_name:
           title: Table Name
@@ -26,29 +25,28 @@ spec:
           type: string
           description: The environment (e.g., dev, prod)
           enum: ['dev', 'prod']
-        provider:
-          title: Provider
-          type: string
-          description: Provider Configuration
-          default: default
         region:
           title: Region
           type: string
           description: AWS region for the DynamoDB table
           default: us-west-2
+        accountId:
+          title: AWS Account ID
+          type: string
+          description: AWS Account ID (defaults to current account)
         namespace:
           default: default
           title: Existing namespace to create this resource
           type: string
-        attribute_name:
-          title: Primary Key Attribute Name
+        attributeName:
+          title: Partition Key Name
           type: string
-          description: Name of the primary key attribute
+          description: Name of the partition key attribute
           default: id
-        attribute_type:
-          title: Primary Key Attribute Type
+        attributeType:
+          title: Partition Key Type
           type: string
-          description: Type of the primary key attribute
+          description: Type of the partition key attribute
           enum: ['S', 'N', 'B']
           default: S
   steps:
@@ -63,13 +61,13 @@ spec:
       input:
         url: ./skeleton
         values:
-          provider: ${{ parameters.provider }}
           table_name: ${{ parameters.table_name }}
           namespace: ${{ parameters.namespace }}
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
-          attribute_name: ${{ parameters.attribute_name }}
-          attribute_type: ${{ parameters.attribute_type }}
+          accountId: ${{ parameters.accountId | default(steps['fetchSystem'].output.entity.spec.aws_account_id) }}
+          attributeName: ${{ parameters.attributeName }}
+          attributeType: ${{ parameters.attributeType }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
     - id: publish
       name: Publishing to GitLab repository
@@ -92,11 +90,13 @@ spec:
             namespace: argocd
           spec:
             description: Project for ${{parameters.table_name}} DynamoDB table
+            sourceNamespaces:
+            - argocd
             sourceRepos:
             - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.table_name}}.git
             destinations:
             - namespace: ${{parameters.namespace}}
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
             clusterResourceWhitelist:
             - group: '*'
               kind: '*'
@@ -107,7 +107,7 @@ spec:
               ignore:
               - kind: Table
     - id: create-argocd-app
-      name: Create ArgoCD App
+      name: Create ArgoCD App with Pruning Disabled
       action: kube:apply
       input:
         namespaced: true
@@ -125,7 +125,7 @@ spec:
             project: ${{parameters.table_name}}-project
             destination:
               namespace: ${{parameters.namespace}}
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
             source:
               repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.table_name}}.git
               targetRevision: HEAD
@@ -144,8 +144,11 @@ spec:
               syncOptions:
               - CreateNamespace=false
               - FailOnSharedResource=true
+            ignoreDifferences:
+            - group: dynamodb.services.k8s.aws
+              kind: Table
     - id: register
-      name: Register
+      name: Register in catalog
       action: catalog:register
       input:
         repoContentsUrl: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.table_name}}/-/blob/main
@@ -159,9 +162,16 @@ spec:
     links:
       - title: Repository
         url: ${{ steps.publish.output.remoteUrl }}
-      - title: Open in catalog
-        icon: catalog
-        entityRef: ${{ steps.register.output.entityRef }}
+      - title: View catalog-info.yaml
+        url: ${{ steps.publish.output.remoteUrl }}/-/blob/main/catalog-info.yaml
       - title: ArgoCD Application
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{ parameters.table_name }}?view=tree&resource=
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{ parameters.table_name }}?view=tree&resource=
         icon: web
+    text:
+      - title: Manual Catalog Registration
+        content: |
+          To register this component in Backstage catalog, go to:
+          /catalog-import
+          
+          And add this URL:
+          ${{ steps.publish.output.remoteUrl }}/-/blob/main/catalog-info.yaml

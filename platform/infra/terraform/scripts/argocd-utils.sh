@@ -15,32 +15,492 @@ export BOOTSTRAP_APPS=(
     "fleet-secrets"
 )
 
+# Infrastructure Verification Functions
+
+# Verify cluster infrastructure health
+verify_cluster_infrastructure() {
+    local status=0
+    
+    print_info "Verifying cluster infrastructure..."
+    
+    # Check nodes
+    local node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+    local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | { grep -c " Ready " || true; })
+    
+    if [ "$node_count" -eq 0 ]; then
+        print_error "No nodes found in cluster"
+        return 2
+    elif [ "$ready_nodes" -lt "$node_count" ]; then
+        print_warning "Nodes: $ready_nodes/$node_count ready"
+        status=1
+    else
+        print_success "Nodes: $ready_nodes/$node_count ready"
+    fi
+    
+    # Check node capacity
+    local allocatable_pods=$(kubectl get nodes -o json 2>/dev/null | jq -r '[.items[].status.allocatable.pods | tonumber] | add' 2>/dev/null || echo "0")
+    local current_pods=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l)
+    
+    if [ "$allocatable_pods" -gt 0 ]; then
+        local pod_usage=$((current_pods * 100 / allocatable_pods))
+        if [ "$pod_usage" -gt 90 ]; then
+            print_warning "Pod capacity: $current_pods/$allocatable_pods (${pod_usage}% - high utilization)"
+            status=1
+        else
+            print_info "Pod capacity: $current_pods/$allocatable_pods (${pod_usage}%)"
+        fi
+    fi
+    
+    return $status
+}
+
+# Verify namespace exists and is active
+verify_namespace_exists() {
+    local namespace=$1
+    
+    if [ -z "$namespace" ]; then
+        return 1
+    fi
+    
+    local ns_status=$(kubectl get namespace "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null)
+    
+    if [ -z "$ns_status" ]; then
+        print_warning "Namespace $namespace does not exist"
+        return 2
+    elif [ "$ns_status" != "Active" ]; then
+        print_warning "Namespace $namespace is in $ns_status phase"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Verify operator health
+verify_operator_health() {
+    local operator=$1
+    local namespace=$2
+    local label_selector=$3
+    
+    if ! verify_namespace_exists "$namespace" 2>/dev/null; then
+        print_warning "Operator $operator: namespace $namespace not found"
+        return 2
+    fi
+    
+    local pods=$(kubectl get pods -n "$namespace" -l "$label_selector" --no-headers 2>/dev/null || echo "")
+    
+    if [ -z "$pods" ]; then
+        print_warning "Operator $operator: no pods found"
+        return 2
+    fi
+    
+    local total=$(echo "$pods" | wc -l)
+    local running=$(echo "$pods" | { grep -c "Running" 2>/dev/null || true; })
+    local completed=$(echo "$pods" | { grep -c "Completed" 2>/dev/null || true; })
+    
+    # Ensure numeric values
+    running=$(echo "$running" | tr -d '[:space:]')
+    completed=$(echo "$completed" | tr -d '[:space:]')
+    total=$(echo "$total" | tr -d '[:space:]')
+    
+    local healthy=$((running + completed))
+    
+    if [ "$running" -eq 0 ] && [ "$completed" -eq 0 ]; then
+        print_error "Operator $operator: 0/$total pods running or completed"
+        return 2
+    elif [ "$healthy" -lt "$total" ]; then
+        local unhealthy=$((total - healthy))
+        print_warning "Operator $operator: $running running, $completed completed, $unhealthy unhealthy"
+        return 1
+    else
+        if [ "$completed" -gt 0 ]; then
+            print_success "Operator $operator: $running running, $completed completed"
+        else
+            print_success "Operator $operator: $running/$total pods running"
+        fi
+    fi
+    
+    return 0
+}
+
+# Generate infrastructure report
+get_infrastructure_report() {
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_info "Infrastructure Health Report"
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    verify_cluster_infrastructure || true
+    local infra_status=$?
+    
+    echo ""
+    print_info "Operator Health:"
+    
+    verify_operator_health "KubeVela" "vela-system" "app.kubernetes.io/name=vela-core" || true
+    verify_operator_health "Crossplane" "crossplane-system" "app=crossplane" || true
+    verify_operator_health "Argo Workflows" "argo" "app in (argo-server,workflow-controller)" || true
+    verify_operator_health "Grafana Operator" "grafana-operator" "app.kubernetes.io/name=grafana-operator" || true
+    
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    
+    return 0
+}
+
+# Generate dependency report with root cause analysis
+generate_dependency_report() {
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_info "Dependency Analysis Report"
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Get all apps with sync wave and status
+    local apps_data=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | 
+        {
+            name: .metadata.name,
+            wave: (.metadata.annotations."argocd.argoproj.io/sync-wave" // "0"),
+            sync: (.status.sync.status // "Unknown"),
+            health: (.status.health.status // "Unknown"),
+            message: ((.status.operationState.message // .status.conditions[0]?.message // "") | gsub("\n"; " "))
+        } | 
+        "\(.wave)|\(.name)|\(.sync)|\(.health)|\(.message)"' 2>/dev/null)
+    
+    # Group by sync wave
+    local waves=$(echo "$apps_data" | cut -d'|' -f1 | sort -n | uniq)
+    
+    for wave in $waves; do
+        local wave_apps=$(echo "$apps_data" | grep "^${wave}|")
+        local total=$(echo "$wave_apps" | wc -l)
+        local healthy=$(echo "$wave_apps" | { grep -c "|Synced|Healthy|" || true; })
+        
+        if [ "$healthy" -eq "$total" ]; then
+            print_success "Sync Wave $wave: $healthy/$total healthy"
+        else
+            print_warning "Sync Wave $wave: $healthy/$total healthy"
+            
+            # Show unhealthy apps with categorized issues
+            echo "$wave_apps" | while IFS='|' read -r w name sync health message; do
+                if [ "$sync" != "Synced" ] || [ "$health" != "Healthy" ]; then
+                    local issue_category="Unknown"
+                    local root_cause=""
+                    
+                    # Categorize issue
+                    if echo "$message" | grep -q "controller sync timeout"; then
+                        issue_category="Sync Timeout"
+                        root_cause="Application controller timeout (>15min)"
+                    elif echo "$message" | grep -q "Too long: may not be more than 262144 bytes"; then
+                        issue_category="CRD Annotation Size"
+                        root_cause="CRD annotation exceeds 262KB limit"
+                    elif echo "$message" | grep -q "cannot reference a different revision"; then
+                        issue_category="Revision Conflict"
+                        root_cause="Git revision mismatch"
+                    elif echo "$message" | grep -q "waiting for healthy state.*Workflow"; then
+                        issue_category="Workflow Dependency"
+                        root_cause="Workflow not started or incomplete"
+                    elif [ "$health" = "Degraded" ] && [ "$sync" = "Synced" ]; then
+                        issue_category="Resource Degraded"
+                        root_cause="Resources synced but not healthy"
+                    elif [ "$health" = "Missing" ]; then
+                        issue_category="Resources Missing"
+                        root_cause="Expected resources not found"
+                    fi
+                    
+                    print_error "  ├─ $name: $sync/$health"
+                    print_info "  │  Category: $issue_category"
+                    [ -n "$root_cause" ] && print_info "  │  Root Cause: $root_cause"
+                fi
+            done
+        fi
+    done
+    
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+# Verify Keycloak secrets and trigger PostSync if needed
+verify_keycloak_secrets() {
+    local secret_name="${RESOURCE_PREFIX:-peeks}-hub/keycloak-clients"
+    
+    print_info "Checking Keycloak secrets..."
+    
+    # Check AWS Secrets Manager
+    if aws secretsmanager describe-secret --secret-id "$secret_name" --region "${AWS_REGION:-us-west-2}" >/dev/null 2>&1; then
+        print_success "Keycloak clients secret exists in AWS Secrets Manager"
+        return 0
+    fi
+    
+    print_warning "Keycloak clients secret not found: $secret_name"
+    
+    # Check if config job completed
+    local job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
+    
+    if [ "$job_status" = "True" ]; then
+        print_warning "Config job completed but secret not found - may need manual investigation"
+        return 1
+    fi
+    
+    print_info "Triggering Keycloak sync to execute PostSync hooks..."
+    
+    # Force sync
+    kubectl patch application "keycloak-${RESOURCE_PREFIX}-hub" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+    sleep 2
+    kubectl patch application "keycloak-${RESOURCE_PREFIX}-hub" -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+    
+    # Wait for job
+    local timeout=300
+    local elapsed=0
+    print_info "Waiting for Keycloak config job to complete (timeout: ${timeout}s)..."
+    while [ $elapsed -lt $timeout ]; do
+        job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
+        if [ "$job_status" = "True" ]; then
+            print_success "Keycloak config job completed"
+            sleep 5
+            
+            # Verify secret created
+            if aws secretsmanager describe-secret --secret-id "$secret_name" --region "${AWS_REGION:-us-west-2}" >/dev/null 2>&1; then
+                print_success "Keycloak clients secret created successfully"
+                return 0
+            else
+                print_error "Secret still not found after job completion"
+                return 1
+            fi
+        fi
+        sleep 10
+        elapsed=$((elapsed + 10))
+    done
+    
+    print_error "Timeout waiting for Keycloak config job"
+    return 1
+}
+
+# Refresh apps that depend on Keycloak secrets
+refresh_keycloak_dependent_apps() {
+    local dependent_apps="backstage argo-workflows jupyterhub devlake"
+    
+    print_info "Waiting for ExternalSecrets to sync..."
+    
+    # Wait for ExternalSecrets to sync (max 60 seconds)
+    local timeout=60
+    local elapsed=0
+    local all_ready=false
+    
+    while [ $elapsed -lt $timeout ]; do
+        all_ready=true
+        
+        for app in $dependent_apps; do
+            # Check if ExternalSecret exists and is ready
+            local es_status=$(kubectl get externalsecret -n "$app" -l "app.kubernetes.io/instance=${app}-${RESOURCE_PREFIX}-hub" \
+                -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+            
+            if [ -n "$es_status" ]; then
+                if echo "$es_status" | grep -q "False"; then
+                    all_ready=false
+                    break
+                fi
+            fi
+        done
+        
+        if [ "$all_ready" = true ]; then
+            print_success "All ExternalSecrets synced successfully"
+            break
+        fi
+        
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+    
+    if [ "$all_ready" = false ]; then
+        print_warning "Some ExternalSecrets still syncing after ${timeout}s, forcing refresh anyway"
+    fi
+    
+    # Only refresh apps that are not already Healthy
+    print_info "Refreshing apps that depend on Keycloak secrets..."
+    
+    local needs_refresh=false
+    for app in $dependent_apps; do
+        local app_name="${app}-${RESOURCE_PREFIX}-hub"
+        if kubectl get application "$app_name" -n argocd >/dev/null 2>&1; then
+            local health=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+            local sync=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
+            local op_phase=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+            if [ "$health" = "Healthy" ] && { [ "$sync" = "Synced" ] || [ "$op_phase" = "Succeeded" ]; }; then
+                print_success "  $app_name already Healthy ($sync), skipping"
+                continue
+            fi
+            print_info "  Refreshing $app_name (health=$health, sync=$sync)..."
+            kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            needs_refresh=true
+            sleep 1
+        fi
+    done
+    
+    if [ "$needs_refresh" = false ]; then
+        print_success "All Keycloak-dependent apps already healthy, no refresh needed"
+        return 0
+    fi
+    
+    # Give apps a moment to start syncing
+    sleep 5
+    
+    # Trigger sync for apps that are OutOfSync and not Healthy
+    print_info "Triggering sync for OutOfSync dependent apps..."
+    for app in $dependent_apps; do
+        local app_name="${app}-${RESOURCE_PREFIX}-hub"
+        if kubectl get application "$app_name" -n argocd >/dev/null 2>&1; then
+            local health=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+            local sync_status=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
+            if [ "$sync_status" = "OutOfSync" ] && [ "$health" != "Healthy" ]; then
+                print_info "  Syncing $app_name..."
+                sync_argocd_app "$app_name" || true
+            fi
+        fi
+    done
+}
+
+# Detect workflows with null phase (never started)
+detect_null_phase_workflows() {
+    local namespace=$1
+    
+    if ! verify_namespace_exists "$namespace" >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    kubectl get workflows.argoproj.io -n "$namespace" -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.phase == null or .status.phase == "") | 
+        "\(.metadata.name)|\(.metadata.creationTimestamp)"' 2>/dev/null
+}
+
+# Trigger workflow manually
+trigger_workflow_manually() {
+    local workflow_name=$1
+    local namespace=$2
+    
+    print_info "Attempting to trigger workflow: $workflow_name in namespace: $namespace"
+    
+    # Check dependencies first
+    print_info "  Checking workflow dependencies..."
+    verify_kubevela_dependencies "$namespace"
+    local dep_status=$?
+    
+    if [ $dep_status -eq 2 ]; then
+        print_error "  Critical dependencies missing, cannot trigger workflow"
+        return 1
+    elif [ $dep_status -eq 1 ]; then
+        print_warning "  Some dependencies not ready, workflow may fail"
+    fi
+    
+    # Get workflow definition
+    local workflow_def=$(kubectl get workflow "$workflow_name" -n "$namespace" -o json 2>/dev/null)
+    
+    if [ -z "$workflow_def" ]; then
+        print_error "  Workflow $workflow_name not found"
+        return 1
+    fi
+    
+    # Check if workflow has actually started (has phase)
+    local current_phase=$(echo "$workflow_def" | jq -r '.status.phase // "null"')
+    
+    if [ "$current_phase" != "null" ] && [ "$current_phase" != "" ]; then
+        print_info "  Workflow already has phase: $current_phase, skipping trigger"
+        return 0
+    fi
+    
+    # Delete and recreate workflow to trigger it (workflows are immutable)
+    print_info "  Deleting workflow to trigger recreation..."
+    kubectl delete workflow "$workflow_name" -n "$namespace" --ignore-not-found=true 2>/dev/null
+    
+    sleep 2
+    
+    # Extract and recreate workflow
+    echo "$workflow_def" | jq 'del(.status, .metadata.uid, .metadata.resourceVersion, .metadata.creationTimestamp, .metadata.generation, .metadata.managedFields)' | \
+        kubectl apply -f - 2>/dev/null
+    
+    if [ $? -eq 0 ]; then
+        print_success "  Workflow $workflow_name triggered successfully"
+        return 0
+    else
+        print_error "  Failed to trigger workflow $workflow_name"
+        return 1
+    fi
+}
+
+# Verify KubeVela/Crossplane dependencies for an app
+verify_kubevela_dependencies() {
+    local namespace=$1
+    local status=0
+    
+    print_info "Checking KubeVela/Crossplane dependencies for namespace: $namespace"
+    
+    # Check if namespace exists
+    if ! verify_namespace_exists "$namespace" >/dev/null 2>&1; then
+        print_warning "  Namespace $namespace does not exist"
+        return 2
+    fi
+    
+    # Check for KubeVela Applications
+    local vela_apps=$(kubectl get applications.core.oam.dev -n "$namespace" --no-headers 2>/dev/null)
+    
+    if [ -n "$vela_apps" ]; then
+        while read -r name rest; do
+            local app_status=$(kubectl get application.core.oam.dev "$name" -n "$namespace" -o jsonpath='{.status.status}' 2>/dev/null)
+            if [ "$app_status" = "running" ] || [ "$app_status" = "runningWorkflow" ]; then
+                print_success "  KubeVela App $name: $app_status"
+            else
+                print_warning "  KubeVela App $name: ${app_status:-unknown}"
+                status=1
+            fi
+        done <<< "$vela_apps"
+    fi
+    
+    # Check for Crossplane-managed database secrets
+    local db_secrets=$(kubectl get secrets -n crossplane-system --no-headers 2>/dev/null | grep -E "${namespace}.*connection" || echo "")
+    
+    if [ -n "$db_secrets" ]; then
+        while read -r secret_name rest; do
+            local has_endpoint=$(kubectl get secret "$secret_name" -n crossplane-system -o jsonpath='{.data.endpoint}' 2>/dev/null)
+            local has_password=$(kubectl get secret "$secret_name" -n crossplane-system -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null)
+            
+            if [ -n "$has_endpoint" ] && [ -n "$has_password" ]; then
+                print_success "  Crossplane Secret $secret_name: ready (endpoint + password)"
+            else
+                print_warning "  Crossplane Secret $secret_name: incomplete"
+                status=1
+            fi
+        done <<< "$db_secrets"
+    else
+        print_info "  No Crossplane database secrets found (may not be required)"
+    fi
+    
+    return $status
+}
+
+# Detect applications with sync timeout pattern
+detect_sync_timeout_pattern() {
+    local timeout_threshold=${1:-900}  # 15 minutes default
+    
+    kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r --arg threshold "$timeout_threshold" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '.items[] | select(
+            .status.operationState.phase == "Running" and
+            ((.status.operationState.message // "") | contains("controller sync timeout")) and
+            ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - ($threshold | tonumber))
+        ) | 
+        {
+            name: .metadata.name,
+            duration: (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime)),
+            message: .status.operationState.message,
+            resources: [.status.resources[] | select(.status == "OutOfSync") | .kind + "/" + .name] | join(", ")
+        } | 
+        "\(.name)|\(.duration)|\(.message)|\(.resources)"' 2>/dev/null
+}
+
 # Function to authenticate ArgoCD CLI
 authenticate_argocd() {
     if command -v argocd >/dev/null 2>&1; then
-        local argocd_server=""
-        
-        # Always recalculate the domain to handle cases where it becomes available later
-        # Calculate domain the same way as 1-tools-urls.sh
-        local domain_name=$(kubectl get secret ${RESOURCE_PREFIX}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null)
-        if [ -z "$domain_name" ] || [ "$domain_name" = "null" ]; then
-            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null)
-        fi
-        
-        # Fallback to ARGOCD_URL environment variable if domain calculation fails
-        if [ -z "$domain_name" ] || [ "$domain_name" = "None" ] || [ "$domain_name" = "null" ]; then
-            if [ -n "$ARGOCD_URL" ]; then
-                # Extract hostname from URL (remove https:// and /argocd)
-                domain_name=$(echo "$ARGOCD_URL" | sed 's|https://||' | sed 's|/argocd||')
-            fi
-        fi
-        
-        argocd_server="$domain_name"
-        
-        if [ -n "$argocd_server" ] && [ "$argocd_server" != "None" ] && [ "$argocd_server" != "null" ]; then
-            export ARGOCD_SERVER="$argocd_server"
-            # Login using admin credentials with timeout
-            if timeout 30 argocd login --username admin --password "${IDE_PASSWORD}" --grpc-web-root-path /argocd "$argocd_server" --insecure 2>/dev/null; then
+        # For EKS Marina managed ArgoCD, use environment variables (no login needed)
+        if [ -n "$ARGOCD_SERVER" ] && [ -n "$ARGOCD_AUTH_TOKEN" ]; then
+            export ARGOCD_SERVER
+            export ARGOCD_AUTH_TOKEN
+            export ARGOCD_OPTS="${ARGOCD_OPTS:---grpc-web}"
+            # Test if ArgoCD CLI is working
+            if argocd app list >/dev/null 2>&1; then
                 return 0
             fi
         fi
@@ -67,14 +527,19 @@ terminate_argocd_operation() {
             if echo "$output" | grep -q "Unable to terminate operation"; then
                 print_info "No operation to terminate for $app_name"
             else
-                print_warning "ArgoCD CLI terminate failed: $output, using direct kubectl approach"
-                kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+                print_warning "ArgoCD CLI terminate failed, trying multiple kubectl approaches"
+                # Try multiple approaches
+                kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/status/operationState"}]' 2>/dev/null || true
+                sleep 1
+                kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/operation"}]' 2>/dev/null || true
             fi
         fi
     else
-        print_warning "ArgoCD CLI authentication failed, using direct kubectl approach"
-        # Remove the operationState entirely - this is more effective than setting operation to null
-        kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+        print_warning "ArgoCD CLI authentication failed, using kubectl approaches"
+        # Try multiple approaches in sequence
+        kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/status/operationState"}]' 2>/dev/null || true
+        sleep 1
+        kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/operation"}]' 2>/dev/null || true
     fi
 }
 
@@ -96,11 +561,68 @@ sync_argocd_app_in_background() {
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
         print_info "Using ArgoCD CLI to sync $app_name (background)"
-        argocd app sync "$app_name" &
+        argocd app sync "$app_name" >/dev/null 2>&1 &
     else
         print_warning "ArgoCD CLI authentication failed, using kubectl approach (background)"
         kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{}}}' &
     fi
+}
+
+# Function to check and trigger Keycloak PostSync hook
+check_keycloak_postsync_hook() {
+    local app_name=$1
+    
+    # Only check keycloak apps
+    if [[ ! "$app_name" == *"keycloak"* ]]; then
+        return 0
+    fi
+    
+    # Check if config job exists and completed
+    local job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
+    
+    if [ "$job_status" = "True" ]; then
+        print_info "Keycloak config job already completed"
+        return 0
+    fi
+    
+    # Check if keycloak-clients secret exists in AWS Secrets Manager
+    local secret_name="${RESOURCE_PREFIX:-peeks}-hub/keycloak-clients"
+    local secret_exists=$(aws secretsmanager describe-secret --secret-id "$secret_name" --region ${AWS_REGION:-us-west-2} --query 'Name' --output text 2>/dev/null || echo "")
+    
+    if [ -n "$secret_exists" ] && [ "$secret_exists" != "None" ]; then
+        print_info "Keycloak secrets already exist in AWS Secrets Manager"
+        return 0
+    fi
+    
+    print_warning "Keycloak PostSync hook not executed, triggering sync..."
+    
+    # Clear any existing operation
+    kubectl patch application "$app_name" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+    sleep 2
+    
+    # Trigger fresh sync to execute PostSync hooks
+    kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+    
+    # Wait for job to complete or fail
+    print_info "Waiting for Keycloak config job to complete..."
+    local timeout=300
+    local elapsed=0
+    while [ $elapsed -lt $timeout ]; do
+        job_status=$(kubectl get job config -n keycloak -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || echo "")
+        if [ "$job_status" = "Complete" ]; then
+            print_success "Keycloak config job completed successfully"
+            return 0
+        elif [ "$job_status" = "Failed" ]; then
+            print_warning "Keycloak config job failed"
+            kubectl logs job/config -n keycloak --tail=20 2>/dev/null || true
+            return 1
+        fi
+        sleep 10
+        elapsed=$((elapsed + 10))
+    done
+    
+    print_warning "Timeout waiting for Keycloak config job"
+    return 1
 }
 
 # Function to sync ArgoCD application
@@ -115,21 +637,77 @@ sync_argocd_app() {
         local sync=$(echo "$app_status" | jq -r '.status.sync.status // "Unknown"')
         local operation_phase=$(echo "$app_status" | jq -r '.status.operationState.phase // "None"')
         
-        # Check for revision mismatch errors in operation state
+        # Check for revision mismatch errors in operation state OR stuck in Running for too long
         local operation_message=$(echo "$app_status" | jq -r '.status.operationState.message // ""')
+        local operation_started=$(echo "$app_status" | jq -r '.status.operationState.startedAt // ""')
         local revision_mismatch=false
-        if [[ "$operation_message" == *"cannot reference a different revision"* ]] || [[ "$operation_message" == *"ComparisonError"* ]]; then
-            print_info "Detected revision mismatch in $app_name, applying complete fix..."
-            terminate_argocd_operation "$app_name"
-            sleep 2
-            refresh_argocd_app "$app_name" "true"
+        
+        # Check if stuck in Running state for more than 5 minutes
+        local stuck_running=false
+        if [ "$operation_phase" = "Running" ] && [ -n "$operation_started" ] && [ "$operation_started" != "null" ]; then
+            local start_epoch=$(date -d "$operation_started" +%s 2>/dev/null || echo "0")
+            local now_epoch=$(date +%s)
+            local elapsed=$((now_epoch - start_epoch))
+            # Keycloak PostSync hook (config job + PushSecret) needs 10+ minutes — use 20min timeout
+            local stuck_threshold=300
+            if [[ "$app_name" == *"keycloak"* ]]; then
+                stuck_threshold=1200
+            fi
+            if [ $elapsed -gt $stuck_threshold ]; then
+                print_warning "App $app_name stuck in Running state for ${elapsed}s (>${stuck_threshold}s)"
+                stuck_running=true
+            fi
+        fi
+        
+        if [[ "$operation_message" == *"cannot reference a different revision"* ]] || [[ "$operation_message" == *"ComparisonError"* ]] || [ "$stuck_running" = true ]; then
+            print_warning "Detected revision mismatch or stuck operation in $app_name - applying fix..."
+            
+            # Extract the commit that main resolves to from error message
+            local target_commit=$(echo "$operation_message" | grep -oP 'references "main" which resolves to "\K[a-f0-9]{40}' | head -1)
+            
+            # Check if cluster-addons has already synced this commit (check first revision in array)
+            local cluster_addons_revision=$(kubectl get application cluster-addons -n argocd -o jsonpath='{.status.sync.revisions[0]}' 2>/dev/null)
+            local cluster_addons_phase=$(kubectl get application cluster-addons -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+            
+            if [ "$cluster_addons_phase" != "Running" ] && [ "$cluster_addons_revision" != "$target_commit" ]; then
+                print_info "Force syncing cluster-addons (current: $cluster_addons_revision, target: $target_commit)"
+                kubectl patch application cluster-addons -n argocd --type='merge' -p='{"operation":{"sync":{}}}' 2>/dev/null || true
+                sleep 3
+            else
+                print_info "cluster-addons already at target revision ($cluster_addons_revision), skipping sync"
+            fi
+            
+            # Step 1: Disable auto-sync temporarily
+            print_info "Step 1: Disabling auto-sync"
+            kubectl patch application "$app_name" -n argocd --type merge -p '{"spec":{"syncPolicy":null}}' 2>/dev/null || true
             sleep 5
+            
+            # Step 2: Hard refresh to clear comparison error (KEY STEP)
+            print_info "Step 2: Hard refresh to clear comparison error"
+            kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep 10
+            
+            # Step 3: Remove stuck operation (try both paths)
+            print_info "Step 3: Removing stuck operation"
+            kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/status/operationState"}]' 2>/dev/null || true
+            sleep 3
+            kubectl patch application "$app_name" -n argocd --type json -p='[{"op":"remove","path":"/operation"}]' 2>/dev/null || true
+            sleep 5
+            
+            # Step 4: Trigger new sync manually
+            print_info "Step 4: Triggering new sync"
+            kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{"revision":null}}}' 2>/dev/null || true
+            sleep 5
+            
             revision_mismatch=true
         fi
         
         # Skip if already healthy and synced with no running operations (unless we just fixed revision mismatch)
-        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ] && [ "$revision_mismatch" = false ]; then
+        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ] && [ "$operation_phase" != "Failed" ] && [ "$revision_mismatch" = false ]; then
             print_info "App $app_name already healthy and synced, skipping sync"
+            
+            # Check Keycloak PostSync hook even if app is synced
+            check_keycloak_postsync_hook "$app_name"
             return 0
         fi
         
@@ -139,29 +717,59 @@ sync_argocd_app() {
             return 0
         fi
         
+        # Clear Failed operationState so the controller accepts a new sync.
+        # With EKS ArgoCD capability, kubectl patch on /status is silently ignored,
+        # so we use raw API replace to modify the status directly.
+        if [ "$operation_phase" = "Failed" ]; then
+            print_warning "App $app_name has Failed operation, clearing via raw API replace..."
+            kubectl get application "$app_name" -n argocd -o json | \
+                jq '.status.operationState.phase = "Succeeded" | .status.operationState.message = "Cleared by init script recovery"' | \
+                kubectl replace --raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/${app_name}" -f - >/dev/null 2>&1 || \
+                print_warning "Failed to clear operationState for $app_name, sync may not proceed"
+            sleep 3
+        fi
+        
         print_info "App $app_name needs sync (health: $health, sync: $sync, operation: $operation_phase)"
     fi
     
-    # Force sync for keycloak to ensure PostSync hooks execute
-    if [[ "$app_name" == *"keycloak"* ]]; then
-        force_flag="--force"
-        print_info "Using force sync for $app_name to execute PostSync hooks"
-    fi
+    # NOTE: Do NOT use --force for keycloak (or any app with ServerSideApply=true).
+    # --force is incompatible with --server-side and causes an infinite retry loop.
+    # PostSync hooks execute on any successful sync — force is not needed.
     
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
         print_info "Using ArgoCD CLI to sync $app_name"
-        argocd app sync "$app_name" $force_flag --timeout 200 || {
+        argocd app sync "$app_name" $force_flag --timeout 200 >/dev/null 2>&1 || {
             print_warning "ArgoCD CLI sync failed, falling back to kubectl"
-            kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+            kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
         }
     else
         print_warning "ArgoCD CLI authentication failed, using kubectl"
-        kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+        kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
+    fi
+    
+    # Check Keycloak PostSync hook after sync, with recovery on failure
+    if [[ "$app_name" == *"keycloak"* ]]; then
+        local max_attempts=3
+        local attempt=1
+        while [ $attempt -le $max_attempts ]; do
+            if check_keycloak_postsync_hook "$app_name"; then
+                return 0
+            fi
+            print_warning "Keycloak PostSync attempt $attempt/$max_attempts failed, clearing stuck operation and retrying..."
+            # Clear stuck operation via raw API (handles EKS capability where status subresource isn't exposed)
+            kubectl get application "$app_name" -n argocd -o json | \
+                jq '.status.operationState.phase = "Failed" | .status.operationState.message = "Cleared for retry" | del(.status.operationState.operation.retry)' | \
+                kubectl replace --raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/${app_name}" -f - >/dev/null 2>&1 || true
+            sleep 10
+            attempt=$((attempt + 1))
+        done
+        print_warning "Keycloak PostSync hook failed after $max_attempts attempts"
+        return 1
     fi
 }
 
-# Handle stuck operations (terminate if running > 3 mins)
+# Handle stuck operations (terminate if running > 3 mins, except keycloak which needs longer for PostSync)
 handle_stuck_operations() {
     # Get stuck operations using both methods for better detection
     local stuck_apps_jq=$(kubectl get applications -n argocd -o json 2>/dev/null | \
@@ -178,6 +786,15 @@ handle_stuck_operations() {
     if [ -n "$all_stuck_apps" ]; then
         echo "$all_stuck_apps" | while read -r app; do
             if [ -n "$app" ]; then
+                # Keycloak PostSync hook needs 10+ minutes — only intervene after 20min
+                if [[ "$app" == *"keycloak"* ]]; then
+                    local kc_started=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.operationState.startedAt}' 2>/dev/null)
+                    local kc_elapsed=$(( $(date +%s) - $(date -d "$kc_started" +%s 2>/dev/null || echo "0") ))
+                    if [ $kc_elapsed -lt 1200 ]; then
+                        print_info "Keycloak $app running for ${kc_elapsed}s, allowing up to 20min for PostSync"
+                        continue
+                    fi
+                fi
                 print_warning "Terminating stuck operation for $app (running > 3 minutes)"
                 terminate_argocd_operation "$app"
                 sleep 2
@@ -185,6 +802,117 @@ handle_stuck_operations() {
             fi
         done
     fi
+}
+
+# Recover from CRD annotation size issues and missing namespaces
+recover_crd_and_namespace_issues() {
+    local app_name=$1
+    
+    # Get application details
+    local app_json=$(kubectl get application "$app_name" -n argocd -o json 2>/dev/null)
+    if [ -z "$app_json" ]; then
+        return 0
+    fi
+    
+    # Check for CRD annotation size errors
+    local operation_message=$(echo "$app_json" | jq -r '.status.operationState.message // ""')
+    if [[ "$operation_message" == *"metadata.annotations: Too long: may not be more than 262144 bytes"* ]]; then
+        print_warning "Detected CRD annotation size issue in $app_name"
+        
+        # Extract CRD names from error message
+        local crds=$(echo "$operation_message" | grep -oP 'CustomResourceDefinition\.apiextensions\.k8s\.io "\K[^"]+' | sort -u)
+        
+        if [ -n "$crds" ]; then
+            echo "$crds" | while read -r crd; do
+                if [ -n "$crd" ]; then
+                    print_info "Cleaning oversized annotations from CRD: $crd"
+                    kubectl get crd "$crd" -o json 2>/dev/null | \
+                        jq 'del(.metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"])' | \
+                        kubectl replace -f - 2>/dev/null || true
+                fi
+            done
+            
+            # Clear failed operation state and trigger resync
+            kubectl patch application "$app_name" -n argocd --type=json -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+            sleep 2
+            sync_argocd_app "$app_name"
+        fi
+    fi
+    
+    # Check for missing namespace errors
+    if [[ "$operation_message" == *"namespaces"*"not found"* ]]; then
+        # Extract namespace from error or app spec
+        local target_namespace=$(echo "$app_json" | jq -r '.spec.destination.namespace // ""')
+        
+        if [ -n "$target_namespace" ] && [ "$target_namespace" != "null" ]; then
+            if ! kubectl get namespace "$target_namespace" >/dev/null 2>&1; then
+                print_warning "Creating missing namespace: $target_namespace"
+                kubectl create namespace "$target_namespace" 2>/dev/null || true
+                sleep 2
+                
+                # Clear failed operation state and trigger resync
+                kubectl patch application "$app_name" -n argocd --type=json -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+                sleep 2
+                sync_argocd_app "$app_name"
+            fi
+        fi
+    fi
+}
+
+# Verify critical resources actually exist in cluster
+verify_critical_resources() {
+    local app_name=$1
+    
+    # Only check platform-manifests-bootstrap apps
+    if [[ ! "$app_name" == *"platform-manifests-bootstrap"* ]]; then
+        return 0  # Skip other apps
+    fi
+    
+    # Get expected NodePool resources from app status
+    local expected_nodepools=$(kubectl get application "$app_name" -n argocd -o json 2>/dev/null | \
+        jq -r '.status.resources[]? | select(.kind == "NodePool") | .name' 2>/dev/null || echo "")
+    
+    if [ -z "$expected_nodepools" ]; then
+        return 0  # No NodePools expected
+    fi
+    
+    # Get cluster context from app destination
+    local cluster_context=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.spec.destination.name}' 2>/dev/null)
+    
+    if [ -z "$cluster_context" ]; then
+        return 0  # Can't determine cluster
+    fi
+    
+    # Check if NodePools actually exist in target cluster
+    local missing_nodepools=""
+    while read -r nodepool; do
+        if [ -n "$nodepool" ]; then
+            if ! kubectl get nodepool "$nodepool" --context "$cluster_context" >/dev/null 2>&1; then
+                missing_nodepools="$missing_nodepools $nodepool"
+            fi
+        fi
+    done <<< "$expected_nodepools"
+    
+    # If NodePools are missing, force recreation
+    if [ -n "$missing_nodepools" ]; then
+        print_warning "Critical resources missing for $app_name:$missing_nodepools"
+        print_info "Forcing hard refresh and sync to recreate missing resources..."
+        
+        # Clear operation state
+        kubectl patch application "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+        kubectl patch application "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+        
+        # Force hard refresh
+        kubectl annotate application "$app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+        sleep 5
+        
+        # Trigger sync with prune (no force — incompatible with ServerSideApply)
+        kubectl patch application "$app_name" -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}},"prune":true}}}' 2>/dev/null || true
+        
+        return 1  # Signal that we fixed something
+    fi
+    
+    return 0  # Everything is fine
 }
 
 # Handle sync issues (revision conflicts and OutOfSync applications)
@@ -211,6 +939,34 @@ handle_sync_issues() {
         done
     fi
     
+    # Handle Degraded applications (Synced but Degraded health)
+    local degraded_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.sync.status == "Synced" and .status.health.status == "Degraded") | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$degraded_apps" ]; then
+        echo "$degraded_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                print_info "Refreshing degraded application: $app"
+                refresh_argocd_app "$app" "true"
+                sleep 2
+                sync_argocd_app "$app"
+                sleep 2
+            fi
+        done
+    fi
+    
+    # Check for CRD and namespace issues in failed apps
+    local failed_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.operationState.phase == "Failed") | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$failed_apps" ]; then
+        echo "$failed_apps" | while read -r app; do
+            if [ -n "$app" ]; then
+                recover_crd_and_namespace_issues "$app"
+            fi
+        done
+    fi
+    
     # Handle OutOfSync/Healthy apps (just need refresh and sync)
     local outofsync_healthy=$(kubectl get applications -n argocd -o json 2>/dev/null | \
         jq -r '.items[] | select(.status.sync.status == "OutOfSync" and .status.health.status == "Healthy") | .metadata.name' 2>/dev/null || echo "")
@@ -219,6 +975,14 @@ handle_sync_issues() {
         echo "$outofsync_healthy" | while read -r app; do
             if [ -n "$app" ]; then
                 print_info "Syncing OutOfSync/Healthy application: $app"
+                
+                # Verify critical resources actually exist before syncing
+                if ! verify_critical_resources "$app"; then
+                    print_warning "Critical resources missing for $app, forced recreation initiated"
+                    sleep 5
+                    continue  # Skip normal sync, we already triggered force sync
+                fi
+                
                 refresh_argocd_app "$app"
                 sleep 1
                 sync_argocd_app "$app"
@@ -275,7 +1039,7 @@ wait_for_argocd_apps_health() {
         [ -z "$argocd_server_ready" ] && argocd_server_ready="0"
         
         # Also check actual pod status
-        argocd_pods_running=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | grep -c "1/1.*Running" || echo "0")
+        argocd_pods_running=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | { grep -c "1/1.*Running" || true; })
         
         if [ "$argocd_server_ready" -eq 0 ] || [ "$argocd_pods_running" -eq 0 ]; then
             print_warning "ArgoCD server not ready (deployment: $argocd_server_ready, running pods: $argocd_pods_running), waiting..."
@@ -422,44 +1186,140 @@ wait_for_argocd_apps_with_dependencies() {
     wait_for_remaining_apps_health
 }
 
+# Recover from stuck workflows
+recover_stuck_workflows() {
+    local namespace=$1
+    local max_age_minutes=${2:-15}
+    local workflows_deleted=false
+    
+    # Find workflows stuck in Running phase for more than max_age_minutes
+    local stuck_workflows=$(kubectl get workflows -n "$namespace" -o json 2>/dev/null | \
+        jq -r --arg max_age "$max_age_minutes" \
+        '.items[] | select(
+            .status.phase == "Running" and
+            (now - (.status.startedAt | fromdateiso8601)) > (($max_age | tonumber) * 60)
+        ) | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$stuck_workflows" ]; then
+        echo "$stuck_workflows" | while read -r workflow; do
+            if [ -n "$workflow" ]; then
+                print_warning "[$namespace] Deleting stuck workflow: $workflow (running > ${max_age_minutes}min)"
+                kubectl delete workflow "$workflow" -n "$namespace" --ignore-not-found=true 2>/dev/null || true
+                workflows_deleted=true
+            fi
+        done
+    fi
+    
+    # Find workflows in Error or Failed phase
+    local failed_workflows=$(kubectl get workflows -n "$namespace" -o json 2>/dev/null | \
+        jq -r '.items[] | select(.status.phase == "Error" or .status.phase == "Failed") | .metadata.name' 2>/dev/null || echo "")
+    
+    if [ -n "$failed_workflows" ]; then
+        echo "$failed_workflows" | while read -r workflow; do
+            if [ -n "$workflow" ]; then
+                print_warning "[$namespace] Deleting failed workflow: $workflow (phase: Error/Failed)"
+                kubectl delete workflow "$workflow" -n "$namespace" --ignore-not-found=true 2>/dev/null || true
+                workflows_deleted=true
+            fi
+        done
+    fi
+    
+    # If workflows were deleted, trigger sync of applications that manage them
+    if [ "$workflows_deleted" = true ]; then
+        print_info "[$namespace] Workflows deleted, triggering application sync to recreate them"
+        
+        # Find applications that target this namespace
+        local apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r --arg ns "$namespace" \
+            '.items[] | select(.spec.destination.namespace == $ns) | .metadata.name' 2>/dev/null || echo "")
+        
+        if [ -n "$apps" ]; then
+            echo "$apps" | while read -r app; do
+                if [ -n "$app" ]; then
+                    print_info "[$namespace] Syncing application: $app"
+                    kubectl patch application "$app" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+                    sleep 1
+                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                fi
+            done
+        fi
+        return 0
+    fi
+    
+    return 1
+}
+
 wait_for_sync_wave_completion() {
     local cluster=$1
     local max_wave=$2
-    local timeout=2700  # 45 minutes per phase
+    local timeout=3600  # 60 minutes per phase (increased from 45min to handle slow ArgoCD syncs)
     
-    print_info "[$cluster] Waiting for sync waves 0-$max_wave to complete..."
+    log_timestamp "[$cluster] Waiting for sync waves 0-$max_wave to complete..."
     
     local start_time=$(date +%s)
     while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+        local elapsed=$(($(date +%s) - start_time))
+        
+        # An app is considered "done" if:
+        # 1. It's Healthy AND Synced, OR
+        # 2. It's in HEALTHY_OUTOFSYNC_OK_APPS AND Healthy AND last operation Succeeded
         local pending_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
             jq -r --arg max_wave "$max_wave" \
             '.items[] | select(
                 ((.metadata.annotations."argocd.argoproj.io/sync-wave" // "0") | tonumber) <= ($max_wave | tonumber) and
-                ((.status.sync.status != "Synced" or .status.health.status != "Healthy") and
-                 (.status.operationState.phase // "None") != "Running")
+                not(
+                    (.status.health.status == "Healthy" and .status.sync.status == "Synced") or
+                    ((.status.operationState.phase // "None") == "Succeeded")
+                )
             ) | .metadata.name' 2>/dev/null)
         
-        # Filter out best effort apps from blocking
+        # Filter out best effort apps and healthy-outofsync-ok apps from blocking
         local blocking_apps=""
         for app in $pending_apps; do
             local is_best_effort=false
+            local is_healthy_outofsync_ok=false
+            
+            # Check if it's a best effort app
             for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
                 if [[ "$app" == "$best_effort_app" ]]; then
                     is_best_effort=true
-                    print_info "[$cluster] Syncing best effort app: $app (non-blocking)"
+                    log_timestamp "[$cluster] Syncing best effort app: $app (non-blocking)"
                     sync_argocd_app_in_background "$app"
                     break
                 fi
             done
+            
+            # Check if it's a healthy-outofsync-ok app with Succeeded operation
             if [[ "$is_best_effort" == false ]]; then
+                for healthy_outofsync_app in "${HEALTHY_OUTOFSYNC_OK_APPS[@]}"; do
+                    if [[ "$app" == "$healthy_outofsync_app" ]]; then
+                        # Verify it's Healthy with Succeeded operation
+                        local app_status=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
+                            jq -r '{health: .status.health.status, operation: (.status.operationState.phase // "None")}')
+                        local health=$(echo "$app_status" | jq -r '.health')
+                        local operation=$(echo "$app_status" | jq -r '.operation')
+                        
+                        if [[ "$health" == "Healthy" ]] && [[ "$operation" == "Succeeded" ]]; then
+                            is_healthy_outofsync_ok=true
+                            log_timestamp "[$cluster] App $app is Healthy with Succeeded operation (OutOfSync OK)"
+                            break
+                        fi
+                    fi
+                done
+            fi
+            
+            if [[ "$is_best_effort" == false ]] && [[ "$is_healthy_outofsync_ok" == false ]]; then
                 blocking_apps="$blocking_apps $app"
             fi
         done
         
         if [ -z "$blocking_apps" ]; then
-            print_success "[$cluster] Sync waves 0-$max_wave completed (ignoring best effort apps)"
+            log_timestamp "[$cluster] Sync waves 0-$max_wave completed (ignoring best effort apps) - elapsed: ${elapsed}s"
             return 0
         fi
+        
+        # Check for stuck Argo Workflows and recover
+        recover_stuck_workflows "devlake" 15 || true
         
         # Check for stuck apps and recover (both stuck operations and stuck Progressing)
         local stuck_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
@@ -472,7 +1332,7 @@ wait_for_sync_wave_completion() {
         if [ -n "$stuck_apps" ]; then
             echo "$stuck_apps" | while read -r app; do
                 if [ -n "$app" ]; then
-                    print_info "[$cluster] Recovering stuck app: $app"
+                    log_timestamp "[$cluster] Recovering stuck app: $app"
                     terminate_argocd_operation "$app"
                     sleep 1
                     refresh_argocd_app "$app" "true"
@@ -483,19 +1343,35 @@ wait_for_sync_wave_completion() {
             done
         fi
         
-        # Try to sync remaining problematic apps
+        # Try to sync remaining problematic apps (only if they actually need it)
         for app in $blocking_apps; do
             if [ -n "$app" ]; then
-                print_info "[$cluster] Syncing blocking app: $app"
-                sync_argocd_app "$app" || true
+                # Check detailed app status
+                local app_info=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
+                    jq -r '{sync: .status.sync.status, health: .status.health.status, operation: (.status.operationState.phase // "None")}')
+                local sync_status=$(echo "$app_info" | jq -r '.sync')
+                local health_status=$(echo "$app_info" | jq -r '.health')
+                local operation_status=$(echo "$app_info" | jq -r '.operation')
+                
+                # Skip if app is Healthy and last operation Succeeded (even if OutOfSync)
+                if [[ "$health_status" == "Healthy" ]] && [[ "$operation_status" == "Succeeded" ]]; then
+                    log_timestamp "[$cluster] App $app is Healthy with Succeeded operation (sync=$sync_status) - considering done"
+                    continue
+                fi
+                
+                # Sync if not healthy or operation didn't succeed
+                if [[ "$health_status" != "Healthy" ]] || [[ "$operation_status" != "Succeeded" ]]; then
+                    log_timestamp "[$cluster] Syncing blocking app: $app (health=$health_status, sync=$sync_status, operation=$operation_status)"
+                    sync_argocd_app "$app" || true
+                fi
             fi
         done
         
-        print_info "[$cluster] Waiting for: $blocking_apps"
+        log_timestamp "[$cluster] Still waiting for: $blocking_apps (elapsed: ${elapsed}s / ${timeout}s)"
         sleep 30
     done
     
-    print_warning "[$cluster] Timeout waiting for sync waves 0-$max_wave"
+    log_timestamp "[$cluster] Timeout waiting for sync waves 0-$max_wave after ${timeout}s"
     return 1
 }
 
@@ -523,39 +1399,76 @@ wait_for_hub_crossplane_ready() {
 }
 
 wait_for_remaining_apps_health() {
-    print_info "Final cleanup: syncing remaining unhealthy applications..."
+    print_info "Final cleanup: waiting for remaining unhealthy applications..."
     
-    # Get apps that are not healthy (excluding best effort apps)
-    local unhealthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
-        jq -r '.items[] | select(
-            .status.health.status != "Healthy"
-        ) | .metadata.name' 2>/dev/null)
+    local timeout=900  # 15 minutes for final convergence
+    local start_time=$(date +%s)
+    local check_interval=30
     
-    if [ -n "$unhealthy_apps" ]; then
-        print_info "Found unhealthy apps, attempting final sync..."
-        echo "$unhealthy_apps" | while read -r app; do
-            if [ -n "$app" ]; then
-                local is_best_effort=false
-                for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
-                    if [[ "$app" == "$best_effort_app" ]]; then
-                        is_best_effort=true
+    while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+        # Get apps that are not healthy (excluding best effort apps)
+        local unhealthy_apps=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r '.items[] | select(
+                .status.health.status != "Healthy" or .status.sync.status != "Synced"
+            ) | .metadata.name' 2>/dev/null)
+        
+        # Filter out best effort apps and healthy-outofsync-ok apps
+        local blocking_unhealthy=""
+        for app in $unhealthy_apps; do
+            local is_skippable=false
+            
+            # Check best effort apps
+            for best_effort_app in "${BEST_EFFORT_APPS[@]}"; do
+                if [[ "$app" == "$best_effort_app" ]]; then
+                    is_skippable=true
+                    break
+                fi
+            done
+            
+            # Check healthy-outofsync-ok apps (Healthy + last operation Succeeded)
+            if [[ "$is_skippable" == false ]]; then
+                for ok_app in "${HEALTHY_OUTOFSYNC_OK_APPS[@]}"; do
+                    if [[ "$app" == "$ok_app" ]]; then
+                        local app_health=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+                        local app_op=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+                        if [[ "$app_health" == "Healthy" ]] && [[ "$app_op" == "Succeeded" ]]; then
+                            is_skippable=true
+                            log_timestamp "App $app is Healthy with Succeeded operation (OutOfSync OK - known false drift)"
+                        fi
                         break
                     fi
                 done
-                
-                if [[ "$is_best_effort" == false ]]; then
-                    print_info "Final sync attempt for unhealthy app: $app"
-                    sync_argocd_app "$app" || true
-                    sleep 10
-                fi
+            fi
+            
+            if [[ "$is_skippable" == false ]]; then
+                blocking_unhealthy="$blocking_unhealthy $app"
             fi
         done
         
-        print_info "Waiting for final sync operations to complete..."
-        sleep 60
-    fi
+        if [ -z "$blocking_unhealthy" ]; then
+            print_success "All blocking applications are healthy and synced"
+            return 0
+        fi
+        
+        local elapsed=$(($(date +%s) - start_time))
+        print_info "Still unhealthy after ${elapsed}s: $blocking_unhealthy"
+        
+        # Attempt recovery for stuck apps
+        handle_stuck_operations
+        handle_sync_issues
+        
+        # Sync unhealthy apps
+        for app in $blocking_unhealthy; do
+            if [ -n "$app" ]; then
+                sync_argocd_app "$app" || true
+                sleep 5
+            fi
+        done
+        
+        sleep $check_interval
+    done
     
-    print_success "Final cleanup completed"
+    print_warning "Timeout waiting for remaining apps, continuing anyway..."
     return 0
 }
 
@@ -583,10 +1496,25 @@ show_final_status() {
                 done
                 
                 print_warning "Terminating ComparisonError operation for $app"
-                terminate_argocd_operation "$app"
-                sleep 10
-                refresh_argocd_app "$app" "true"
-                sleep 10
+                
+                # Check if this is a revision conflict
+                revision_conflict=$(kubectl get application "$app" -n argocd -o json 2>/dev/null | \
+                    jq -r '.status.operationState.message // "" | contains("cannot reference a different revision")')
+                
+                if [ "$revision_conflict" = "true" ]; then
+                    # Force revision alignment
+                    kubectl patch application "$app" -n argocd --type='merge' -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                    # Clear operation state
+                    kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
+                    # Force refresh
+                    kubectl annotate application "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+                    sleep 2
+                else
+                    terminate_argocd_operation "$app"
+                    sleep 10
+                    refresh_argocd_app "$app" "true"
+                    sleep 10
+                fi
                 
                 if [[ "$is_best_effort" == true ]]; then
                     sync_argocd_app_in_background "$app"
@@ -639,14 +1567,25 @@ show_final_status() {
     echo "----------------------------------------"
     
     if kubectl get applications -n argocd >/dev/null 2>&1; then
-        kubectl get applications -n argocd -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status" --no-headers | \
-        while read name sync health; do
-            if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
-                print_success "$name: $sync/$health"
-            elif [ "$health" = "Healthy" ]; then
-                print_warning "$name: $sync/$health"
+        kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.phase // "")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
+        while IFS='|' read -r name sync health operation message; do
+            # Accept Healthy + (Synced OR operation=Succeeded) to handle false OutOfSync from drift
+            if [ "$health" = "Healthy" ] && { [ "$sync" = "Synced" ] || [ "$operation" = "Succeeded" ]; }; then
+                print_success "$name: OK"
             else
-                print_error "$name: $sync/$health"
+                # Extract key error message
+                error_msg=$(echo "$message" | sed -n 's/.*\(Resource count [0-9]* exceeds limit of [0-9]*\).*/\1/p')
+                if [ -z "$error_msg" ]; then
+                    error_msg=$(echo "$message" | sed -n 's/.*ComparisonError: \(.*\)/\1/p' | head -c 80)
+                fi
+                if [ -z "$error_msg" ] && [ -n "$message" ]; then
+                    error_msg=$(echo "$message" | head -c 80)
+                fi
+                if [ -n "$error_msg" ]; then
+                    print_error "$name: KO - $error_msg"
+                else
+                    print_error "$name: KO - $sync/$health"
+                fi
             fi
         done
     else
@@ -654,6 +1593,17 @@ show_final_status() {
     fi
     
     echo "----------------------------------------"
+
+    # Report any security group fixes applied during init
+    if [ ${#SG_FIXED_CLUSTERS[@]} -gt 0 ]; then
+        echo ""
+        print_warning "⚠ SECURITY GROUP AUTO-FIX APPLIED"
+        print_warning "The following clusters were missing the EKS self-referencing SG ingress rule:"
+        for fixed_cluster in "${SG_FIXED_CLUSTERS[@]}"; do
+            print_warning "  - $fixed_cluster"
+        done
+        print_warning "The rule was added automatically. Investigate why EKS did not create it during cluster provisioning."
+    fi
 }
 
 # Function to force sync all ArgoCD applications
@@ -780,4 +1730,147 @@ delete_argocd_apps() {
         sleep 2
         apps_to_delete=("${remaining_apps[@]}")
     done
+}
+
+# Wait for Keycloak ArgoCD application to be healthy and synced
+# Actively handles sync issues (stuck ops, revision conflicts, degraded state, CRD issues)
+# Returns 0 if healthy, 1 if timeout
+wait_for_keycloak_ready() {
+    local max_wait=${1:-900}  # 15 minutes default
+    local check_interval=${2:-30}
+    local elapsed=0
+    local recovery_attempted=false
+
+    print_info "Waiting for Keycloak ArgoCD app to be healthy (timeout: ${max_wait}s)..."
+
+    while [ $elapsed -lt $max_wait ]; do
+        local kc_app_name=""
+        local kc_app_json=""
+
+        # Try label-based lookup first
+        kc_app_name=$(kubectl get application -n argocd -l "app.kubernetes.io/instance=keycloak" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+        # Fallback to name pattern match
+        if [ -z "$kc_app_name" ]; then
+            kc_app_name=$(kubectl get applications -n argocd -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | test("keycloak")) | .metadata.name' | head -1)
+        fi
+
+        if [ -z "$kc_app_name" ]; then
+            print_warning "Keycloak application not found yet, waiting... ($elapsed/${max_wait}s)"
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # Fetch full app JSON once for all checks
+        kc_app_json=$(kubectl get application "$kc_app_name" -n argocd -o json 2>/dev/null || echo "")
+        if [ -z "$kc_app_json" ]; then
+            print_warning "Could not fetch Keycloak app status, waiting... ($elapsed/${max_wait}s)"
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        local kc_health=$(echo "$kc_app_json" | jq -r '.status.health.status // "Unknown"')
+        local kc_sync=$(echo "$kc_app_json" | jq -r '.status.sync.status // "Unknown"')
+        local kc_operation=$(echo "$kc_app_json" | jq -r '.status.operationState.phase // "None"')
+        local kc_message=$(echo "$kc_app_json" | jq -r '.status.operationState.message // ""')
+        local kc_condition_message=$(echo "$kc_app_json" | jq -r '(.status.conditions[]?.message // "")' 2>/dev/null | head -1)
+        local kc_finished=$(echo "$kc_app_json" | jq -r '.status.operationState.finishedAt // "none"')
+
+        # Ready criteria (consistent with wait_for_sync_wave_completion and show_final_status):
+        # Healthy AND (Synced OR last operation Succeeded)
+        if [ "$kc_health" = "Healthy" ] && { [ "$kc_sync" = "Synced" ] || [ "$kc_operation" = "Succeeded" ]; }; then
+            print_success "Keycloak is healthy and ready (health=$kc_health, sync=$kc_sync, operation=$kc_operation)"
+            return 0
+        fi
+
+        print_info "Keycloak status: health=$kc_health sync=$kc_sync operation=$kc_operation ($elapsed/${max_wait}s)"
+
+        # --- Active recovery using direct kubectl patches (matching recover-argocd-apps.sh) ---
+        # Never call sync_argocd_app here — it has its own revision mismatch detection that causes loops
+
+        local combined_message="$kc_message $kc_condition_message"
+
+        # 1. Revision conflict — clear operation + status, hard refresh (no re-sync)
+        if echo "$combined_message" | grep -q "cannot reference a different revision\|ComparisonError"; then
+            print_warning "Keycloak has revision conflict, clearing state and refreshing..."
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+            kubectl patch application "$kc_app_name" -n argocd --type merge -p='{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}' 2>/dev/null || true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # 2. Stuck operation (running > 3 minutes) — terminate, clear state, hard refresh
+        if [ "$kc_operation" = "Running" ]; then
+            local op_started=$(echo "$kc_app_json" | jq -r '.status.operationState.startedAt // ""')
+            if [ -n "$op_started" ]; then
+                local op_started_epoch=$(date -d "$op_started" +%s 2>/dev/null || echo "0")
+                local now_epoch=$(date +%s)
+                local op_duration=$(( now_epoch - op_started_epoch ))
+                if [ "$op_duration" -gt 180 ]; then
+                    print_warning "Keycloak operation stuck for ${op_duration}s, clearing state..."
+                    terminate_argocd_operation "$kc_app_name"
+                    sleep 2
+                    kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+                    kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+                    sleep $check_interval
+                    elapsed=$((elapsed + check_interval))
+                    continue
+                fi
+            fi
+        fi
+
+        # 3. Stale finished operation — clear operation + status, hard refresh
+        if [ "$kc_finished" != "none" ] && [ "$kc_operation" != "Succeeded" ]; then
+            print_warning "Keycloak has stale operation state (finished=$kc_finished), clearing..."
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+            kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # 4. Degraded health — hard refresh
+        if [ "$kc_health" = "Degraded" ]; then
+            print_warning "Keycloak is Degraded, forcing hard refresh..."
+            kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # 5. OutOfSync with no active operation — one-time recovery attempt
+        if [ "$kc_sync" = "OutOfSync" ] && [ "$kc_operation" != "Running" ] && [ "$recovery_attempted" = false ]; then
+            print_info "Keycloak is OutOfSync, clearing state and triggering fresh sync..."
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status"}]' 2>/dev/null || true
+            kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            recovery_attempted=true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        # 6. Progressing stuck for too long (> 5 minutes elapsed)
+        if [ "$kc_health" = "Progressing" ] && [ "$elapsed" -gt 300 ]; then
+            print_warning "Keycloak stuck in Progressing state, clearing state..."
+            terminate_argocd_operation "$kc_app_name"
+            sleep 2
+            kubectl patch application "$kc_app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
+            kubectl annotate application "$kc_app_name" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+
+    print_warning "Keycloak did not become healthy within ${max_wait}s"
+    return 1
 }

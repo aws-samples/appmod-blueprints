@@ -17,11 +17,23 @@ spec:
       - branch: main
         path: ./src
   - uses: yaml-update
+    as: yaml-update-kro
+    continueOnError: true
+    config:
+      path: ./src/deployment/${{ ctx.stage }}/application.yaml
+      updates:
+      - key: spec.image
+        value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
+  - uses: yaml-update
+    as: yaml-update-kubevela
+    continueOnError: true
     config:
       path: ./src/deployment/${{ ctx.stage }}/application.yaml
       updates:
       - key: spec.components.0.properties.image
         value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
+      - key: metadata.annotations.app\.oam\.dev/publishVersion
+        value: ${{ imageFrom(vars.image).Tag }}
   - uses: git-commit
     config:
       path: ./src

@@ -124,16 +124,18 @@ check_and_create_repo() {
 }
 
 set_gitlab_remote_for_peeks() {
-  rm -rf ~/environment/$WORKING_REPO
-  mkdir -p ~/environment/$WORKING_REPO
   pushd ~/environment/$WORKING_REPO
   
   git config user.email "participants@workshops.aws"
   git config user.name "Workshop Participant"
-  git clone https://$USERNAME:$GITLAB_TOKEN@$GITLAB_HOSTNAME/$USERNAME/$WORKING_REPO.git .
+  
+  # deploy.sh already pushed to GitLab with fleet/backstage content.
+  # Pull that commit so the IDE is in sync, then set tracking branch.
+  git checkout -B main
+  git pull --rebase origin main || git push -u origin main
   
   popd
-  echo "GitLab remote set for ~/environment/$WORKING_REPO"
+  echo "GitLab remote set for ~/environment/$WORKING_REPO - synced with GitLab"
 }
 
 # Main execution

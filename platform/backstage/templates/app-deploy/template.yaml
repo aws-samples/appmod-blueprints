@@ -36,7 +36,6 @@ spec:
           type: string
           description: The namespace where the app should be deployed
           default: default
-    - title: Provide GitLab Instance Information
   steps:
     - id: fetchSystem
       name: Fetch System
@@ -70,11 +69,13 @@ spec:
             namespace: argocd
           spec:
             description: Project for ${{parameters.appName}} application
+            sourceNamespaces:
+            - argocd
             sourceRepos:
             - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}.git
             destinations:
             - namespace: ${{parameters.appNamespace}}
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
             clusterResourceWhitelist:
             - group: '*'
               kind: '*'
@@ -100,7 +101,7 @@ spec:
             project: ${{parameters.appName}}-project
             destination:
               namespace: ${{parameters.appNamespace}}
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
             source:
               repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.repoName}}.git
               targetRevision: HEAD

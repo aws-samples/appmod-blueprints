@@ -45,6 +45,33 @@ main() {
   fi
   cd -
 
+  # Drain nodes before terraform destroy. Terraform deletes VPC routes concurrently
+  # with EKS cluster deletion, which can strand nodes without network connectivity.
+  # Disabling built-in nodepools ensures nodes are terminated before VPC teardown.
+  log "Disabling built-in nodepools and draining nodes from all clusters..."
+  for cluster_name in "${CLUSTER_NAMES[@]}"; do
+    log "Disabling built-in nodepools for cluster: $cluster_name"
+    aws eks update-cluster-config \
+      --name "$cluster_name" \
+      --region "${AWS_REGION}" \
+      --compute-config '{"enabled":true,"nodePools":[]}' 2>&1 || log_warning "Failed to disable nodepools for $cluster_name"
+    log "Waiting for cluster update to complete: $cluster_name"
+    aws eks wait cluster-active --name "$cluster_name" --region "${AWS_REGION}" 2>&1 || log_warning "Wait timed out for $cluster_name"
+
+    # Delete any remaining nodepools (custom/GitOps-managed) via kubectl.
+    if configure_kubectl_with_fallback "$cluster_name"; then
+      log "Deleting any remaining nodepools from cluster: $cluster_name"
+      kubectl delete nodepool --all \
+        --context "$cluster_name" \
+        --wait=true \
+        --timeout=300s 2>&1 || log_warning "Failed to delete nodepools from $cluster_name (may already be empty)"
+      log_success "Node drain complete for cluster: $cluster_name"
+    else
+      log_warning "Could not configure kubectl for $cluster_name, skipping remaining nodepool cleanup"
+    fi
+  done
+  log "Pre-destroy node drain complete"
+
   # Destroy Terraform resources
   log "Destroying clusters stack..."
   if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
@@ -55,7 +82,6 @@ main() {
     -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
     -auto-approve; then
     log_warning "Clusters stack destroy failed, checking for lock issues"
-    
     # Extract lock ID from error if present
     cd "$DEPLOY_SCRIPTDIR"
     LOCK_ID=$(terraform plan 2>&1 | grep -oP 'ID:\s+\K[a-f0-9-]+' | head -1 || echo "")
@@ -64,7 +90,6 @@ main() {
       terraform force-unlock -force "$LOCK_ID" || true
     fi
     cd -
-    
     log_warning "Retrying destroy after lock handling"
     if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
       -var-file="${GENERATED_TFVAR_FILE}" \

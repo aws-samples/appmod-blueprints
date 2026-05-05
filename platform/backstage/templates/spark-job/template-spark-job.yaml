@@ -33,6 +33,9 @@ spec:
         values:
           name: ${{parameters.name}}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
+          argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
+          ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
+          gituser: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
     - id: publish
       name: Publishing to GitLab repository
       action: publish:gitlab
@@ -59,7 +62,7 @@ spec:
               targetRevision: HEAD
               path: manifests
             destination:
-              server: https://kubernetes.default.svc
+              name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
               namespace: ${{parameters.name}}
             syncPolicy:
               automated:
@@ -83,7 +86,7 @@ spec:
         entityRef: ${{ steps['register'].output.entityRef }}
       - title: ArgoCD Application
         icon: argocd
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argocd/applications/argocd/${{parameters.name}}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{parameters.name}}
       - title: Argo Workflows
         icon: argo
         url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflows/argo/${{parameters.name}}

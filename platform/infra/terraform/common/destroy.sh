@@ -36,6 +36,9 @@ main() {
 
   # Delete backstage ecr repo
   delete_backstage_ecr_repo
+
+  # Force-delete ECR repos and empty S3 bucket that block terraform destroy
+  force_cleanup_ray_resources
   
   export GENERATED_TFVAR_FILE="$(mktemp).tfvars.json"
   yq eval -o=json '.' $CONFIG_FILE > $GENERATED_TFVAR_FILE
@@ -68,11 +71,20 @@ main() {
   if ! terraform state rm gitlab_personal_access_token.workshop || ! terraform state rm data.gitlab_user.workshop; then
     log_warning "GitLab resources not found in state"
   fi
+
+  # Remove data sources that may reference resources already deleted by ArgoCD cleanup
+  terraform state rm data.aws_lb.ingress_nginx 2>/dev/null || log_warning "data.aws_lb.ingress_nginx not found in state"
+
   cd - # Go back
 
   # Destroy Terraform resources
+  # Use -refresh=false because we already removed stale data sources (gitlab_user,
+  # ingress_nginx LB) from state above. Without this flag, terraform re-evaluates
+  # data source blocks in the HCL and fails if the backing infrastructure (GitLab,
+  # nginx ingress) was already torn down by the ArgoCD cleanup phase.
   log "Destroying bootstrap resources..."
   if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
+    -refresh=false \
     -var-file="${GENERATED_TFVAR_FILE}" \
     -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
     -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
@@ -80,7 +92,7 @@ main() {
     -var="git_username=${GIT_USERNAME}" \
     -var="git_password=${USER1_PASSWORD}" \
     -var="working_repo=${WORKING_REPO}" \
-    -auto-approve -refresh=false; then
+    -auto-approve; then
     log_warning "Bootstrap stack destroy failed, checking for lock issues"
     
     # Extract lock ID from error if present
@@ -94,6 +106,7 @@ main() {
     
     log_warning "Retrying destroy after lock handling"
     if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
+      -refresh=false \
       -var-file="${GENERATED_TFVAR_FILE}" \
       -var="gitlab_domain_name=${GITLAB_DOMAIN:-""}" \
       -var="gitlab_security_groups=${GITLAB_SG_ID:-""}" \
@@ -101,7 +114,7 @@ main() {
       -var="git_username=${GIT_USERNAME}" \
       -var="git_password=${USER1_PASSWORD}" \
       -var="working_repo=${WORKING_REPO}" \
-      -auto-approve -refresh=false; then
+      -auto-approve; then
       log_error "Bootstrap stack destroy failed again, exiting"
       exit 1
     fi

@@ -16,8 +16,23 @@ providers:
     lambdaVersion: "v1.13.0"
     rdsVersion: "v1.13.1"
     runtimeConfigRef: "aws-irsa-drc"
+    # Default resources for all providers
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
 
 compositions:
   enabled: true
+
+functions:
+  patchAndTransform:
+    enabled: true
+    package: xpkg.upbound.io/crossplane-contrib/function-patch-and-transform:v0.8.2
+  environmentConfigs:
+    enabled: true
+    package: xpkg.upbound.io/crossplane-contrib/function-environment-configs:v0.6.0
 
 namespace: crossplane-system

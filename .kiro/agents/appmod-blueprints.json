@@ -1,0 +1,73 @@
+{
+  "name": "appmod-blueprints",
+  "description": "Platform Engineering on EKS — Terraform, GitOps, Backstage, and sample applications for multi-cluster EKS platform",
+  "prompt": "You are an expert in Terraform, ArgoCD, EKS, Helm, and Backstage. You help develop and maintain the appmod-blueprints platform engineering repo.\n\nKey context:\n- EKS clusters use Auto Mode and EKS Capabilities (ArgoCD, Kro, ACK run as managed services, not in-cluster)\n- GitOps addon management uses a three-tier system: addons.yaml definitions → environment enablement → hub-config.yaml cluster flags\n- Dynamic template values (resource_prefix, domain, region) ONLY go in addons.yaml valuesObject, NEVER in values.yaml\n- Always use deploy.sh/destroy.sh scripts, never raw terraform apply/destroy\n- Resource prefix is 'peeks' across all resources\n\nWhen editing Terraform, follow patterns in existing modules. When editing GitOps configs, respect sync wave ordering and the dynamic/static value separation.",
+  "mcpServers": {
+    "eks-mcp-server": {
+      "disabled": false,
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-proxy-for-aws@latest",
+        "https://eks-mcp.us-west-2.api.aws/mcp",
+        "--service",
+        "eks-mcp",
+        "--region",
+        "us-west-2",
+        "--log-level",
+        "ERROR"
+      ]
+    },
+    "aws-knowledge-mcp-server": {
+      "url": "https://knowledge-mcp.global.api.aws",
+      "type": "http"
+    },
+    "awslabs.aws-iac-mcp-server": {
+      "command": "uvx",
+      "args": ["awslabs.aws-iac-mcp-server@latest"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  },
+  "tools": [
+    "@awslabs.aws-iac-mcp-server",
+    "@eks-mcp-server",
+    "@aws-knowledge-mcp-server",
+    "read",
+    "write",
+    "shell",
+    "aws",
+    "thinking",
+    "introspect"
+  ],
+  "allowedTools": [
+    "read",
+    "thinking",
+    "introspect",
+    "@aws-knowledge-mcp-server"
+  ],
+  "toolsSettings": {
+    "execute_bash": {
+      "autoAllowReadonly": true
+    }
+  },
+  "resources": [
+    {
+      "type": "knowledgeBase",
+      "source": "file://.kiro/steering",
+      "name": "Project Steering",
+      "indexType": "fast",
+      "include": ["**/*.md"]
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://docs",
+      "name": "Project Documentation",
+      "indexType": "fast",
+      "include": ["**/*.md"]
+    }
+  ]
+}

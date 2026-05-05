@@ -1,0 +1,218 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: huggingfacemodel
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: HuggingFaceModel
+    spec:
+      modelId: string              # e.g., "meta-llama/Llama-2-7b-hf"
+      s3Bucket: string             # Target S3 bucket name
+      namespace: string            # Kubernetes namespace
+      accountId: string            # AWS account ID
+      region: string               # AWS region
+      clusterName: string          # EKS cluster name
+  
+  resources:
+    # Kubernetes Role for Argo Workflows
+    - id: workflowRole
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: ${schema.metadata.name}-workflow-role
+          namespace: ${schema.spec.namespace}
+        rules:
+        - apiGroups: ["argoproj.io"]
+          resources: ["workflowtaskresults"]
+          verbs: ["create", "patch"]
+    
+    # Kubernetes RoleBinding
+    - id: workflowRoleBinding
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: ${schema.metadata.name}-workflow-binding
+          namespace: ${schema.spec.namespace}
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: ${schema.metadata.name}-workflow-role
+        subjects:
+        - kind: ServiceAccount
+          name: ${schema.metadata.name}-sa
+          namespace: ${schema.spec.namespace}
+    
+    # IAM Policy for S3 access
+    - id: s3Policy
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          name: ${schema.metadata.name}-s3-policy
+          namespace: ${schema.spec.namespace}
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+        spec:
+          name: ${schema.metadata.name}-s3-policy
+          policyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject",
+                    "s3:GetObject",
+                    "s3:ListBucket"
+                  ],
+                  "Resource": [
+                    "arn:aws:s3:::${schema.spec.s3Bucket}",
+                    "arn:aws:s3:::${schema.spec.s3Bucket}/*"
+                  ]
+                }
+              ]
+            }
+    
+    # IAM Role
+    - id: iamRole
+      readyWhen:
+        - ${iamRole.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          name: ${schema.metadata.name}-role
+          namespace: ${schema.spec.namespace}
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+        spec:
+          name: ${schema.metadata.name}-role
+          policyRefs:
+            - from:
+                name: ${s3Policy.metadata.name}
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "pods.eks.amazonaws.com"
+                  },
+                  "Action": [
+                    "sts:AssumeRole",
+                    "sts:TagSession"
+                  ]
+                }
+              ]
+            }
+    
+    # Pod Identity Association
+    - id: podIdentity
+      readyWhen:
+        - ${podIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          name: ${schema.metadata.name}-podidentity
+          namespace: ${schema.spec.namespace}
+        spec:
+          clusterName: ${schema.spec.clusterName}
+          namespace: ${schema.spec.namespace}
+          serviceAccount: ${schema.metadata.name}-sa
+          roleARN: ${iamRole.status.ackResourceMetadata.arn}
+    
+    # Service Account (created after PodIdentity)
+    - id: serviceAccount
+      readyWhen:
+        - ${serviceAccount.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: ${schema.metadata.name}-sa
+          namespace: ${schema.spec.namespace}
+          annotations:
+            eks.amazonaws.com/role-arn: ${podIdentity.spec.roleARN}
+    
+    # Argo Workflow for model download
+    - id: downloadWorkflow
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: Workflow
+        metadata:
+          name: ${schema.metadata.name}-download
+          namespace: ${schema.spec.namespace}
+        spec:
+          serviceAccountName: ${serviceAccount.metadata.name}
+          entrypoint: download-and-upload
+          
+          templates:
+            - name: download-and-upload
+              steps:
+                - - name: download-model
+                    template: download
+                - - name: upload-to-s3
+                    template: upload
+            
+            - name: download
+              container:
+                image: python:3.11-slim
+                command: [bash, -c]
+                args:
+                  - |
+                    set -e
+                    echo "Installing dependencies..."
+                    pip install -q huggingface_hub
+                    
+                    echo "Downloading model: ${schema.spec.modelId}"
+                    python3 << 'PYEOF'
+                    from huggingface_hub import snapshot_download
+                    import os
+                    
+                    model_id = "${schema.spec.modelId}"
+                    local_dir = "/workspace/model"
+                    
+                    print(f"Downloading {model_id} to {local_dir}")
+                    snapshot_download(
+                        repo_id=model_id,
+                        local_dir=local_dir,
+                        local_dir_use_symlinks=False
+                    )
+                    print("Download complete!")
+                    PYEOF
+                volumeMounts:
+                  - name: workspace
+                    mountPath: /workspace
+            
+            - name: upload
+              container:
+                image: amazon/aws-cli:latest
+                command: [bash, -c]
+                args:
+                  - |
+                    set -e
+                    MODEL_NAME=$(echo "${schema.spec.modelId}" | tr '/' '-')
+                    S3_PATH="s3://${schema.spec.s3Bucket}/models/$MODEL_NAME/"
+                    
+                    echo "Uploading model to $S3_PATH"
+                    aws s3 sync /workspace/model/ $S3_PATH --region ${schema.spec.region}
+                    echo "Upload complete!"
+                    
+                    echo "Model available at: $S3_PATH"
+                volumeMounts:
+                  - name: workspace
+                    mountPath: /workspace
+          
+          volumeClaimTemplates:
+            - metadata:
+                name: workspace
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                resources:
+                  requests:
+                    storage: 50Gi

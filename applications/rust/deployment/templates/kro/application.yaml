@@ -1,0 +1,42 @@
+apiVersion: kro.run/v1alpha1
+kind: AppmodService
+metadata:
+  name: rust-microservice-<environment>
+  namespace: team-rust
+spec:
+  image: <image>
+  image_name: rust-microservice
+  replicas: 2
+  port: 8080
+  targetPort: 8080
+  serviceAccount: rust-service-account-<environment>
+  clusterName: peeks-spoke-dev
+  accountId: "${AWS_ACCOUNT_ID}"
+  env:
+    - name: TABLE_NAME
+      value: rust-app-table-<environment>
+    - name: AWS_REGION
+      value: "${AWS_REGION}"
+  components:
+    dynamodb:
+      enabled: true
+      tableName: rust-app-table-<environment>
+      partitionKey: partition_key
+      partitionKeyType: S
+      sortKey: sort_key
+      sortKeyType: S
+  ingress:
+    enabled: true
+    path: /rust-app
+    rewrite: true
+  ## Uncomment the sections below to enable metrics-driven progressive delivery (Module 30)
+  # functionalGate:
+  #   enabled: true
+  #   image: "httpd:alpine"
+  #   extraArgs: "{"
+  #   path: "/collection/FRONT_PAGE"
+  # performanceGate:
+  #   enabled: true
+  # metrics:
+  #   enabled: true
+  #   path: "/collection/test"
