@@ -872,7 +872,11 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: HookFailed
 spec:
   updatePolicy: Replace
-  deletionPolicy: Delete
+  # None: don't delete the AWS secret when the PushSecret resource is deleted.
+  # Prevents AWS Secrets Manager idempotency token conflicts when the hook is
+  # re-run after a failed/terminated sync (AWS caches ClientRequestToken for
+  # ~24h even after the secret is gone, blocking re-creation).
+  deletionPolicy: None
   refreshInterval: 30s
   secretStoreRefs:
     - name: aws-secrets-manager
