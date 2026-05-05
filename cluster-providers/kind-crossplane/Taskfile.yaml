@@ -248,7 +248,16 @@ tasks:
             echo "$SETS"
           fi
     cmds:
-      - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
+      # Apply XRD and Composition first (rendered via helm template since files contain Go templates)
+      - cmd: |
+          helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster \
+            --set clusters.hub.region={{.AWS_REGION}} \
+            --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}} \
+            --show-only templates/xrd.yaml | kubectl apply -f -
+          helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster \
+            --set clusters.hub.region={{.AWS_REGION}} \
+            --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}} \
+            --show-only templates/composition.yaml | kubectl apply -f -
       # Wait for XRD to generate the PlatformCluster CRD before applying the claim
       - kubectl wait --for=condition=Established xrd/xplatformclusters.platform.gitops.io --timeout=60s
       - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
@@ -371,6 +380,7 @@ tasks:
             fleetRepoURL: "REPO_URL"
             fleetRepoRevision: "REPO_REVISION"
             fleetRepoBasepath: "REPO_BASEPATH"
+            aws_cluster_name: {{.HUB_CLUSTER_NAME}}
           labels:
             argocd.argoproj.io/secret-type: cluster
             environment: control-plane
