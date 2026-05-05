@@ -14,10 +14,28 @@ import json
 import os
 import sys
 
+_CHROMIUM_YUM_DEPS = [
+    "atk", "at-spi2-atk", "cups-libs", "libdrm", "libxkbcommon",
+    "libXcomposite", "libXdamage", "libXrandr", "mesa-libgbm", "pango",
+    "alsa-lib", "nss", "nspr", "libXScrnSaver", "libXtst", "gtk3",
+]
+
+
+def _ensure_chromium_deps():
+    """Install Chromium system libraries if missing."""
+    import subprocess
+    import shutil
+    # Quick check: if libatk-1.0.so.0 is missing, install all deps
+    if not shutil.which("playwright") or not os.path.exists("/usr/lib64/libatk-1.0.so.0"):
+        subprocess.run(["sudo", "yum", "install", "-y"] + _CHROMIUM_YUM_DEPS, capture_output=True)
+
+
 try:
     from playwright.async_api import async_playwright
+    _ensure_chromium_deps()
 except ImportError:
-    print("Installing playwright...", file=sys.stderr)
+    print("Installing playwright and Chromium system dependencies...", file=sys.stderr)
+    _ensure_chromium_deps()
     os.system("pip install playwright >/dev/null 2>&1 && playwright install chromium >/dev/null 2>&1")
     from playwright.async_api import async_playwright
 
