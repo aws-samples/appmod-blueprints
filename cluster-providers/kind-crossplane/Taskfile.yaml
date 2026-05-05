@@ -249,6 +249,8 @@ tasks:
           fi
     cmds:
       - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
+      # Wait for XRD to generate the PlatformCluster CRD before applying the claim
+      - kubectl wait --for=condition=Established xrd/xplatformclusters.platform.gitops.io --timeout=60s
       - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
           --set clusters.hub.region={{.AWS_REGION}}
           --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
@@ -258,6 +260,17 @@ tasks:
           {{.MNG_SETS}}
           | kubectl apply -f -
       - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl apply -f -
+      # Wait for ArgoCD capability role to be ready, then patch the composite so the access entry gets its principalArn
+      - cmd: |
+          kubectl -n crossplane-system wait --for=condition=Ready roles.iam.aws.upbound.io/argocd-capability-role --timeout=120s 2>/dev/null || true
+          ROLE_ARN=$(kubectl get role.iam.aws.upbound.io/argocd-capability-role -o jsonpath='{.status.atProvider.arn}' 2>/dev/null)
+          if [ -n "$ROLE_ARN" ]; then
+            XPC_NAME=$(kubectl get xplatformcluster -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+            if [ -n "$XPC_NAME" ]; then
+              kubectl patch xplatformcluster "$XPC_NAME" --type merge -p "{\"spec\":{\"argoCDRoleArn\":\"$ROLE_ARN\"}}"
+            fi
+          fi
+        ignore_error: true
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
           --set aws.region={{.AWS_REGION}}
@@ -541,48 +554,58 @@ tasks:
       - task: credentials:refresh
       - kubectl -n crossplane-system rollout restart deploy -l pkg.crossplane.io/revision 2>/dev/null || true
       - kubectl -n crossplane-system rollout status deploy -l pkg.crossplane.io/revision --timeout=120s 2>/dev/null || true
-      # Phase 1: Clean hub addons
-      - task: hub:destroy-addons
+      # Phase 1: Clean hub addons (continue on failure so remaining phases still run)
+      - cmd: task hub:destroy-addons
+        ignore_error: true
       # Phase 2: Delete pod identities and IAM resources (chart-managed)
-      - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
-          --set aws.region={{.AWS_REGION}}
-          --set aws.clusterName={{.HUB_CLUSTER_NAME}}
-          --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set identities.eso.enabled=true
-          --set identities.lbc.enabled=true
-          --set identities.external-dns.enabled=true
-          | kubectl delete --ignore-not-found -f -
-      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role --timeout=600s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete rolepolicyattachments.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete policies.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
+      - cmd: |
+          helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity \
+            --set aws.region={{.AWS_REGION}} \
+            --set aws.clusterName={{.HUB_CLUSTER_NAME}} \
+            --set aws.accountId={{.AWS_ACCOUNT_ID}} \
+            --set identities.eso.enabled=true \
+            --set identities.lbc.enabled=true \
+            --set identities.external-dns.enabled=true \
+            | kubectl delete --ignore-not-found --wait=false --timeout=60s -f - 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete rolepolicyattachments.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete policies.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
+        ignore_error: true
       # Phase 3: Delete ArgoCD capability via Job, then its IAM role (needs IAM provider alive)
-      - task: argocd:delete-capability
-      - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl delete --ignore-not-found -f -
-      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=300s 2>/dev/null || true
+      - cmd: task argocd:delete-capability
+        ignore_error: true
+      - cmd: |
+          sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=120s 2>/dev/null || true
+        ignore_error: true
       # Phase 4: Delete EKS cluster + VPC (needs providers alive to reconcile deletion)
-      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
-          --set clusters.hub.region={{.AWS_REGION}}
-          --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
-          --show-only templates/claim.yaml
-          | kubectl delete --ignore-not-found -f -
-      - kubectl -n crossplane-system wait --for=delete clusters.eks.aws.upbound.io --all --timeout=1800s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete vpc.ec2.aws.upbound.io --all --timeout=600s 2>/dev/null || true
-      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/composition.yaml --ignore-not-found
-      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/xrd.yaml --ignore-not-found
+      - cmd: |
+          helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster \
+            --set clusters.hub.region={{.AWS_REGION}} \
+            --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}} \
+            --show-only templates/claim.yaml \
+            | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete clusters.eks.aws.upbound.io --all --timeout=1800s 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete vpc.ec2.aws.upbound.io --all --timeout=600s 2>/dev/null || true
+        ignore_error: true
+      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/composition.yaml --ignore-not-found 2>/dev/null || true
+      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/xrd.yaml --ignore-not-found 2>/dev/null || true
       # Phase 5: Delete crossplane-base provider pod identities and providers (safe — no managed resources left)
-      - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
-          --set providerConfig.enabled=false
-          --set aws.region={{.AWS_REGION}}
-          --set aws.clusterName={{.HUB_CLUSTER_NAME}}
-          --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set providers.family.version=v2.5.3
-          --set providers.iam.version=v2.5.3
-          --set providers.eks.version=v2.5.3
-          --set providers.ec2.version=v2.5.3
-          | kubectl delete --ignore-not-found -f -
-      - kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=600s 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=300s 2>/dev/null || true
+      - cmd: |
+          helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base \
+            --set providerConfig.enabled=false \
+            --set aws.region={{.AWS_REGION}} \
+            --set aws.clusterName={{.HUB_CLUSTER_NAME}} \
+            --set aws.accountId={{.AWS_ACCOUNT_ID}} \
+            --set providers.family.version=v2.5.3 \
+            --set providers.iam.version=v2.5.3 \
+            --set providers.eks.version=v2.5.3 \
+            --set providers.ec2.version=v2.5.3 \
+            | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=120s 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
+        ignore_error: true
       # Phase 6: Safety net — clean up any orphaned AWS resources
       - cmd: |
           for ASSOC_ID in $(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'associations[].associationId' --output text 2>/dev/null); do
@@ -599,6 +622,7 @@ tasks:
             POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName==\`$POLICY\`].Arn" --output text 2>/dev/null)
             [ -n "$POLICY_ARN" ] && aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null || true
           done
+        ignore_error: true
       # Phase 7: Clean up Kind (pass CLEANUP_KIND=true to remove)
       - cmd: |
           if [ "{{.CLEANUP_KIND}}" = "true" ]; then
@@ -687,13 +711,16 @@ tasks:
       - cmd: |
           if [ "{{.ITEM}}" = "argocd" ] || [ "{{.ITEM}}" = "crossplane" ] || [ "{{.ITEM}}" = "crossplane-base" ] || [ "{{.ITEM}}" = "crossplane-aws" ]; then
             echo "Skipping {{.ITEM}} (Crossplane stack — deleted after clusters)"
-          elif KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset {{.ITEM}} -n argocd 2>/dev/null; then
+          elif KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset {{.ITEM}} -n argocd >/dev/null 2>&1; then
             echo "Deleting {{.ITEM}}..."
             KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
             sleep 3
             KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset {{.ITEM}} -n argocd --timeout=180s 2>/dev/null || true
-            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName={{.ITEM}} --timeout=600s 2>/dev/null || true
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName={{.ITEM}} --timeout=120s 2>/dev/null || true
+          else
+            echo "Skipping {{.ITEM}} (not found)"
           fi
+        ignore_error: true
         for:
           var: ADDONS
       # 6. Delete clusters (spoke + hub claims cleaned up before Crossplane providers are removed)
@@ -708,14 +735,15 @@ tasks:
       # 7. Delete Crossplane stack in reverse wave order (providers still alive for cluster cleanup)
       - cmd: |
           for ADDON in crossplane-aws crossplane-base crossplane; do
-            if KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset $ADDON -n argocd 2>/dev/null; then
+            if KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset $ADDON -n argocd >/dev/null 2>&1; then
               echo "Deleting $ADDON..."
               KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
               sleep 3
               KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset $ADDON -n argocd --timeout=180s 2>/dev/null || true
-              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName=$ADDON --timeout=600s 2>/dev/null || true
+              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName=$ADDON --timeout=120s 2>/dev/null || true
             fi
           done
+        ignore_error: true
       # 8. Delete fleet-secrets
       - printf '{{.C_ERR}}▸ Deleting fleet-secrets...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset fleet-secrets -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
@@ -730,6 +758,7 @@ tasks:
              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application $app -n argocd --wait=false 2>/dev/null) || true
           done
+        ignore_error: true
       - printf '{{.C_ERR}}▸ Cleaning up AWS resources...{{.C_RESET}}\n'
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
