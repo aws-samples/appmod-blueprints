@@ -223,11 +223,17 @@ spec:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
         effect: "NoSchedule"
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
       containers:
         - envFrom:
             - secretRef:
                 name: keycloak-config
           image: docker.io/library/postgres:17.4-alpine3.21
+          imagePullPolicy: IfNotPresent
           name: postgres
           env:
             - name: PGDATA
@@ -235,12 +241,15 @@ spec:
           ports:
             - containerPort: 5432
               name: postgresdb
+              protocol: TCP
           resources:
             limits:
               memory: 500Mi
             requests:
               cpu: 100m
               memory: 300Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
