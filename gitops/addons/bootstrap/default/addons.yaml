@@ -859,6 +859,7 @@ keycloak:
         - '.spec.template.metadata.annotations'
         - '.spec.volumeClaimTemplates[].metadata.creationTimestamp'
         - '.spec.volumeClaimTemplates[].metadata'
+        - '.spec.volumeClaimTemplates[].status'
     - group: ''
       kind: PersistentVolumeClaim
       jsonPointers:
@@ -1562,6 +1563,7 @@ backstage:
         - /spec/replicas
         - /spec/template/metadata/annotations
         - /spec/volumeClaimTemplates/0/metadata
+        - /spec/volumeClaimTemplates/0/status
       jqPathExpressions:
         - '.spec.template.metadata.annotations'
     - group: rbac.authorization.k8s.io
