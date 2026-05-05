@@ -1778,9 +1778,10 @@ wait_for_keycloak_ready() {
         local kc_condition_message=$(echo "$kc_app_json" | jq -r '(.status.conditions[]?.message // "")' 2>/dev/null | head -1)
         local kc_finished=$(echo "$kc_app_json" | jq -r '.status.operationState.finishedAt // "none"')
 
-        # Ready criteria (consistent with wait_for_sync_wave_completion and show_final_status):
-        # Healthy AND (Synced OR last operation Succeeded)
-        if [ "$kc_health" = "Healthy" ] && { [ "$kc_sync" = "Synced" ] || [ "$kc_operation" = "Succeeded" ]; }; then
+        # Ready criteria: Healthy AND (Synced OR operation Succeeded OR OutOfSync with no active operation)
+        # The OutOfSync case handles persistent StatefulSet drift (K8s-defaulted fields like
+        # revisionHistoryLimit/persistentVolumeClaimRetentionPolicy that aren't in the chart).
+        if [ "$kc_health" = "Healthy" ] && { [ "$kc_sync" = "Synced" ] || [ "$kc_operation" = "Succeeded" ] || { [ "$kc_sync" = "OutOfSync" ] && [ "$kc_operation" != "Running" ]; }; }; then
             print_success "Keycloak is healthy and ready (health=$kc_health, sync=$kc_sync, operation=$kc_operation)"
             return 0
         fi

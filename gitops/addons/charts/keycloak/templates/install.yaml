@@ -199,6 +199,10 @@ metadata:
     argocd.argoproj.io/sync-wave: "6"
 spec:
   replicas: 1
+  revisionHistoryLimit: 10
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   selector:
     matchLabels:
       app: postgresql
