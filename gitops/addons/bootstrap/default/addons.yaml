@@ -846,6 +846,13 @@ keycloak:
         - /metadata/generation
         - /metadata/managedFields
         - /metadata/resourceVersion
+    - group: external-secrets.io
+      kind: PushSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+        - /metadata/resourceVersion
     - group: ''
       kind: Secret
       jsonPointers:

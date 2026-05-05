@@ -867,9 +867,7 @@ metadata:
   name: keycloak-clients
   namespace: keycloak
   annotations:
-    argocd.argoproj.io/sync-wave: "11" # Sync after config job
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookFailed
+    argocd.argoproj.io/sync-wave: "11"
 spec:
   updatePolicy: Replace
   # None: don't delete the AWS secret when the PushSecret resource is deleted.
