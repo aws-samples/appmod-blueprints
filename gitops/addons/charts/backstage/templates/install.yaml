@@ -551,6 +551,11 @@ metadata:
 spec:
   replicas: 1
   revisionHistoryLimit: 10
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
   persistentVolumeClaimRetentionPolicy:
     whenDeleted: Retain
     whenScaled: Retain
