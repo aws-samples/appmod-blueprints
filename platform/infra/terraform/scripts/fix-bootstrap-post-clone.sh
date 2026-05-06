@@ -20,7 +20,8 @@ cd $BASE_DIR
 echo "=== Running post-clone setup from $BASE_DIR ==="
 
 # Ensure mise-managed tools (uv, etc.) are on PATH
-eval "$(~/.local/bin/mise activate bash 2>/dev/null)" || export PATH="$HOME/.local/bin:$PATH"
+eval "$(~/.local/bin/mise activate bash 2>/dev/null)" || true
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
 
 # Zsh config
 cp hack/.zshrc hack/.p10k.zsh hack/.zsh_history ~/
