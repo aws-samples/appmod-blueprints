@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: delete-argocd-capability
+  namespace: crossplane-system
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: crossplane
+      restartPolicy: OnFailure
+      volumes:
+        - name: aws-creds
+          secret:
+            secretName: aws-credentials
+      containers:
+        - name: delete-capability
+          image: amazon/aws-cli:latest
+          envFrom:
+            - configMapRef:
+                name: argocd-capability-config
+          env:
+            - name: AWS_SHARED_CREDENTIALS_FILE
+              value: /tmp/.aws/credentials
+          volumeMounts:
+            - name: aws-creds
+              mountPath: /tmp/.aws
+              readOnly: true
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              echo "=== Delete ArgoCD capability ==="
+              STATUS=$(aws eks describe-capability \
+                --cluster-name "$CLUSTER_NAME" \
+                --capability-name "$CAPABILITY_NAME" \
+                --region "$AWS_REGION" \
+                --query 'capability.status' \
+                --output text 2>/dev/null || echo "NOT_FOUND")
+
+              if [ "$STATUS" = "NOT_FOUND" ]; then
+                echo "Capability not found — nothing to delete"
+                exit 0
+              fi
+
+              aws eks delete-capability \
+                --cluster-name "$CLUSTER_NAME" \
+                --capability-name "$CAPABILITY_NAME" \
+                --region "$AWS_REGION"
+
+              echo "=== Wait for deletion ==="
+              for i in $(seq 1 60); do
+                STATUS=$(aws eks describe-capability \
+                  --cluster-name "$CLUSTER_NAME" \
+                  --capability-name "$CAPABILITY_NAME" \
+                  --region "$AWS_REGION" \
+                  --query 'capability.status' \
+                  --output text 2>/dev/null || echo "DELETED")
+                echo "Status: $STATUS ($i/60)"
+                [ "$STATUS" = "DELETED" ] && break
+                sleep 30
+              done
+
+              echo "=== Done ==="

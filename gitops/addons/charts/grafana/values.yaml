@@ -1,0 +1,6 @@
+ingress_domain_name: ""
+aws:
+  clusterName: ""
+  region: "us-west-2"
+global:
+  clusterName: ""

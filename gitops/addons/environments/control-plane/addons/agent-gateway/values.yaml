@@ -1,0 +1,5 @@
+global:
+  keycloak:
+    issuerUrl: "https://idp.elamaras.people.aws.dev/keycloak/realms/platform"
+    namespace: keycloak
+    serviceName: keycloak

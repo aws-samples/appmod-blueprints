@@ -1,0 +1,72 @@
+# Agent Platform
+# Deploys the AI agent platform from the sample-agent-platform-on-eks repo.
+# This single addon bootstraps the entire agent platform pipeline:
+#   KAgent, LiteLLM, Langfuse, Jaeger, and optionally Bedrock AgentCore.
+# All charts and configs live in the external repo — appmod-blueprints only
+# controls enablement via this registry entry.
+#
+# Prerequisites: see gitops/AGENT-PLATFORM.md
+# Source: https://github.com/aws-samples/sample-agent-platform-on-eks
+
+agent-platform:
+  namespace: argocd
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/agent-platform'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '8'
+  selector:
+    matchExpressions:
+      - key: enable_agent_platform
+        operator: In
+        values: ['true']
+  valuesObject:
+    agentPlatform:
+      repoURL: '{{default "https://github.com/aws-samples/sample-agent-platform-on-eks.git" (index .metadata.annotations "agent_platform_repo_url")}}'
+      revision: '{{default "main" (index .metadata.annotations "agent_platform_repo_revision")}}'
+      basepath: '{{default "gitops/addons/" (index .metadata.annotations "agent_platform_repo_basepath")}}'
+      environment: '{{.metadata.labels.environment}}'
+    cluster:
+      name: '{{.name}}'
+      server: 'arn:aws:eks:{{.metadata.annotations.aws_region}}:{{.metadata.annotations.aws_account_id}}:cluster/{{.metadata.annotations.aws_cluster_name}}'
+      region: '{{.metadata.annotations.aws_region}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    agentCore:
+      projectName: '{{default "" (index .metadata.annotations "agent_core_project_name")}}'
+      networkMode: '{{default "PUBLIC" (index .metadata.annotations "agent_core_network_mode")}}'
+      mcpImage: '{{default "" (index .metadata.annotations "agent_core_mcp_image")}}'
+      mcpImageTag: '{{default "latest" (index .metadata.annotations "agent_core_mcp_image_tag")}}'
+      terraformRepoUrl: '{{default "" (index .metadata.annotations "agent_core_terraform_repo_url")}}'
+      terraformRepoRevision: '{{default "" (index .metadata.annotations "agent_core_terraform_repo_revision")}}'
+  additionalResources:
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
+      helm:
+        releaseName: agent-platform-pod-identity
+        valuesObject:
+          aws:
+            region: '{{.metadata.annotations.aws_region}}'
+            clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+            accountId: '{{.metadata.annotations.aws_account_id}}'
+          restartHook:
+            enabled: true
+          identities:
+            litellm:
+              enabled: true
+            tofu-runner:
+              enabled: true
+  ignoreDifferences:
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: Policy
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /status
+    - group: eks.aws.upbound.io
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status

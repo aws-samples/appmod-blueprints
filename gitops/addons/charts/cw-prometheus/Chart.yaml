@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cw-prometheus
+description: CloudWatch Prometheus integration for EKS — deploys ADOT collector and CloudWatch agent
+type: application
+version: 0.1.0

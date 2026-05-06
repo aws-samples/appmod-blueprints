@@ -1,0 +1,5 @@
+apiVersion: v2
+name: agent-platform
+description: Bootstrap the agent platform from the sample-agent-platform-on-eks repo
+type: application
+version: 0.1.0

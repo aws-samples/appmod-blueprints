@@ -1,0 +1,6 @@
+# Uncomment to register spoke-prod as a fleet member.
+# clusterName: spoke-prod
+# region: us-west-2
+# labels:
+#   environment: prod
+#   tenant: workshop

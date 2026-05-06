@@ -1,0 +1,5 @@
+externalSecret:
+  enabled: true
+  labels:
+    environment: control-plane
+    tenant: control-plane

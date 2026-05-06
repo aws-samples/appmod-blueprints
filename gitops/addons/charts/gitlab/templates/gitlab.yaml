@@ -144,6 +144,32 @@ spec:
             gitlab_rails['monitoring_whitelist'] = ['0.0.0.0/0']
             gitlab_rails['signup_enabled'] = false
             gitlab_rails['initial_root_password'] = '{{ .Values.initial_root_password }}'
+
+            # OmniAuth Keycloak OIDC configuration (PKCE, no client secret)
+            gitlab_rails['omniauth_enabled'] = true
+            gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
+            gitlab_rails['omniauth_block_auto_created_users'] = false
+            gitlab_rails['omniauth_providers'] = [
+              {
+                name: "openid_connect",
+                label: "Platform IDP",
+                args: {
+                  name: "openid_connect",
+                  scope: ["openid", "profile", "email"],
+                  response_type: "code",
+                  issuer: "https://{{ .Values.keycloak_domain_name }}/keycloak/realms/platform",
+                  client_auth_method: "query",
+                  discovery: true,
+                  uid_field: "preferred_username",
+                  pkce: true,
+                  client_options: {
+                    identifier: "gitlab",
+                    secret: "",
+                    redirect_uri: "https://{{ .Values.domain_name }}/users/auth/openid_connect/callback"
+                  }
+                }
+              }
+            ]
         resources:
           requests:
             memory: "8Gi"

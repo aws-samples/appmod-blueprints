@@ -1,0 +1,20 @@
+featureGates:
+  ServiceLevelCARM: true
+  TeamLevelCARM: true
+
+aws:
+  region: '{{.metadata.annotations.aws_region}}'
+
+deployment:
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi

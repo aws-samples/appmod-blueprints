@@ -1,0 +1,30 @@
+# IAM Role for EKS ArgoCD Capability
+# Created by Crossplane before the capability Job runs.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: argocd-capability-role
+  namespace: crossplane-system
+  annotations:
+    crossplane.io/external-name: CLUSTER_NAME-ArgoCDCapabilityRole
+spec:
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "capabilities.eks.amazonaws.com"
+            },
+            "Action": [
+              "sts:AssumeRole",
+              "sts:TagSession"
+            ]
+          }
+        ]
+      }
+    tags:
+      managed-by: crossplane
+      purpose: eks-argocd-capability

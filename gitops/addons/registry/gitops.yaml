@@ -1,0 +1,126 @@
+# GitOps tooling addons
+# Wave ordering: 3 (rollouts/events) → 4 (kargo/flux) → 7 (argo-workflows, after keycloak)
+
+argo-rollouts:
+  namespace: argo-rollouts
+  chartName: argo-rollouts
+  chartRepository: https://argoproj.github.io/argo-helm
+  defaultVersion: '2.39.5'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_argo_rollouts
+        operator: In
+        values: ['true']
+  valuesObject:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: 'arn:aws:iam::{{.metadata.annotations.aws_account_id}}:role/{{.metadata.annotations.aws_cluster_name}}-argo-rollouts'
+
+argo-events:
+  namespace: argo-events
+  chartName: argo-events
+  chartRepository: https://argoproj.github.io/argo-helm
+  defaultVersion: '2.4.20'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_argo_events
+        operator: In
+        values: ['true']
+  valuesObject:
+    controller:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+
+argo-workflows:
+  namespace: argo
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/argo-workflows'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '7'
+  selector:
+    matchExpressions:
+      - key: enable_argo_workflows
+        operator: In
+        values: ['true']
+  valuesObject:
+    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/resourceVersion
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      name: keycloak-oidc
+      jsonPointers:
+        - /metadata/resourceVersion
+        - /metadata/managedFields
+
+kargo:
+  namespace: kargo
+  chartName: kargo
+  chartRepository: ghcr.io/akuity/kargo-charts
+  defaultVersion: '1.7.5'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_kargo
+        operator: In
+        values: ['true']
+  valuesObject:
+    api:
+      host: '{{.metadata.annotations.ingress_domain_name}}'
+      argocd:
+        urls:
+          - https://{{.metadata.annotations.ingress_domain_name}}/argocd
+      oidc:
+        issuerURL: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
+      secret:
+        name: kargo-admin-credentials
+
+flux:
+  namespace: flux-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/flux'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_flux
+        operator: In
+        values: ['true']
+  valuesObject:
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    gitRepository:
+      url: '{{.metadata.annotations.addonsRepoURL}}'
+  ignoreDifferences:
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+      jsonPointers:
+        - /rules
+        - /metadata/labels
+        - /metadata/annotations
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+      jsonPointers:
+        - /subjects
+        - /roleRef
+        - /metadata/labels
+        - /metadata/annotations
+    - group: source.toolkit.fluxcd.io
+      kind: GitRepository
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields

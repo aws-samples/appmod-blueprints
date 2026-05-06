@@ -6,7 +6,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ $.Values.global.resourcePrefix | default "peeks" }}-{{ $modelName }}-prestage
+  name: {{ $.Values.global.clusterName }}-{{ $modelName }}-prestage
   namespace: {{ $.Release.Namespace }}
   labels:
     app.kubernetes.io/name: ray

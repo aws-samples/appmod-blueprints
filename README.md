@@ -119,6 +119,10 @@ The following script will help you connect to the different tools using the SSO 
 ./platform-on-eks-workshop/platform/infra/terraform/scripts/1-tools-urls.sh  
 ```
 
+## GitOps Platform
+
+The `gitops/` directory contains a complete GitOps-based addon management system using ArgoCD ApplicationSets, Helm charts, and Crossplane. See [gitops/README.md](gitops/README.md) for architecture, quick start, and operations guide.
+
 ## Contributing
 
 We welcome contributions to the Modern Engineering on AWS initiative. Please read our [CONTRIBUTING](CONTRIBUTING.md) guide for details on our code of conduct and the process for submitting pull requests.

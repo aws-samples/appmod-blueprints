@@ -1,0 +1,159 @@
+# Machine learning and AI addons
+# Wave ordering: 5 (all ML/AI tools)
+
+jupyterhub:
+  namespace: jupyterhub
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/jupyterhub'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_jupyterhub
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1secret
+        - /spec/template/metadata/annotations/checksum~1config-map
+
+kubeflow:
+  namespace: kubeflow
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kubeflow'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_kubeflow
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields
+    - group: batch
+      kind: Job
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+
+mlflow:
+  namespace: mlflow
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/mlflow'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_mlflow
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+
+ray-operator:
+  namespace: ray-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/ray-operator'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_ray_operator
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
+        - /status
+
+spark-operator:
+  namespace: spark-operator
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/spark-operator'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_spark_operator
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
+        - /status
+
+airflow:
+  namespace: airflow
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/airflow'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_airflow
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields

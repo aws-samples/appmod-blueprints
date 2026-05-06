@@ -1,0 +1,97 @@
+# Security and policy addons
+# Wave ordering: 3 (kyverno) → 4 (policies/reporter) → 6 (keycloak, needs Ingress/LBC)
+
+keycloak:
+  namespace: keycloak
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/keycloak'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '6'
+  selector:
+    matchExpressions:
+      - key: enable_keycloak
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
+      grafana_url: '{{.metadata.annotations.ingress_domain_name}}/grafana'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+        - /metadata/resourceVersion
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/managedFields
+        - /metadata/resourceVersion
+        - /data
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /metadata/managedFields
+        - /metadata/generation
+        - /status
+        - /spec/replicas
+        - /spec/template/metadata/annotations
+    - group: ''
+      kind: Service
+      jsonPointers:
+        - /spec/clusterIP
+        - /spec/clusterIPs
+        - /metadata/managedFields
+
+kyverno:
+  namespace: kyverno
+  chartName: kyverno
+  releaseName: kyverno
+  chartRepository: https://kyverno.github.io/kyverno
+  defaultVersion: '3.3.6'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_kyverno
+        operator: In
+        values: ['true']
+  valuesObject:
+    environment: '{{.metadata.labels.environment}}'
+
+kyverno-policies:
+  namespace: kyverno
+  chartName: kyverno-policies
+  releaseName: kyverno-policies
+  chartRepository: https://kyverno.github.io/kyverno
+  defaultVersion: '3.3.6'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_kyverno_policies
+        operator: In
+        values: ['true']
+  ignoreDifferences:
+    - group: kyverno.io
+      kind: ClusterPolicy
+      jqPathExpressions:
+        - .spec.rules | .. | .allowExistingViolations?
+
+kyverno-policy-reporter:
+  namespace: kyverno
+  chartName: policy-reporter
+  releaseName: kyverno-policy-reporter
+  chartRepository: https://kyverno.github.io/policy-reporter
+  defaultVersion: '3.1.0'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_kyverno_policy_reporter
+        operator: In
+        values: ['true']

@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Platform Bootstrap Configuration",
+  "description": "Configuration for the GitOps addon management platform. Copy to config.local.yaml and customize.",
+  "type": "object",
+  "required": ["hub", "aws", "repo", "domain"],
+  "properties": {
+    "clusterProvider": {
+      "type": "string",
+      "enum": ["kind-crossplane", "byoc"],
+      "default": "kind-crossplane",
+      "description": "Which cluster provider to use for hub provisioning"
+    },
+    "repo": {
+      "type": "object",
+      "required": ["url", "revision", "basepath"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Git repository URL hosting the platform code"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Git branch or tag to deploy from"
+        },
+        "basepath": {
+          "type": "string",
+          "default": "gitops/",
+          "description": "Path within the repo to the gitops directory (must end with /)"
+        }
+      }
+    },
+    "hub": {
+      "type": "object",
+      "required": ["clusterName"],
+      "properties": {
+        "clusterName": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "description": "EKS cluster name. Must be DNS-compatible, unique per account+region. Used to prefix IAM roles and Secrets Manager keys."
+        },
+        "kubernetesVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$",
+          "default": "1.35",
+          "description": "EKS Kubernetes version"
+        },
+        "vpcCidr": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+/[0-9]+$",
+          "default": "10.0.0.0/16",
+          "description": "VPC CIDR block. Must not overlap with other stacks if VPC peering is needed."
+        },
+        "managedNodeGroup": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable a managed node group alongside EKS Auto Mode"
+            },
+            "instanceTypes": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["m5.large"],
+              "description": "EC2 instance types for the node group"
+            },
+            "desiredSize": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 2
+            },
+            "minSize": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "maxSize": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 5
+            },
+            "diskSize": {
+              "type": "integer",
+              "minimum": 20,
+              "default": 50,
+              "description": "Root volume size in GB"
+            },
+            "capacityType": {
+              "type": "string",
+              "enum": ["ON_DEMAND", "SPOT"],
+              "default": "ON_DEMAND"
+            }
+          }
+        }
+      }
+    },
+    "aws": {
+      "type": "object",
+      "required": ["region", "accountId"],
+      "properties": {
+        "region": {
+          "type": "string",
+          "pattern": "^[a-z]{2}-[a-z]+-[0-9]+$",
+          "description": "AWS region (e.g. us-west-2)"
+        },
+        "accountId": {
+          "type": "string",
+          "pattern": "^[0-9]{12}$",
+          "description": "12-digit AWS account ID"
+        },
+        "profile": {
+          "type": "string",
+          "default": "default",
+          "description": "AWS CLI profile name (local dev only)"
+        }
+      }
+    },
+    "domain": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]+[a-z0-9]$",
+      "description": "Base domain for ingress hostnames. Must be unique per stack — two stacks sharing a domain will have DNS and TLS conflicts."
+    },
+    "resourcePrefix": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Prefix for KRO tenant-facing resources (ECR repos, S3 buckets). Infrastructure resources use clusterName instead."
+    },
+    "ingressName": {
+      "type": "string",
+      "default": "",
+      "description": "ALB ingress group name. Defaults to {clusterName}-ingress if empty."
+    },
+    "ingressSecurityGroups": {
+      "type": "string",
+      "default": "",
+      "description": "Comma-separated security group IDs for the ALB"
+    },
+    "identityCenter": {
+      "type": "object",
+      "required": ["instanceArn", "region", "adminGroupId"],
+      "description": "AWS Identity Center config for EKS ArgoCD Capability",
+      "properties": {
+        "instanceArn": {
+          "type": "string",
+          "pattern": "^arn:aws:sso:::instance/",
+          "description": "Identity Center instance ARN"
+        },
+        "region": {
+          "type": "string",
+          "pattern": "^[a-z]{2}-[a-z]+-[0-9]+$",
+          "description": "Identity Center region (often us-east-1)"
+        },
+        "adminGroupId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identity Center admin group ID for ArgoCD access"
+        }
+      }
+    },
+    "argocdCapability": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "default": "argocd",
+          "description": "EKS ArgoCD Capability name"
+        }
+      }
+    }
+  }
+}

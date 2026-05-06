@@ -1,0 +1,6 @@
+aws_cluster_name: ""
+ingress_domain_name: ""
+controller:
+  resources: {}
+server:
+  resources: {}

@@ -1,0 +1,49 @@
+# PostSync hook: restarts deployments that use pod identity service accounts.
+# EKS Pod Identity webhook injects credentials at pod creation time. If the
+# PodIdentityAssociation didn't exist when the pod started, the pod runs
+# without credentials permanently. This hook detects that condition and
+# restarts the deployment so the webhook can inject credentials on the new pod.
+# The check is idempotent — if credentials are already present, no restart occurs.
+{{- if .Values.restartHook.enabled }}
+{{- range $name, $identity := .Values.identities }}
+{{- if not (eq (toString $identity.enabled) "false") }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-pod-identity-restart
+  namespace: {{ $identity.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      serviceAccountName: {{ $name }}-restart-sa
+      containers:
+        - name: restart
+          image: bitnami/kubectl:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              SA="{{ $identity.serviceAccount }}"
+              NS="{{ $identity.namespace }}"
+              DEPLOY=$(kubectl get deploy -n $NS -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.template.spec.serviceAccountName}{"\n"}{end}' | grep "$SA" | awk '{print $1}')
+              if [ -z "$DEPLOY" ]; then
+                echo "No deployment found using SA $SA in $NS, skipping"
+                exit 0
+              fi
+              if kubectl get pods -n $NS -l app.kubernetes.io/name=$DEPLOY \
+                -o jsonpath='{.items[0].spec.containers[0].env[*].name}' 2>/dev/null | grep -q AWS_CONTAINER_CREDENTIALS_FULL_URI; then
+                echo "Pod identity credentials already injected in $DEPLOY, skipping restart"
+              else
+                echo "Restarting $DEPLOY in $NS to pick up pod identity credentials"
+                kubectl rollout restart deployment/$DEPLOY -n $NS
+                kubectl rollout status deployment/$DEPLOY -n $NS --timeout=120s
+              fi
+      restartPolicy: Never
+{{- end }}
+{{- end }}
+{{- end }}
