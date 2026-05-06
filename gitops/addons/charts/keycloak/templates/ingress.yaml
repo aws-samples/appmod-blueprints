@@ -4,6 +4,7 @@ metadata:
   name: keycloak
   namespace: keycloak
   annotations:
+    argocd.argoproj.io/sync-wave: "10"
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
