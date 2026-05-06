@@ -73,8 +73,12 @@ external-secrets:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
   additionalResources:
-    - type: manifests
-      manifestPath: manifests
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/cluster-secret-store'
+      helm:
+        releaseName: cluster-secret-store
+        valuesObject:
+          aws:
+            region: '{{.metadata.annotations.aws_region}}'
 
 ingress-class-alb:
   namespace: kube-system
