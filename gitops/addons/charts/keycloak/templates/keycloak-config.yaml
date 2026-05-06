@@ -602,7 +602,7 @@ spec:
               export DEBIAN_FRONTEND=noninteractive
               export TZ=UTC
 
-              apt -qq update && apt -qq install curl jq gettext-base -y
+              apt -qq update && apt -qq install curl jq gettext-base unzip -y
 
               # Helper functions
               keycloak_post() {
