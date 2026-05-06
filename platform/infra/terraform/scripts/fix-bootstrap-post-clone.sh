@@ -23,6 +23,13 @@ echo "=== Running post-clone setup from $BASE_DIR ==="
 eval "$(~/.local/bin/mise activate bash 2>/dev/null)" || true
 export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
 
+# Install uv if missing (git/NFS bug may have interrupted mise setup)
+if ! command -v uv &>/dev/null; then
+  echo "Installing uv..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+
 # Zsh config
 cp hack/.zshrc hack/.p10k.zsh hack/.zsh_history ~/
 
