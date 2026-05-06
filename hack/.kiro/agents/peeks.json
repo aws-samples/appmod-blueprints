@@ -6,9 +6,8 @@
     "eks-mcp-server": {
       "disabled": false,
       "type": "stdio",
-      "command": "/home/ec2-user/.local/bin/uvx",
+      "command": "/home/ec2-user/.local/bin/mcp-proxy-for-aws",
       "args": [
-        "mcp-proxy-for-aws@latest",
         "https://eks-mcp.us-west-2.api.aws/mcp",
         "--service",
         "eks-mcp",
@@ -23,8 +22,8 @@
       "type": "http"
     },
     "awslabs.aws-iac-mcp-server": {
-      "command": "/home/ec2-user/.local/bin/uvx",
-      "args": ["awslabs.aws-iac-mcp-server@latest"],
+      "command": "/home/ec2-user/.local/bin/awslabs.aws-iac-mcp-server",
+      "args": [],
       "env": {
         "FASTMCP_LOG_LEVEL": "ERROR"
       },
