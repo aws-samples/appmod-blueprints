@@ -868,12 +868,11 @@ metadata:
   namespace: keycloak
   annotations:
     argocd.argoproj.io/sync-wave: "11"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   updatePolicy: Replace
   # None: don't delete the AWS secret when the PushSecret resource is deleted.
-  # Prevents AWS Secrets Manager idempotency token conflicts when the hook is
-  # re-run after a failed/terminated sync (AWS caches ClientRequestToken for
-  # ~24h even after the secret is gone, blocking re-creation).
   deletionPolicy: None
   refreshInterval: 30s
   secretStoreRefs:
