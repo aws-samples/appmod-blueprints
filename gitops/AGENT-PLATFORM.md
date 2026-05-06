@@ -47,8 +47,12 @@ All addons are defined in the sample repo and deploy in sync-wave order:
 | 5 | jaeger (distributed tracing) | Helm: `jaegertracing/jaeger:3.4.1` | jaeger |
 | 5 | prometheus-operator-crds | Helm: `prometheus-community/prometheus-operator-crds:28.0.1` | kagent |
 | 6 | kagent-monitoring (ServiceMonitor) | Git path chart | kagent |
+| 7 | gateway-api-crds | Git path chart (Job) | agentgateway-system |
+| 7 | agentgateway-crds | OCI: `cr.agentgateway.dev/charts/agentgateway-crds:v1.1.0` | agentgateway-system |
+| 8 | agentgateway (control plane) | OCI: `cr.agentgateway.dev/charts/agentgateway:v1.1.0` | agentgateway-system |
+| 9 | agent-gateway (Gateway + Policies) | Git path chart | agent-core-infra |
 
-Flux and tofu-controller are prerequisites for agent-core only. The prometheus-operator-crds chart deploys automatically before kagent-monitoring — no manual CRD installation needed.
+Flux and tofu-controller are prerequisites for agent-core only. The prometheus-operator-crds chart deploys automatically before kagent-monitoring — no manual CRD installation needed. AgentGateway provides MCP authentication via KeyCloak JWT validation — it requires KeyCloak to be deployed on the cluster (already provided by appmod-blueprints).
 
 ## Prerequisites
 
@@ -114,6 +118,10 @@ To override any of these defaults, add annotations to the hub cluster secret (vi
 | `agent_core_terraform_repo_revision` | sample repo revision | Terraform module branch |
 | `agent_platform_repo_url` | `https://github.com/aws-samples/sample-agent-platform-on-eks.git` | Agent platform repo |
 | `agent_platform_repo_revision` | `main` | Agent platform branch |
+| `keycloak_issuer_url` | (auto-derived from `ingress_domain_name`) | KeyCloak issuer URL for JWT validation |
+| `keycloak_service_name` | `keycloak` | KeyCloak Kubernetes Service name |
+| `keycloak_namespace` | `keycloak` | KeyCloak namespace |
+| `agent_gateway_resource_url` | (optional) | MCP resource identifier for OAuth discovery |
 
 Commit and push. ArgoCD deploys everything automatically.
 
@@ -165,3 +173,7 @@ kubectl run test --rm -i --restart=Never --image=curlimages/curl -n kagent -- \
 | RemoteMCPServer "Accepted: False" | DNS resolution failure or MCP server down | Verify URL uses FQDN (`<svc>.<ns>.svc.cluster.local`), check MCP server logs |
 | kagent-monitoring fails | Missing ServiceMonitor CRD | Verify `prometheus-operator-crds` addon deployed (wave 5, before monitoring at wave 6) |
 | ArgoCD reverts manual changes | selfHeal enabled | Push changes to the sample repo git branch instead of patching directly |
+| Gateway API CRDs Job fails | No outbound internet | Ensure NAT gateway is configured for EKS nodes |
+| AgentGateway proxy not starting | Missing Gateway API CRDs | Verify gateway-api-crds Job completed, check `kubectl get crds | grep gateway` |
+| JWT validation fails | Wrong issuer URL | Ensure `keycloak_issuer_url` annotation matches the `iss` claim in tokens |
+| AgentGateway "no backends" | MCP servers not running | Verify agent-core MCP pods are healthy in agent-core-infra namespace |
