@@ -6,7 +6,7 @@ export TF_CLI_ARGS="-no-color"
 set -euo pipefail
 
 SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
+ROOTDIR="$(cd ${SCRIPTDIR}/../../../..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
 # Save the current script directory before sourcing utils.sh
