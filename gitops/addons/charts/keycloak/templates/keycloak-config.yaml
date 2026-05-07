@@ -583,6 +583,33 @@ data:
         }
       ]
     }
+  mcp-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "mcp-client",
+      "name": "MCP Client",
+      "description": "Used for AgentGateway MCP authentication",
+      "publicClient": true,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": true,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "",
+      "baseUrl": "",
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "*"
+      ]
+    }
 ---
 apiVersion: batch/v1
 kind: Job
@@ -821,6 +848,7 @@ spec:
               create_client "Spark" "/var/config/spark-client-payload.json"
               create_client "Airflow" "/var/config/airflow-client-payload.json"
               create_client "Kargo" "/var/config/kargo-client-payload.json"
+              create_client "MCP Client" "/var/config/mcp-client-payload.json"
               # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
               create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
