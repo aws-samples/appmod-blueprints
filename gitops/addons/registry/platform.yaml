@@ -58,8 +58,6 @@ crossplane-base:
       eks:
         version: "v2.5.3"
         createIdentity: false
-      secretsmanager:
-        version: "v2.5.3"
   ignoreDifferences:
     - group: pkg.crossplane.io
       kind: Provider
