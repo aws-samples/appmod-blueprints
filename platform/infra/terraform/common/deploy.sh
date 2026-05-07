@@ -198,6 +198,7 @@ main() {
   update_backstage_defaults
 
   # Push a clean single-commit history to GitLab (no GitHub refs/history)
+  cd "$ROOTDIR"
   rm -rf .git
   git init -b main
   git add .
