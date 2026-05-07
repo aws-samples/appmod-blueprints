@@ -130,9 +130,10 @@ set_gitlab_remote_for_peeks() {
   git config user.name "Workshop Participant"
   
   # deploy.sh already pushed to GitLab with fleet/backstage content.
-  # Pull that commit so the IDE is in sync, then set tracking branch.
+  # Reset local to match GitLab (avoids rebase conflicts from bootstrap's initial commit).
   git checkout -B main
-  git pull --rebase origin main || git push -u origin main
+  git fetch origin main
+  git reset --hard origin/main
   
   popd
   echo "GitLab remote set for ~/environment/$WORKING_REPO - synced with GitLab"

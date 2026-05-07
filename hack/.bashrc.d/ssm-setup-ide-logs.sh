@@ -70,6 +70,42 @@ argocd-refresh-token() {
         --password "${IDE_PASSWORD}" \
         --output token 2>/tmp/argocd-token-debug.log)
 
+    # If token retrieval failed, try configuring IDC-Keycloak federation first
+    if [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
+        echo "Token retrieval failed. Checking IDC-Keycloak federation..." >&2
+
+        local idc_instance_arn idc_instance_id domain_name keycloak_admin_password
+        idc_instance_arn=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text 2>/dev/null || echo "None")
+        if [[ -n "$idc_instance_arn" && "$idc_instance_arn" != "None" ]]; then
+            idc_instance_id=$(echo "$idc_instance_arn" | grep -oP '[0-9a-f]{16}$' || echo "")
+            [[ -z "$idc_instance_id" ]] && idc_instance_id=$(echo "$idc_instance_arn" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//')
+        fi
+
+        domain_name=$(kubectl get secret ${RESOURCE_PREFIX:-peeks}-hub-cluster -n argocd -o jsonpath='{.metadata.annotations.ingress_domain_name}' 2>/dev/null || echo "")
+        [[ -z "$domain_name" || "$domain_name" == "null" ]] && \
+            domain_name=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].Id, 'http-origin')].DomainName | [0]" --output text 2>/dev/null || echo "")
+
+        keycloak_admin_password=$(kubectl get secret keycloak-config -n keycloak -o jsonpath='{.data.KC_BOOTSTRAP_ADMIN_PASSWORD}' 2>/dev/null | base64 -d || echo "")
+
+        if [[ -n "$idc_instance_id" && -n "$domain_name" && "$domain_name" != "None" && -n "$keycloak_admin_password" ]]; then
+            echo "Running IDC-Keycloak federation setup..." >&2
+            python3 "$script_dir/configure_identity_center.py" \
+                --region "${AWS_REGION:-us-west-2}" \
+                --instance-id "$idc_instance_id" \
+                --keycloak-dns "$domain_name" \
+                --keycloak-admin-password="$keycloak_admin_password" 2>&1 | tail -5 >&2
+
+            echo "Retrying token retrieval..." >&2
+            token=$(python3 "$script_dir/argocd_token_automation.py" \
+                --url "$server_url" \
+                --username "user1" \
+                --password "${IDE_PASSWORD}" \
+                --output token 2>/tmp/argocd-token-debug.log)
+        else
+            echo "ERROR: Cannot configure IDC federation (missing: instance_id=$idc_instance_id, domain=$domain_name, kc_password=$([ -n "$keycloak_admin_password" ] && echo set || echo missing))" >&2
+        fi
+    fi
+
     if [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
         echo "ERROR: Failed to retrieve ArgoCD token. Debug log:" >&2
         cat /tmp/argocd-token-debug.log >&2

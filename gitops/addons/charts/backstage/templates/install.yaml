@@ -550,6 +550,15 @@ metadata:
     argocd.argoproj.io/sync-wave: "10"
 spec:
   replicas: 1
+  revisionHistoryLimit: 10
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   selector:
     matchLabels:
       app: postgresql
@@ -565,6 +574,11 @@ spec:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
         effect: "NoSchedule"
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
       containers:
         - env:
             - name: PGDATA
@@ -585,16 +599,20 @@ spec:
                   name: backstage-postgres-vars
                   key: POSTGRES_PASSWORD
           image: docker.io/library/postgres:17.4-alpine3.21
+          imagePullPolicy: IfNotPresent
           name: postgres
           ports:
             - containerPort: 5432
               name: postgresdb
+              protocol: TCP
           resources:
             limits:
               memory: 500Mi
             requests:
               cpu: 100m
               memory: 300Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data

@@ -6,7 +6,7 @@ export TF_CLI_ARGS="-no-color"
 set -euo pipefail
 
 SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-ROOTDIR="$(cd ${SCRIPTDIR}/../..; pwd )"
+ROOTDIR="$(cd ${SCRIPTDIR}/../../../..; pwd )"
 [[ -n "${DEBUG:-}" ]] && set -x
 
 # Save the current script directory before sourcing utils.sh
@@ -196,10 +196,15 @@ main() {
 
   create_spoke_cluster_secret_values
   update_backstage_defaults
+
+  # Push a clean single-commit history to GitLab (no GitHub refs/history)
+  cd "$ROOTDIR"
+  rm -rf .git
+  git init -b main
   git add .
-  git commit -m "Bootstrap: add fleet member values and backstage defaults" || true
-  git checkout -B main
-  git push -u origin main
+  git commit -m "Bootstrap: platform-on-eks-workshop"
+  git remote add origin "$GITLAB_PUSH_URL"
+  git push -u origin main --force
   cd -
 
   log_success "Bootstrap stack deployment completed successfully"
