@@ -174,7 +174,11 @@ spec:
         {{- end }}
       destination:
         namespace: '{{ $chartConfig.namespace }}'
+        {{- if $chartConfig.destinationServer }}
+        server: {{ $chartConfig.destinationServer | squote }}
+        {{- else }}
         name: '{{`{{ .name }}`}}'
+        {{- end }}
       {{- if $chartConfig.syncPolicy }}
       syncPolicy:
         {{- toYaml $chartConfig.syncPolicy | nindent 8 }}
