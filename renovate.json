@@ -107,8 +107,8 @@
         "/addons\\.ya?ml$/"
       ],
       "matchStrings": [
-        "chartName:\\s*(?<depName>[^\\s]+)[\\s\\S]*?chartRepository:\\s*['\"]?(?<registryUrl>https://[^'\"\\s]+)['\"]?[\\s\\S]*?defaultVersion:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?",
-        "chartName:\\s*(?<depName>[^\\s]+)[\\s\\S]*?defaultVersion:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?[\\s\\S]*?chartRepository:\\s*['\"]?(?<registryUrl>https://[^'\"\\s]+)['\"]?"
+        "chartName:\\s*(?<depName>[^\\s]+)\\s*\\n(?:[^\\n]*\\n){0,15}?\\s*chartRepository:\\s*['\"]?(?<registryUrl>https://[^\\s'\"]+)['\"]?\\s*\\n(?:[^\\n]*\\n){0,5}?\\s*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?",
+        "chartName:\\s*(?<depName>[^\\s]+)\\s*\\n(?:[^\\n]*\\n){0,15}?\\s*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?\\s*\\n(?:[^\\n]*\\n){0,5}?\\s*chartRepository:\\s*['\"]?(?<registryUrl>https://[^\\s'\"]+)['\"]?"
       ],
       "datasourceTemplate": "helm"
     },
@@ -119,8 +119,8 @@
         "/addons\\.ya?ml$/"
       ],
       "matchStrings": [
-        "chartName:\\s*(?<depName>[^\\s]+)[\\s\\S]*?chartRepository:\\s*['\"]?(?<registryUrl>ghcr\\.io/[^'\"\\s]+)['\"]?[\\s\\S]*?defaultVersion:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?",
-        "chartName:\\s*(?<depName>[^\\s]+)[\\s\\S]*?chartRepository:\\s*['\"]?(?<registryUrl>public\\.ecr\\.aws[^'\"\\s]*)['\"]?[\\s\\S]*?defaultVersion:\\s*['\"]?(?<currentValue>[0-9][0-9\\.]+)['\"]?"
+        "chartName:\\s*(?<depName>[^\\s]+)\\s*\\n(?:[^\\n]*\\n){0,15}?\\s*chartRepository:\\s*['\"]?(?<registryUrl>ghcr\\.io/[^\\s'\"]+)['\"]?\\s*\\n(?:[^\\n]*\\n){0,5}?\\s*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?",
+        "chartName:\\s*(?<depName>[^\\s]+)\\s*\\n(?:[^\\n]*\\n){0,15}?\\s*chartRepository:\\s*['\"]?(?<registryUrl>public\\.ecr\\.aws[^\\s'\"]*)['\"]?\\s*\\n(?:[^\\n]*\\n){0,5}?\\s*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?"
       ],
       "datasourceTemplate": "docker"
     }
