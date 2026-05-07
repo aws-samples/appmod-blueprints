@@ -1,270 +1,125 @@
 # Release Notes
 
----
+## v0.2.6 (2026-05-07)
 
-## Performance Optimizations (2026-02-07)
+### Critical Fixes
+- Push keycloak OIDC secrets directly to AWS SM from config Job (removes PushSecret race condition)
+- Fix ROOTDIR calculation in deploy.sh — was `platform/infra` instead of repo root
+- Push clean single-commit history to GitLab with `git init -b main`
+- Use `git reset --hard origin/main` instead of `git pull --rebase` to sync IDE with GitLab
+- Add `unzip` to config Job container for AWS CLI v2
 
-### Sync Wave Optimizations
+### Improvements
+- Add deployment architecture steering doc for IDE agent
+- Use mise shims path for MCP servers in peeks agent config
+- Add post-clone recovery script for git/NFS bootstrap failures
+- Self-healing `argocd-refresh-token` with IDC-Keycloak auto-configuration
+- Reorder zsh_history for better UX
+- Improve Renovate regex to detect addon version bumps in addons.yaml
+- Fix kro `omit()` for optional argocd tracking-id annotation
+- Add download timeout to model prestage jobs
+- Bump cni-metrics-helper to 1.21.1
 
-Reduced ArgoCD sync wave dependencies to improve initial setup time by ~6-7 minutes.
-
-**Changes:**
-- **Backstage**: Wave 10 → 4 (only depends on Keycloak wave 3)
-- **Devlake**: Wave 10 → 7 (only depends on Crossplane-AWS wave 6)
-- **Argo Workflows**: Wave 6 → 4 (only depends on Keycloak wave 3)
-- **Kargo**: Wave 6 → 4 (only depends on Keycloak wave 3)
-
-**Revert Instructions (if needed):**
-```bash
-# In gitops/addons/bootstrap/default/addons.yaml
-# Backstage: sync-wave: '4' → '10'
-# Devlake: sync-wave: '7' → '10'
-# Argo Workflows: sync-wave: '4' → '6'
-# Kargo: sync-wave: '4' → '6'
-```
-
-**Impact:** These addons now deploy in parallel with other wave 4-7 services instead of waiting for all previous waves to complete.
-
----
-
-## EKS Capabilities Integration (feat/eks-capabilities-integration)
-
-### Overview
-
-This release integrates Amazon EKS Capabilities - fully managed versions of Argo CD, ACK, and kro that run in AWS-managed infrastructure, eliminating the need to self-manage these components.
-
-### Major Features
-
-#### EKS Managed Capabilities
-
-- **Managed Argo CD**: Replaced self-hosted Argo CD with EKS Capability for GitOps
-- **Managed ACK Controllers**: AWS Controllers for Kubernetes as managed capability
-- **Managed kro**: Kubernetes Resource Orchestrator as managed capability
-- **Identity Center Integration**: RBAC via AWS Identity Center groups (`eks-argocd-admins`, `eks-argocd-developers`)
-
-#### Infrastructure Changes
-
-- **EKS Module Upgrade**: Updated from `~> 20.31.6` to `~> 21.10.1` for Capabilities support
-- **Custom Karpenter Nodepools**: Switched from Auto Mode default nodepools to custom Karpenter nodepools
-- **Identity Center Terraform Module**: New module at `platform/infra/terraform/identity-center/` for IDC group/user management
-- **EKS Capabilities RBAC**: Added ClusterRole/ClusterRoleBinding for managed kro capability
-
-#### HuggingFace Model Downloads
-
-- **Kro RGD for Model Downloads**: New ResourceGraphDefinition replacing CodeBuild-based downloads
-- **Argo Workflows Integration**: Model downloads run as Kubernetes-native workflows
-- **Pod Identity**: Proper IAM integration for S3 uploads
-
-#### Keycloak Improvements
-
-- **Split-Brain Detector**: CronJob to detect and heal Keycloak cluster split-brain scenarios
-- **Enhanced Secret Generation**: Improved secret management templates
-
-#### Argo CD Recovery
-
-- **Automatic Workflow Recovery**: Added recovery for stuck Argo Workflows
-- **Improved Stuck App Detection**: Better handling of stale finished operations
-- **Revision Conflict Recovery**: Enhanced sync wave monitoring
-
-### New Documentation
-
-- `docs/EKS-Capabilities-ArgoCD-Setup.md`: Configuration guide for EKS managed Argo CD
-- `docs/huggingface-model-download.md`: Kro-based model download documentation
-- `platform/infra/terraform/cluster/EKS_CAPABILITIES_SETUP.md`: EKS Capabilities deployment guide
-
-### Bug Fixes
-
-- Added lifecycle rule to prevent CloudFront VPC origin update conflicts
-- Added EKS cluster security group to RDS ingress rules
-- Fixed dynamic server in fleet-secrets ApplicationSet
-- Removed duplicate ClusterSecretStore
-- Updated Backstage external secret for EKS managed Argo CD
-
-### Breaking Changes
-
-- Argo CD now runs as EKS Capability (not self-hosted)
-- Requires AWS Identity Center for Argo CD RBAC
-- GitOps Bridge cluster secrets use EKS cluster ARN as server
-
-### Migration Notes
-
-- Associate `AmazonEKSClusterAdminPolicy` with `AmazonEKSCapabilityArgoCDRole`
-- Update cluster secrets to use EKS cluster ARN instead of `https://kubernetes.default.svc`
-- Configure Identity Center groups for Argo CD access
+### ArgoCD Drift Fixes
+- Keycloak StatefulSet ignoreDifferences (pod template, volumeClaimTemplates, updateStrategy)
+- Argo-rollouts CRD drift (conversion, preserveUnknownFields)
 
 ---
 
-**Release Date**: February 2026
-**Branch**: feat/eks-capabilities-integration → main
+## v0.2.5 (2026-04-15)
+
+- Fix Backstage kubernetes auth with long-lived SA token
 
 ---
 
-## riv25 Branch Merge
+## v0.2.4 (2026-04-15)
 
-### Overview
-
-This release merges the `riv25` branch into `main`, bringing significant platform enhancements, new features, and stability improvements for the EKS application modernization blueprint.
-
-## Major Features
-
-### Platform Architecture
-
-- **Decoupled Deployment Model**: Separated cluster creation from bootstrap process for improved modularity
-- **Multi-Cluster Fleet Management**: Enhanced spoke cluster (dev/prod) configuration and secret management
-- **High Availability Configuration**: Comprehensive HA setup for critical platform addons including Argo CD, Keycloak, and KubeVela
-
-### GitOps & CI/CD
-
-- **KRO (Kubernetes Resource Orchestrator)**:
-  - Upgraded to v0.6.1
-  - Added CI/CD pipeline implementation using KRO Resource Graph Definitions (RGD)
-  - Integrated KRO with Backstage for streamlined resource management
-- **Argo Workflows**: Enabled and configured for workflow orchestration
-- **Argo Events**: Added event-driven automation with GitLab webhook integration
-- **Kargo**: Enabled progressive delivery and promotion workflows
-- **Progressive Delivery**: Extended gate pauses and rollout tracking with Argo Rollouts
-
-### Developer Platform
-
-- **Backstage Enhancements**:
-  - GitLab integration with custom plugin for improved timeout handling
-  - Argo CD plugin integration (Roadie's Argo CD Plugin)
-  - New templates for DynamoDB, S3, and EKS cluster provisioning
-  - KRO catalog and pipeline templates
-- **JupyterHub**: Added addon for ML/data science workloads
-
-### Infrastructure as Code
-
-- **Crossplane**:
-  - Migrated to EKS Pod Identity
-  - Separated core Crossplane from AWS provider
-  - Added compositions and provider configurations
-- **Flux CD**:
-  - Enabled on spoke clusters
-  - Integrated with GitOps bridge templating
-- **ACK (AWS Controllers for Kubernetes)**:
-  - Enabled S3, DynamoDB, ECR, and IAM controllers
-  - Configured with EKS Pod Identity
-
-### Observability
-
-- **Grafana Operator**: Added and enabled
-- **Rust Metrics Dashboard**: Custom dashboard for Rust application monitoring
-- **AWS Observability Accelerator**: Integrated terraform-aws-observability-accelerator module
-- **DevLake**: Added DORA metrics tracking and deployment
-
-### Security & Compliance
-
-- **Keycloak**:
-  - Configured for PKCE authentication
-  - StatefulSet deployment for HA
-  - Automated client configuration for Argo CD, Grafana, and GitLab
-- **Kyverno**: Configured policies (disabled by default for workshop)
-- **External Secrets Operator**: Enhanced with ClusterSecretStore configurations
-- **Security Hub**: Added Terraform integration
-
-## Infrastructure Improvements
-
-### Networking
-
-- **GitLab**: Migrated to private NLB with VPC origin
-- **CloudFront**: Increased timeout configurations
-- **Ingress**: Priority routing for Argo Events webhooks
-
-### Compute
-
-- **EKS Auto Mode**: Optimized nodepool configurations
-- **Critical Addons**: Moved to system nodepool with PodDisruptionBudgets
-- **Topology Spread**: Configured nginx with zone-aware spreading
-
-### Storage & Data
-
-- **RDS**: Added security group ingress rules for EKS cluster
-- **S3**: Force delete configuration for ECR repositories
-
-## Application Updates
-
-### Sample Applications
-
-- **Rust Application**: Updated with metrics and dashboard
-- **Java Application**: Fixed timeouts for rollout checks, updated components
-- **HuggingFace Models**: Added download support and platform manifest updates
-
-## Developer Experience
-
-### Scripts & Automation
-
-- **Idempotent Operations**: GitLab repository setup and webhook configuration
-- **Retry Logic**: Added to deployment scripts for improved reliability
-- **Cleanup Scripts**: Argo CD app deletion and webhook cleanup
-- **Init Process**: Enhanced stability with proper sourcing and wait logic
-
-### Docs Updates
-
-- **README**: Comprehensive updates with architecture diagrams
-- **CloudFormation**: Fixed instructions and template links
-- **On Your Own**: Updated deployment instructions
-
-## Bug Fixes
-
-### Argo CD
-
-- Improved stuck app detection and recovery
-- Fixed operation termination checks
-- Enhanced sync wave monitoring
-- Resolved revision conflict recovery
-
-### GitLab
-
-- Fixed personal access token expiration (2026-12-31)
-- Resolved git tag handling issues
-- Fixed push stale info errors
-- HTTPS token configuration
-
-### Terraform
-
-- Fixed EKS access entry ARN format conversion
-- Resolved circular dependencies
-- Added explicit dependencies for access policies
-- Fixed timeout and retry logic
-
-### Templates
-
-- Fixed YAML syntax errors across Backstage templates
-- Corrected API versions and resource references
-- Updated action names (argocd:create-resources, kube:apply)
-- Fixed variable references and hostname configurations
-
-## Breaking Changes
-
-- Crossplane now uses EKS Pod Identity instead of IRSA
-- GitLab moved to private NLB (requires VPC access)
-- Backstage templates updated to use `kube:apply` instead of `argocd:create-app`
-
-## Migration Notes
-
-- Existing clusters should review Pod Identity configurations
-- Update any custom Backstage templates to use new action names
-- Review and update GitLab access patterns for private NLB
-
-## Dependencies
-
-- KRO: v0.6.1
-- KubeVela: v1.10.0
-- External Secrets Operator: v0.19.2
-- Flux: v2 with updated CRD APIs
-- Observability Accelerator: v2.13.1
-
-## New Documentation
-
-- **GitOps Bridge Architecture**: Added comprehensive documentation explaining the GitOps Bridge pattern, three-tier configuration system, cluster secrets, ApplicationSets, and External Secrets integration (`docs/platform/gitops-bridge-architecture.md`)
-
-## Contributors
-
-Special thanks to all contributors who made this release possible through extensive testing, bug fixes, and feature development.
+- Use EKS Capabilities for ACK/KRO on spoke clusters
+- Harden IAM policies and rename progressive-app to rollout-demo
+- Fix terraform destroy with `-refresh=false` after state rm
+- Bump next.js to 15.5.15
 
 ---
 
-**Release Date**: February 2026
-**Branch**: riv25 → main
-**Commits**: 800+ commits merged
+## v0.2.3 (2026-04-12)
+
+- Fix environment-specific AWS resource naming
+- Fix KubeVela auto-reconciliation
+
+---
+
+## v0.2.2 (2026-04-03)
+
+- Fix Playwright AWS Console onboarding tutorial handling
+- Consolidate validation prompt
+- Fix Renovate addons configuration
+- Multiple dependency bumps (lodash, node-forge, handlebars, backstage plugins)
+
+---
+
+## v0.2.1 (2026-03-19)
+
+- Add Spark to best-effort addon list
+- Fix keycloak secret handling when value starts with `-`
+
+---
+
+## v0.2.0 (2026-03-18)
+
+### Major Changes
+- Platform updates for 2026 workshop season
+- Fix external-secret ownership issues
+- Make Argo Rollouts metrics analysis configurable
+- Fix KubeVela publishVersion in CI/CD pipeline
+- Add AWS_REGION env var to Kro and KubeVela deployment templates
+- Fix pod identity race condition with init container wait
+- Reduce KubeVela resync period
+- Add display names to Kargo yaml-update steps
+- Fix DORA pipeline
+- Remove Kro-based deployment manifests for java dev/prod (use KubeVela)
+
+---
+
+## v0.1.5 (2026-02-03)
+
+- Fix ArgoCD operation termination check
+- Improve error handling in deploy scripts
+- Dependency bumps (js-yaml, lodash)
+
+---
+
+## v0.1.4 (2026-02-02)
+
+- Fix OpenTelemetry webhook readiness checks and wait dependency order
+- Increase ArgoCD sync wave timeout from 30 to 45 minutes
+- Multiple dependency bumps (vite, esbuild, backstage plugins)
+
+---
+
+## v0.1.3 (2026-01-29)
+
+### Major Changes
+- Riv25 evolution of the repository (#252)
+- Add Ray Serve templates (CPU/GPU/Trainium)
+- Workshop validation tools and infrastructure improvements
+- Fix SOCI build workflow with containerd integration
+- Dependency bumps (qs, lodash, tar)
+
+---
+
+## v0.1.2-riv25 (2026-01-09)
+
+- Fix git tag handling to avoid switching to remote main
+- Use tag name for branch creation instead of timestamp
+
+---
+
+## v0.1.1-riv25 (2026-01-08)
+
+- Fix git tag detection in gitlab_repository_setup
+
+---
+
+## v0.1.0-riv25 (2026-01-08)
+
+- Initial riv25 release
