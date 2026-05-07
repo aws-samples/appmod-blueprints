@@ -199,7 +199,7 @@ main() {
 
   # Push a clean single-commit history to GitLab (no GitHub refs/history)
   rm -rf .git
-  git init
+  git init -b main
   git add .
   git commit -m "Bootstrap: platform-on-eks-workshop"
   git remote add origin "$GITLAB_PUSH_URL"
