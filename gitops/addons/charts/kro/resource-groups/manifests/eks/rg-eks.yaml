@@ -124,7 +124,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-ingress-http"
@@ -169,7 +169,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-ingress-https"
@@ -217,7 +217,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cluster-role"
@@ -262,7 +262,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cluster-node-role"
@@ -303,7 +303,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             clusterRoleArn: "${clusterRole.status.ackResourceMetadata.arn}"
             nodeRoleArn: "${nodeRole.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
@@ -364,7 +364,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             clusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -393,7 +393,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
             #force dependency on ekscluster
             eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
@@ -465,7 +465,7 @@ spec:
           # (EksCluster is in ${schema.spec.name} namespace, Secret is in argocd namespace)
           # Kubernetes doesn't allow cross-namespace owner references for security reasons
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             # GitOps Bridge
             accountId: "${schema.spec.accountId}"
             aws_account_id: "${schema.spec.accountId}"
@@ -557,7 +557,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${schema.spec.name}"
@@ -587,7 +587,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${ekscluster.spec.name}"
@@ -621,7 +621,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-external-secrets-role"
@@ -660,7 +660,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${ekscluster.spec.name}"
@@ -694,7 +694,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-ack-iam"
@@ -743,7 +743,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             policy: "${externalDnsPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -789,7 +789,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${ekscluster.spec.name}"
@@ -820,7 +820,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-adot-collector-role"
@@ -860,7 +860,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${ekscluster.spec.name}"
@@ -895,7 +895,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-kyverno-policy-reporter-role"
@@ -935,7 +935,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${ekscluster.spec.name}"
@@ -969,7 +969,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cni-metrics-helper-policy"
@@ -1007,7 +1007,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cni-metrics-helper-role"
@@ -1047,7 +1047,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${ekscluster.spec.name}"
@@ -1081,7 +1081,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cloudwatch-observability-role"
@@ -1121,7 +1121,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           clusterName: "${ekscluster.spec.name}"
@@ -1161,7 +1161,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.resourcePrefix}-${schema.spec.name}-ack-capability-role"
@@ -1231,7 +1231,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.resourcePrefix}-${schema.spec.name}-kro-capability-role"
@@ -1275,7 +1275,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
               argocd.argoproj.io/sync-options: Prune=false
         spec:
           clusterName: ${ekscluster.spec.name}
@@ -1302,7 +1302,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
               argocd.argoproj.io/sync-options: Prune=false
         spec:
           clusterName: ${ekscluster.spec.name}
