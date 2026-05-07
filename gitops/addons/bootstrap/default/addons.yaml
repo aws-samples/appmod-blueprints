@@ -270,7 +270,7 @@ external-secrets:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
   namespace: external-secrets
   chartName: external-secrets
-  defaultVersion: '0.19.2'
+  defaultVersion: '2.4.1'
   chartRepository: 'https://charts.external-secrets.io'
   selector:
     matchExpressions:
@@ -355,7 +355,7 @@ aws-efs-csi-driver:
   namespace: 'kube-sytem'
   chartName: aws-efs-csi-driver
   chartRepository: https://kubernetes-sigs.github.io/aws-efs-csi-driver
-  defaultVersion: '3.0.7'
+  defaultVersion: '4.1.0'
   selector:
     matchExpressions:
       - key: enable_aws_efs_csi_driver
@@ -381,7 +381,7 @@ aws-for-fluentbit:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
   chartName: aws-for-fluent-bit
   chartRepository: https://aws.github.io/eks-charts
-  defaultVersion: '0.1.34'
+  defaultVersion: '0.2.0'
   selector:
     matchExpressions:
       - key: enable_aws_for_fluentbit
@@ -425,7 +425,7 @@ external-dns:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
   chartName: external-dns
   chartRepository: https://kubernetes-sigs.github.io/external-dns
-  defaultVersion: '1.14.5'
+  defaultVersion: '1.21.1'
   selector:
     matchExpressions:
       - key: enable_external_dns
@@ -447,7 +447,7 @@ opentelemetry-operator:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
   chartRepository: https://open-telemetry.github.io/opentelemetry-helm-charts
-  defaultVersion: '0.71.1'
+  defaultVersion: '0.112.1'
   values:
     manager:
       collectorImage:
@@ -466,7 +466,7 @@ kyverno:
   namespace: '{{ default "kyverno" (index .metadata.annotations "kyverno_namespace")}}'
   chartName: kyverno
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   selector:
     matchExpressions:
       - key: enable_kyverno
@@ -486,7 +486,7 @@ kyverno-policy-reporter:
   namespace: '{{ default "kyverno" (index .metadata.annotations "kyverno_namespace")}}'
   chartName: policy-reporter
   chartRepository: https://kyverno.github.io/policy-reporter
-  defaultVersion: '3.1.0'
+  defaultVersion: '3.7.4'
   selector:
     matchExpressions:
       - key: enable_kyverno_policy_reporter
@@ -529,7 +529,7 @@ kyverno-policies:
   namespace: '{{ default "kyverno" (index .metadata.annotations "kyverno_namespace")}}'
   chartName: kyverno-policies
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   selector:
     matchExpressions:
       - key: enable_kyverno_policies
@@ -572,7 +572,7 @@ kube-state-metrics:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
   chartRepository: https://prometheus-community.github.io/helm-charts
-  defaultVersion: '5.25.1'
+  defaultVersion: '7.3.0'
   selector:
     matchExpressions:
       - key: enable_kube_state_metrics
@@ -587,7 +587,7 @@ prometheus-node-exporter:
   namespace: '{{ default "kube-prometheus-stack" (index .metadata.annotations "prometheus_node_exporter_namespace")}}'
   chartName: prometheus-node-exporter
   chartRepository: https://prometheus-community.github.io/helm-charts
-  defaultVersion: '4.39.0'
+  defaultVersion: '4.55.0'
   selector:
     matchExpressions:
       - key: enable_prometheus_node_exporter
@@ -769,7 +769,7 @@ ingress-nginx:
   namespace: ingress-nginx
   chartName: ingress-nginx
   chartRepository: https://kubernetes.github.io/ingress-nginx
-  defaultVersion: '4.12.2'
+  defaultVersion: '4.15.1'
   selector:
     matchExpressions:
       - key: enable_ingress_nginx
