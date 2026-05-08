@@ -37,6 +37,8 @@ agent-platform:
       mcpImageTag: '{{default "latest" (index .metadata.annotations "agent_core_mcp_image_tag")}}'
       terraformRepoUrl: '{{default "" (index .metadata.annotations "agent_core_terraform_repo_url")}}'
       terraformRepoRevision: '{{default "" (index .metadata.annotations "agent_core_terraform_repo_revision")}}'
+    agentGateway:
+      keycloakIssuerUrl: '{{default (printf "https://%s/keycloak/realms/platform" .metadata.annotations.ingress_domain_name) (index .metadata.annotations "keycloak_issuer_url")}}'
   additionalResources:
     - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
       helm:

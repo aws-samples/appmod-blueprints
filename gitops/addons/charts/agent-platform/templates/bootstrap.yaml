@@ -56,6 +56,11 @@ spec:
             valuesObject:
               global:
                 awsRegion: {{ .Values.cluster.region | quote }}
+          agent-gateway:
+            valuesObject:
+              global:
+                keycloak:
+                  issuerUrl: {{ .Values.agentGateway.keycloakIssuerUrl | quote }}
   destination:
     namespace: argocd
     name: {{ .Values.cluster.name | quote }}

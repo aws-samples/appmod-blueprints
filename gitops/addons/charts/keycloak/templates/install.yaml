@@ -153,7 +153,7 @@ data:
     # hostname settings
     hostname=https://{{ .Values.global.ingress_domain_name }}/keycloak
     hostname-admin=https://{{ .Values.global.ingress_domain_name }}/keycloak
-    hostname-strict=true
+    hostname-strict=false
     http-relative-path=keycloak
     http-enabled=true
     hostname-debug=true

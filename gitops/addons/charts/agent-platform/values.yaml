@@ -23,3 +23,7 @@ agentCore:
   mcpImageTag: "latest"
   terraformRepoUrl: ""
   terraformRepoRevision: "main"
+
+# AgentGateway KeyCloak integration
+agentGateway:
+  keycloakIssuerUrl: ""
