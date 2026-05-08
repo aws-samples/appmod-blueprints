@@ -51,7 +51,7 @@ spec:
             blockOwnerDeletion: true
             controller: false
         annotations:
-          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
           argocd.argoproj.io/sync-options: "Ignore=true,SkipDryRunOnMissingResource=true"
       spec:

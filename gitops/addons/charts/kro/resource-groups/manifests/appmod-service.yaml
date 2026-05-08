@@ -131,7 +131,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           tableName: ${schema.spec.components.dynamodb.tableName}
           billingMode: PAY_PER_REQUEST
@@ -163,7 +163,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           name: ${schema.metadata.name}-role
           assumeRolePolicyDocument: |
@@ -202,7 +202,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           clusterName: ${schema.spec.clusterName}
           namespace: ${schema.metadata.namespace}
@@ -224,7 +224,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             kro.run/depends-on: ${podidentity.metadata.name}
     - id: serviceaccountWithoutDynamoDB
       includeWhen:
@@ -242,7 +242,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
     - id: rolloutWithDynamoDB
       includeWhen:
         - ${schema.spec.functionalGate.enabled == false && schema.spec.performanceGate.enabled == false && schema.spec.components.dynamodb.enabled == true}
@@ -259,7 +259,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           replicas: ${schema.spec.replicas}
           revisionHistoryLimit: 2
@@ -332,7 +332,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           replicas: ${schema.spec.replicas}
           revisionHistoryLimit: 2
@@ -392,7 +392,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           replicas: ${schema.spec.replicas}
           revisionHistoryLimit: 2
@@ -487,7 +487,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           replicas: ${schema.spec.replicas}
           revisionHistoryLimit: 2
@@ -568,7 +568,7 @@ spec:
     #           blockOwnerDeletion: true
     #           controller: false
     #       annotations:
-    #         argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+    #         argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
     #     spec:
     #       selector:
     #         app: ${schema.metadata.name}
@@ -583,7 +583,7 @@ spec:
     #     metadata:
     #       name: ${schema.metadata.name}-preview
     #       annotations:
-    #         argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+    #         argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
     #     spec:
     #       selector:
     #         app: ${schema.metadata.name}
@@ -608,7 +608,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             nginx.ingress.kubernetes.io/rewrite-target: /$2
             nginx.ingress.kubernetes.io/use-regex: "true"
         spec:
@@ -642,7 +642,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             nginx.ingress.kubernetes.io/use-regex: "true"
         spec:
           ingressClassName: nginx
@@ -672,7 +672,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           secretStoreRef:
             name: aws-secrets-manager
@@ -707,7 +707,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           args:
             - name: service-name
@@ -745,7 +745,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           args:
             - name: service-name
@@ -783,7 +783,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           args:
             - name: service-name
@@ -830,7 +830,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           args:
             - name: service-name
@@ -862,7 +862,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         data:
           benchmark.yaml: |
             config:

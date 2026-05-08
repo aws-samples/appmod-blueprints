@@ -108,7 +108,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              ecr.services.k8s.aws/force-delete: "true"
        spec:
           name: >-
@@ -169,7 +169,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              ecr.services.k8s.aws/force-delete: "true"
        spec:
           name: >-
@@ -231,7 +231,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
        spec:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
           description: ECR access policy for CI/CD pipeline
@@ -295,7 +295,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
        spec:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
           description: IAM role for CI/CD pipeline with EKS pod identity
@@ -340,7 +340,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Implicit dependencies through template references
              roleArn: ${iamrole.status.ackResourceMetadata.arn}
        spec:
@@ -370,7 +370,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.aws.region}
         spec:
           clusterName: "${schema.spec.aws.deployClusterName}"
@@ -401,7 +401,7 @@ spec:
              app.kubernetes.io/component: cicd-pipeline
              app.kubernetes.io/managed-by: kro
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Implicit dependency on IAM role through template reference
              eks.amazonaws.com/role-arn: ${iamrole.status.ackResourceMetadata.arn}
              # Reference to Pod Identity Association for tracking
@@ -429,7 +429,7 @@ spec:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
        rules:
           # Minimal permissions for CI/CD operations
           - apiGroups: ['']
@@ -503,7 +503,7 @@ spec:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
        subjects:
           - kind: ServiceAccount
             name: ${schema.spec.name}-sa
@@ -531,7 +531,7 @@ spec:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
        rules:
           - apiGroups: [""]
             resources: ["secrets"]
@@ -558,7 +558,7 @@ spec:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
        subjects:
           - kind: ServiceAccount
             name: ${schema.spec.name}-sa
@@ -585,7 +585,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -638,7 +638,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -682,7 +682,7 @@ spec:
              app.kubernetes.io/component: cicd-pipeline
              app.kubernetes.io/managed-by: kro
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Reference to ECR repositories for credential management
              ecr.aws/main-repository: ${ecrmainrepo.status.repositoryURI}
              ecr.aws/cache-repository: ${ecrcacherepo.status.repositoryURI}
@@ -720,7 +720,7 @@ spec:
              app.kubernetes.io/component: cicd-pipeline
              app.kubernetes.io/managed-by: kro
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Namespace scoping
              cicd.kro.run/namespace-scoped: 'true'
              cicd.kro.run/application: ${schema.spec.application.name}
@@ -819,7 +819,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -1117,7 +1117,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -1194,7 +1194,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -1456,7 +1456,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -1722,7 +1722,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -2110,7 +2110,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Implicit dependency on WorkflowTemplate
              workflowtemplate-ref: ${dorasetuptemplate.metadata.name}
           labels:
@@ -2145,7 +2145,7 @@ spec:
              app.kubernetes.io/component: cicd-pipeline
              app.kubernetes.io/managed-by: kro
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Namespace scoping
              cicd.kro.run/namespace-scoped: 'true'
              cicd.kro.run/application: ${schema.spec.application.name}
@@ -2253,7 +2253,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Implicit dependency on WorkflowTemplate
              workflowtemplate-ref: ${provisioningworkflow.metadata.name}
           labels:
@@ -2290,7 +2290,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Explicit dependency - reference setup workflow to create implicit dependency
              kro.run/depends-on: ${setupworkflow.metadata.name}
           labels:
@@ -2341,7 +2341,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -2371,7 +2371,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-pipeline
@@ -2630,7 +2630,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           labels:
             app.kubernetes.io/name: ${schema.spec.application.name}
             app.kubernetes.io/component: cicd-pipeline
@@ -2665,7 +2665,7 @@ spec:
             app.kubernetes.io/component: cicd-pipeline
             app.kubernetes.io/managed-by: kro
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             nginx.ingress.kubernetes.io/proxy-body-size: 512m
             nginx.ingress.kubernetes.io/use-regex: "true"
             nginx.ingress.kubernetes.io/rewrite-target: /webhook
@@ -2705,7 +2705,7 @@ spec:
             app.kubernetes.io/component: cicd-pipeline
             app.kubernetes.io/managed-by: kro
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           maxUnavailable: 0
           selector:
