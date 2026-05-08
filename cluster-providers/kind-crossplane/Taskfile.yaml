@@ -5,10 +5,13 @@ silent: true
 env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
   AWS_PAGER: ""
+  AWS_PROFILE: "{{.AWS_PROFILE}}"
 
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
+  AWS_PROFILE:
+    sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
   HUB_K8S_VERSION:
@@ -299,19 +302,28 @@ tasks:
     cmds:
       - task: credentials:refresh
       - printf '{{.C_STEP}}▸ Waiting for hub cluster...{{.C_RESET}}\n'
-      - kubectl wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/hub -n crossplane-system 2>/dev/null || true
+      - kubectl wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/{{.HUB_CLUSTER_NAME}} -n crossplane-system
+      - printf '{{.C_STEP}}▸ Verifying hub EKS cluster is ACTIVE...{{.C_RESET}}\n'
+      - |
+        until aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query "cluster.status" --output text 2>/dev/null | grep -q ACTIVE; do
+          sleep 10
+        done
       - printf '{{.C_STEP}}▸ Creating cluster admin access entry...{{.C_RESET}}\n'
       - cmd: |
           CALLER_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
-          ROLE_ARN=$(echo "$CALLER_ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||')
-          aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$ROLE_ARN" --type STANDARD --region {{.AWS_REGION}} --output text 2>/dev/null || true
-          aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$ROLE_ARN" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} --output text 2>/dev/null || true
-          echo "Access entry created for $ROLE_ARN"
+          if echo "$CALLER_ARN" | grep -q ":assumed-role/"; then
+            PRINCIPAL_ARN=$(echo "$CALLER_ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||')
+          else
+            PRINCIPAL_ARN="$CALLER_ARN"
+          fi
+          aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --type STANDARD --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          echo "Access entry created for $PRINCIPAL_ARN"
       - printf '{{.C_STEP}}▸ Waiting for IAM roles...{{.C_RESET}}\n'
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role
       - printf '{{.C_STEP}}▸ Waiting for pod identity resources...{{.C_RESET}}\n'
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io --all 2>/dev/null || true
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s podidentityassociations.eks.aws.upbound.io --all 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io --all
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s podidentityassociations.eks.aws.upbound.io --all
       - task: argocd:capability
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
@@ -677,7 +689,7 @@ tasks:
           {{.MNG_SETS}}
           | kubectl apply -f -
       - kubectl apply -f claims/
-      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/hub 2>/dev/null || true
+      - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/{{.HUB_CLUSTER_NAME}}
       - task: destroy-kind
 
   hub:destroy-addons:
