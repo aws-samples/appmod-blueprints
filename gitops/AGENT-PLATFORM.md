@@ -125,6 +125,82 @@ To override any of these defaults, add annotations to the hub cluster secret (vi
 
 Commit and push. ArgoCD deploys everything automatically.
 
+## Using the Agent Platform
+
+### Chat with Agents (A2A Protocol)
+
+Agents are accessible directly via the A2A (Agent-to-Agent) JSON-RPC protocol. No authentication required for internal cluster access:
+
+```bash
+# List available agents
+kubectl get agents -n kagent
+
+# Chat with the bedrock-assistant
+kubectl run chat --rm -i --restart=Never --image=curlimages/curl -n kagent -- \
+  -s -X POST http://bedrock-assistant.kagent.svc.cluster.local:8080/ \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","messageId":"msg-1","parts":[{"type":"text","text":"What is 2+2?"}]}}}'
+
+# Chat with the k8s-ops-agent (has kubectl tools)
+kubectl run chat --rm -i --restart=Never --image=curlimages/curl -n kagent -- \
+  -s -X POST http://k8s-ops-agent.kagent.svc.cluster.local:8080/ \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"message/send","params":{"message":{"role":"user","messageId":"msg-1","parts":[{"type":"text","text":"List all namespaces"}]}}}'
+```
+
+### Access MCP Tools via AgentGateway (KeyCloak Auth)
+
+For authenticated access to MCP tool servers (code-interpreter, browser, memory) through the AgentGateway:
+
+```bash
+DOMAIN="<your-ingress-domain>"  # e.g., idp.example.people.aws.dev
+
+# 1. Get a JWT token from KeyCloak (platform realm, mcp-client)
+TOKEN=$(curl -s -X POST "https://${DOMAIN}/keycloak/realms/platform/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=mcp-client&username=user1&password=<USER_PASSWORD>" \
+  | jq -r .access_token)
+
+# 2. Verify token has groups claim (must include "admin")
+echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq '{sub:.preferred_username, groups:.groups}'
+
+# 3. Connect to MCP servers through the gateway (SSE transport)
+curl -N http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/sse \
+  -H "Authorization: Bearer $TOKEN"
+
+# 4. Without token — should get 401
+curl -s -w "%{http_code}" -X POST http://agentgateway-proxy.agentgateway-system.svc.cluster.local:8080/sse
+# Output: 401
+```
+
+The AgentGateway multiplexes all MCP servers behind a single endpoint. Tools are prefixed with the target name (e.g., `code_execute_code`, `browser_navigate`, `memory_store`).
+
+### Architecture Overview
+
+```
+                    ┌─────────────────────────────────────────────────────┐
+                    │                  EKS Cluster                         │
+                    │                                                      │
+  ┌──────────┐     │  ┌─────────────┐    ┌──────────┐    ┌─────────────┐ │
+  │  Client  │─A2A─┼─▶│ Agent Pods  │───▶│ LiteLLM  │───▶│   Bedrock   │ │
+  │          │     │  │ (kagent)    │    │ (proxy)  │    │   (Claude)  │ │
+  └──────────┘     │  └──────┬──────┘    └──────────┘    └─────────────┘ │
+                    │         │                                            │
+                    │         │ MCP (tools)                                │
+                    │         ▼                                            │
+  ┌──────────┐     │  ┌─────────────┐                                    │
+  │  Client  │─JWT─┼─▶│AgentGateway │──▶ MCP Servers (code/browser/mem)  │
+  │          │     │  │  (proxy)    │                                    │
+  └──────────┘     │  └──────┬──────┘                                    │
+                    │         │ JWKS                                       │
+                    │         ▼                                            │
+                    │  ┌─────────────┐                                    │
+                    │  │  KeyCloak   │                                    │
+                    │  │  (platform) │                                    │
+                    │  └─────────────┘                                    │
+                    └─────────────────────────────────────────────────────┘
+```
+
 ## Verify Deployment
 
 ```bash
