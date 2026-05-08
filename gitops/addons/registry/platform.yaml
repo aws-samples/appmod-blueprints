@@ -51,13 +51,13 @@ crossplane-base:
         version: "v2.5.3"
       iam:
         version: "v2.5.3"
-        createIdentity: false
+        createIdentity: true
       ec2:
         version: "v2.5.3"
-        createIdentity: false
+        createIdentity: true
       eks:
         version: "v2.5.3"
-        createIdentity: false
+        createIdentity: true
   ignoreDifferences:
     - group: pkg.crossplane.io
       kind: Provider
