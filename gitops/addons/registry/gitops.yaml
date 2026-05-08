@@ -89,38 +89,3 @@ kargo:
         issuerURL: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
       secret:
         name: kargo-admin-credentials
-
-flux:
-  namespace: flux-system
-  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/flux'
-  annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '4'
-  selector:
-    matchExpressions:
-      - key: enable_flux
-        operator: In
-        values: ['true']
-  valuesObject:
-    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
-    gitRepository:
-      url: '{{.metadata.annotations.addonsRepoURL}}'
-  ignoreDifferences:
-    - group: rbac.authorization.k8s.io
-      kind: ClusterRole
-      jsonPointers:
-        - /rules
-        - /metadata/labels
-        - /metadata/annotations
-    - group: rbac.authorization.k8s.io
-      kind: ClusterRoleBinding
-      jsonPointers:
-        - /subjects
-        - /roleRef
-        - /metadata/labels
-        - /metadata/annotations
-    - group: source.toolkit.fluxcd.io
-      kind: GitRepository
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
