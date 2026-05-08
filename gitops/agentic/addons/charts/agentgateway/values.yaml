@@ -1,5 +1,7 @@
 # -- AgentGateway controller settings (passed to subchart)
 agentgateway:
+  serviceAccount:
+    name: agentgateway
   controller:
     logLevel: info
 
