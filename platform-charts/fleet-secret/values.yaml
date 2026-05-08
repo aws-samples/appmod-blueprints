@@ -15,6 +15,7 @@ externalSecret:
 
 # Direct mode fields — populated from hub cluster secret annotations
 hub:
+  clusterName: ""
   accountId: ""
   addonsRepoURL: ""
   addonsRepoRevision: ""
