@@ -17,7 +17,7 @@ spec:
         metadata:
           name: ${schema.spec.name}-s3-models-pv
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
@@ -26,7 +26,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           capacity:
             storage: 100Gi
@@ -52,7 +52,7 @@ spec:
           name: ${schema.spec.name}-s3-models-pvc
           namespace: ${schema.metadata.namespace}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
@@ -61,7 +61,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           accessModes:
             - ReadWriteMany
@@ -82,7 +82,7 @@ spec:
         kind: RayService
         metadata:
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             backstage.io/created-by: ${schema.spec.createdBy}
             backstage.io/template-version: 1.0.0
             ray.io/serve-config-source: ${schema.spec.rayServeFile}
@@ -101,7 +101,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           deploymentUnhealthySecondThreshold: 1200
           rayClusterConfig:
@@ -219,7 +219,7 @@ spec:
         kind: RayService
         metadata:
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             backstage.io/created-by: ${schema.spec.createdBy}
             backstage.io/template-version: 1.0.0
             ray.io/serve-config-source: ${schema.spec.rayServeFile}
@@ -238,7 +238,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           deploymentUnhealthySecondThreshold: 1200
           rayClusterConfig:
@@ -361,7 +361,7 @@ spec:
         kind: RayService
         metadata:
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             backstage.io/created-by: ${schema.spec.createdBy}
             backstage.io/template-version: 1.0.0
             ray.io/serve-config-source: ${schema.spec.rayServeFile}
@@ -380,7 +380,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           deploymentUnhealthySecondThreshold: 1200
           rayClusterConfig:
@@ -540,7 +540,7 @@ spec:
         kind: Service
         metadata:
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             backstage.io/created-by: ${schema.spec.createdBy}
             backstage.io/template-version: 1.0.0
           labels:
@@ -558,7 +558,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           ports:
             - name: serve
@@ -581,7 +581,7 @@ spec:
         kind: Ingress
         metadata:
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             backstage.io/created-by: ${schema.spec.createdBy}
             backstage.io/template-version: 1.0.0
             nginx.ingress.kubernetes.io/rewrite-target: /$2
@@ -634,7 +634,7 @@ spec:
           name: ${schema.spec.name}-head-pdb
           namespace: ${schema.metadata.namespace}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
@@ -643,7 +643,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           minAvailable: 1
           selector:
@@ -661,7 +661,7 @@ spec:
           name: ${schema.spec.name}-worker-pdb
           namespace: ${schema.metadata.namespace}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               blockOwnerDeletion: true
@@ -670,7 +670,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].omit()}
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           minAvailable: 1
           selector:
