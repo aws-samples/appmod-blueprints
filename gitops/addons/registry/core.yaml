@@ -140,6 +140,8 @@ ingress-class-alb:
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/ingress-class-alb'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5'
+  goTemplateOptions:
+    - "missingkey=zero"
   selector:
     matchExpressions:
       - key: enable_ingress_class_alb
@@ -160,6 +162,8 @@ aws-load-balancer-controller:
       - key: enable_aws_load_balancer_controller
         operator: In
         values: ['true']
+  goTemplateOptions:
+    - "missingkey=zero"
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     vpcId: '{{.metadata.annotations.aws_vpc_id}}'
