@@ -1,5 +1,11 @@
 # Release Notes
 
+## v0.2.7 (2026-05-08)
+
+- Revert kro `omit()` change for tracking-id annotation (caused rendering issues)
+
+---
+
 ## v0.2.6 (2026-05-07)
 
 ### Critical Fixes
