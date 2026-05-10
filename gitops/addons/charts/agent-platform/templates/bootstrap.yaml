@@ -1,6 +1,6 @@
 {{/*
   Agent Platform Bootstrap
-  Creates an ApplicationSet that deploys the sample-agent-platform-on-eks
+  Creates an Application that deploys the sample-agent-platform-on-eks
   repo's application-sets chart to the hub cluster.
 
   Uses the existing hub cluster secret (no duplicate cluster registration).
@@ -8,9 +8,6 @@
   enable_agent_platform label (globalSelectors), with individual
   enable_* selectors disabled (useSelectors: false).
 */}}
-{{- $mcpImage := .Values.agentCore.mcpImage | default (printf "%s.dkr.ecr.%s.amazonaws.com/agent-core-mcp" .Values.cluster.accountId .Values.cluster.region) }}
-{{- $tfRepoUrl := .Values.agentCore.terraformRepoUrl | default .Values.agentPlatform.repoURL }}
-{{- $tfRepoRevision := .Values.agentCore.terraformRepoRevision | default .Values.agentPlatform.revision }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -39,19 +36,6 @@ spec:
           repoURLGit: {{ .Values.agentPlatform.repoURL | quote }}
           repoURLGitRevision: {{ .Values.agentPlatform.revision | quote }}
           repoURLGitBasePath: {{ .Values.agentPlatform.basepath | quote }}
-          agent-core:
-            valuesObject:
-              global:
-                awsRegion: {{ .Values.cluster.region | quote }}
-                eksClusterName: {{ .Values.cluster.clusterName | quote }}
-                projectName: {{ .Values.agentCore.projectName | default "agent-core" | quote }}
-                networkMode: {{ .Values.agentCore.networkMode | default "PUBLIC" | quote }}
-                terraformRepoUrl: {{ $tfRepoUrl | quote }}
-                terraformRepoRevision: {{ $tfRepoRevision | quote }}
-              mcpServer:
-                image:
-                  repository: {{ $mcpImage | quote }}
-                  tag: {{ .Values.agentCore.mcpImageTag | default "latest" | quote }}
           litellm:
             valuesObject:
               global:

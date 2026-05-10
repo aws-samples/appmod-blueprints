@@ -15,15 +15,6 @@ cluster:
   accountId: ""
   clusterName: ""
 
-# Agent-core specific (optional)
-agentCore:
-  projectName: "agent-core"
-  networkMode: "PUBLIC"
-  mcpImage: ""
-  mcpImageTag: "latest"
-  terraformRepoUrl: ""
-  terraformRepoRevision: "main"
-
 # AgentGateway KeyCloak integration
 agentGateway:
   keycloakIssuerUrl: ""

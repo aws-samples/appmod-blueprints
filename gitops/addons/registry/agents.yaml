@@ -1,7 +1,7 @@
 # Agent Platform
 # Deploys the AI agent platform from the sample-agent-platform-on-eks repo.
 # This single addon bootstraps the entire agent platform pipeline:
-#   KAgent, LiteLLM, Langfuse, Jaeger, and optionally Bedrock AgentCore.
+#   KAgent, LiteLLM, Langfuse, Jaeger, AgentGateway, and Bedrock AgentCore (via Crossplane).
 # All charts and configs live in the external repo — appmod-blueprints only
 # controls enablement via this registry entry.
 #
@@ -30,13 +30,6 @@ agent-platform:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
-    agentCore:
-      projectName: '{{default "" (index .metadata.annotations "agent_core_project_name")}}'
-      networkMode: '{{default "PUBLIC" (index .metadata.annotations "agent_core_network_mode")}}'
-      mcpImage: '{{default "" (index .metadata.annotations "agent_core_mcp_image")}}'
-      mcpImageTag: '{{default "latest" (index .metadata.annotations "agent_core_mcp_image_tag")}}'
-      terraformRepoUrl: '{{default "" (index .metadata.annotations "agent_core_terraform_repo_url")}}'
-      terraformRepoRevision: '{{default "" (index .metadata.annotations "agent_core_terraform_repo_revision")}}'
     agentGateway:
       keycloakIssuerUrl: '{{default (printf "https://%s/keycloak/realms/platform" .metadata.annotations.ingress_domain_name) (index .metadata.annotations "keycloak_issuer_url")}}'
   additionalResources:
@@ -52,8 +45,6 @@ agent-platform:
             enabled: true
           identities:
             litellm:
-              enabled: true
-            tofu-runner:
               enabled: true
   ignoreDifferences:
     - group: iam.aws.upbound.io
