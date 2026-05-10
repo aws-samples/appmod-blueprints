@@ -39,6 +39,7 @@ All addons are defined in the sample repo and deploy in sync-wave order:
 | 3 | kagent (operator + UI) | OCI: `ghcr.io/kagent-dev/kagent/helm/kagent:0.7.9` | kagent |
 | 3 | kagent-setup (ModelConfig) | Git path chart | kagent |
 | 3 | litellm (LLM gateway) | Git path chart | kagent |
+| 4 | crossplane-agentcore | Git path chart | crossplane-system |
 | 5 | langfuse (LLM tracing + PostgreSQL) | Git path chart | langfuse |
 | 5 | jaeger (distributed tracing) | Helm: `jaegertracing/jaeger:3.4.1` | jaeger |
 | 5 | prometheus-operator-crds | Helm: `prometheus-community/prometheus-operator-crds:28.0.1` | kagent |
@@ -48,7 +49,7 @@ All addons are defined in the sample repo and deploy in sync-wave order:
 | 8 | agentgateway (control plane) | OCI: `cr.agentgateway.dev/charts/agentgateway:v1.1.0` | agentgateway-system |
 | 9 | agent-gateway (Gateway + Policies) | Git path chart | agent-core-infra |
 
-AgentCore resources (Memory, Browser, Code Interpreter) are provisioned via Crossplane compositions. AgentGateway provides MCP authentication via KeyCloak JWT validation — KeyCloak is already provided by appmod-blueprints.
+The `crossplane-agentcore` addon (wave 4) installs the Bedrock AgentCore Crossplane provider, creates XRDs/Compositions, and provisions Memory, Browser, and Code Interpreter resources in AWS via claims. AgentGateway provides MCP authentication via KeyCloak JWT validation — KeyCloak is already provided by appmod-blueprints.
 
 ## Prerequisites
 
