@@ -14,7 +14,3 @@ cluster:
   region: ""
   accountId: ""
   clusterName: ""
-
-# AgentGateway KeyCloak integration
-agentGateway:
-  keycloakIssuerUrl: ""

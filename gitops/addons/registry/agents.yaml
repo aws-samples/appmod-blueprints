@@ -30,8 +30,6 @@ agent-platform:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
-    agentGateway:
-      keycloakIssuerUrl: '{{default (printf "https://%s/keycloak/realms/platform" .metadata.annotations.ingress_domain_name) (index .metadata.annotations "keycloak_issuer_url")}}'
   additionalResources:
     - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
       helm:

@@ -7,6 +7,10 @@
   All generated ApplicationSets match the hub secret via the
   enable_agent_platform label (globalSelectors), with individual
   enable_* selectors disabled (useSelectors: false).
+
+  Per-addon configuration (region, issuer URL, etc.) is derived from
+  cluster secret annotations in the sample repo's addons.yaml — no
+  overrides needed here.
 */}}
 ---
 apiVersion: argoproj.io/v1alpha1
@@ -36,15 +40,6 @@ spec:
           repoURLGit: {{ .Values.agentPlatform.repoURL | quote }}
           repoURLGitRevision: {{ .Values.agentPlatform.revision | quote }}
           repoURLGitBasePath: {{ .Values.agentPlatform.basepath | quote }}
-          litellm:
-            valuesObject:
-              global:
-                awsRegion: {{ .Values.cluster.region | quote }}
-          agent-gateway:
-            valuesObject:
-              global:
-                keycloak:
-                  issuerUrl: {{ .Values.agentGateway.keycloakIssuerUrl | quote }}
   destination:
     namespace: argocd
     name: {{ .Values.cluster.name | quote }}
