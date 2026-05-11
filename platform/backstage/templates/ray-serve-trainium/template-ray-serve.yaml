@@ -191,6 +191,9 @@ spec:
               - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service.git
             sourceNamespaces:
               - argocd
+            clusterResourceWhitelist:
+              - group: ""
+                kind: PersistentVolume
             namespaceResourceWhitelist:
               - group: ""
                 kind: Namespace
@@ -200,6 +203,8 @@ spec:
                 kind: ConfigMap
               - group: ""
                 kind: Secret
+              - group: ""
+                kind: PersistentVolumeClaim
               - group: apps
                 kind: Deployment
               - group: kro.run
@@ -210,6 +215,8 @@ spec:
                 kind: RayCluster
               - group: networking.k8s.io
                 kind: Ingress
+              - group: policy
+                kind: PodDisruptionBudget
             roles:
               - name: admin
                 policies:
