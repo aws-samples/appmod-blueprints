@@ -411,7 +411,11 @@ APPPROJ
     # ---------------------------------------------------------------------------
     log_timestamp "Phase: IAM Identity Center configuration and ArgoCD token retrieval"
     configure_idc_and_argocd_token
-    
+
+    # Schedule ArgoCD token refresh every 4 hours (tokens expire in ~24h)
+    (crontab -l 2>/dev/null | grep -v "argocd-refresh-token"; echo "0 */4 * * * bash -lc 'source ~/.bashrc.d/platform.sh && argocd-refresh-token' >> /tmp/argocd-cron.log 2>&1") | crontab -
+    print_status "SUCCESS" "ArgoCD token refresh cron scheduled (every 4h)"
+
     # Wait for Backstage build to complete if it has started
     # Uncomment this if you want to build backstage locally
     # if [[ -n $BACKSTAGE_BUILD_PID ]]; then
