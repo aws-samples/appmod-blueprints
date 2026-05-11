@@ -4,30 +4,60 @@ Enable an AI agent platform on the appmod-blueprints hub cluster with a single t
 
 ## How It Works
 
+### Deployment Flow
+
 ```
-appmod-blueprints                          sample-agent-platform-on-eks
-┌─────────────────────┐                    ┌──────────────────────────────┐
-│ registry/agents.yaml│                    │ gitops/addons/               │
-│   agent-platform:   │                    │   bootstrap/default/         │
-│     enabled: true   │                    │     addons.yaml              │
-│                     │                    │   charts/                    │
-│ charts/             │                    │     application-sets/        │
-│   agent-platform/   │──creates──────────▶│     kagent-setup/            │
-│     bootstrap.yaml  │  ArgoCD            │     litellm/                 │
-│                     │  Application       │     langfuse/                │
-│                     │  pointing to ──────│     kagent-monitoring/       │
-│                     │  sample repo       │     agent-gateway/           │
-└─────────────────────┘                    │   environments/              │
-                                           │     control-plane/           │
-                                           │       addons.yaml            │
-                                           └──────────────────────────────┘
+Git Push → ArgoCD detects change → Charts deployed to cluster
 ```
 
-1. Setting `agent_platform: true` in appmod-blueprints `enabled-addons.yaml` triggers the `agent-platform` addon
-2. The addon deploys a thin bootstrap chart that creates an ArgoCD **Application** pointing to the sample repo's `application-sets` chart
-3. The Application renders the sample repo's `application-sets` chart with `useSelectors: false` and `globalSelectors: {enable_agent_platform: "true"}`, so all generated ApplicationSets match the existing hub cluster secret — no duplicate cluster secret is created
-4. Each addon deploys via the ArgoCD EKS Capability to the cluster
-5. The cluster uses EKS Auto Mode with Pod Identity for AWS credentials
+The agent platform uses a two-repo pattern where appmod-blueprints controls *whether* to deploy, and the external sample-agent-platform-on-eks repo controls *what* gets deployed.
+
+### Step-by-step
+
+1. `enabled-addons.yaml` sets `agent_platform: true`
+2. The fleet-secret chart stamps `enable_agent_platform: "true"` as a label on the ArgoCD cluster secret
+3. The `appset-chart` reads the registry entry in `agents.yaml` and generates an ApplicationSet with a selector matching that label
+4. The ApplicationSet matches the cluster secret → creates an Application that renders `addons/charts/agent-platform/`
+5. That chart's `bootstrap.yaml` template creates another Application pointing to the external sample-agent-platform-on-eks repo's `application-sets` chart
+6. That chart generates individual ApplicationSets for each agent platform component (LiteLLM, Langfuse, KAgent, Jaeger, AgentGateway, Bedrock AgentCore, etc.)
+
+### Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  appmod-blueprints repo (this repo)                         │
+│                                                             │
+│  enabled-addons.yaml ──► fleet-secret ──► cluster labels    │
+│                                                             │
+│  agents.yaml (registry) ──► appset-chart ──► ApplicationSet │
+│                                                             │
+│  addons/charts/agent-platform/ ──► Application              │
+│       (bootstrap.yaml)              │                       │
+└─────────────────────────────────────┼───────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│  sample-agent-platform-on-eks repo (external)               │
+│                                                             │
+│  gitops/addons/charts/application-sets ──► ApplicationSets  │
+│       + bootstrap/default/addons.yaml                       │
+│       + environments/<env>/addons.yaml                      │
+│                                                             │
+│  Generates per-component apps:                              │
+│    • LiteLLM        • Langfuse                              │
+│    • KAgent         • Jaeger                                │
+│    • AgentGateway   • Bedrock AgentCore (Crossplane)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Decisions
+
+- **Label-driven enablement** — flip `agent_platform: true` in `enabled-addons.yaml`, commit, push. Done.
+- **Two-repo separation** — appmod-blueprints owns enablement and cluster config; the sample repo owns chart definitions and component configuration.
+- **Sync wave 8** — agent platform deploys last, after all infrastructure (Crossplane, ESO, LBC, DNS, Keycloak) is ready.
+- **No per-addon selectors inside** — the external repo's ApplicationSets use `globalSelectors` with `enable_agent_platform` rather than individual `enable_*` labels, so all agent platform components deploy together as a unit.
+- **No duplicate cluster secrets** — the bootstrap chart uses `useSelectors: false` and `globalSelectors: {enable_agent_platform: "true"}` to match the existing hub cluster secret.
+- **EKS Auto Mode with Pod Identity** — AWS credentials are provided via Pod Identity associations, not IRSA annotations.
 
 ## What Gets Deployed
 
