@@ -411,7 +411,33 @@ APPPROJ
     # ---------------------------------------------------------------------------
     log_timestamp "Phase: IAM Identity Center configuration and ArgoCD token retrieval"
     configure_idc_and_argocd_token
-    
+
+    # Schedule ArgoCD token refresh every 4 hours via systemd timer (tokens expire in ~24h)
+    sudo tee /etc/systemd/system/argocd-refresh-token.service >/dev/null <<SVCEOF
+[Unit]
+Description=Refresh ArgoCD auth token
+
+[Service]
+Type=oneshot
+User=ec2-user
+Environment=HOME=/home/ec2-user
+ExecStart=/bin/bash -lc "source ~/.bashrc.d/platform.sh && argocd-refresh-token"
+SVCEOF
+    sudo tee /etc/systemd/system/argocd-refresh-token.timer >/dev/null <<TMREOF
+[Unit]
+Description=Refresh ArgoCD token every 4 hours
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=4h
+
+[Install]
+WantedBy=timers.target
+TMREOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now argocd-refresh-token.timer
+    print_status "SUCCESS" "ArgoCD token refresh timer scheduled (every 4h)"
+
     # Wait for Backstage build to complete if it has started
     # Uncomment this if you want to build backstage locally
     # if [[ -n $BACKSTAGE_BUILD_PID ]]; then
