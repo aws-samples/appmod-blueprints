@@ -99,6 +99,10 @@ ack-iam:
 ack-backup:
   enabled: false
   enableACK: false
+  # enableACKKRO wires IAM via kro + ACK (iam.Policy + iam.Role +
+  # eks.PodIdentityAssociation) through the podidentity.kro.run RGD,
+  # instead of Crossplane. Mutually exclusive with enableACK.
+  enableACKKRO: true
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
   namespace: ack-system
@@ -109,6 +113,29 @@ ack-backup:
   # NOTE: backup-controller is in PREVIEW (v0.1.1) and is NOT yet bundled
   # in the EKS `ACK` capability as of May 2026. Deploy via this chart until
   # AWS ships it as part of the capability.
+  podIdentity:
+    piNamespace: ack-system
+    serviceAccounts:
+      - ack-backup-controller
+    # Least-privilege policy for the backup-controller. iam:PassRole is
+    # scoped to role/* (any role in the account) so the controller can pass
+    # backup service roles regardless of naming conventions.
+    policyDocument:
+      - actions:
+          - backup:*
+          - backup-storage:*
+        resourceName: '*'
+      - actions:
+          - iam:PassRole
+        customArn: arn:aws:iam::*:role/*
+      - actions:
+          - kms:Decrypt
+          - kms:Encrypt
+          - kms:GenerateDataKey
+          - kms:GenerateDataKeyWithoutPlaintext
+          - kms:DescribeKey
+          - kms:CreateGrant
+        resourceName: '*'
   selector:
     matchExpressions:
       - key: enable_ack_backup
