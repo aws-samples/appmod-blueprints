@@ -22,6 +22,8 @@ spec:
               revision: '{{ .metadata.annotations.addonsRepoRevision }}'
               directories:
                 - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/resource-groups/*'
+                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/resource-groups/aws-resources'
+                  exclude: true
   template:
     metadata:
       name: '{{ .path.basename }}-{{ .name }}'
