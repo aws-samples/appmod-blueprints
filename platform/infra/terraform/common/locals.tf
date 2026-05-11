@@ -147,6 +147,11 @@ locals {
         addons_repo_revision = var.gitops_addons_repo_revision
       },
       {
+        overlay_repo_url      = var.overlay_repo_url
+        overlay_repo_revision = var.overlay_repo_revision
+        overlay_repo_basepath = var.overlay_repo_base_path
+      },
+      {
         workload_repo_url      = local.gitops_workload_repo_url
         workload_repo_path     = var.gitops_workload_repo_path
         workload_repo_basepath = var.gitops_workload_repo_base_path
