@@ -54,12 +54,10 @@ crossplane-base:
         createIdentity: false
       ec2:
         version: "v2.5.3"
-        createIdentity: false
+        createIdentity: true
       eks:
         version: "v2.5.3"
         createIdentity: false
-      secretsmanager:
-        version: "v2.5.3"
   ignoreDifferences:
     - group: pkg.crossplane.io
       kind: Provider

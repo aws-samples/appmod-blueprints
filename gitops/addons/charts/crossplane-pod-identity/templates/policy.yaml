@@ -4,7 +4,7 @@
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: Policy
 metadata:
-  name: {{ $name }}-pod-identity-policy
+  name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity-policy
   annotations:
     crossplane.io/external-name: {{ $.Values.aws.clusterName }}-{{ $identity.policy.name }}
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true

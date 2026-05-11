@@ -1,5 +1,51 @@
 # Core infrastructure addons
-# Wave ordering: -1 (external-secrets) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (lbc, efs-csi) → 5 (ingress-class-alb)
+# Wave ordering: -1 (external-secrets, pod-identities) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (efs-csi) → 5 (lbc, ingress-class-alb, external-dns)
+
+pod_identities:
+  namespace: crossplane-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
+  destinationHub: true
+  goTemplateOptions:
+    - "missingkey=zero"
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: environment
+        operator: Exists
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+    identities:
+      eso:
+        enabled: '{{`{{ default "" (index .metadata.labels "enable_external_secrets") }}`}}'
+      lbc:
+        enabled: '{{`{{ default "" (index .metadata.labels "enable_aws_load_balancer_controller") }}`}}'
+      external-dns:
+        enabled: '{{`{{ default "" (index .metadata.labels "enable_external_dns") }}`}}'
+      litellm:
+        enabled: '{{`{{ default "" (index .metadata.labels "enable_agent_platform") }}`}}'
+      tofu-runner:
+        enabled: '{{`{{ default "" (index .metadata.labels "enable_agent_platform") }}`}}'
+  ignoreDifferences:
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: Policy
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /status
+    - group: eks.aws.upbound.io
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status
 
 argocd:
   namespace: argocd
@@ -79,12 +125,23 @@ external-secrets:
         valuesObject:
           aws:
             region: '{{.metadata.annotations.aws_region}}'
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
+      helm:
+        releaseName: eso-credential-check
+        valuesObject:
+          targets:
+            - name: eso
+              namespace: external-secrets
+              serviceAccount: external-secrets-sa
+              deploymentLabel: app.kubernetes.io/name=external-secrets
 
 ingress-class-alb:
   namespace: kube-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/ingress-class-alb'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5'
+  goTemplateOptions:
+    - "missingkey=zero"
   selector:
     matchExpressions:
       - key: enable_ingress_class_alb
@@ -105,6 +162,8 @@ aws-load-balancer-controller:
       - key: enable_aws_load_balancer_controller
         operator: In
         values: ['true']
+  goTemplateOptions:
+    - "missingkey=zero"
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     vpcId: '{{.metadata.annotations.aws_vpc_id}}'
@@ -113,36 +172,15 @@ aws-load-balancer-controller:
       create: true
       name: aws-load-balancer-controller-sa
   additionalResources:
-    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
       helm:
-        releaseName: lbc-pod-identity
+        releaseName: lbc-credential-check
         valuesObject:
-          aws:
-            region: '{{.metadata.annotations.aws_region}}'
-            clusterName: '{{.metadata.annotations.aws_cluster_name}}'
-            accountId: '{{.metadata.annotations.aws_account_id}}'
-          restartHook:
-            enabled: true
-          identities:
-            lbc:
-              enabled: true
-  ignoreDifferences:
-    - group: iam.aws.upbound.io
-      kind: Role
-      jsonPointers:
-        - /status
-    - group: iam.aws.upbound.io
-      kind: Policy
-      jsonPointers:
-        - /status
-    - group: iam.aws.upbound.io
-      kind: RolePolicyAttachment
-      jsonPointers:
-        - /status
-    - group: eks.aws.upbound.io
-      kind: PodIdentityAssociation
-      jsonPointers:
-        - /status
+          targets:
+            - name: lbc
+              namespace: kube-system
+              serviceAccount: aws-load-balancer-controller-sa
+              deploymentLabel: app.kubernetes.io/name=aws-load-balancer-controller
 
 image-prepuller:
   namespace: kube-system
@@ -203,33 +241,12 @@ external-dns:
     serviceAccount:
       name: external-dns-sa
   additionalResources:
-    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
       helm:
-        releaseName: external-dns-pod-identity
+        releaseName: external-dns-credential-check
         valuesObject:
-          aws:
-            region: '{{.metadata.annotations.aws_region}}'
-            clusterName: '{{.metadata.annotations.aws_cluster_name}}'
-            accountId: '{{.metadata.annotations.aws_account_id}}'
-          restartHook:
-            enabled: true
-          identities:
-            external-dns:
-              enabled: true
-  ignoreDifferences:
-    - group: iam.aws.upbound.io
-      kind: Role
-      jsonPointers:
-        - /status
-    - group: iam.aws.upbound.io
-      kind: Policy
-      jsonPointers:
-        - /status
-    - group: iam.aws.upbound.io
-      kind: RolePolicyAttachment
-      jsonPointers:
-        - /status
-    - group: eks.aws.upbound.io
-      kind: PodIdentityAssociation
-      jsonPointers:
-        - /status
+          targets:
+            - name: external-dns
+              namespace: kube-system
+              serviceAccount: external-dns-sa
+              deploymentLabel: app.kubernetes.io/name=external-dns

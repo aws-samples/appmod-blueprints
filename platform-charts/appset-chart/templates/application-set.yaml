@@ -174,7 +174,13 @@ spec:
         {{- end }}
       destination:
         namespace: '{{ $chartConfig.namespace }}'
+        {{- if $chartConfig.destinationServer }}
+        server: {{ $chartConfig.destinationServer | squote }}
+        {{- else if $chartConfig.destinationHub }}
+        name: '{{`{{ default .name (index .metadata.annotations "hub_cluster_name") }}`}}'
+        {{- else }}
         name: '{{`{{ .name }}`}}'
+        {{- end }}
       {{- if $chartConfig.syncPolicy }}
       syncPolicy:
         {{- toYaml $chartConfig.syncPolicy | nindent 8 }}

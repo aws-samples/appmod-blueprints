@@ -59,5 +59,7 @@ enabledAddons:
   ray_operator: false
   spark_operator: false
   airflow: false
+  # AWS Resources (Crossplane-managed VPC secrets etc.)
+  aws_resources: false
   # Agent Platform (deploys from sample-agent-platform-on-eks repo)
   agent_platform: true
