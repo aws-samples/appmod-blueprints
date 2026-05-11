@@ -412,9 +412,31 @@ APPPROJ
     log_timestamp "Phase: IAM Identity Center configuration and ArgoCD token retrieval"
     configure_idc_and_argocd_token
 
-    # Schedule ArgoCD token refresh every 4 hours (tokens expire in ~24h)
-    (crontab -l 2>/dev/null | grep -v "argocd-refresh-token"; echo "0 */4 * * * bash -lc 'source ~/.bashrc.d/platform.sh && argocd-refresh-token' >> /tmp/argocd-cron.log 2>&1") | crontab -
-    print_status "SUCCESS" "ArgoCD token refresh cron scheduled (every 4h)"
+    # Schedule ArgoCD token refresh every 4 hours via systemd timer
+    # (crontab/crond not available on Workshop Studio AMI - Amazon Linux 2023)
+    sudo tee /etc/systemd/system/argocd-refresh-token.service >/dev/null <<SVCEOF
+[Unit]
+Description=Refresh ArgoCD auth token
+
+[Service]
+Type=oneshot
+User=ec2-user
+Environment=HOME=/home/ec2-user
+ExecStart=/bin/bash -lc "source ~/.bashrc.d/platform.sh && argocd-refresh-token"
+SVCEOF
+    sudo tee /etc/systemd/system/argocd-refresh-token.timer >/dev/null <<TMREOF
+[Unit]
+Description=Refresh ArgoCD token every 4 hours
+
+[Timer]
+OnUnitActiveSec=4h
+
+[Install]
+WantedBy=timers.target
+TMREOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now argocd-refresh-token.timer
+    print_status "SUCCESS" "ArgoCD token refresh timer scheduled (every 4h)"
 
     # Wait for Backstage build to complete if it has started
     # Uncomment this if you want to build backstage locally
