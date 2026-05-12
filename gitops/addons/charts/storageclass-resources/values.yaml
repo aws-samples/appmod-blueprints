@@ -1,17 +1,61 @@
+# Set `spokeName` at install time (e.g. via ApplicationSet parameter) so that
+# every EBS StorageClass below bakes `peeks.io/spoke=<spokeName>` as a tag on
+# every volume it provisions. This is what AWS Backup `BackupSelection` matches
+# on (see kro-rgds/manifests/backup-policy).
+#
+# spokeName: spoke-prod-euw1
+
 storageClasses:
   # efs:
-    # fileSystemId: fs-12345678 
+    # fileSystemId: fs-12345678
     # efs-sc:
-    #   reclaimPolicy: Delete  
-    #   directoryPerms: "700"  
-    #   basePath: /data  
+    #   reclaimPolicy: Delete
+    #   directoryPerms: "700"
+    #   basePath: /data
     #   mountOptions:
     #     - nfsvers=4.1
 
   ebs:
+    # Legacy default — unchanged, kept for backwards compatibility.
     ebs-sc-gp3:
       reclaimPolicy: Retain
-      volumeType: gp3 
+      volumeType: gp3
       size: 20Gi
       iops: 3000
       throughput: 125
+
+    # Peeks DR-aware StorageClasses — one per backup tier.
+    # Workloads declare their recovery requirement by choosing the right SC
+    # in their PVC manifest. Every volume provisioned by these SCs inherits
+    # the `peeks.io/backup-tier=<tier>` AWS tag, which AWS Backup's
+    # `BackupSelection` matches on — no central ConfigMap, no platform ticket.
+    #
+    # Native EBS CSI label-propagation from namespace → volume tag is NOT
+    # supported (the driver's `tagSpecification_<N>` only expands
+    # ${pvc.name}/${pvc.namespace}/${pv.name}, not arbitrary labels). A per-SC
+    # strategy is therefore the explicit contract; a mutating webhook could
+    # achieve automatic propagation but is out of scope for v1.
+    peeks-gold-gp3:
+      reclaimPolicy: Retain
+      volumeType: gp3
+      iops: 3000
+      throughput: 125
+      tags:
+        peeks.io/backup-tier: gold
+        peeks.io/managed-by: peeks-platform
+    peeks-silver-gp3:
+      reclaimPolicy: Retain
+      volumeType: gp3
+      iops: 3000
+      throughput: 125
+      tags:
+        peeks.io/backup-tier: silver
+        peeks.io/managed-by: peeks-platform
+    peeks-bronze-gp3:
+      reclaimPolicy: Delete
+      volumeType: gp3
+      iops: 3000
+      throughput: 125
+      tags:
+        peeks.io/backup-tier: bronze
+        peeks.io/managed-by: peeks-platform
