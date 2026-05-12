@@ -104,9 +104,9 @@ Documented explicitly because the boundary matters for DR correctness:
   (`pg_basebackup` + WAL archiving to S3, Kafka tiered storage, etc.) — see
   task 2.2 in the DR plan.
 - **PVC restore targeting** — the actual mechanism that attaches restored
-  volumes to the new pods in an `existingCluster` restore is handled by a
-  separate RGD (`RestoreSelection`, task 2.1), not here. This RGD only
-  produces the backups; restoring them is a different concern.
+  volumes to the new pods in an `existingCluster` restore is handled by the
+  companion `RestoreSelection` RGD (same DR kit, separate concern). This RGD
+  only produces the backups; restoring them lives next to this directory.
 
 ## Validation
 
@@ -134,4 +134,5 @@ kubectl --context hub get backupvault,backupplan,backupselection -A
 - `copyDestinationVaultARN` must be pre-provisioned in the DR region. A future
   iteration could nest that vault in the same RGD.
 - Restore side (how the PVs land in a target cluster) is the responsibility of
-  a separate `RestoreSelection` RGD — not in this directory.
+  the companion `RestoreSelection` RGD — shipped alongside this one as part of
+  the same DR kit.
