@@ -253,8 +253,45 @@ tasks:
             workloadRepoRevision: REPO_REVISION
             workloadRepoBasePath: "REPO_BASEPATH/apps/"
             workloadRepoPath: ""
+          addons:
+            enable_ingress_class_alb: "true"
+            enable_argo_rollouts: "false"
+            enable_metrics_server: "false"
+            enable_external_secrets: "true"
+            enable_external_dns: "true"
+            enable_adot_collector: "false"
+            enable_cw_prometheus: "false"
+            enable_kyverno: "false"
+            enable_kyverno_policies: "false"
+            enable_kyverno_policy_reporter: "false"
+            enable_cni_metrics_helper: "false"
+            enable_prometheus_node_exporter: "false"
+            enable_kube_state_metrics: "false"
+            enable_opentelemetry_operator: "false"
+            enable_cert_manager: "true"
+            enable_ack_iam: "false"
+            enable_ack_eks: "false"
+            enable_ack_ec2: "false"
+            enable_ack_ecr: "false"
+            enable_ack_s3: "false"
+            enable_ack_dynamodb: "false"
+            enable_ack_efs: "false"
+            enable_aws_efs_csi_driver: "false"
+            enable_crossplane: "false"
+            enable_crossplane_aws: "false"
+            enable_flux: "false"
+            enable_ingress_nginx: "false"
+            enable_platform_manifests: "true"
+            enable_kubevela: "false"
+            adot_collector_namespace: adot-collector-kubeprometheus
+            adot_collector_service_account: adot-collector-kubeprometheus
+            external_dns_namespace: external-dns
+            external_dns_service_account: external-dns-sa
+            external_dns_policy: sync
+            external_secrets_namespace: external-secrets
+            external_secrets_service_account: external-secrets-sa
+            amp_endpoint_url: ""
         EOF
-      - printf '{{.C_OK}}✓ Hub cluster claim applied.{{.C_RESET}}\n'
 
   hub:seed:
     desc: Seed hub cluster after EKS is ACTIVE
