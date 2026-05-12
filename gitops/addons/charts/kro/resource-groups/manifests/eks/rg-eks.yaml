@@ -71,13 +71,6 @@ spec:
         enable_kube_state_metrics: string
         enable_opentelemetry_operator: string
         enable_cert_manager: string
-        enable_ack_iam: string
-        enable_ack_eks: string
-        enable_ack_ec2: string
-        enable_ack_ecr: string
-        enable_ack_s3: string
-        enable_ack_dynamodb: string
-        enable_ack_efs: string
         enable_aws_efs_csi_driver: string
         enable_crossplane: string
         enable_crossplane_aws: string
@@ -454,13 +447,7 @@ spec:
             enable_kube_state_metrics: "${schema.spec.addons.enable_kube_state_metrics}"
             enable_opentelemetry_operator: "${schema.spec.addons.enable_opentelemetry_operator}"
             enable_cert_manager: "${schema.spec.addons.enable_cert_manager}"
-            enable_ack_iam: "${schema.spec.addons.enable_ack_iam}"
-            enable_ack_eks: "${schema.spec.addons.enable_ack_eks}"
-            enable_ack_ec2: "${schema.spec.addons.enable_ack_ec2}"
-            enable_ack_ecr: "${schema.spec.addons.enable_ack_ecr}"
-            enable_ack_s3: "${schema.spec.addons.enable_ack_s3}"
-            enable_ack_dynamodb: "${schema.spec.addons.enable_ack_dynamodb}"
-            enable_ack_efs: "${schema.spec.addons.enable_ack_efs}"
+            enable_cert_manager: "${schema.spec.addons.enable_cert_manager}"
             enable_aws_efs_csi_driver: "${schema.spec.addons.enable_aws_efs_csi_driver}"
             enable_crossplane: "${schema.spec.addons.enable_crossplane}"
             enable_crossplane_aws: "${schema.spec.addons.enable_crossplane_aws}"
