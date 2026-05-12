@@ -422,13 +422,14 @@ Description=Refresh ArgoCD auth token
 Type=oneshot
 User=ec2-user
 Environment=HOME=/home/ec2-user
-ExecStart=/bin/bash -lc "source ~/.bashrc.d/platform.sh && argocd-refresh-token"
+ExecStart=/bin/bash -lc "source $HOME/.bashrc.d/ssm-setup-ide-logs.sh && source $HOME/.bashrc.d/platform.sh && argocd-refresh-token"
 SVCEOF
     sudo tee /etc/systemd/system/argocd-refresh-token.timer >/dev/null <<TMREOF
 [Unit]
 Description=Refresh ArgoCD token every 4 hours
 
 [Timer]
+OnBootSec=5min
 OnUnitActiveSec=4h
 
 [Install]
