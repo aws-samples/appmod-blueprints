@@ -192,7 +192,7 @@ tasks:
       - kubectl apply -f {{.GITOPS_ROOT}}/addons/charts/kro/resource-groups/manifests/eks/rg-eks.yaml
       - kubectl apply -f {{.GITOPS_ROOT}}/addons/charts/kro/resource-groups/manifests/eks/rg-eks-vpc.yaml
       - printf '{{.C_STEP}}▸ Waiting for RGDs to be ready...{{.C_RESET}}\n'
-      - kubectl wait --for=condition=ResourceGraphDefinitionReady resourcegraphdefinition --all --timeout=120s
+      - kubectl wait --for=condition=Ready resourcegraphdefinition --all --timeout=180s
       - printf '{{.C_OK}}✓ ResourceGraphDefinitions applied.{{.C_RESET}}\n'
 
   hub:claim:
