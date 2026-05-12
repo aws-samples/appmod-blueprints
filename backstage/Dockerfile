@@ -1,48 +1,35 @@
-# Stage 1 - Create yarn install skeleton layer
-FROM node:20-bookworm-slim AS packages
+# Backstage image based on CNOE backstage-app with workshop-specific patches:
+# - /backstage sub-path support (baseUrl)
+# - GitLab scaffolder module
+# - kube:apply action alias with manifest input + in-cluster fallback
+#
+# To rebuild: docker build -t <ecr-repo>/backstage:latest backstage/
 
-WORKDIR /app
-COPY backstage.json package.json yarn.lock ./
-COPY .yarn ./.yarn
-COPY .yarnrc.yml ./
+# Stage 1: Clone CNOE source and apply patches
+FROM node:22-bookworm-slim AS source
 
-COPY packages packages
+RUN apt-get update && apt-get install -y --no-install-recommends git patch ca-certificates && rm -rf /var/lib/apt/lists/*
 
-# Comment this out if you don't have any internal plugins
-COPY plugins plugins
+WORKDIR /build
+RUN git clone --depth 1 https://github.com/cnoe-io/backstage-app.git .
 
-RUN find packages \! -name "package.json" -mindepth 2 -maxdepth 2 -exec rm -rf {} \+
+COPY patches/cnoe-customizations.patch /tmp/
+RUN patch -p1 < /tmp/cnoe-customizations.patch
 
-# Stage 2 - Install dependencies and build packages
-FROM node:20-bookworm-slim AS build
-
-# Set Python interpreter for `node-gyp` to use
-ENV PYTHON=/usr/bin/python3
-
-# Install isolate-vm dependencies, these are needed by the @backstage/plugin-scaffolder-backend.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends python3 g++ build-essential && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install sqlite3 dependencies. You can skip this if you don't use sqlite3 in the image,
-# in which case you should also move better-sqlite3 to "devDependencies" in package.json.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends libsqlite3-dev && \
-    rm -rf /var/lib/apt/lists/*
+# Stage 2: Install and build (mirrors CNOE Dockerfile)
+FROM node:22-bookworm-slim AS build
 
 USER node
 WORKDIR /app
 
-COPY --from=packages --chown=node:node /app .
+COPY --from=source --chown=node:node /build/package.json /build/yarn.lock ./
+COPY --from=source --chown=node:node /build/packages packages
+COPY --from=source --chown=node:node /build/plugins plugins
 
 RUN --mount=type=cache,target=/home/node/.cache/yarn,sharing=locked,uid=1000,gid=1000 \
-    yarn install
+    yarn install --frozen-lockfile --network-timeout 600000
 
-COPY --chown=node:node . .
+COPY --from=source --chown=node:node /build .
 
 RUN yarn tsc
 RUN yarn --cwd packages/backend build
@@ -51,62 +38,36 @@ RUN mkdir packages/backend/dist/skeleton packages/backend/dist/bundle \
     && tar xzf packages/backend/dist/skeleton.tar.gz -C packages/backend/dist/skeleton \
     && tar xzf packages/backend/dist/bundle.tar.gz -C packages/backend/dist/bundle
 
-# Stage 3 - Build the actual backend image and install production dependencies
-FROM node:20-bookworm-slim
+# Stage 3: Production image
+FROM node:22-bookworm-slim
 
-# Set Python interpreter for `node-gyp` to use
-ENV PYTHON=/usr/bin/python3
-
-# Install isolate-vm dependencies, these are needed by the @backstage/plugin-scaffolder-backend.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
-    apt-get install -y --no-install-recommends python3 g++ build-essential && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv g++ build-essential ca-certificates curl
 
-# Install sqlite3 dependencies, git, and CA certificates for scaffolder operations
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends libsqlite3-dev git ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+RUN yarn config set python /usr/bin/python3
 
-# From here on we use the least-privileged `node` user to run the backend.
+# kubectl for kube:apply action
+RUN curl -L -o /usr/local/bin/kubectl https://dl.k8s.io/release/v1.29.9/bin/linux/amd64/kubectl && chmod +x /usr/local/bin/kubectl
+
+# mkdocs for TechDocs
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+RUN pip3 install 'mkdocs-techdocs-core==1.4.2'
+
 USER node
-
-# This should create the app dir as `node`.
-# If it is instead created as `root` then the `tar` command below will
-# fail: `can't create directory 'packages/': Permission denied`.
-# If this occurs, then ensure BuildKit is enabled (`DOCKER_BUILDKIT=1`)
-# so the app dir is correctly created as `node`.
 WORKDIR /app
 
-# Copy the install dependencies from the build stage and context
-COPY --from=build --chown=node:node /app/.yarn ./.yarn
-COPY --from=build --chown=node:node /app/.yarnrc.yml  ./
-COPY --from=build --chown=node:node /app/backstage.json ./
 COPY --from=build --chown=node:node /app/yarn.lock /app/package.json /app/packages/backend/dist/skeleton/ ./
 
-# Note: The skeleton bundle only includes package.json files -- if your app has
-# plugins that define a `bin` export, the bin files need to be copied as well to
-# be linked in node_modules/.bin during yarn install.
-
 RUN --mount=type=cache,target=/home/node/.cache/yarn,sharing=locked,uid=1000,gid=1000 \
-    yarn workspaces focus --all --production && rm -rf "$(yarn cache clean)"
+    yarn install --frozen-lockfile --production --network-timeout 600000
 
-# Copy the built packages from the build stage
 COPY --from=build --chown=node:node /app/packages/backend/dist/bundle/ ./
+COPY --from=source --chown=node:node /build/app-config.yaml /build/app-config.production.yaml ./
 
-# Copy any other files that we need at runtime
-COPY --chown=node:node app-config*.yaml ./
-
-# This will include the examples, if you don't need these simply remove this line
-COPY --chown=node:node examples ./examples
-
-# This switches many Node.js dependencies to production mode.
-ENV NODE_ENV=production
-
-# This disables node snapshot for Node 20 to work with the Scaffolder
+ENV NODE_ENV production
 ENV NODE_OPTIONS="--no-node-snapshot"
-
 CMD ["node", "packages/backend", "--config", "app-config.yaml", "--config", "app-config.production.yaml"]

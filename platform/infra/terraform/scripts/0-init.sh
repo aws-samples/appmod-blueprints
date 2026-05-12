@@ -380,6 +380,15 @@ APPPROJ
     # Initialize GitLab configuration (creates app repos — platform repo already pushed by deploy.sh)
     bash "$SCRIPT_DIR/2-gitlab-init.sh"
 
+    # Generate backstage spoke cluster values (tokens for k8s plugin)
+    log_timestamp "Phase: Generating Backstage spoke cluster values"
+    generate_backstage_spoke_values
+    cd "$GIT_ROOT_PATH"
+    git add -A
+    git commit -m "chore: add backstage spoke cluster values" || true
+    git push origin main
+    cd -
+
     # Dependency-aware ArgoCD app synchronization
     # NOTE: IDC configuration is deferred to AFTER app sync because Keycloak must be healthy first
     wait_for_argocd_apps_with_dependencies
