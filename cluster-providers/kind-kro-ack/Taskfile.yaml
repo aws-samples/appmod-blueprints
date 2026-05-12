@@ -1,0 +1,496 @@
+version: "3"
+set: [errexit, nounset, pipefail]
+silent: true
+
+env:
+  KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
+  AWS_PAGER: ""
+  AWS_PROFILE: "{{.AWS_PROFILE}}"
+
+vars:
+  GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
+  REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
+  AWS_PROFILE:
+    sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
+  HUB_CLUSTER_NAME:
+    sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
+  HUB_K8S_VERSION:
+    sh: yq '.hub.kubernetesVersion // "1.35"' {{.CONFIG_FILE}}
+  HUB_VPC_CIDR:
+    sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}}
+  AWS_ACCOUNT_ID:
+    sh: yq '.aws.accountId' {{.CONFIG_FILE}}
+  AWS_REGION:
+    sh: yq '.aws.region' {{.CONFIG_FILE}}
+  REPO_URL:
+    sh: yq '.repo.url' {{.CONFIG_FILE}}
+  REPO_REVISION:
+    sh: yq '.repo.revision' {{.CONFIG_FILE}}
+  REPO_BASEPATH:
+    sh: yq '.repo.basepath' {{.CONFIG_FILE}}
+  DOMAIN:
+    sh: yq '.domain' {{.CONFIG_FILE}}
+  RESOURCE_PREFIX:
+    sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
+  INGRESS_NAME:
+    sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
+  INGRESS_SECURITY_GROUPS:
+    sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  CAPABILITY_NAME:
+    sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
+  IDC_INSTANCE_ARN:
+    sh: yq '.identityCenter.instanceArn' {{.CONFIG_FILE}}
+  IDC_REGION:
+    sh: yq '.identityCenter.region' {{.CONFIG_FILE}}
+  IDC_ADMIN_GROUP_ID:
+    sh: yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}}
+  KIND_CLUSTER_NAME: "{{.HUB_CLUSTER_NAME}}-bootstrap"
+  ACK_NAMESPACE: "ack-system"
+  KRO_NAMESPACE: "kro-system"
+  ACK_IAM_VERSION: "1.3.16"
+  ACK_EKS_VERSION: "1.6.0"
+  ACK_EC2_VERSION: "1.3.4"
+  KRO_VERSION: "0.6.1"
+  ARGOCD_VERSION:
+    sh: yq '.argocd.defaultVersion' {{.ROOT_DIR}}/gitops/addons/registry/core.yaml
+  C_INFO:
+    sh: printf '\033[1;36m'
+  C_OK:
+    sh: printf '\033[1;32m'
+  C_STEP:
+    sh: printf '\033[1;33m'
+  C_ERR:
+    sh: printf '\033[1;31m'
+  C_RESET:
+    sh: printf '\033[0m'
+
+tasks:
+  validate:
+    desc: Pre-flight checks
+    cmds:
+      - cmd: command -v {{.ITEM}} >/dev/null 2>&1 || { echo "Missing {{.ITEM}}"; exit 1; }
+        for:
+          var: REQUIRED_CLIS
+      - test -f {{.CONFIG_FILE}} || { echo "config.local.yaml not found"; exit 1; }
+      - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
+      - printf '{{.C_OK}}✓ Pre-flight checks passed.{{.C_RESET}}\n'
+
+  install:
+    desc: Bootstrap the platform (idempotent)
+    cmds:
+      - task: kind:create
+      - task: credentials:setup
+      - task: argocd:install
+      - task: ack:install
+      - task: kro:install
+      - task: kro:apply-rgds
+      - task: hub:claim
+      - task: hub:seed
+      - task: hub:wait-for-sync
+      - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
+
+  kind:create:
+    desc: Create Kind cluster (skips if exists)
+    status:
+      - kind get clusters 2>/dev/null | grep -q "^{{.KIND_CLUSTER_NAME}}$"
+    cmds:
+      - kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind.yaml --kubeconfig {{.KUBECONFIG}}
+
+  credentials:setup:
+    desc: Create AWS credentials secret (skips if exists)
+    status:
+      - kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials 2>/dev/null
+    cmds:
+      - task: credentials:refresh
+
+  credentials:refresh:
+    desc: Force-refresh AWS credentials secret
+    cmds:
+      - kubectl create namespace {{.ACK_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
+      - |
+        set -e
+        TOKEN=$(curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)
+        if [ -n "$TOKEN" ]; then
+          ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+          CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+          AKI=$(echo "$CREDS" | jq -r .AccessKeyId)
+          SAK=$(echo "$CREDS" | jq -r .SecretAccessKey)
+          ST=$(echo  "$CREDS" | jq -r .Token)
+        else
+          AWS_PROFILE_NAME=$(yq '.aws.profile // "default"' {{.CONFIG_FILE}})
+          EXPORTED=$(aws configure export-credentials --profile "$AWS_PROFILE_NAME" --format env-no-export)
+          AKI=$(echo "$EXPORTED" | sed -n 's/^AWS_ACCESS_KEY_ID=//p')
+          SAK=$(echo "$EXPORTED" | sed -n 's/^AWS_SECRET_ACCESS_KEY=//p')
+          ST=$(echo  "$EXPORTED" | sed -n 's/^AWS_SESSION_TOKEN=//p')
+        fi
+        [ -z "$AKI" ] || [ -z "$SAK" ] && echo "ERROR: empty credentials" && exit 1
+        rm -f {{.ROOT_DIR}}/private/aws-creds.ini
+        install -m 600 /dev/null {{.ROOT_DIR}}/private/aws-creds.ini
+        {
+          echo "[default]"
+          echo "aws_access_key_id = $AKI"
+          echo "aws_secret_access_key = $SAK"
+          [ -n "$ST" ] && echo "aws_session_token = $ST"
+        } > {{.ROOT_DIR}}/private/aws-creds.ini
+      - kubectl -n {{.ACK_NAMESPACE}} create secret generic aws-credentials
+          --from-file=credentials={{.ROOT_DIR}}/private/aws-creds.ini
+          --dry-run=client -o yaml | kubectl apply -f -
+      - rm -f {{.ROOT_DIR}}/private/aws-creds.ini
+
+  argocd:install:
+    desc: Install ArgoCD (skips if deployed)
+    status:
+      - helm status argocd -n argocd 2>/dev/null | grep -q deployed
+    cmds:
+      - helm repo add argo https://argoproj.github.io/argo-helm --force-update
+      - helm upgrade --install argocd argo/argo-cd
+          --namespace argocd --create-namespace
+          --version {{.ARGOCD_VERSION}}
+          --wait --timeout 5m
+
+  ack:install:
+    desc: Install ACK controllers (IAM, EKS, EC2)
+    cmds:
+      - task: ack:install-controller
+        vars: { CONTROLLER: iam, VERSION: "{{.ACK_IAM_VERSION}}" }
+      - task: ack:install-controller
+        vars: { CONTROLLER: eks, VERSION: "{{.ACK_EKS_VERSION}}" }
+      - task: ack:install-controller
+        vars: { CONTROLLER: ec2, VERSION: "{{.ACK_EC2_VERSION}}" }
+      - printf '{{.C_OK}}✓ ACK controllers installed.{{.C_RESET}}\n'
+
+  ack:install-controller:
+    internal: true
+    status:
+      - helm status ack-{{.CONTROLLER}}-controller -n {{.ACK_NAMESPACE}} 2>/dev/null | grep -q deployed
+    cmds:
+      - helm install ack-{{.CONTROLLER}}-controller
+          oci://public.ecr.aws/aws-controllers-k8s/{{.CONTROLLER}}-chart
+          --namespace {{.ACK_NAMESPACE}} --create-namespace
+          --version {{.VERSION}}
+          --set aws.region={{.AWS_REGION}}
+          --set aws.credentials.secretName=aws-credentials
+          --set aws.credentials.secretKey=credentials
+          --set serviceAccount.name=ack-{{.CONTROLLER}}-controller
+          --wait --timeout 5m
+
+  kro:install:
+    desc: Install KRO controller
+    status:
+      - helm status kro -n {{.KRO_NAMESPACE}} 2>/dev/null | grep -q deployed
+    cmds:
+      - helm install kro oci://registry.k8s.io/kro/charts/kro
+          --namespace {{.KRO_NAMESPACE}} --create-namespace
+          --version {{.KRO_VERSION}}
+          --wait --timeout 5m
+      - printf '{{.C_OK}}✓ KRO installed.{{.C_RESET}}\n'
+
+  kro:apply-rgds:
+    desc: Apply KRO ResourceGraphDefinitions for VPC and EKS
+    cmds:
+      - kubectl apply -f {{.GITOPS_ROOT}}/addons/charts/kro/resource-groups/manifests/eks/rg-vpc.yaml
+      - kubectl apply -f {{.GITOPS_ROOT}}/addons/charts/kro/resource-groups/manifests/eks/rg-eks.yaml
+      - kubectl apply -f {{.GITOPS_ROOT}}/addons/charts/kro/resource-groups/manifests/eks/rg-eks-vpc.yaml
+      - printf '{{.C_STEP}}▸ Waiting for RGDs to be ready...{{.C_RESET}}\n'
+      - kubectl wait --for=condition=ResourceGraphDefinitionReady resourcegraphdefinition --all --timeout=120s
+      - printf '{{.C_OK}}✓ ResourceGraphDefinitions applied.{{.C_RESET}}\n'
+
+  hub:claim:
+    desc: Apply hub cluster claim (EksclusterWithVpc instance)
+    cmds:
+      - kubectl create namespace {{.HUB_CLUSTER_NAME}} --dry-run=client -o yaml | kubectl apply -f -
+      - |
+        cat <<'EOF' | sed \
+          -e "s|HUB_CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" \
+          -e "s|AWS_REGION|{{.AWS_REGION}}|g" \
+          -e "s|AWS_ACCOUNT_ID|{{.AWS_ACCOUNT_ID}}|g" \
+          -e "s|HUB_K8S_VERSION|{{.HUB_K8S_VERSION}}|g" \
+          -e "s|HUB_VPC_CIDR|{{.HUB_VPC_CIDR}}|g" \
+          -e "s|RESOURCE_PREFIX|{{.RESOURCE_PREFIX}}|g" \
+          -e "s|REPO_URL|{{.REPO_URL}}|g" \
+          -e "s|REPO_REVISION|{{.REPO_REVISION}}|g" \
+          -e "s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" \
+          -e "s|DOMAIN|{{.DOMAIN}}|g" \
+          | kubectl apply -f -
+        apiVersion: kro.run/v1alpha1
+        kind: EksclusterWithVpc
+        metadata:
+          name: HUB_CLUSTER_NAME
+          namespace: HUB_CLUSTER_NAME
+        spec:
+          name: HUB_CLUSTER_NAME
+          tenant: platform
+          environment: control-plane
+          region: AWS_REGION
+          k8sVersion: "HUB_K8S_VERSION"
+          accountId: "AWS_ACCOUNT_ID"
+          managementAccountId: "AWS_ACCOUNT_ID"
+          argoCdHubRoleArn: "arn:aws:iam::AWS_ACCOUNT_ID:role/HUB_CLUSTER_NAME-argocd-role"
+          adminRoleName: Admin
+          fleetSecretManagerSecretNameSuffix: argocd-secret
+          domainName: DOMAIN
+          resourcePrefix: RESOURCE_PREFIX
+          cidr:
+            vpcCidr: HUB_VPC_CIDR
+            publicSubnet1Cidr: "10.0.1.0/24"
+            publicSubnet2Cidr: "10.0.2.0/24"
+            privateSubnet1Cidr: "10.0.11.0/24"
+            privateSubnet2Cidr: "10.0.12.0/24"
+          gitops:
+            addonsRepoUrl: REPO_URL
+            addonsRepoRevision: REPO_REVISION
+            addonsRepoBasePath: "REPO_BASEPATH/addons/"
+            addonsRepoPath: bootstrap
+            fleetRepoUrl: REPO_URL
+            fleetRepoRevision: REPO_REVISION
+            fleetRepoBasePath: "REPO_BASEPATH/fleet/"
+            fleetRepoPath: bootstrap
+            platformRepoUrl: REPO_URL
+            platformRepoRevision: REPO_REVISION
+            platformRepoBasePath: "REPO_BASEPATH/platform/"
+            platformRepoPath: bootstrap
+            workloadRepoUrl: REPO_URL
+            workloadRepoRevision: REPO_REVISION
+            workloadRepoBasePath: "REPO_BASEPATH/apps/"
+            workloadRepoPath: ""
+        EOF
+      - printf '{{.C_OK}}✓ Hub cluster claim applied.{{.C_RESET}}\n'
+
+  hub:seed:
+    desc: Seed hub cluster after EKS is ACTIVE
+    cmds:
+      - task: credentials:refresh
+      - printf '{{.C_STEP}}▸ Waiting for hub EksCluster to be ready...{{.C_RESET}}\n'
+      - |
+        for i in $(seq 1 120); do
+          STATUS=$(kubectl get ekscluster {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.clusterState}' 2>/dev/null || echo "Pending")
+          printf '{{.C_INFO}}  [%s/120] Cluster status: %s{{.C_RESET}}\n' "$i" "$STATUS"
+          [ "$STATUS" = "ACTIVE" ] && break
+          sleep 15
+        done
+        [ "$STATUS" != "ACTIVE" ] && echo "ERROR: cluster not ACTIVE" && exit 1
+      - printf '{{.C_STEP}}▸ Creating cluster admin access entry...{{.C_RESET}}\n'
+      - cmd: |
+          CALLER_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
+          if echo "$CALLER_ARN" | grep -q ":assumed-role/"; then
+            PRINCIPAL_ARN=$(echo "$CALLER_ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||')
+          else
+            PRINCIPAL_ARN="$CALLER_ARN"
+          fi
+          aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --type STANDARD --region {{.AWS_REGION}} 2>/dev/null || true
+          aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} 2>/dev/null || true
+      - task: argocd:capability
+      - task: secrets-manager:seed
+      - task: secrets-manager:seed-keycloak
+      - task: hub:install-eso
+      - task: hub:cluster-secret-store
+      - task: hub:seed-secret
+      - task: hub:apply-root-appset
+
+  hub:kubeconfig:
+    cmds:
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>&1 >/dev/null
+
+  argocd:capability:
+    desc: Create EKS ArgoCD Capability via Job
+    status:
+      - kubectl -n {{.ACK_NAMESPACE}} get job create-argocd-capability -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q 1
+    vars:
+      CAPABILITY_ROLE_ARN:
+        sh: kubectl get role.iam.services.k8s.aws/{{.HUB_CLUSTER_NAME}}-argocd-role -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.ackResourceMetadata.arn}' 2>/dev/null || echo ""
+    cmds:
+      - kubectl -n {{.ACK_NAMESPACE}} create configmap argocd-capability-config
+          --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
+          --from-literal=AWS_REGION={{.AWS_REGION}}
+          --from-literal=AWS_ACCOUNT_ID={{.AWS_ACCOUNT_ID}}
+          --from-literal=CAPABILITY_NAME={{.CAPABILITY_NAME}}
+          --from-literal=CAPABILITY_ROLE_ARN={{.CAPABILITY_ROLE_ARN}}
+          --from-literal=IDC_INSTANCE_ARN={{.IDC_INSTANCE_ARN}}
+          --from-literal=IDC_REGION={{.IDC_REGION}}
+          --from-literal=IDC_ADMIN_GROUP_ID={{.IDC_ADMIN_GROUP_ID}}
+          --dry-run=client -o yaml | kubectl apply -f -
+      - kubectl delete job create-argocd-capability -n {{.ACK_NAMESPACE}} 2>/dev/null || true
+      - kubectl apply -f manifests/argocd/create-capability.yaml
+      - kubectl -n {{.ACK_NAMESPACE}} wait --for=condition=Complete --timeout=2400s job/create-argocd-capability
+
+  secrets-manager:seed:
+    desc: Seed hub config into AWS Secrets Manager
+    vars:
+      CLUSTER_ARN:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null
+      VPC_ID:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
+    cmds:
+      - |
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        SECRET_VALUE=$(jq -n \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg config '{"tlsClientConfig":{"insecure":false}}' \
+          --arg server '{{.CLUSTER_ARN}}' \
+          --arg addons '' \
+          '{metadata: $metadata, config: $config, server: $server, addons: $addons}')
+        aws secretsmanager create-secret \
+          --name "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}} 2>/dev/null \
+        || aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}}
+
+  secrets-manager:seed-keycloak:
+    desc: Seed keycloak passwords
+    status:
+      - aws secretsmanager describe-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - |
+        ADMIN_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+        DB_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+        USER_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
+        SECRET_VALUE=$(jq -n \
+          --arg admin "$ADMIN_PASS" --arg db "$DB_PASS" --arg user "$USER_PASS" \
+          '{keycloak_admin_password: $admin, keycloak_postgres_password: $db, user_password: $user}')
+        aws secretsmanager create-secret \
+          --name "{{.HUB_CLUSTER_NAME}}/keycloak" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}} 2>/dev/null \
+        || aws secretsmanager put-secret-value \
+          --secret-id "{{.HUB_CLUSTER_NAME}}/keycloak" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}}
+
+  hub:install-eso:
+    desc: Install External Secrets Operator on hub
+    vars:
+      ESO_VERSION:
+        sh: yq '.external-secrets.defaultVersion' {{.GITOPS_ROOT}}/addons/registry/core.yaml
+    status:
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
+    cmds:
+      - task: hub:kubeconfig
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm repo add external-secrets https://charts.external-secrets.io --force-update
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm upgrade --install external-secrets external-secrets/external-secrets
+          --namespace external-secrets --create-namespace
+          --version {{.ESO_VERSION}}
+          --set serviceAccount.name=external-secrets-sa
+          --wait --timeout 5m
+
+  hub:cluster-secret-store:
+    desc: Apply ClusterSecretStore on hub
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        cat <<'EOF' | sed "s|AWS_REGION|{{.AWS_REGION}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        apiVersion: external-secrets.io/v1
+        kind: ClusterSecretStore
+        metadata:
+          name: aws-secrets-manager
+        spec:
+          provider:
+            aws:
+              service: SecretsManager
+              region: AWS_REGION
+        EOF
+
+  hub:seed-secret:
+    desc: Create seed cluster secret on hub
+    vars:
+      CLUSTER_ARN:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text
+    cmds:
+      - task: hub:kubeconfig
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+      - |
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        type: Opaque
+        metadata:
+          name: CLUSTER_NAME
+          namespace: argocd
+          annotations:
+            addonsRepoURL: "REPO_URL"
+            addonsRepoRevision: "REPO_REVISION"
+            addonsRepoBasepath: "REPO_BASEPATH"
+            fleetRepoURL: "REPO_URL"
+            fleetRepoRevision: "REPO_REVISION"
+            fleetRepoBasepath: "REPO_BASEPATH"
+            aws_cluster_name: CLUSTER_NAME
+          labels:
+            argocd.argoproj.io/secret-type: cluster
+            environment: control-plane
+            fleet_member: control-plane
+        stringData:
+          name: CLUSTER_NAME
+          server: "CLUSTER_ARN"
+          config: '{"tlsClientConfig":{"insecure":false}}'
+        EOF
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+  hub:apply-root-appset:
+    desc: Apply root-appset to hub
+    cmds:
+      - task: hub:kubeconfig
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_OK}}✓ Root appset applied. Hub is now self-managing.{{.C_RESET}}\n'
+
+  hub:wait-for-sync:
+    desc: Wait for hub ArgoCD apps to sync
+    cmds:
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Waiting for apps to appear...{{.C_RESET}}\n'
+      - |
+        for i in $(seq 1 30); do
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
+          [ "$TOTAL" -gt 3 ] && break
+          sleep 10
+        done
+      - printf '{{.C_STEP}}▸ Waiting for apps to sync...{{.C_RESET}}\n'
+      - |
+        TIMEOUT=1800; ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
+          SYNCED=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '{print $2}' | grep -c "Synced" || true)
+          OUTOFSYNC=$((TOTAL - SYNCED))
+          printf '{{.C_INFO}}  %s/%s synced (%ss){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$ELAPSED"
+          [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le 2 ] && break
+          sleep 15; ELAPSED=$((ELAPSED + 15))
+        done
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+  status:
+    desc: Check bootstrap status
+    cmds:
+      - printf '{{.C_INFO}}=== Kind ==={{.C_RESET}}\n' && kind get clusters 2>/dev/null | grep "{{.KIND_CLUSTER_NAME}}" || echo "Not running"
+      - printf '{{.C_INFO}}=== Helm ==={{.C_RESET}}\n' && helm list -A 2>/dev/null || echo "None"
+      - printf '{{.C_INFO}}=== KRO RGDs ==={{.C_RESET}}\n' && kubectl get resourcegraphdefinitions 2>/dev/null || echo "None"
+      - printf '{{.C_INFO}}=== KRO Instances ==={{.C_RESET}}\n' && kubectl get eksclusterwithvpc -A 2>/dev/null || echo "None"
+
+  destroy-kind:
+    desc: Delete Kind cluster only (hub persists)
+    status:
+      - "! kind get clusters 2>/dev/null | grep -q '^{{.KIND_CLUSTER_NAME}}$'"
+    cmds:
+      - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
+
+  destroy:
+    desc: Full teardown — delete KRO instances, wait for ACK to clean up AWS resources, delete Kind
+    vars:
+      CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
+    cmds:
+      - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
+      - task: credentials:refresh
+      # Delete the hub claim — KRO cascades to ACK which deletes AWS resources
+      - printf '{{.C_ERR}}▸ Deleting hub cluster claim...{{.C_RESET}}\n'
+      - kubectl delete eksclusterwithvpc {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} --timeout=60s 2>/dev/null || true
+      - printf '{{.C_STEP}}▸ Waiting for EKS cluster deletion...{{.C_RESET}}\n'
+      - |
+        for i in $(seq 1 120); do
+          EXISTS=$(kubectl get ekscluster {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} 2>/dev/null && echo "yes" || echo "no")
+          [ "$EXISTS" = "no" ] && break
+          printf '{{.C_INFO}}  [%s/120] Waiting for deletion...{{.C_RESET}}\n' "$i"
+          sleep 15
+        done
+      # Clean up Secrets Manager
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
+      - cmd: |
+          if [ "{{.CLEANUP_KIND}}" = "true" ]; then
+            kind delete cluster --name {{.KIND_CLUSTER_NAME}}
+          else
+            echo "Kind preserved. Run 'task destroy-kind' to remove."
+          fi
+      - printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'
