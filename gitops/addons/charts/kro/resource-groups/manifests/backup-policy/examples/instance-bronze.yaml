@@ -1,0 +1,12 @@
+---
+apiVersion: kro.run/v1alpha1
+kind: BackupPolicy
+metadata:
+  name: spoke-prod-euw1-bronze
+  namespace: default
+spec:
+  tier: bronze
+  spokeName: spoke-prod-euw1
+  region: eu-west-1
+  # bronze = same-region only, no copyDestinationRegion / copyDestinationVaultARN
+  iamRoleARN: arn:aws:iam::000000000000:role/AWSBackupDefaultServiceRole
