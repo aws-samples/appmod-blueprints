@@ -19,6 +19,12 @@ includes:
     vars:
       CONFIG_FILE: "{{.CONFIG_FILE}}"
     optional: true
+  kind-kro-ack:
+    taskfile: ./cluster-providers/kind-kro-ack/Taskfile.yaml
+    dir: ./cluster-providers/kind-kro-ack
+    vars:
+      CONFIG_FILE: "{{.CONFIG_FILE}}"
+    optional: true
 
 tasks:
   default:
