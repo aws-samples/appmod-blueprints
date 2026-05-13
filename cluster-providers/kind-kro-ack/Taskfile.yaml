@@ -42,8 +42,10 @@ vars:
     sh: yq '.identityCenter.instanceArn' {{.CONFIG_FILE}}
   IDC_REGION:
     sh: yq '.identityCenter.region' {{.CONFIG_FILE}}
+  IDC_IDENTITY_STORE_ID:
+    sh: yq '.identityCenter.identityStoreId // ""' {{.CONFIG_FILE}}
   IDC_ADMIN_GROUP_ID:
-    sh: yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}}
+    sh: yq '.identityCenter.adminGroupId // ""' {{.CONFIG_FILE}}
   KIND_CLUSTER_NAME: "{{.HUB_CLUSTER_NAME}}-bootstrap"
   CALLER_ROLE_ARN:
     sh: |
@@ -99,6 +101,7 @@ tasks:
       - task: ack:install
       - task: kro:install
       - task: kro:apply-rgds
+      - task: idc:setup
       - task: hub:claim
       - task: hub:seed
       - task: hub:wait-for-sync
@@ -209,6 +212,55 @@ tasks:
       - printf '{{.C_STEP}}▸ Waiting for RGDs to be ready...{{.C_RESET}}\n'
       - kubectl wait --for=condition=Ready resourcegraphdefinition --all --timeout=180s
       - printf '{{.C_OK}}✓ ResourceGraphDefinitions applied.{{.C_RESET}}\n'
+
+  idc:setup:
+    desc: Create IDC groups if they don't exist (idempotent)
+    vars:
+      STORE_ID:
+        sh: |
+          ID=$(yq '.identityCenter.identityStoreId // ""' {{.CONFIG_FILE}})
+          if [ -z "$ID" ]; then
+            aws sso-admin list-instances --region {{.IDC_REGION}} --query 'Instances[0].IdentityStoreId' --output text 2>/dev/null || echo ""
+          else
+            echo "$ID"
+          fi
+      ADMIN_GROUP:
+        sh: |
+          EXISTING=$(yq '.identityCenter.adminGroupId // ""' {{.CONFIG_FILE}})
+          if [ -n "$EXISTING" ]; then echo "$EXISTING"; exit 0; fi
+          STORE_ID=$(yq '.identityCenter.identityStoreId // ""' {{.CONFIG_FILE}})
+          [ -z "$STORE_ID" ] && STORE_ID=$(aws sso-admin list-instances --region {{.IDC_REGION}} --query 'Instances[0].IdentityStoreId' --output text 2>/dev/null)
+          aws identitystore list-groups --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} --filters '[{"AttributePath":"DisplayName","AttributeValue":"admin"}]' --query 'Groups[0].GroupId' --output text 2>/dev/null | grep -v None || echo ""
+    cmds:
+      - |
+        STORE_ID="{{.STORE_ID}}"
+        if [ -z "$STORE_ID" ]; then
+          echo "ERROR: No IDC Identity Store found. Set identityCenter.identityStoreId in config.local.yaml"
+          exit 1
+        fi
+        printf '{{.C_STEP}}▸ IDC Identity Store: %s{{.C_RESET}}\n' "$STORE_ID"
+        # Create groups idempotently
+        for GROUP_NAME in admin editor viewer; do
+          EXISTING=$(aws identitystore list-groups --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
+            --filters "[{\"AttributePath\":\"DisplayName\",\"AttributeValue\":\"$GROUP_NAME\"}]" \
+            --query 'Groups[0].GroupId' --output text 2>/dev/null | grep -v None || echo "")
+          if [ -n "$EXISTING" ]; then
+            printf '{{.C_INFO}}  Group "%s" exists: %s{{.C_RESET}}\n' "$GROUP_NAME" "$EXISTING"
+          else
+            NEW_ID=$(aws identitystore create-group --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
+              --display-name "$GROUP_NAME" --description "Platform group for EKS ArgoCD Capability" \
+              --query 'GroupId' --output text)
+            printf '{{.C_OK}}  Created group "%s": %s{{.C_RESET}}\n' "$GROUP_NAME" "$NEW_ID"
+          fi
+        done
+        # Output admin group ID
+        ADMIN_ID=$(aws identitystore list-groups --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
+          --filters '[{"AttributePath":"DisplayName","AttributeValue":"admin"}]' \
+          --query 'Groups[0].GroupId' --output text)
+        printf '{{.C_OK}}✓ IDC admin group: %s{{.C_RESET}}\n' "$ADMIN_ID"
+        # Update config.local.yaml with discovered values
+        yq -i ".identityCenter.adminGroupId = \"$ADMIN_ID\"" {{.CONFIG_FILE}}
+        yq -i ".identityCenter.identityStoreId = \"$STORE_ID\"" {{.CONFIG_FILE}}
 
   hub:claim:
     desc: Apply hub cluster claim (EksclusterWithVpc instance)
