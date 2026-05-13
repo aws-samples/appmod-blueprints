@@ -1584,3 +1584,70 @@ spec:
           namespace: crossplane-system
           roleARN: "${crossplaneEc2ProviderRole.status.ackResourceMetadata.arn}"
           serviceAccount: provider-aws-ec2
+
+    ###########################################################
+    # AWS Load Balancer Controller Pod Identity
+    ###########################################################
+    - id: lbcRole
+      includeWhen:
+        - ${schema.spec.addons.enable_ingress_class_alb == "true"}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-lbc-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-LBCPodIdentityRole"
+          policies:
+            - arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess
+            - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+            - arn:aws:iam::aws:policy/AmazonCognitoReadOnly
+            - arn:aws:iam::aws:policy/AWSWAFv2FullAccess
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "pods.eks.amazonaws.com"
+                  },
+                  "Action": ["sts:AssumeRole", "sts:TagSession"]
+                }
+              ]
+            }
+    - id: lbcPodIdentity
+      includeWhen:
+        - ${schema.spec.addons.enable_ingress_class_alb == "true"}
+      readyWhen:
+        - ${lbcPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          name: "${schema.spec.name}-lbc"
+          namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
+          namespace: kube-system
+          roleARN: "${lbcRole.status.ackResourceMetadata.arn}"
+          serviceAccount: aws-load-balancer-controller-sa
