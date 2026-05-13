@@ -30,6 +30,8 @@ vars:
     sh: yq '.repo.basepath' {{.CONFIG_FILE}}
   DOMAIN:
     sh: yq '.domain' {{.CONFIG_FILE}}
+  CLOUDFRONT_DOMAIN:
+    sh: yq '.cloudfront.domain // ""' {{.CONFIG_FILE}}
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
   INGRESS_NAME:
@@ -105,6 +107,8 @@ tasks:
       - task: kro:apply-rgds
       - task: idc:setup
       - task: hub:claim
+      - task: hub:ingress
+      - task: hub:cloudfront
       - task: hub:seed
       - task: hub:wait-for-sync
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
@@ -391,6 +395,84 @@ tasks:
             amp_endpoint_url: ""
         EOF
 
+  hub:ingress:
+    desc: Create ALB for hub ingress (waits for EKS to be ACTIVE)
+    vars:
+      ALB_NAME: "{{.HUB_CLUSTER_NAME}}-ingress"
+      VPC_ID:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
+      SUBNETS:
+        sh: aws ec2 describe-subnets --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=tag:Name,Values=*public*" --query 'Subnets[].SubnetId' --output text
+      SG_ID:
+        sh: aws ec2 describe-security-groups --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=group-name,Values={{.HUB_CLUSTER_NAME}}-ingress-http" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo ""
+    status:
+      - aws elbv2 describe-load-balancers --names {{.ALB_NAME}} --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - |
+        SUBNETS=$(echo "{{.SUBNETS}}" | tr '\t' ' ')
+        SG="{{.SG_ID}}"
+        if [ -z "$SG" ] || [ "$SG" = "None" ]; then
+          # Create security group if not exists
+          SG=$(aws ec2 create-security-group --group-name "{{.HUB_CLUSTER_NAME}}-ingress-http" \
+            --description "HTTP/HTTPS for hub ingress" --vpc-id "{{.VPC_ID}}" --region {{.AWS_REGION}} \
+            --query 'GroupId' --output text)
+          aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
+          aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 443 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
+        fi
+        aws elbv2 create-load-balancer --name "{{.ALB_NAME}}" --type application \
+          --scheme internet-facing --subnets $SUBNETS --security-groups "$SG" \
+          --region {{.AWS_REGION}} --output text --query 'LoadBalancers[0].DNSName'
+        printf '{{.C_OK}}✓ ALB created: {{.ALB_NAME}}{{.C_RESET}}\n'
+
+  hub:cloudfront:
+    desc: Create CloudFront distribution pointing to the ALB
+    vars:
+      ALB_DNS:
+        sh: aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo ""
+    status:
+      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-ingress'].Id" --output text | grep -q .
+    cmds:
+      - |
+        ALB_DNS="{{.ALB_DNS}}"
+        if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ]; then
+          echo "ERROR: ALB not found. Run hub:ingress first."
+          exit 1
+        fi
+        DIST_ID=$(aws cloudfront create-distribution \
+          --distribution-config "{
+            \"CallerReference\": \"{{.HUB_CLUSTER_NAME}}-$(date +%s)\",
+            \"Comment\": \"{{.HUB_CLUSTER_NAME}}-ingress\",
+            \"Enabled\": true,
+            \"Origins\": {
+              \"Quantity\": 1,
+              \"Items\": [{
+                \"Id\": \"alb-origin\",
+                \"DomainName\": \"$ALB_DNS\",
+                \"CustomOriginConfig\": {
+                  \"HTTPPort\": 80,
+                  \"HTTPSPort\": 443,
+                  \"OriginProtocolPolicy\": \"http-only\",
+                  \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
+                }
+              }]
+            },
+            \"DefaultCacheBehavior\": {
+              \"TargetOriginId\": \"alb-origin\",
+              \"ViewerProtocolPolicy\": \"redirect-to-https\",
+              \"AllowedMethods\": {\"Quantity\": 7, \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"], \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
+              \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
+              \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
+              \"Compress\": true,
+              \"ForwardedValues\": {\"QueryString\": false, \"Cookies\": {\"Forward\": \"none\"}}
+            },
+            \"PriceClass\": \"PriceClass_100\",
+            \"HttpVersion\": \"http2\"
+          }" --query 'Distribution.[Id,DomainName]' --output text)
+        CF_DOMAIN=$(echo "$DIST_ID" | awk '{print $2}')
+        printf '{{.C_OK}}✓ CloudFront created: %s{{.C_RESET}}\n' "$CF_DOMAIN"
+        # Store domain in config for hub:seed to use
+        yq -i ".cloudfront.domain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
+
   hub:seed:
     desc: Seed hub cluster after EKS is ACTIVE
     cmds:
@@ -460,7 +542,7 @@ tasks:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}/","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}/","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}/","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}/","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.HUB_CLUSTER_NAME}}-ingress","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
