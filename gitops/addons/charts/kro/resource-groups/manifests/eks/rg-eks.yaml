@@ -1611,7 +1611,7 @@ spec:
           policies:
             - arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess
             - arn:aws:iam::aws:policy/AmazonEC2FullAccess
-            - arn:aws:iam::aws:policy/AmazonCognitoReadOnly
+            - arn:aws:iam::aws:policy/AWSCertificateManagerReadOnly
             - arn:aws:iam::aws:policy/AWSWAFv2FullAccess
           assumeRolePolicyDocument: |
             {
