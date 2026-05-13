@@ -426,6 +426,8 @@ tasks:
 
   hub:cloudfront:
     desc: Create CloudFront distribution pointing to the ALB
+    # CachePolicyId 4135ea2d = AWS Managed "CachingDisabled"
+    # OriginRequestPolicyId 216adef6 = AWS Managed "AllViewer" (forwards all headers/cookies/qs)
     vars:
       ALB_DNS:
         sh: aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo ""
@@ -462,8 +464,7 @@ tasks:
               \"AllowedMethods\": {\"Quantity\": 7, \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"], \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
               \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
               \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
-              \"Compress\": true,
-              \"ForwardedValues\": {\"QueryString\": false, \"Cookies\": {\"Forward\": \"none\"}}
+              \"Compress\": true
             },
             \"PriceClass\": \"PriceClass_100\",
             \"HttpVersion\": \"http2\"
