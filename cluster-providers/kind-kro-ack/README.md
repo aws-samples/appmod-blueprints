@@ -68,3 +68,15 @@ aws:
 ```
 
 On the hub (after bootstrap), ACK runs as an EKS Capability with its own IAM role — no credentials Secret needed.
+
+### Keeping the Kind cluster alive
+
+If you keep the Kind cluster running (e.g. to manage hub infrastructure updates), AWS session tokens will expire (typically 12h). When this happens, ACK controllers stop reconciling and resources show `SYNCED: Unknown`.
+
+Fix:
+```bash
+task credentials:refresh
+kubectl rollout restart deploy -n ack-system
+```
+
+For long-lived Kind clusters, consider using an IAM user with static credentials or running on an EC2 instance with an instance profile (credentials auto-rotate via IMDS).
