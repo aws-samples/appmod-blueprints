@@ -253,10 +253,13 @@ tasks:
             printf '{{.C_OK}}  Created group "%s": %s{{.C_RESET}}\n' "$GROUP_NAME" "$NEW_ID"
           fi
         done
-        # Output admin group ID
-        ADMIN_ID=$(aws identitystore list-groups --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
-          --filters '[{"AttributePath":"DisplayName","AttributeValue":"admin"}]' \
-          --query 'Groups[0].GroupId' --output text)
+        # Output admin group ID (prefer config value, fallback to lookup)
+        ADMIN_ID=$(yq '.identityCenter.adminGroupId // ""' {{.CONFIG_FILE}})
+        if [ -z "$ADMIN_ID" ]; then
+          ADMIN_ID=$(aws identitystore list-groups --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
+            --filters '[{"AttributePath":"DisplayName","AttributeValue":"admin"}]' \
+            --query 'Groups[0].GroupId' --output text)
+        fi
         printf '{{.C_OK}}✓ IDC admin group: %s{{.C_RESET}}\n' "$ADMIN_ID"
         # Create admin user if not exists
         ADMIN_USER=$(aws identitystore list-users --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
