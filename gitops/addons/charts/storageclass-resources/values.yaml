@@ -1,7 +1,6 @@
-# Set `spokeName` at install time (e.g. via ApplicationSet parameter) so that
-# every EBS StorageClass below bakes `peeks.io/spoke=<spokeName>` as a tag on
-# every volume it provisions. This is what AWS Backup `BackupSelection` matches
-# on (see kro-rgds/manifests/backup-policy).
+# Optional `spokeName` is rendered as a `peeks.io/spoke=<spokeName>` AWS tag
+# on every volume provisioned by the EBS StorageClasses below. Useful for
+# cost attribution and inventory.
 #
 # spokeName: spoke-prod-euw1
 
@@ -24,38 +23,15 @@ storageClasses:
       iops: 3000
       throughput: 125
 
-    # Peeks DR-aware StorageClasses — one per backup tier.
-    # Workloads declare their recovery requirement by choosing the right SC
-    # in their PVC manifest. Every volume provisioned by these SCs inherits
-    # the `peeks.io/backup-tier=<tier>` AWS tag, which AWS Backup's
-    # `BackupSelection` matches on — no central ConfigMap, no platform ticket.
-    #
-    # Native EBS CSI label-propagation from namespace → volume tag is NOT
-    # supported (the driver's `tagSpecification_<N>` only expands
-    # ${pvc.name}/${pvc.namespace}/${pv.name}, not arbitrary labels). A per-SC
-    # strategy is therefore the explicit contract; a mutating webhook could
-    # achieve automatic propagation but is out of scope for v1.
-    peeks-gold-gp3:
+    # PeEKS default StorageClass — single SC, performance-tuned only.
+    # Backup protection is decided at the cluster/namespace level by the
+    # AWS Backup for EKS resource selection (cluster ARN + namespace filter),
+    # not at the StorageClass level. Tier semantics (gold/silver/bronze) live
+    # on the BackupPolicy, not on the SC.
+    peeks-gp3:
       reclaimPolicy: Retain
       volumeType: gp3
       iops: 3000
       throughput: 125
       tags:
-        peeks.io/backup-tier: gold
-        peeks.io/managed-by: peeks-platform
-    peeks-silver-gp3:
-      reclaimPolicy: Retain
-      volumeType: gp3
-      iops: 3000
-      throughput: 125
-      tags:
-        peeks.io/backup-tier: silver
-        peeks.io/managed-by: peeks-platform
-    peeks-bronze-gp3:
-      reclaimPolicy: Delete
-      volumeType: gp3
-      iops: 3000
-      throughput: 125
-      tags:
-        peeks.io/backup-tier: bronze
         peeks.io/managed-by: peeks-platform
