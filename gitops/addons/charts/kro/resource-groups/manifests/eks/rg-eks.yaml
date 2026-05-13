@@ -1370,6 +1370,34 @@ spec:
                     - id: ${schema.spec.argocdCapability.adminGroupId}
                       type: SSO_GROUP
 
+    - id: argocdCapabilityAccessEntry
+      includeWhen:
+        - ${schema.spec.argocdCapability.enabled == "true"}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-argocd-capability-access"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
+          accessPolicies:
+            - accessScope:
+                type: "cluster"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          principalARN: "${argocdCapabilityRole.status.ackResourceMetadata.arn}"
+          type: STANDARD
+
     ###########################################################
     # XXX Pod Identity
     ###########################################################
