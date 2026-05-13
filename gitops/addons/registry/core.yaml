@@ -5,6 +5,7 @@ pod_identities:
   namespace: crossplane-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
   destinationHub: true
+  enabled: false  # Disabled: pod identities are created by the EksCluster RGD via ACK
   goTemplateOptions:
     - "missingkey=zero"
   annotationsAppSet:
