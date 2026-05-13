@@ -459,9 +459,9 @@ tasks:
           --secret-id "{{.HUB_CLUSTER_NAME}}/keycloak" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}}
 
   hub:install-argocd:
-    desc: Install ArgoCD on the hub cluster (OSS mode, not EKS Capability)
+    desc: Install ArgoCD on the hub cluster (OSS mode, skipped when EKS Capability is used)
     status:
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm status argocd -n argocd 2>/dev/null | grep -q deployed
+      - test "$(yq '.identityCenter.adminGroupId // ""' {{.CONFIG_FILE}})" != ""
     cmds:
       - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm repo add argo https://argoproj.github.io/argo-helm --force-update
@@ -469,7 +469,7 @@ tasks:
           --namespace argocd --create-namespace
           --version {{.ARGOCD_VERSION}}
           --wait --timeout 5m
-      - printf '{{.C_OK}}✓ ArgoCD installed on hub.{{.C_RESET}}\n'
+      - printf '{{.C_OK}}✓ ArgoCD installed on hub (OSS mode).{{.C_RESET}}\n'
 
   hub:install-eso:
     desc: Install External Secrets Operator on hub
@@ -506,11 +506,14 @@ tasks:
 
   hub:seed-secret:
     desc: Create seed cluster secret on hub
+    vars:
+      CLUSTER_ARN:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text
     cmds:
       - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}/|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}/|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
@@ -531,8 +534,8 @@ tasks:
             fleet_member: control-plane
         stringData:
           name: CLUSTER_NAME
-          server: "https://kubernetes.default.svc"
-          config: '{"tlsClientConfig":{"insecure":true}}'
+          server: "CLUSTER_ARN"
+          config: '{"tlsClientConfig":{"insecure":false}}'
         EOF
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
