@@ -547,7 +547,8 @@ tasks:
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
-          '{metadata: $metadata, config: $config, server: $server, addons: $addons}')
+          --arg vpc '{{.VPC_ID}}' \
+          '{metadata: $metadata, config: $config, server: $server, addons: $addons, vpc: $vpc}')
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}} 2>/dev/null \
         || aws secretsmanager put-secret-value \
