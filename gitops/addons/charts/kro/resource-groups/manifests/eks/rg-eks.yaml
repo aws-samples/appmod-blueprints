@@ -1360,9 +1360,9 @@ spec:
           roleARN: ${argocdCapabilityRole.status.ackResourceMetadata.arn}
           deletePropagationPolicy: RETAIN
           configuration:
-            argoCd:
-              awsIdc:
-                idcInstanceArn: ${schema.spec.argocdCapability.idcInstanceArn}
+            argoCD:
+              awsIDC:
+                idcInstanceARN: ${schema.spec.argocdCapability.idcInstanceArn}
                 idcRegion: ${schema.spec.argocdCapability.idcRegion}
               rbacRoleMappings:
                 - role: ADMIN
