@@ -535,11 +535,13 @@ tasks:
     vars:
       CLUSTER_ARN:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text
+      ARGOCD_ROLE_ARN:
+        sh: aws iam get-role --role-name {{.HUB_CLUSTER_NAME}}-argocd-role --query 'Role.Arn' --output text 2>/dev/null || echo ""
     cmds:
       - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}/|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}/|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
@@ -561,7 +563,7 @@ tasks:
         stringData:
           name: CLUSTER_NAME
           server: "CLUSTER_ARN"
-          config: '{"tlsClientConfig":{"insecure":false}}'
+          config: '{"awsAuthConfig":{"clusterName":"CLUSTER_NAME","roleARN":"ARGOCD_ROLE_ARN"},"tlsClientConfig":{"insecure":false}}'
         EOF
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
