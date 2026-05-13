@@ -6,6 +6,7 @@ enabledAddons:
   external_secrets: true
   external_dns: true
   cert_manager: true
+  platform_manifests_bootstrap: true
   # Security
   kyverno: true
   kyverno_policies: true

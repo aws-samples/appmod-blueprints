@@ -458,6 +458,29 @@ ack-efs:
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
+platform-manifests-bootstrap:
+  namespace: default
+  defaultVersion: '1.0.0'
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/platform-manifests-bootstrap'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_platform_manifests_bootstrap
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      aws_region: '{{.metadata.annotations.aws_region}}'
+      aws_account_id: '{{.metadata.annotations.aws_account_id}}'
+      aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
+    customNodepools:
+      enabled: true
+    gpu:
+      enabled: true
+
 platform-manifests:
   namespace: default
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/platform-manifests'

@@ -5,6 +5,7 @@ enabledAddons:
   aws_load_balancer_controller: true
   external_secrets: true
   external_dns: true
+  platform_manifests_bootstrap: true
   # Security
   kyverno: true
   kyverno_policies: true
