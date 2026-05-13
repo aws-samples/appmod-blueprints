@@ -29,11 +29,11 @@ enabledAddons:
   grafana: false
   grafana_operator: true
   grafana_dashboards: true
-  kube_state_metrics: false
-  prometheus_node_exporter: false
+  kube_state_metrics: true
+  prometheus_node_exporter: true
   opentelemetry_operator: false
   cw_prometheus: false
-  aws_for_fluentbit: false
+  aws_for_fluentbit: true
   cni_metrics_helper: false
   # Platform
   crossplane: true
