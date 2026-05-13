@@ -27,6 +27,11 @@ spec:
       git_username: string | default="user1"
       aws_partition: string | default="aws"
       aws_dns_suffix: string | default="amazonaws.com"
+      argocdCapability:
+        enabled: string | default="false"
+        idcInstanceArn: string | default=""
+        idcRegion: string | default=""
+        adminGroupId: string | default=""
       network:
         vpcID: string
         subnets:
@@ -1281,6 +1286,89 @@ spec:
           type: KRO
           roleARN: ${kroCapabilityRole.status.ackResourceMetadata.arn}
           deletePropagationPolicy: RETAIN
+
+    ###########################################################
+    # ArgoCD Capability (optional, for hub clusters)
+    ###########################################################
+    - id: argocdCapabilityRole
+      includeWhen:
+        - ${schema.spec.argocdCapability.enabled == "true"}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-argocd-capability-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-argocd-capability-role"
+          policies:
+            - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "capabilities.eks.amazonaws.com"
+                  },
+                  "Action": [
+                    "sts:AssumeRole",
+                    "sts:TagSession"
+                  ]
+                }
+              ]
+            }
+
+    - id: argocdCapability
+      includeWhen:
+        - ${schema.spec.argocdCapability.enabled == "true"}
+      readyWhen:
+        - ${argocdCapability.metadata.name != ""}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: Capability
+        metadata:
+          name: ${schema.spec.name}-argocd
+          namespace: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/instance: ${schema.spec.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/sync-options: Prune=false
+        spec:
+          clusterName: ${schema.spec.name}
+          name: argocd
+          type: ARGOCD
+          roleARN: ${argocdCapabilityRole.status.ackResourceMetadata.arn}
+          deletePropagationPolicy: RETAIN
+          configuration:
+            argoCd:
+              awsIdc:
+                idcInstanceArn: ${schema.spec.argocdCapability.idcInstanceArn}
+                idcRegion: ${schema.spec.argocdCapability.idcRegion}
+              rbacRoleMappings:
+                - role: ADMIN
+                  identities:
+                    - id: ${schema.spec.argocdCapability.adminGroupId}
+                      type: SSO_GROUP
 
     ###########################################################
     # XXX Pod Identity

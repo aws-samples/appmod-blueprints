@@ -223,6 +223,9 @@ tasks:
           -e "s|HUB_VPC_CIDR|{{.HUB_VPC_CIDR}}|g" \
           -e "s|RESOURCE_PREFIX|{{.RESOURCE_PREFIX}}|g" \
           -e "s|CALLER_ROLE_ARN|{{.CALLER_ROLE_ARN}}|g" \
+          -e "s|IDC_INSTANCE_ARN|{{.IDC_INSTANCE_ARN}}|g" \
+          -e "s|IDC_REGION|{{.IDC_REGION}}|g" \
+          -e "s|IDC_ADMIN_GROUP_ID|{{.IDC_ADMIN_GROUP_ID}}|g" \
           -e "s|REPO_URL|{{.REPO_URL}}|g" \
           -e "s|REPO_REVISION|{{.REPO_REVISION}}|g" \
           -e "s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" \
@@ -246,6 +249,11 @@ tasks:
           fleetSecretManagerSecretNameSuffix: argocd-secret
           domainName: DOMAIN
           resourcePrefix: RESOURCE_PREFIX
+          argocdCapability:
+            enabled: "true"
+            idcInstanceArn: IDC_INSTANCE_ARN
+            idcRegion: IDC_REGION
+            adminGroupId: IDC_ADMIN_GROUP_ID
           cidr:
             vpcCidr: HUB_VPC_CIDR
             publicSubnet1Cidr: "10.0.1.0/24"
