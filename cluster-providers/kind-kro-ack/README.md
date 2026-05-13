@@ -11,7 +11,38 @@ Zero-Terraform bootstrap for the hub cluster using KRO ResourceGraphDefinitions 
 | helm 3.x | Chart installation |
 | yq | YAML processing |
 | aws CLI | Configured with credentials |
-| `config.local.yaml` | Must have `hub.clusterName`, `aws.region`, `aws.accountId`, `repo.url` set |
+| `config.local.yaml` | See below |
+
+### config.local.yaml
+
+```yaml
+hub:
+  clusterName: hub
+  kubernetesVersion: "1.32"
+  vpcCidr: "10.0.0.0/16"
+  adminRoleName: Admin  # IAM role for cluster admin access entry
+aws:
+  accountId: "123456789012"
+  region: us-west-2
+  profile: default
+repo:
+  url: https://github.com/aws-samples/appmod-blueprints
+  revision: main
+  basepath: gitops
+domain: example.com
+resourcePrefix: peeks
+ingressName: hub-ingress
+ingressSecurityGroups: ""
+argocdCapability:
+  enabled: "true"  # Set to "false" to use Helm-installed ArgoCD instead
+identityCenter:
+  instanceArn: arn:aws:sso:::instance/ssoins-XXXXXXXX  # Must exist
+  region: us-east-1  # Region where IDC is deployed
+  identityStoreId: d-XXXXXXXXXX  # Optional, auto-detected if omitted
+  adminGroupId: ""  # Optional, created by idc:setup if empty
+```
+
+**IDC prerequisite**: An Identity Center instance must exist in your account/organization. The `idc:setup` task creates groups and users automatically.
 
 ## Task Commands
 

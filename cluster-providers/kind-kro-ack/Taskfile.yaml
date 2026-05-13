@@ -36,6 +36,8 @@ vars:
     sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  ADMIN_ROLE_NAME:
+    sh: yq '.hub.adminRoleName // "Admin"' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
     sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
@@ -304,6 +306,7 @@ tasks:
           -e "s|IDC_INSTANCE_ARN|{{.IDC_INSTANCE_ARN}}|g" \
           -e "s|IDC_REGION|{{.IDC_REGION}}|g" \
           -e "s|IDC_ADMIN_GROUP_ID|{{.IDC_ADMIN_GROUP_ID}}|g" \
+          -e "s|ADMIN_ROLE_NAME|{{.ADMIN_ROLE_NAME}}|g" \
           -e "s|REPO_URL|{{.REPO_URL}}|g" \
           -e "s|REPO_REVISION|{{.REPO_REVISION}}|g" \
           -e "s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" \
@@ -323,7 +326,7 @@ tasks:
           accountId: "AWS_ACCOUNT_ID"
           managementAccountId: "AWS_ACCOUNT_ID"
           argoCdHubRoleArn: "CALLER_ROLE_ARN"
-          adminRoleName: Admin
+          adminRoleName: ADMIN_ROLE_NAME
           fleetSecretManagerSecretNameSuffix: argocd-secret
           domainName: DOMAIN
           resourcePrefix: RESOURCE_PREFIX
@@ -487,7 +490,7 @@ tasks:
   hub:install-argocd:
     desc: Install ArgoCD on the hub cluster (OSS mode, skipped when EKS Capability is used)
     status:
-      - test "$(yq '.identityCenter.adminGroupId // ""' {{.CONFIG_FILE}})" != ""
+      - test "$(yq '.argocdCapability.enabled // "false"' {{.CONFIG_FILE}} 2>/dev/null || echo false)" = "true"
     cmds:
       - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm repo add argo https://argoproj.github.io/argo-helm --force-update
