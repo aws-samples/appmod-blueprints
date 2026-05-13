@@ -45,6 +45,14 @@ vars:
   IDC_ADMIN_GROUP_ID:
     sh: yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}}
   KIND_CLUSTER_NAME: "{{.HUB_CLUSTER_NAME}}-bootstrap"
+  CALLER_ROLE_ARN:
+    sh: |
+      ARN=$(aws sts get-caller-identity --query "Arn" --output text 2>/dev/null)
+      if echo "$ARN" | grep -q ":assumed-role/"; then
+        echo "$ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||'
+      else
+        echo "$ARN"
+      fi
   ACK_NAMESPACE: "ack-system"
   KRO_NAMESPACE: "kro-system"
   ACK_IAM_VERSION: "1.6.4"
@@ -207,6 +215,7 @@ tasks:
           -e "s|HUB_K8S_VERSION|{{.HUB_K8S_VERSION}}|g" \
           -e "s|HUB_VPC_CIDR|{{.HUB_VPC_CIDR}}|g" \
           -e "s|RESOURCE_PREFIX|{{.RESOURCE_PREFIX}}|g" \
+          -e "s|CALLER_ROLE_ARN|{{.CALLER_ROLE_ARN}}|g" \
           -e "s|REPO_URL|{{.REPO_URL}}|g" \
           -e "s|REPO_REVISION|{{.REPO_REVISION}}|g" \
           -e "s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" \
@@ -225,7 +234,7 @@ tasks:
           k8sVersion: "HUB_K8S_VERSION"
           accountId: "AWS_ACCOUNT_ID"
           managementAccountId: "AWS_ACCOUNT_ID"
-          argoCdHubRoleArn: "arn:aws:iam::AWS_ACCOUNT_ID:role/HUB_CLUSTER_NAME-argocd-role"
+          argoCdHubRoleArn: "CALLER_ROLE_ARN"
           adminRoleName: Admin
           fleetSecretManagerSecretNameSuffix: argocd-secret
           domainName: DOMAIN
