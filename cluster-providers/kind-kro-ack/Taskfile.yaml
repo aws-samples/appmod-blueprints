@@ -385,7 +385,6 @@ tasks:
           fi
           aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --type STANDARD --region {{.AWS_REGION}} 2>/dev/null || true
           aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} 2>/dev/null || true
-      - task: argocd:capability
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
       - task: hub:install-eso
