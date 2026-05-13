@@ -258,6 +258,29 @@ tasks:
           --filters '[{"AttributePath":"DisplayName","AttributeValue":"admin"}]' \
           --query 'Groups[0].GroupId' --output text)
         printf '{{.C_OK}}✓ IDC admin group: %s{{.C_RESET}}\n' "$ADMIN_ID"
+        # Create admin user if not exists
+        ADMIN_USER=$(aws identitystore list-users --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
+          --filters '[{"AttributePath":"UserName","AttributeValue":"eks-argocd-admin-user"}]' \
+          --query 'Users[0].UserId' --output text 2>/dev/null | grep -v None || echo "")
+        if [ -z "$ADMIN_USER" ]; then
+          ADMIN_USER=$(aws identitystore create-user --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
+            --user-name "eks-argocd-admin-user" --display-name "EKS ArgoCD Admin" \
+            --name '{"GivenName":"EKS Admin","FamilyName":"User"}' \
+            --emails '[{"Value":"eks-argocd-admin@example.com","Primary":true}]' \
+            --query 'UserId' --output text)
+          printf '{{.C_OK}}  Created admin user: %s{{.C_RESET}}\n' "$ADMIN_USER"
+        else
+          printf '{{.C_INFO}}  Admin user exists: %s{{.C_RESET}}\n' "$ADMIN_USER"
+        fi
+        # Add user to admin group if not already member
+        IS_MEMBER=$(aws identitystore is-member-in-groups --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
+          --member-id '{"UserId":"'"$ADMIN_USER"'"}' --group-ids "$ADMIN_ID" \
+          --query 'Results[0].MembershipExists' --output text 2>/dev/null || echo "false")
+        if [ "$IS_MEMBER" != "True" ]; then
+          aws identitystore create-group-membership --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
+            --group-id "$ADMIN_ID" --member-id '{"UserId":"'"$ADMIN_USER"'"}' >/dev/null 2>&1 || true
+          printf '{{.C_OK}}  Added user to admin group{{.C_RESET}}\n'
+        fi
         # Update config.local.yaml with discovered values
         yq -i ".identityCenter.adminGroupId = \"$ADMIN_ID\"" {{.CONFIG_FILE}}
         yq -i ".identityCenter.identityStoreId = \"$STORE_ID\"" {{.CONFIG_FILE}}
@@ -368,13 +391,14 @@ tasks:
       - task: credentials:refresh
       - printf '{{.C_STEP}}▸ Waiting for hub EksCluster to be ready...{{.C_RESET}}\n'
       - |
+        STATUS="Pending"
         for i in $(seq 1 120); do
           STATUS=$(kubectl get ekscluster {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.clusterState}' 2>/dev/null || echo "Pending")
           printf '{{.C_INFO}}  [%s/120] Cluster status: %s{{.C_RESET}}\n' "$i" "$STATUS"
-          [ "$STATUS" = "ACTIVE" ] && break
+          if [ "$STATUS" = "ACTIVE" ]; then break; fi
           sleep 15
         done
-        [ "$STATUS" != "ACTIVE" ] && echo "ERROR: cluster not ACTIVE" && exit 1
+        if [ "$STATUS" != "ACTIVE" ]; then echo "ERROR: cluster not ACTIVE"; exit 1; fi
       - printf '{{.C_STEP}}▸ Creating cluster admin access entry...{{.C_RESET}}\n'
       - cmd: |
           CALLER_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
