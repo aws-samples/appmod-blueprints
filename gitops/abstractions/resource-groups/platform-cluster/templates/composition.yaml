@@ -288,6 +288,78 @@ spec:
               - type: PatchSet
                 patchSetName: tags
 
+          # Usage: block EIP deletion until NAT Gateway is gone
+          - name: natgw-uses-eip
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: EIP
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: NATGateway
+                  resourceSelector:
+                    matchControllerRef: true
+
+          # Usage: block InternetGateway deletion until Routes are gone
+          - name: route-uses-igw
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: InternetGateway
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: Route
+                  resourceSelector:
+                    matchControllerRef: true
+
+          # Usage: block NATGateway deletion until Routes are gone
+          - name: route-uses-natgw
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: NATGateway
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: Route
+                  resourceSelector:
+                    matchControllerRef: true
+
+          # Usage: block RouteTables deletion until RouteTableAssociations are gone
+          - name: rta-uses-rt
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: RouteTable
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: RouteTableAssociation
+                  resourceSelector:
+                    matchControllerRef: true
+
           # Public Route Table + Route
           - name: public-rt
             base:
@@ -770,6 +842,42 @@ spec:
                 toFieldPath: status.oidcIssuer
 
           # ===== EKS MANAGED ADD-ONS (required for managed node group nodes) =====
+
+          # Usage: block Subnet deletion until EKS Cluster is gone (ENIs hold subnets)
+          - name: cluster-uses-subnets
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: Subnet
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: eks.aws.upbound.io/v1beta2
+                  kind: Cluster
+                  resourceSelector:
+                    matchControllerRef: true
+
+          # Usage: block VPC deletion until EKS Cluster is gone
+          - name: cluster-uses-vpc
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: VPC
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: eks.aws.upbound.io/v1beta2
+                  kind: Cluster
+                  resourceSelector:
+                    matchControllerRef: true
 
           - name: addon-vpc-cni
             base:
