@@ -7,7 +7,7 @@ env:
   AWS_PAGER: ""
 
 vars:
-  GITOPS_ROOT: "{{.ROOT_DIR}}/../../gitops"
+  GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
@@ -70,7 +70,7 @@ vars:
   ACK_EC2_VERSION: "1.12.0"
   KRO_VERSION: "0.9.2"
   ARGOCD_VERSION:
-    sh: yq '.argocd.defaultVersion' {{.ROOT_DIR}}/../../gitops/addons/registry/core.yaml
+    sh: yq '.argocd.defaultVersion' {{.ROOT_DIR}}/gitops/addons/registry/core.yaml
   C_INFO:
     sh: printf '\033[1;36m'
   C_OK:
