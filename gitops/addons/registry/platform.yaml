@@ -59,7 +59,7 @@ crossplane-base:
         version: "v2.5.3"
         createIdentity: false
       kubernetes:
-        version: "v0.18.1"
+        version: "v1.2.1"
   ignoreDifferences:
     - group: pkg.crossplane.io
       kind: Provider
