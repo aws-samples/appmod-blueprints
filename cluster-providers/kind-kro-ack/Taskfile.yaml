@@ -104,6 +104,7 @@ tasks:
       - task: kro:apply-rgds
       - task: idc:setup
       - task: hub:claim
+      - task: hub:wait-for-eks
       - task: hub:ingress
       - task: hub:cloudfront
       - task: hub:seed
@@ -407,6 +408,48 @@ tasks:
             external_secrets_service_account: external-secrets-sa
             amp_endpoint_url: ""
         EOF
+
+  hub:wait-for-eks:
+    desc: Wait for the EksclusterWithVpc instance to reach ACTIVE state and the EKS cluster to exist in AWS
+    vars:
+      WAIT_TIMEOUT_SEC: '{{.WAIT_TIMEOUT_SEC | default "1800"}}'
+      WAIT_INTERVAL_SEC: '{{.WAIT_INTERVAL_SEC | default "30"}}'
+    cmds:
+      - |
+        printf '{{.C_STEP}}▸ Waiting for EksclusterWithVpc/{{.HUB_CLUSTER_NAME}} to reach ACTIVE (max {{.WAIT_TIMEOUT_SEC}}s)...{{.C_RESET}}\n'
+        END=$(( $(date +%s) + {{.WAIT_TIMEOUT_SEC}} ))
+        LAST_STATE=""
+        while [ "$(date +%s)" -lt "$END" ]; do
+          STATE=$(kubectl get eksclusterwithvpc {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+          if [ "$STATE" != "$LAST_STATE" ]; then
+            printf '{{.C_INFO}}  state: %s{{.C_RESET}}\n' "${STATE:-<empty>}"
+            LAST_STATE="$STATE"
+          fi
+          if [ "$STATE" = "ACTIVE" ]; then
+            break
+          fi
+          sleep {{.WAIT_INTERVAL_SEC}}
+        done
+        if [ "$STATE" != "ACTIVE" ]; then
+          printf '{{.C_ERR}}✗ EksclusterWithVpc not ACTIVE after {{.WAIT_TIMEOUT_SEC}}s (last state: %s){{.C_RESET}}\n' "$STATE"
+          kubectl get eksclusterwithvpc {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.conditions}' 2>/dev/null || true
+          exit 1
+        fi
+        printf '{{.C_OK}}✓ EksclusterWithVpc ACTIVE{{.C_RESET}}\n'
+      - |
+        printf '{{.C_STEP}}▸ Verifying EKS cluster {{.HUB_CLUSTER_NAME}} exists in AWS...{{.C_RESET}}\n'
+        END=$(( $(date +%s) + 300 ))
+        while [ "$(date +%s)" -lt "$END" ]; do
+          EKS_STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "")
+          if [ "$EKS_STATUS" = "ACTIVE" ]; then
+            printf '{{.C_OK}}✓ EKS cluster ACTIVE{{.C_RESET}}\n'
+            exit 0
+          fi
+          printf '{{.C_INFO}}  EKS status: %s{{.C_RESET}}\n' "${EKS_STATUS:-<not-found>}"
+          sleep 15
+        done
+        printf '{{.C_ERR}}✗ EKS cluster not ACTIVE in AWS after RGD reported ACTIVE{{.C_RESET}}\n'
+        exit 1
 
   hub:ingress:
     desc: Create ALB for hub ingress (waits for EKS to be ACTIVE)
