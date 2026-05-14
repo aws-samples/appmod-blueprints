@@ -134,19 +134,34 @@ tasks:
       - kubectl create namespace {{.ACK_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
       - |
         set -e
-        TOKEN=$(curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)
-        if [ -n "$TOKEN" ]; then
-          ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
-          CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
-          AKI=$(echo "$CREDS" | jq -r .AccessKeyId)
-          SAK=$(echo "$CREDS" | jq -r .SecretAccessKey)
-          ST=$(echo  "$CREDS" | jq -r .Token)
-        else
-          AWS_PROFILE_NAME=$(yq '.aws.profile // "default"' {{.CONFIG_FILE}})
+        # Prefer explicit aws.profile from config — IMDS only used as fallback when no profile
+        # is set (or set to "default"). Without this, EC2-hosted runners (Cloud9, Workshop Studio,
+        # any EC2-based bootstrap host) silently override the user's intended account by reading
+        # the instance role from IMDS, causing ACK controllers to provision in the wrong account.
+        AWS_PROFILE_NAME=$(yq '.aws.profile // ""' {{.CONFIG_FILE}})
+        AKI=""; SAK=""; ST=""
+        if [ -n "$AWS_PROFILE_NAME" ] && [ "$AWS_PROFILE_NAME" != "default" ]; then
+          printf '  Using AWS profile from config: %s\n' "$AWS_PROFILE_NAME"
           EXPORTED=$(aws configure export-credentials --profile "$AWS_PROFILE_NAME" --format env-no-export)
           AKI=$(echo "$EXPORTED" | sed -n 's/^AWS_ACCESS_KEY_ID=//p')
           SAK=$(echo "$EXPORTED" | sed -n 's/^AWS_SECRET_ACCESS_KEY=//p')
           ST=$(echo  "$EXPORTED" | sed -n 's/^AWS_SESSION_TOKEN=//p')
+        else
+          TOKEN=$(curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)
+          if [ -n "$TOKEN" ]; then
+            printf '  Using EC2 instance role credentials (IMDS)\n'
+            ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+            CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+            AKI=$(echo "$CREDS" | jq -r .AccessKeyId)
+            SAK=$(echo "$CREDS" | jq -r .SecretAccessKey)
+            ST=$(echo  "$CREDS" | jq -r .Token)
+          else
+            printf '  Using AWS default profile\n'
+            EXPORTED=$(aws configure export-credentials --profile default --format env-no-export)
+            AKI=$(echo "$EXPORTED" | sed -n 's/^AWS_ACCESS_KEY_ID=//p')
+            SAK=$(echo "$EXPORTED" | sed -n 's/^AWS_SECRET_ACCESS_KEY=//p')
+            ST=$(echo  "$EXPORTED" | sed -n 's/^AWS_SESSION_TOKEN=//p')
+          fi
         fi
         [ -z "$AKI" ] || [ -z "$SAK" ] && echo "ERROR: empty credentials" && exit 1
         rm -f {{.ROOT_DIR}}/private/aws-creds.ini
