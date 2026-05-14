@@ -57,5 +57,9 @@ providers:
     serviceAccount: provider-aws-secretsmanager
     roleName: CrossplaneSecretsManagerProviderRole
     createIdentity: true
+  kubernetes:
+    version: ""
+    serviceAccount: provider-kubernetes
+    createIdentity: false
 
 namespace: crossplane-system

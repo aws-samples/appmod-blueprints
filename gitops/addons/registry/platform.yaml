@@ -58,6 +58,8 @@ crossplane-base:
       eks:
         version: "v2.5.3"
         createIdentity: false
+      kubernetes:
+        version: "v0.18.1"
   ignoreDifferences:
     - group: pkg.crossplane.io
       kind: Provider
@@ -67,6 +69,12 @@ crossplane-base:
         - /metadata/managedFields
     - group: pkg.crossplane.io
       kind: Function
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: kubernetes.crossplane.io
+      kind: ProviderConfig
       jsonPointers:
         - /status
         - /metadata/generation
