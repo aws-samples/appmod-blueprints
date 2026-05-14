@@ -1,0 +1,44 @@
+# Defaults for nodepool toggles (consumed by gpu-nodepool.yaml, custom-nodepools.yaml).
+# These are normally overridden by the ApplicationSet at deploy time.
+gpu:
+  enabled: false
+customNodepools:
+  enabled: false
+
+# Optional `spokeName` is rendered as a `peeks.io/spoke=<spokeName>` AWS tag
+# on every volume provisioned by the EBS StorageClasses below. Useful for
+# cost attribution and inventory.
+#
+# spokeName: spoke-prod-euw1
+
+storageClasses:
+  # efs:
+    # fileSystemId: fs-12345678
+    # efs-sc:
+    #   reclaimPolicy: Delete
+    #   directoryPerms: "700"
+    #   basePath: /data
+    #   mountOptions:
+    #     - nfsvers=4.1
+
+  ebs:
+    # Legacy default — unchanged, kept for backwards compatibility.
+    ebs-sc-gp3:
+      reclaimPolicy: Retain
+      volumeType: gp3
+      size: 20Gi
+      iops: 3000
+      throughput: 125
+
+    # PeEKS default StorageClass — single SC, performance-tuned only.
+    # Backup protection is decided at the cluster/namespace level by the
+    # AWS Backup for EKS resource selection (cluster ARN + namespace filter),
+    # not at the StorageClass level. Tier semantics (gold/silver/bronze) live
+    # on the BackupPolicy, not on the SC.
+    peeks-gp3:
+      reclaimPolicy: Retain
+      volumeType: gp3
+      iops: 3000
+      throughput: 125
+      tags:
+        peeks.io/managed-by: peeks-platform
