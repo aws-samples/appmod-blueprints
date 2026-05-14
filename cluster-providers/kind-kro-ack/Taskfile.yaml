@@ -246,6 +246,18 @@ tasks:
           exit 1
         fi
         printf '{{.C_STEP}}▸ IDC Identity Store: %s{{.C_RESET}}\n' "$STORE_ID"
+        # BYO IdC: if adminGroupId AND adminUserId are pre-populated in config,
+        # skip group/user/membership creation entirely (useful when IdC lives in
+        # a different AWS account and the bootstrap role lacks identitystore:Create* perms).
+        BYO_GROUP=$(yq '.identityCenter.adminGroupId // ""' {{.CONFIG_FILE}})
+        BYO_USER=$(yq '.identityCenter.adminUserId // ""' {{.CONFIG_FILE}})
+        if [ -n "$BYO_GROUP" ] && [ -n "$BYO_USER" ]; then
+          printf '{{.C_INFO}}  BYO IdC detected (adminGroupId + adminUserId set) — skipping group/user/membership creation{{.C_RESET}}\n'
+          printf '{{.C_OK}}✓ IDC admin group: %s{{.C_RESET}}\n' "$BYO_GROUP"
+          printf '{{.C_OK}}✓ IDC admin user:  %s{{.C_RESET}}\n' "$BYO_USER"
+          yq -i ".identityCenter.identityStoreId = \"$STORE_ID\"" {{.CONFIG_FILE}}
+          exit 0
+        fi
         # Create groups idempotently
         for GROUP_NAME in admin editor viewer; do
           EXISTING=$(aws identitystore list-groups --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} \
