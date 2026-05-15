@@ -130,8 +130,17 @@ spec:
       - repoURL: {{ $repoURLGit | squote}}
         targetRevision: {{ $repoURLGitRevision | squote }}
         ref: values
+        {{- if and (eq (toString $chartConfig.enableAckPodIdentity) "true") (eq (toString $chartConfig.enableACKKRO) "true") }}
+        {{- fail (printf "Addon %s: enableAckPodIdentity (Crossplane path) and enableACKKRO (kro+ACK path) are mutually exclusive. Pick one." $nameNormalize) }}
+        {{- end }}
         {{- if eq (toString $chartConfig.enableAckPodIdentity) "true" }}
         {{ include "application-sets.pod-identity" (dict
+          "chartName" ($chartConfig.chartName | default $nameNormalize)
+          "valueFiles" $valueFiles
+          "chartConfig" $chartConfig "values" $values ) | nindent 6 }}
+        {{- end }}
+        {{- if eq (toString $chartConfig.enableACKKRO) "true" }}
+        {{ include "application-sets.pod-identity-kro" (dict
           "chartName" ($chartConfig.chartName | default $nameNormalize)
           "valueFiles" $valueFiles
           "chartConfig" $chartConfig "values" $values ) | nindent 6 }}
