@@ -61,6 +61,20 @@ roleRef:
   kind: ClusterRole
   name: eks-capabilities-kro
 subjects:
+# Native EKS capability identity (used for most internal calls).
 - apiGroup: rbac.authorization.k8s.io
   kind: User
   name: capabilities.eks.amazonaws.com
+{{- /*
+  When the KRO capability assumes its IAM role to act on K8s resources
+  (e.g. reading iam.services.k8s.aws/Policy while reconciling a RGD that
+  declares Policy/Role children, like the `podidentity` RGD), the API server
+  receives the STS username, not the synthetic `capabilities.eks.amazonaws.com`.
+  We must bind that username explicitly. Wildcards are not supported in RBAC
+  subjects, so we render the literal ARN.
+*/ -}}
+{{- if and .Values.global (and .Values.global.accountId .Values.global.resourcePrefix .Values.global.clusterName) }}
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: "arn:aws:sts::{{ .Values.global.accountId }}:assumed-role/{{ .Values.global.resourcePrefix }}-{{ .Values.global.clusterName }}-kro-capability-role/KRO"
+{{- end }}
