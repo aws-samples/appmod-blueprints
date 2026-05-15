@@ -1,22 +1,24 @@
 # Enabled addons map for the control-plane (hub) environment.
 # All addon keys use underscores matching the enable_<addon> label convention.
 # All values are boolean. Every known addon is listed explicitly.
+# Source: platform/infra/terraform/hub-config.yaml (main branch)
 enabledAddons:
   # Core
-  argocd: false
+  argocd: false # EKS Managed Capability
   metrics_server: true
   ingress_class_alb: true
   aws_load_balancer_controller: true
-  cert_manager: false
+  cert_manager: true
   external_secrets: true
-  external_dns: true
+  external_dns: false
   aws_efs_csi_driver: false
-  image_prepuller: false
+  image_prepuller: true
+  ingress_nginx: true
   # GitOps
-  argo_events: false
-  argo_rollouts: false
+  argo_events: true
+  argo_rollouts: true
   argo_workflows: true
-  kargo: false
+  kargo: true
   flux: false
   # Security
   keycloak: true
@@ -25,26 +27,28 @@ enabledAddons:
   kyverno_policy_reporter: false
   # Observability
   grafana: false
-  grafana_operator: false
-  grafana_dashboards: false
-  kube_state_metrics: false
-  prometheus_node_exporter: false
+  grafana_operator: true
+  grafana_dashboards: true
+  kube_state_metrics: true
+  prometheus_node_exporter: true
   opentelemetry_operator: false
   cw_prometheus: false
-  aws_for_fluentbit: false
+  aws_for_fluentbit: true
   cni_metrics_helper: false
   # Platform
   crossplane: true
-  kro: false
+  crossplane_aws: true
+  kro: false # EKS Managed Capability
   kro_manifests: false
-  kro_manifests_hub: false
-  multi_acct: false
-  platform_manifests: false
-  backstage: false
-  kubevela: false
-  devlake: false
-  gitlab: false
-  # ACK controllers
+  kro_manifests_hub: true
+  multi_acct: true
+  platform_manifests: true
+  platform_manifests_bootstrap: true
+  backstage: true
+  kubevela: true
+  devlake: true
+  gitlab: true
+  # ACK controllers (EKS Managed Capability)
   ack_iam: false
   ack_eks: false
   ack_ec2: false
@@ -53,13 +57,11 @@ enabledAddons:
   ack_dynamodb: false
   ack_efs: false
   # ML/AI
-  jupyterhub: false
+  jupyterhub: true
   kubeflow: false
   mlflow: false
-  ray_operator: false
-  spark_operator: false
+  ray_operator: true
+  spark_operator: true
   airflow: false
-  # AWS Resources (Crossplane-managed VPC secrets etc.)
-  aws_resources: false
-  # Agent Platform (deploys from sample-agent-platform-on-eks repo)
+  # Agent Platform
   agent_platform: true

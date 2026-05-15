@@ -5,6 +5,13 @@ pod_identities:
   namespace: crossplane-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
   destinationHub: true
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_pod_identities
+        operator: In
+        values: ['true']
   goTemplateOptions:
     - "missingkey=zero"
   annotationsAppSet:

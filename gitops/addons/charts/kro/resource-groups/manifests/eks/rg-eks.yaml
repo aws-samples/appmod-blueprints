@@ -27,6 +27,11 @@ spec:
       git_username: string | default="user1"
       aws_partition: string | default="aws"
       aws_dns_suffix: string | default="amazonaws.com"
+      argocdCapability:
+        enabled: string | default="false"
+        idcInstanceArn: string | default=""
+        idcRegion: string | default=""
+        adminGroupId: string | default=""
       network:
         vpcID: string
         subnets:
@@ -71,13 +76,6 @@ spec:
         enable_kube_state_metrics: string
         enable_opentelemetry_operator: string
         enable_cert_manager: string
-        enable_ack_iam: string
-        enable_ack_eks: string
-        enable_ack_ec2: string
-        enable_ack_ecr: string
-        enable_ack_s3: string
-        enable_ack_dynamodb: string
-        enable_ack_efs: string
         enable_aws_efs_csi_driver: string
         enable_crossplane: string
         enable_crossplane_aws: string
@@ -454,13 +452,7 @@ spec:
             enable_kube_state_metrics: "${schema.spec.addons.enable_kube_state_metrics}"
             enable_opentelemetry_operator: "${schema.spec.addons.enable_opentelemetry_operator}"
             enable_cert_manager: "${schema.spec.addons.enable_cert_manager}"
-            enable_ack_iam: "${schema.spec.addons.enable_ack_iam}"
-            enable_ack_eks: "${schema.spec.addons.enable_ack_eks}"
-            enable_ack_ec2: "${schema.spec.addons.enable_ack_ec2}"
-            enable_ack_ecr: "${schema.spec.addons.enable_ack_ecr}"
-            enable_ack_s3: "${schema.spec.addons.enable_ack_s3}"
-            enable_ack_dynamodb: "${schema.spec.addons.enable_ack_dynamodb}"
-            enable_ack_efs: "${schema.spec.addons.enable_ack_efs}"
+            enable_cert_manager: "${schema.spec.addons.enable_cert_manager}"
             enable_aws_efs_csi_driver: "${schema.spec.addons.enable_aws_efs_csi_driver}"
             enable_crossplane: "${schema.spec.addons.enable_crossplane}"
             enable_crossplane_aws: "${schema.spec.addons.enable_crossplane_aws}"
@@ -1296,5 +1288,366 @@ spec:
           deletePropagationPolicy: RETAIN
 
     ###########################################################
-    # XXX Pod Identity
+    # ArgoCD Capability (optional, for hub clusters)
     ###########################################################
+    - id: argocdCapabilityRole
+      includeWhen:
+        - ${schema.spec.argocdCapability.enabled == "true"}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-argocd-capability-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-argocd-capability-role"
+          policies:
+            - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "capabilities.eks.amazonaws.com"
+                  },
+                  "Action": [
+                    "sts:AssumeRole",
+                    "sts:TagSession"
+                  ]
+                }
+              ]
+            }
+
+    - id: argocdCapability
+      includeWhen:
+        - ${schema.spec.argocdCapability.enabled == "true"}
+      readyWhen:
+        - ${argocdCapability.metadata.name != ""}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: Capability
+        metadata:
+          name: ${schema.spec.name}-argocd
+          namespace: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/instance: ${schema.spec.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/sync-options: Prune=false
+        spec:
+          clusterName: ${schema.spec.name}
+          name: argocd
+          type: ARGOCD
+          roleARN: ${argocdCapabilityRole.status.ackResourceMetadata.arn}
+          deletePropagationPolicy: RETAIN
+          configuration:
+            argoCD:
+              awsIDC:
+                idcInstanceARN: ${schema.spec.argocdCapability.idcInstanceArn}
+                idcRegion: ${schema.spec.argocdCapability.idcRegion}
+              rbacRoleMappings:
+                - role: ADMIN
+                  identities:
+                    - id: ${schema.spec.argocdCapability.adminGroupId}
+                      type: SSO_GROUP
+
+    - id: argocdCapabilityAccessEntry
+      includeWhen:
+        - ${schema.spec.argocdCapability.enabled == "true"}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-argocd-capability-access"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
+          accessPolicies:
+            - accessScope:
+                type: "cluster"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          principalARN: "${argocdCapabilityRole.status.ackResourceMetadata.arn}"
+          type: STANDARD
+
+    ###########################################################
+    # Crossplane Provider Pod Identities (when crossplane enabled)
+    ###########################################################
+    - id: crossplaneIamProviderRole
+      includeWhen:
+        - ${schema.spec.addons.enable_crossplane == "true"}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-crossplane-iam-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-CrossplaneIAMProviderRole"
+          policies:
+            - arn:aws:iam::aws:policy/IAMFullAccess
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "pods.eks.amazonaws.com"
+                  },
+                  "Action": ["sts:AssumeRole", "sts:TagSession"]
+                }
+              ]
+            }
+    - id: crossplaneIamPodIdentity
+      includeWhen:
+        - ${schema.spec.addons.enable_crossplane == "true"}
+      readyWhen:
+        - ${crossplaneIamPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          name: "${schema.spec.name}-crossplane-iam"
+          namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
+          namespace: crossplane-system
+          roleARN: "${crossplaneIamProviderRole.status.ackResourceMetadata.arn}"
+          serviceAccount: provider-aws-iam
+
+    - id: crossplaneEksProviderRole
+      includeWhen:
+        - ${schema.spec.addons.enable_crossplane == "true"}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-crossplane-eks-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-CrossplaneEKSProviderRole"
+          policies:
+            - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "pods.eks.amazonaws.com"
+                  },
+                  "Action": ["sts:AssumeRole", "sts:TagSession"]
+                }
+              ]
+            }
+    - id: crossplaneEksPodIdentity
+      includeWhen:
+        - ${schema.spec.addons.enable_crossplane == "true"}
+      readyWhen:
+        - ${crossplaneEksPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          name: "${schema.spec.name}-crossplane-eks"
+          namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
+          namespace: crossplane-system
+          roleARN: "${crossplaneEksProviderRole.status.ackResourceMetadata.arn}"
+          serviceAccount: provider-aws-eks
+
+    - id: crossplaneEc2ProviderRole
+      includeWhen:
+        - ${schema.spec.addons.enable_crossplane == "true"}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-crossplane-ec2-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-CrossplaneEC2ProviderRole"
+          policies:
+            - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+            - arn:aws:iam::aws:policy/AmazonVPCFullAccess
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "pods.eks.amazonaws.com"
+                  },
+                  "Action": ["sts:AssumeRole", "sts:TagSession"]
+                }
+              ]
+            }
+    - id: crossplaneEc2PodIdentity
+      includeWhen:
+        - ${schema.spec.addons.enable_crossplane == "true"}
+      readyWhen:
+        - ${crossplaneEc2PodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          name: "${schema.spec.name}-crossplane-ec2"
+          namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
+          namespace: crossplane-system
+          roleARN: "${crossplaneEc2ProviderRole.status.ackResourceMetadata.arn}"
+          serviceAccount: provider-aws-ec2
+
+    ###########################################################
+    # AWS Load Balancer Controller Pod Identity
+    ###########################################################
+    - id: lbcRole
+      includeWhen:
+        - ${schema.spec.addons.enable_ingress_class_alb == "true"}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-lbc-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-LBCPodIdentityRole"
+          policies:
+            - arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess
+            - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+            - arn:aws:iam::aws:policy/AWSCertificateManagerReadOnly
+            - arn:aws:iam::aws:policy/AWSWAFv2FullAccess
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "pods.eks.amazonaws.com"
+                  },
+                  "Action": ["sts:AssumeRole", "sts:TagSession"]
+                }
+              ]
+            }
+    - id: lbcPodIdentity
+      includeWhen:
+        - ${schema.spec.addons.enable_ingress_class_alb == "true"}
+      readyWhen:
+        - ${lbcPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          name: "${schema.spec.name}-lbc"
+          namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
+          namespace: kube-system
+          roleARN: "${lbcRole.status.ackResourceMetadata.arn}"
+          serviceAccount: aws-load-balancer-controller-sa
