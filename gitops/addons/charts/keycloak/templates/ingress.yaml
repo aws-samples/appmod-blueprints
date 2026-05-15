@@ -6,8 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "10"
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
-    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /keycloak/health
 spec:
   ingressClassName: platform
