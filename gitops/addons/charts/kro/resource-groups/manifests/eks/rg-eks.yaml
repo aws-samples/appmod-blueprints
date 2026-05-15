@@ -1172,6 +1172,42 @@ spec:
             - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
             - arn:aws:iam::aws:policy/AmazonS3FullAccess
             - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+          inlinePolicies:
+            ManagePodIdentityAssociations: |
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Sid": "PassWorkloadRolesToEKSPodIdentity",
+                    "Effect": "Allow",
+                    "Action": ["iam:PassRole"],
+                    "Resource": ["arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.name}-*"],
+                    "Condition": {
+                      "StringEquals": {
+                        "iam:PassedToService": "pods.eks.amazonaws.com"
+                      }
+                    }
+                  },
+                  {
+                    "Sid": "ManagePodIdentityAssociations",
+                    "Effect": "Allow",
+                    "Action": [
+                      "eks:CreatePodIdentityAssociation",
+                      "eks:DeletePodIdentityAssociation",
+                      "eks:DescribePodIdentityAssociation",
+                      "eks:ListPodIdentityAssociations",
+                      "eks:UpdatePodIdentityAssociation",
+                      "eks:TagResource",
+                      "eks:UntagResource",
+                      "eks:ListTagsForResource"
+                    ],
+                    "Resource": [
+                      "arn:aws:eks:*:${schema.spec.accountId}:cluster/${schema.spec.name}",
+                      "arn:aws:eks:*:${schema.spec.accountId}:podidentityassociation/${schema.spec.name}/*"
+                    ]
+                  }
+                ]
+              }
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",
