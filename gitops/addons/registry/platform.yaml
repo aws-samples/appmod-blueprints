@@ -316,6 +316,65 @@ ack-iam:
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
+ack-backup:
+  # ack-backup-controller is in PREVIEW (v0.1.1) and is NOT yet bundled in
+  # the EKS 'ACK' capability as of May 2026. It is wired here as a regular
+  # Helm addon and gets its IAM via the kro+ACK pod-identity path
+  # (enableACKKRO=true), instead of relying on the capability role.
+  namespace: ack-system
+  chartName: backup-chart
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  defaultVersion: '0.1.1'
+  enableACKKRO: true
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_ack_backup
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: ack-backup-controller
+  podIdentity:
+    piNamespace: ack-system
+    serviceAccounts:
+      - ack-backup-controller
+    # Least-privilege policy for the backup-controller. iam:PassRole is
+    # scoped to role/* (any role in the account) so the controller can
+    # pass backup service roles regardless of naming conventions.
+    policyDocument:
+      - actions:
+          - backup:*
+          - backup-storage:*
+        resourceName: '*'
+      - actions:
+          - iam:PassRole
+        customArn: arn:aws:iam::*:role/*
+      - actions:
+          - kms:Decrypt
+          - kms:Encrypt
+          - kms:GenerateDataKey
+          - kms:GenerateDataKeyWithoutPlaintext
+          - kms:DescribeKey
+          - kms:CreateGrant
+        resourceName: '*'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      managedFieldsManagers:
+        - kube-controller-manager
+
 ack-eks:
   namespace: ack-system
   chartName: eks-chart
