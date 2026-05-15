@@ -173,6 +173,25 @@ aws-load-balancer-controller:
     serviceAccount:
       create: true
       name: aws-load-balancer-controller-sa
+  # The chart's cert-gen Job rotates the webhook TLS material after install,
+  # which causes Argo to see persistent OutOfSync drift on these three resources.
+  ignoreDifferences:
+    - group: ''
+      kind: Secret
+      name: aws-load-balancer-tls
+      namespace: kube-system
+      jsonPointers:
+        - /data
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      name: aws-load-balancer-webhook
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      name: aws-load-balancer-webhook
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
   additionalResources:
     - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
       helm:

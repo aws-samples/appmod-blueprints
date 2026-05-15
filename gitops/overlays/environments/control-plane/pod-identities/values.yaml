@@ -1,0 +1,6 @@
+# Control-plane environments do not run their own ESO pod identity.
+# ESO on the hub uses the Crossplane provider role for Secrets Manager access;
+# Crossplane on the hub provisions ESO pod identities for spoke clusters.
+identities:
+  eso:
+    enabled: false
