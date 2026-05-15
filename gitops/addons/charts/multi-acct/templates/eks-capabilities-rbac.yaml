@@ -47,6 +47,10 @@ rules:
 - apiGroups: ["ecr.services.k8s.aws"]
   resources: ["*"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK Backup (AWS Backup: BackupVault, BackupPlan, BackupSelection)
+- apiGroups: ["backup.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Kro custom resources
 - apiGroups: ["kro.run"]
   resources: ["*"]

@@ -9,4 +9,4 @@ spec:
   spokeName: spoke-prod-euw1
   region: eu-west-1
   # bronze = same-region only, no copyDestinationRegion / copyDestinationVaultARN
-  iamRoleARN: arn:aws:iam::000000000000:role/AWSBackupDefaultServiceRole
+  iamRoleARN: arn:aws:iam::586794472760:role/AWSBackupDefaultServiceRole
