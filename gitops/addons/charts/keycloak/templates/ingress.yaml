@@ -8,6 +8,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /keycloak/health
+    alb.ingress.kubernetes.io/load-balancer-name: {{ .Values.global.ingress_name | default "platform" }}
 spec:
   ingressClassName: platform
   rules:

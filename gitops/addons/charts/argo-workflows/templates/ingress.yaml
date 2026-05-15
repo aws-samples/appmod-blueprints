@@ -6,6 +6,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/load-balancer-name: {{ .Values.ingress_name | default "platform" }}
     alb.ingress.kubernetes.io/transforms.argo-server: |
       [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/argo-workflows\\/?(.*)$","replace":"/$1"}]}}]
 spec:
