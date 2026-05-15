@@ -69,7 +69,7 @@ spec:
   iamRoleARN: arn:aws:iam::<acct>:role/AWSBackupDefaultServiceRole
 ```
 
-See `examples/instance-{gold,silver,bronze}.yaml`.
+See `../../examples/backup-policy/instance-{gold,silver,bronze}.yaml`.
 
 ## Developer contract
 
@@ -122,7 +122,7 @@ kubectl --context hub apply -f rgd-backup-policy.yaml
 kubectl --context hub get rgd backuppolicy.kro.run
 
 # end-to-end: instance expands into BackupVault + BackupPlan + BackupSelection
-kubectl --context hub apply -f examples/instance-bronze.yaml
+kubectl --context hub apply -f ../../examples/backup-policy/instance-bronze.yaml
 kubectl --context hub get backupvault,backupplan,backupselection -A
 ```
 
