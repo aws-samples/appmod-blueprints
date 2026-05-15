@@ -9,6 +9,9 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-2"
 spec:
+  # Orphan the underlying attachment on prune. Avoids breaking Terraform-managed
+  # PodIdentityAssociations that share the same Role/Policy.
+  deletionPolicy: Orphan
   forProvider:
     policyArnRef:
       name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity-policy

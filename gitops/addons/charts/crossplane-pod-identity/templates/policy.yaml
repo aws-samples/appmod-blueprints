@@ -10,6 +10,10 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-3"
 spec:
+  # Orphan, do not delete, the underlying IAM Policy on prune. The policy may
+  # be referenced by Terraform-managed roles on the same cluster and pruning
+  # here must never break ESO/LBC/etc.
+  deletionPolicy: Orphan
   forProvider:
     policy: |
 {{ $identity.policy.document | indent 6 }}

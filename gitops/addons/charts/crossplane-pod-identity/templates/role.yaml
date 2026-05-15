@@ -12,6 +12,10 @@ metadata:
   labels:
     platform.gitops.io/role: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity
 spec:
+  # Orphan, do not delete, the underlying IAM Role on prune. The role may be
+  # shared with Terraform-managed PodIdentityAssociations on the same cluster
+  # and pruning here must never break ESO/LBC/etc.
+  deletionPolicy: Orphan
   forProvider:
     assumeRolePolicy: |
       {
