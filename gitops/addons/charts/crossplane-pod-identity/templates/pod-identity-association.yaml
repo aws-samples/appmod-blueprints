@@ -9,6 +9,10 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-1"
 spec:
+  # Orphan the underlying EKS PodIdentityAssociation on prune. The association
+  # may be Terraform-managed on the same SA (e.g. hub ESO) and pruning here
+  # must never tear it down.
+  deletionPolicy: Orphan
   forProvider:
     clusterName: {{ $.Values.aws.clusterName }}
     namespace: {{ $identity.namespace }}
