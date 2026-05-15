@@ -20,11 +20,11 @@ pod_identities:
       accountId: '{{.metadata.annotations.aws_account_id}}'
     identities:
       # Pod identity enablement uses cluster labels by default.
-      # The control-plane cluster runs the ESO addon but does NOT need its own pod identity
-      # because Crossplane (running on the hub) manages pod identities for spoke clusters.
-      # The hub's ESO uses the Crossplane provider's credentials instead.
-      eso:
-        enabled: '{{`{{ if eq (default "" .metadata.labels.environment) "control-plane" }}false{{ else }}{{ default "" (index .metadata.labels "enable_external_secrets") }}{{ end }}`}}'
+      # eso identity is intentionally omitted here: the ApplicationSet templater
+      # does not evaluate nested {{if}}{{else}}{{end}} forms inside valuesObject
+      # and the literal string would be treated as truthy by the chart. The hub
+      # (control-plane) reuses the Crossplane provider role for ESO, so the chart
+      # default of `false` applies; spoke clusters enable it via env overlay.
       lbc:
         enabled: '{{`{{ default "" (index .metadata.labels "enable_aws_load_balancer_controller") }}`}}'
       external-dns:
