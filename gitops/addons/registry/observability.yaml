@@ -33,24 +33,32 @@ observability-aws:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+        # Crossplane provider injects bookkeeping tags (crossplane-kind,
+        # crossplane-name, crossplane-providerconfig) onto every managed
+        # resource. The chart can't know about them at render time, so
+        # they show up as drift on every reconcile.
+        - /spec/forProvider/tags
     - group: amp.aws.upbound.io
       kind: Scraper
       jsonPointers:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+        - /spec/forProvider/tags
     - group: grafana.aws.upbound.io
       kind: Workspace
       jsonPointers:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+        - /spec/forProvider/tags
     - group: grafana.aws.upbound.io
       kind: WorkspaceSamlConfiguration
       jsonPointers:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+        - /spec/forProvider/tags
 
 grafana:
   namespace: grafana
@@ -124,8 +132,15 @@ grafana-dashboards:
         values: ['true']
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     namespace: grafana-operator
     grafana_url: '{{.metadata.annotations.aws_grafana_url | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
+    # Devlake is what publishes the {prefix}-devlake/mysql-connection
+    # Secrets Manager secret. The grafana-mysql-creds ExternalSecret only
+    # reads it when devlake is enabled — otherwise that ExternalSecret
+    # would block grafana-dashboards-hub on a non-existent source secret.
+    devlake:
+      enabled: '{{.metadata.labels.enable_devlake | default "false"}}'
 
 kube-state-metrics:
   namespace: kube-prometheus-stack
