@@ -152,7 +152,7 @@ tasks:
           echo "[default]"
           echo "aws_access_key_id = $AKI"
           echo "aws_secret_access_key = $SAK"
-          [ -n "$ST" ] && echo "aws_session_token = $ST"
+          if [ -n "$ST" ]; then echo "aws_session_token = $ST"; fi
         } > {{.ROOT_DIR}}/private/aws-creds.ini
       - kubectl -n crossplane-system create secret generic aws-credentials
           --from-file=credentials={{.ROOT_DIR}}/private/aws-creds.ini
