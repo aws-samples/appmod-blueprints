@@ -204,31 +204,59 @@ tasks:
   crossplane:providers:
     status:
       - kubectl get providers.pkg.crossplane.io provider-aws-iam -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null | grep -q True
+      - kubectl get providerconfig.kubernetes.crossplane.io default 2>/dev/null
     vars:
       K8S_PROVIDER_VERSION:
         sh: yq '.crossplane-base.valuesObject.providers.kubernetes.version // "v1.2.1"' {{.GITOPS_ROOT}}/addons/registry/platform.yaml
     cmds:
       - kubectl apply -f manifests/crossplane/drc-stub.yaml
-      - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
-          --set providerConfig.enabled=false
-          --set aws.region={{.AWS_REGION}}
-          --set aws.clusterName={{.HUB_CLUSTER_NAME}}
-          --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set functions.patchAndTransform.version=v0.10.0
-          --set functions.environmentConfigs.version=v0.3.0
-          --set functions.celFilter.version=v0.2.0
-          --set providers.family.version=v2.5.3
-          --set providers.iam.version=v2.5.3
-          --set providers.iam.createIdentity=false
-          --set providers.eks.version=v2.5.3
-          --set providers.eks.createIdentity=false
-          --set providers.ec2.version=v2.5.3
-          --set providers.ec2.createIdentity=false
-          --set providers.kubernetes.version={{.K8S_PROVIDER_VERSION}}
-          --set providers.kubernetes.serviceAccount=provider-kubernetes
-          | kubectl apply -f -
+      # First apply: install providers, functions, runtime configs.
+      # ProviderConfigs in the chart will fail because their CRDs are
+      # installed by the providers themselves — we tolerate that with
+      # `|| true` and re-apply once providers are Healthy.
+      - cmd: |
+          helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base \
+            --set providerConfig.enabled=false \
+            --set aws.region={{.AWS_REGION}} \
+            --set aws.clusterName={{.HUB_CLUSTER_NAME}} \
+            --set aws.accountId={{.AWS_ACCOUNT_ID}} \
+            --set functions.patchAndTransform.version=v0.10.0 \
+            --set functions.environmentConfigs.version=v0.3.0 \
+            --set functions.celFilter.version=v0.2.0 \
+            --set providers.family.version=v2.5.3 \
+            --set providers.iam.version=v2.5.3 \
+            --set providers.iam.createIdentity=false \
+            --set providers.eks.version=v2.5.3 \
+            --set providers.eks.createIdentity=false \
+            --set providers.ec2.version=v2.5.3 \
+            --set providers.ec2.createIdentity=false \
+            --set providers.kubernetes.version={{.K8S_PROVIDER_VERSION}} \
+            --set providers.kubernetes.serviceAccount=provider-kubernetes \
+            | kubectl apply -f - || true
       - kubectl wait --for=condition=Healthy --timeout=300s providers.pkg.crossplane.io --all
       - kubectl wait --for=condition=Healthy --timeout=300s functions.pkg.crossplane.io --all
+      # Re-apply now that provider CRDs are installed — picks up the
+      # kubernetes.crossplane.io/ProviderConfig and any other CRD-gated
+      # objects the first apply skipped.
+      - cmd: |
+          helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base \
+            --set providerConfig.enabled=false \
+            --set aws.region={{.AWS_REGION}} \
+            --set aws.clusterName={{.HUB_CLUSTER_NAME}} \
+            --set aws.accountId={{.AWS_ACCOUNT_ID}} \
+            --set functions.patchAndTransform.version=v0.10.0 \
+            --set functions.environmentConfigs.version=v0.3.0 \
+            --set functions.celFilter.version=v0.2.0 \
+            --set providers.family.version=v2.5.3 \
+            --set providers.iam.version=v2.5.3 \
+            --set providers.iam.createIdentity=false \
+            --set providers.eks.version=v2.5.3 \
+            --set providers.eks.createIdentity=false \
+            --set providers.ec2.version=v2.5.3 \
+            --set providers.ec2.createIdentity=false \
+            --set providers.kubernetes.version={{.K8S_PROVIDER_VERSION}} \
+            --set providers.kubernetes.serviceAccount=provider-kubernetes \
+            | kubectl apply -f -
 
   crossplane:provider-config:
     status:
