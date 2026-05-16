@@ -465,13 +465,13 @@ tasks:
   hub:ingress:
     desc: Create ALB for hub ingress (waits for EKS to be ACTIVE)
     vars:
-      ALB_NAME: "{{.HUB_CLUSTER_NAME}}-ingress"
+      ALB_NAME: "{{.RESOURCE_PREFIX}}-hub-ingress"
       VPC_ID:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
       SUBNETS:
         sh: aws ec2 describe-subnets --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=tag:Name,Values=*public*" --query 'Subnets[].SubnetId' --output text
       SG_ID:
-        sh: aws ec2 describe-security-groups --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=group-name,Values={{.HUB_CLUSTER_NAME}}-ingress-http" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo ""
+        sh: aws ec2 describe-security-groups --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=group-name,Values={{.RESOURCE_PREFIX}}-hub-ingress-http" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo ""
     status:
       - aws elbv2 describe-load-balancers --names {{.ALB_NAME}} --region {{.AWS_REGION}} 2>/dev/null
     cmds:
@@ -480,7 +480,7 @@ tasks:
         SG="{{.SG_ID}}"
         if [ -z "$SG" ] || [ "$SG" = "None" ]; then
           # Create security group if not exists
-          SG=$(aws ec2 create-security-group --group-name "{{.HUB_CLUSTER_NAME}}-ingress-http" \
+          SG=$(aws ec2 create-security-group --group-name "{{.RESOURCE_PREFIX}}-hub-ingress-http" \
             --description "HTTP/HTTPS for hub ingress" --vpc-id "{{.VPC_ID}}" --region {{.AWS_REGION}} \
             --query 'GroupId' --output text)
           aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
@@ -497,9 +497,9 @@ tasks:
     # OriginRequestPolicyId 216adef6 = AWS Managed "AllViewer" (forwards all headers/cookies/qs)
     vars:
       ALB_DNS:
-        sh: aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo ""
+        sh: aws elbv2 describe-load-balancers --names "{{.RESOURCE_PREFIX}}-hub-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo ""
     status:
-      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-ingress'].Id" --output text | grep -q .
+      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.RESOURCE_PREFIX}}-hub-ingress'].Id" --output text | grep -q .
     cmds:
       - |
         ALB_DNS="{{.ALB_DNS}}"
@@ -510,7 +510,7 @@ tasks:
         DIST_ID=$(aws cloudfront create-distribution \
           --distribution-config "{
             \"CallerReference\": \"{{.HUB_CLUSTER_NAME}}-$(date +%s)\",
-            \"Comment\": \"{{.HUB_CLUSTER_NAME}}-ingress\",
+            \"Comment\": \"{{.RESOURCE_PREFIX}}-hub-ingress\",
             \"Enabled\": true,
             \"Origins\": {
               \"Quantity\": 1,
@@ -610,7 +610,7 @@ tasks:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}/","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}/","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.HUB_CLUSTER_NAME}}-ingress","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}/","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}/","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.RESOURCE_PREFIX}}-hub-ingress","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
