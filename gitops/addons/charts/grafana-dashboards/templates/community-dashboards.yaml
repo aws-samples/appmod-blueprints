@@ -1,0 +1,54 @@
+---
+# Kubernetes Cluster Overview (ID: 7249, rev 1) - simple, no recording rules
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: community-k8s-cluster-overview
+  namespace: {{ .Values.namespace | default "grafana-operator" }}
+spec:
+  folder: "Community Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  grafanaCom:
+    id: 7249
+    revision: 1
+  datasources:
+    - inputName: "DS_PROMETHEUS"
+      datasourceName: "Prometheus"
+---
+# Kubernetes Capacity Planning (ID: 5228, rev 5)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: community-k8s-capacity
+  namespace: {{ .Values.namespace | default "grafana-operator" }}
+spec:
+  folder: "Community Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  grafanaCom:
+    id: 5228
+    revision: 5
+  datasources:
+    - inputName: "DS_PROMETHEUS"
+      datasourceName: "Prometheus"
+---
+# Kubernetes Resource Requests (ID: 7187, rev 1)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: community-k8s-resources
+  namespace: {{ .Values.namespace | default "grafana-operator" }}
+spec:
+  folder: "Community Dashboards"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  grafanaCom:
+    id: 7187
+    revision: 1
+  datasources:
+    - inputName: "DS_PROMETHEUS"
+      datasourceName: "Prometheus"
