@@ -39,6 +39,13 @@ resourcePrefix: "<prefix>"                   # Used for KRO tenant-facing resour
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
 
+# Hub ingress exposure mode (kind-kro-ack provider)
+# - cloudfront: ALB internal + CloudFront VPC Origin (default, no cert/domain needed)
+# - tls:        ALB internet-facing HTTPS:443, requires ingress.certificateArn + domain
+ingress:
+  mode: "cloudfront"                         # cloudfront | tls
+  certificateArn: ""                         # ACM cert ARN (required when mode=tls)
+
 # AWS Identity Center (required for EKS ArgoCD Capability)
 identityCenter:
   instanceArn: "<identity-center-instance-arn>"
