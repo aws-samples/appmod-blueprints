@@ -8,3 +8,6 @@ enabledAddons:
   # Security
   kyverno: true
   kyverno_policies: true
+  # Observability
+  kube_state_metrics: true
+  prometheus_node_exporter: true

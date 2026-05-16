@@ -1,5 +1,56 @@
 # Observability and monitoring addons
-# Wave ordering: 3 (metrics/otel) → 4 (grafana) → 5 (dashboards/cw)
+# Wave ordering: 3 (metrics/otel) → 4 (grafana/observability-aws) → 5 (dashboards/cw)
+
+observability-aws:
+  namespace: crossplane-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/observability-aws'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_observability_aws
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      vpcId: '{{.metadata.annotations.aws_vpc_id}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    ingress:
+      domainName: '{{.metadata.annotations.ingress_domain_name}}'
+    resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    amg:
+      subnetIds: ''
+    scraper:
+      clusterArn: '{{.metadata.annotations.aws_cluster_arn}}'
+      clusterSubnetIds: '{{.metadata.annotations.aws_private_subnet_ids}}'
+      clusterSecurityGroupIds: '{{.metadata.annotations.aws_cluster_security_group_id}}'
+  ignoreDifferences:
+    - group: amp.aws.upbound.io
+      kind: Workspace
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: amp.aws.upbound.io
+      kind: Scraper
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: grafana.aws.upbound.io
+      kind: Workspace
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: grafana.aws.upbound.io
+      kind: WorkspaceSamlConfiguration
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
 
 grafana:
   namespace: grafana
@@ -74,7 +125,7 @@ grafana-dashboards:
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     namespace: grafana-operator
-    grafana_url: '{{.metadata.annotations.ingress_domain_name}}/grafana'
+    grafana_url: '{{.metadata.annotations.aws_grafana_url | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
 
 kube-state-metrics:
   namespace: kube-prometheus-stack

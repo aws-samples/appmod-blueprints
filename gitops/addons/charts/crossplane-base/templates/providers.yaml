@@ -109,3 +109,31 @@ spec:
   runtimeConfigRef:
     name: secretsmanager-drc
 {{- end }}
+{{- if .Values.providers.amp.version }}
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-amp
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-amp:{{ .Values.providers.amp.version }}
+  runtimeConfigRef:
+    name: amp-drc
+{{- end }}
+{{- if .Values.providers.grafana.version }}
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-grafana
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-grafana:{{ .Values.providers.grafana.version }}
+  runtimeConfigRef:
+    name: grafana-drc
+{{- end }}

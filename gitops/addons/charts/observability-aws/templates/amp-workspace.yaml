@@ -1,0 +1,19 @@
+{{- if .Values.amp.enabled }}
+apiVersion: amp.aws.upbound.io/v1beta1
+kind: Workspace
+metadata:
+  name: {{ .Values.resourcePrefix }}-amp
+  annotations:
+    crossplane.io/external-name: ""
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    alias: {{ .Values.amp.alias | default (printf "%s-observability-amp" .Values.resourcePrefix) }}
+    tags:
+      managed-by: crossplane
+      purpose: observability
+  providerConfigRef:
+    name: default
+{{- end }}

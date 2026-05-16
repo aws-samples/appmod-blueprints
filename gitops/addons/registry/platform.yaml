@@ -58,6 +58,12 @@ crossplane-base:
       eks:
         version: "v2.5.3"
         createIdentity: false
+      amp:
+        version: "v2.5.3"
+        createIdentity: true
+      grafana:
+        version: "v2.5.3"
+        createIdentity: true
       kubernetes:
         version: "v1.2.1"
   ignoreDifferences:
