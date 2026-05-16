@@ -495,34 +495,74 @@ tasks:
         esac
 
   hub:ingress:
-    desc: Create ALB for hub ingress (waits for EKS to be ACTIVE)
+    desc: |
+      Create ALB for hub ingress. Behaviour depends on ingress.mode:
+      - cloudfront: ALB scheme=internal in private subnets, SG limited to VPC CIDR
+      - tls: ALB scheme=internet-facing in public subnets, SG open 80/443 to 0.0.0.0/0
+      Switching mode after creation requires manual ALB teardown (AWS scheme is immutable).
     deps: [hub:ingress:preflight]
     vars:
       ALB_NAME: "{{.RESOURCE_PREFIX}}-hub-ingress"
       VPC_ID:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
-      SUBNETS:
-        sh: aws ec2 describe-subnets --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=tag:Name,Values=*public*" --query 'Subnets[].SubnetId' --output text
+      VPC_CIDR:
+        sh: aws ec2 describe-vpcs --vpc-ids "$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" --region {{.AWS_REGION}} --query 'Vpcs[0].CidrBlock' --output text
       SG_ID:
         sh: aws ec2 describe-security-groups --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=group-name,Values={{.RESOURCE_PREFIX}}-hub-ingress-http" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo ""
     status:
       - aws elbv2 describe-load-balancers --names {{.ALB_NAME}} --region {{.AWS_REGION}} 2>/dev/null
     cmds:
       - |
-        SUBNETS=$(echo "{{.SUBNETS}}" | tr '\t' ' ')
+        MODE="{{.INGRESS_MODE}}"
+        VPC_ID="{{.VPC_ID}}"
+        VPC_CIDR="{{.VPC_CIDR}}"
+        # Resolve subnets according to mode
+        if [ "$MODE" = "cloudfront" ]; then
+          SCHEME="internal"
+          SUBNET_NAME_FILTER="*private*"
+          ROLE_TAG="kubernetes.io/role/internal-elb"
+        else
+          SCHEME="internet-facing"
+          SUBNET_NAME_FILTER="*public*"
+          ROLE_TAG="kubernetes.io/role/elb"
+        fi
+        SUBNETS=$(aws ec2 describe-subnets --region {{.AWS_REGION}} \
+          --filters "Name=vpc-id,Values=$VPC_ID" \
+                    "Name=tag:Name,Values=$SUBNET_NAME_FILTER" \
+                    "Name=tag:$ROLE_TAG,Values=1" \
+          --query 'Subnets[].SubnetId' --output text | tr '\t' ' ')
+        if [ -z "$SUBNETS" ]; then
+          # Fallback: name-only filter for older VPCs without role tags
+          SUBNETS=$(aws ec2 describe-subnets --region {{.AWS_REGION}} \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=$SUBNET_NAME_FILTER" \
+            --query 'Subnets[].SubnetId' --output text | tr '\t' ' ')
+        fi
+        if [ -z "$SUBNETS" ]; then
+          printf '{{.C_ERR}}✗ No subnets matched filter %s in VPC %s{{.C_RESET}}\n' "$SUBNET_NAME_FILTER" "$VPC_ID"
+          exit 1
+        fi
+        # Resolve / create SG with mode-appropriate ingress rules
         SG="{{.SG_ID}}"
         if [ -z "$SG" ] || [ "$SG" = "None" ]; then
-          # Create security group if not exists
           SG=$(aws ec2 create-security-group --group-name "{{.RESOURCE_PREFIX}}-hub-ingress-http" \
-            --description "HTTP/HTTPS for hub ingress" --vpc-id "{{.VPC_ID}}" --region {{.AWS_REGION}} \
+            --description "HTTP/HTTPS for hub ingress (mode=$MODE)" --vpc-id "$VPC_ID" --region {{.AWS_REGION}} \
             --query 'GroupId' --output text)
-          aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
-          aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 443 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
+          if [ "$MODE" = "cloudfront" ]; then
+            # ALB internal — limit to VPC CIDR (CloudFront VPC Origin reaches it via the ENIs)
+            aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 \
+              --cidr "$VPC_CIDR" --region {{.AWS_REGION}} 2>/dev/null || true
+          else
+            # ALB internet-facing — open 80 (redirect) and 443
+            aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 \
+              --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
+            aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 443 \
+              --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
+          fi
         fi
         aws elbv2 create-load-balancer --name "{{.ALB_NAME}}" --type application \
-          --scheme internet-facing --subnets $SUBNETS --security-groups "$SG" \
+          --scheme "$SCHEME" --subnets $SUBNETS --security-groups "$SG" \
           --region {{.AWS_REGION}} --output text --query 'LoadBalancers[0].DNSName'
-        printf '{{.C_OK}}✓ ALB created: {{.ALB_NAME}}{{.C_RESET}}\n'
+        printf '{{.C_OK}}✓ ALB created: {{.ALB_NAME}} (scheme=%s, mode=%s){{.C_RESET}}\n' "$SCHEME" "$MODE"
 
   hub:cloudfront:
     desc: Create CloudFront distribution pointing to the ALB
