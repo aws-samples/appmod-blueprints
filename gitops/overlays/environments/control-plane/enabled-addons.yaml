@@ -25,10 +25,10 @@ enabledAddons:
   kyverno_policy_reporter: false
   # Observability
   grafana: false
-  grafana_operator: false
-  grafana_dashboards: false
-  kube_state_metrics: false
-  prometheus_node_exporter: false
+  grafana_operator: true
+  grafana_dashboards: true
+  kube_state_metrics: true
+  prometheus_node_exporter: true
   opentelemetry_operator: false
   cw_prometheus: false
   aws_for_fluentbit: false
@@ -61,5 +61,7 @@ enabledAddons:
   airflow: false
   # AWS Resources (Crossplane-managed VPC secrets etc.)
   aws_resources: false
+  # Observability AWS (AMP + AMG via Crossplane)
+  observability_aws: true
   # Agent Platform (deploys from sample-agent-platform-on-eks repo)
   agent_platform: true

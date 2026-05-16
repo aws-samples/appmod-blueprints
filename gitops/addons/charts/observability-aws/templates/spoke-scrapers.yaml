@@ -1,0 +1,36 @@
+{{- if .Values.spokeScrapers }}
+{{- range $clusterName, $cluster := .Values.spokeScrapers }}
+{{- if $cluster.clusterArn }}
+---
+apiVersion: amp.aws.upbound.io/v1beta1
+kind: Scraper
+metadata:
+  name: {{ $.Values.resourcePrefix }}-scraper-{{ $clusterName }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  forProvider:
+    region: {{ $.Values.aws.region }}
+    alias: {{ $.Values.resourcePrefix }}-{{ $clusterName }}
+    source:
+      - eks:
+          - clusterArn: {{ $cluster.clusterArn }}
+            subnetIds:
+              {{- range (splitList "," $cluster.subnetIds) }}
+              - {{ . | trim }}
+              {{- end }}
+            securityGroupIds:
+              {{- range (splitList "," $cluster.securityGroupIds) }}
+              - {{ . | trim }}
+              {{- end }}
+    destination:
+      - amp:
+          - workspaceArnRef:
+              name: {{ $.Values.resourcePrefix }}-amp
+    scrapeConfiguration: {{ $.Files.Get "files/scraper-config.yaml" | replace "{scrape_interval}" $.Values.scraper.scrapeInterval | replace "{scrape_timeout}" $.Values.scraper.scrapeTimeout | replace "{cluster}" $clusterName | replace "{region}" $.Values.aws.region | replace "{account_id}" ($.Values.aws.accountId | toString) | quote }}
+  providerConfigRef:
+    name: default
+{{- end }}
+{{- end }}
+{{- end }}

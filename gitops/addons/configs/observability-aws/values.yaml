@@ -1,0 +1,14 @@
+# Default values for observability-aws addon
+# Hub cluster scraper is auto-configured via cluster secret annotations.
+# Spoke cluster scrapers are configured below.
+# Values are populated by 'task observability-seed' after clusters are provisioned.
+
+spokeScrapers:
+  spoke-dev:
+    clusterArn: ""
+    subnetIds: ""
+    securityGroupIds: ""
+  spoke-prod:
+    clusterArn: ""
+    subnetIds: ""
+    securityGroupIds: ""

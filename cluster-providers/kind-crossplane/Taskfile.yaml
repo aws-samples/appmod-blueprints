@@ -94,6 +94,7 @@ tasks:
       - task: crossplane:setup
       - task: hub:seed
       - task: hub:wait-for-sync
+      - task: secrets-manager:seed-observability
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
 
   credentials:setup:
@@ -203,6 +204,9 @@ tasks:
   crossplane:providers:
     status:
       - kubectl get providers.pkg.crossplane.io provider-aws-iam -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null | grep -q True
+    vars:
+      K8S_PROVIDER_VERSION:
+        sh: yq '.crossplane-base.valuesObject.providers.kubernetes.version // "v1.2.1"' {{.GITOPS_ROOT}}/addons/registry/platform.yaml
     cmds:
       - kubectl apply -f manifests/crossplane/drc-stub.yaml
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
@@ -220,6 +224,8 @@ tasks:
           --set providers.eks.createIdentity=false
           --set providers.ec2.version=v2.5.3
           --set providers.ec2.createIdentity=false
+          --set providers.kubernetes.version={{.K8S_PROVIDER_VERSION}}
+          --set providers.kubernetes.serviceAccount=provider-kubernetes
           | kubectl apply -f -
       - kubectl wait --for=condition=Healthy --timeout=300s providers.pkg.crossplane.io --all
       - kubectl wait --for=condition=Healthy --timeout=300s functions.pkg.crossplane.io --all
@@ -470,11 +476,19 @@ tasks:
         sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.CONFIG_FILE}}):cluster/$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
       VPC_ID:
         sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
+      SUBNET_IDS:
+        sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' ','
+      PRIVATE_SUBNET_IDS:
+        sh: |
+          SUBNETS=$(aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' '\n')
+          aws ec2 describe-subnets --subnet-ids $SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' ','
+      CLUSTER_SG:
+        sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
@@ -513,6 +527,118 @@ tasks:
           --secret-string "$SECRET_VALUE" \
           --region {{.AWS_REGION}}
         echo "Seeded Secrets Manager: $SECRET_KEY"
+
+  secrets-manager:seed-observability:
+    desc: Seed observability credentials (AMP endpoint, AMG API key) into Secrets Manager
+    cmds:
+      - |
+        set -e
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/secrets"
+
+        # Get AMP workspace endpoint
+        AMP_WORKSPACE_ID=$(aws amp list-workspaces --region {{.AWS_REGION}} --query "workspaces[?alias=='{{.RESOURCE_PREFIX}}-observability-amp'].workspaceId" --output text 2>/dev/null)
+        if [ -z "$AMP_WORKSPACE_ID" ]; then
+          echo "WARN: AMP workspace not found yet. Skipping observability seed."
+          exit 0
+        fi
+        AMP_ENDPOINT=$(aws amp describe-workspace --workspace-id "$AMP_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.prometheusEndpoint" --output text)
+        echo "Found AMP endpoint: $AMP_ENDPOINT"
+
+        # Get AMG workspace URL
+        AMG_WORKSPACE_ID=$(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability'].id" --output text 2>/dev/null)
+        if [ -z "$AMG_WORKSPACE_ID" ]; then
+          echo "WARN: AMG workspace not found yet. Skipping observability seed."
+          exit 0
+        fi
+        AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.endpoint" --output text)
+        echo "Found AMG endpoint: $AMG_ENDPOINT"
+
+        # Create AMG API key (admin, 30 days)
+        AMG_API_KEY=$(aws grafana create-workspace-api-key --workspace-id "$AMG_WORKSPACE_ID" --key-name "crossplane-$(date +%s)" --key-role ADMIN --seconds-to-live 2592000 --region {{.AWS_REGION}} --query "key" --output text 2>/dev/null || echo "")
+        if [ -z "$AMG_API_KEY" ]; then
+          echo "WARN: Could not create AMG API key. Skipping."
+          exit 0
+        fi
+
+        # Merge into existing secret (preserves other keys)
+        EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text 2>/dev/null || echo "{}")
+        UPDATED=$(echo "$EXISTING" | jq \
+          --arg amp_url "${AMP_ENDPOINT}api/v1/remote_write" \
+          --arg amp_query_url "$AMP_ENDPOINT" \
+          --arg amp_region "{{.AWS_REGION}}" \
+          --arg grafana_api_key "$AMG_API_KEY" \
+          --arg grafana_url "$AMG_ENDPOINT" \
+          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url}')
+        aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" \
+          --secret-string "$UPDATED" \
+          --region {{.AWS_REGION}}
+        echo "Seeded observability credentials into $SECRET_KEY"
+
+        # Update hub cluster config secret with AMG URL for Keycloak SAML and grafana-dashboards
+        CONFIG_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$CONFIG_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text)
+        CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq \
+          --arg grafana_url "$AMG_ENDPOINT" \
+          '.metadata = (.metadata | fromjson | . + {aws_grafana_url: $grafana_url} | tojson)')
+        aws secretsmanager put-secret-value \
+          --secret-id "$CONFIG_KEY" \
+          --secret-string "$CONFIG_UPDATED" \
+          --region {{.AWS_REGION}}
+        echo "Updated hub config with AMG URL: $AMG_ENDPOINT"
+
+        # Populate spoke scraper values if clusters exist
+        SPOKE_CONFIG="{{.GITOPS_ROOT}}/addons/configs/observability-aws/values.yaml"
+        SPOKE_UPDATED=false
+        for CLUSTER in spoke-dev spoke-prod; do
+          SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
+          if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
+            SPOKE_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' ',')
+            SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
+            yq -i ".spokeScrapers.\"$CLUSTER\".clusterArn = \"$SPOKE_ARN\"" "$SPOKE_CONFIG"
+            yq -i ".spokeScrapers.\"$CLUSTER\".subnetIds = \"$SPOKE_SUBNETS\"" "$SPOKE_CONFIG"
+            yq -i ".spokeScrapers.\"$CLUSTER\".securityGroupIds = \"$SPOKE_SG\"" "$SPOKE_CONFIG"
+            echo "Configured scraper for $CLUSTER: $SPOKE_ARN"
+            SPOKE_UPDATED=true
+          else
+            echo "WARN: Cluster $CLUSTER not found in {{.AWS_REGION}}. Scraper skipped."
+          fi
+        done
+        if [ "$SPOKE_UPDATED" = "true" ]; then
+          echo "Spoke scraper values written to $SPOKE_CONFIG"
+          echo "Commit and push to activate spoke scrapers via ArgoCD."
+        fi
+
+        # Update Keycloak SAML client with AMG URL
+        printf '{{.C_STEP}}▸ Updating Keycloak SAML client with AMG URL...{{.C_RESET}}\n'
+        KC_PASS=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password')
+        KC_TOKEN=$(curl -s -X POST "https://{{.DOMAIN}}/keycloak/realms/master/protocol/openid-connect/token" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "grant_type=password&client_id=admin-cli&username=admin&password=$KC_PASS" | jq -r '.access_token')
+        if [ -n "$KC_TOKEN" ] && [ "$KC_TOKEN" != "null" ]; then
+          KC_CLIENT_ID=$(curl -s "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients" \
+            -H "Authorization: Bearer $KC_TOKEN" | jq -r '.[] | select(.name=="amazon-managed-grafana" and .protocol=="saml") | .id')
+          if [ -n "$KC_CLIENT_ID" ]; then
+            KC_CLIENT=$(curl -s "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
+              -H "Authorization: Bearer $KC_TOKEN")
+            KC_UPDATED=$(echo "$KC_CLIENT" | jq \
+              --arg url "$AMG_ENDPOINT" \
+              '.clientId = "https://\($url)/saml/metadata" | .adminUrl = "https://\($url)/login/saml" | .redirectUris = ["https://\($url)/saml/acs"]')
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
+              -H "Authorization: Bearer $KC_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$KC_UPDATED")
+            if [ "$HTTP_CODE" = "204" ]; then
+              echo "Keycloak SAML client updated for AMG: $AMG_ENDPOINT"
+            else
+              echo "WARN: Keycloak SAML client update returned HTTP $HTTP_CODE"
+            fi
+          else
+            echo "WARN: Keycloak SAML client 'amazon-managed-grafana' not found"
+          fi
+        else
+          echo "WARN: Could not get Keycloak admin token. SAML client not updated."
+        fi
 
   argocd:capability:
     desc: Create EKS ArgoCD Capability (skips if done)

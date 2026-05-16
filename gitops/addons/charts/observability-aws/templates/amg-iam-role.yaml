@@ -1,0 +1,64 @@
+{{- if .Values.amg.enabled }}
+{{- if not .Values.amg.roleArn }}
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: {{ .Values.resourcePrefix }}-amg-workspace-role
+  annotations:
+    crossplane.io/external-name: {{ .Values.resourcePrefix }}-AMGWorkspaceRole
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [{
+          "Effect": "Allow",
+          "Principal": {"Service": "grafana.amazonaws.com"},
+          "Action": "sts:AssumeRole",
+          "Condition": {
+            "StringEquals": {
+              "aws:SourceAccount": "{{ .Values.aws.accountId }}"
+            }
+          }
+        }]
+      }
+    tags:
+      managed-by: crossplane
+      purpose: amg-workspace
+  providerConfigRef:
+    name: default
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: {{ .Values.resourcePrefix }}-amg-prometheus-access
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  forProvider:
+    policyArn: "arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess"
+    roleRef:
+      name: {{ .Values.resourcePrefix }}-amg-workspace-role
+  providerConfigRef:
+    name: default
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: {{ .Values.resourcePrefix }}-amg-cloudwatch-access
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  forProvider:
+    policyArn: "arn:aws:iam::aws:policy/service-role/AmazonGrafanaCloudWatchAccess"
+    roleRef:
+      name: {{ .Values.resourcePrefix }}-amg-workspace-role
+  providerConfigRef:
+    name: default
+{{- end }}
+{{- end }}
