@@ -123,7 +123,7 @@ external-secrets:
         maxDuration: 10m
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true
+      - Replace=true
   selector:
     matchExpressions:
       - key: enable_external_secrets
