@@ -45,6 +45,13 @@ observability-aws:
         - /metadata/generation
         - /metadata/managedFields
         - /spec/forProvider/tags
+        # Crossplane resolves source.eks[].clusterArnRef and
+        # destination.amp[].workspaceArnRef into concrete ARNs in
+        # spec.forProvider.{source,destination}, but the chart only
+        # renders the *Ref selectors — perpetual drift on the
+        # resolved values.
+        - /spec/forProvider/destination
+        - /spec/forProvider/source
     - group: grafana.aws.upbound.io
       kind: Workspace
       jsonPointers:
