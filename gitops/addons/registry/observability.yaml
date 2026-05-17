@@ -23,9 +23,9 @@ observability-aws:
     amg:
       subnetIds: ''
     scraper:
-      clusterArn: '{{.metadata.annotations.aws_cluster_arn}}'
-      clusterSubnetIds: '{{.metadata.annotations.aws_private_subnet_ids}}'
-      clusterSecurityGroupIds: '{{.metadata.annotations.aws_cluster_security_group_id}}'
+      clusterArn: '{{index .metadata.annotations "aws_cluster_arn"}}'
+      clusterSubnetIds: '{{index .metadata.annotations "aws_private_subnet_ids"}}'
+      clusterSecurityGroupIds: '{{index .metadata.annotations "aws_cluster_security_group_id"}}'
   ignoreDifferences:
     - group: amp.aws.upbound.io
       kind: Workspace
@@ -134,7 +134,7 @@ grafana-dashboards:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     namespace: grafana-operator
-    grafana_url: '{{.metadata.annotations.aws_grafana_url | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
+    grafana_url: '{{index .metadata.annotations "aws_grafana_url" | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
     # Devlake is what publishes the {prefix}-devlake/mysql-connection
     # Secrets Manager secret. The grafana-mysql-creds ExternalSecret only
     # reads it when devlake is enabled — otherwise that ExternalSecret
