@@ -573,7 +573,10 @@ tasks:
           exit 0
         fi
 
-        # Merge into existing secret (preserves other keys)
+        # Merge into existing secret (preserves other keys). On first run
+        # the secret doesn't exist yet — `get-secret-value` returns empty,
+        # we start from `{}`, and `put-secret-value` would fail with
+        # ResourceNotFoundException, so create-then-put.
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text 2>/dev/null || echo "{}")
         UPDATED=$(echo "$EXISTING" | jq \
           --arg amp_url "${AMP_ENDPOINT}api/v1/remote_write" \
@@ -582,7 +585,18 @@ tasks:
           --arg grafana_api_key "$AMG_API_KEY" \
           --arg grafana_url "$AMG_ENDPOINT" \
           '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url}')
-        aws secretsmanager put-secret-value \
+        # Generate the grafana_mysql_password the grafana-dashboards
+        # ExternalSecret expects, but only if it isn't already there
+        # (so re-runs don't rotate it out from under live consumers).
+        if ! echo "$UPDATED" | jq -e 'has("grafana_mysql_password")' >/dev/null; then
+          GRAFANA_MYSQL_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+          UPDATED=$(echo "$UPDATED" | jq --arg p "$GRAFANA_MYSQL_PASSWORD" '. + {grafana_mysql_password: $p}')
+        fi
+        aws secretsmanager create-secret \
+          --name "$SECRET_KEY" \
+          --secret-string "$UPDATED" \
+          --region {{.AWS_REGION}} 2>/dev/null \
+        || aws secretsmanager put-secret-value \
           --secret-id "$SECRET_KEY" \
           --secret-string "$UPDATED" \
           --region {{.AWS_REGION}}

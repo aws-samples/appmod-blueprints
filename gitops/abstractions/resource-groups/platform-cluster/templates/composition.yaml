@@ -705,6 +705,48 @@ spec:
                 fromFieldPath: spec.argoCDRoleArn
                 toFieldPath: spec.forProvider.principalArn
 
+          # ArgoCD-specific access policies the EKS Capability needs to drive
+          # remote-cluster sync (AmazonEKSClusterAdminPolicy alone is not
+          # sufficient — the hub-side ArgoCD Capability fails with
+          # "failed to verify the access entry" without these two).
+          - name: argocd-cluster-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDClusterPolicy
+                  accessScope:
+                    type: cluster
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
+          - name: argocd-namespace-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDPolicy
+                  accessScope:
+                    type: namespace
+                    namespaces:
+                      - argocd
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
           # EKS Cluster with Auto Mode enabled
           - name: eks-cluster
             base:
