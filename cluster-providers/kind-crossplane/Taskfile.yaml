@@ -556,19 +556,45 @@ tasks:
         set -e
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/secrets"
 
-        # Get AMP workspace endpoint
-        AMP_WORKSPACE_ID=$(aws amp list-workspaces --region {{.AWS_REGION}} --query "workspaces[?alias=='{{.RESOURCE_PREFIX}}-observability-amp'].workspaceId" --output text 2>/dev/null)
-        if [ -z "$AMP_WORKSPACE_ID" ]; then
-          echo "WARN: AMP workspace not found yet. Skipping observability seed."
+        # Poll for AMP workspace (up to 30 min — Crossplane provisioning can take time)
+        AMP_WORKSPACE_ID=""
+        printf '{{.C_STEP}}▸ Waiting for AMP workspace...{{.C_RESET}}\n'
+        for i in $(seq 1 60); do
+          AMP_WORKSPACE_ID=$(aws amp list-workspaces --region {{.AWS_REGION}} --query "workspaces[?alias=='{{.RESOURCE_PREFIX}}-observability-amp'].workspaceId" --output text 2>/dev/null)
+          if [ -n "$AMP_WORKSPACE_ID" ] && [ "$AMP_WORKSPACE_ID" != "None" ]; then
+            break
+          fi
+          printf '  [%d/60] AMP workspace not ready yet...\n' "$i"
+          sleep 30
+        done
+        if [ -z "$AMP_WORKSPACE_ID" ] || [ "$AMP_WORKSPACE_ID" = "None" ]; then
+          echo ""
+          echo "============================================================"
+          echo "WARN: AMP workspace not created after 30 min."
+          echo "  Run 'task observability-seed' once the observability-aws"
+          echo "  ArgoCD app is Synced and AMP/AMG workspaces are ACTIVE."
+          echo "============================================================"
           exit 0
         fi
         AMP_ENDPOINT=$(aws amp describe-workspace --workspace-id "$AMP_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.prometheusEndpoint" --output text)
         echo "Found AMP endpoint: $AMP_ENDPOINT"
 
-        # Get AMG workspace URL
-        AMG_WORKSPACE_ID=$(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability'].id" --output text 2>/dev/null)
-        if [ -z "$AMG_WORKSPACE_ID" ]; then
-          echo "WARN: AMG workspace not found yet. Skipping observability seed."
+        # Poll for AMG workspace (up to 15 min)
+        AMG_WORKSPACE_ID=""
+        printf '{{.C_STEP}}▸ Waiting for AMG workspace...{{.C_RESET}}\n'
+        for i in $(seq 1 30); do
+          AMG_WORKSPACE_ID=$(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability'].id" --output text 2>/dev/null)
+          if [ -n "$AMG_WORKSPACE_ID" ] && [ "$AMG_WORKSPACE_ID" != "None" ]; then
+            AMG_STATUS=$(aws grafana describe-workspace --workspace-id "$AMG_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.status" --output text 2>/dev/null)
+            if [ "$AMG_STATUS" = "ACTIVE" ]; then
+              break
+            fi
+          fi
+          printf '  [%d/30] AMG workspace not ready yet...\n' "$i"
+          sleep 30
+        done
+        if [ -z "$AMG_WORKSPACE_ID" ] || [ "$AMG_WORKSPACE_ID" = "None" ]; then
+          echo "WARN: AMG workspace not found. Run 'task observability-seed' later."
           exit 0
         fi
         AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.endpoint" --output text)
