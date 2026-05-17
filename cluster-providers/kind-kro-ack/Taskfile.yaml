@@ -5,13 +5,12 @@ silent: true
 env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
   AWS_PAGER: ""
-  AWS_PROFILE: "{{.AWS_PROFILE}}"
 
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}/../../gitops"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   AWS_PROFILE:
-    sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
+    sh: yq '.aws.profile // ""' {{.CONFIG_FILE}}
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
   HUB_K8S_VERSION:
@@ -141,8 +140,12 @@ tasks:
           SAK=$(echo "$CREDS" | jq -r .SecretAccessKey)
           ST=$(echo  "$CREDS" | jq -r .Token)
         else
-          AWS_PROFILE_NAME=$(yq '.aws.profile // "default"' {{.CONFIG_FILE}})
-          EXPORTED=$(aws configure export-credentials --profile "$AWS_PROFILE_NAME" --format env-no-export)
+          AWS_PROFILE_NAME=$(yq '.aws.profile // ""' {{.CONFIG_FILE}})
+          if [ -n "$AWS_PROFILE_NAME" ]; then
+            EXPORTED=$(aws configure export-credentials --profile "$AWS_PROFILE_NAME" --format env-no-export)
+          else
+            EXPORTED=$(aws configure export-credentials --format env-no-export)
+          fi
           AKI=$(echo "$EXPORTED" | sed -n 's/^AWS_ACCESS_KEY_ID=//p')
           SAK=$(echo "$EXPORTED" | sed -n 's/^AWS_SECRET_ACCESS_KEY=//p')
           ST=$(echo  "$EXPORTED" | sed -n 's/^AWS_SESSION_TOKEN=//p')
