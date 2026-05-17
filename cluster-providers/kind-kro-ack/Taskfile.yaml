@@ -548,9 +548,21 @@ tasks:
             --description "HTTP/HTTPS for hub ingress (mode=$MODE)" --vpc-id "$VPC_ID" --region {{.AWS_REGION}} \
             --query 'GroupId' --output text)
           if [ "$MODE" = "cloudfront" ]; then
-            # ALB internal — limit to VPC CIDR (CloudFront VPC Origin reaches it via the ENIs)
+            # ALB internal — limit to VPC CIDR (covers in-cluster traffic)
             aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 \
               --cidr "$VPC_CIDR" --region {{.AWS_REGION}} 2>/dev/null || true
+            # CloudFront VPC Origin ENIs use a dedicated AWS-managed SG —
+            # CIDR alone is not sufficient because CF routes via service SG.
+            CF_SG=$(aws ec2 describe-security-groups --region {{.AWS_REGION}} \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=CloudFront-VPCOrigins-Service-SG" \
+              --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            if [ -n "$CF_SG" ] && [ "$CF_SG" != "None" ]; then
+              aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 \
+                --source-group "$CF_SG" --region {{.AWS_REGION}} 2>/dev/null || true
+              printf '{{.C_OK}}✓ Authorized CloudFront-VPCOrigins-Service-SG → ALB:80{{.C_RESET}}\n'
+            else
+              printf '{{.C_WARN}}⚠ CloudFront-VPCOrigins-Service-SG not found — ALB may 504. Re-run after first VPC Origin creation.{{.C_RESET}}\n'
+            fi
           else
             # ALB internet-facing — open 80 (redirect) and 443
             aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 \
