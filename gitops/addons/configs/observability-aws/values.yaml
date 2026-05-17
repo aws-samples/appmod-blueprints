@@ -6,9 +6,9 @@
 spokeScrapers:
   spoke-dev:
     clusterArn: "arn:aws:eks:us-east-1:257077212816:cluster/spoke-dev"
-    subnetIds: "subnet-0e7876110a42e3f9b,subnet-0e139383f039588c3,subnet-08aa4ad66845a3ba0,subnet-0da7ecdb8a5f91445"
+    subnetIds: "subnet-0da7ecdb8a5f91445,subnet-0e7876110a42e3f9b"
     securityGroupIds: "sg-098e19d90fc6af3c9"
   spoke-prod:
     clusterArn: "arn:aws:eks:us-east-1:257077212816:cluster/spoke-prod"
-    subnetIds: "subnet-0e656b1fe2950ab03,subnet-054a9e6a2d7e83079,subnet-046df3c22704d7b24,subnet-001ca67b534195099"
+    subnetIds: "subnet-001ca67b534195099,subnet-046df3c22704d7b24"
     securityGroupIds: "sg-074db181ef46d91a6"

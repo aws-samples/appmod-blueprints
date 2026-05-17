@@ -655,9 +655,9 @@ tasks:
           SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
           if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
             SPOKE_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' '\n')
-            SPOKE_PRIVATE_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $SPOKE_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`] | [?AvailabilityZone!=`null`].SubnetId' --output text | awk '!seen[$0]++' | head -2 | tr '\n' ',' | sed 's/,$//')
+            SPOKE_PRIVATE_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $SPOKE_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' '\n' | awk '!seen[$0]++' | head -2 | paste -sd ',' -)
             if [ -z "$SPOKE_PRIVATE_SUBNETS" ]; then
-              SPOKE_PRIVATE_SUBNETS=$(echo "$SPOKE_SUBNETS" | head -2 | tr '\n' ',' | sed 's/,$//')
+              SPOKE_PRIVATE_SUBNETS=$(echo "$SPOKE_SUBNETS" | head -2 | paste -sd ',' -)
             fi
             SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
             yq -i ".spokeScrapers.\"$CLUSTER\".clusterArn = \"$SPOKE_ARN\"" "$SPOKE_CONFIG"
