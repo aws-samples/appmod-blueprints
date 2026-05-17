@@ -34,16 +34,22 @@ spec:
           targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
           ref: values
         - repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
-          path: '{{ .metadata.annotations.fleetRepoBasepath }}abstractions/resource-groups/platform-cluster'
+          path: '{{ .metadata.annotations.fleetRepoBasepath }}abstractions/resource-groups/platform-cluster-kro'
           targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
           helm:
             releaseName: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
             ignoreMissingValueFiles: true
             valuesObject:
-              xrd:
-                enabled: false
               global:
-                argoCDRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
+                accountId: '{{ .metadata.annotations.aws_account_id }}'
+                region: '{{ .metadata.annotations.aws_region }}'
+                argoCDRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-argocd-role'
+                repoUrl: '{{ .metadata.annotations.addonsRepoURL }}'
+                repoRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+                repoBasePath: '{{ .metadata.annotations.addonsRepoBasepath }}'
+                domainName: '{{ .metadata.annotations.ingress_domain_name }}'
+                resourcePrefix: '{{ .metadata.annotations.resource_prefix }}'
+                adminRoleName: '{{ .metadata.annotations.admin_role_name }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/default/kro-clusters/values.yaml'
               - '$values/{{ .path.path }}/values.yaml'

@@ -1,0 +1,49 @@
+{{- range $name, $cluster := .Values.clusters }}
+---
+apiVersion: kro.run/v1alpha1
+kind: EksclusterWithVpc
+metadata:
+  name: {{ $cluster.clusterName }}
+  namespace: {{ $cluster.clusterName }}
+spec:
+  name: {{ $cluster.clusterName }}
+  tenant: {{ $cluster.tenant | default $.Values.global.tenant | default "workshop" }}
+  environment: {{ $cluster.environment | default "dev" }}
+  region: {{ $cluster.region | default $.Values.global.region | default "us-west-2" }}
+  k8sVersion: {{ $cluster.kubernetesVersion | default "1.32" | quote }}
+  accountId: {{ $cluster.accountId | default $.Values.global.accountId | quote }}
+  managementAccountId: {{ $cluster.managementAccountId | default $.Values.global.accountId | quote }}
+  argoCdHubRoleArn: {{ $cluster.argoCdHubRoleArn | default $.Values.global.argoCDRoleArn | default "" }}
+  adminRoleName: {{ $cluster.adminRoleName | default $.Values.global.adminRoleName | default "Admin" }}
+  fleetSecretManagerSecretNameSuffix: {{ $cluster.fleetSecretManagerSecretNameSuffix | default "argocd-secret" }}
+  domainName: {{ $cluster.domainName | default $.Values.global.domainName | default "example.com" }}
+  resourcePrefix: {{ $cluster.resourcePrefix | default $.Values.global.resourcePrefix | default "peeks" }}
+  cidr:
+    vpcCidr: {{ $cluster.vpcCidr | default "10.0.0.0/16" | quote }}
+    publicSubnet1Cidr: {{ $cluster.publicSubnet1Cidr | default "10.0.1.0/24" | quote }}
+    publicSubnet2Cidr: {{ $cluster.publicSubnet2Cidr | default "10.0.2.0/24" | quote }}
+    privateSubnet1Cidr: {{ $cluster.privateSubnet1Cidr | default "10.0.11.0/24" | quote }}
+    privateSubnet2Cidr: {{ $cluster.privateSubnet2Cidr | default "10.0.12.0/24" | quote }}
+  gitops:
+    addonsRepoUrl: {{ $cluster.addonsRepoUrl | default $.Values.global.repoUrl }}
+    addonsRepoRevision: {{ $cluster.addonsRepoRevision | default $.Values.global.repoRevision }}
+    addonsRepoBasePath: {{ $cluster.addonsRepoBasePath | default $.Values.global.repoBasePath | default "gitops/addons/" }}
+    addonsRepoPath: bootstrap
+    fleetRepoUrl: {{ $cluster.fleetRepoUrl | default $.Values.global.repoUrl }}
+    fleetRepoRevision: {{ $cluster.fleetRepoRevision | default $.Values.global.repoRevision }}
+    fleetRepoBasePath: {{ $cluster.fleetRepoBasePath | default $.Values.global.repoBasePath | default "gitops/fleet/" }}
+    fleetRepoPath: bootstrap
+    platformRepoUrl: {{ $cluster.platformRepoUrl | default $.Values.global.repoUrl }}
+    platformRepoRevision: {{ $cluster.platformRepoRevision | default $.Values.global.repoRevision }}
+    platformRepoBasePath: {{ $cluster.platformRepoBasePath | default $.Values.global.repoBasePath | default "gitops/platform/" }}
+    platformRepoPath: bootstrap
+    workloadRepoUrl: {{ $cluster.workloadRepoUrl | default $.Values.global.repoUrl }}
+    workloadRepoRevision: {{ $cluster.workloadRepoRevision | default $.Values.global.repoRevision }}
+    workloadRepoBasePath: {{ $cluster.workloadRepoBasePath | default $.Values.global.repoBasePath | default "gitops/apps/" }}
+    workloadRepoPath: ""
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $cluster.clusterName }}
+{{- end }}
