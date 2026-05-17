@@ -27,8 +27,9 @@ spec:
                 description: Name of the S3 bucket
               region:
                 type: string
-                description: AWS region for the bucket
-                default: "us-east-1"
+                description: AWS region for the bucket. Required — callers must
+                  pass an explicit region (typically the cluster's region from
+                  the vpc-config EnvironmentConfig).
               versioning:
                 type: boolean
                 description: Enable versioning on the bucket
@@ -67,8 +68,9 @@ spec:
             apiVersion: s3.aws.upbound.io/v1beta1
             kind: Bucket
             spec:
-              forProvider:
-                region: us-east-1
+              # forProvider.region is patched from spec.region below.
+              # No hardcoded default — every caller must specify the region.
+              forProvider: {}
               providerConfigRef:
                 name: provider-aws-config
           patches:

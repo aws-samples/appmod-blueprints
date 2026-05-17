@@ -1,15 +1,19 @@
 # Workshop tenant cluster provisioning values.
+#
+# region: defaults to hub region (clusters.yaml ApplicationSet injects
+# global.defaultRegion from the hub cluster secret's aws_region annotation).
+# Uncomment + set per-cluster only if a spoke must run in a different region.
 
 clusters:
   spoke-dev:
-    region: us-east-1
+    # region: us-east-1
     clusterName: spoke-dev
     vpcCidr: "10.1.0.0/16"
     kubernetesVersion: "1.35"
     autoMode: true
     resourcePrefix: peeks
   spoke-prod:
-    region: us-east-1
+    # region: us-east-1
     clusterName: spoke-prod
     vpcCidr: "10.2.0.0/16"
     kubernetesVersion: "1.35"
