@@ -26,7 +26,6 @@ metadata:
   namespace: {{ default "argocd" $namespace }}
   annotations:
     {{- include "application-sets.annotations" $ | nindent 4 }}
-    {{- if $chartConfig.annotationsAppSet }}{{- toYaml $chartConfig.annotationsAppSet | nindent 4 }}{{- end }}
   labels:
     {{- include "application-sets.labels" $ | nindent 4 }}
     {{- if $chartConfig.labelsAppSet }}{{- toYaml $chartConfig.labelsAppSet | nindent 4 }}{{- end }}
@@ -120,9 +119,10 @@ spec:
         environment: '{{`{{.metadata.labels.environment}}`}}'
         clusterName: '{{`{{.name}}`}}'
         kubernetesVersion: '{{`{{default "v1.32.0" (index .metadata.labels "kubernetesVersion")}}`}}'
-      {{- if $chartConfig.annotationsApp }}
+      {{- if or $chartConfig.annotationsApp $chartConfig.annotationsAppSet }}
       annotations:
-        {{- toYaml $chartConfig.annotationsApp | nindent 8 }}
+        {{- if $chartConfig.annotationsAppSet }}{{- toYaml $chartConfig.annotationsAppSet | nindent 8 }}{{- end }}
+        {{- if $chartConfig.annotationsApp }}{{- toYaml $chartConfig.annotationsApp | nindent 8 }}{{- end }}
       {{- end }}
     spec:
       project: {{ default "default" $chartConfig.project }}
