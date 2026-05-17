@@ -18,7 +18,7 @@ scrape_configs:
           - __name__
       - action: drop
         regex: apiserver_request_duration_seconds_bucket;(0.15|0.2|0.3|0.35|0.4|0.45|0.6|0.7|0.8|0.9|1.25|1.5|1.75|2|3|3.5|4|4.5|6|7|8|9|15|25|40|50)
-        replacement: $${1}
+        replacement: ${1}
         separator: ;
         source_labels:
           - __name__
@@ -73,7 +73,7 @@ scrape_configs:
     - replacement: kubernetes.default.svc:443
       target_label: __address__
     - regex: (.+)
-      replacement: /api/v1/nodes/$${1}/proxy/metrics/cadvisor
+      replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
       source_labels:
       - __meta_kubernetes_node_name
       target_label: __metrics_path__
@@ -137,7 +137,7 @@ scrape_configs:
           - __meta_kubernetes_pod_name
       - action: replace
         regex: "(.+?)(\\\\:\\\\d+)?"
-        replacement: $${1}:10249
+        replacement: ${1}:10249
         source_labels:
           - __address__
         target_label: __address__
