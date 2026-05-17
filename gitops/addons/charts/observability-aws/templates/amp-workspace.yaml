@@ -1,5 +1,5 @@
 {{- if .Values.amp.enabled }}
-apiVersion: amp.aws.upbound.io/v1beta1
+apiVersion: amp.aws.upbound.io/v1beta2
 kind: Workspace
 metadata:
   name: {{ .Values.resourcePrefix }}-amp
