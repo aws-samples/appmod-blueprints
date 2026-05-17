@@ -68,7 +68,7 @@ kyverno:
         maxDuration: 10m
     syncOptions:
       - CreateNamespace=true
-      - Replace=true
+      - ServerSideApply=true
   selector:
     matchExpressions:
       - key: enable_kyverno
