@@ -559,9 +559,23 @@ tasks:
               --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
           fi
         fi
-        aws elbv2 create-load-balancer --name "{{.ALB_NAME}}" --type application \
+        ALB_ARN=$(aws elbv2 create-load-balancer --name "{{.ALB_NAME}}" --type application \
           --scheme "$SCHEME" --subnets $SUBNETS --security-groups "$SG" \
-          --region {{.AWS_REGION}} --output text --query 'LoadBalancers[0].DNSName'
+          --region {{.AWS_REGION}} --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        # Default listener (404) — AWS LBC adds rules later when K8s Ingresses appear
+        if [ "$MODE" = "cloudfront" ]; then
+          aws elbv2 create-listener --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
+            --default-actions 'Type=fixed-response,FixedResponseConfig={StatusCode=404,ContentType=text/plain,MessageBody=NotFound}' \
+            --region {{.AWS_REGION}} >/dev/null
+        else
+          aws elbv2 create-listener --load-balancer-arn "$ALB_ARN" --protocol HTTPS --port 443 \
+            --certificates "CertificateArn={{.INGRESS_CERT_ARN}}" \
+            --default-actions 'Type=fixed-response,FixedResponseConfig={StatusCode=404,ContentType=text/plain,MessageBody=NotFound}' \
+            --region {{.AWS_REGION}} >/dev/null
+          aws elbv2 create-listener --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
+            --default-actions 'Type=redirect,RedirectConfig={Protocol=HTTPS,Port=443,StatusCode=HTTP_301}' \
+            --region {{.AWS_REGION}} >/dev/null
+        fi
         printf '{{.C_OK}}✓ ALB created: {{.ALB_NAME}} (scheme=%s, mode=%s){{.C_RESET}}\n' "$SCHEME" "$MODE"
 
   hub:cloudfront:
