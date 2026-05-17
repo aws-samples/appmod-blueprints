@@ -140,7 +140,7 @@ grafana-dashboards:
     # reads it when devlake is enabled — otherwise that ExternalSecret
     # would block grafana-dashboards-hub on a non-existent source secret.
     devlake:
-      enabled: '{{.metadata.labels.enable_devlake | default "false"}}'
+      enabled: '{{index .metadata.labels "enable_devlake" | default "false"}}'
 
 kube-state-metrics:
   namespace: kube-prometheus-stack
