@@ -318,6 +318,15 @@ scrape_configs:
         regex: true
         source_labels:
           - __meta_kubernetes_service_annotation_prometheus_io_scrape
+      # Exclude services that have dedicated scrape jobs
+      - action: drop
+        regex: prometheus-node-exporter
+        source_labels:
+          - __meta_kubernetes_service_label_app_kubernetes_io_name
+      - action: drop
+        regex: kube-state-metrics
+        source_labels:
+          - __meta_kubernetes_service_label_app_kubernetes_io_name
       - action: replace
         regex: (https?)
         source_labels:
