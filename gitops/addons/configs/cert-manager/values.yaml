@@ -30,14 +30,16 @@ podDisruptionBudget:
   maxUnavailable: 1
 
 # CA Injector HA
+# memory: 256Mi — 128Mi triggers OOMKilled (exit 137) on cluster bootstrap
+# when cainjector caches all CABundle injectables across CRDs
 cainjector:
   replicaCount: 2
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
-      memory: 128Mi
+      memory: 256Mi
   nodeSelector:
     karpenter.sh/nodepool: system
   tolerations:
