@@ -500,12 +500,20 @@ tasks:
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        # Build VPC JSON for the aws-resources chart ExternalSecret
+        PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | jq -R . | jq -s .)
+        VPC_JSON=$(jq -n \
+          --arg id "{{.VPC_ID}}" \
+          --argjson subnet_ids "$PRIVATE_SUBNETS_JSON" \
+          --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
+          '{id: $id, subnet_ids: $subnet_ids, cluster_security_group_id: $cluster_security_group_id}' | jq -c .)
         SECRET_VALUE=$(jq -n \
           --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
-          '{metadata: $metadata, config: $config, server: $server, addons: $addons}')
+          --arg vpc "$VPC_JSON" \
+          '{metadata: $metadata, config: $config, server: $server, addons: $addons, vpc: $vpc}')
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" \
           --secret-string "$SECRET_VALUE" \

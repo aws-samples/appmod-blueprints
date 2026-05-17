@@ -60,7 +60,7 @@ enabledAddons:
   spark_operator: false
   airflow: false
   # AWS Resources (Crossplane-managed VPC secrets etc.)
-  aws_resources: false
+  aws_resources: true
   # Observability AWS (AMP + AMG via Crossplane)
   observability_aws: true
   # Agent Platform (deploys from sample-agent-platform-on-eks repo)
