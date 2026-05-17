@@ -110,6 +110,20 @@ external-secrets:
   defaultVersion: '0.19.2'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1'
+  syncPolicy:
+    automated:
+      selfHeal: false
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
   selector:
     matchExpressions:
       - key: enable_external_secrets
