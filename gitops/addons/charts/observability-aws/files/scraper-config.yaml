@@ -191,23 +191,20 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_endpoint_address_target_kind, __meta_kubernetes_endpoint_address_target_name]
         separator: ;
         regex: Node;(.*)
-        replacement: $1
-        target_label: node
+        replacement: ${1}
+        target_label: nodename
       - source_labels: [__meta_kubernetes_endpoint_address_target_kind, __meta_kubernetes_endpoint_address_target_name]
         separator: ;
-        regex: Pod;(.*)
-        replacement: $1
-        target_label: pod
+        regex: Node;(.*)
+        replacement: ${1}
+        target_label: node
       - source_labels: [__meta_kubernetes_namespace]
         target_label: namespace
       - source_labels: [__meta_kubernetes_service_name]
         target_label: service
-      - source_labels: [__meta_kubernetes_pod_name]
-        target_label: pod_name
-      - source_labels: [__meta_kubernetes_pod_container_name]
-        target_label: container
-      - action: labelmap
-        regex: __meta_kubernetes_pod_label_(.+)
+    metric_relabel_configs:
+      - action: labeldrop
+        regex: pod|pod_name|container|controller_revision_hash|pod_template_generation|app_kubernetes_io_.*|helm_sh_chart|release|topology_kubernetes_io_.*|account_id|region
 
   # ADOT Collector metrics
   - job_name: adot-collector
