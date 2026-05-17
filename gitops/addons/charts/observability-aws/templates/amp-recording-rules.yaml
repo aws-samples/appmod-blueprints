@@ -1,0 +1,33 @@
+{{- if .Values.amp.enabled }}
+apiVersion: amp.aws.upbound.io/v1beta1
+kind: RuleGroupNamespace
+metadata:
+  name: {{ .Values.resourcePrefix }}-recording-rules
+  annotations:
+    crossplane.io/external-name: accelerator-v2-recording-rules
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    workspaceIdRef:
+      name: {{ .Values.resourcePrefix }}-amp
+    data: |
+      groups:
+        - name: accelerator-v2-recording-rules
+          rules:
+            - record: node:node_cpu_utilisation:avg1m
+              expr: avg by (node) (rate(node_cpu_seconds_total{mode!="idle"}[1m]))
+            - record: node:node_memory_utilisation:ratio
+              expr: 1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+            - record: node:node_net_bytes_transmitted:sum_rate
+              expr: sum by (node) (rate(node_network_transmit_bytes_total[1m]))
+            - record: node:node_net_bytes_received:sum_rate
+              expr: sum by (node) (rate(node_network_receive_bytes_total[1m]))
+            - record: namespace:container_cpu_usage_seconds_total:sum_rate
+              expr: sum by (namespace) (rate(container_cpu_usage_seconds_total{container!=""}[5m]))
+            - record: namespace:container_memory_working_set_bytes:sum
+              expr: sum by (namespace) (container_memory_working_set_bytes{container!=""})
+  providerConfigRef:
+    name: default
+{{- end }}
