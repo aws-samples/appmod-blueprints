@@ -568,22 +568,65 @@ tasks:
         printf '{{.C_OK}}✓ ALB created: {{.ALB_NAME}} (scheme=%s, mode=%s){{.C_RESET}}\n' "$SCHEME" "$MODE"
 
   hub:cloudfront:
-    desc: Create CloudFront distribution pointing to the ALB
+    desc: Create CloudFront distribution with VPC Origin (cloudfront mode only)
     # CachePolicyId 4135ea2d = AWS Managed "CachingDisabled"
     # OriginRequestPolicyId 216adef6 = AWS Managed "AllViewer" (forwards all headers/cookies/qs)
+    # Uses CloudFront VPC Origin (post-2024) to reach an internal ALB without public exposure.
     vars:
+      ALB_ARN:
+        sh: aws elbv2 describe-load-balancers --names "{{.RESOURCE_PREFIX}}-hub-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo ""
       ALB_DNS:
         sh: aws elbv2 describe-load-balancers --names "{{.RESOURCE_PREFIX}}-hub-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo ""
+      VPC_ORIGIN_NAME: "{{.RESOURCE_PREFIX}}-hub-vpc-origin"
     status:
+      # Skip entirely when not in cloudfront mode (idempotent no-op for tls)
+      - test "{{.INGRESS_MODE}}" != "cloudfront"
       - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.RESOURCE_PREFIX}}-hub-ingress'].Id" --output text | grep -q .
     cmds:
       - |
-        ALB_DNS="{{.ALB_DNS}}"
-        if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ]; then
-          echo "ERROR: ALB not found. Run hub:ingress first."
+        if [ "{{.INGRESS_MODE}}" != "cloudfront" ]; then
+          printf '{{.C_INFO}}⊘ Skipping hub:cloudfront (ingress.mode={{.INGRESS_MODE}}){{.C_RESET}}\n'
+          exit 0
+        fi
+        if [ -z "{{.ALB_ARN}}" ] || [ "{{.ALB_ARN}}" = "None" ]; then
+          echo "ERROR: ALB {{.RESOURCE_PREFIX}}-hub-ingress not found. Run hub:ingress first."
           exit 1
         fi
-        DIST_ID=$(aws cloudfront create-distribution \
+      - |
+        # 1. Create or reuse VPC Origin pointing at the internal ALB
+        VPC_ORIGIN_ID=$(aws cloudfront list-vpc-origins --region {{.AWS_REGION}} \
+          --query "Items[?Name=='{{.VPC_ORIGIN_NAME}}'].Id" --output text 2>/dev/null || echo "")
+        if [ -z "$VPC_ORIGIN_ID" ] || [ "$VPC_ORIGIN_ID" = "None" ]; then
+          VPC_ORIGIN_ID=$(aws cloudfront create-vpc-origin --region {{.AWS_REGION}} \
+            --vpc-origin-endpoint-config "{
+              \"Name\": \"{{.VPC_ORIGIN_NAME}}\",
+              \"Arn\": \"{{.ALB_ARN}}\",
+              \"HTTPPort\": 80,
+              \"HTTPSPort\": 443,
+              \"OriginProtocolPolicy\": \"http-only\",
+              \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
+            }" --query 'VpcOrigin.Id' --output text)
+          printf '{{.C_OK}}✓ VPC Origin created: %s{{.C_RESET}}\n' "$VPC_ORIGIN_ID"
+        else
+          printf '{{.C_INFO}}↻ Reusing VPC Origin: %s{{.C_RESET}}\n' "$VPC_ORIGIN_ID"
+        fi
+
+        # Wait for VPC Origin Deployed (~5-10 min)
+        printf '{{.C_STEP}}▸ Waiting for VPC Origin Deployed...{{.C_RESET}}\n'
+        for i in $(seq 1 60); do
+          STATE=$(aws cloudfront get-vpc-origin --id "$VPC_ORIGIN_ID" --region {{.AWS_REGION}} --query 'VpcOrigin.Status' --output text 2>/dev/null || echo "Pending")
+          printf '{{.C_INFO}}  [%s/60] VPC Origin status: %s{{.C_RESET}}\n' "$i" "$STATE"
+          [ "$STATE" = "Deployed" ] && break
+          sleep 15
+        done
+        if [ "$STATE" != "Deployed" ]; then
+          echo "ERROR: VPC Origin did not reach Deployed within 15 min"; exit 1
+        fi
+        echo "$VPC_ORIGIN_ID" > /tmp/hub-vpc-origin-id
+      - |
+        # 2. Create CloudFront distribution wired to the VPC Origin
+        VPC_ORIGIN_ID=$(cat /tmp/hub-vpc-origin-id)
+        DIST_OUT=$(aws cloudfront create-distribution \
           --distribution-config "{
             \"CallerReference\": \"{{.HUB_CLUSTER_NAME}}-$(date +%s)\",
             \"Comment\": \"{{.RESOURCE_PREFIX}}-hub-ingress\",
@@ -591,18 +634,17 @@ tasks:
             \"Origins\": {
               \"Quantity\": 1,
               \"Items\": [{
-                \"Id\": \"alb-origin\",
-                \"DomainName\": \"$ALB_DNS\",
-                \"CustomOriginConfig\": {
-                  \"HTTPPort\": 80,
-                  \"HTTPSPort\": 443,
-                  \"OriginProtocolPolicy\": \"http-only\",
-                  \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
+                \"Id\": \"alb-vpc-origin\",
+                \"DomainName\": \"{{.ALB_DNS}}\",
+                \"VpcOriginConfig\": {
+                  \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
+                  \"OriginReadTimeout\": 30,
+                  \"OriginKeepaliveTimeout\": 5
                 }
               }]
             },
             \"DefaultCacheBehavior\": {
-              \"TargetOriginId\": \"alb-origin\",
+              \"TargetOriginId\": \"alb-vpc-origin\",
               \"ViewerProtocolPolicy\": \"redirect-to-https\",
               \"AllowedMethods\": {\"Quantity\": 7, \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"], \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
               \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
@@ -612,10 +654,11 @@ tasks:
             \"PriceClass\": \"PriceClass_100\",
             \"HttpVersion\": \"http2\"
           }" --query 'Distribution.[Id,DomainName]' --output text)
-        CF_DOMAIN=$(echo "$DIST_ID" | awk '{print $2}')
+        CF_DOMAIN=$(echo "$DIST_OUT" | awk '{print $2}')
         printf '{{.C_OK}}✓ CloudFront created: %s{{.C_RESET}}\n' "$CF_DOMAIN"
         # Store domain in config for hub:seed to use
         yq -i ".cloudfront.domain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
+        rm -f /tmp/hub-vpc-origin-id
 
   hub:seed:
     desc: Seed hub cluster after EKS is ACTIVE
