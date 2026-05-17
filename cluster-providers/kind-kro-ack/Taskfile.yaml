@@ -650,7 +650,26 @@ tasks:
         fi
         echo "$VPC_ORIGIN_ID" > /tmp/hub-vpc-origin-id
       - |
-        # 2. Create CloudFront distribution wired to the VPC Origin
+        # 2. Reconcile ALB SG ingress from CloudFront-VPCOrigins-Service-SG.
+        # This SG is created by AWS only after the first VPC Origin lands in
+        # the VPC, so hub:ingress can't authorize it on first run. We close
+        # the loop here so a single hub:ingress + hub:cloudfront sequence is
+        # sufficient (no manual re-run of hub:ingress needed).
+        VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        ALB_SG=$(aws ec2 describe-security-groups --region {{.AWS_REGION}} \
+          --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values={{.RESOURCE_PREFIX}}-hub-ingress-http" \
+          --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+        CF_SG=$(aws ec2 describe-security-groups --region {{.AWS_REGION}} \
+          --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=CloudFront-VPCOrigins-Service-SG" \
+          --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+        if [ -n "$ALB_SG" ] && [ "$ALB_SG" != "None" ] && [ -n "$CF_SG" ] && [ "$CF_SG" != "None" ]; then
+          aws ec2 authorize-security-group-ingress --group-id "$ALB_SG" --protocol tcp --port 80 \
+            --source-group "$CF_SG" --region {{.AWS_REGION}} 2>/dev/null \
+            && printf '{{.C_OK}}✓ Authorized %s → %s:80 (post VPC Origin){{.C_RESET}}\n' "$CF_SG" "$ALB_SG" \
+            || printf '{{.C_INFO}}↻ ALB SG already allows CloudFront-VPCOrigins-Service-SG{{.C_RESET}}\n'
+        fi
+      - |
+        # 3. Create CloudFront distribution wired to the VPC Origin
         VPC_ORIGIN_ID=$(cat /tmp/hub-vpc-origin-id)
         DIST_OUT=$(aws cloudfront create-distribution \
           --distribution-config "{
