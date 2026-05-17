@@ -209,6 +209,7 @@ tasks:
         sh: yq '.crossplane-base.valuesObject.providers.kubernetes.version // "v1.2.1"' {{.GITOPS_ROOT}}/addons/registry/platform.yaml
     cmds:
       - kubectl apply -f manifests/crossplane/drc-stub.yaml
+      # Apply all providers except kubernetes ProviderConfig (CRD not ready yet)
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
           --set aws.region={{.AWS_REGION}}
@@ -226,9 +227,21 @@ tasks:
           --set providers.ec2.createIdentity=false
           --set providers.kubernetes.version={{.K8S_PROVIDER_VERSION}}
           --set providers.kubernetes.serviceAccount=provider-kubernetes
-          | kubectl apply -f -
+          | kubectl apply --server-side --force-conflicts -f - 2>&1 | grep -v "ProviderConfig" || true
       - kubectl wait --for=condition=Healthy --timeout=300s providers.pkg.crossplane.io --all
       - kubectl wait --for=condition=Healthy --timeout=300s functions.pkg.crossplane.io --all
+      # Now apply the kubernetes ProviderConfig (CRD is registered after provider is healthy)
+      - cmd: |
+          kubectl wait --for=condition=Established crd/providerconfigs.kubernetes.crossplane.io --timeout=60s 2>/dev/null || true
+          cat <<'EOF' | kubectl apply -f -
+          apiVersion: kubernetes.crossplane.io/v1alpha1
+          kind: ProviderConfig
+          metadata:
+            name: default
+          spec:
+            credentials:
+              source: InjectedIdentity
+          EOF
 
   crossplane:provider-config:
     status:
