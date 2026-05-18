@@ -1,5 +1,130 @@
 # Helm + kubectl resources applied to the hub cluster
-# ESO, ClusterSecretStore, seed cluster secret, root-appset
+# Crossplane, ESO, ClusterSecretStore, seed cluster secret, root-appset
+
+# --- Crossplane (must be running before ArgoCD syncs crossplane-base) ---
+resource "helm_release" "crossplane" {
+  name             = "crossplane"
+  repository       = "https://charts.crossplane.io/stable"
+  chart            = "crossplane"
+  version          = "2.2.1"
+  namespace        = "crossplane-system"
+  create_namespace = true
+  wait             = true
+  timeout          = 300
+
+  depends_on = [aws_eks_cluster.hub]
+}
+
+# --- Crossplane Providers + ProviderConfig ---
+# Install providers with correct service accounts so they pick up pod identity immediately
+resource "kubectl_manifest" "crossplane_provider_config" {
+  yaml_body = yamlencode({
+    apiVersion = "aws.upbound.io/v1beta1"
+    kind       = "ProviderConfig"
+    metadata = {
+      name = "default"
+    }
+    spec = {
+      credentials = {
+        source = "PodIdentity"
+      }
+    }
+  })
+
+  depends_on = [helm_release.crossplane]
+}
+
+resource "kubectl_manifest" "crossplane_drc" {
+  for_each = local.crossplane_providers
+
+  yaml_body = yamlencode({
+    apiVersion = "pkg.crossplane.io/v1beta1"
+    kind       = "DeploymentRuntimeConfig"
+    metadata = {
+      name = "${each.key}-drc"
+    }
+    spec = {
+      deploymentTemplate = {
+        spec = {
+          selector = {}
+          template = {
+            spec = {
+              serviceAccountName = each.value.service_account
+              containers = [{
+                name = "package-runtime"
+                resources = {
+                  requests = { cpu = "100m", memory = "256Mi" }
+                  limits   = { memory = "512Mi" }
+                }
+              }]
+            }
+          }
+        }
+      }
+    }
+  })
+
+  depends_on = [helm_release.crossplane]
+}
+
+resource "kubectl_manifest" "crossplane_sa" {
+  for_each = { for k, v in local.crossplane_providers : k => v if v.namespace == "crossplane-system" }
+
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "ServiceAccount"
+    metadata = {
+      name      = each.value.service_account
+      namespace = "crossplane-system"
+    }
+  })
+
+  depends_on = [helm_release.crossplane]
+}
+
+resource "kubectl_manifest" "crossplane_provider" {
+  for_each = {
+    iam            = { package = "xpkg.upbound.io/upbound/provider-aws-iam:v2.5.3" }
+    eks            = { package = "xpkg.upbound.io/upbound/provider-aws-eks:v2.5.3" }
+    ec2            = { package = "xpkg.upbound.io/upbound/provider-aws-ec2:v2.5.3" }
+    secretsmanager = { package = "xpkg.upbound.io/upbound/provider-aws-secretsmanager:v2.5.3" }
+  }
+
+  yaml_body = yamlencode({
+    apiVersion = "pkg.crossplane.io/v1"
+    kind       = "Provider"
+    metadata = {
+      name = "provider-aws-${each.key}"
+    }
+    spec = {
+      package = each.value.package
+      runtimeConfigRef = {
+        name = "${each.key}-drc"
+      }
+    }
+  })
+
+  depends_on = [
+    kubectl_manifest.crossplane_drc,
+    kubectl_manifest.crossplane_sa,
+  ]
+}
+
+# Also install the provider-family-aws (required dependency)
+resource "kubectl_manifest" "crossplane_provider_family" {
+  yaml_body = yamlencode({
+    apiVersion = "pkg.crossplane.io/v1"
+    kind       = "Provider"
+    metadata = {
+      name = "provider-family-aws"
+    }
+    spec = {
+      package = "xpkg.upbound.io/upbound/provider-family-aws:v2.5.3"
+    }
+  })
+
+  depends_on = [helm_release.crossplane]
+}
 
 # --- External Secrets Operator (chicken-and-egg: installed before ArgoCD can manage it) ---
 resource "helm_release" "external_secrets" {
@@ -18,8 +143,8 @@ resource "helm_release" "external_secrets" {
 
   depends_on = [
     aws_eks_cluster.hub,
-    aws_eks_pod_identity_association.eso,
     aws_eks_capability.argocd,
+    kubectl_manifest.crossplane_provider,
   ]
 }
 
