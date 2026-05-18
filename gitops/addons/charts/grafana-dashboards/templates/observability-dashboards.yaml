@@ -65,17 +65,10 @@ spec:
   url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/infrastructure/workloads.json"
 ---
 # Kubelet Dashboard
-apiVersion: grafana.integreatly.org/v1beta1
-kind: GrafanaDashboard
-metadata:
-  name: kubelet-grafanadashboard
-  namespace: grafana-operator
-spec:
-  folder: "Platform Observability"
-  instanceSelector:
-    matchLabels:
-      dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/aws-observability/aws-observability-accelerator/main/artifacts/grafana-dashboards/eks/infrastructure/kubelet.json"
+# NOTE: Removed — the upstream dashboard uses job="kubernetes-kubelet" which
+# conflicts with the standard job="kubelet" name required by the Cluster,
+# Node Exporter, Namespace Workloads, and Workloads dashboards. Kubelet
+# metrics are already visible in those dashboards.
 ---
 # Java/JMX Dashboard
 apiVersion: grafana.integreatly.org/v1beta1
