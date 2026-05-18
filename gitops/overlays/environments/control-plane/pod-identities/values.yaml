@@ -4,3 +4,9 @@
 identities:
   eso:
     enabled: false
+  lbc:
+    enabled: true
+  external-dns:
+    enabled: true
+  litellm:
+    enabled: true
