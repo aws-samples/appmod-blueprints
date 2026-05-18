@@ -651,7 +651,12 @@ tasks:
         # Populate spoke scraper values into hub Secrets Manager secret (dynamic, no file commits needed)
         CONFIG_KEY="{{.HUB_CLUSTER_NAME}}/config"
         CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$CONFIG_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text)
-        SPOKE_METADATA_UPDATES=""
+        SPOKE_DEV_ARN=""
+        SPOKE_DEV_SUBNETS=""
+        SPOKE_DEV_SG=""
+        SPOKE_PROD_ARN=""
+        SPOKE_PROD_SUBNETS=""
+        SPOKE_PROD_SG=""
         for CLUSTER in spoke-dev spoke-prod; do
           SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
           if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
@@ -661,16 +666,29 @@ tasks:
               SPOKE_PRIVATE_SUBNETS=$(echo "$SPOKE_ALL_SUBNETS" | tr '\t' '\n' | head -2 | paste -sd ',' -)
             fi
             SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
-            CLUSTER_KEY=$(echo "$CLUSTER" | tr '-' '_')
-            SPOKE_METADATA_UPDATES="$SPOKE_METADATA_UPDATES --arg ${CLUSTER_KEY}_cluster_arn \"$SPOKE_ARN\" --arg ${CLUSTER_KEY}_private_subnet_ids \"$SPOKE_PRIVATE_SUBNETS\" --arg ${CLUSTER_KEY}_security_group_id \"$SPOKE_SG\""
             echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
+            if [ "$CLUSTER" = "spoke-dev" ]; then
+              SPOKE_DEV_ARN="$SPOKE_ARN"
+              SPOKE_DEV_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
+              SPOKE_DEV_SG="$SPOKE_SG"
+            else
+              SPOKE_PROD_ARN="$SPOKE_ARN"
+              SPOKE_PROD_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
+              SPOKE_PROD_SG="$SPOKE_SG"
+            fi
           else
             echo "WARN: Cluster $CLUSTER not found in {{.AWS_REGION}}. Scraper skipped."
           fi
         done
-        if [ -n "$SPOKE_METADATA_UPDATES" ]; then
-          CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | eval jq "$SPOKE_METADATA_UPDATES" \
-            '.metadata = (.metadata | fromjson | . + {spoke_dev_cluster_arn: \$spoke_dev_cluster_arn, spoke_dev_private_subnet_ids: \$spoke_dev_private_subnet_ids, spoke_dev_security_group_id: \$spoke_dev_security_group_id, spoke_prod_cluster_arn: \$spoke_prod_cluster_arn, spoke_prod_private_subnet_ids: \$spoke_prod_private_subnet_ids, spoke_prod_security_group_id: \$spoke_prod_security_group_id} | tojson)')
+        if [ -n "$SPOKE_DEV_ARN" ] || [ -n "$SPOKE_PROD_ARN" ]; then
+          CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq \
+            --arg sda "$SPOKE_DEV_ARN" \
+            --arg sds "$SPOKE_DEV_SUBNETS" \
+            --arg sdsg "$SPOKE_DEV_SG" \
+            --arg spa "$SPOKE_PROD_ARN" \
+            --arg sps "$SPOKE_PROD_SUBNETS" \
+            --arg spsg "$SPOKE_PROD_SG" \
+            '.metadata = (.metadata | fromjson | . + {spoke_dev_cluster_arn: $sda, spoke_dev_private_subnet_ids: $sds, spoke_dev_security_group_id: $sdsg, spoke_prod_cluster_arn: $spa, spoke_prod_private_subnet_ids: $sps, spoke_prod_security_group_id: $spsg} | tojson)')
           aws secretsmanager put-secret-value \
             --secret-id "$CONFIG_KEY" \
             --secret-string "$CONFIG_UPDATED" \
