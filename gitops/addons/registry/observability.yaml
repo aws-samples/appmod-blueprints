@@ -42,11 +42,10 @@ observability-aws:
         - /status
         - /metadata/generation
         - /metadata/managedFields
-        # Crossplane provider injects bookkeeping tags (crossplane-kind,
-        # crossplane-name, crossplane-providerconfig) onto every managed
-        # resource. The chart can't know about them at render time, so
-        # they show up as drift on every reconcile.
         - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
     - group: amp.aws.upbound.io
       kind: Scraper
       jsonPointers:
@@ -54,13 +53,11 @@ observability-aws:
         - /metadata/generation
         - /metadata/managedFields
         - /spec/forProvider/tags
-        # Crossplane resolves source.eks[].clusterArnRef and
-        # destination.amp[].workspaceArnRef into concrete ARNs in
-        # spec.forProvider.{source,destination}, but the chart only
-        # renders the *Ref selectors — perpetual drift on the
-        # resolved values.
         - /spec/forProvider/destination
         - /spec/forProvider/source
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
     - group: grafana.aws.upbound.io
       kind: Workspace
       jsonPointers:
@@ -68,6 +65,9 @@ observability-aws:
         - /metadata/generation
         - /metadata/managedFields
         - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
     - group: grafana.aws.upbound.io
       kind: WorkspaceSamlConfiguration
       jsonPointers:
@@ -75,6 +75,41 @@ observability-aws:
         - /metadata/generation
         - /metadata/managedFields
         - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: amp.aws.upbound.io
+      kind: RuleGroupNamespace
+      jsonPointers:
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: ec2.aws.upbound.io
+      kind: SecurityGroup
+      jsonPointers:
+        - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: ec2.aws.upbound.io
+      kind: SecurityGroupRule
+      jsonPointers:
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
 
 grafana:
   namespace: grafana
