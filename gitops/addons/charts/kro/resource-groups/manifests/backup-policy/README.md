@@ -1,3 +1,22 @@
+> ## ⚠️ DEPRECATED — do not use this branch
+>
+> This branch (`feat/peeks-backup-policy-rgd`) was forked from `main` and
+> is **99 commits behind** `feature/platform-cluster-kro-ack`. The
+> BackupPolicy RGD work has been re-homed onto the upstream
+> [PR #642 family](https://github.com/aws-samples/appmod-blueprints/pull/642)
+> on a dedicated branch:
+>
+> **→ Use `feat/peeks-backup-policy-rgd-on-pr642` instead.**
+>
+> Key differences on the active branch:
+> - StorageClass moved into `gitops/addons/charts/platform-manifests-bootstrap/templates/peeks-storageclass.yaml` (consolidated with the platform bootstrap chart) instead of a standalone `storageclass-resources/` chart.
+> - DR-aware tier StorageClasses (`peeks-gold-gp3` / `peeks-silver-gp3` / `peeks-bronze-gp3`) emit the `peeks.io/backup-tier` tag matched by the BackupSelection.
+> - Targets `feature/platform-cluster-kro-ack` (PR #642), not `main`.
+>
+> Kept here only for historical reference. No new commits will land here.
+>
+> ---
+
 # BackupPolicy RGD
 
 Kro `ResourceGraphDefinition` that exposes a single `BackupPolicy` custom resource
