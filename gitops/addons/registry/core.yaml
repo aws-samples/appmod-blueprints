@@ -19,18 +19,16 @@ pod_identities:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
     identities:
-      # Pod identity enablement uses cluster labels by default.
-      # eso identity is intentionally omitted here: the ApplicationSet templater
-      # does not evaluate nested {{if}}{{else}}{{end}} forms inside valuesObject
-      # and the literal string would be treated as truthy by the chart. The hub
-      # (control-plane) reuses the Crossplane provider role for ESO, so the chart
-      # default of `false` applies; spoke clusters enable it via env overlay.
+      # Pod identity enablement derived from cluster labels.
+      # eso identity is intentionally omitted here: the hub (control-plane)
+      # reuses the Crossplane provider role for ESO; spoke clusters enable
+      # it via env overlay.
       lbc:
-        enabled: '{{`{{ default "" (index .metadata.labels "enable_aws_load_balancer_controller") }}`}}'
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
-        enabled: '{{`{{ default "" (index .metadata.labels "enable_external_dns") }}`}}'
+        enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
       litellm:
-        enabled: '{{`{{ default "" (index .metadata.labels "enable_agent_platform") }}`}}'
+        enabled: '{{default "false" (index .metadata.labels "enable_agent_platform")}}'
   ignoreDifferences:
     - group: iam.aws.upbound.io
       kind: Role
@@ -48,6 +46,19 @@ pod_identities:
       kind: PodIdentityAssociation
       jsonPointers:
         - /status
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
 
 argocd:
   namespace: argocd
