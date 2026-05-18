@@ -654,10 +654,16 @@ tasks:
         AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.endpoint" --output text)
         echo "Found AMG endpoint: $AMG_ENDPOINT"
 
-        # Create AMG API key (admin, 30 days)
-        AMG_API_KEY=$(aws grafana create-workspace-api-key --workspace-id "$AMG_WORKSPACE_ID" --key-name "crossplane-$(date +%s)" --key-role ADMIN --seconds-to-live 2592000 --region {{.AWS_REGION}} --query "key" --output text 2>/dev/null || echo "")
+        # Create AMG service account + token (admin, 30 days) — API keys removed in Grafana 12
+        SA_NAME="crossplane-$(date +%s)"
+        SA_ID=$(aws grafana create-workspace-service-account --workspace-id "$AMG_WORKSPACE_ID" --grafana-role ADMIN --name "$SA_NAME" --region {{.AWS_REGION}} --query "id" --output text 2>/dev/null || echo "")
+        if [ -z "$SA_ID" ] || [ "$SA_ID" = "None" ]; then
+          echo "WARN: Could not create AMG service account. Skipping."
+          exit 0
+        fi
+        AMG_API_KEY=$(aws grafana create-workspace-service-account-token --workspace-id "$AMG_WORKSPACE_ID" --service-account-id "$SA_ID" --name "token-$SA_NAME" --seconds-to-live 2592000 --region {{.AWS_REGION}} --query "serviceAccountToken.key" --output text 2>/dev/null || echo "")
         if [ -z "$AMG_API_KEY" ]; then
-          echo "WARN: Could not create AMG API key. Skipping."
+          echo "WARN: Could not create AMG service account token. Skipping."
           exit 0
         fi
 
