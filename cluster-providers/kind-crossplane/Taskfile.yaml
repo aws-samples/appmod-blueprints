@@ -207,6 +207,7 @@ tasks:
   crossplane:providers:
     status:
       - kubectl get providers.pkg.crossplane.io provider-aws-iam -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null | grep -q True
+      - kubectl get providerconfig.kubernetes.crossplane.io default 2>/dev/null
     vars:
       K8S_PROVIDER_VERSION:
         sh: yq '.crossplane-base.valuesObject.providers.kubernetes.version // "v1.2.1"' {{.GITOPS_ROOT}}/addons/registry/platform.yaml
