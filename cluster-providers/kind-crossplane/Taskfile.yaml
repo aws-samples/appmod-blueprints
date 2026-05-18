@@ -712,6 +712,15 @@ tasks:
         fi
 
         # Update Keycloak SAML client with AMG URL
+        printf '{{.C_STEP}}▸ Waiting for Keycloak to be reachable...{{.C_RESET}}\n'
+        for i in $(seq 1 30); do
+          if curl -sf -o /dev/null "https://{{.DOMAIN}}/keycloak/realms/master/.well-known/openid-configuration" 2>/dev/null; then
+            echo "Keycloak is reachable"
+            break
+          fi
+          echo "  [$i/30] Keycloak not reachable yet (DNS/ALB propagating)..."
+          sleep 20
+        done
         printf '{{.C_STEP}}▸ Updating Keycloak SAML client with AMG URL...{{.C_RESET}}\n'
         KC_PASS=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password')
         KC_TOKEN=$(curl -s -X POST "https://{{.DOMAIN}}/keycloak/realms/master/protocol/openid-connect/token" \
