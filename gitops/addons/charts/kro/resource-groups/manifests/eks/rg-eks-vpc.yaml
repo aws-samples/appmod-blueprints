@@ -132,7 +132,7 @@ spec:
           privateSubnet2Cidr: ${schema.spec.cidr.privateSubnet2Cidr}
   - id: eks
     readyWhen:
-    - ${eks.status.conditions.exists(x, x.type == 'InstanceSynced' && x.status == "True")} # Check on kro conditions
+    - ${eks.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")} # Check on kro conditions
     template:
       apiVersion: kro.run/v1alpha1
       kind: EksCluster
