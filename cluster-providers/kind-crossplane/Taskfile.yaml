@@ -8,7 +8,8 @@ env:
   AWS_PROFILE: "{{.AWS_PROFILE}}"
 
 vars:
-  GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
+  GITOPS_ROOT:
+    sh: echo "$(dirname {{.CONFIG_FILE}})/gitops"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   AWS_PROFILE:
     sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
@@ -56,7 +57,7 @@ vars:
   C_RESET:
     sh: printf '\033[0m'
   ARGOCD_VERSION:
-    sh: yq '.argocd.defaultVersion' {{.GITOPS_ROOT}}/addons/registry/core.yaml
+    sh: yq '.argocd.defaultVersion' "$(dirname {{.CONFIG_FILE}})/gitops/addons/registry/core.yaml"
 
 tasks:
   validate:
