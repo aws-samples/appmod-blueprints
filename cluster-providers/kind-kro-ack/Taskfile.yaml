@@ -911,6 +911,7 @@ tasks:
             aws_region: "AWS_REGION_VAL"
             aws_vpc_id: "VPC_ID_VAL"
             admin_role_name: "ADMIN_ROLE_NAME_VAL"
+            admin_role_name: "ADMIN_ROLE_NAME_VAL"
             resource_prefix: "RESOURCE_PREFIX_VAL"
             # Ingress / edge metadata (gitops-bridge contract — consumed by AppSets)
             ingress_domain_name: "EDGE_DOMAIN"
