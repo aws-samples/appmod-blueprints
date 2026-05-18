@@ -11,6 +11,7 @@ spec:
     source: PodIdentity
 {{- end }}
 {{- range $name, $provider := .Values.providers }}
+{{- if kindIs "map" $provider }}
 {{- if and $provider.version $provider.serviceAccount }}
 ---
 apiVersion: v1
@@ -44,5 +45,6 @@ spec:
                 memory: {{ $.Values.providers.memoryRequest | default "1Gi" }}
               limits:
                 memory: 2Gi
+{{- end }}
 {{- end }}
 {{- end }}
