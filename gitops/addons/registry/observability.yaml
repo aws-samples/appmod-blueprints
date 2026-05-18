@@ -46,6 +46,8 @@ observability-aws:
         - /spec/deletionPolicy
         - /spec/initProvider
         - /spec/managementPolicies
+      jqPathExpressions:
+        - .metadata.annotations["crossplane.io/external-name"]
     - group: amp.aws.upbound.io
       kind: Scraper
       jsonPointers:
