@@ -878,6 +878,14 @@ spec:
               # add_client_scope "argocd" "Argo CD"  # Disabled - using EKS Marina managed ArgoCD
               add_client_scope "account-console" "Account Console"
               add_client_scope "gitlab" "GitLab"
+              add_client_scope "mcp-client" "MCP Client"
+
+              echo "adding user1 to admin group"
+              USER1_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/users?username=user1" '.[0].id')
+              ADMIN_GROUP_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/groups" '.[] | select(.name == "admin") | .id')
+              if [ -n "$USER1_ID" ] && [ -n "$ADMIN_GROUP_ID" ]; then
+                keycloak_put "/admin/realms/${REALM_NAME}/users/${USER1_ID}/groups/${ADMIN_GROUP_ID}" "user1 to admin group"
+              fi
 
               echo "getting client secrets"
               get_client_secret "backstage" "BACKSTAGE_CLIENT_SECRET"
