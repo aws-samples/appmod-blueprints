@@ -36,7 +36,7 @@ scrape_configs:
       insecure_skip_verify: true
 
   # Kubernetes kubelet metrics
-  - job_name: kubernetes-kubelet
+  - job_name: kubelet
     bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
     kubernetes_sd_configs:
     - role: node
