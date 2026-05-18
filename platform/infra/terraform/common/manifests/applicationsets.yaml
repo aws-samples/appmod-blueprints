@@ -16,7 +16,7 @@ spec:
     metadata:
       name: bootstrap
     spec:
-      project: default
+      project: platform
       source:
         repoURL: '{{.metadata.annotations.fleet_repo_url}}'
         path: '{{.metadata.annotations.fleet_repo_basepath}}{{.metadata.annotations.fleet_repo_path}}'
