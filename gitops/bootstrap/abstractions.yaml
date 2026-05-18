@@ -17,6 +17,7 @@ spec:
               selector:
                 matchLabels:
                   fleet_member: control-plane
+                  enable_crossplane_abstractions: "true"
           - git:
               repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
               revision: '{{ .metadata.annotations.addonsRepoRevision }}'
