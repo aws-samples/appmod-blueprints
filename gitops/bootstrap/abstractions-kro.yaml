@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: clusters
+  name: platform-cluster-kro
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "5"
@@ -25,7 +25,7 @@ spec:
                 - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/*/kro-clusters/values.yaml'
   template:
     metadata:
-      name: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
+      name: 'platform-cluster-kro-{{ index (splitList "/" .path.path) 4 }}'
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
@@ -38,7 +38,7 @@ spec:
           path: '{{ .metadata.annotations.fleetRepoBasepath }}abstractions/resource-groups-kro/platform-cluster-kro'
           targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
           helm:
-            releaseName: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
+            releaseName: 'platform-cluster-kro-{{ index (splitList "/" .path.path) 4 }}'
             ignoreMissingValueFiles: true
             valuesObject:
               global:
