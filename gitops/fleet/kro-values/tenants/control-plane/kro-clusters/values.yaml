@@ -1,4 +1,0 @@
-# Control-plane tenant cluster provisioning values.
-# Add entries here to provision fleet member clusters via Crossplane.
-
-clusters: {}
