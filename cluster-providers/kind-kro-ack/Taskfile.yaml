@@ -35,6 +35,10 @@ vars:
     sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  INGRESS_MODE:
+    sh: yq '.ingress.mode // "cloudfront"' {{.CONFIG_FILE}}
+  INGRESS_CERT_ARN:
+    sh: yq '.ingress.certificateArn // ""' {{.CONFIG_FILE}}
   ADMIN_ROLE_NAME:
     sh: yq '.hub.adminRoleName // "Admin"' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
@@ -462,71 +466,227 @@ tasks:
         printf '{{.C_ERR}}✗ EKS cluster not ACTIVE in AWS after RGD reported ACTIVE{{.C_RESET}}\n'
         exit 1
 
+  hub:ingress:preflight:
+    desc: Validate ingress.mode config (fails fast if mode=tls without certificateArn+domain)
+    cmds:
+      - |
+        MODE="{{.INGRESS_MODE}}"
+        CERT="{{.INGRESS_CERT_ARN}}"
+        DOMAIN="{{.DOMAIN}}"
+        case "$MODE" in
+          cloudfront)
+            printf '{{.C_INFO}}  ingress.mode=cloudfront (ALB internal + CloudFront VPC Origin){{.C_RESET}}\n'
+            ;;
+          tls)
+            if [ -z "$CERT" ]; then
+              printf '{{.C_ERR}}✗ ingress.mode=tls requires ingress.certificateArn (ACM ARN){{.C_RESET}}\n'
+              exit 1
+            fi
+            if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "<your-domain>" ]; then
+              printf '{{.C_ERR}}✗ ingress.mode=tls requires top-level domain to be set{{.C_RESET}}\n'
+              exit 1
+            fi
+            printf '{{.C_INFO}}  ingress.mode=tls (ALB internet-facing HTTPS:443, cert=%s, domain=%s){{.C_RESET}}\n' "$CERT" "$DOMAIN"
+            ;;
+          *)
+            printf '{{.C_ERR}}✗ ingress.mode=%s invalid; expected: cloudfront | tls{{.C_RESET}}\n' "$MODE"
+            exit 1
+            ;;
+        esac
+
   hub:ingress:
-    desc: Create ALB for hub ingress (waits for EKS to be ACTIVE)
+    desc: |
+      Create ALB for hub ingress. Behaviour depends on ingress.mode:
+      - cloudfront: ALB scheme=internal in private subnets, SG limited to VPC CIDR
+      - tls: ALB scheme=internet-facing in public subnets, SG open 80/443 to 0.0.0.0/0
+      Switching mode after creation requires manual ALB teardown (AWS scheme is immutable).
+    deps: [hub:ingress:preflight]
     vars:
-      ALB_NAME: "{{.HUB_CLUSTER_NAME}}-ingress"
+      ALB_NAME: "{{.RESOURCE_PREFIX}}-hub-ingress"
       VPC_ID:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
-      SUBNETS:
-        sh: aws ec2 describe-subnets --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=tag:Name,Values=*public*" --query 'Subnets[].SubnetId' --output text
+      VPC_CIDR:
+        sh: aws ec2 describe-vpcs --vpc-ids "$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" --region {{.AWS_REGION}} --query 'Vpcs[0].CidrBlock' --output text
       SG_ID:
-        sh: aws ec2 describe-security-groups --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=group-name,Values={{.HUB_CLUSTER_NAME}}-ingress-http" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo ""
+        sh: aws ec2 describe-security-groups --region {{.AWS_REGION}} --filters "Name=vpc-id,Values=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)" "Name=group-name,Values={{.RESOURCE_PREFIX}}-hub-ingress-http" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo ""
     status:
       - aws elbv2 describe-load-balancers --names {{.ALB_NAME}} --region {{.AWS_REGION}} 2>/dev/null
     cmds:
       - |
-        SUBNETS=$(echo "{{.SUBNETS}}" | tr '\t' ' ')
-        SG="{{.SG_ID}}"
-        if [ -z "$SG" ] || [ "$SG" = "None" ]; then
-          # Create security group if not exists
-          SG=$(aws ec2 create-security-group --group-name "{{.HUB_CLUSTER_NAME}}-ingress-http" \
-            --description "HTTP/HTTPS for hub ingress" --vpc-id "{{.VPC_ID}}" --region {{.AWS_REGION}} \
-            --query 'GroupId' --output text)
-          aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
-          aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 443 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
+        MODE="{{.INGRESS_MODE}}"
+        VPC_ID="{{.VPC_ID}}"
+        VPC_CIDR="{{.VPC_CIDR}}"
+        # Resolve subnets according to mode
+        if [ "$MODE" = "cloudfront" ]; then
+          SCHEME="internal"
+          SUBNET_NAME_FILTER="*private*"
+          ROLE_TAG="kubernetes.io/role/internal-elb"
+        else
+          SCHEME="internet-facing"
+          SUBNET_NAME_FILTER="*public*"
+          ROLE_TAG="kubernetes.io/role/elb"
         fi
-        aws elbv2 create-load-balancer --name "{{.ALB_NAME}}" --type application \
-          --scheme internet-facing --subnets $SUBNETS --security-groups "$SG" \
-          --region {{.AWS_REGION}} --output text --query 'LoadBalancers[0].DNSName'
-        printf '{{.C_OK}}✓ ALB created: {{.ALB_NAME}}{{.C_RESET}}\n'
-
-  hub:cloudfront:
-    desc: Create CloudFront distribution pointing to the ALB
-    # CachePolicyId 4135ea2d = AWS Managed "CachingDisabled"
-    # OriginRequestPolicyId 216adef6 = AWS Managed "AllViewer" (forwards all headers/cookies/qs)
-    vars:
-      ALB_DNS:
-        sh: aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo ""
-    status:
-      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-ingress'].Id" --output text | grep -q .
-    cmds:
-      - |
-        ALB_DNS="{{.ALB_DNS}}"
-        if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ]; then
-          echo "ERROR: ALB not found. Run hub:ingress first."
+        SUBNETS=$(aws ec2 describe-subnets --region {{.AWS_REGION}} \
+          --filters "Name=vpc-id,Values=$VPC_ID" \
+                    "Name=tag:Name,Values=$SUBNET_NAME_FILTER" \
+                    "Name=tag:$ROLE_TAG,Values=1" \
+          --query 'Subnets[].SubnetId' --output text | tr '\t' ' ')
+        if [ -z "$SUBNETS" ]; then
+          # Fallback: name-only filter for older VPCs without role tags
+          SUBNETS=$(aws ec2 describe-subnets --region {{.AWS_REGION}} \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=$SUBNET_NAME_FILTER" \
+            --query 'Subnets[].SubnetId' --output text | tr '\t' ' ')
+        fi
+        if [ -z "$SUBNETS" ]; then
+          printf '{{.C_ERR}}✗ No subnets matched filter %s in VPC %s{{.C_RESET}}\n' "$SUBNET_NAME_FILTER" "$VPC_ID"
           exit 1
         fi
-        DIST_ID=$(aws cloudfront create-distribution \
+        # Resolve / create SG with mode-appropriate ingress rules
+        SG="{{.SG_ID}}"
+        if [ -z "$SG" ] || [ "$SG" = "None" ]; then
+          SG=$(aws ec2 create-security-group --group-name "{{.RESOURCE_PREFIX}}-hub-ingress-http" \
+            --description "HTTP/HTTPS for hub ingress (mode=$MODE)" --vpc-id "$VPC_ID" --region {{.AWS_REGION}} \
+            --query 'GroupId' --output text)
+          if [ "$MODE" = "cloudfront" ]; then
+            # ALB internal — limit to VPC CIDR (covers in-cluster traffic)
+            aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 \
+              --cidr "$VPC_CIDR" --region {{.AWS_REGION}} 2>/dev/null || true
+            # CloudFront VPC Origin ENIs use a dedicated AWS-managed SG —
+            # CIDR alone is not sufficient because CF routes via service SG.
+            CF_SG=$(aws ec2 describe-security-groups --region {{.AWS_REGION}} \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=CloudFront-VPCOrigins-Service-SG" \
+              --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            if [ -n "$CF_SG" ] && [ "$CF_SG" != "None" ]; then
+              aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 \
+                --source-group "$CF_SG" --region {{.AWS_REGION}} 2>/dev/null || true
+              printf '{{.C_OK}}✓ Authorized CloudFront-VPCOrigins-Service-SG → ALB:80{{.C_RESET}}\n'
+            else
+              printf '{{.C_WARN}}⚠ CloudFront-VPCOrigins-Service-SG not found — ALB may 504. Re-run after first VPC Origin creation.{{.C_RESET}}\n'
+            fi
+          else
+            # ALB internet-facing — open 80 (redirect) and 443
+            aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 \
+              --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
+            aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 443 \
+              --cidr 0.0.0.0/0 --region {{.AWS_REGION}} 2>/dev/null || true
+          fi
+        fi
+        ALB_ARN=$(aws elbv2 create-load-balancer --name "{{.ALB_NAME}}" --type application \
+          --scheme "$SCHEME" --subnets $SUBNETS --security-groups "$SG" \
+          --region {{.AWS_REGION}} --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        # Default listener (404) — AWS LBC adds rules later when K8s Ingresses appear
+        if [ "$MODE" = "cloudfront" ]; then
+          aws elbv2 create-listener --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
+            --default-actions 'Type=fixed-response,FixedResponseConfig={StatusCode=404,ContentType=text/plain,MessageBody=NotFound}' \
+            --region {{.AWS_REGION}} >/dev/null
+        else
+          aws elbv2 create-listener --load-balancer-arn "$ALB_ARN" --protocol HTTPS --port 443 \
+            --certificates "CertificateArn={{.INGRESS_CERT_ARN}}" \
+            --default-actions 'Type=fixed-response,FixedResponseConfig={StatusCode=404,ContentType=text/plain,MessageBody=NotFound}' \
+            --region {{.AWS_REGION}} >/dev/null
+          aws elbv2 create-listener --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
+            --default-actions 'Type=redirect,RedirectConfig={Protocol=HTTPS,Port=443,StatusCode=HTTP_301}' \
+            --region {{.AWS_REGION}} >/dev/null
+        fi
+        printf '{{.C_OK}}✓ ALB created: {{.ALB_NAME}} (scheme=%s, mode=%s){{.C_RESET}}\n' "$SCHEME" "$MODE"
+
+  hub:cloudfront:
+    desc: Create CloudFront distribution with VPC Origin (cloudfront mode only)
+    # CachePolicyId 4135ea2d = AWS Managed "CachingDisabled"
+    # OriginRequestPolicyId 216adef6 = AWS Managed "AllViewer" (forwards all headers/cookies/qs)
+    # Uses CloudFront VPC Origin (post-2024) to reach an internal ALB without public exposure.
+    vars:
+      ALB_ARN:
+        sh: aws elbv2 describe-load-balancers --names "{{.RESOURCE_PREFIX}}-hub-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo ""
+      ALB_DNS:
+        sh: aws elbv2 describe-load-balancers --names "{{.RESOURCE_PREFIX}}-hub-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo ""
+      VPC_ORIGIN_NAME: "{{.RESOURCE_PREFIX}}-hub-vpc-origin"
+    status:
+      # Skip entirely when not in cloudfront mode (idempotent no-op for tls)
+      - test "{{.INGRESS_MODE}}" != "cloudfront"
+      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.RESOURCE_PREFIX}}-hub-ingress'].Id" --output text | grep -q .
+    cmds:
+      - |
+        if [ "{{.INGRESS_MODE}}" != "cloudfront" ]; then
+          printf '{{.C_INFO}}⊘ Skipping hub:cloudfront (ingress.mode={{.INGRESS_MODE}}){{.C_RESET}}\n'
+          exit 0
+        fi
+        if [ -z "{{.ALB_ARN}}" ] || [ "{{.ALB_ARN}}" = "None" ]; then
+          echo "ERROR: ALB {{.RESOURCE_PREFIX}}-hub-ingress not found. Run hub:ingress first."
+          exit 1
+        fi
+      - |
+        # 1. Create or reuse VPC Origin pointing at the internal ALB
+        VPC_ORIGIN_ID=$(aws cloudfront list-vpc-origins --region {{.AWS_REGION}} \
+          --query "Items[?Name=='{{.VPC_ORIGIN_NAME}}'].Id" --output text 2>/dev/null || echo "")
+        if [ -z "$VPC_ORIGIN_ID" ] || [ "$VPC_ORIGIN_ID" = "None" ]; then
+          VPC_ORIGIN_ID=$(aws cloudfront create-vpc-origin --region {{.AWS_REGION}} \
+            --vpc-origin-endpoint-config "{
+              \"Name\": \"{{.VPC_ORIGIN_NAME}}\",
+              \"Arn\": \"{{.ALB_ARN}}\",
+              \"HTTPPort\": 80,
+              \"HTTPSPort\": 443,
+              \"OriginProtocolPolicy\": \"http-only\",
+              \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
+            }" --query 'VpcOrigin.Id' --output text)
+          printf '{{.C_OK}}✓ VPC Origin created: %s{{.C_RESET}}\n' "$VPC_ORIGIN_ID"
+        else
+          printf '{{.C_INFO}}↻ Reusing VPC Origin: %s{{.C_RESET}}\n' "$VPC_ORIGIN_ID"
+        fi
+
+        # Wait for VPC Origin Deployed (~5-10 min)
+        printf '{{.C_STEP}}▸ Waiting for VPC Origin Deployed...{{.C_RESET}}\n'
+        for i in $(seq 1 60); do
+          STATE=$(aws cloudfront get-vpc-origin --id "$VPC_ORIGIN_ID" --region {{.AWS_REGION}} --query 'VpcOrigin.Status' --output text 2>/dev/null || echo "Pending")
+          printf '{{.C_INFO}}  [%s/60] VPC Origin status: %s{{.C_RESET}}\n' "$i" "$STATE"
+          [ "$STATE" = "Deployed" ] && break
+          sleep 15
+        done
+        if [ "$STATE" != "Deployed" ]; then
+          echo "ERROR: VPC Origin did not reach Deployed within 15 min"; exit 1
+        fi
+        echo "$VPC_ORIGIN_ID" > /tmp/hub-vpc-origin-id
+      - |
+        # 2. Reconcile ALB SG ingress from CloudFront-VPCOrigins-Service-SG.
+        # This SG is created by AWS only after the first VPC Origin lands in
+        # the VPC, so hub:ingress can't authorize it on first run. We close
+        # the loop here so a single hub:ingress + hub:cloudfront sequence is
+        # sufficient (no manual re-run of hub:ingress needed).
+        VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        ALB_SG=$(aws ec2 describe-security-groups --region {{.AWS_REGION}} \
+          --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values={{.RESOURCE_PREFIX}}-hub-ingress-http" \
+          --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+        CF_SG=$(aws ec2 describe-security-groups --region {{.AWS_REGION}} \
+          --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=CloudFront-VPCOrigins-Service-SG" \
+          --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+        if [ -n "$ALB_SG" ] && [ "$ALB_SG" != "None" ] && [ -n "$CF_SG" ] && [ "$CF_SG" != "None" ]; then
+          aws ec2 authorize-security-group-ingress --group-id "$ALB_SG" --protocol tcp --port 80 \
+            --source-group "$CF_SG" --region {{.AWS_REGION}} 2>/dev/null \
+            && printf '{{.C_OK}}✓ Authorized %s → %s:80 (post VPC Origin){{.C_RESET}}\n' "$CF_SG" "$ALB_SG" \
+            || printf '{{.C_INFO}}↻ ALB SG already allows CloudFront-VPCOrigins-Service-SG{{.C_RESET}}\n'
+        fi
+      - |
+        # 3. Create CloudFront distribution wired to the VPC Origin
+        VPC_ORIGIN_ID=$(cat /tmp/hub-vpc-origin-id)
+        DIST_OUT=$(aws cloudfront create-distribution \
           --distribution-config "{
             \"CallerReference\": \"{{.HUB_CLUSTER_NAME}}-$(date +%s)\",
-            \"Comment\": \"{{.HUB_CLUSTER_NAME}}-ingress\",
+            \"Comment\": \"{{.RESOURCE_PREFIX}}-hub-ingress\",
             \"Enabled\": true,
             \"Origins\": {
               \"Quantity\": 1,
               \"Items\": [{
-                \"Id\": \"alb-origin\",
-                \"DomainName\": \"$ALB_DNS\",
-                \"CustomOriginConfig\": {
-                  \"HTTPPort\": 80,
-                  \"HTTPSPort\": 443,
-                  \"OriginProtocolPolicy\": \"http-only\",
-                  \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
+                \"Id\": \"alb-vpc-origin\",
+                \"DomainName\": \"{{.ALB_DNS}}\",
+                \"VpcOriginConfig\": {
+                  \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
+                  \"OriginReadTimeout\": 30,
+                  \"OriginKeepaliveTimeout\": 5
                 }
               }]
             },
             \"DefaultCacheBehavior\": {
-              \"TargetOriginId\": \"alb-origin\",
+              \"TargetOriginId\": \"alb-vpc-origin\",
               \"ViewerProtocolPolicy\": \"redirect-to-https\",
               \"AllowedMethods\": {\"Quantity\": 7, \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"], \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
               \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
@@ -536,10 +696,11 @@ tasks:
             \"PriceClass\": \"PriceClass_100\",
             \"HttpVersion\": \"http2\"
           }" --query 'Distribution.[Id,DomainName]' --output text)
-        CF_DOMAIN=$(echo "$DIST_ID" | awk '{print $2}')
+        CF_DOMAIN=$(echo "$DIST_OUT" | awk '{print $2}')
         printf '{{.C_OK}}✓ CloudFront created: %s{{.C_RESET}}\n' "$CF_DOMAIN"
         # Store domain in config for hub:seed to use
         yq -i ".cloudfront.domain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
+        rm -f /tmp/hub-vpc-origin-id
 
   hub:seed:
     desc: Seed hub cluster after EKS is ACTIVE
@@ -610,7 +771,7 @@ tasks:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}/","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}/","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.HUB_CLUSTER_NAME}}-ingress","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}/","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}/","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.RESOURCE_PREFIX}}-hub-ingress","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
