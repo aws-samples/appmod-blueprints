@@ -29,6 +29,24 @@ parameters:
   fsType: ext4
   iopsPerGiB: "{{ $storageClass.iops | default "3000" }}"
   throughput: "{{ $storageClass.throughput | default "125" }}"
+{{- /*
+     Tag propagation: any tag declared under a StorageClass's `tags:` map is
+     rendered as a `tagSpecification_<N>` parameter. The EBS CSI driver
+     translates these into AWS tags applied to every volume provisioned by
+     this StorageClass. Combined with `peeks.io/backup-tier` and
+     `peeks.io/spoke` tags, this lets an AWS Backup `BackupSelection`
+     match volumes by tag without any central ConfigMap.
+*/}}
+{{- $defaultTags := dict }}
+{{- if $.Values.spokeName }}
+  {{- $_ := set $defaultTags "peeks.io/spoke" $.Values.spokeName }}
+{{- end }}
+{{- $scTags := merge (dict) ($storageClass.tags | default dict) $defaultTags }}
+{{- $idx := 1 }}
+{{- range $tagKey, $tagValue := $scTags }}
+  tagSpecification_{{ $idx }}: "{{ $tagKey }}={{ $tagValue }}"
+  {{- $idx = add $idx 1 }}
+{{- end }}
 {{- end }}
 reclaimPolicy: {{ $storageClass.reclaimPolicy | default "Delete" }}
 allowVolumeExpansion: true
