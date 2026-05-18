@@ -1,0 +1,55 @@
+{{/*
+  Agent Platform Bootstrap
+  Creates an Application that deploys the sample-agent-platform-on-eks
+  repo's application-sets chart to the hub cluster.
+
+  Uses the existing hub cluster secret (no duplicate cluster registration).
+  All generated ApplicationSets match the hub secret via the
+  enable_agent_platform label (globalSelectors), with individual
+  enable_* selectors disabled (useSelectors: false).
+
+  Per-addon configuration (region, issuer URL, etc.) is derived from
+  cluster secret annotations in the sample repo's addons.yaml — no
+  overrides needed here.
+*/}}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agent-platform-addons
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - ref: values
+      repoURL: {{ .Values.agentPlatform.repoURL | quote }}
+      targetRevision: {{ .Values.agentPlatform.revision | quote }}
+    - repoURL: {{ .Values.agentPlatform.repoURL | quote }}
+      path: {{ .Values.agentPlatform.basepath }}charts/application-sets
+      targetRevision: {{ .Values.agentPlatform.revision | quote }}
+      helm:
+        releaseName: agent-platform-addons
+        ignoreMissingValueFiles: true
+        valueFiles:
+          - $values/{{ .Values.agentPlatform.basepath }}bootstrap/default/addons.yaml
+          - $values/{{ .Values.agentPlatform.basepath }}environments/{{ .Values.agentPlatform.environment }}/addons.yaml
+        valuesObject:
+          useSelectors: false
+          globalSelectors:
+            enable_agent_platform: "true"
+          repoURLGit: {{ .Values.agentPlatform.repoURL | quote }}
+          repoURLGitRevision: {{ .Values.agentPlatform.revision | quote }}
+          repoURLGitBasePath: {{ .Values.agentPlatform.basepath | quote }}
+  destination:
+    namespace: argocd
+    name: {{ .Values.cluster.name | quote }}
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: true
+    retry:
+      limit: 100
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

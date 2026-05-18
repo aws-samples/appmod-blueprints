@@ -1,0 +1,5 @@
+# Spoke prod clusters get their own ESO pod identity provisioned by
+# Crossplane on the hub (chart default is false; opt in here).
+identities:
+  eso:
+    enabled: true

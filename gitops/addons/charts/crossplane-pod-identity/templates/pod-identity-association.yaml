@@ -4,18 +4,22 @@
 apiVersion: eks.aws.upbound.io/v1beta1
 kind: PodIdentityAssociation
 metadata:
-  name: {{ $name }}-pod-identity
+  name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-1"
 spec:
+  # Orphan the underlying EKS PodIdentityAssociation on prune. The association
+  # may be Terraform-managed on the same SA (e.g. hub ESO) and pruning here
+  # must never tear it down.
+  deletionPolicy: Orphan
   forProvider:
     clusterName: {{ $.Values.aws.clusterName }}
     namespace: {{ $identity.namespace }}
     serviceAccount: {{ $identity.serviceAccount }}
     roleArnSelector:
       matchLabels:
-        platform.gitops.io/role: {{ $name }}-pod-identity
+        platform.gitops.io/role: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity
     region: {{ $.Values.aws.region }}
   providerConfigRef:
     name: default

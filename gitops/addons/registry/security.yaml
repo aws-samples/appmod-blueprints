@@ -17,7 +17,7 @@ keycloak:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
-      grafana_url: '{{.metadata.annotations.ingress_domain_name}}/grafana'
+      grafana_url: '{{index .metadata.annotations "aws_grafana_url" | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -55,6 +55,20 @@ kyverno:
   defaultVersion: '3.3.6'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3'
+  syncPolicy:
+    automated:
+      selfHeal: false
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
   selector:
     matchExpressions:
       - key: enable_kyverno

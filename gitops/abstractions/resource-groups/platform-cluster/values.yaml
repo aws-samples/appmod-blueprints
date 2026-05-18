@@ -4,6 +4,11 @@
 
 global:
   argoCDRoleArn: ""
+  # Default AWS region for clusters that don't set their own.
+  # Injected by the bootstrap ApplicationSet from the hub cluster's
+  # aws_region annotation. Per-cluster `region` in
+  # fleet/kro-values/.../kro-clusters/values.yaml takes precedence.
+  defaultRegion: ""
 
 xrd:
   enabled: true

@@ -57,5 +57,19 @@ providers:
     serviceAccount: provider-aws-secretsmanager
     roleName: CrossplaneSecretsManagerProviderRole
     createIdentity: true
+  amp:
+    version: ""
+    serviceAccount: provider-aws-amp
+    roleName: CrossplaneAMPProviderRole
+    createIdentity: true
+  grafana:
+    version: ""
+    serviceAccount: provider-aws-grafana
+    roleName: CrossplaneGrafanaProviderRole
+    createIdentity: true
+  kubernetes:
+    version: ""
+    serviceAccount: provider-kubernetes
+    createIdentity: false
 
 namespace: crossplane-system

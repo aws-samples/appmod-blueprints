@@ -1,0 +1,57 @@
+{{- if .Values.providers.kubernetes.version }}
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-kubernetes
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  package: xpkg.upbound.io/crossplane-contrib/provider-kubernetes:{{ .Values.providers.kubernetes.version }}
+  runtimeConfigRef:
+    name: kubernetes-drc
+---
+apiVersion: kubernetes.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: default
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  credentials:
+    source: InjectedIdentity
+---
+# RBAC: provider-kubernetes patches ArgoCD cluster Secrets to publish
+# Composition-derived facts (e.g. aws_vpc_id) onto the spoke Secret used by
+# ApplicationSets. Scoped to argocd-namespace Secrets only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: provider-kubernetes-cluster-secret-writer
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "4"
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: provider-kubernetes-cluster-secret-writer
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "4"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: provider-kubernetes-cluster-secret-writer
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.providers.kubernetes.serviceAccount }}
+    namespace: {{ .Values.namespace }}
+{{- end }}

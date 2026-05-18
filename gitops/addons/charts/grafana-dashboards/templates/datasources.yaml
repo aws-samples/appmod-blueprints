@@ -12,6 +12,7 @@ spec:
     name: Prometheus
     type: prometheus
     access: proxy
+    uid: prometheus
     url: ${AMP_ENDPOINT_URL}
     isDefault: true
     jsonData:

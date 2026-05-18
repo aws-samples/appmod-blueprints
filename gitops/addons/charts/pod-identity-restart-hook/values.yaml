@@ -1,0 +1,5 @@
+targets: []
+  # - name: lbc
+  #   namespace: kube-system
+  #   serviceAccount: aws-load-balancer-controller-sa
+  #   deploymentLabel: app.kubernetes.io/name=aws-load-balancer-controller

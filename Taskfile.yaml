@@ -81,6 +81,14 @@ tasks:
     cmds:
       - task: "{{.PROVIDER}}:hub:update"
 
+  observability-seed:
+    desc: Seed observability credentials (AMP/AMG) into Secrets Manager (run after workspaces are created)
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:secrets-manager:seed-observability"
+
   hub-destroy-addons:
     desc: Remove all addons from the hub cluster (no git changes needed)
     vars:

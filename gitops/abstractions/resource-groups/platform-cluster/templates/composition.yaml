@@ -543,8 +543,8 @@ spec:
                       "Version": "2012-10-17",
                       "Statement": [{
                         "Effect": "Allow",
-                        "Principal": {"Service": "ec2.amazonaws.com"},
-                        "Action": "sts:AssumeRole"
+                        "Principal": {"Service": ["ec2.amazonaws.com", "eks.amazonaws.com"]},
+                        "Action": ["sts:AssumeRole", "sts:TagSession"]
                       }]
                     }
             patches:
@@ -705,6 +705,48 @@ spec:
                 fromFieldPath: spec.argoCDRoleArn
                 toFieldPath: spec.forProvider.principalArn
 
+          # ArgoCD-specific access policies the EKS Capability needs to drive
+          # remote-cluster sync (AmazonEKSClusterAdminPolicy alone is not
+          # sufficient — the hub-side ArgoCD Capability fails with
+          # "failed to verify the access entry" without these two).
+          - name: argocd-cluster-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDClusterPolicy
+                  accessScope:
+                    type: cluster
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
+          - name: argocd-namespace-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDPolicy
+                  accessScope:
+                    type: namespace
+                    namespaces:
+                      - argocd
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
           # EKS Cluster with Auto Mode enabled
           - name: eks-cluster
             base:
@@ -768,6 +810,42 @@ spec:
               - type: ToCompositeFieldPath
                 fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
                 toFieldPath: status.oidcIssuer
+
+          # Publish status.vpcId onto the ArgoCD cluster Secret (argocd/<clusterName>).
+          # Composition is the source of truth for VPC id; this annotation is consumed
+          # by addon ApplicationSets (e.g. aws-load-balancer-controller --vpc-id).
+          # Uses provider-kubernetes Object with Observe+Update so the Secret must
+          # already exist (created by the fleet-secret Helm chart) — the Object only
+          # patches the single annotation via Server-Side Apply.
+          - name: cluster-secret-vpc-annotation
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                managementPolicies: ["Observe", "Update"]
+                providerConfigRef:
+                  name: default
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: Secret
+                    metadata:
+                      name: ""
+                      namespace: argocd
+                      annotations:
+                        aws_vpc_id: ""
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.forProvider.manifest.metadata.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.vpcId
+                toFieldPath: spec.forProvider.manifest.metadata.annotations[aws_vpc_id]
+                policy:
+                  fromFieldPath: Required
 
           # ===== EKS MANAGED ADD-ONS (required for managed node group nodes) =====
 

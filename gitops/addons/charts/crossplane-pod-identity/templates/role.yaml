@@ -4,14 +4,18 @@
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: Role
 metadata:
-  name: {{ $name }}-pod-identity-role
+  name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity-role
   annotations:
     crossplane.io/external-name: {{ $.Values.aws.clusterName }}-{{ $identity.roleName }}
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "-3"
   labels:
-    platform.gitops.io/role: {{ $name }}-pod-identity
+    platform.gitops.io/role: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity
 spec:
+  # Orphan, do not delete, the underlying IAM Role on prune. The role may be
+  # shared with Terraform-managed PodIdentityAssociations on the same cluster
+  # and pruning here must never break ESO/LBC/etc.
+  deletionPolicy: Orphan
   forProvider:
     assumeRolePolicy: |
       {

@@ -580,7 +580,46 @@ data:
             "attribute.nameformat": "Unspecified",
             "attribute.name": "role"
           }
+        },
+        {
+          "name": "groups",
+          "protocol": "saml",
+          "protocolMapper": "saml-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "attribute.nameformat": "Unspecified",
+            "attribute.name": "groups",
+            "single": "false",
+            "full.path": "false"
+          }
         }
+      ]
+    }
+  mcp-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "mcp-client",
+      "name": "MCP Client",
+      "description": "Used for AgentGateway MCP authentication",
+      "publicClient": true,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": true,
+        "oidc.ciba.grant.enabled": false
+      },
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "",
+      "baseUrl": "",
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "*"
       ]
     }
 ---
@@ -821,6 +860,7 @@ spec:
               create_client "Spark" "/var/config/spark-client-payload.json"
               create_client "Airflow" "/var/config/airflow-client-payload.json"
               create_client "Kargo" "/var/config/kargo-client-payload.json"
+              create_client "MCP Client" "/var/config/mcp-client-payload.json"
               # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
               create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
@@ -838,6 +878,14 @@ spec:
               # add_client_scope "argocd" "Argo CD"  # Disabled - using EKS Marina managed ArgoCD
               add_client_scope "account-console" "Account Console"
               add_client_scope "gitlab" "GitLab"
+              add_client_scope "mcp-client" "MCP Client"
+
+              echo "adding user1 to admin group"
+              USER1_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/users?username=user1" '.[0].id')
+              ADMIN_GROUP_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/groups" '.[] | select(.name == "admin") | .id')
+              if [ -n "$USER1_ID" ] && [ -n "$ADMIN_GROUP_ID" ]; then
+                keycloak_put "/admin/realms/${REALM_NAME}/users/${USER1_ID}/groups/${ADMIN_GROUP_ID}" "user1 to admin group"
+              fi
 
               echo "getting client secrets"
               get_client_secret "backstage" "BACKSTAGE_CLIENT_SECRET"

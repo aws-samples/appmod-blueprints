@@ -44,6 +44,10 @@ spec:
                 enabled: false
               global:
                 argoCDRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
+                # Default region for clusters that don't set their own.
+                # Hub region (from cluster secret annotation) — keeps spokes
+                # in the hub's region unless a tenant values file overrides.
+                defaultRegion: '{{ .metadata.annotations.aws_region }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/default/kro-clusters/values.yaml'
               - '$values/{{ .path.path }}/values.yaml'

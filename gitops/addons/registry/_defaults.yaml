@@ -14,7 +14,6 @@ syncPolicy:
       maxDuration: 10m
   syncOptions:
     - CreateNamespace=true
-    - ServerSideApply=true
 
 syncPolicyAppSet:
   preserveResourcesOnDeletion: true

@@ -1,5 +1,117 @@
 # Observability and monitoring addons
-# Wave ordering: 3 (metrics/otel) → 4 (grafana) → 5 (dashboards/cw)
+# Wave ordering: 3 (metrics/otel) → 4 (grafana/observability-aws) → 5 (dashboards/cw)
+
+observability-aws:
+  namespace: crossplane-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/observability-aws'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_observability_aws
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      vpcId: '{{.metadata.annotations.aws_vpc_id}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    ingress:
+      domainName: '{{.metadata.annotations.ingress_domain_name}}'
+    resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    amg:
+      subnetIds: ''
+    scraper:
+      clusterArn: '{{index .metadata.annotations "aws_cluster_arn"}}'
+      clusterSubnetIds: '{{index .metadata.annotations "aws_private_subnet_ids"}}'
+      clusterSecurityGroupIds: '{{index .metadata.annotations "aws_cluster_security_group_id"}}'
+    spokeScrapers:
+      spoke-dev:
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_dev_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_dev_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_dev_security_group_id")}}'
+      spoke-prod:
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_prod_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_prod_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_prod_security_group_id")}}'
+  ignoreDifferences:
+    - group: amp.aws.upbound.io
+      kind: Workspace
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+        - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+      jqPathExpressions:
+        - .metadata.annotations["crossplane.io/external-name"]
+    - group: amp.aws.upbound.io
+      kind: Scraper
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+        - /spec/forProvider/tags
+        - /spec/forProvider/destination
+        - /spec/forProvider/source
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: grafana.aws.upbound.io
+      kind: Workspace
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+        - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: grafana.aws.upbound.io
+      kind: WorkspaceSamlConfiguration
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+        - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: amp.aws.upbound.io
+      kind: RuleGroupNamespace
+      jsonPointers:
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: ec2.aws.upbound.io
+      kind: SecurityGroup
+      jsonPointers:
+        - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: ec2.aws.upbound.io
+      kind: SecurityGroupRule
+      jsonPointers:
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /spec/forProvider/tags
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /spec/deletionPolicy
+        - /spec/initProvider
+        - /spec/managementPolicies
 
 grafana:
   namespace: grafana
@@ -73,8 +185,15 @@ grafana-dashboards:
         values: ['true']
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     namespace: grafana-operator
-    grafana_url: '{{.metadata.annotations.ingress_domain_name}}/grafana'
+    grafana_url: '{{index .metadata.annotations "aws_grafana_url" | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
+    # Devlake is what publishes the {prefix}-devlake/mysql-connection
+    # Secrets Manager secret. The grafana-mysql-creds ExternalSecret only
+    # reads it when devlake is enabled — otherwise that ExternalSecret
+    # would block grafana-dashboards-hub on a non-existent source secret.
+    devlake:
+      enabled: '{{index .metadata.labels "enable_devlake" | default "false"}}'
 
 kube-state-metrics:
   namespace: kube-prometheus-stack
@@ -133,7 +252,7 @@ aws-for-fluentbit:
   namespace: kube-system
   chartName: aws-for-fluent-bit
   chartRepository: https://aws.github.io/eks-charts
-  defaultVersion: '0.1.34'
+  defaultVersion: '0.2.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3'
   selector:
