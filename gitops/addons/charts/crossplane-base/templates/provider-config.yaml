@@ -11,7 +11,6 @@ spec:
     source: PodIdentity
 {{- end }}
 {{- range $name, $provider := .Values.providers }}
-{{- if kindIs "map" $provider }}
 {{- if and $provider.version $provider.serviceAccount }}
 ---
 apiVersion: v1
@@ -41,10 +40,9 @@ spec:
           - name: package-runtime
             resources:
               requests:
-                cpu: {{ $.Values.providerResources.cpuRequest | default "250m" }}
-                memory: {{ $.Values.providerResources.memoryRequest | default "1Gi" }}
+                cpu: {{ if $.Values.providerResources }}{{ $.Values.providerResources.cpuRequest | default "250m" }}{{ else }}250m{{ end }}
+                memory: {{ if $.Values.providerResources }}{{ $.Values.providerResources.memoryRequest | default "1Gi" }}{{ else }}1Gi{{ end }}
               limits:
                 memory: 2Gi
-{{- end }}
 {{- end }}
 {{- end }}
