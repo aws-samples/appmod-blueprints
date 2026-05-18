@@ -637,7 +637,7 @@ tasks:
         AMG_WORKSPACE_ID=""
         printf '{{.C_STEP}}▸ Waiting for AMG workspace...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          AMG_WORKSPACE_ID=$(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability'].id" --output text 2>/dev/null)
+          AMG_WORKSPACE_ID=$(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability' && status=='ACTIVE'].id | [0]" --output text 2>/dev/null)
           if [ -n "$AMG_WORKSPACE_ID" ] && [ "$AMG_WORKSPACE_ID" != "None" ]; then
             AMG_STATUS=$(aws grafana describe-workspace --workspace-id "$AMG_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.status" --output text 2>/dev/null)
             if [ "$AMG_STATUS" = "ACTIVE" ]; then
