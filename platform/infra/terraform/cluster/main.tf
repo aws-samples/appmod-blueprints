@@ -2,8 +2,8 @@ module "eks" {
   #checkov:skip=CKV_TF_1:We are using version control for those modules
   #checkov:skip=CKV_TF_2:We are using version control for those modules
   for_each = var.clusters
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.15"
+  source   = "terraform-aws-modules/eks/aws"
+  version  = "~> 21.15"
 
   name                   = each.value.name
   kubernetes_version     = each.value.kubernetes_version
@@ -57,10 +57,10 @@ module "eks" {
       cidr_blocks = [data.aws_vpc.hub_vpc.cidr_block]
     }
   }
-  
+
   # Enable EKS Auto Mode with IAM resources only (no default node pools)
   create_auto_mode_iam_resources = true
-  
+
   compute_config = {
     enabled    = true
     node_pools = ["system"]
@@ -78,11 +78,11 @@ module "eks" {
 
 # ArgoCD Capability (Hub cluster only, conditional on Identity Center configuration)
 resource "aws_eks_capability" "argocd" {
-  for_each = { 
-    for k, v in var.clusters : k => v 
+  for_each = {
+    for k, v in var.clusters : k => v
     if v.environment == "control-plane" && var.identity_center_instance_arn != ""
   }
-  
+
   cluster_name              = module.eks[each.key].cluster_name
   capability_name           = "argocd"
   type                      = "ARGOCD"
@@ -123,7 +123,7 @@ resource "aws_eks_capability" "argocd" {
 # ACK Capability (all clusters)
 resource "aws_eks_capability" "ack" {
   for_each = var.clusters
-  
+
   cluster_name              = module.eks[each.key].cluster_name
   capability_name           = "ack"
   type                      = "ACK"
@@ -131,13 +131,13 @@ resource "aws_eks_capability" "ack" {
   delete_propagation_policy = "RETAIN"
 
   depends_on = [module.eks]
-  tags = local.tags
+  tags       = local.tags
 }
 
 # Kro Capability (all clusters)
 resource "aws_eks_capability" "kro" {
   for_each = var.clusters
-  
+
   cluster_name              = module.eks[each.key].cluster_name
   capability_name           = "kro"
   type                      = "KRO"
@@ -145,7 +145,7 @@ resource "aws_eks_capability" "kro" {
   delete_propagation_policy = "RETAIN"
 
   depends_on = [module.eks]
-  tags = local.tags
+  tags       = local.tags
 }
 
 ################################################################################
@@ -155,7 +155,7 @@ resource "aws_eks_capability" "kro" {
 # ArgoCD Capability Role (Hub cluster only, requires Identity Center)
 resource "aws_iam_role" "eks_capability_argocd" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
-  
+
   name = "${local.context_prefix}-${each.value.name}-argocd-capability-role"
 
   assume_role_policy = jsonencode({
@@ -180,7 +180,7 @@ resource "aws_iam_role" "eks_capability_argocd" {
 # ACK Capability Role (all clusters)
 resource "aws_iam_role" "eks_capability_ack" {
   for_each = var.clusters
-  
+
   name = "${local.context_prefix}-${each.value.name}-ack-capability-role"
 
   assume_role_policy = jsonencode({
@@ -205,7 +205,7 @@ resource "aws_iam_role" "eks_capability_ack" {
 # ACK Capability Role Inline Policy (minimal permissions for IAM Role Selector pattern)
 resource "aws_iam_role_policy" "eks_capability_ack_assume_workload_roles" {
   for_each = var.clusters
-  
+
   name = "AssumeWorkloadRoles"
   role = aws_iam_role.eks_capability_ack[each.key].id
 
@@ -226,11 +226,15 @@ resource "aws_iam_role_policy" "eks_capability_ack_assume_workload_roles" {
   })
 }
 
-# ACK Capability Role - IAM permissions for managing IRSA roles on spoke clusters
-# Addons (e.g. argo-rollouts) use ACK iam.services.k8s.aws/Role to create IRSA roles.
+# ACK Capability Role - IAM permissions for managing workload roles (IRSA + Pod Identity)
+# Addons use ACK iam.services.k8s.aws/Role to create workload roles. These IAM actions
+# are trust-policy-agnostic — they work identically whether the role has an OIDC
+# (IRSA) trust or a pods.eks.amazonaws.com (Pod Identity) trust.
 # Scoped to roles prefixed with the cluster name to prevent cross-cluster access.
+# Applies to all clusters (hub + spokes) because the hub also runs addons that
+# need workload roles (e.g. ack-backup-controller wired via kro+ACK).
 resource "aws_iam_role_policy" "eks_capability_ack_manage_irsa_roles" {
-  for_each = { for k, v in var.clusters : k => v if v.environment != "control-plane" }
+  for_each = var.clusters
 
   name = "ManageIRSARoles"
   role = aws_iam_role.eks_capability_ack[each.key].id
@@ -266,17 +270,106 @@ resource "aws_iam_role_policy" "eks_capability_ack_manage_irsa_roles" {
   })
 }
 
+# ACK Capability Role - IAM permissions for managing customer-managed IAM Policies
+# attached to workload roles. Required by the kro+ACK pod-identity pattern where
+# the podidentity.kro.run RGD creates an iam.services.k8s.aws/Policy resource.
+# Scoped to policies prefixed with the cluster name to prevent cross-cluster access.
+resource "aws_iam_role_policy" "eks_capability_ack_manage_workload_policies" {
+  for_each = var.clusters
+
+  name = "ManageWorkloadPolicies"
+  role = aws_iam_role.eks_capability_ack[each.key].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:CreatePolicy",
+          "iam:DeletePolicy",
+          "iam:GetPolicy",
+          "iam:GetPolicyVersion",
+          "iam:ListPolicyVersions",
+          "iam:CreatePolicyVersion",
+          "iam:DeletePolicyVersion",
+          "iam:TagPolicy",
+          "iam:UntagPolicy",
+          "iam:ListPolicyTags"
+        ]
+        Resource = [
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${each.value.name}-*"
+        ]
+      }
+    ]
+  })
+}
+
+# ACK Capability Role - EKS Pod Identity Association management + PassRole
+# Required by the kro+ACK pod-identity pattern where the podidentity.kro.run RGD
+# creates an eks.services.k8s.aws/PodIdentityAssociation resource binding a
+# ServiceAccount to a workload IAM role.
+#
+# iam:PassRole is constrained by iam:PassedToService = pods.eks.amazonaws.com
+# so the capability role can only pass workload roles to the EKS Pod Identity
+# service, never to EC2/Lambda/etc.
+resource "aws_iam_role_policy" "eks_capability_ack_manage_pod_identity" {
+  for_each = var.clusters
+
+  name = "ManagePodIdentityAssociations"
+  role = aws_iam_role.eks_capability_ack[each.key].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "PassWorkloadRolesToEKSPodIdentity"
+        Effect = "Allow"
+        Action = [
+          "iam:PassRole"
+        ]
+        Resource = [
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${each.value.name}-*"
+        ]
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "pods.eks.amazonaws.com"
+          }
+        }
+      },
+      {
+        Sid    = "ManagePodIdentityAssociations"
+        Effect = "Allow"
+        Action = [
+          "eks:CreatePodIdentityAssociation",
+          "eks:DeletePodIdentityAssociation",
+          "eks:DescribePodIdentityAssociation",
+          "eks:ListPodIdentityAssociations",
+          "eks:UpdatePodIdentityAssociation",
+          "eks:TagResource",
+          "eks:UntagResource",
+          "eks:ListTagsForResource"
+        ]
+        Resource = [
+          "arn:aws:eks:*:${data.aws_caller_identity.current.account_id}:cluster/${each.value.name}",
+          "arn:aws:eks:*:${data.aws_caller_identity.current.account_id}:podidentityassociation/${each.value.name}/*"
+        ]
+      }
+    ]
+  })
+}
+
 # ArgoCD Capability Role Policies (requires Identity Center)
 resource "aws_iam_role_policy_attachment" "eks_capability_argocd_secrets" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
-  
+
   role       = aws_iam_role.eks_capability_argocd[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/AWSSecretsManagerClientReadOnlyAccess"
 }
 
 resource "aws_iam_role_policy_attachment" "eks_capability_argocd_codecommit" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
-  
+
   role       = aws_iam_role.eks_capability_argocd[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/AWSCodeCommitReadOnly"
 }
@@ -284,7 +377,7 @@ resource "aws_iam_role_policy_attachment" "eks_capability_argocd_codecommit" {
 # Custom policy for CodeConnections (requires Identity Center)
 resource "aws_iam_role_policy" "eks_capability_argocd_codeconnections" {
   for_each = { for k, v in var.clusters : k => v if v.environment == "control-plane" }
-  
+
   name = "codeconnections-policy"
   role = aws_iam_role.eks_capability_argocd[each.key].id
 
@@ -351,7 +444,7 @@ resource "aws_eks_access_policy_association" "kro" {
 # Kro Capability Role (all clusters)
 resource "aws_iam_role" "eks_capability_kro" {
   for_each = var.clusters
-  
+
   name = "${local.context_prefix}-${each.value.name}-kro-capability-role"
 
   assume_role_policy = jsonencode({
@@ -376,7 +469,7 @@ resource "aws_iam_role" "eks_capability_kro" {
 # Kro needs EKS cluster admin permissions to manage external-secrets CRDs (all clusters)
 resource "aws_iam_role_policy_attachment" "eks_capability_kro_cluster_admin" {
   for_each = var.clusters
-  
+
   role       = aws_iam_role.eks_capability_kro[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
@@ -389,8 +482,8 @@ module "vpc" {
   version = "~> 6.0"
 
   for_each = local.spoke_clusters
-  name = "${local.context_prefix}-${each.value.name}"
-  cidr = local.vpc_cidr
+  name     = "${local.context_prefix}-${each.value.name}"
+  cidr     = local.vpc_cidr
 
   azs             = local.azs
   private_subnets = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 4, k)]

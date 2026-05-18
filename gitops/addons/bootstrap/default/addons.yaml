@@ -96,6 +96,69 @@ ack-iam:
     serviceAccount:
       name: '{{default "ack-iam-controller" (index .metadata.annotations "ack_iam_service_account")}}'
 
+ack-backup:
+  enabled: false
+  enableACK: false
+  # enableACKKRO wires IAM via kro + ACK (iam.Policy + iam.Role +
+  # eks.PodIdentityAssociation) through the podidentity.kro.run RGD,
+  # instead of Crossplane. Mutually exclusive with enableACK.
+  enableACKKRO: true
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
+  namespace: ack-system
+  defaultVersion: '0.1.1'
+  chartNamespace: aws-controllers-k8s
+  chartName: backup-chart
+  chartRepository: public.ecr.aws
+  # NOTE: backup-controller is in PREVIEW (v0.1.1) and is NOT yet bundled
+  # in the EKS `ACK` capability as of May 2026. Deploy via this chart until
+  # AWS ships it as part of the capability.
+  podIdentity:
+    piNamespace: ack-system
+    serviceAccounts:
+      - ack-backup-controller
+    # Least-privilege policy for the backup-controller. iam:PassRole is
+    # scoped to role/* (any role in the account) so the controller can pass
+    # backup service roles regardless of naming conventions.
+    policyDocument:
+      - actions:
+          - backup:*
+          - backup-storage:*
+        resourceName: '*'
+      - actions:
+          - iam:PassRole
+        customArn: arn:aws:iam::*:role/*
+      - actions:
+          - kms:Decrypt
+          - kms:Encrypt
+          - kms:GenerateDataKey
+          - kms:GenerateDataKeyWithoutPlaintext
+          - kms:DescribeKey
+          - kms:CreateGrant
+        resourceName: '*'
+  selector:
+    matchExpressions:
+      - key: enable_ack_backup
+        operator: In
+        values: ['true']
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+      jqPathExpressions:
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .generateName?'
+        - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      managedFieldsManagers:
+        - kube-controller-manager
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: '{{default "ack-backup-controller" (index .metadata.annotations "ack_backup_service_account")}}'
+
 ack-eks:
   enabled: false
   enableACK: false

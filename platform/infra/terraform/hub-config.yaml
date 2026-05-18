@@ -39,6 +39,7 @@ clusters:
       enable_ack_efs: false # EKS Managed capability
       enable_ack_s3: false # EKS Managed capability
       enable_ack_dynamodb: false # EKS Managed capability
+      enable_ack_backup: false # Not yet in EKS capability (PREVIEW v0.1.1) — flip to true to deploy via Helm
       enable_crossplane: true
       enable_crossplane_aws: true
       enable_kro: false # EKS Managed capability
@@ -86,6 +87,7 @@ clusters:
       enable_ack_s3: false # EKS Managed capability
       enable_ack_efs: false # EKS Managed capability
       enable_ack_dynamodb: false # EKS Managed capability
+      enable_ack_backup: false # Not yet in EKS capability (PREVIEW v0.1.1) — flip to true to deploy via Helm
       enable_crossplane: true
       enable_crossplane_aws: true
       enable_external_secrets: true
@@ -135,6 +137,7 @@ clusters:
       enable_ack_efs: false # EKS Managed capability
       enable_ack_s3: false # EKS Managed capability
       enable_ack_dynamodb: false # EKS Managed capability
+      enable_ack_backup: false # Not yet in EKS capability (PREVIEW v0.1.1) — flip to true to deploy via Helm
       enable_kro: false # EKS Managed capability
       enable_kro_manifests: true
       enable_crossplane: true
