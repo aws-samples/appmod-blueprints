@@ -174,6 +174,35 @@ kro-manifests-hub:
         operator: In
         values: ['true']
 
+# AppExposure RGD — exposes a Kubernetes Service through the shared hub
+# ALB (cloudfront-alb / tls-alb modes). Synthesises ACK TargetGroup +
+# ACK Rule + LBC TargetGroupBinding from a single AppExposure claim.
+# Edge metadata flows from cluster secret annotations via valuesObject.
+app-exposure:
+  enabled: false
+  namespace: kro
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/app-exposure'
+  defaultVersion: '0.1.0'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '8'
+  selector:
+    matchExpressions:
+      - key: enable_app_exposure
+        operator: In
+        values: ['true']
+  valuesObject:
+    albListenerArn:    '{{.metadata.annotations.alb_listener_arn}}'
+    ingressDomainName: '{{.metadata.annotations.ingress_domain_name}}'
+    vpcId:             '{{.metadata.annotations.aws_vpc_id}}'
+    awsRegion:         '{{.metadata.annotations.aws_region}}'
+    exposureMode:      '{{.metadata.annotations.exposure_mode}}'
+  ignoreDifferences:
+    - group: kro.run
+      kind: ResourceGraphDefinition
+      jsonPointers:
+        - /status
+        - /metadata/generation
+
 multi-acct:
   namespace: kro
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/multi-acct'
