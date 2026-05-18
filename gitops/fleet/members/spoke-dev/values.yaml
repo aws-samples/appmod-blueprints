@@ -1,5 +1,0 @@
-clusterName: spoke-dev
-region: us-west-2
-labels:
-  environment: dev
-  tenant: workshop
