@@ -846,17 +846,51 @@ tasks:
         EOF
 
   hub:seed-secret:
-    desc: Create seed cluster secret on hub
+    desc: Create seed cluster secret on hub (with edge metadata for AppExposure RGD)
     vars:
       CLUSTER_ARN:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text
       ARGOCD_ROLE_ARN:
         sh: aws iam get-role --role-name {{.HUB_CLUSTER_NAME}}-argocd-role --query 'Role.Arn' --output text 2>/dev/null || echo ""
+      ADMIN_ROLE_NAME:
+        sh: yq '.hub.adminRoleName // "Admin"' {{.CONFIG_FILE}}
+      # Edge metadata — populated by hub:ingress + hub:cloudfront before hub:seed runs.
+      # Consumed by ApplicationSets enrolling RGDs that need to know how the cluster is
+      # exposed (e.g. AppExposure RGD reads {{.metadata.annotations.ingress_domain_name}}
+      # via the ArgoCD clusters generator — gitops-bridge pattern).
+      EXPOSURE_MODE:
+        sh: |
+          if [ "{{.INGRESS_MODE}}" = "tls" ]; then echo "tls-alb"; else echo "cloudfront-alb"; fi
+      EDGE_DOMAIN:
+        sh: |
+          if [ "{{.INGRESS_MODE}}" = "tls" ]; then
+            echo "{{.DOMAIN}}"
+          else
+            echo "{{.CLOUDFRONT_DOMAIN}}"
+          fi
+      ALB_LISTENER_ARN:
+        sh: |
+          ALB_NAME="{{.RESOURCE_PREFIX}}-hub-ingress"
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --region {{.AWS_REGION}} --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
+          if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then echo ""; exit 0; fi
+          # Pick listener matching the mode: HTTP:80 for cloudfront-alb, HTTPS:443 for tls-alb
+          if [ "{{.INGRESS_MODE}}" = "tls" ]; then PORT=443; else PORT=80; fi
+          aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --region {{.AWS_REGION}} \
+            --query "Listeners[?Port==\`$PORT\`].ListenerArn | [0]" --output text 2>/dev/null || echo ""
+      VPC_ID:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null || echo ""
     cmds:
       - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}/|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        printf '{{.C_INFO}}  Seeding cluster secret with gitops-bridge metadata:{{.C_RESET}}\n'
+        printf '    aws_region          = %s\n' "{{.AWS_REGION}}"
+        printf '    aws_vpc_id          = %s\n' "{{.VPC_ID}}"
+        printf '    ingress_domain_name = %s\n' "{{.EDGE_DOMAIN}}"
+        printf '    exposure_mode       = %s\n' "{{.EXPOSURE_MODE}}"
+        printf '    alb_listener_arn    = %s\n' "{{.ALB_LISTENER_ARN}}"
+      - |
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}/|g; s|EXPOSURE_MODE|{{.EXPOSURE_MODE}}|g; s|EDGE_DOMAIN|{{.EDGE_DOMAIN}}|g; s|ALB_LISTENER_ARN|{{.ALB_LISTENER_ARN}}|g; s|VPC_ID_VAL|{{.VPC_ID}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID_VAL|{{.AWS_ACCOUNT_ID}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|INGRESS_SECURITY_GROUPS_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|ADMIN_ROLE_NAME_VAL|{{.ADMIN_ROLE_NAME}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
@@ -864,17 +898,33 @@ tasks:
           name: CLUSTER_NAME
           namespace: argocd
           annotations:
+            # Repo coordinates (gitops-bridge contract)
             addonsRepoURL: "REPO_URL"
             addonsRepoRevision: "REPO_REVISION"
             addonsRepoBasepath: "REPO_BASEPATH"
             fleetRepoURL: "REPO_URL"
             fleetRepoRevision: "REPO_REVISION"
             fleetRepoBasepath: "REPO_BASEPATH"
-            aws_cluster_name: CLUSTER_NAME
+            # Cluster identity (gitops-bridge contract — consumed by AppSets)
+            aws_cluster_name: "CLUSTER_NAME"
+            aws_account_id: "AWS_ACCOUNT_ID_VAL"
+            aws_region: "AWS_REGION_VAL"
+            aws_vpc_id: "VPC_ID_VAL"
+            admin_role_name: "ADMIN_ROLE_NAME_VAL"
+            resource_prefix: "RESOURCE_PREFIX_VAL"
+            # Ingress / edge metadata (gitops-bridge contract — consumed by AppSets)
+            ingress_domain_name: "EDGE_DOMAIN"
+            ingress_name: "RESOURCE_PREFIX_VAL-hub-ingress"
+            ingress_security_groups: "INGRESS_SECURITY_GROUPS_VAL"
+            alb_controller_mode: "oss"
+            # Exposure metadata (PeEKS extension — consumed by AppExposure RGD)
+            exposure_mode: "EXPOSURE_MODE"
+            alb_listener_arn: "ALB_LISTENER_ARN"
           labels:
             argocd.argoproj.io/secret-type: cluster
             environment: control-plane
             fleet_member: control-plane
+            exposure_mode: "EXPOSURE_MODE"
         stringData:
           name: CLUSTER_NAME
           server: "CLUSTER_ARN"
