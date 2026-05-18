@@ -206,6 +206,8 @@ data:
       session:
         secret: MW2sV-sIPngEl26vAzatV-6VqfsgAx4bPIz7PuE_2Lk=
       providers:
+        guest:
+          dangerouslyAllowOutsideDevelopment: true
         keycloak-oidc:
           development:
             metadataUrl: ${KEYCLOAK_NAME_METADATA}
@@ -245,11 +247,13 @@ data:
           url: https://kubernetes.default.svc.cluster.local
           authProvider: 'serviceAccount'
           skipTLSVerify: true
-        - name: workshop
-          url: K8S_SERVER
+        {{- range .Values.spoke_clusters }}
+        - name: {{ .name }}
+          url: {{ .url }}
           authProvider: 'serviceAccount'
           skipTLSVerify: true
-          serviceAccountToken: SA_TOKEN
+          serviceAccountToken: {{ .token }}
+        {{- end }}
       # ResourceGraphDefinition entity processing configuration
       entityProcessing:
         # Enable automatic catalog ingestion of ResourceGraphDefinitions
@@ -295,11 +299,13 @@ data:
           url: https://kubernetes.default.svc.cluster.local
           authProvider: 'serviceAccount'
           skipTLSVerify: true
-        - name: workshop
-          url: K8S_SERVER
+        {{- range .Values.spoke_clusters }}
+        - name: {{ .name }}
+          url: {{ .url }}
           authProvider: 'serviceAccount'
           skipTLSVerify: true
-          serviceAccountToken: SA_TOKEN
+          serviceAccountToken: {{ .token }}
+        {{- end }}
     argocd:
       username: admin
       password: ${ARGOCD_ADMIN_PASSWORD}
@@ -344,13 +350,13 @@ stringData:
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
             plural: 'vpcs'
-      - url: K8S_SERVER
-        name: workshop
+      {{- range .Values.spoke_clusters }}
+      - url: {{ .url }}
+        name: {{ .name }}
         authProvider: 'serviceAccount'
         skipTLSVerify: true
         skipMetricsLookup: true
-        serviceAccountToken: SA_TOKEN
-        # Additional configuration for Kro resources
+        serviceAccountToken: {{ .token }}
         customResources:
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
@@ -367,6 +373,7 @@ stringData:
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
             plural: 'vpcs'
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -477,6 +484,10 @@ spec:
               value: "/app/config/ca.crt"
             - name: DOMAIN_NAME
               value: {{ .Values.ingress_domain_name }}
+            - name: KEYCLOAK_URL
+              value: "https://{{ .Values.ingress_domain_name }}/keycloak"
+            - name: GIT_HOSTNAME
+              value: {{ .Values.gitlab_domain_name }}
             - name: NODE_ENV
               value: development
             - name: NODE_OPTIONS
@@ -511,7 +522,7 @@ spec:
               memory: 2Gi
           startupProbe:
             httpGet:
-              path: /api/auth/keycloak-oidc/start?scope=openid%20profile%20email%20groups&flow=popup&env=development
+              path: /.backstage/health/v1/readiness
               port: http
           volumeMounts:
             - mountPath: /app/config
