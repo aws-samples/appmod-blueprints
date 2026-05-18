@@ -26,6 +26,15 @@ observability-aws:
       clusterArn: '{{index .metadata.annotations "aws_cluster_arn"}}'
       clusterSubnetIds: '{{index .metadata.annotations "aws_private_subnet_ids"}}'
       clusterSecurityGroupIds: '{{index .metadata.annotations "aws_cluster_security_group_id"}}'
+    spokeScrapers:
+      spoke-dev:
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_dev_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_dev_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_dev_security_group_id")}}'
+      spoke-prod:
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_prod_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_prod_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_prod_security_group_id")}}'
   ignoreDifferences:
     - group: amp.aws.upbound.io
       kind: Workspace
