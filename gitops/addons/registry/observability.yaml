@@ -250,7 +250,7 @@ aws-for-fluentbit:
   namespace: kube-system
   chartName: aws-for-fluent-bit
   chartRepository: https://aws.github.io/eks-charts
-  defaultVersion: '0.1.34'
+  defaultVersion: '0.2.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3'
   selector:
