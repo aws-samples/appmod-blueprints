@@ -94,6 +94,7 @@ tasks:
       - task: crossplane:setup
       - task: hub:seed
       - task: hub:wait-for-sync
+      - task: hub:restart-identity-pods
       - task: secrets-manager:seed-observability
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
 
@@ -481,6 +482,20 @@ tasks:
           exit 1
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+  hub:restart-identity-pods:
+    desc: Restart pods that depend on Pod Identity (external-dns, LBC) after identities are ready
+    cmds:
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Waiting for pod identity associations to be Ready...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n crossplane-system wait --for=condition=Ready podidentityassociations.eks.aws.upbound.io --all --timeout=300s 2>/dev/null || true
+      - printf '{{.C_STEP}}▸ Restarting external-dns and LBC to pick up pod identity credentials...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kube-system -l app.kubernetes.io/name=external-dns 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=external-dns --timeout=60s 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --timeout=60s 2>/dev/null || true
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_OK}}✓ Identity-dependent pods restarted.{{.C_RESET}}\n'
 
   secrets-manager:seed:
     desc: Seed hub cluster config into AWS Secrets Manager for ExternalSecrets
