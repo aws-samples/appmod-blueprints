@@ -580,6 +580,18 @@ data:
             "attribute.nameformat": "Unspecified",
             "attribute.name": "role"
           }
+        },
+        {
+          "name": "groups",
+          "protocol": "saml",
+          "protocolMapper": "saml-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "attribute.nameformat": "Unspecified",
+            "attribute.name": "groups",
+            "single": "false",
+            "full.path": "false"
+          }
         }
       ]
     }
