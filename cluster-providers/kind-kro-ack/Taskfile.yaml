@@ -9,8 +9,6 @@ env:
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}/../../gitops"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
-  AWS_PROFILE:
-    sh: yq '.aws.profile // ""' {{.CONFIG_FILE}}
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
   HUB_K8S_VERSION:
@@ -142,7 +140,7 @@ tasks:
         else
           AWS_PROFILE_NAME=$(yq '.aws.profile // ""' {{.CONFIG_FILE}})
           if [ -n "$AWS_PROFILE_NAME" ]; then
-            EXPORTED=$(aws configure export-credentials --profile "$AWS_PROFILE_NAME" --format env-no-export)
+            EXPORTED=$(AWS_PROFILE=$AWS_PROFILE_NAME aws configure export-credentials --format env-no-export)
           else
             EXPORTED=$(aws configure export-credentials --format env-no-export)
           fi
