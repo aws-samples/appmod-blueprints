@@ -218,6 +218,8 @@ tasks:
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
+          --set providers.cpuRequest=100m
+          --set providers.memoryRequest=256Mi
           --set functions.patchAndTransform.version=v0.10.0
           --set functions.environmentConfigs.version=v0.3.0
           --set functions.celFilter.version=v0.2.0
