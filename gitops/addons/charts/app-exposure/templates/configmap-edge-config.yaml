@@ -1,0 +1,24 @@
+{{/*
+Edge config ConfigMap — materialises the values pulled from the cluster
+secret annotations (gitops-bridge contract) into a Kubernetes object that
+the AppExposure RGD reads via externalRef. This is the same pattern used
+by crossplane-aws's EnvironmentConfig (see gitops/addons/charts/crossplane-aws/
+templates/init-env-config.yaml on feature/agentic-addons), but simpler —
+we don't need a Job because all values arrive directly as Helm values via
+the AppSet's valuesObject.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "app-exposure.edgeConfigName" . }}
+  namespace: {{ .Values.namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+  labels:
+    {{- include "app-exposure.labels" . | nindent 4 }}
+data:
+  albListenerArn:    {{ .Values.albListenerArn    | quote }}
+  ingressDomainName: {{ .Values.ingressDomainName | quote }}
+  vpcId:             {{ .Values.vpcId             | quote }}
+  awsRegion:         {{ .Values.awsRegion         | quote }}
+  exposureMode:      {{ .Values.exposureMode      | quote }}

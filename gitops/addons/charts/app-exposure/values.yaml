@@ -1,0 +1,44 @@
+# app-exposure chart values
+#
+# Edge metadata is normally populated by the gitops-bridge cluster secret
+# annotations via the AppSet `valuesObject` (see gitops/addons/bootstrap/default/addons.yaml,
+# entry `app-exposure`). The defaults below are placeholders only — leave them
+# empty unless rendering the chart locally for testing.
+
+# Shared ALB listener ARN (HTTP:80 for cloudfront-alb, HTTPS:443 for tls-alb).
+# Sourced from cluster secret annotation `alb_listener_arn`.
+albListenerArn: ""
+
+# Public DNS name advertised to users. CloudFront domain in cloudfront-alb mode,
+# or the configured public domain in tls-alb mode.
+# Sourced from cluster secret annotation `ingress_domain_name`.
+ingressDomainName: ""
+
+# VPC the cluster runs in — needed for the ACK TargetGroup vpcID field.
+# Sourced from cluster secret annotation `aws_vpc_id`.
+vpcId: ""
+
+# AWS region — needed for the ACK services.k8s.aws/region annotation.
+# Sourced from cluster secret annotation `aws_region`.
+awsRegion: ""
+
+# "cloudfront-alb" or "tls-alb". Currently informational only — the RGD is
+# mode-agnostic because both modes share the same ALB. Reserved for future
+# branching (e.g. dedicated-alb mode).
+# Sourced from cluster secret annotation `exposure_mode`.
+exposureMode: "cloudfront-alb"
+
+# Namespace where the edge-config ConfigMap is created. The RGD references it
+# by name from this namespace. Must match the namespace KRO instances run in
+# (or be readable cross-namespace via your KRO setup).
+namespace: kro
+
+# Default rule priority offset on the shared listener. AppExposure claims pick
+# their priority via spec.rulePriority — this value is informational.
+defaultRulePriorityBase: 100
+
+# Smoke-test claim under templates/examples/. Disabled by default; flip on
+# only on a hub cluster with EKS Capability ALB enabled to validate the RGD.
+examples:
+  enabled: false
+  namespace: default

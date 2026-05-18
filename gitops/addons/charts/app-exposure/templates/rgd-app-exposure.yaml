@@ -1,0 +1,138 @@
+{{/*
+AppExposure RGD — synthesises the three resources needed to expose a
+Kubernetes Service through the shared hub ALB:
+
+  1. elbv2.services.k8s.aws/v1alpha1 TargetGroup       (ACK)
+  2. elbv2.services.k8s.aws/v1alpha1 Rule              (ACK, listener rule)
+  3. elbv2.k8s.aws/v1beta1           TargetGroupBinding (AWS LBC, TG <-> Service)
+
+Edge metadata (alb_listener_arn, ingress_domain_name, aws_vpc_id, aws_region,
+exposure_mode) is rendered into the RGD at chart-install time from Helm
+values. The values themselves come from the gitops-bridge cluster secret
+annotations via the AppSet valuesObject. KRO has no native externalRef
+mechanism for reading ConfigMaps inside resource templates, so we inline
+the values here. The ConfigMap edge-config is kept alongside as a debug /
+observability surface only.
+
+Shared-ALB modes (cloudfront-alb, tls-alb) both use the same listener, so
+this RGD covers both. Dedicated-ALB mode is a future variant.
+*/}}
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: appexposure.peeks.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+  labels:
+    {{- include "app-exposure.labels" . | nindent 4 }}
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: AppExposure
+    spec:
+      # Target Kubernetes Service. The TargetGroupBinding routes the ACK
+      # TargetGroup to this Service's endpoints (pod IPs in target-type=ip).
+      service:
+        name: string | required=true description="Service to expose"
+        port: integer | required=true description="Service port (TCP) the ALB targets"
+
+      # Hostname under the cluster's edge domain. Final FQDN is
+      # `<hostname>.<ingress_domain_name>`. The listener rule matches on this host.
+      hostname: string | required=true description="Hostname prefix (final = <hostname>.<edgeDomain>)"
+
+      # HTTP path forwarded to the TargetGroup. Defaults to "/".
+      path: string | default="/" description="Path prefix matched on the listener"
+
+      # ALB health-check path on the pods. Defaults to "/".
+      healthCheckPath: string | default="/" description="HTTP health-check path"
+
+      # ALB listener rule priority — must be unique on the shared listener.
+      # Numbers below 50 are reserved for platform rules.
+      rulePriority: integer | required=true description="Listener rule priority (50-50000, unique)"
+
+      # Optional resource name suffix. Defaults to the claim's metadata.name.
+      resourceSuffix: string | default="" description="Override for AWS resource names"
+
+    status:
+      targetGroupARN: ${targetGroup.status.ackResourceMetadata.arn}
+      ruleARN: ${listenerRule.status.ackResourceMetadata.arn}
+      fqdn: ${targetGroup.metadata.name}
+
+  resources:
+    # 1) ACK TargetGroup — provisioned by the EKS Capability ALB / ACK ELBv2.
+    #    targetType=ip is required for TargetGroupBinding with pod targets.
+    - id: targetGroup
+      template:
+        apiVersion: elbv2.services.k8s.aws/v1alpha1
+        kind: TargetGroup
+        metadata:
+          name: ${schema.spec.hostname}-${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+        spec:
+          name: ${schema.spec.hostname}-${schema.metadata.name}
+          protocol: HTTP
+          port: ${schema.spec.service.port}
+          targetType: ip
+          vpcID: {{ .Values.vpcId | quote }}
+          healthCheckEnabled: true
+          healthCheckProtocol: HTTP
+          healthCheckPath: ${schema.spec.healthCheckPath}
+          healthCheckIntervalSeconds: 30
+          healthCheckTimeoutSeconds: 5
+          healthyThresholdCount: 2
+          unhealthyThresholdCount: 3
+          matcher:
+            httpCode: "200-399"
+          tags:
+            - key: ManagedBy
+              value: kro-app-exposure
+            - key: AppExposureName
+              value: ${schema.metadata.name}
+            - key: AppExposureNamespace
+              value: ${schema.metadata.namespace}
+
+    # 2) ACK Rule — listener rule on the shared hub ALB. Host-header match
+    #    routes traffic for <hostname>.<edgeDomain><path> to the TargetGroup.
+    - id: listenerRule
+      template:
+        apiVersion: elbv2.services.k8s.aws/v1alpha1
+        kind: Rule
+        metadata:
+          name: ${schema.spec.hostname}-${schema.metadata.name}-rule
+          namespace: ${schema.metadata.namespace}
+        spec:
+          listenerARN: {{ .Values.albListenerArn | quote }}
+          priority: ${schema.spec.rulePriority}
+          conditions:
+            - field: host-header
+              hostHeaderConfig:
+                values:
+                  - ${schema.spec.hostname}.{{ .Values.ingressDomainName }}
+            - field: path-pattern
+              pathPatternConfig:
+                values:
+                  - ${schema.spec.path}
+          actions:
+            - type: forward
+              targetGroupARN: ${targetGroup.status.ackResourceMetadata.arn}
+          tags:
+            - key: ManagedBy
+              value: kro-app-exposure
+            - key: AppExposureName
+              value: ${schema.metadata.name}
+
+    # 3) AWS LBC TargetGroupBinding — wires the ACK TargetGroup to the
+    #    Kubernetes Service so endpoint changes propagate to ALB targets.
+    - id: targetGroupBinding
+      template:
+        apiVersion: elbv2.k8s.aws/v1beta1
+        kind: TargetGroupBinding
+        metadata:
+          name: ${schema.metadata.name}-tgb
+          namespace: ${schema.metadata.namespace}
+        spec:
+          serviceRef:
+            name: ${schema.spec.service.name}
+            port: ${schema.spec.service.port}
+          targetType: ip
+          targetGroupARN: ${targetGroup.status.ackResourceMetadata.arn}

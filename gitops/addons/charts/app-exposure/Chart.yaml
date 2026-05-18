@@ -1,0 +1,18 @@
+apiVersion: v2
+name: app-exposure
+description: |
+  KRO ResourceGraphDefinition for exposing application Services through the
+  shared cluster ALB (with optional CloudFront in front). Synthesizes ACK
+  TargetGroup + ACK Rule + AWS LBC TargetGroupBinding from a single
+  per-app AppExposure claim.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kro
+  - exposure
+  - alb
+  - cloudfront
+  - peeks
+maintainers:
+  - name: PeEKS

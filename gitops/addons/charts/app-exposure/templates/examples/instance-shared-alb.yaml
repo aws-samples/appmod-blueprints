@@ -1,0 +1,29 @@
+# Example AppExposure claim — disabled by default.
+#
+# Rendered only when `examples.enabled=true` in chart values. Useful as a
+# smoke-test on a hub cluster that has the EKS Capability ALB installed.
+#
+# Once applied, KRO synthesises:
+#   - elbv2.services.k8s.aws/v1alpha1 TargetGroup       my-app-demo-app
+#   - elbv2.services.k8s.aws/v1alpha1 Rule              my-app-demo-app-rule
+#   - elbv2.k8s.aws/v1beta1           TargetGroupBinding demo-app-tgb
+#
+# The traffic path becomes:
+#   <ingressDomainName> ──ALB listener:443/80── host:my-app.<edge>──► TG ──► Service my-app:80
+{{- if .Values.examples.enabled }}
+apiVersion: peeks.io/v1alpha1
+kind: AppExposure
+metadata:
+  name: demo-app
+  namespace: {{ .Values.examples.namespace | default "default" | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "30"
+spec:
+  service:
+    name: my-app
+    port: 80
+  hostname: my-app
+  path: /
+  healthCheckPath: /healthz
+  rulePriority: 100
+{{- end }}
