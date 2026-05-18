@@ -1,0 +1,8 @@
+clusterName: spoke-prod
+region: us-west-2
+vpcCidr: "10.2.0.0/16"
+kubernetesVersion: "1.35"
+autoMode: true
+resourcePrefix: peeks
+environment: prod
+tenant: workshop

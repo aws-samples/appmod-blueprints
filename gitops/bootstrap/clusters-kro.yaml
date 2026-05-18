@@ -22,10 +22,10 @@ spec:
               repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
               revision: '{{ .metadata.annotations.fleetRepoRevision }}'
               files:
-                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/*/kro-clusters/values.yaml'
+                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/*/kro-clusters/*.yaml'
   template:
     metadata:
-      name: 'platform-cluster-kro-{{ index (splitList "/" .path.path) 4 }}'
+      name: 'cluster-{{ .clusterName }}'
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
@@ -38,7 +38,7 @@ spec:
           path: '{{ .metadata.annotations.fleetRepoBasepath }}abstractions/resource-groups-kro/platform-cluster-kro'
           targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
           helm:
-            releaseName: 'platform-cluster-kro-{{ index (splitList "/" .path.path) 4 }}'
+            releaseName: 'cluster-{{ .clusterName }}'
             ignoreMissingValueFiles: true
             valuesObject:
               global:
@@ -53,7 +53,7 @@ spec:
                 adminRoleName: '{{ .metadata.annotations.admin_role_name }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/default/kro-clusters/values.yaml'
-              - '$values/{{ .path.path }}/values.yaml'
+              - '$values/{{ .path.path }}'
       destination:
         namespace: argocd
         name: '{{ .name }}'
