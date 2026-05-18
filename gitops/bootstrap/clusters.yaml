@@ -17,6 +17,7 @@ spec:
               selector:
                 matchLabels:
                   fleet_member: control-plane
+                  enable_kroack_abstractions: "true"
           - git:
               repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
               revision: '{{ .metadata.annotations.fleetRepoRevision }}'

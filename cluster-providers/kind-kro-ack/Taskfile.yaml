@@ -924,6 +924,7 @@ tasks:
             argocd.argoproj.io/secret-type: cluster
             environment: control-plane
             fleet_member: control-plane
+            enable_kroack_abstractions: "true"
             exposure_mode: "EXPOSURE_MODE"
         stringData:
           name: CLUSTER_NAME
