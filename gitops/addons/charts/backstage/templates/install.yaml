@@ -202,19 +202,17 @@ data:
         type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
 
     auth:
-      environment: development
+      environment: production
       session:
         secret: MW2sV-sIPngEl26vAzatV-6VqfsgAx4bPIz7PuE_2Lk=
+      signInPage: keycloak-oidc
       providers:
         keycloak-oidc:
-          development:
+          production:
             metadataUrl: ${KEYCLOAK_NAME_METADATA}
             clientId: backstage
             clientSecret: ${KEYCLOAK_CLIENT_SECRET}
             prompt: auto
-            signIn:
-              resolvers:
-                - resolver: emailMatchingUserEntityProfileEmail
 
     scaffolder:
       # see https://backstage.io/docs/features/software-templates/configuration for software template options
