@@ -56,12 +56,7 @@ vars:
     sh: |
       ARN=$(aws sts get-caller-identity --query "Arn" --output text 2>/dev/null || true)
       if [ -z "$ARN" ]; then
-        # Fallback: get instance profile role
-        TOKEN=$(curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)
-        if [ -n "$TOKEN" ]; then
-          ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/info | jq -r .InstanceProfileArn | sed 's|instance-profile|role|')
-          echo "$ROLE"
-        fi
+        echo ""
       elif echo "$ARN" | grep -q ":assumed-role/"; then
         echo "$ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||'
       else
