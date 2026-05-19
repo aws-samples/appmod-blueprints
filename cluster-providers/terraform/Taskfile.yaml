@@ -2,15 +2,67 @@ version: "3"
 set: [errexit, nounset, pipefail]
 silent: true
 
+env:
+  AWS_PAGER: ""
+  AWS_PROFILE: "{{.AWS_PROFILE}}"
+
 vars:
   TF_DIR: "{{.ROOT_DIR}}/cluster-providers/terraform"
   TFVARS: "{{.TF_DIR}}/terraform.tfvars"
+  GITOPS_ROOT:
+    sh: echo "$(dirname {{.CONFIG_FILE}})/gitops"
+  REQUIRED_CLIS: [terraform, kubectl, helm, yq, aws]
+  AWS_PROFILE:
+    sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
   AWS_REGION:
     sh: yq '.aws.region' {{.CONFIG_FILE}}
+  AWS_ACCOUNT_ID:
+    sh: yq '.aws.accountId' {{.CONFIG_FILE}}
+  REPO_URL:
+    sh: yq '.repo.url' {{.CONFIG_FILE}}
+  REPO_REVISION:
+    sh: yq '.repo.revision' {{.CONFIG_FILE}}
+  REPO_BASEPATH:
+    sh: yq '.repo.basepath' {{.CONFIG_FILE}}
+  DOMAIN:
+    sh: yq '.domain' {{.CONFIG_FILE}}
+  RESOURCE_PREFIX:
+    sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
+  INGRESS_NAME:
+    sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
+  INGRESS_SECURITY_GROUPS:
+    sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  C_INFO:
+    sh: printf '\033[1;36m'
+  C_OK:
+    sh: printf '\033[1;32m'
+  C_STEP:
+    sh: printf '\033[1;33m'
+  C_ERR:
+    sh: printf '\033[1;31m'
+  C_RESET:
+    sh: printf '\033[0m'
 
 tasks:
+  validate:
+    desc: Pre-flight checks for terraform provider
+    cmds:
+      - printf '{{.C_STEP}}▸ Checking required CLIs...{{.C_RESET}}\n'
+      - cmd: command -v {{.ITEM}} >/dev/null 2>&1 || { echo "Missing required CLI {{.ITEM}}"; exit 1; }
+        for:
+          var: REQUIRED_CLIS
+      - printf '{{.C_STEP}}▸ Checking config.local.yaml...{{.C_RESET}}\n'
+      - test -f {{.CONFIG_FILE}} || { echo "config.local.yaml not found"; exit 1; }
+      - yq '.hub.clusterName' {{.CONFIG_FILE}} | grep -qv null || { echo "hub.clusterName not set in config.local.yaml"; exit 1; }
+      - yq '.aws.region' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.region not set in config.local.yaml"; exit 1; }
+      - yq '.aws.accountId' {{.CONFIG_FILE}} | grep -qv null || { echo "aws.accountId not set in config.local.yaml"; exit 1; }
+      - yq '.repo.url' {{.CONFIG_FILE}} | grep -qv null || { echo "repo.url not set in config.local.yaml"; exit 1; }
+      - printf '{{.C_STEP}}▸ Checking AWS credentials...{{.C_RESET}}\n'
+      - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
+      - printf '{{.C_OK}}✓ All pre-flight checks passed.{{.C_RESET}}\n'
+
   generate-tfvars:
     desc: Generate terraform.tfvars from config.local.yaml
     cmds:
@@ -32,8 +84,7 @@ tasks:
         idc_region              = "$(yq '.identityCenter.region' {{.CONFIG_FILE}})"
         idc_admin_group_id      = "$(yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}})"
         argocd_capability_name  = "$(yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}})"
-        eso_version             = "$(yq '.external-secrets.defaultVersion' {{.ROOT_DIR}}/gitops/addons/registry/core.yaml)"
-        root_appset_path        = "{{.ROOT_DIR}}/gitops/bootstrap/root-appset.yaml"
+        eso_version             = "$(yq '.external-secrets.defaultVersion' {{.GITOPS_ROOT}}/addons/registry/core.yaml)"
         EOF
       # Generate cluster-level addon override when autoMode is enabled
       - |
@@ -58,26 +109,466 @@ tasks:
       - terraform init
 
   install:
-    desc: Full bootstrap — VPC, EKS, IAM, ArgoCD capability, ESO, seed, root-appset
+    desc: Bootstrap the platform (idempotent)
     cmds:
+      - task: validate
       - task: generate-tfvars
       - task: init
+      - printf '{{.C_STEP}}▸ Running terraform apply (infra + helm)...{{.C_RESET}}\n'
       - cmd: cd {{.TF_DIR}} && terraform apply -auto-approve
-      - echo "✓ Bootstrap complete. Run 'task status'"
+      - task: hub:kubeconfig
+      - task: hub:wait-for-providers
+      - task: hub:apply-provider-config
+      - task: hub:apply-cluster-secret-store
+      - task: hub:apply-seed-secret
+      - task: hub:apply-root-appset
+      - task: hub:wait-for-sync
+      - task: hub:restart-identity-pods
+      - task: hub:wait-for-full-sync
+      - task: secrets-manager:seed-observability
+      - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
+
+  hub:wait-for-providers:
+    desc: Wait for Crossplane providers to be healthy and CRDs registered
+    cmds:
+      - printf '{{.C_STEP}}▸ Waiting for Crossplane providers to become healthy...{{.C_RESET}}\n'
+      - |
+        TIMEOUT=600
+        ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          HEALTHY=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | grep -c "True" || echo 0)
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          printf '{{.C_INFO}}  Providers: %s/%s healthy (%ss elapsed){{.C_RESET}}\n' "$HEALTHY" "$TOTAL" "$ELAPSED"
+          if [ "$TOTAL" -gt 0 ] && [ "$HEALTHY" -eq "$TOTAL" ]; then
+            break
+          fi
+          sleep 15
+          ELAPSED=$((ELAPSED + 15))
+        done
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          printf '{{.C_ERR}}⚠ Timed out waiting for providers{{.C_RESET}}\n'
+          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get providers.pkg.crossplane.io
+          exit 1
+        fi
+      - printf '{{.C_STEP}}▸ Waiting for ProviderConfig CRD...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=condition=Established crd/providerconfigs.aws.upbound.io --timeout=120s
+      - printf '{{.C_OK}}✓ Crossplane providers healthy, CRDs registered.{{.C_RESET}}\n'
+
+  hub:apply-provider-config:
+    desc: Apply Crossplane ProviderConfig (PodIdentity mode)
+    cmds:
+      - printf '{{.C_STEP}}▸ Applying ProviderConfig...{{.C_RESET}}\n'
+      - |
+        cat <<'EOF' | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        apiVersion: aws.upbound.io/v1beta1
+        kind: ProviderConfig
+        metadata:
+          name: default
+        spec:
+          credentials:
+            source: PodIdentity
+        EOF
+      - printf '{{.C_OK}}✓ ProviderConfig applied.{{.C_RESET}}\n'
+
+  hub:apply-cluster-secret-store:
+    desc: Apply ClusterSecretStore for AWS Secrets Manager
+    cmds:
+      - printf '{{.C_STEP}}▸ Waiting for ESO CRDs...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=condition=Established crd/clustersecretstores.external-secrets.io --timeout=300s
+      - printf '{{.C_STEP}}▸ Applying ClusterSecretStore...{{.C_RESET}}\n'
+      - |
+        cat <<EOF | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        apiVersion: external-secrets.io/v1
+        kind: ClusterSecretStore
+        metadata:
+          name: aws-secrets-manager
+        spec:
+          provider:
+            aws:
+              service: SecretsManager
+              region: {{.AWS_REGION}}
+        EOF
+      - printf '{{.C_OK}}✓ ClusterSecretStore applied.{{.C_RESET}}\n'
+
+  hub:apply-seed-secret:
+    desc: Create seed cluster secret for ArgoCD
+    vars:
+      CLUSTER_ARN:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text
+      VPC_ID:
+        sh: cd {{.TF_DIR}} && terraform output -raw vpc_id
+      SUBNET_IDS:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' ','
+      PRIVATE_SUBNET_IDS:
+        sh: |
+          SUBNETS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' '\n')
+          aws ec2 describe-subnets --subnet-ids $SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' ','
+      CLUSTER_SG:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating seed cluster secret...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+      - |
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|AWS_REGION|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID|{{.AWS_ACCOUNT_ID}}|g; s|VPC_ID|{{.VPC_ID}}|g; s|SUBNET_IDS|{{.SUBNET_IDS}}|g; s|PRIVATE_SUBNET_IDS|{{.PRIVATE_SUBNET_IDS}}|g; s|CLUSTER_SG|{{.CLUSTER_SG}}|g; s|DOMAIN_NAME|{{.DOMAIN}}|g; s|INGRESS_NAME_VAL|{{.INGRESS_NAME}}|g; s|INGRESS_SG_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        type: Opaque
+        metadata:
+          name: CLUSTER_NAME
+          namespace: argocd
+          labels:
+            argocd.argoproj.io/secret-type: cluster
+            fleet_member: control-plane
+            environment: control-plane
+          annotations:
+            addonsRepoURL: "REPO_URL"
+            addonsRepoRevision: "REPO_REVISION"
+            addonsRepoBasepath: "REPO_BASEPATH"
+            fleetRepoURL: "REPO_URL"
+            fleetRepoRevision: "REPO_REVISION"
+            fleetRepoBasepath: "REPO_BASEPATH"
+            aws_cluster_name: "CLUSTER_NAME"
+            aws_cluster_arn: "CLUSTER_ARN"
+            aws_region: "AWS_REGION"
+            aws_account_id: "AWS_ACCOUNT_ID"
+            aws_vpc_id: "VPC_ID"
+            aws_subnet_ids: "SUBNET_IDS"
+            aws_private_subnet_ids: "PRIVATE_SUBNET_IDS"
+            aws_cluster_security_group_id: "CLUSTER_SG"
+            alb_controller_mode: "auto"
+            ingress_domain_name: "DOMAIN_NAME"
+            ingress_name: "INGRESS_NAME_VAL"
+            ingress_security_groups: "INGRESS_SG_VAL"
+            resource_prefix: "RESOURCE_PREFIX_VAL"
+        stringData:
+          name: CLUSTER_NAME
+          server: "CLUSTER_ARN"
+          config: '{"tlsClientConfig":{"insecure":false}}'
+        EOF
+      - printf '{{.C_OK}}✓ Seed secret created.{{.C_RESET}}\n'
+
+  hub:apply-root-appset:
+    desc: Apply root-appset to bootstrap ArgoCD
+    cmds:
+      - printf '{{.C_STEP}}▸ Applying root-appset...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
+      - printf '{{.C_OK}}✓ Root appset applied. Hub is now self-managing.{{.C_RESET}}\n'
+
+  hub:kubeconfig:
+    desc: Fetch hub EKS kubeconfig
+    cmds:
+      - mkdir -p {{.ROOT_DIR}}/private
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>&1 >/dev/null
+
+  hub:wait-for-sync:
+    desc: Wait for hub ArgoCD apps to reach Synced state
+    vars:
+      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "2"}}'
+    cmds:
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Waiting for root-appset to generate apps...{{.C_RESET}}\n'
+      - |
+        TIMEOUT=300
+        ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
+          if [ "$TOTAL" -gt 3 ]; then
+            printf '{{.C_INFO}}  %s apps detected, proceeding to sync check{{.C_RESET}}\n' "$TOTAL"
+            break
+          fi
+          printf '{{.C_INFO}}  %s apps so far, waiting...{{.C_RESET}}\n' "$TOTAL"
+          sleep 10
+          ELAPSED=$((ELAPSED + 10))
+        done
+      - printf '{{.C_STEP}}▸ Waiting for hub apps to sync (max %s OutOfSync tolerated)...{{.C_RESET}}\n' "{{.MAX_OUTOFSYNC}}"
+      - |
+        TIMEOUT=1800
+        INTERVAL=15
+        ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Unknown"' | wc -l)
+          SYNCED=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Synced"' | wc -l)
+          HEALTHY=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$3 == "Healthy"' | wc -l)
+          UNKNOWN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Unknown"' | wc -l)
+          OUTOFSYNC=$((TOTAL - SYNCED))
+          printf '{{.C_INFO}}  Apps: %s/%s synced, %s out-of-sync, %s unknown/spoke (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$OUTOFSYNC" "$UNKNOWN" "$ELAPSED"
+          if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
+            if [ "$OUTOFSYNC" -gt 0 ]; then
+              printf '{{.C_STEP}}▸ %s app(s) still OutOfSync (within tolerance):{{.C_RESET}}\n' "$OUTOFSYNC"
+              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" && $2 != "Unknown" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+            fi
+            printf '{{.C_OK}}✓ %s/%s hub apps are Synced (%s spoke apps pending).{{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN"
+            break
+          fi
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          printf '{{.C_ERR}}⚠ Timed out after %ss. %s hub app(s) still OutOfSync:{{.C_RESET}}\n' "$TIMEOUT" "$OUTOFSYNC"
+          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" && $2 != "Unknown" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+          printf '{{.C_STEP}}▸ Continuing with remaining steps (spoke apps will sync when clusters are ready)...{{.C_RESET}}\n'
+        fi
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+  hub:restart-identity-pods:
+    desc: Restart pods that depend on Pod Identity after associations are ready
+    cmds:
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Restarting Crossplane providers to pick up pod identity credentials...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete pod -n crossplane-system -l pkg.crossplane.io/revision --force --grace-period=0 2>/dev/null || true
+      - sleep 15
+      - printf '{{.C_STEP}}▸ Restarting external-dns and LBC to pick up pod identity credentials...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kube-system -l app.kubernetes.io/name=external-dns 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=external-dns --timeout=60s 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --timeout=60s 2>/dev/null || true
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_OK}}✓ Identity-dependent pods restarted.{{.C_RESET}}\n'
+
+  hub:wait-for-full-sync:
+    desc: Wait for ALL apps (including spokes) to sync after provider restart
+    vars:
+      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
+    cmds:
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Waiting for all apps to sync (spoke clusters provisioning)...{{.C_RESET}}\n'
+      - |
+        TIMEOUT=2400
+        INTERVAL=30
+        ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
+          SYNCED=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Synced"' | wc -l)
+          UNKNOWN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Unknown"' | wc -l)
+          OUTOFSYNC=$((TOTAL - SYNCED - UNKNOWN))
+          printf '{{.C_INFO}}  Apps: %s/%s synced, %s unknown, %s out-of-sync (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "$ELAPSED"
+          if [ "$TOTAL" -gt 0 ] && [ "$UNKNOWN" -eq 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
+            printf '{{.C_OK}}✓ All %s apps synced (within %s tolerance).{{.C_RESET}}\n' "$SYNCED" "{{.MAX_OUTOFSYNC}}"
+            break
+          fi
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          printf '{{.C_ERR}}⚠ Timed out after %ss. %s app(s) still not synced:{{.C_RESET}}\n' "$TIMEOUT" "$OUTOFSYNC"
+          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+          printf '{{.C_STEP}}▸ Continuing — spoke clusters may still be provisioning.{{.C_RESET}}\n'
+        fi
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+  secrets-manager:seed-observability:
+    desc: Seed observability credentials (AMP endpoint, AMG API key) into Secrets Manager
+    cmds:
+      - |
+        set -e
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/secrets"
+
+        # Poll for AMP workspace (up to 30 min — Crossplane provisioning can take time)
+        AMP_WORKSPACE_ID=""
+        printf '{{.C_STEP}}▸ Waiting for AMP workspace...{{.C_RESET}}\n'
+        for i in $(seq 1 60); do
+          AMP_WORKSPACE_ID=$(aws amp list-workspaces --region {{.AWS_REGION}} --query "workspaces[?alias=='{{.RESOURCE_PREFIX}}-observability-amp'].workspaceId" --output text 2>/dev/null)
+          if [ -n "$AMP_WORKSPACE_ID" ] && [ "$AMP_WORKSPACE_ID" != "None" ]; then
+            break
+          fi
+          printf '  [%d/60] AMP workspace not ready yet...\n' "$i"
+          sleep 30
+        done
+        if [ -z "$AMP_WORKSPACE_ID" ] || [ "$AMP_WORKSPACE_ID" = "None" ]; then
+          echo ""
+          echo "============================================================"
+          echo "WARN: AMP workspace not created after 30 min."
+          echo "  Run 'task secrets-manager:seed-observability' once the"
+          echo "  observability-aws ArgoCD app is Synced and AMP/AMG"
+          echo "  workspaces are ACTIVE."
+          echo "============================================================"
+          exit 0
+        fi
+        AMP_ENDPOINT=$(aws amp describe-workspace --workspace-id "$AMP_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.prometheusEndpoint" --output text)
+        echo "Found AMP endpoint: $AMP_ENDPOINT"
+
+        # Poll for AMG workspace (up to 15 min)
+        AMG_WORKSPACE_ID=""
+        printf '{{.C_STEP}}▸ Waiting for AMG workspace...{{.C_RESET}}\n'
+        for i in $(seq 1 30); do
+          AMG_WORKSPACE_ID=$(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability' && status=='ACTIVE'].id | [0]" --output text 2>/dev/null)
+          if [ -n "$AMG_WORKSPACE_ID" ] && [ "$AMG_WORKSPACE_ID" != "None" ]; then
+            AMG_STATUS=$(aws grafana describe-workspace --workspace-id "$AMG_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.status" --output text 2>/dev/null)
+            if [ "$AMG_STATUS" = "ACTIVE" ]; then
+              break
+            fi
+          fi
+          printf '  [%d/30] AMG workspace not ready yet...\n' "$i"
+          sleep 30
+        done
+        if [ -z "$AMG_WORKSPACE_ID" ] || [ "$AMG_WORKSPACE_ID" = "None" ]; then
+          echo "WARN: AMG workspace not found. Run 'task secrets-manager:seed-observability' later."
+          exit 0
+        fi
+        AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.endpoint" --output text)
+        echo "Found AMG endpoint: $AMG_ENDPOINT"
+
+        # Create AMG service account + token (admin, 30 days)
+        SA_NAME="terraform-$(date +%s)"
+        SA_ID=$(aws grafana create-workspace-service-account --workspace-id "$AMG_WORKSPACE_ID" --grafana-role ADMIN --name "$SA_NAME" --region {{.AWS_REGION}} --query "id" --output text 2>/dev/null || echo "")
+        if [ -z "$SA_ID" ] || [ "$SA_ID" = "None" ]; then
+          echo "WARN: Could not create AMG service account. Skipping."
+          exit 0
+        fi
+        AMG_API_KEY=$(aws grafana create-workspace-service-account-token --workspace-id "$AMG_WORKSPACE_ID" --service-account-id "$SA_ID" --name "token-$SA_NAME" --seconds-to-live 2592000 --region {{.AWS_REGION}} --query "serviceAccountToken.key" --output text 2>/dev/null || echo "")
+        if [ -z "$AMG_API_KEY" ]; then
+          echo "WARN: Could not create AMG service account token. Skipping."
+          exit 0
+        fi
+
+        # Merge into existing secret (preserves other keys)
+        EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text 2>/dev/null || echo "{}")
+        UPDATED=$(echo "$EXISTING" | jq \
+          --arg amp_url "${AMP_ENDPOINT}api/v1/remote_write" \
+          --arg amp_query_url "$AMP_ENDPOINT" \
+          --arg amp_region "{{.AWS_REGION}}" \
+          --arg grafana_api_key "$AMG_API_KEY" \
+          --arg grafana_url "$AMG_ENDPOINT" \
+          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url}')
+        if ! echo "$UPDATED" | jq -e 'has("grafana_mysql_password")' >/dev/null; then
+          GRAFANA_MYSQL_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+          UPDATED=$(echo "$UPDATED" | jq --arg p "$GRAFANA_MYSQL_PASSWORD" '. + {grafana_mysql_password: $p}')
+        fi
+        aws secretsmanager create-secret \
+          --name "$SECRET_KEY" \
+          --secret-string "$UPDATED" \
+          --region {{.AWS_REGION}} 2>/dev/null \
+        || aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" \
+          --secret-string "$UPDATED" \
+          --region {{.AWS_REGION}}
+        echo "Seeded observability credentials into $SECRET_KEY"
+
+        # Update hub cluster config secret with AMG URL for Keycloak SAML and grafana-dashboards
+        CONFIG_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$CONFIG_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text)
+        CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq \
+          --arg grafana_url "$AMG_ENDPOINT" \
+          '.metadata = (.metadata | fromjson | . + {aws_grafana_url: $grafana_url} | tojson)')
+        aws secretsmanager put-secret-value \
+          --secret-id "$CONFIG_KEY" \
+          --secret-string "$CONFIG_UPDATED" \
+          --region {{.AWS_REGION}}
+        echo "Updated hub config with AMG URL: $AMG_ENDPOINT"
 
   status:
-    desc: Show current state
+    desc: Check bootstrap status
     cmds:
-      - aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query '{status:cluster.status, endpoint:cluster.endpoint, version:cluster.version}' --output table 2>/dev/null || echo "Cluster not found"
+      - printf '{{.C_INFO}}=== EKS Cluster ==={{.C_RESET}}\n'
+      - aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query '{status:cluster.status, endpoint:cluster.endpoint, version:cluster.version}' --output table 2>/dev/null || echo "Not found"
+      - printf '{{.C_INFO}}=== Terraform State ==={{.C_RESET}}\n'
+      - cmd: cd {{.TF_DIR}} && terraform output 2>/dev/null || echo "No state"
+      - printf '{{.C_INFO}}=== ArgoCD Apps ==={{.C_RESET}}\n'
+      - |
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>/dev/null
+        KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd 2>/dev/null || echo "Cannot reach cluster"
+        rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+  hub:update:
+    desc: Update hub infrastructure
+    cmds:
+      - task: validate
+      - task: generate-tfvars
+      - cmd: cd {{.TF_DIR}} && terraform apply -auto-approve
 
   destroy:
     desc: Full teardown
     cmds:
       - task: generate-tfvars
+      - task: hub:destroy-addons
+      - printf '{{.C_STEP}}▸ Running terraform destroy...{{.C_RESET}}\n'
       - cmd: cd {{.TF_DIR}} && terraform destroy -auto-approve
+      - printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'
 
-  hub:update:
-    desc: Update hub infrastructure
+  hub:destroy-addons:
+    desc: Remove all addons from the hub cluster before terraform destroy
+    vars:
+      ADDONS:
+        sh: |
+          ENABLED_LABELS=$(for f in {{.GITOPS_ROOT}}/overlays/environments/*/enabled-addons.yaml; do
+            [ -f "$f" ] && yq -r '.enabledAddons | to_entries[] | select(.value == true) | "enable_" + .key' "$f"
+          done | sort -u)
+          REGISTRY=$(yq eval-all '. as $item ireduce ({}; . * $item)' \
+            {{.GITOPS_ROOT}}/addons/registry/core.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/gitops.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/security.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/observability.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/ml.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/platform.yaml)
+          echo "$REGISTRY" | yq -r 'to_entries[] | .key + " " + .value.selector.matchExpressions[0].key + " " + (.value.annotationsAppSet."argocd.argoproj.io/sync-wave" // "0")' | while read addon selector wave; do
+            if echo "$ENABLED_LABELS" | grep -qx "$selector"; then
+              echo "$wave $addon"
+            fi
+          done | sort -rn | awk '{print $2}'
     cmds:
-      - task: generate-tfvars
-      - cmd: cd {{.TF_DIR}} && terraform apply -auto-approve
+      - task: hub:kubeconfig
+      - printf '{{.C_ERR}}▸ Stopping all regeneration...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset bootstrap -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>/dev/null || true
+      - sleep 3
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset bootstrap -n argocd --timeout=30s 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application bootstrap -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application bootstrap -n argocd --wait=false 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset cluster-addons -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>/dev/null || true
+      - sleep 3
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset cluster-addons -n argocd --timeout=30s 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application cluster-addons -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>/dev/null || true
+      - cmd: |
+          if [ "{{.ITEM}}" = "argocd" ] || [ "{{.ITEM}}" = "crossplane" ] || [ "{{.ITEM}}" = "crossplane-base" ] || [ "{{.ITEM}}" = "crossplane-aws" ]; then
+            echo "Skipping {{.ITEM}} (Crossplane stack — deleted after clusters)"
+          elif KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset {{.ITEM}} -n argocd >/dev/null 2>&1; then
+            echo "Deleting {{.ITEM}}..."
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+            sleep 3
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset {{.ITEM}} -n argocd --timeout=180s 2>/dev/null || true
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName={{.ITEM}} --timeout=120s 2>/dev/null || true
+          else
+            echo "Skipping {{.ITEM}} (not found)"
+          fi
+        ignore_error: true
+        for:
+          var: ADDONS
+      - printf '{{.C_ERR}}▸ Deleting clusters...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset clusters -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+      - sleep 3
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset clusters -n argocd --timeout=60s 2>/dev/null || true
+      - cmd: |
+          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l app.kubernetes.io/instance=clusters --timeout=600s 2>/dev/null || \
+          (KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application clusters -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+           KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application clusters -n argocd --wait=false 2>/dev/null) || true
+      - cmd: |
+          for ADDON in crossplane-aws crossplane-base crossplane; do
+            if KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset $ADDON -n argocd >/dev/null 2>&1; then
+              echo "Deleting $ADDON..."
+              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+              sleep 3
+              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset $ADDON -n argocd --timeout=180s 2>/dev/null || true
+              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName=$ADDON --timeout=120s 2>/dev/null || true
+            fi
+          done
+        ignore_error: true
+      - printf '{{.C_ERR}}▸ Deleting fleet-secrets...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset fleet-secrets -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+      - sleep 3
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true
+      - cmd: |
+          for app in $(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+            echo "Deleting leftover app $app..."
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application $app -n argocd --timeout=300s 2>/dev/null || \
+            (echo "Force-deleting stuck app $app (stripping finalizers)..." && \
+             KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+             KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application $app -n argocd --wait=false 2>/dev/null) || true
+          done
+        ignore_error: true
+      - printf '{{.C_ERR}}▸ Cleaning up Secrets Manager...{{.C_RESET}}\n'
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/secrets --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_OK}}✓ Hub addons destroyed.{{.C_RESET}}\n'

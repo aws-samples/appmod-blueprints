@@ -99,9 +99,3 @@ variable "eso_version" {
   default     = "0.19.2"
 }
 
-# Root appset path
-variable "root_appset_path" {
-  description = "Path to bootstrap/root-appset.yaml relative to repo root"
-  type        = string
-  default     = "../gitops/bootstrap/root-appset.yaml"
-}
