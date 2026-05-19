@@ -26,8 +26,6 @@ spec:
   template:
     metadata:
       name: 'cluster-{{ .clusterName }}'
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
     spec:
       project: default
       sources:
