@@ -342,6 +342,14 @@ tasks:
           aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --type STANDARD --region {{.AWS_REGION}} --output text 2>/dev/null || true
           aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} --output text 2>/dev/null || true
           echo "Access entry created for $PRINCIPAL_ARN"
+      - printf '{{.C_STEP}}▸ Ensuring EKS Pod Identity Agent addon is installed...{{.C_RESET}}\n'
+      - cmd: |
+          if ! aws eks describe-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name eks-pod-identity-agent --region {{.AWS_REGION}} --query 'addon.status' --output text 2>/dev/null | grep -qE "ACTIVE|CREATING"; then
+            aws eks create-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name eks-pod-identity-agent --region {{.AWS_REGION}} --output text 2>/dev/null || true
+            echo "EKS Pod Identity Agent addon created"
+          else
+            echo "EKS Pod Identity Agent addon already exists"
+          fi
       - printf '{{.C_STEP}}▸ Waiting for IAM roles...{{.C_RESET}}\n'
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role
       - printf '{{.C_STEP}}▸ Waiting for pod identity resources...{{.C_RESET}}\n'
@@ -501,8 +509,11 @@ tasks:
       - printf '{{.C_STEP}}▸ Restarting external-dns and LBC to pick up pod identity credentials...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kube-system -l app.kubernetes.io/name=external-dns 2>/dev/null || true
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller 2>/dev/null || true
+      - printf '{{.C_STEP}}▸ Restarting LiteLLM to pick up pod identity credentials...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kagent litellm 2>/dev/null || true
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=external-dns --timeout=60s 2>/dev/null || true
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --timeout=60s 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kagent litellm --timeout=120s 2>/dev/null || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Identity-dependent pods restarted.{{.C_RESET}}\n'
 
