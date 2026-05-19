@@ -1,0 +1,236 @@
+# yamllint disable rule:line-length
+---
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: backuppolicy.kro.run
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: BackupPolicy
+    spec:
+      # Tier of the backup policy: gold | silver | bronze
+      tier: string | required=true enum="gold,silver,bronze"
+      # Name of the spoke cluster this policy targets (used for naming & tag matching)
+      spokeName: string | required=true
+      # AWS region where the BackupVault / BackupPlan are created
+      region: string | required=true
+      # Name of the BackupVault (defaults to peeks-<spoke>-<tier>)
+      backupVaultName: string | default=""
+      # Destination region for cross-region copy (required for gold & silver)
+      copyDestinationRegion: string | default=""
+      # ARN of the destination BackupVault (required for gold & silver cross-region copy)
+      copyDestinationVaultARN: string | default=""
+      # ARN of the IAM role used by AWS Backup for BackupSelection
+      iamRoleARN: string | required=true
+    status:
+      vaultStatus: ${backupvault.status.conditions}
+  resources:
+    # -----------------------------------------------------------------------
+    # BackupVault - created for every tier
+    # -----------------------------------------------------------------------
+    - id: backupvault
+      readyWhen:
+        - ${backupvault.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: backup.services.k8s.aws/v1alpha1
+        kind: BackupVault
+        metadata:
+          name: '${schema.spec.backupVaultName != "" ? schema.spec.backupVaultName : "peeks-" + schema.spec.spokeName + "-" + schema.spec.tier}'
+        spec:
+          name: '${schema.spec.backupVaultName != "" ? schema.spec.backupVaultName : "peeks-" + schema.spec.spokeName + "-" + schema.spec.tier}'
+          tags:
+            peeks-dr-test: "true"
+            peeks.io/spoke: ${schema.spec.spokeName}
+            peeks.io/tier: ${schema.spec.tier}
+
+    # -----------------------------------------------------------------------
+    # BackupPlan - GOLD tier: RPO 1h, retention 30d, cold 90d, cross-region copy
+    # -----------------------------------------------------------------------
+    - id: backupplangold
+      includeWhen:
+        - ${schema.spec.tier == "gold"}
+      readyWhen:
+        - ${backupplangold.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: backup.services.k8s.aws/v1alpha1
+        kind: BackupPlan
+        metadata:
+          name: peeks-${schema.spec.spokeName}-gold
+        spec:
+          name: peeks-${schema.spec.spokeName}-gold
+          tags:
+            peeks-dr-test: "true"
+            peeks.io/spoke: ${schema.spec.spokeName}
+            peeks.io/tier: gold
+          rules:
+            - ruleName: gold-hourly
+              targetBackupVaultName: ${backupvault.spec.name}
+              scheduleExpression: cron(0 */1 * * ? *)
+              startWindowMinutes: 60
+              completionWindowMinutes: 180
+              lifecycle:
+                deleteAfterDays: 30
+                moveToColdStorageAfterDays: 90
+              copyActions:
+                - destinationBackupVaultARN: ${schema.spec.copyDestinationVaultARN}
+                  lifecycle:
+                    deleteAfterDays: 30
+                    moveToColdStorageAfterDays: 90
+              recoveryPointTags:
+                peeks-dr-test: "true"
+                peeks.io/spoke: ${schema.spec.spokeName}
+                peeks.io/tier: gold
+
+    # -----------------------------------------------------------------------
+    # BackupPlan - SILVER tier: RPO 24h, retention 14d, cross-region copy
+    # -----------------------------------------------------------------------
+    - id: backupplansilver
+      includeWhen:
+        - ${schema.spec.tier == "silver"}
+      readyWhen:
+        - ${backupplansilver.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: backup.services.k8s.aws/v1alpha1
+        kind: BackupPlan
+        metadata:
+          name: peeks-${schema.spec.spokeName}-silver
+        spec:
+          name: peeks-${schema.spec.spokeName}-silver
+          tags:
+            peeks-dr-test: "true"
+            peeks.io/spoke: ${schema.spec.spokeName}
+            peeks.io/tier: silver
+          rules:
+            - ruleName: silver-daily
+              targetBackupVaultName: ${backupvault.spec.name}
+              scheduleExpression: cron(0 2 * * ? *)
+              startWindowMinutes: 60
+              completionWindowMinutes: 360
+              lifecycle:
+                deleteAfterDays: 14
+              copyActions:
+                - destinationBackupVaultARN: ${schema.spec.copyDestinationVaultARN}
+                  lifecycle:
+                    deleteAfterDays: 14
+              recoveryPointTags:
+                peeks-dr-test: "true"
+                peeks.io/spoke: ${schema.spec.spokeName}
+                peeks.io/tier: silver
+
+    # -----------------------------------------------------------------------
+    # BackupPlan - BRONZE tier: RPO 24h, retention 7d, same-region only
+    # -----------------------------------------------------------------------
+    - id: backupplanbronze
+      includeWhen:
+        - ${schema.spec.tier == "bronze"}
+      readyWhen:
+        - ${backupplanbronze.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: backup.services.k8s.aws/v1alpha1
+        kind: BackupPlan
+        metadata:
+          name: peeks-${schema.spec.spokeName}-bronze
+        spec:
+          name: peeks-${schema.spec.spokeName}-bronze
+          tags:
+            peeks-dr-test: "true"
+            peeks.io/spoke: ${schema.spec.spokeName}
+            peeks.io/tier: bronze
+          rules:
+            - ruleName: bronze-daily
+              targetBackupVaultName: ${backupvault.spec.name}
+              scheduleExpression: cron(0 3 * * ? *)
+              startWindowMinutes: 60
+              completionWindowMinutes: 360
+              lifecycle:
+                deleteAfterDays: 7
+              recoveryPointTags:
+                peeks-dr-test: "true"
+                peeks.io/spoke: ${schema.spec.spokeName}
+                peeks.io/tier: bronze
+
+    # -----------------------------------------------------------------------
+    # BackupSelection - one per tier (variant activated via includeWhen)
+    # Matches resources tagged with peeks.io/backup-tier + peeks.io/spoke.
+    # -----------------------------------------------------------------------
+    - id: backupselectiongold
+      includeWhen:
+        - ${schema.spec.tier == "gold"}
+      readyWhen:
+        - ${backupselectiongold.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: backup.services.k8s.aws/v1alpha1
+        kind: BackupSelection
+        metadata:
+          name: peeks-${schema.spec.spokeName}-gold-sel
+        spec:
+          name: peeks-${schema.spec.spokeName}-gold-sel
+          backupPlanRef:
+            from:
+              name: peeks-${schema.spec.spokeName}-gold
+          iamRoleARN: ${schema.spec.iamRoleARN}
+          resources:
+            - "arn:aws:ec2:*:*:volume/*"
+            - "arn:aws:eks:*:*:cluster/*"
+          conditions:
+            stringEquals:
+              - conditionKey: "aws:ResourceTag/peeks.io/backup-tier"
+                conditionValue: gold
+              - conditionKey: "aws:ResourceTag/peeks.io/spoke"
+                conditionValue: ${schema.spec.spokeName}
+
+    - id: backupselectionsilver
+      includeWhen:
+        - ${schema.spec.tier == "silver"}
+      readyWhen:
+        - ${backupselectionsilver.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: backup.services.k8s.aws/v1alpha1
+        kind: BackupSelection
+        metadata:
+          name: peeks-${schema.spec.spokeName}-silver-sel
+        spec:
+          name: peeks-${schema.spec.spokeName}-silver-sel
+          backupPlanRef:
+            from:
+              name: peeks-${schema.spec.spokeName}-silver
+          iamRoleARN: ${schema.spec.iamRoleARN}
+          resources:
+            - "arn:aws:ec2:*:*:volume/*"
+            - "arn:aws:eks:*:*:cluster/*"
+          conditions:
+            stringEquals:
+              - conditionKey: "aws:ResourceTag/peeks.io/backup-tier"
+                conditionValue: silver
+              - conditionKey: "aws:ResourceTag/peeks.io/spoke"
+                conditionValue: ${schema.spec.spokeName}
+
+    - id: backupselectionbronze
+      includeWhen:
+        - ${schema.spec.tier == "bronze"}
+      readyWhen:
+        - ${backupselectionbronze.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: backup.services.k8s.aws/v1alpha1
+        kind: BackupSelection
+        metadata:
+          name: peeks-${schema.spec.spokeName}-bronze-sel
+        spec:
+          name: peeks-${schema.spec.spokeName}-bronze-sel
+          backupPlanRef:
+            from:
+              name: peeks-${schema.spec.spokeName}-bronze
+          iamRoleARN: ${schema.spec.iamRoleARN}
+          resources:
+            - "arn:aws:ec2:*:*:volume/*"
+            - "arn:aws:eks:*:*:cluster/*"
+          conditions:
+            stringEquals:
+              - conditionKey: "aws:ResourceTag/peeks.io/backup-tier"
+                conditionValue: bronze
+              - conditionKey: "aws:ResourceTag/peeks.io/spoke"
+                conditionValue: ${schema.spec.spokeName}
