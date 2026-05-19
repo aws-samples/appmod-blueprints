@@ -10,3 +10,5 @@ identities:
     enabled: true
   litellm:
     enabled: true
+  otel-collector:
+    enabled: true
