@@ -1,6 +1,10 @@
 clusterName: spoke-dev
 region: us-west-2
 vpcCidr: "10.1.0.0/16"
+publicSubnet1Cidr: "10.1.1.0/24"
+publicSubnet2Cidr: "10.1.2.0/24"
+privateSubnet1Cidr: "10.1.11.0/24"
+privateSubnet2Cidr: "10.1.12.0/24"
 kubernetesVersion: "1.35"
 autoMode: true
 resourcePrefix: peeks
