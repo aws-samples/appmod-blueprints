@@ -260,6 +260,9 @@ aws-for-fluentbit:
       - key: enable_aws_for_fluentbit
         operator: In
         values: ['true']
+  values:
+    image:
+      tag: '3.3.1'
 
 cni-metrics-helper:
   namespace: kube-system
