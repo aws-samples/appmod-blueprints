@@ -1,0 +1,45 @@
+podIdentityPolicyCreate: true
+podIdentityRole:
+  description: "External Secrets Operator Role"
+podIdentityAssociation:
+  serviceAccounts:
+    - external-secrets-sa
+podIdentityPolicy:
+  description: "External Secrets Operator Policy"
+  policies:
+    - resourceType: ssm
+      resourceName: "*"
+      actions:
+        - "ssm:DescribeParameters"
+    - resourceType: ssm
+      resourceName: "parameter/*"
+      actions:
+        - "ssm:GetParametersByPath"
+        - "ssm:GetParameters"
+        - "ssm:GetParameter"
+    - resourceType: secretsmanager
+      resourceName: "secret:*"
+      actions:
+        - "secretsmanager:ListSecrets"
+        - "secretsmanager:BatchGetSecretValue"
+        - "secretsmanager:ListSecretVersionIds"
+        - "secretsmanager:GetSecretValue"
+        - "secretsmanager:GetResourcePolicy"
+        - "secretsmanager:DescribeSecret"
+        - "secretsmanager:CreateSecret"
+        - "secretsmanager:PutSecretValue"
+        - "secretsmanager:TagResource"
+        - "secretsmanager:DeleteResourcePolicy"
+    - resourceType: secretsmanager
+      resourceName: "secret:*"
+      actions:
+        - "secretsmanager:DeleteSecret"
+      conditions:
+        - test: "StringEquals"
+          variable: "secretsmanager:ResourceTag/managed-by"
+          values:
+            - "external-secrets"
+    - resourceType: kms
+      resourceName: "key/*"
+      actions:
+        - "kms:Decrypt"
