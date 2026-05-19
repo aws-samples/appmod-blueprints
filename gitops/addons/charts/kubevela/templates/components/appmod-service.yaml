@@ -285,10 +285,16 @@ spec:
         						provider: prometheus: {
         							address: ampWorkspaceUrl
         							query:   [
-        									if criteria.function != _|_ {
+        									if criteria.function != _|_ if criteria.rateInterval != _|_ {
+        									"\(criteria.function)(rate(\(criteria.metric){\(prometheusTargetQuery)}[\(criteria.rateInterval)]))"
+        								},
+        									if criteria.function != _|_ if criteria.rateInterval == _|_ {
         									"\(criteria.function)(\(criteria.metric){\(prometheusTargetQuery)})"
         								},
-        								if criteria.function == _|_ {
+        								if criteria.function == _|_ if criteria.rateInterval != _|_ {
+        									"rate(\(criteria.metric){\(prometheusTargetQuery)}[\(criteria.rateInterval)])"
+        								},
+        								if criteria.function == _|_ if criteria.rateInterval == _|_ {
         									"\(criteria.metric){\(prometheusTargetQuery)}"
         								},
         							][0]
@@ -455,6 +461,7 @@ spec:
         		interval:               *"1s" | string
         		count:                  *1 | int
         		function?:              "sum" | "avg" | "max" | "min" | "count"
+        		rateInterval?:          string
         		successOrFailCondition: *"success" | "fail"
         		metric:                 string
         		comparisonType:         *">" | ">=" | "<" | "<=" | "==" | "!="
