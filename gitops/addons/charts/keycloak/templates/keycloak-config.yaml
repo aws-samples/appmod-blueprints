@@ -595,6 +595,30 @@ data:
         }
       ]
     }
+  langfuse-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "langfuse",
+      "name": "Langfuse",
+      "description": "Langfuse observability platform SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {},
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://{{.Values.domain}}/api/auth/callback/keycloak"
+      ],
+      "webOrigins": [
+        "https://{{.Values.domain}}"
+      ]
+    }
   mcp-client-payload.json: |
     {
       "protocol": "openid-connect",
@@ -861,6 +885,7 @@ spec:
               create_client "Airflow" "/var/config/airflow-client-payload.json"
               create_client "Kargo" "/var/config/kargo-client-payload.json"
               create_client "MCP Client" "/var/config/mcp-client-payload.json"
+              create_client "Langfuse" "/var/config/langfuse-client-payload.json"
               # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
               create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
@@ -895,6 +920,7 @@ spec:
               get_client_secret "spark" "SPARK_CLIENT_SECRET"
               get_client_secret "airflow" "AIRFLOW_CLIENT_SECRET"
               get_client_secret "argo-workflows" "ARGO_WORKFLOWS_CLIENT_SECRET"
+              get_client_secret "langfuse" "LANGFUSE_CLIENT_SECRET"
 
               # ARGOCD_SESSION_TOKEN=$(curl -k -sS http://argocd-server.argocd.svc.cluster.local/argocd/api/v1/session -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_PASSWORD}\"}" | jq -r .token)
               ARGOCD_SESSION_TOKEN=""  # Disabled - using EKS Marina managed ArgoCD
@@ -932,6 +958,8 @@ spec:
                 SPARK_CLIENT_ID: spark
                 AIRFLOW_CLIENT_SECRET: ${AIRFLOW_CLIENT_SECRET}
                 AIRFLOW_CLIENT_ID: airflow
+                LANGFUSE_CLIENT_SECRET: ${LANGFUSE_CLIENT_SECRET}
+                LANGFUSE_CLIENT_ID: langfuse
               " > /tmp/secret.yaml
 
               ./kubectl apply -f /tmp/secret.yaml
@@ -1053,4 +1081,16 @@ spec:
         remoteRef:
           remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
           property: AIRFLOW_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: LANGFUSE_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: LANGFUSE_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: LANGFUSE_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: LANGFUSE_CLIENT_ID
 
