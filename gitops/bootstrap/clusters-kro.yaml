@@ -39,6 +39,13 @@ spec:
             releaseName: 'cluster-{{ .clusterName }}'
             ignoreMissingValueFiles: true
             valuesObject:
+              clusterName: '{{ .clusterName }}'
+              region: '{{ .region }}'
+              vpcCidr: '{{ .vpcCidr }}'
+              kubernetesVersion: '{{ .kubernetesVersion }}'
+              resourcePrefix: '{{ .resourcePrefix }}'
+              environment: '{{ .environment }}'
+              tenant: '{{ .tenant }}'
               global:
                 accountId: '{{ .metadata.annotations.aws_account_id }}'
                 region: '{{ .metadata.annotations.aws_region }}'
