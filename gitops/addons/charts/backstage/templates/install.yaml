@@ -274,9 +274,7 @@ data:
     kubernetesIngestor:
       refreshInterval: 300 # 5 minutes in seconds
       resources:
-        - apiVersion: 'kro.run/v1alpha1'
-          kind: 'ResourceGraphDefinition'
-        # Kro instances (these will be discovered dynamically based on ResourceGraphDefinitions)
+        # Kro instances (namespaced resources created from ResourceGraphDefinitions)
         - apiVersion: 'kro.run/v1alpha1'
           kind: 'CICDPipeline'
         - apiVersion: 'kro.run/v1alpha1'
