@@ -613,10 +613,10 @@ data:
       "rootUrl": "",
       "baseUrl": "",
       "redirectUris": [
-        "https://{{.Values.domain}}/api/auth/callback/keycloak"
+        "https://${DOMAIN_NAME}/api/auth/callback/keycloak"
       ],
       "webOrigins": [
-        "https://{{.Values.domain}}"
+        "https://${DOMAIN_NAME}"
       ]
     }
   mcp-client-payload.json: |
