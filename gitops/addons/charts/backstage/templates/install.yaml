@@ -336,9 +336,6 @@ stringData:
         customResources:
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
-            plural: 'resourcegraphdefinitions'
-          - group: 'kro.run'
-            apiVersion: 'v1alpha1'
             plural: 'cicdpipelines'
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
@@ -357,9 +354,6 @@ stringData:
         skipMetricsLookup: true
         serviceAccountToken: {{ .token }}
         customResources:
-          - group: 'kro.run'
-            apiVersion: 'v1alpha1'
-            plural: 'resourcegraphdefinitions'
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
             plural: 'cicdpipelines'
