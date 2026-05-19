@@ -17,6 +17,7 @@ hub:
   clusterName: "<unique-cluster-name>"       # Must be DNS-compatible, unique per account+region
   kubernetesVersion: "1.35"
   vpcCidr: "10.0.0.0/16"
+  autoMode: true                             # EKS Auto Mode — disables OSS LBC, uses built-in ALB
   # Optional: managed node group alongside Auto Mode
   # managedNodeGroup:
   #   enabled: true

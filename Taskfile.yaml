@@ -19,6 +19,12 @@ includes:
     vars:
       CONFIG_FILE: "{{.CONFIG_FILE}}"
     optional: true
+  terraform:
+    taskfile: ./cluster-providers/terraform/Taskfile.yaml
+    dir: ./cluster-providers/terraform
+    vars:
+      CONFIG_FILE: "{{.CONFIG_FILE}}"
+    optional: true
 
 tasks:
   default:
