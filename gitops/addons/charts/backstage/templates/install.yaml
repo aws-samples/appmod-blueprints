@@ -206,14 +206,15 @@ data:
       session:
         secret: MW2sV-sIPngEl26vAzatV-6VqfsgAx4bPIz7PuE_2Lk=
       providers:
-        guest:
-          dangerouslyAllowOutsideDevelopment: true
         keycloak-oidc:
           development:
             metadataUrl: ${KEYCLOAK_NAME_METADATA}
             clientId: backstage
             clientSecret: ${KEYCLOAK_CLIENT_SECRET}
             prompt: auto
+            signIn:
+              resolvers:
+                - resolver: emailMatchingUserEntityProfileEmail
 
     scaffolder:
       # see https://backstage.io/docs/features/software-templates/configuration for software template options
