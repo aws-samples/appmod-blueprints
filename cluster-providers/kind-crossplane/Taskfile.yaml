@@ -456,7 +456,7 @@ tasks:
         TIMEOUT=300
         ELAPSED=0
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l | tr -d ' ')
           if [ "$TOTAL" -gt 3 ]; then
             printf '{{.C_INFO}}  %s apps detected, proceeding to sync check{{.C_RESET}}\n' "$TOTAL"
             break
@@ -473,16 +473,17 @@ tasks:
         while [ $ELAPSED -lt $TIMEOUT ]; do
           # Count only apps that are NOT in Unknown sync state (spoke apps targeting
           # non-existent clusters show Unknown and should not block the install).
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Unknown"' | wc -l)
-          SYNCED=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Synced"' | wc -l)
-          HEALTHY=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$3 == "Healthy"' | wc -l)
-          UNKNOWN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Unknown"' | wc -l)
+          APP_OUTPUT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null || echo "")
+          TOTAL=$(echo "$APP_OUTPUT" | awk '$2 != "Unknown" && NF>0' | wc -l | tr -d ' ')
+          SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
+          HEALTHY=$(echo "$APP_OUTPUT" | awk '$3 == "Healthy"' | wc -l | tr -d ' ')
+          UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
           OUTOFSYNC=$((TOTAL - SYNCED))
           printf '{{.C_INFO}}  Apps: %s/%s synced, %s out-of-sync, %s unknown/spoke (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$OUTOFSYNC" "$UNKNOWN" "$ELAPSED"
           if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
             if [ "$OUTOFSYNC" -gt 0 ]; then
               printf '{{.C_STEP}}▸ %s app(s) still OutOfSync (within tolerance):{{.C_RESET}}\n' "$OUTOFSYNC"
-              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" && $2 != "Unknown" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+              echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "  - %s (%s/%s)\n", $1, $3, $2}'
             fi
             printf '{{.C_OK}}✓ %s/%s hub apps are Synced (%s spoke apps pending).{{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN"
             break
@@ -492,7 +493,7 @@ tasks:
         done
         if [ $ELAPSED -ge $TIMEOUT ]; then
           printf '{{.C_ERR}}⚠ Timed out after %ss. %s hub app(s) still OutOfSync:{{.C_RESET}}\n' "$TIMEOUT" "$OUTOFSYNC"
-          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" && $2 != "Unknown" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+          echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "  - %s (%s/%s)\n", $1, $3, $2}'
           printf '{{.C_STEP}}▸ Continuing with remaining steps (spoke apps will sync when clusters are ready)...{{.C_RESET}}\n'
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
@@ -530,9 +531,10 @@ tasks:
         INTERVAL=30
         ELAPSED=0
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
-          SYNCED=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Synced"' | wc -l)
-          UNKNOWN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Unknown"' | wc -l)
+          APP_OUTPUT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null || echo "")
+          TOTAL=$(echo "$APP_OUTPUT" | awk 'NF>0' | wc -l | tr -d ' ')
+          SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
+          UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
           OUTOFSYNC=$((TOTAL - SYNCED - UNKNOWN))
           printf '{{.C_INFO}}  Apps: %s/%s synced, %s unknown, %s out-of-sync (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "$ELAPSED"
           if [ "$TOTAL" -gt 0 ] && [ "$UNKNOWN" -eq 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
@@ -544,7 +546,7 @@ tasks:
         done
         if [ $ELAPSED -ge $TIMEOUT ]; then
           printf '{{.C_ERR}}⚠ Timed out after %ss. %s app(s) still not synced:{{.C_RESET}}\n' "$TIMEOUT" "$OUTOFSYNC"
-          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+          echo "$APP_OUTPUT" | awk '$2 != "Synced" && NF>0 {printf "  - %s (%s/%s)\n", $1, $3, $2}'
           printf '{{.C_STEP}}▸ Continuing — spoke clusters may still be provisioning.{{.C_RESET}}\n'
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
