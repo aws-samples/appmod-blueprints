@@ -64,4 +64,4 @@ enabledAddons:
   # Observability AWS (AMP + AMG via Crossplane)
   observability_aws: true
   # Agent Platform (deploys from sample-agent-platform-on-eks repo)
-  agent_platform: true
+  agent_platform: false
