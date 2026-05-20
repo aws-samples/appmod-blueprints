@@ -49,3 +49,7 @@ identityCenter:
 # EKS ArgoCD Capability
 argocdCapability:
   name: "argocd"
+
+# Exposure mode: "domain" (HTTPS + ACM cert + custom domain) or "cloudfront" (HTTP ALB behind CloudFront)
+exposure:
+  mode: "domain"
