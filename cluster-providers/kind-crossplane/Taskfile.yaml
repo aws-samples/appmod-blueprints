@@ -98,6 +98,7 @@ tasks:
       - task: hub:restart-identity-pods
       - task: hub:wait-for-full-sync
       - task: secrets-manager:seed-observability
+      - task: hub:restart-langfuse
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
 
   credentials:setup:
@@ -518,6 +519,16 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kagent litellm --timeout=120s 2>/dev/null || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Identity-dependent pods restarted.{{.C_RESET}}\n'
+
+  hub:restart-langfuse:
+    desc: Restart Langfuse to pick up Keycloak client secret (created by config job after initial deploy)
+    cmds:
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Restarting Langfuse to pick up Keycloak client secret...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n langfuse langfuse 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n langfuse langfuse --timeout=120s 2>/dev/null || true
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_OK}}✓ Langfuse restarted with Keycloak SSO credentials.{{.C_RESET}}\n'
 
   hub:wait-for-full-sync:
     desc: Wait for ALL apps (including spokes) to sync after provider restart
