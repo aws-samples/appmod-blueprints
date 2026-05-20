@@ -65,3 +65,5 @@ enabledAddons:
   airflow: false
   # Agent Platform
   agent_platform: true
+  # Edge / exposure (PeEKS extension — KRO RGD synthesizing TargetGroup + ListenerRule + TargetGroupBinding)
+  app_exposure: true
