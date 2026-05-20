@@ -176,6 +176,7 @@ ingress-class-alb:
         values: ['true']
   valuesObject:
     controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
+    certificateArn: '{{.metadata.annotations.acm_certificate_arn}}'
 
 aws-load-balancer-controller:
   namespace: kube-system

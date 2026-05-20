@@ -34,6 +34,8 @@ vars:
     sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  ACM_CERTIFICATE_ARN:
+    sh: yq '.acmCertificateArn // ""' {{.CONFIG_FILE}}
   C_INFO:
     sh: printf '\033[1;36m'
   C_OK:
@@ -209,7 +211,7 @@ tasks:
       - printf '{{.C_STEP}}▸ Creating seed cluster secret...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|AWS_REGION|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID|{{.AWS_ACCOUNT_ID}}|g; s|VPC_ID|{{.VPC_ID}}|g; s|SUBNET_IDS|{{.SUBNET_IDS}}|g; s|PRIVATE_SUBNET_IDS|{{.PRIVATE_SUBNET_IDS}}|g; s|CLUSTER_SG|{{.CLUSTER_SG}}|g; s|DOMAIN_NAME|{{.DOMAIN}}|g; s|INGRESS_NAME_VAL|{{.INGRESS_NAME}}|g; s|INGRESS_SG_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|AWS_REGION|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID|{{.AWS_ACCOUNT_ID}}|g; s|VPC_ID|{{.VPC_ID}}|g; s|SUBNET_IDS|{{.SUBNET_IDS}}|g; s|PRIVATE_SUBNET_IDS|{{.PRIVATE_SUBNET_IDS}}|g; s|CLUSTER_SG|{{.CLUSTER_SG}}|g; s|DOMAIN_NAME|{{.DOMAIN}}|g; s|INGRESS_NAME_VAL|{{.INGRESS_NAME}}|g; s|INGRESS_SG_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|ACM_CERT_ARN|{{.ACM_CERTIFICATE_ARN}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
@@ -240,6 +242,7 @@ tasks:
             ingress_name: "INGRESS_NAME_VAL"
             ingress_security_groups: "INGRESS_SG_VAL"
             resource_prefix: "RESOURCE_PREFIX_VAL"
+            acm_certificate_arn: "ACM_CERT_ARN"
         stringData:
           name: CLUSTER_NAME
           server: "CLUSTER_ARN"
