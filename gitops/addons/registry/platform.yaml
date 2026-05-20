@@ -216,6 +216,8 @@ multi-acct:
   valuesObject:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
 
 kubevela:
   namespace: vela-system

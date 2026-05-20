@@ -51,6 +51,14 @@ rules:
 - apiGroups: ["kro.run"]
   resources: ["*"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK ELBv2 (TargetGroup, Rule, Listener, LoadBalancer) — required by AppExposure RGD
+- apiGroups: ["elbv2.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# AWS Load Balancer Controller TargetGroupBinding — required by AppExposure RGD
+- apiGroups: ["elbv2.k8s.aws"]
+  resources: ["targetgroupbindings"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -61,6 +69,15 @@ roleRef:
   kind: ClusterRole
   name: eks-capabilities-kro
 subjects:
+# Legacy username — pre-EKS-Capabilities GA, kept for backward compatibility.
 - apiGroup: rbac.authorization.k8s.io
   kind: User
   name: capabilities.eks.amazonaws.com
+{{- if and .Values.global.accountId .Values.global.resourcePrefix .Values.global.clusterName }}
+# Real runtime identity of the KRO controller — STS assumed-role session.
+# EKS access-entry maps the IAM role to: arn:aws:sts::<account>:assumed-role/<role>/{{ "{{SessionName}}" }}
+# and the controller uses session name "KRO".
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: arn:aws:sts::{{ .Values.global.accountId }}:assumed-role/{{ .Values.global.resourcePrefix }}-{{ .Values.global.clusterName }}-kro-capability-role/KRO
+{{- end }}
