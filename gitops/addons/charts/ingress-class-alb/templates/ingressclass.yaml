@@ -11,7 +11,7 @@ spec:
     name: platform
   scheme: internet-facing
   {{- if .Values.certificateArn }}
-  certificateArn:
+  certificateARNs:
     - {{ .Values.certificateArn }}
   {{- end }}
 ---
