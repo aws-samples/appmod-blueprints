@@ -60,5 +60,20 @@ spec:
       name: {{ .Values.resourcePrefix }}-amg-workspace-role
   providerConfigRef:
     name: default
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: {{ .Values.resourcePrefix }}-amg-xray-access
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  forProvider:
+    policyArn: "arn:aws:iam::aws:policy/AWSXrayReadOnlyAccess"
+    roleRef:
+      name: {{ .Values.resourcePrefix }}-amg-workspace-role
+  providerConfigRef:
+    name: default
 {{- end }}
 {{- end }}

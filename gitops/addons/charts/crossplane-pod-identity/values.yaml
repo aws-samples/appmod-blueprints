@@ -340,3 +340,31 @@ identities:
             }
           ]
         }
+
+  otel-collector:
+    enabled: false
+    roleName: OtelCollectorXRayRole
+    namespace: otel
+    serviceAccount: otel-collector
+    tags:
+      managed-by: crossplane
+      purpose: otel-collector-xray-export
+    policy:
+      name: OtelCollectorXRayPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+                "xray:GetSamplingStatisticSummaries"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }

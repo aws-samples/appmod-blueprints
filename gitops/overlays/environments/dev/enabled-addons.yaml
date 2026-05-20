@@ -11,3 +11,4 @@ enabledAddons:
   # Observability
   kube_state_metrics: true
   prometheus_node_exporter: true
+  aws_for_fluentbit: true

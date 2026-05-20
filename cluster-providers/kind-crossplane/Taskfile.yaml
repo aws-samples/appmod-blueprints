@@ -98,6 +98,7 @@ tasks:
       - task: hub:restart-identity-pods
       - task: hub:wait-for-full-sync
       - task: secrets-manager:seed-observability
+      - task: hub:restart-langfuse
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
 
   credentials:setup:
@@ -342,6 +343,14 @@ tasks:
           aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --type STANDARD --region {{.AWS_REGION}} --output text 2>/dev/null || true
           aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} --output text 2>/dev/null || true
           echo "Access entry created for $PRINCIPAL_ARN"
+      - printf '{{.C_STEP}}▸ Ensuring EKS Pod Identity Agent addon is installed...{{.C_RESET}}\n'
+      - cmd: |
+          if ! aws eks describe-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name eks-pod-identity-agent --region {{.AWS_REGION}} --query 'addon.status' --output text 2>/dev/null | grep -qE "ACTIVE|CREATING"; then
+            aws eks create-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name eks-pod-identity-agent --region {{.AWS_REGION}} --output text 2>/dev/null || true
+            echo "EKS Pod Identity Agent addon created"
+          else
+            echo "EKS Pod Identity Agent addon already exists"
+          fi
       - printf '{{.C_STEP}}▸ Waiting for IAM roles...{{.C_RESET}}\n'
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io/argocd-capability-role
       - printf '{{.C_STEP}}▸ Waiting for pod identity resources...{{.C_RESET}}\n'
@@ -448,7 +457,7 @@ tasks:
         TIMEOUT=300
         ELAPSED=0
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l | tr -d ' ')
           if [ "$TOTAL" -gt 3 ]; then
             printf '{{.C_INFO}}  %s apps detected, proceeding to sync check{{.C_RESET}}\n' "$TOTAL"
             break
@@ -465,16 +474,17 @@ tasks:
         while [ $ELAPSED -lt $TIMEOUT ]; do
           # Count only apps that are NOT in Unknown sync state (spoke apps targeting
           # non-existent clusters show Unknown and should not block the install).
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Unknown"' | wc -l)
-          SYNCED=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Synced"' | wc -l)
-          HEALTHY=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$3 == "Healthy"' | wc -l)
-          UNKNOWN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Unknown"' | wc -l)
+          APP_OUTPUT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null || echo "")
+          TOTAL=$(echo "$APP_OUTPUT" | awk '$2 != "Unknown" && NF>0' | wc -l | tr -d ' ')
+          SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
+          HEALTHY=$(echo "$APP_OUTPUT" | awk '$3 == "Healthy"' | wc -l | tr -d ' ')
+          UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
           OUTOFSYNC=$((TOTAL - SYNCED))
           printf '{{.C_INFO}}  Apps: %s/%s synced, %s out-of-sync, %s unknown/spoke (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$OUTOFSYNC" "$UNKNOWN" "$ELAPSED"
           if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
             if [ "$OUTOFSYNC" -gt 0 ]; then
               printf '{{.C_STEP}}▸ %s app(s) still OutOfSync (within tolerance):{{.C_RESET}}\n' "$OUTOFSYNC"
-              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" && $2 != "Unknown" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+              echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "  - %s (%s/%s)\n", $1, $3, $2}'
             fi
             printf '{{.C_OK}}✓ %s/%s hub apps are Synced (%s spoke apps pending).{{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN"
             break
@@ -484,7 +494,7 @@ tasks:
         done
         if [ $ELAPSED -ge $TIMEOUT ]; then
           printf '{{.C_ERR}}⚠ Timed out after %ss. %s hub app(s) still OutOfSync:{{.C_RESET}}\n' "$TIMEOUT" "$OUTOFSYNC"
-          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" && $2 != "Unknown" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+          echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "  - %s (%s/%s)\n", $1, $3, $2}'
           printf '{{.C_STEP}}▸ Continuing with remaining steps (spoke apps will sync when clusters are ready)...{{.C_RESET}}\n'
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
@@ -501,10 +511,24 @@ tasks:
       - printf '{{.C_STEP}}▸ Restarting external-dns and LBC to pick up pod identity credentials...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kube-system -l app.kubernetes.io/name=external-dns 2>/dev/null || true
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller 2>/dev/null || true
+      - printf '{{.C_STEP}}▸ Restarting LiteLLM to pick up pod identity credentials...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n kagent litellm 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n otel otel-collector 2>/dev/null || true
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=external-dns --timeout=60s 2>/dev/null || true
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --timeout=60s 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kagent litellm --timeout=120s 2>/dev/null || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Identity-dependent pods restarted.{{.C_RESET}}\n'
+
+  hub:restart-langfuse:
+    desc: Restart Langfuse to pick up Keycloak client secret (created by config job after initial deploy)
+    cmds:
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Restarting Langfuse to pick up Keycloak client secret...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n langfuse langfuse 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n langfuse langfuse --timeout=120s 2>/dev/null || true
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_OK}}✓ Langfuse restarted with Keycloak SSO credentials.{{.C_RESET}}\n'
 
   hub:wait-for-full-sync:
     desc: Wait for ALL apps (including spokes) to sync after provider restart
@@ -518,9 +542,10 @@ tasks:
         INTERVAL=30
         ELAPSED=0
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
-          SYNCED=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Synced"' | wc -l)
-          UNKNOWN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Unknown"' | wc -l)
+          APP_OUTPUT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null || echo "")
+          TOTAL=$(echo "$APP_OUTPUT" | awk 'NF>0' | wc -l | tr -d ' ')
+          SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
+          UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
           OUTOFSYNC=$((TOTAL - SYNCED - UNKNOWN))
           printf '{{.C_INFO}}  Apps: %s/%s synced, %s unknown, %s out-of-sync (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "$ELAPSED"
           if [ "$TOTAL" -gt 0 ] && [ "$UNKNOWN" -eq 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
@@ -532,7 +557,7 @@ tasks:
         done
         if [ $ELAPSED -ge $TIMEOUT ]; then
           printf '{{.C_ERR}}⚠ Timed out after %ss. %s app(s) still not synced:{{.C_RESET}}\n' "$TIMEOUT" "$OUTOFSYNC"
-          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+          echo "$APP_OUTPUT" | awk '$2 != "Synced" && NF>0 {printf "  - %s (%s/%s)\n", $1, $3, $2}'
           printf '{{.C_STEP}}▸ Continuing — spoke clusters may still be provisioning.{{.C_RESET}}\n'
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
@@ -667,6 +692,13 @@ tasks:
           echo "WARN: Could not create AMG service account token. Skipping."
           exit 0
         fi
+
+        # Install required Grafana plugins (X-Ray for trace visualization)
+        printf '{{.C_STEP}}▸ Installing AMG plugins (X-Ray)...{{.C_RESET}}\n'
+        curl -s -X POST -H "Authorization: Bearer $AMG_API_KEY" \
+          -H "Content-Type: application/json" \
+          "https://$AMG_ENDPOINT/api/plugins/grafana-x-ray-datasource/install" 2>/dev/null || true
+        echo "X-Ray plugin installed"
 
         # Merge into existing secret (preserves other keys). On first run
         # the secret doesn't exist yet — `get-secret-value` returns empty,
