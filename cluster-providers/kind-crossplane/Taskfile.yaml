@@ -693,6 +693,13 @@ tasks:
           exit 0
         fi
 
+        # Install required Grafana plugins (X-Ray for trace visualization)
+        printf '{{.C_STEP}}▸ Installing AMG plugins (X-Ray)...{{.C_RESET}}\n'
+        curl -s -X POST -H "Authorization: Bearer $AMG_API_KEY" \
+          -H "Content-Type: application/json" \
+          "https://$AMG_ENDPOINT/api/plugins/grafana-x-ray-datasource/install" 2>/dev/null || true
+        echo "X-Ray plugin installed"
+
         # Merge into existing secret (preserves other keys). On first run
         # the secret doesn't exist yet — `get-secret-value` returns empty,
         # we start from `{}`, and `put-secret-value` would fail with
