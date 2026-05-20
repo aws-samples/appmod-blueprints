@@ -884,8 +884,62 @@ tasks:
         printf '    ingress_domain_name = %s\n' "{{.EDGE_DOMAIN}}"
         printf '    exposure_mode       = %s\n' "{{.EXPOSURE_MODE}}"
         printf '    alb_listener_arn    = %s\n' "{{.ALB_LISTENER_ARN}}"
+      # Idempotent seed: create full secret on first run, patch only managed fields on re-run.
+      # Rationale: other controllers (e.g. KRO RGDs, addon registries) may add labels like
+      # enable_<addon>=true to the same secret. A blanket `kubectl apply` of the full manifest
+      # would clobber any label/annotation not present in our template. Splitting create vs.
+      # update keeps the task re-runnable without trampling third-party metadata.
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}/|g; s|EXPOSURE_MODE|{{.EXPOSURE_MODE}}|g; s|EDGE_DOMAIN|{{.EDGE_DOMAIN}}|g; s|ALB_LISTENER_ARN|{{.ALB_LISTENER_ARN}}|g; s|VPC_ID_VAL|{{.VPC_ID}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID_VAL|{{.AWS_ACCOUNT_ID}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|INGRESS_SECURITY_GROUPS_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|ADMIN_ROLE_NAME_VAL|{{.ADMIN_ROLE_NAME}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        export KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig
+        if kubectl -n argocd get secret {{.HUB_CLUSTER_NAME}} >/dev/null 2>&1; then
+          printf '{{.C_INFO}}  Secret {{.HUB_CLUSTER_NAME}} exists — patching managed fields only (preserving foreign labels/annotations){{.C_RESET}}\n'
+
+          # Annotations owned by this task (gitops-bridge contract + PeEKS exposure metadata).
+          # --overwrite updates these specific keys; foreign annotations are untouched.
+          kubectl -n argocd annotate secret {{.HUB_CLUSTER_NAME}} --overwrite \
+            addonsRepoURL="{{.REPO_URL}}" \
+            addonsRepoRevision="{{.REPO_REVISION}}" \
+            addonsRepoBasepath="{{.REPO_BASEPATH}}/" \
+            fleetRepoURL="{{.REPO_URL}}" \
+            fleetRepoRevision="{{.REPO_REVISION}}" \
+            fleetRepoBasepath="{{.REPO_BASEPATH}}/" \
+            aws_cluster_name="{{.HUB_CLUSTER_NAME}}" \
+            aws_account_id="{{.AWS_ACCOUNT_ID}}" \
+            aws_region="{{.AWS_REGION}}" \
+            aws_vpc_id="{{.VPC_ID}}" \
+            admin_role_name="{{.ADMIN_ROLE_NAME}}" \
+            resource_prefix="{{.RESOURCE_PREFIX}}" \
+            ingress_domain_name="{{.EDGE_DOMAIN}}" \
+            ingress_name="{{.RESOURCE_PREFIX}}-hub-ingress" \
+            ingress_security_groups="{{.INGRESS_SECURITY_GROUPS}}" \
+            alb_controller_mode="oss" \
+            exposure_mode="{{.EXPOSURE_MODE}}" \
+            alb_listener_arn="{{.ALB_LISTENER_ARN}}"
+
+          # Labels owned by this task. NOTE: enable_* labels are deliberately NOT managed
+          # here — they are owned by the KRO eks-cluster RGD (rg-eks.yaml argocdSecret resource)
+          # and/or addon registries. Touching them here would create a tug-of-war.
+          kubectl -n argocd label secret {{.HUB_CLUSTER_NAME}} --overwrite \
+            argocd.argoproj.io/secret-type=cluster \
+            environment=control-plane \
+            fleet_member=control-plane \
+            enable_kroack_abstractions=true \
+            exposure_mode="{{.EXPOSURE_MODE}}"
+
+          # Refresh stringData (server/config may change if ARGOCD_ROLE_ARN evolves).
+          kubectl -n argocd patch secret {{.HUB_CLUSTER_NAME}} --type=merge -p "$(cat <<EOF
+        {
+          "stringData": {
+            "name": "{{.HUB_CLUSTER_NAME}}",
+            "server": "{{.CLUSTER_ARN}}",
+            "config": "{\"awsAuthConfig\":{\"clusterName\":\"{{.HUB_CLUSTER_NAME}}\",\"roleARN\":\"{{.ARGOCD_ROLE_ARN}}\"},\"tlsClientConfig\":{\"insecure\":false}}"
+          }
+        }
+        EOF
+        )"
+        else
+          printf '{{.C_INFO}}  Secret {{.HUB_CLUSTER_NAME}} absent — creating from full manifest{{.C_RESET}}\n'
+          cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}/|g; s|EXPOSURE_MODE|{{.EXPOSURE_MODE}}|g; s|EDGE_DOMAIN|{{.EDGE_DOMAIN}}|g; s|ALB_LISTENER_ARN|{{.ALB_LISTENER_ARN}}|g; s|VPC_ID_VAL|{{.VPC_ID}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID_VAL|{{.AWS_ACCOUNT_ID}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|INGRESS_SECURITY_GROUPS_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|ADMIN_ROLE_NAME_VAL|{{.ADMIN_ROLE_NAME}}|g" | kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
@@ -926,6 +980,7 @@ tasks:
           server: "CLUSTER_ARN"
           config: '{"awsAuthConfig":{"clusterName":"CLUSTER_NAME","roleARN":"ARGOCD_ROLE_ARN"},"tlsClientConfig":{"insecure":false}}'
         EOF
+        fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   hub:apply-root-appset:
