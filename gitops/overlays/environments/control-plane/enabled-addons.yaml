@@ -40,7 +40,7 @@ enabledAddons:
   kro_manifests_hub: false
   multi_acct: false
   platform_manifests: false
-  backstage: false
+  backstage: true
   kubevela: false
   devlake: false
   gitlab: false
