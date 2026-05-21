@@ -133,6 +133,26 @@ variable "gitops_addons_repo_revision" {
   description = "The name of branch or tag"
   default     = "main"
 }
+
+# Overlay (optional multi-repo values override)
+variable "overlay_repo_url" {
+  description = "Git URL for overlay values repo (empty = no overlay)"
+  type        = string
+  default     = ""
+}
+
+variable "overlay_repo_revision" {
+  description = "Branch or tag for overlay repo"
+  type        = string
+  default     = "main"
+}
+
+variable "overlay_repo_base_path" {
+  description = "Base path within overlay repo for addon values"
+  type        = string
+  default     = "gitops/addons/"
+}
+
 # Fleet
 variable "gitops_fleet_repo_name" {
   description = "The name of Git repo"

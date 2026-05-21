@@ -28,3 +28,8 @@ repoURLGit: "{{.metadata.annotations.addonsRepoURL}}"
 repoURLGitRevision: "{{.metadata.annotations.addonsRepoRevision}}"
 repoURLGitBasePath: "{{.metadata.annotations.addonsRepoBasepath}}"
 overlayBasePath: ""
+
+# Overlay multi-repo (optional, injected by bootstrap/addons.yaml valuesObject)
+overlayRepoURLGit: ""
+overlayRepoURLGitRevision: "main"
+overlayRepoURLGitBasePath: ""

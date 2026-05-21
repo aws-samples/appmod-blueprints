@@ -23,7 +23,10 @@ spec:
       sources:
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
-          ref: values
+          ref: defaults
+        - repoURL: '{{ or .metadata.annotations.overlay_repo_url .metadata.annotations.addonsRepoURL }}'
+          targetRevision: '{{ or .metadata.annotations.overlay_repo_revision .metadata.annotations.addonsRepoRevision }}'
+          ref: overlay
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
           path: 'platform-charts/appset-chart'
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
@@ -32,16 +35,22 @@ spec:
             ignoreMissingValueFiles: true
             valueFiles:
               - values.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/_defaults.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/core.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/gitops.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/security.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/observability.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/platform.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/ml.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/agents.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml
-              - $values/{{ .metadata.annotations.addonsRepoBasepath }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/_defaults.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/core.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/gitops.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/security.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/observability.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/platform.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/ml.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/agents.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml
+              - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
+              - $overlay/{{ or .metadata.annotations.overlay_repo_basepath .metadata.annotations.addonsRepoBasepath }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml
+              - $overlay/{{ or .metadata.annotations.overlay_repo_basepath .metadata.annotations.addonsRepoBasepath }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
+            valuesObject:
+              overlayRepoURLGit: '{{ .metadata.annotations.overlay_repo_url }}'
+              overlayRepoURLGitRevision: '{{ or .metadata.annotations.overlay_repo_revision "main" }}'
+              overlayRepoURLGitBasePath: '{{ .metadata.annotations.overlay_repo_basepath }}'
       destination:
         namespace: argocd
         name: '{{ .name }}'

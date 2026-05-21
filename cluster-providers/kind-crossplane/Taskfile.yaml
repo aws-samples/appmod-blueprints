@@ -424,6 +424,9 @@ tasks:
             fleetRepoURL: "REPO_URL"
             fleetRepoRevision: "REPO_REVISION"
             fleetRepoBasepath: "REPO_BASEPATH"
+            overlay_repo_url: ""
+            overlay_repo_revision: ""
+            overlay_repo_basepath: ""
             aws_cluster_name: {{.HUB_CLUSTER_NAME}}
           labels:
             argocd.argoproj.io/secret-type: cluster
