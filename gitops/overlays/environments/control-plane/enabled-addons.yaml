@@ -39,7 +39,7 @@ enabledAddons:
   kro_manifests: false
   kro_manifests_hub: false
   multi_acct: false
-  platform_manifests: false
+  platform_manifests: true
   backstage: true
   kubevela: false
   devlake: false

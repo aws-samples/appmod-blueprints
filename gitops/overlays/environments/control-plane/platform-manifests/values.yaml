@@ -1,0 +1,3 @@
+# Enable custom nodepools (system-peeks, general-purpose-peeks) on the hub control-plane
+customNodepools:
+  enabled: true
