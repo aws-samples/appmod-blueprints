@@ -38,7 +38,7 @@ spec:
   destinations:
   - namespace: '*'
     name: '*-spoke-*'
-  clusterResourceBlacklist:
+  clusterResourceWhitelist:
   - group: ''
     kind: Namespace
   namespaceResourceWhitelist:

@@ -165,3 +165,25 @@ index cd83d25..a99b363 100644
            createSanitizeResource(),
            createVerifyDependency(),
          );
+diff --git a/packages/app/src/App.tsx b/packages/app/src/App.tsx
+index abb34f2..89021b8 100644
+--- a/packages/app/src/App.tsx
++++ b/packages/app/src/App.tsx
+@@ -22,7 +22,7 @@ import {
+ import { TechDocsAddons } from '@backstage/plugin-techdocs-react';
+ import { ReportIssue } from '@backstage/plugin-techdocs-module-addons-contrib';
+ import { UserSettingsPage } from '@backstage/plugin-user-settings';
+-import { apis } from './apis';
++import { apis, keycloakOIDCAuthApiRef } from './apis';
+ import { entityPage } from './components/catalog/EntityPage';
+ import { searchPage } from './components/search/SearchPage';
+ import { Root } from './components/Root';
+@@ -46,7 +46,7 @@ const app = createApp({
+   themes: [cnoeVibrantLightAppTheme, cnoeVibrantDarkAppTheme],
+   components: {
+     SignInPage: props => {
+-      return <SignInPage {...props} auto providers={['guest']} />;
++      return <SignInPage {...props} providers={[{ id: 'keycloak-oidc', title: 'Keycloak', message: 'Sign in with Keycloak SSO', apiRef: keycloakOIDCAuthApiRef }]} />;
+     },
+   },
+   bindRoutes({ bind }) {

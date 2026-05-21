@@ -846,6 +846,9 @@ keycloak:
         - /metadata/generation
         - /metadata/managedFields
         - /metadata/resourceVersion
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -963,6 +966,9 @@ jupyterhub:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1028,6 +1034,15 @@ devlake:
       name: devlake-mysql-access
       jsonPointers:
         - /secrets
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
@@ -1088,6 +1103,9 @@ kubeflow:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1123,6 +1141,9 @@ argo-workflows:
         - /metadata/resourceVersion
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       name: keycloak-oidc
@@ -1218,6 +1239,16 @@ kargo:
                 conversionStrategy: Default
                 decodingStrategy: None
                 metadataPolicy: None
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
 
 kubevela:
   enabled: false
@@ -1366,6 +1397,15 @@ crossplane-aws:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
 
 grafana:
   enabled: false
@@ -1396,6 +1436,8 @@ grafana:
       jqPathExpressions:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
         - '.spec.versions[].schema.openAPIV3Schema | .. | .remoteRef?'
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1433,6 +1475,16 @@ grafana-dashboards:
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     grafana_url: '{{.metadata.annotations.aws_grafana_url}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
 
 grafana-operator:
   enabled: false
@@ -1511,6 +1563,9 @@ flux:
         - /spec/data/1/remoteRef/metadataPolicy
         - /spec/target/template/engineVersion
         - /spec/target/template/mergePolicy
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: source.toolkit.fluxcd.io
       kind: GitRepository
       jsonPointers:
@@ -1550,6 +1605,8 @@ backstage:
       jqPathExpressions:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
         - '.spec.versions[].schema.openAPIV3Schema | .. | .remoteRef?'
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1615,6 +1672,9 @@ mlflow:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1678,6 +1738,9 @@ spark-operator:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1720,6 +1783,9 @@ airflow:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:

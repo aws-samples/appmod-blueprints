@@ -202,14 +202,13 @@ data:
         type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
 
     auth:
-      environment: development
+      environment: production
       session:
         secret: MW2sV-sIPngEl26vAzatV-6VqfsgAx4bPIz7PuE_2Lk=
+      signInPage: keycloak-oidc
       providers:
-        guest:
-          dangerouslyAllowOutsideDevelopment: true
         keycloak-oidc:
-          development:
+          production:
             metadataUrl: ${KEYCLOAK_NAME_METADATA}
             clientId: backstage
             clientSecret: ${KEYCLOAK_CLIENT_SECRET}
@@ -275,9 +274,7 @@ data:
     kubernetesIngestor:
       refreshInterval: 300 # 5 minutes in seconds
       resources:
-        - apiVersion: 'kro.run/v1alpha1'
-          kind: 'ResourceGraphDefinition'
-        # Kro instances (these will be discovered dynamically based on ResourceGraphDefinitions)
+        # Kro instances (namespaced resources created from ResourceGraphDefinitions)
         - apiVersion: 'kro.run/v1alpha1'
           kind: 'CICDPipeline'
         - apiVersion: 'kro.run/v1alpha1'
@@ -337,9 +334,6 @@ stringData:
         customResources:
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
-            plural: 'resourcegraphdefinitions'
-          - group: 'kro.run'
-            apiVersion: 'v1alpha1'
             plural: 'cicdpipelines'
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
@@ -358,9 +352,6 @@ stringData:
         skipMetricsLookup: true
         serviceAccountToken: {{ .token }}
         customResources:
-          - group: 'kro.run'
-            apiVersion: 'v1alpha1'
-            plural: 'resourcegraphdefinitions'
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
             plural: 'cicdpipelines'
