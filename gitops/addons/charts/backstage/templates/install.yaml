@@ -742,6 +742,8 @@ metadata:
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
 {{- end }}
+    alb.ingress.kubernetes.io/transforms.backstage: |
+      [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/backstage\\/?(.*)$","replace":"/$1"}]}}]
 spec:
   ingressClassName: platform
   rules:
