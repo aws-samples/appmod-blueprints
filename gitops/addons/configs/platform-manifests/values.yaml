@@ -7,6 +7,12 @@ gpu:
 customNodepools:
   enabled: false  # Enable custom Karpenter nodepools — set true per environment
 
+trainium:
+  enabled: false  # Enable Trainium Karpenter nodepool — set true per environment
+
+raySystem:
+  enabled: false  # Enable ray-system IAMRoleSelectors — requires ACK IAM CRDs
+
 # Hugging Face models to download and store in S3
 huggingfaceModels:
   - name: gpt2-neuron
