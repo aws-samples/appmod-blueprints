@@ -8,5 +8,3 @@ identities:
     enabled: true
   external-dns:
     enabled: true
-  litellm:
-    enabled: true
