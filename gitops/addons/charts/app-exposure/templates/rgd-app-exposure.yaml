@@ -50,12 +50,25 @@ spec:
       # Numbers below 50 are reserved for platform rules.
       rulePriority: integer | required=true description="Listener rule priority (50-50000, unique)"
 
+      # Routing mode for the listener rule:
+      #   - "host" (default): match host-header `<hostname>.<edgeDomain>` AND path
+      #     Use this when the edge presents real subdomains (prod-public, internal-only with split-horizon DNS).
+      #   - "path": match path only, no host condition
+      #     Use this when the edge presents a single shared host — typically Workshop Studio
+      #     (CloudFront single distribution) where every app shares `<cf-domain>` and routing is
+      #     differentiated by URL path (/grafana, /keycloak, ...).
+      routingMode: string | default="host" enum="host,path" description="Listener match mode - host+path or path-only"
+
       # Optional resource name suffix. Defaults to the claim's metadata.name.
       resourceSuffix: string | default="" description="Override for AWS resource names"
 
     status:
       targetGroupARN: ${targetGroup.status.ackResourceMetadata.arn}
-      ruleARN: ${listenerRule.status.ackResourceMetadata.arn}
+      # Legacy field — populated in host-mode only. Kept for CRD backward compatibility.
+      ruleARN: ${listenerRuleHost.status.ackResourceMetadata.arn}
+      # New per-mode fields. Only one is populated at runtime depending on routingMode.
+      ruleARNHost: ${listenerRuleHost.status.ackResourceMetadata.arn}
+      ruleARNPath: ${listenerRulePath.status.ackResourceMetadata.arn}
       fqdn: ${targetGroup.metadata.name}
 
   resources:
@@ -91,9 +104,11 @@ spec:
             - key: AppExposureNamespace
               value: ${schema.metadata.namespace}
 
-    # 2) ACK Rule — listener rule on the shared hub ALB. Host-header match
-    #    routes traffic for <hostname>.<edgeDomain><path> to the TargetGroup.
-    - id: listenerRule
+    # 2a) ACK Rule — host-mode: match `<hostname>.<edgeDomain>` AND path.
+    #     Used in prod-public / internal-only modes with real subdomains.
+    - id: listenerRuleHost
+      includeWhen:
+        - ${schema.spec.routingMode == "host"}
       template:
         apiVersion: elbv2.services.k8s.aws/v1alpha1
         kind: Rule
@@ -108,6 +123,35 @@ spec:
               hostHeaderConfig:
                 values:
                   - ${schema.spec.hostname}.{{ .Values.ingressDomainName }}
+            - field: path-pattern
+              pathPatternConfig:
+                values:
+                  - ${schema.spec.path}
+          actions:
+            - type: forward
+              targetGroupARN: ${targetGroup.status.ackResourceMetadata.arn}
+          tags:
+            - key: ManagedBy
+              value: kro-app-exposure
+            - key: AppExposureName
+              value: ${schema.metadata.name}
+
+    # 2b) ACK Rule — path-mode: match path only, no host condition.
+    #     Used in workshop-studio (single-domain CloudFront) where every app
+    #     shares the same edge host and routing is differentiated by URL path.
+    - id: listenerRulePath
+      includeWhen:
+        - ${schema.spec.routingMode == "path"}
+      template:
+        apiVersion: elbv2.services.k8s.aws/v1alpha1
+        kind: Rule
+        metadata:
+          name: ${schema.spec.hostname}-${schema.metadata.name}-rule
+          namespace: ${schema.metadata.namespace}
+        spec:
+          listenerARN: {{ .Values.albListenerArn | quote }}
+          priority: ${schema.spec.rulePriority}
+          conditions:
             - field: path-pattern
               pathPatternConfig:
                 values:
