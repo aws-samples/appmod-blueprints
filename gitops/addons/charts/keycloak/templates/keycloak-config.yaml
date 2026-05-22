@@ -580,7 +580,43 @@ data:
             "attribute.nameformat": "Unspecified",
             "attribute.name": "role"
           }
+        },
+        {
+          "name": "groups",
+          "protocol": "saml",
+          "protocolMapper": "saml-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "attribute.nameformat": "Unspecified",
+            "attribute.name": "groups",
+            "single": "false",
+            "full.path": "false"
+          }
         }
+      ]
+    }
+  langfuse-client-payload.json: |
+    {
+      "protocol": "openid-connect",
+      "clientId": "langfuse",
+      "name": "Langfuse",
+      "description": "Langfuse observability platform SSO",
+      "publicClient": false,
+      "authorizationServicesEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "frontchannelLogout": true,
+      "attributes": {},
+      "alwaysDisplayInConsole": false,
+      "rootUrl": "",
+      "baseUrl": "",
+      "redirectUris": [
+        "https://${DOMAIN_NAME}/api/auth/callback/keycloak"
+      ],
+      "webOrigins": [
+        "https://${DOMAIN_NAME}"
       ]
     }
   mcp-client-payload.json: |
@@ -849,6 +885,7 @@ spec:
               create_client "Airflow" "/var/config/airflow-client-payload.json"
               create_client "Kargo" "/var/config/kargo-client-payload.json"
               create_client "MCP Client" "/var/config/mcp-client-payload.json"
+              create_client "Langfuse" "/var/config/langfuse-client-payload.json"
               # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
               create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
@@ -866,6 +903,14 @@ spec:
               # add_client_scope "argocd" "Argo CD"  # Disabled - using EKS Marina managed ArgoCD
               add_client_scope "account-console" "Account Console"
               add_client_scope "gitlab" "GitLab"
+              add_client_scope "mcp-client" "MCP Client"
+
+              echo "adding user1 to admin group"
+              USER1_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/users?username=user1" '.[0].id')
+              ADMIN_GROUP_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/groups" '.[] | select(.name == "admin") | .id')
+              if [ -n "$USER1_ID" ] && [ -n "$ADMIN_GROUP_ID" ]; then
+                keycloak_put "/admin/realms/${REALM_NAME}/users/${USER1_ID}/groups/${ADMIN_GROUP_ID}" "user1 to admin group"
+              fi
 
               echo "getting client secrets"
               get_client_secret "backstage" "BACKSTAGE_CLIENT_SECRET"
@@ -875,6 +920,7 @@ spec:
               get_client_secret "spark" "SPARK_CLIENT_SECRET"
               get_client_secret "airflow" "AIRFLOW_CLIENT_SECRET"
               get_client_secret "argo-workflows" "ARGO_WORKFLOWS_CLIENT_SECRET"
+              get_client_secret "langfuse" "LANGFUSE_CLIENT_SECRET"
 
               # ARGOCD_SESSION_TOKEN=$(curl -k -sS http://argocd-server.argocd.svc.cluster.local/argocd/api/v1/session -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"${ARGOCD_PASSWORD}\"}" | jq -r .token)
               ARGOCD_SESSION_TOKEN=""  # Disabled - using EKS Marina managed ArgoCD
@@ -912,6 +958,8 @@ spec:
                 SPARK_CLIENT_ID: spark
                 AIRFLOW_CLIENT_SECRET: ${AIRFLOW_CLIENT_SECRET}
                 AIRFLOW_CLIENT_ID: airflow
+                LANGFUSE_CLIENT_SECRET: ${LANGFUSE_CLIENT_SECRET}
+                LANGFUSE_CLIENT_ID: langfuse
               " > /tmp/secret.yaml
 
               ./kubectl apply -f /tmp/secret.yaml
@@ -1033,4 +1081,16 @@ spec:
         remoteRef:
           remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
           property: AIRFLOW_CLIENT_ID
+    - conversionStrategy: None
+      match:
+        secretKey: LANGFUSE_CLIENT_SECRET
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: LANGFUSE_CLIENT_SECRET
+    - conversionStrategy: None
+      match:
+        secretKey: LANGFUSE_CLIENT_ID
+        remoteRef:
+          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
+          property: LANGFUSE_CLIENT_ID
 

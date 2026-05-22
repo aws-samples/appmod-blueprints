@@ -1,0 +1,160 @@
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: agent-platform-overview
+  namespace: grafana-operator
+spec:
+  folder: "Agent Platform"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  json: |
+    {
+      "title": "Agent Platform - Overview",
+      "uid": "agent-platform-overview",
+      "tags": ["agent-platform"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "title": "Agent Pods (kagent)",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [{"expr": "count(kube_pod_info{namespace=\"kagent\"})", "legendFormat": "Pods"}]
+        },
+        {
+          "title": "LiteLLM Ready",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [{"expr": "count(kube_pod_status_ready{namespace=\"kagent\",pod=~\"litellm.*\",condition=\"true\"})", "legendFormat": "Ready"}]
+        },
+        {
+          "title": "OTEL Collector Ready",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [{"expr": "count(kube_pod_status_ready{namespace=\"otel\",condition=\"true\"})", "legendFormat": "Ready"}]
+        },
+        {
+          "title": "Agent Gateway Ready",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [{"expr": "count(kube_pod_status_ready{namespace=\"agentgateway-system\",condition=\"true\"})", "legendFormat": "Ready"}]
+        },
+        {
+          "title": "CPU Usage by Namespace",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"kagent|otel|agentgateway-system|langfuse|jaeger\"}[5m])) by (namespace)", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}"}
+          ]
+        },
+        {
+          "title": "Memory Usage by Namespace",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(container_memory_working_set_bytes{namespace=~\"kagent|otel|agentgateway-system|langfuse|jaeger\"}) by (namespace) / 1024 / 1024", "legendFormat": "{{ "{{" }}namespace{{ "}}" }} (MiB)"}
+          ]
+        },
+        {
+          "title": "Pod Restarts (last 1h)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "increase(kube_pod_container_status_restarts_total{namespace=~\"kagent|otel|agentgateway-system|langfuse\"}[1h]) > 0", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}/{{ "{{" }}pod{{ "}}" }}"}
+          ]
+        }
+      ]
+    }
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: agent-platform-xray-traces
+  namespace: grafana-operator
+spec:
+  folder: "Agent Platform"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  json: |
+    {
+      "title": "Agent Platform - X-Ray Traces",
+      "uid": "agent-platform-xray",
+      "tags": ["agent-platform", "tracing"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "title": "Service Map",
+          "type": "nodeGraph",
+          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
+          "datasource": {"uid": "xray"},
+          "targets": [{"queryType": "getServiceMap", "refId": "A", "region": "us-east-1"}]
+        },
+        {
+          "title": "Recent Traces",
+          "type": "table",
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 12},
+          "datasource": {"uid": "xray"},
+          "targets": [{"queryType": "getTraceSummaries", "refId": "A", "query": "", "region": "us-east-1"}]
+        }
+      ]
+    }
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: agent-platform-litellm
+  namespace: grafana-operator
+spec:
+  folder: "Agent Platform"
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  json: |
+    {
+      "title": "Agent Platform - LiteLLM Gateway",
+      "uid": "agent-platform-litellm",
+      "tags": ["agent-platform", "litellm"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "title": "LiteLLM CPU",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"kagent\",pod=~\"litellm.*\"}[5m])) by (pod)", "legendFormat": "{{ "{{" }}pod{{ "}}" }}"}
+          ]
+        },
+        {
+          "title": "LiteLLM Memory",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(container_memory_working_set_bytes{namespace=\"kagent\",pod=~\"litellm.*\"}) by (pod) / 1024 / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} (MiB)"}
+          ]
+        },
+        {
+          "title": "LiteLLM Network I/O",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(container_network_receive_bytes_total{namespace=\"kagent\",pod=~\"litellm.*\"}[5m])) by (pod) / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} RX (KiB/s)"},
+            {"expr": "sum(rate(container_network_transmit_bytes_total{namespace=\"kagent\",pod=~\"litellm.*\"}[5m])) by (pod) / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} TX (KiB/s)"}
+          ]
+        }
+      ]
+    }

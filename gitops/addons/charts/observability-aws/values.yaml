@@ -16,7 +16,7 @@ amp:
 amg:
   enabled: true
   name: ""  # defaults to <resourcePrefix>-observability
-  grafanaVersion: "10.4"
+  grafanaVersion: "12.4"
   roleArn: ""  # IAM role ARN for AMG workspace (required for CURRENT_ACCOUNT access type)
   dataSources:
     - CLOUDWATCH
