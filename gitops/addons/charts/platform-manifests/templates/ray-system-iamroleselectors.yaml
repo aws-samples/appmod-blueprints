@@ -1,4 +1,4 @@
-{{- if .Values.global }}
+{{- if and .Values.global .Values.raySystem.enabled }}
 {{- $accountId := .Values.global.accountId | default "123456789012" }}
 ---
 apiVersion: services.k8s.aws/v1alpha1
