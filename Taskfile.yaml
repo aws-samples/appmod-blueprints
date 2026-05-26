@@ -81,6 +81,14 @@ tasks:
     cmds:
       - task: "{{.PROVIDER}}:hub:update"
 
+  hub-cloudfront:
+    desc: Create CloudFront distribution for domain-less exposure
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:hub:cloudfront"
+
   observability-seed:
     desc: Seed observability credentials (AMP/AMG) into Secrets Manager (run after workspaces are created)
     vars:

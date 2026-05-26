@@ -1,53 +1,90 @@
-# Workshop Infrastructure Context
+# Infrastructure Context — feature/cloudfront-exposure
 
 ## Purpose
 
-Provides context about the workshop's infrastructure and proper deployment patterns for the platform-on-eks-workshop repository.
+Architecture and deployment context for the appmod-blueprints platform on the `feature/cloudfront-exposure` branch.
 
 ## Instructions
 
-### Workshop Repository Structure
+### Bootstrap (kind-crossplane provider)
 
-- Workshop participants work in the `platform-on-eks-workshop` repository (ID: WORKSHOP_MAIN_REPO)
-- Infrastructure is located in `platform/infra/terraform/` with organized modules: cluster/, common/ (ID: WORKSHOP_TERRAFORM_STRUCTURE)
-- GitOps configurations are in `gitops/addons/` with charts, bootstrap, environments, and tenants (ID: WORKSHOP_GITOPS_STRUCTURE)
+- Bootstrap uses `task install` which delegates to `cluster-providers/kind-crossplane/Taskfile.yaml`
+- Kind cluster runs Crossplane to provision the hub EKS cluster (VPC, subnets, IAM, EKS)
+- After hub is ACTIVE, a Job creates EKS Capabilities (ArgoCD + KRO + ACK)
+- ESO is installed on hub, seed secret applied, root-appset bootstraps self-management
+- Kind cluster can be deleted after hub is self-managing (`task destroy-kind`)
 
-### Deployment Script Usage
+### EKS Capabilities
 
-- ALWAYS use deployment scripts `deploy.sh` and `destroy.sh` instead of direct terraform commands (ID: WORKSHOP_USE_DEPLOY_SCRIPTS)
-- Deployment scripts handle proper environment variable setup, backend configuration, and state management (ID: WORKSHOP_SCRIPT_BENEFITS)
-- For cluster infrastructure: `cd platform/infra/terraform/cluster && ./deploy.sh` (ID: WORKSHOP_CLUSTER_DEPLOY)
-- For platform addons: `cd platform/infra/terraform/common && ./deploy.sh` (ID: WORKSHOP_COMMON_DEPLOY)
+- **ArgoCD** — managed GitOps, configured with IDC for SSO (ADMIN mapped to IDC group)
+- **KRO** — managed Kube Resource Orchestrator, provides ResourceGraphDefinitions
+- **ACK** — managed AWS Controllers for Kubernetes, provisions AWS resources from K8s
+- All three created in `manifests/argocd/create-capability.yaml` Job
+- They are NOT pods — they're EKS managed services
 
-### Infrastructure Phases
+### Exposure Mode: CloudFront
 
-- **Phase 1**: Cluster infrastructure (hub, staging, prod EKS clusters) via cluster/ module (ID: WORKSHOP_PHASE1_CLUSTERS)
-- **Phase 2**: Platform addons (ArgoCD, Backstage, Keycloak, External Secrets, ACK controllers) via common/ module (ID: WORKSHOP_PHASE2_ADDONS)
-- **Phase 3**: GitOps applications automatically deployed by ArgoCD based on Git configurations (ID: WORKSHOP_PHASE3_GITOPS)
+- Single internet-facing ALB (`peeks-hub-platform`) shared by all ingresses via IngressClassParams group
+- CloudFront distribution fronts the ALB (HTTPS termination, caching)
+- Apps differentiated by path prefix with ALB URL rewrite (`transforms` annotation)
+- No custom domain or Route53 needed
+- CloudFront domain stored in `private/cloudfront-domain`
 
-### EKS Auto Mode and Capabilities
+### ALB URL Rewrite Pattern
 
-- Clusters use EKS Auto Mode - Karpenter is NOT running inside clusters (ID: WORKSHOP_EKS_AUTO_MODE)
-- EKS Capabilities are enabled for ArgoCD, Kro, and ACK - these controllers run as managed services (ID: WORKSHOP_EKS_CAPABILITIES)
-- Node management is handled automatically by EKS Auto Mode (ID: WORKSHOP_AUTO_NODE_MGMT)
+```yaml
+annotations:
+  alb.ingress.kubernetes.io/transforms.<service-name>: |
+    [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/prefix\\/?(.*)$","replace":"/$1"}]}}]
+```
 
-### Resource Prefix and Naming
+Required for apps that don't natively serve at their path prefix (argo-workflows, backstage).
+Not needed for apps that handle their own path (keycloak with `/keycloak` context path).
 
-- Resource prefix flows from environment variable `RESOURCE_PREFIX` (defaults to "peeks") (ID: WORKSHOP_RESOURCE_PREFIX)
-- Terraform passes prefix to cluster secrets as annotation, used by GitOps for consistent naming (ID: WORKSHOP_PREFIX_FLOW)
-- All resources use consistent naming: `{resource_prefix}-{service}-{cluster}` pattern (ID: WORKSHOP_NAMING_PATTERN)
+### Cluster Provisioning — Two Paths
+
+**1. Crossplane (platform team)**
+- `gitops/abstractions/resource-groups/platform-cluster/` — XRD + Composition
+- Creates `PlatformCluster` claims in `crossplane-system` namespace
+- Provisions full stack: VPC, subnets, NAT, IGW, EKS, IAM roles, node roles
+- Triggered by `gitops/fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml`
+- ArgoCD `clusters.yaml` ApplicationSet watches these files
+
+**2. KRO + ACK (self-service)**
+- `gitops/addons/charts/kro/resource-groups/manifests/eks/` — ResourceGraphDefinitions
+- Creates `EksCluster` custom resources reconciled by ACK capability
+- Intended for tenant self-service via Backstage templates
+- Expects existing VPC (or uses separate `rg-vpc.yaml` ResourceGraphDefinition)
+
+### IDC ↔ Keycloak Federation
+
+- `configure_identity_center.py` uses Playwright browser automation
+- Changes IDC identity source to External IdP (Keycloak SAML)
+- Enables SCIM automatic provisioning
+- Syncs Keycloak users/groups to IDC
+- Credentials seeded from EC2 instance profile → SSM parameter
+- Taskfile task: `idc:configure` (runs after hub apps are synced)
+
+### Addon Management
+
+- Addons defined in `gitops/addons/registry/<domain>.yaml` (core, platform, security, observability, ml)
+- Enablement via `gitops/overlays/environments/<env>/enabled-addons.yaml`
+- Values layered: chart defaults → addon configs → environment overrides → cluster overrides
+- `fleet-secret` chart generates ArgoCD cluster secrets with `enable_*` labels
+- `appset-chart` ApplicationSets match labels to deploy addons to clusters
+
+### Secrets Flow
+
+- AWS Secrets Manager holds platform secrets (`peeks-hub/config`, `peeks-hub/keycloak`, `peeks-hub/secrets`)
+- ExternalSecrets Operator (ESO) on hub syncs secrets into K8s via ClusterSecretStore
+- Pod Identity provides ESO with AWS credentials (no static keys)
 
 ### Multi-Cluster Architecture
 
-- Hub cluster (control-plane) runs platform services: ArgoCD, Backstage, Keycloak (ID: WORKSHOP_HUB_CLUSTER)
-- Spoke clusters (staging, prod) run workloads and connect to hub for management (ID: WORKSHOP_SPOKE_CLUSTERS)
-- ACK controllers in hub manage AWS resources across all clusters via role assumption (ID: WORKSHOP_CROSS_CLUSTER_ACK)
-
-### Workshop File Paths
-
-- All file paths reference the workshop repository: `/home/ec2-user/environment/platform-on-eks-workshop/` (ID: WORKSHOP_BASE_PATH)
-- Terraform modules: `/home/ec2-user/environment/platform-on-eks-workshop/platform/infra/terraform/` (ID: WORKSHOP_TF_PATH)
-- GitOps configs: `/home/ec2-user/environment/platform-on-eks-workshop/gitops/addons/` (ID: WORKSHOP_GITOPS_PATH)
+- **Hub** (`peeks-hub`) — control plane: ArgoCD, Backstage, Keycloak, Crossplane, observability
+- **Spokes** (`spoke-dev`, `spoke-prod`) — workload clusters managed by hub
+- Hub ArgoCD deploys addons to spokes via cluster secrets with `enable_*` labels
+- Crossplane on hub manages spoke lifecycle (create/update/delete)
 
 ## Priority
 
@@ -55,6 +92,8 @@ Critical
 
 ## Error Handling
 
-- If deployment fails, check environment variables are set correctly
-- If resources not found, verify correct terraform module and deployment phase
-- If GitOps not working, ensure ArgoCD is deployed and cluster secrets exist
+- If `task install` fails, it's idempotent — re-run safely
+- If ESO pods are in ImagePullBackOff, check NAT gateway exists for private subnets
+- If ALB creation fails with "no internet gateway", ensure IGW is attached to EKS VPC
+- If Keycloak SAML update fails, verify CloudFront domain is propagated
+- If IDC configure fails, check SSM parameter has valid credentials with RoleArn in description

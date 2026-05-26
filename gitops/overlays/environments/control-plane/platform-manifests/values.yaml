@@ -1,0 +1,6 @@
+# Enable custom nodepools (system-peeks, general-purpose-peeks) on the hub control-plane
+customNodepools:
+  enabled: true
+
+# Disable Hugging Face models (HuggingFaceModel CRD not deployed in this setup)
+huggingfaceModels: []

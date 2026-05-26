@@ -39,8 +39,8 @@ enabledAddons:
   kro_manifests: false
   kro_manifests_hub: false
   multi_acct: false
-  platform_manifests: false
-  backstage: false
+  platform_manifests: true
+  backstage: true
   kubevela: false
   devlake: false
   gitlab: false
@@ -64,4 +64,4 @@ enabledAddons:
   # Observability AWS (AMP + AMG via Crossplane)
   observability_aws: true
   # Agent Platform (deploys from sample-agent-platform-on-eks repo)
-  agent_platform: true
+  agent_platform: false

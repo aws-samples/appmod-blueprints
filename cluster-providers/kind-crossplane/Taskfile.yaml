@@ -37,6 +37,8 @@ vars:
     sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  EXPOSURE_MODE:
+    sh: yq '.exposure.mode // "domain"' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
     sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
@@ -99,6 +101,7 @@ tasks:
       - task: hub:wait-for-full-sync
       - task: secrets-manager:seed-observability
       - task: hub:restart-langfuse
+      - task: idc:configure
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
 
   credentials:setup:
@@ -357,6 +360,11 @@ tasks:
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io --all
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s podidentityassociations.eks.aws.upbound.io --all
       - task: argocd:capability
+      - cmd: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
+            cd {{.ROOT_DIR}} && task kind-crossplane:hub:create-alb
+            cd {{.ROOT_DIR}} && task kind-crossplane:hub:cloudfront
+          fi
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
       - task: hub:install-eso
@@ -404,6 +412,13 @@ tasks:
     vars:
       CLUSTER_ARN:
         sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.CONFIG_FILE}}):cluster/$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
+      INGRESS_DOMAIN:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
     cmds:
       - printf '{{.C_STEP}}▸ Getting hub kubeconfig...{{.C_RESET}}\n'
       - task: hub:kubeconfig
@@ -425,6 +440,8 @@ tasks:
             fleetRepoRevision: "REPO_REVISION"
             fleetRepoBasepath: "REPO_BASEPATH"
             aws_cluster_name: {{.HUB_CLUSTER_NAME}}
+            exposure_mode: {{.EXPOSURE_MODE}}
+            ingress_domain_name: {{.INGRESS_DOMAIN}}
           labels:
             argocd.argoproj.io/secret-type: cluster
             environment: control-plane
@@ -445,6 +462,131 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Root appset applied. Hub is now self-managing.{{.C_RESET}}\n'
+
+  hub:create-alb:
+    desc: Pre-create the platform ALB so CloudFront can be configured before any apps deploy (cloudfront mode only)
+    status:
+      - aws elbv2 describe-load-balancers --names {{.HUB_CLUSTER_NAME}}-platform --region {{.AWS_REGION}} 2>/dev/null
+    vars:
+      VPC_ID:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null
+      PUBLIC_SUBNETS:
+        sh: |
+          SUBNETS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text 2>/dev/null)
+          aws ec2 describe-subnets --subnet-ids $SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' --output text 2>/dev/null | tr '\t' ' '
+      CLUSTER_SG:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text 2>/dev/null
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating platform ALB security group and ALB...{{.C_RESET}}\n'
+      - |
+        set -e
+        if [ -z "{{.PUBLIC_SUBNETS}}" ]; then
+          echo "ERROR: No public subnets found in VPC {{.VPC_ID}} for internet-facing ALB"
+          exit 1
+        fi
+        # Create or reuse dedicated SG for the platform ALB
+        SG_NAME="{{.HUB_CLUSTER_NAME}}-platform-alb-sg"
+        SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values={{.VPC_ID}}" --region {{.AWS_REGION}} --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+        if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+          SG_ID=$(aws ec2 create-security-group --group-name "$SG_NAME" --description "Platform ALB" --vpc-id "{{.VPC_ID}}" --region {{.AWS_REGION}} --query 'GroupId' --output text)
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} >/dev/null
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 443 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} >/dev/null
+          # Allow ALB to reach pods on the cluster security group
+          aws ec2 authorize-security-group-ingress --group-id "{{.CLUSTER_SG}}" --protocol -1 --source-group "$SG_ID" --region {{.AWS_REGION}} 2>/dev/null || true
+          echo "Created SG $SG_ID"
+        else
+          echo "Reusing SG $SG_ID"
+        fi
+        # Create ALB with tags so the AWS LBC controller can adopt it
+        ALB_ARN=$(aws elbv2 create-load-balancer \
+          --name "{{.HUB_CLUSTER_NAME}}-platform" \
+          --subnets {{.PUBLIC_SUBNETS}} \
+          --security-groups "$SG_ID" \
+          --scheme internet-facing \
+          --type application \
+          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=ingress.k8s.aws/stack,Value=platform Key=ingress.k8s.aws/resource,Value=LoadBalancer \
+          --region {{.AWS_REGION}} \
+          --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        # Default 404 listener so the ALB serves something even before ingresses are registered
+        aws elbv2 create-listener \
+          --load-balancer-arn "$ALB_ARN" \
+          --protocol HTTP --port 80 \
+          --default-actions "Type=fixed-response,FixedResponseConfig={MessageBody=Not Found,StatusCode=404,ContentType=text/plain}" \
+          --region {{.AWS_REGION}} \
+          --query 'Listeners[0].ListenerArn' --output text >/dev/null
+        ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        echo "ALB created: $ALB_DNS"
+      - printf '{{.C_OK}}✓ Platform ALB ready.{{.C_RESET}}\n'
+
+  hub:cloudfront:
+    desc: Create CloudFront distribution pointing at the platform ALB (idempotent, requires hub:create-alb)
+    status:
+      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].Id" --output text | grep -q .
+    cmds:
+      - printf '{{.C_STEP}}▸ Looking up platform ALB DNS...{{.C_RESET}}\n'
+      - |
+        set -e
+        ALB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-platform" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+        if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ]; then
+          echo "ERROR: ALB '{{.HUB_CLUSTER_NAME}}-platform' not found. Run hub:create-alb first."
+          exit 1
+        fi
+        echo "Found ALB: $ALB_DNS"
+        # Create CloudFront distribution
+        EXISTING_DIST=$(aws cloudfront list-distributions \
+          --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].Id" \
+          --output text 2>/dev/null)
+        if [ -n "$EXISTING_DIST" ] && [ "$EXISTING_DIST" != "None" ]; then
+          CF_DOMAIN=$(aws cloudfront get-distribution --id "$EXISTING_DIST" \
+            --query "Distribution.DomainName" --output text)
+          echo "CloudFront already exists: $CF_DOMAIN"
+        else
+          CF_CONFIG=$(cat <<'CFEOF'
+        {
+          "CallerReference": "{{.HUB_CLUSTER_NAME}}-TIMESTAMP",
+          "Comment": "{{.HUB_CLUSTER_NAME}}-platform",
+          "Enabled": true,
+          "Origins": {
+            "Quantity": 1,
+            "Items": [{
+              "Id": "alb-origin",
+              "DomainName": "ALB_DNS_PLACEHOLDER",
+              "CustomOriginConfig": {
+                "HTTPPort": 80,
+                "HTTPSPort": 443,
+                "OriginProtocolPolicy": "http-only",
+                "OriginSslProtocols": {"Quantity": 1, "Items": ["TLSv1.2"]}
+              }
+            }]
+          },
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "alb-origin",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": {"Quantity": 7, "Items": ["GET","HEAD","OPTIONS","PUT","POST","PATCH","DELETE"], "CachedMethods": {"Quantity": 2, "Items": ["GET","HEAD"]}},
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
+            "Compress": true
+          },
+          "ViewerCertificate": {
+            "CloudFrontDefaultCertificate": true
+          },
+          "PriceClass": "PriceClass_100"
+        }
+        CFEOF
+          )
+          CF_CONFIG=$(echo "$CF_CONFIG" | sed "s|ALB_DNS_PLACEHOLDER|$ALB_DNS|g; s|TIMESTAMP|$(date +%s)|g")
+          DIST_OUTPUT=$(aws cloudfront create-distribution \
+            --distribution-config "$CF_CONFIG" \
+            --query "Distribution.{Id:Id,DomainName:DomainName}" --output json)
+          CF_DOMAIN=$(echo "$DIST_OUTPUT" | jq -r '.DomainName')
+          echo "Created CloudFront distribution: $CF_DOMAIN"
+        fi
+        # Write CloudFront domain to a file for downstream tasks (secrets-manager:seed reads this)
+        mkdir -p {{.ROOT_DIR}}/private
+        echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/cloudfront-domain
+        echo "Stored CloudFront domain to private/cloudfront-domain: $CF_DOMAIN"
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_OK}}✓ CloudFront distribution ready.{{.C_RESET}}\n'
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to reach Synced state
@@ -530,6 +672,48 @@ tasks:
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Langfuse restarted with Keycloak SSO credentials.{{.C_RESET}}\n'
 
+  idc:configure:
+    desc: Configure IDC with Keycloak as external IdP and sync users via SCIM
+    vars:
+      IDC_INSTANCE_ID:
+        sh: echo "{{.IDC_INSTANCE_ARN}}" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//'
+      KC_ADMIN_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
+      KEYCLOAK_DNS:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+    cmds:
+      - printf '{{.C_STEP}}▸ Seeding IDC integration credentials into SSM...{{.C_RESET}}\n'
+      - |
+        TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+        ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+        CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+        CREDENTIALS_JSON=$(echo "$CREDS" | jq '{AccessKeyId: .AccessKeyId, SecretAccessKey: .SecretAccessKey, SessionToken: .Token, Expiration: .Expiration}')
+        aws ssm put-parameter \
+          --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
+          --value "$CREDENTIALS_JSON" \
+          --type "SecureString" \
+          --overwrite \
+          --description "Keycloak IDC Integration credentials from instance profile arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/)" \
+          --region {{.AWS_REGION}} > /dev/null
+        echo "Credentials stored in SSM"
+      - printf '{{.C_STEP}}▸ Installing Playwright dependencies...{{.C_RESET}}\n'
+      - pip install playwright boto3 requests --quiet 2>/dev/null
+      - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
+      - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
+      - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
+      - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
+      - python3 {{.ROOT_DIR}}/platform/infra/terraform/scripts/configure_identity_center.py
+          --region {{.AWS_REGION}}
+          --instance-id {{.IDC_INSTANCE_ID}}
+          --keycloak-dns {{.KEYCLOAK_DNS}}
+          --keycloak-admin-password="{{.KC_ADMIN_PASSWORD}}"
+      - printf '{{.C_OK}}✓ IDC configured with Keycloak federation and SCIM sync.{{.C_RESET}}\n'
+
   hub:wait-for-full-sync:
     desc: Wait for ALL apps (including spokes) to sync after provider restart
     vars:
@@ -577,6 +761,20 @@ tasks:
           aws ec2 describe-subnets --subnet-ids $SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' ','
       CLUSTER_SG:
         sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text
+      INGRESS_DOMAIN:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      ADMIN_ROLE_NAME:
+        sh: yq '.adminRoleName // ""' {{.CONFIG_FILE}}
+      MODEL_S3_BUCKET:
+        sh: |
+          if [ "$(yq '.modelS3Bucket.enabled // false' {{.CONFIG_FILE}})" = "true" ]; then
+            echo "{{.RESOURCE_PREFIX}}-model-artifacts"
+          fi
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
@@ -588,7 +786,7 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id: $id, subnet_ids: $subnet_ids, cluster_security_group_id: $cluster_security_group_id}' | jq -c .)
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","exposure_mode":"{{.EXPOSURE_MODE}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","model_s3_bucket":"{{.MODEL_S3_BUCKET}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
@@ -790,30 +988,40 @@ tasks:
         fi
 
         # Update Keycloak SAML client with AMG URL
-        printf '{{.C_STEP}}▸ Waiting for Keycloak to be reachable...{{.C_RESET}}\n'
+        # Determine the base URL for Keycloak based on exposure mode
+        if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+          KC_BASE_URL="https://$(cat {{.ROOT_DIR}}/private/cloudfront-domain)"
+        else
+          KC_BASE_URL="https://{{.DOMAIN}}"
+        fi
+        # Wait for Keycloak pods to be ready before attempting HTTP calls
+        printf '{{.C_STEP}}▸ Waiting for Keycloak pods to be ready...{{.C_RESET}}\n'
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>/dev/null
+        KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=condition=Available deploy/keycloak -n keycloak --timeout=600s 2>/dev/null || true
+        printf '{{.C_STEP}}▸ Waiting for Keycloak to be reachable at %s...{{.C_RESET}}\n' "$KC_BASE_URL"
         for i in $(seq 1 30); do
-          if curl -sf -o /dev/null "https://{{.DOMAIN}}/keycloak/realms/master/.well-known/openid-configuration" 2>/dev/null; then
+          if curl -sf -o /dev/null "$KC_BASE_URL/keycloak/realms/master/.well-known/openid-configuration" 2>/dev/null; then
             echo "Keycloak is reachable"
             break
           fi
-          echo "  [$i/30] Keycloak not reachable yet (DNS/ALB propagating)..."
+          echo "  [$i/30] Keycloak not reachable yet (DNS/ALB/CloudFront propagating)..."
           sleep 20
         done
         printf '{{.C_STEP}}▸ Updating Keycloak SAML client with AMG URL...{{.C_RESET}}\n'
         KC_PASS=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password')
-        KC_TOKEN=$(curl -s -X POST "https://{{.DOMAIN}}/keycloak/realms/master/protocol/openid-connect/token" \
+        KC_TOKEN=$(curl -s -X POST "$KC_BASE_URL/keycloak/realms/master/protocol/openid-connect/token" \
           -H "Content-Type: application/x-www-form-urlencoded" \
           -d "grant_type=password&client_id=admin-cli&username=admin&password=$KC_PASS" | jq -r '.access_token')
         if [ -n "$KC_TOKEN" ] && [ "$KC_TOKEN" != "null" ]; then
-          KC_CLIENT_ID=$(curl -s "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients" \
+          KC_CLIENT_ID=$(curl -s "$KC_BASE_URL/keycloak/admin/realms/platform/clients" \
             -H "Authorization: Bearer $KC_TOKEN" | jq -r '.[] | select(.name=="amazon-managed-grafana" and .protocol=="saml") | .id')
           if [ -n "$KC_CLIENT_ID" ]; then
-            KC_CLIENT=$(curl -s "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
+            KC_CLIENT=$(curl -s "$KC_BASE_URL/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
               -H "Authorization: Bearer $KC_TOKEN")
             KC_UPDATED=$(echo "$KC_CLIENT" | jq \
               --arg url "$AMG_ENDPOINT" \
               '.clientId = "https://\($url)/saml/metadata" | .adminUrl = "https://\($url)/login/saml" | .redirectUris = ["https://\($url)/saml/acs"]')
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "$KC_BASE_URL/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
               -H "Authorization: Bearer $KC_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$KC_UPDATED")

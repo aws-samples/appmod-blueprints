@@ -176,6 +176,7 @@ ingress-class-alb:
         values: ['true']
   valuesObject:
     controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
+    loadBalancerName: '{{if eq (default "domain" .metadata.annotations.exposure_mode) "cloudfront"}}{{.metadata.annotations.aws_cluster_name}}-platform{{end}}'
 
 aws-load-balancer-controller:
   namespace: kube-system

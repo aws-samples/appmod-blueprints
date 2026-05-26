@@ -110,9 +110,16 @@ backstage:
         values: ['true']
   valuesObject:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+    workshop_git_branch: '{{.metadata.annotations.addonsRepoRevision}}'
     global:
       aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      aws_region: '{{.metadata.annotations.aws_region}}'
+      aws_account_id: '{{.metadata.annotations.aws_account_id}}'
+      resource_prefix: '{{.metadata.annotations.resource_prefix}}'
+      admin_role_name: '{{default "" .metadata.annotations.admin_role_name}}'
+      model_s3_bucket: '{{default "" .metadata.annotations.model_s3_bucket}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

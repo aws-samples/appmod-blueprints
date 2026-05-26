@@ -6,14 +6,22 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "10"
     alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /keycloak/health
+{{- if eq (default "domain" .Values.global.exposure_mode) "cloudfront" }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+{{- else }}
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
-    alb.ingress.kubernetes.io/healthcheck-path: /keycloak/health
+{{- end }}
 spec:
   ingressClassName: platform
   rules:
+{{- if eq (default "domain" .Values.global.exposure_mode) "cloudfront" }}
+    - http:
+{{- else }}
     - host: {{ .Values.global.ingress_domain_name }}
       http:
+{{- end }}
         paths:
           - path: /keycloak
             pathType: Prefix
