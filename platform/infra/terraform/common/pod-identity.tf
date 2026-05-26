@@ -44,6 +44,11 @@ module "external_secrets_pod_identity" {
       sid       = "ecr"
       actions   = ["ecr:*"]
       resources = ["*"]
+    },
+    {
+      sid       = "secretsManagerResourcePolicy"
+      actions   = ["secretsmanager:DeleteResourcePolicy", "secretsmanager:PutResourcePolicy"]
+      resources = ["arn:aws:secretsmanager:${each.value.region}:*:secret:${local.context_prefix}*"]
     }
   ]
   # Pod Identity Associations
