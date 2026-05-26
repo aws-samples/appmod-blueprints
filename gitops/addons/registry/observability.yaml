@@ -262,7 +262,7 @@ aws-for-fluentbit:
         values: ['true']
   values:
     image:
-      tag: '3.3.1'
+      tag: '3.3.2'
 
 cni-metrics-helper:
   namespace: kube-system
