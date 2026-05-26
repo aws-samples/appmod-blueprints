@@ -53,3 +53,10 @@ argocdCapability:
 # Exposure mode: "domain" (HTTPS + ACM cert + custom domain) or "cloudfront" (HTTP ALB behind CloudFront)
 exposure:
   mode: "domain"
+
+# Console admin role name (used by Backstage templates for EKS access entries)
+adminRoleName: "<console-role-name>"       # e.g. WSParticipantRole
+
+# ML model S3 bucket (created by Taskfile if enabled)
+modelS3Bucket:
+  enabled: false

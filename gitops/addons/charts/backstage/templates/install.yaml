@@ -157,11 +157,9 @@ data:
       # workingDirectory: /tmp # Use this to configure a working directory for the scaffolder, defaults to the OS temp-dir
 
     integrations:
-      gitlab:
-        - token: ${GIT_PASSWORD}
-          apiBaseUrl: https://${GIT_HOSTNAME}/api/v4
-          baseUrl: https://${GIT_HOSTNAME}
-          host: ${GIT_HOSTNAME}
+      github:
+        - host: github.com
+          token: ${GIT_PASSWORD}
     #  gitea:
     #   - baseUrl: https://cnoe.localtest.me:8443/gitea
     #     host: cnoe.localtest.me:8443
@@ -227,11 +225,32 @@ data:
       rules:
         - allow: [Component, System, API, Resource, Location, Template]
       locations:
-        # Templates from Gitlab.
+        # Templates from GitHub.
         - type: url
-          target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/platform/backstage/templates/catalog-info.yaml
+          target: https://github.com/aws-samples/appmod-blueprints/blob/${WORKSHOP_GIT_BRANCH}/platform/backstage/templates/catalog-info.yaml
           rules:
             - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
+      providers:
+        static:
+          system-info:
+            - apiVersion: backstage.io/v1alpha1
+              kind: System
+              metadata:
+                name: system-info
+                description: Holds system information i.e, hostname, IP, OS, etc
+              spec:
+                owner: guest
+                ingress_hostname: ${DOMAIN_NAME}
+                gitlab_hostname: ${GIT_HOSTNAME}
+                argocd_hostname: ${DOMAIN_NAME}
+                gituser: ${GIT_USERNAME}
+                aws_region: ${AWS_REGION}
+                aws_account_id: ${AWS_ACCOUNT_ID}
+                admin_role_name: ${ADMIN_ROLE_NAME}
+                resource_prefix: ${RESOURCE_PREFIX}
+                hub_cluster_name: ${HUB_CLUSTER_NAME}
+                model_s3_bucket: ${MODEL_S3_BUCKET}
+                workshop_git_branch: ${WORKSHOP_GIT_BRANCH}
     kubernetes:
       serviceLocatorMethod:
         type: 'multiTenant'
@@ -479,6 +498,22 @@ spec:
               value: "https://{{ .Values.ingress_domain_name }}/keycloak"
             - name: GIT_HOSTNAME
               value: {{ .Values.gitlab_domain_name }}
+            - name: WORKSHOP_GIT_BRANCH
+              value: {{ .Values.workshop_git_branch | default "main" }}
+            - name: AWS_REGION
+              value: {{ .Values.global.aws_region | default "us-west-2" }}
+            - name: AWS_ACCOUNT_ID
+              value: "{{ .Values.global.aws_account_id | default "" }}"
+            - name: RESOURCE_PREFIX
+              value: {{ .Values.global.resource_prefix | default "" }}
+            - name: HUB_CLUSTER_NAME
+              value: {{ .Values.global.aws_cluster_name }}
+            - name: ADMIN_ROLE_NAME
+              value: {{ .Values.global.admin_role_name | default "" }}
+            - name: GIT_USERNAME
+              value: {{ .Values.git_username | default "user1" }}
+            - name: MODEL_S3_BUCKET
+              value: {{ .Values.global.model_s3_bucket | default "" }}
             - name: NODE_ENV
               value: development
             - name: NODE_OPTIONS

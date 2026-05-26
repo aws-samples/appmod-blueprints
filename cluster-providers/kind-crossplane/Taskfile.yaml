@@ -101,6 +101,7 @@ tasks:
       - task: hub:wait-for-full-sync
       - task: secrets-manager:seed-observability
       - task: hub:restart-langfuse
+      - task: idc:configure
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
 
   credentials:setup:
@@ -361,8 +362,8 @@ tasks:
       - task: argocd:capability
       - cmd: |
           if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
-            task kind-crossplane:hub:create-alb
-            task kind-crossplane:hub:cloudfront
+            cd {{.ROOT_DIR}} && task kind-crossplane:hub:create-alb
+            cd {{.ROOT_DIR}} && task kind-crossplane:hub:cloudfront
           fi
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
@@ -671,6 +672,48 @@ tasks:
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Langfuse restarted with Keycloak SSO credentials.{{.C_RESET}}\n'
 
+  idc:configure:
+    desc: Configure IDC with Keycloak as external IdP and sync users via SCIM
+    vars:
+      IDC_INSTANCE_ID:
+        sh: echo "{{.IDC_INSTANCE_ARN}}" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//'
+      KC_ADMIN_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
+      KEYCLOAK_DNS:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+    cmds:
+      - printf '{{.C_STEP}}▸ Seeding IDC integration credentials into SSM...{{.C_RESET}}\n'
+      - |
+        TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+        ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+        CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+        CREDENTIALS_JSON=$(echo "$CREDS" | jq '{AccessKeyId: .AccessKeyId, SecretAccessKey: .SecretAccessKey, SessionToken: .Token, Expiration: .Expiration}')
+        aws ssm put-parameter \
+          --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
+          --value "$CREDENTIALS_JSON" \
+          --type "SecureString" \
+          --overwrite \
+          --description "Keycloak IDC Integration credentials from instance profile arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/iam/security-credentials/)" \
+          --region {{.AWS_REGION}} > /dev/null
+        echo "Credentials stored in SSM"
+      - printf '{{.C_STEP}}▸ Installing Playwright dependencies...{{.C_RESET}}\n'
+      - pip install playwright boto3 requests --quiet 2>/dev/null
+      - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
+      - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
+      - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
+      - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
+      - python3 {{.ROOT_DIR}}/platform/infra/terraform/scripts/configure_identity_center.py
+          --region {{.AWS_REGION}}
+          --instance-id {{.IDC_INSTANCE_ID}}
+          --keycloak-dns {{.KEYCLOAK_DNS}}
+          --keycloak-admin-password="{{.KC_ADMIN_PASSWORD}}"
+      - printf '{{.C_OK}}✓ IDC configured with Keycloak federation and SCIM sync.{{.C_RESET}}\n'
+
   hub:wait-for-full-sync:
     desc: Wait for ALL apps (including spokes) to sync after provider restart
     vars:
@@ -725,6 +768,13 @@ tasks:
           else
             echo "{{.DOMAIN}}"
           fi
+      ADMIN_ROLE_NAME:
+        sh: yq '.adminRoleName // ""' {{.CONFIG_FILE}}
+      MODEL_S3_BUCKET:
+        sh: |
+          if [ "$(yq '.modelS3Bucket.enabled // false' {{.CONFIG_FILE}})" = "true" ]; then
+            echo "{{.RESOURCE_PREFIX}}-model-artifacts"
+          fi
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
@@ -736,7 +786,7 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id: $id, subnet_ids: $subnet_ids, cluster_security_group_id: $cluster_security_group_id}' | jq -c .)
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","exposure_mode":"{{.EXPOSURE_MODE}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","exposure_mode":"{{.EXPOSURE_MODE}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","model_s3_bucket":"{{.MODEL_S3_BUCKET}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
@@ -938,30 +988,40 @@ tasks:
         fi
 
         # Update Keycloak SAML client with AMG URL
-        printf '{{.C_STEP}}▸ Waiting for Keycloak to be reachable...{{.C_RESET}}\n'
+        # Determine the base URL for Keycloak based on exposure mode
+        if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+          KC_BASE_URL="https://$(cat {{.ROOT_DIR}}/private/cloudfront-domain)"
+        else
+          KC_BASE_URL="https://{{.DOMAIN}}"
+        fi
+        # Wait for Keycloak pods to be ready before attempting HTTP calls
+        printf '{{.C_STEP}}▸ Waiting for Keycloak pods to be ready...{{.C_RESET}}\n'
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>/dev/null
+        KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=condition=Available deploy/keycloak -n keycloak --timeout=600s 2>/dev/null || true
+        printf '{{.C_STEP}}▸ Waiting for Keycloak to be reachable at %s...{{.C_RESET}}\n' "$KC_BASE_URL"
         for i in $(seq 1 30); do
-          if curl -sf -o /dev/null "https://{{.DOMAIN}}/keycloak/realms/master/.well-known/openid-configuration" 2>/dev/null; then
+          if curl -sf -o /dev/null "$KC_BASE_URL/keycloak/realms/master/.well-known/openid-configuration" 2>/dev/null; then
             echo "Keycloak is reachable"
             break
           fi
-          echo "  [$i/30] Keycloak not reachable yet (DNS/ALB propagating)..."
+          echo "  [$i/30] Keycloak not reachable yet (DNS/ALB/CloudFront propagating)..."
           sleep 20
         done
         printf '{{.C_STEP}}▸ Updating Keycloak SAML client with AMG URL...{{.C_RESET}}\n'
         KC_PASS=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password')
-        KC_TOKEN=$(curl -s -X POST "https://{{.DOMAIN}}/keycloak/realms/master/protocol/openid-connect/token" \
+        KC_TOKEN=$(curl -s -X POST "$KC_BASE_URL/keycloak/realms/master/protocol/openid-connect/token" \
           -H "Content-Type: application/x-www-form-urlencoded" \
           -d "grant_type=password&client_id=admin-cli&username=admin&password=$KC_PASS" | jq -r '.access_token')
         if [ -n "$KC_TOKEN" ] && [ "$KC_TOKEN" != "null" ]; then
-          KC_CLIENT_ID=$(curl -s "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients" \
+          KC_CLIENT_ID=$(curl -s "$KC_BASE_URL/keycloak/admin/realms/platform/clients" \
             -H "Authorization: Bearer $KC_TOKEN" | jq -r '.[] | select(.name=="amazon-managed-grafana" and .protocol=="saml") | .id')
           if [ -n "$KC_CLIENT_ID" ]; then
-            KC_CLIENT=$(curl -s "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
+            KC_CLIENT=$(curl -s "$KC_BASE_URL/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
               -H "Authorization: Bearer $KC_TOKEN")
             KC_UPDATED=$(echo "$KC_CLIENT" | jq \
               --arg url "$AMG_ENDPOINT" \
               '.clientId = "https://\($url)/saml/metadata" | .adminUrl = "https://\($url)/login/saml" | .redirectUris = ["https://\($url)/saml/acs"]')
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "$KC_BASE_URL/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
               -H "Authorization: Bearer $KC_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$KC_UPDATED")
