@@ -63,3 +63,5 @@ enabledAddons:
   aws_resources: true
   # Observability AWS (AMP + AMG via Crossplane)
   observability_aws: true
+  # Agentic Platform (KAgent, LiteLLM, Langfuse, AgentGateway, etc.)
+  agent_platform: true
