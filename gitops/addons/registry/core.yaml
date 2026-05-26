@@ -27,8 +27,6 @@ pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
-      litellm:
-        enabled: '{{default "false" (index .metadata.labels "enable_agent_platform")}}'
   ignoreDifferences:
     - group: iam.aws.upbound.io
       kind: Role
