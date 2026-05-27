@@ -35,6 +35,26 @@ done
 print_info "Checking for stuck apps (OutOfSync/Error > 5 min)..."
 sleep 10
 
+# Terminate stuck operations (running > 5 min)
+STUCK_OPS=$(kubectl get applications.argoproj.io -n argocd -o json 2>/dev/null | \
+  jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  '.items[] | select(
+    .status.operationState.phase == "Running" and
+    ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)
+  ) | .metadata.name' 2>/dev/null || echo "")
+
+if [ -n "$STUCK_OPS" ]; then
+  print_warn "Terminating stuck operations:"
+  for app in $STUCK_OPS; do
+    echo "  - $app"
+    kubectl patch applications.argoproj.io "$app" -n argocd --type merge \
+      -p '{"status":{"operationState":null}}' 2>/dev/null || true
+    # Re-trigger sync after termination
+    kubectl annotate applications.argoproj.io "$app" -n argocd argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+  done
+  sleep 10
+fi
+
 # Find and retry stuck apps
 STUCK=$(kubectl get applications.argoproj.io -n argocd -o json 2>/dev/null | \
   jq -r '.items[] | select(.status.sync.status != "Synced" or .status.health.status == "Degraded") | .metadata.name' 2>/dev/null || echo "")
