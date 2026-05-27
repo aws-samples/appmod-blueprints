@@ -83,6 +83,8 @@ kubectl get applications.argoproj.io -n argocd -o json | jq -r '.items[] | selec
 
 **Key insight:** With EKS ArgoCD Capability, you CANNOT force-remove finalizers — the managed controller re-adds them. The only way to unstick a deleting app is to fix the underlying issue (remove stale cluster secrets, wait for resource cleanup) or wait for the controller timeout.
 
+**CRITICAL:** You MUST ALWAYS ask the user before deleting any ArgoCD Application or ApplicationSet. Deleting an app with `preserveResourcesOnDeletion: false` (the default) will CASCADE-DELETE all Kubernetes resources it manages. This can destroy entire namespaces, deployments, secrets, and PVCs. Even deleting a single ApplicationSet can wipe out dozens of apps and their resources across multiple clusters. NEVER delete ArgoCD apps without explicit user confirmation.
+
 **For infrastructure issues:**
 - Use `terraform state list` then `terraform state show <resource>` before checking AWS CLI because Terraform state is the source of truth
 - For networking issues, examine Terraform config files first
