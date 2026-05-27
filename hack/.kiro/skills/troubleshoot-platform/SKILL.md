@@ -25,6 +25,64 @@ Systematic troubleshooting methodology for the workshop environment. Prioritizes
 
 ### 2. Investigate Systematically
 
+**For ArgoCD issues (ALWAYS check first):**
+
+Before any other investigation, check for stuck ArgoCD state:
+
+```bash
+# Check for apps stuck in Deleting state
+kubectl get applications.argoproj.io -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" del="}{.metadata.deletionTimestamp}{"\n"}{end}' | grep "del=2"
+
+# Check for stuck operations (Running > 5 min)
+kubectl get applications.argoproj.io -n argocd -o json | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.items[] | select(.status.operationState.phase == "Running" and ((.status.operationState.startedAt // .metadata.creationTimestamp) | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < (($now | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 300)) | .metadata.name'
+
+# Check for ComparisonError (git cache stale)
+kubectl get applications.argoproj.io -n argocd -o json | jq -r '.items[] | select(.status.operationState.message // "" | contains("ComparisonError")) | .metadata.name + ": " + .status.operationState.message'
+```
+
+**Recovery procedures:**
+
+1. **Stuck operations (Running > 5 min):** Terminate and re-trigger
+   ```bash
+   kubectl patch applications.argoproj.io <app> -n argocd --type merge -p '{"status":{"operationState":null}}'
+   kubectl annotate applications.argoproj.io <app> -n argocd argocd.argoproj.io/refresh=hard --overwrite
+   ```
+
+2. **Apps stuck Deleting:** The EKS ArgoCD Capability controller re-adds finalizers. You cannot force-delete while the controller is running. Options:
+   - Wait for the controller to complete cleanup (may take 5-10 min)
+   - If the target cluster no longer exists, delete the cluster secret so the controller stops trying:
+     ```bash
+     kubectl delete secret <cluster-name> -n argocd
+     ```
+   - For apps targeting the hub itself: the controller will eventually succeed once it confirms resources are gone
+
+3. **Git cache stale ("app path does not exist"):** The EKS ArgoCD Capability caches git repos. Force refresh:
+   ```bash
+   kubectl annotate applications.argoproj.io <app> -n argocd argocd.argoproj.io/refresh=hard --overwrite
+   ```
+   If that doesn't work, delete and let the ApplicationSet recreate:
+   ```bash
+   kubectl patch applications.argoproj.io <app> -n argocd --type merge -p '{"metadata":{"finalizers":[]}}'
+   kubectl delete applications.argoproj.io <app> -n argocd --wait=false
+   ```
+
+4. **All apps disappeared (ExternalSecret flicker):** The hub cluster secret was momentarily reset, causing ArgoCD to delete all apps. Recovery:
+   ```bash
+   # Re-apply root-appset
+   kubectl apply -f gitops/bootstrap/root-appset.yaml
+   # Wait for bootstrap to regenerate child appsets
+   # Then run argocd-sync to recover stuck apps
+   ./scripts/argocd-sync.sh
+   ```
+
+5. **Use the recovery script:**
+   ```bash
+   ./scripts/argocd-sync.sh          # refresh all + terminate stuck ops
+   ./scripts/argocd-sync.sh <app>    # refresh specific app
+   ```
+
+**Key insight:** With EKS ArgoCD Capability, you CANNOT force-remove finalizers — the managed controller re-adds them. The only way to unstick a deleting app is to fix the underlying issue (remove stale cluster secrets, wait for resource cleanup) or wait for the controller timeout.
+
 **For infrastructure issues:**
 - Use `terraform state list` then `terraform state show <resource>` before checking AWS CLI because Terraform state is the source of truth
 - For networking issues, examine Terraform config files first
