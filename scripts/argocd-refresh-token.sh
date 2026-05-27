@@ -3,7 +3,10 @@
 # Usage: source scripts/argocd-refresh-token.sh
 #   Exports ARGOCD_AUTH_TOKEN, ARGOCD_SERVER, ARGOCD_OPTS
 
-set -euo pipefail
+# Don't use set -e when sourced — it kills the parent shell
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  set -euo pipefail
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -21,7 +24,7 @@ SERVER_URL=$(aws eks describe-capability \
 
 if [[ -z "$SERVER_URL" || "$SERVER_URL" == "None" ]]; then
   echo "ERROR: Could not get ArgoCD server URL" >&2
-  exit 1
+  return 1
 fi
 
 echo "Retrieving ArgoCD token via SSO (this may take ~30s)..." >&2
@@ -34,7 +37,7 @@ TOKEN=$(python3 "$AUTOMATION_SCRIPT" \
 if [[ -z "$TOKEN" || "$TOKEN" == "Failed to retrieve token" ]]; then
   echo "ERROR: Failed to retrieve ArgoCD token. Debug log:" >&2
   cat /tmp/argocd-token-debug.log >&2
-  exit 1
+  return 1
 fi
 
 export ARGOCD_AUTH_TOKEN="$TOKEN"
