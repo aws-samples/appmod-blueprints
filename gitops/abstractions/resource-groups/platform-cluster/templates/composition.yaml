@@ -747,6 +747,92 @@ spec:
                 fromFieldPath: spec.argoCDRoleArn
                 toFieldPath: spec.forProvider.principalArn
 
+          # Create KRO and ACK EKS Capabilities on the spoke cluster
+          - name: eks-capabilities-job
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                providerConfigRef:
+                  name: default
+                forProvider:
+                  manifest:
+                    apiVersion: batch/v1
+                    kind: Job
+                    metadata:
+                      name: ""
+                      namespace: crossplane-system
+                    spec:
+                      backoffLimit: 5
+                      ttlSecondsAfterFinished: 300
+                      template:
+                        spec:
+                          serviceAccountName: crossplane
+                          restartPolicy: OnFailure
+                          volumes:
+                            - name: aws-creds
+                              secret:
+                                secretName: aws-credentials
+                          containers:
+                            - name: create-capabilities
+                              image: amazon/aws-cli:latest
+                              env:
+                                - name: AWS_SHARED_CREDENTIALS_FILE
+                                  value: /tmp/.aws/credentials
+                                - name: CLUSTER_NAME
+                                  value: ""
+                                - name: AWS_REGION
+                                  value: ""
+                                - name: ROLE_ARN
+                                  value: ""
+                              volumeMounts:
+                                - name: aws-creds
+                                  mountPath: /tmp/.aws
+                                  readOnly: true
+                              command: ["/bin/bash", "-c"]
+                              args:
+                                - |
+                                  set -euo pipefail
+                                  aws eks wait cluster-active --name "$CLUSTER_NAME" --region "$AWS_REGION"
+                                  for CAP_TYPE in KRO ACK; do
+                                    CAP_NAME=$(echo "$CAP_TYPE" | tr '[:upper:]' '[:lower:]')
+                                    EXISTING=$(aws eks describe-capability --cluster-name "$CLUSTER_NAME" --capability-name "$CAP_NAME" --region "$AWS_REGION" --query 'capability.status' --output text 2>/dev/null || echo "NOT_FOUND")
+                                    if [ "$EXISTING" = "NOT_FOUND" ]; then
+                                      aws eks create-capability --region "$AWS_REGION" --cluster-name "$CLUSTER_NAME" --capability-name "$CAP_NAME" --type "$CAP_TYPE" --role-arn "$ROLE_ARN" --delete-propagation-policy RETAIN
+                                      echo "$CAP_NAME capability created"
+                                    else
+                                      echo "$CAP_NAME capability exists: $EXISTING"
+                                    fi
+                                  done
+                                  for CAP_NAME in kro ack; do
+                                    for i in $(seq 1 40); do
+                                      S=$(aws eks describe-capability --cluster-name "$CLUSTER_NAME" --capability-name "$CAP_NAME" --region "$AWS_REGION" --query 'capability.status' --output text 2>/dev/null || echo "UNKNOWN")
+                                      [ "$S" = "ACTIVE" ] && echo "$CAP_NAME: ACTIVE" && break
+                                      sleep 15
+                                    done
+                                  done
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.forProvider.manifest.metadata.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-capabilities"
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.forProvider.manifest.spec.template.spec.containers[0].env[1].value
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.manifest.spec.template.spec.containers[0].env[2].value
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.manifest.spec.template.spec.containers[0].env[3].value
+
           # EKS Cluster with Auto Mode enabled
           - name: eks-cluster
             base:

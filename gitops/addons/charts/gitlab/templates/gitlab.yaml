@@ -65,17 +65,21 @@ spec:
         ports:
         - containerPort: 80
           name: http
-        # - containerPort: 443
-        #   name: https
+{{- if ne (default "domain" .Values.exposure_mode) "cloudfront" }}
         - containerPort: 22
           name: ssh
+{{- end }}
         env:
         - name: GITLAB_OMNIBUS_CONFIG
           value: |
             external_url 'https://{{ .Values.domain_name }}'
             gitlab_rails['gitlab_shell_ssh_port'] = 22
             gitlab_rails['gitlab_shell_git_timeout'] = 800
+{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+            gitlab_rails['enabled_git_access_protocol'] = 'http'
+{{- else }}
             gitlab_rails['enabled_git_access_protocol'] = 'ssh'
+{{- end }}
 
             # Disable Let's Encrypt
             letsencrypt['enable'] = false
@@ -210,9 +214,12 @@ metadata:
   name: gitlab
   namespace: gitlab
   annotations:
-    service.beta.kubernetes.io/aws-load-balancer-name: "gitlab"
+    service.beta.kubernetes.io/aws-load-balancer-name: "{{ .Values.global.aws_cluster_name }}-gitlab"
     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+{{- if .Values.security_groups }}
     service.beta.kubernetes.io/aws-load-balancer-security-groups: "{{ .Values.security_groups }}"
+{{- end }}
     service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
 spec:
   type: LoadBalancer
@@ -221,9 +228,11 @@ spec:
   - name: http
     port: 80
     targetPort: 80
+{{- if ne (default "domain" .Values.exposure_mode) "cloudfront" }}
   - name: ssh
     port: 22
     targetPort: 22
+{{- end }}
   selector:
     app: gitlab
 ---
