@@ -18,6 +18,7 @@ spec:
       region: string
       accountId: string
       managementAccountId: string
+      managementRegion: string | default="us-west-2"
       argoCdHubRoleArn: string
       k8sVersion: string
       adminRoleName: string
@@ -548,7 +549,8 @@ spec:
           name: ${schema.spec.name}-config
           namespace: ${schema.spec.name}
           annotations:
-            services.k8s.aws/region: us-west-2
+            services.k8s.aws/region: ${schema.spec.managementRegion}
+            services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -592,7 +594,8 @@ spec:
           name: ${schema.spec.name}-secrets
           namespace: ${schema.spec.name}
           annotations:
-            services.k8s.aws/region: us-west-2
+            services.k8s.aws/region: ${schema.spec.managementRegion}
+            services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
