@@ -1,6 +1,15 @@
 # Control-plane environments do not run their own ESO pod identity.
 # ESO on the hub uses the Crossplane provider role for Secrets Manager access;
 # Crossplane on the hub provisions ESO pod identities for spoke clusters.
+#
+# NOTE: aws.region/clusterName/accountId are also set via valuesObject in the
+# ApplicationSet, but we repeat them here as a workaround for EKS ArgoCD
+# Capability rendering where valuesObject may not override chart defaults
+# for identities enabled only via value files.
+aws:
+  region: us-east-1
+  clusterName: hub
+  accountId: "257077212816"
 identities:
   eso:
     enabled: false
