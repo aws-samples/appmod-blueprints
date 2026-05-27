@@ -538,6 +538,28 @@ spec:
             }
 
 
+    - id: clusterConfigSecret
+      readyWhen:
+      - ${clusterConfigSecret.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: secretsmanager.services.k8s.aws/v1alpha1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.name}-config
+          namespace: ${schema.spec.name}
+          annotations:
+            services.k8s.aws/region: us-west-2
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+        spec:
+          name: ${schema.spec.name}/config
+          secretString: |
+            {"vpc":{"id":"${schema.spec.network.vpcID}","cluster_security_group_id":"${ekscluster.status.clusterSecurityGroupID}","subnet_ids":["${schema.spec.network.subnets.workers.subnet1ID}","${schema.spec.network.subnets.workers.subnet2ID}"]},"server":"${ekscluster.status.ackResourceMetadata.arn}","metadata":{"cluster_name":"${schema.spec.name}","region":"${schema.spec.region}","account_id":"${schema.spec.accountId}"}}
+
     - id: accessEntry
       template:
         apiVersion: eks.services.k8s.aws/v1alpha1
