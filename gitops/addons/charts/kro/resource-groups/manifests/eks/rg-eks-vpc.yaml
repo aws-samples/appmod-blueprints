@@ -74,6 +74,8 @@ spec:
         enable_crossplane_aws: string | default="true"
         enable_flux: string | default="true"
         enable_ingress_nginx: string | default="true"
+        enable_aws_for_fluentbit: string | default="true"
+        enable_kro_manifests: string | default="true"
         enable_platform_manifests: string | default="true"
         enable_platform_manifests_bootstrap: string | default="true"
         enable_kubevela: string | default="true"
@@ -209,6 +211,8 @@ spec:
             enable_crossplane_aws: ${schema.spec.addons.enable_crossplane_aws}
             enable_flux: ${schema.spec.addons.enable_flux}
             enable_ingress_nginx: ${schema.spec.addons.enable_ingress_nginx}
+            enable_aws_for_fluentbit: ${schema.spec.addons.enable_aws_for_fluentbit}
+            enable_kro_manifests: ${schema.spec.addons.enable_kro_manifests}
             enable_platform_manifests: ${schema.spec.addons.enable_platform_manifests}
             enable_platform_manifests_bootstrap: ${schema.spec.addons.enable_platform_manifests_bootstrap}
             enable_kubevela: ${schema.spec.addons.enable_kubevela}
