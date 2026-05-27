@@ -524,7 +524,7 @@ spec:
         type: Opaque
         stringData:
           name: "${schema.spec.name}"
-          server: "${ekscluster.status.endpoint}"
+          server: "${ekscluster.status.ackResourceMetadata.arn}"
           config: |
             {
               "awsAuthConfig": {
