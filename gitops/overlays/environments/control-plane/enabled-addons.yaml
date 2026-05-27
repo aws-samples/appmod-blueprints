@@ -43,7 +43,7 @@ enabledAddons:
   backstage: true
   kubevela: false
   devlake: false
-  gitlab: false
+  gitlab: true
   # ACK controllers
   ack_iam: false
   ack_eks: false

@@ -296,9 +296,12 @@ gitlab:
         operator: In
         values: ['true']
   valuesObject:
-    domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    domain_name: '{{default .metadata.annotations.ingress_domain_name .metadata.annotations.gitlab_domain_name}}'
     keycloak_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     security_groups: '{{.metadata.annotations.ingress_security_groups}}'
+    exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+    global:
+      aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

@@ -364,6 +364,8 @@ tasks:
           if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
             cd {{.ROOT_DIR}} && task kind-crossplane:hub:create-alb
             cd {{.ROOT_DIR}} && task kind-crossplane:hub:cloudfront
+            cd {{.ROOT_DIR}} && task kind-crossplane:gitlab:create-nlb
+            cd {{.ROOT_DIR}} && task kind-crossplane:gitlab:cloudfront
           fi
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
@@ -588,6 +590,99 @@ tasks:
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ CloudFront distribution ready.{{.C_RESET}}\n'
 
+
+  gitlab:create-nlb:
+    desc: Pre-create GitLab NLB so CloudFront can be configured early (cloudfront mode only)
+    status:
+      - aws elbv2 describe-load-balancers --names {{.HUB_CLUSTER_NAME}}-gitlab --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating GitLab NLB...{{.C_RESET}}\n'
+      - |
+        set -e
+        VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        PUBLIC_SUBNETS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' '\n')
+        PUBLIC_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $PUBLIC_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' --output text | tr '\t' ' ')
+        NLB_ARN=$(aws elbv2 create-load-balancer \
+          --name "{{.HUB_CLUSTER_NAME}}-gitlab" \
+          --subnets $PUBLIC_SUBNETS \
+          --scheme internet-facing \
+          --type network \
+          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=service.k8s.aws/stack,Value=gitlab/gitlab \
+          --region {{.AWS_REGION}} \
+          --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        # Default target group (HTTP, no targets — LBC will adopt and register)
+        TG_ARN=$(aws elbv2 create-target-group \
+          --name "{{.HUB_CLUSTER_NAME}}-gitlab-http" \
+          --protocol TCP --port 80 \
+          --vpc-id "$VPC_ID" \
+          --target-type ip \
+          --region {{.AWS_REGION}} \
+          --query 'TargetGroups[0].TargetGroupArn' --output text)
+        aws elbv2 create-listener \
+          --load-balancer-arn "$NLB_ARN" \
+          --protocol TCP --port 80 \
+          --default-actions "Type=forward,TargetGroupArn=$TG_ARN" \
+          --region {{.AWS_REGION}} > /dev/null
+        NLB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$NLB_ARN" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        echo "GitLab NLB created: $NLB_DNS"
+      - printf '{{.C_OK}}✓ GitLab NLB ready.{{.C_RESET}}\n'
+
+  gitlab:cloudfront:
+    desc: Create CloudFront distribution for GitLab NLB (idempotent)
+    status:
+      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-gitlab'].Id" --output text | grep -q .
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating GitLab CloudFront distribution...{{.C_RESET}}\n'
+      - |
+        set -e
+        NLB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-gitlab" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+        if [ -z "$NLB_DNS" ] || [ "$NLB_DNS" = "None" ]; then
+          echo "ERROR: GitLab NLB not found. Run gitlab:create-nlb first."
+          exit 1
+        fi
+        CF_CONFIG=$(cat <<'CFEOF'
+        {
+          "CallerReference": "{{.HUB_CLUSTER_NAME}}-gitlab-TIMESTAMP",
+          "Comment": "{{.HUB_CLUSTER_NAME}}-gitlab",
+          "Enabled": true,
+          "Origins": {
+            "Quantity": 1,
+            "Items": [{
+              "Id": "gitlab-nlb",
+              "DomainName": "NLB_DNS_PLACEHOLDER",
+              "CustomOriginConfig": {
+                "HTTPPort": 80,
+                "HTTPSPort": 443,
+                "OriginProtocolPolicy": "http-only",
+                "OriginSslProtocols": {"Quantity": 1, "Items": ["TLSv1.2"]}
+              }
+            }]
+          },
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "gitlab-nlb",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": {"Quantity": 7, "Items": ["GET","HEAD","OPTIONS","PUT","POST","PATCH","DELETE"], "CachedMethods": {"Quantity": 2, "Items": ["GET","HEAD"]}},
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
+            "Compress": true
+          },
+          "ViewerCertificate": {
+            "CloudFrontDefaultCertificate": true
+          },
+          "PriceClass": "PriceClass_100"
+        }
+        CFEOF
+        )
+        CF_CONFIG=$(echo "$CF_CONFIG" | sed "s|NLB_DNS_PLACEHOLDER|$NLB_DNS|g; s|TIMESTAMP|$(date +%s)|g")
+        DIST_OUTPUT=$(aws cloudfront create-distribution \
+          --distribution-config "$CF_CONFIG" \
+          --query "Distribution.{Id:Id,DomainName:DomainName}" --output json)
+        CF_DOMAIN=$(echo "$DIST_OUTPUT" | jq -r '.DomainName')
+        mkdir -p {{.ROOT_DIR}}/private
+        echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+        echo "GitLab CloudFront: $CF_DOMAIN"
+      - printf '{{.C_OK}}✓ GitLab CloudFront distribution ready.{{.C_RESET}}\n'
+
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to reach Synced state
     vars:
@@ -775,6 +870,11 @@ tasks:
           if [ "$(yq '.modelS3Bucket.enabled // false' {{.CONFIG_FILE}})" = "true" ]; then
             echo "{{.RESOURCE_PREFIX}}-model-artifacts"
           fi
+      GITLAB_DOMAIN:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          fi
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
@@ -786,7 +886,7 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id: $id, subnet_ids: $subnet_ids, cluster_security_group_id: $cluster_security_group_id}' | jq -c .)
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","exposure_mode":"{{.EXPOSURE_MODE}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","model_s3_bucket":"{{.MODEL_S3_BUCKET}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","exposure_mode":"{{.EXPOSURE_MODE}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","model_s3_bucket":"{{.MODEL_S3_BUCKET}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
