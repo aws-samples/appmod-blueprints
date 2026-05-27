@@ -802,7 +802,7 @@ tasks:
       - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
       - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
       - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
-      - python3 {{.ROOT_DIR}}/platform/infra/terraform/scripts/configure_identity_center.py
+      - python3 {{.ROOT_DIR}}/scripts/configure_identity_center.py
           --region {{.AWS_REGION}}
           --instance-id {{.IDC_INSTANCE_ID}}
           --keycloak-dns {{.KEYCLOAK_DNS}}

@@ -7,7 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-AUTOMATION_SCRIPT="$REPO_ROOT/platform/infra/terraform/scripts/argocd_token_automation.py"
+AUTOMATION_SCRIPT="$REPO_ROOT/scripts/argocd_token_automation.py"
 
 CLUSTER_NAME="${RESOURCE_PREFIX:-peeks}-hub"
 USER_PASSWORD="${IDE_PASSWORD:-$(aws secretsmanager get-secret-value --secret-id ${CLUSTER_NAME}/keycloak --region ${AWS_DEFAULT_REGION:-us-west-2} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password' 2>/dev/null)}"
