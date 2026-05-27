@@ -1,8 +1,4 @@
-aws:
-  region: ""
-  clusterName: ""
-  accountId: ""
-
+aws: {}
 identities:
   eso:
     enabled: false
