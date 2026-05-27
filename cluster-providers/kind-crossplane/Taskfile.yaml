@@ -418,7 +418,7 @@ tasks:
       - printf '{{.C_STEP}}▸ Creating seed cluster secret on hub...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|FLEET_REPO_URL|{{.FLEET_REPO_URL}}|g; s|FLEET_REPO_REVISION|{{.FLEET_REPO_REVISION}}|g; s|FLEET_REPO_BASEPATH|{{.FLEET_REPO_BASEPATH}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|FLEET_REPO_URL|{{.FLEET_REPO_URL}}|g; s|FLEET_REPO_REVISION|{{.FLEET_REPO_REVISION}}|g; s|FLEET_REPO_BASEPATH|{{.FLEET_REPO_BASEPATH}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
