@@ -8,7 +8,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -euo pipefail
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]:-${(%):-%x}}")")" && pwd)"
 AUTOMATION_SCRIPT="$SCRIPT_DIR/argocd_token_automation.py"
 
 CLUSTER_NAME="${RESOURCE_PREFIX:-peeks}-hub"
