@@ -103,6 +103,7 @@ tasks:
       - task: crossplane:setup
       - task: hub:seed
       - task: hub:wait-for-sync
+      - task: hub:sync-cloudfront-origins
       - task: hub:restart-identity-pods
       - task: hub:wait-for-full-sync
       - task: secrets-manager:seed-observability
@@ -930,6 +931,46 @@ tasks:
     cmds:
       - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
 
+
+
+  hub:sync-cloudfront-origins:
+    desc: Ensure CloudFront distributions point to the current ALB/NLB DNS (idempotent safety net)
+    cmds:
+      - cmd: |
+          if [ "{{.EXPOSURE_MODE}}" != "cloudfront" ]; then exit 0; fi
+          printf '{{.C_STEP}}▸ Syncing CloudFront origins with current LB DNS...{{.C_RESET}}\n'
+          # Platform ALB
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-platform" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+          DIST_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].Id" --output text 2>/dev/null)
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ] && [ -n "$ALB_DNS" ] && [ "$ALB_DNS" != "None" ]; then
+            CURRENT_ORIGIN=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig.Origins.Items[0].DomainName' --output text)
+            if [ "$CURRENT_ORIGIN" != "$ALB_DNS" ]; then
+              echo "Updating platform CloudFront origin: $CURRENT_ORIGIN → $ALB_DNS"
+              ETAG=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'ETag' --output text)
+              aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig' --output json | \
+                jq --arg dns "$ALB_DNS" '.Origins.Items[0].DomainName = $dns' > /tmp/cf-platform-config.json
+              aws cloudfront update-distribution --id "$DIST_ID" --if-match "$ETAG" --distribution-config file:///tmp/cf-platform-config.json > /dev/null
+              echo "Platform CloudFront updated"
+            else
+              echo "Platform CloudFront origin OK"
+            fi
+          fi
+          # GitLab NLB
+          NLB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-gitlab" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+          DIST_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-gitlab'].Id" --output text 2>/dev/null)
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ] && [ -n "$NLB_DNS" ] && [ "$NLB_DNS" != "None" ]; then
+            CURRENT_ORIGIN=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig.Origins.Items[0].DomainName' --output text)
+            if [ "$CURRENT_ORIGIN" != "$NLB_DNS" ]; then
+              echo "Updating GitLab CloudFront origin: $CURRENT_ORIGIN → $NLB_DNS"
+              ETAG=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'ETag' --output text)
+              aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig' --output json | \
+                jq --arg dns "$NLB_DNS" '.Origins.Items[0].DomainName = $dns' > /tmp/cf-gitlab-config.json
+              aws cloudfront update-distribution --id "$DIST_ID" --if-match "$ETAG" --distribution-config file:///tmp/cf-gitlab-config.json > /dev/null
+              echo "GitLab CloudFront updated"
+            else
+              echo "GitLab CloudFront origin OK"
+            fi
+          fi
 
   hub:create-alb:
     desc: Pre-create the platform ALB for CloudFront (cloudfront mode only)
