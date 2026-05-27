@@ -97,6 +97,61 @@ spec:
                 --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
                 --access-scope type=cluster 2>/dev/null || true
 
+              echo "=== Create KRO capability ==="
+              KRO_STATUS=$(aws eks describe-capability \
+                --cluster-name "$CLUSTER_NAME" \
+                --capability-name "kro" \
+                --region "$AWS_REGION" \
+                --query 'capability.status' \
+                --output text 2>/dev/null || echo "NOT_FOUND")
+              if [ "$KRO_STATUS" = "NOT_FOUND" ]; then
+                aws eks create-capability \
+                  --region "$AWS_REGION" \
+                  --cluster-name "$CLUSTER_NAME" \
+                  --capability-name "kro" \
+                  --type KRO \
+                  --role-arn "$CAPABILITY_ROLE_ARN" \
+                  --delete-propagation-policy RETAIN
+                echo "KRO capability created"
+              else
+                echo "KRO capability exists: $KRO_STATUS"
+              fi
+
+              echo "=== Create ACK capability ==="
+              ACK_STATUS=$(aws eks describe-capability \
+                --cluster-name "$CLUSTER_NAME" \
+                --capability-name "ack" \
+                --region "$AWS_REGION" \
+                --query 'capability.status' \
+                --output text 2>/dev/null || echo "NOT_FOUND")
+              if [ "$ACK_STATUS" = "NOT_FOUND" ]; then
+                aws eks create-capability \
+                  --region "$AWS_REGION" \
+                  --cluster-name "$CLUSTER_NAME" \
+                  --capability-name "ack" \
+                  --type ACK \
+                  --role-arn "$CAPABILITY_ROLE_ARN" \
+                  --delete-propagation-policy RETAIN
+                echo "ACK capability created"
+              else
+                echo "ACK capability exists: $ACK_STATUS"
+              fi
+
+              echo "=== Wait for KRO and ACK ACTIVE ==="
+              for CAP in kro ack; do
+                for i in $(seq 1 40); do
+                  S=$(aws eks describe-capability \
+                    --cluster-name "$CLUSTER_NAME" \
+                    --capability-name "$CAP" \
+                    --region "$AWS_REGION" \
+                    --query 'capability.status' \
+                    --output text 2>/dev/null || echo "UNKNOWN")
+                  [ "$S" = "ACTIVE" ] && echo "$CAP: ACTIVE" && break
+                  echo "$CAP: $S ($i/40)"
+                  sleep 15
+                done
+              done
+
               echo "=== Done ==="
               echo "ARN: arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${CLUSTER_NAME}"
               aws eks describe-capability \
