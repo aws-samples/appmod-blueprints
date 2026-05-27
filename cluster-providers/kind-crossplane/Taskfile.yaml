@@ -43,6 +43,8 @@ vars:
     sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  EXPOSURE_MODE:
+    sh: yq '.exposure.mode // "domain"' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
     sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
@@ -105,6 +107,7 @@ tasks:
       - task: hub:wait-for-full-sync
       - task: secrets-manager:seed-observability
       - task: hub:restart-langfuse
+      - task: idc:configure
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
 
   credentials:setup:
@@ -365,6 +368,13 @@ tasks:
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io --all
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s podidentityassociations.eks.aws.upbound.io --all
       - task: argocd:capability
+      - cmd: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
+            cd {{.ROOT_DIR}} && task kind-crossplane:hub:create-alb
+            cd {{.ROOT_DIR}} && task kind-crossplane:hub:cloudfront
+            cd {{.ROOT_DIR}} && task kind-crossplane:gitlab:create-nlb
+            cd {{.ROOT_DIR}} && task kind-crossplane:gitlab:cloudfront
+          fi
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
       - task: hub:install-eso
@@ -897,6 +907,162 @@ tasks:
       - "! kind get clusters 2>/dev/null | grep -q '^{{.KIND_CLUSTER_NAME}}$'"
     cmds:
       - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
+
+
+  hub:create-alb:
+    desc: Pre-create the platform ALB for CloudFront (cloudfront mode only)
+    status:
+      - aws elbv2 describe-load-balancers --names {{.HUB_CLUSTER_NAME}}-platform --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating platform ALB...{{.C_RESET}}\n'
+      - |
+        set -e
+        VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        PUBLIC_SUBNETS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' '\n')
+        PUBLIC_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $PUBLIC_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' --output text | tr '\t' ' ')
+        CLUSTER_SG=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
+        SG_NAME="{{.HUB_CLUSTER_NAME}}-platform-alb-sg"
+        SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$VPC_ID" --region {{.AWS_REGION}} --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+        if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+          SG_ID=$(aws ec2 create-security-group --group-name "$SG_NAME" --description "Platform ALB" --vpc-id "$VPC_ID" --region {{.AWS_REGION}} --query 'GroupId' --output text)
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} >/dev/null
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 443 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} >/dev/null
+          aws ec2 authorize-security-group-ingress --group-id "$CLUSTER_SG" --protocol -1 --source-group "$SG_ID" --region {{.AWS_REGION}} 2>/dev/null || true
+        fi
+        ALB_ARN=$(aws elbv2 create-load-balancer \
+          --name "{{.HUB_CLUSTER_NAME}}-platform" \
+          --subnets $PUBLIC_SUBNETS \
+          --security-groups "$SG_ID" \
+          --scheme internet-facing \
+          --type application \
+          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=ingress.k8s.aws/stack,Value=platform \
+          --region {{.AWS_REGION}} \
+          --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        aws elbv2 create-listener \
+          --load-balancer-arn "$ALB_ARN" \
+          --protocol HTTP --port 80 \
+          --default-actions "Type=fixed-response,FixedResponseConfig={MessageBody=Not Found,StatusCode=404,ContentType=text/plain}" \
+          --region {{.AWS_REGION}} > /dev/null
+        ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        echo "ALB created: $ALB_DNS"
+      - printf '{{.C_OK}}✓ Platform ALB ready.{{.C_RESET}}\n'
+
+  hub:cloudfront:
+    desc: Create CloudFront distribution for the platform ALB (idempotent)
+    status:
+      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].Id" --output text | grep -q .
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating platform CloudFront distribution...{{.C_RESET}}\n'
+      - |
+        set -e
+        ALB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-platform" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        CF_CONFIG=$(cat <<'CFEOF'
+        {"CallerReference":"{{.HUB_CLUSTER_NAME}}-TIMESTAMP","Comment":"{{.HUB_CLUSTER_NAME}}-platform","Enabled":true,"Origins":{"Quantity":1,"Items":[{"Id":"alb-origin","DomainName":"ALB_DNS_PLACEHOLDER","CustomOriginConfig":{"HTTPPort":80,"HTTPSPort":443,"OriginProtocolPolicy":"http-only","OriginSslProtocols":{"Quantity":1,"Items":["TLSv1.2"]}}}]},"DefaultCacheBehavior":{"TargetOriginId":"alb-origin","ViewerProtocolPolicy":"redirect-to-https","AllowedMethods":{"Quantity":7,"Items":["GET","HEAD","OPTIONS","PUT","POST","PATCH","DELETE"],"CachedMethods":{"Quantity":2,"Items":["GET","HEAD"]}},"CachePolicyId":"4135ea2d-6df8-44a3-9df3-4b5a84be39ad","OriginRequestPolicyId":"216adef6-5c7f-47e4-b989-5492eafa07d3","Compress":true},"ViewerCertificate":{"CloudFrontDefaultCertificate":true},"PriceClass":"PriceClass_100"}
+        CFEOF
+        )
+        CF_CONFIG=$(echo "$CF_CONFIG" | sed "s|ALB_DNS_PLACEHOLDER|$ALB_DNS|g; s|TIMESTAMP|$(date +%s)|g")
+        CF_DOMAIN=$(aws cloudfront create-distribution --distribution-config "$CF_CONFIG" --query "Distribution.DomainName" --output text)
+        mkdir -p {{.ROOT_DIR}}/private
+        echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/cloudfront-domain
+        echo "CloudFront: $CF_DOMAIN"
+      - printf '{{.C_OK}}✓ Platform CloudFront ready.{{.C_RESET}}\n'
+
+  gitlab:create-nlb:
+    desc: Pre-create GitLab NLB for CloudFront (cloudfront mode only)
+    status:
+      - aws elbv2 describe-load-balancers --names {{.HUB_CLUSTER_NAME}}-gitlab --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating GitLab NLB...{{.C_RESET}}\n'
+      - |
+        set -e
+        VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        PUBLIC_SUBNETS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' '\n')
+        PUBLIC_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $PUBLIC_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' --output text | tr '\t' ' ')
+        NLB_ARN=$(aws elbv2 create-load-balancer \
+          --name "{{.HUB_CLUSTER_NAME}}-gitlab" \
+          --subnets $PUBLIC_SUBNETS \
+          --scheme internet-facing \
+          --type network \
+          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=service.k8s.aws/stack,Value=gitlab/gitlab \
+          --region {{.AWS_REGION}} \
+          --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        TG_ARN=$(aws elbv2 create-target-group \
+          --name "{{.HUB_CLUSTER_NAME}}-gitlab-http" \
+          --protocol TCP --port 80 \
+          --vpc-id "$VPC_ID" \
+          --target-type ip \
+          --region {{.AWS_REGION}} \
+          --query 'TargetGroups[0].TargetGroupArn' --output text)
+        aws elbv2 create-listener \
+          --load-balancer-arn "$NLB_ARN" \
+          --protocol TCP --port 80 \
+          --default-actions "Type=forward,TargetGroupArn=$TG_ARN" \
+          --region {{.AWS_REGION}} > /dev/null
+        NLB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$NLB_ARN" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        echo "GitLab NLB: $NLB_DNS"
+      - printf '{{.C_OK}}✓ GitLab NLB ready.{{.C_RESET}}\n'
+
+  gitlab:cloudfront:
+    desc: Create CloudFront distribution for GitLab NLB (idempotent)
+    status:
+      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-gitlab'].Id" --output text | grep -q .
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating GitLab CloudFront distribution...{{.C_RESET}}\n'
+      - |
+        set -e
+        NLB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-gitlab" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        CF_CONFIG=$(cat <<'CFEOF'
+        {"CallerReference":"{{.HUB_CLUSTER_NAME}}-gitlab-TIMESTAMP","Comment":"{{.HUB_CLUSTER_NAME}}-gitlab","Enabled":true,"Origins":{"Quantity":1,"Items":[{"Id":"gitlab-nlb","DomainName":"NLB_DNS_PLACEHOLDER","CustomOriginConfig":{"HTTPPort":80,"HTTPSPort":443,"OriginProtocolPolicy":"http-only","OriginSslProtocols":{"Quantity":1,"Items":["TLSv1.2"]}}}]},"DefaultCacheBehavior":{"TargetOriginId":"gitlab-nlb","ViewerProtocolPolicy":"redirect-to-https","AllowedMethods":{"Quantity":7,"Items":["GET","HEAD","OPTIONS","PUT","POST","PATCH","DELETE"],"CachedMethods":{"Quantity":2,"Items":["GET","HEAD"]}},"CachePolicyId":"4135ea2d-6df8-44a3-9df3-4b5a84be39ad","OriginRequestPolicyId":"216adef6-5c7f-47e4-b989-5492eafa07d3","Compress":true},"ViewerCertificate":{"CloudFrontDefaultCertificate":true},"PriceClass":"PriceClass_100"}
+        CFEOF
+        )
+        CF_CONFIG=$(echo "$CF_CONFIG" | sed "s|NLB_DNS_PLACEHOLDER|$NLB_DNS|g; s|TIMESTAMP|$(date +%s)|g")
+        CF_DOMAIN=$(aws cloudfront create-distribution --distribution-config "$CF_CONFIG" --query "Distribution.DomainName" --output text)
+        mkdir -p {{.ROOT_DIR}}/private
+        echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+        echo "GitLab CloudFront: $CF_DOMAIN"
+      - printf '{{.C_OK}}✓ GitLab CloudFront ready.{{.C_RESET}}\n'
+
+  idc:configure:
+    desc: Configure IDC with Keycloak as external IdP and sync users via SCIM
+    vars:
+      IDC_INSTANCE_ID:
+        sh: echo "{{.IDC_INSTANCE_ARN}}" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//'
+      KC_ADMIN_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
+      KEYCLOAK_DNS:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+    cmds:
+      - printf '{{.C_STEP}}▸ Seeding IDC integration credentials into SSM...{{.C_RESET}}\n'
+      - |
+        TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+        ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+        CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+        CREDENTIALS_JSON=$(echo "$CREDS" | jq '{AccessKeyId: .AccessKeyId, SecretAccessKey: .SecretAccessKey, SessionToken: .Token, Expiration: .Expiration}')
+        aws ssm put-parameter \
+          --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
+          --value "$CREDENTIALS_JSON" \
+          --type "SecureString" \
+          --overwrite \
+          --description "Keycloak IDC Integration credentials from instance profile arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ROLE" \
+          --region {{.AWS_REGION}} > /dev/null
+        echo "Credentials stored in SSM"
+      - printf '{{.C_STEP}}▸ Installing Playwright dependencies...{{.C_RESET}}\n'
+      - pip install playwright boto3 requests --quiet 2>/dev/null
+      - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
+      - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
+      - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
+      - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
+      - python3 {{.ROOT_DIR}}/platform/infra/terraform/scripts/configure_identity_center.py
+          --region {{.AWS_REGION}}
+          --instance-id {{.IDC_INSTANCE_ID}}
+          --keycloak-dns {{.KEYCLOAK_DNS}}
+          --keycloak-admin-password="{{.KC_ADMIN_PASSWORD}}"
+      - printf '{{.C_OK}}✓ IDC configured with Keycloak federation and SCIM sync.{{.C_RESET}}\n'
 
   destroy:
     desc: >-

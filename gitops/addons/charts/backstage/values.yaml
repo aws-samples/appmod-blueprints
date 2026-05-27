@@ -3,6 +3,7 @@ git_username: ""
 gitlab_domain_name: ""
 working_repo: ""
 ingress_domain_name: ""
+workshop_git_branch: "main"
 global:
   aws_cluster_name: ""
   clusterName: ""
