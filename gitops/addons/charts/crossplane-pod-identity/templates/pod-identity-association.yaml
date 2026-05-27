@@ -1,5 +1,5 @@
 {{- range $name, $identity := .Values.identities }}
-{{- if not (eq (toString $identity.enabled) "false") }}
+{{- if and (not (eq (toString $identity.enabled) "false")) $.Values.aws.region }}
 ---
 apiVersion: eks.aws.upbound.io/v1beta1
 kind: PodIdentityAssociation
