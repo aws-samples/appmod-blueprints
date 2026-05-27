@@ -1275,6 +1275,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+              services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
         spec:
@@ -1302,6 +1303,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+              services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
         spec:
