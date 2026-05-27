@@ -33,9 +33,9 @@ spec:
         - repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
           targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
           ref: values
-        - repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
-          path: '{{ .metadata.annotations.fleetRepoBasepath }}abstractions/resource-groups/platform-cluster'
-          targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+        - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+          path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/resource-groups/platform-cluster'
+          targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
           helm:
             releaseName: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
             ignoreMissingValueFiles: true
