@@ -1189,96 +1189,160 @@ tasks:
 
   hub:destroy-addons:
     desc: Remove all addons from the hub cluster (no git changes needed)
-    vars:
-      ADDONS:
-        sh: |
-          ENABLED_LABELS=$(for f in {{.GITOPS_ROOT}}/overlays/environments/*/enabled-addons.yaml; do
-            [ -f "$f" ] && yq -r '.enabledAddons | to_entries[] | select(.value == true) | "enable_" + .key' "$f"
-          done | sort -u)
-          REGISTRY=$(yq eval-all '. as $item ireduce ({}; . * $item)' \
-            {{.GITOPS_ROOT}}/addons/registry/core.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/gitops.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/security.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/observability.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/ml.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/platform.yaml)
-          echo "$REGISTRY" | yq -r 'to_entries[] | .key + " " + .value.selector.matchExpressions[0].key + " " + (.value.annotationsAppSet."argocd.argoproj.io/sync-wave" // "0")' | while read addon selector wave; do
-            if echo "$ENABLED_LABELS" | grep -qx "$selector"; then
-              echo "$wave $addon"
-            fi
-          done | sort -rn | awk '{print $2}'
     cmds:
       - task: hub:kubeconfig
       - printf '{{.C_ERR}}▸ Stopping all regeneration...{{.C_RESET}}\n'
       # 1. Delete bootstrap ApplicationSet (preserveResources) to stop recreating bootstrap App
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset bootstrap -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset bootstrap -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>&1 || true
       - sleep 3
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset bootstrap -n argocd --timeout=30s 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset bootstrap -n argocd --timeout=30s 2>&1 || true
       # 2. Delete bootstrap Application (no cascade) to stop syncing bootstrap/ directory
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application bootstrap -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application bootstrap -n argocd --wait=false 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application bootstrap -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>&1 || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application bootstrap -n argocd --wait=false 2>&1 || true
       # 3. Delete cluster-addons ApplicationSet (preserveResources) to stop generating addon ApplicationSets
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset cluster-addons -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset cluster-addons -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>&1 || true
       - sleep 3
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset cluster-addons -n argocd --timeout=30s 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset cluster-addons -n argocd --timeout=30s 2>&1 || true
       # 4. Delete cluster-addons Application (no cascade)
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application cluster-addons -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application cluster-addons -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>&1 || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application cluster-addons -n argocd --wait=false 2>&1 || true
+      # 4.5. Delete agent-platform chain (AppSet → apps → child AppSets become orphans for Phase 5)
+      - cmd: |
+          if KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset agent-platform -n argocd >/dev/null 2>&1; then
+            echo "Stopping agent-platform AppSet..."
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset agent-platform -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>&1 || true
+            sleep 3
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset agent-platform -n argocd --timeout=30s 2>&1 || true
+          fi
+          APPS=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep -E '^agent-platform-' || true)
+          for app in $APPS; do
+            echo "Stopping $app..."
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>&1 || true
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application "$app" -n argocd --wait=false 2>&1 || true
+          done
       # 5. Delete non-Crossplane addon ApplicationSets in reverse sync-wave order
       - cmd: |
-          if [ "{{.ITEM}}" = "argocd" ] || [ "{{.ITEM}}" = "crossplane" ] || [ "{{.ITEM}}" = "crossplane-base" ] || [ "{{.ITEM}}" = "crossplane-aws" ]; then
-            echo "Skipping {{.ITEM}} (Crossplane stack — deleted after clusters)"
-          elif KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset {{.ITEM}} -n argocd >/dev/null 2>&1; then
-            echo "Deleting {{.ITEM}}..."
-            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
-            sleep 3
-            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset {{.ITEM}} -n argocd --timeout=180s 2>/dev/null || true
-            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName={{.ITEM}} --timeout=120s 2>/dev/null || true
-          else
-            echo "Skipping {{.ITEM}} (not found)"
-          fi
-        ignore_error: true
-        for:
-          var: ADDONS
-      # 6. Delete clusters (spoke + hub claims cleaned up before Crossplane providers are removed)
-      - printf '{{.C_ERR}}▸ Deleting clusters...{{.C_RESET}}\n'
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset clusters -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
-      - sleep 3
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset clusters -n argocd --timeout=60s 2>/dev/null || true
-      - cmd: |
-          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l app.kubernetes.io/instance=clusters --timeout=600s 2>/dev/null || \
-          (KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application clusters -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
-           KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application clusters -n argocd --wait=false 2>/dev/null) || true
-      # 7. Delete Crossplane stack in reverse wave order (providers still alive for cluster cleanup)
-      - cmd: |
-          for ADDON in crossplane-aws crossplane-base crossplane; do
-            if KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset $ADDON -n argocd >/dev/null 2>&1; then
+          SKIP="argocd crossplane crossplane-base crossplane-aws pod-identities bootstrap cluster-addons agent-platform fleet-secrets hub-fleet-secret clusters abstractions"
+          ADDONS=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationsets -n argocd \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.annotations.argocd\.argoproj\.io/sync-wave}{"\n"}{end}' \
+          | while read name wave; do
+            [ -z "$name" ] && continue
+            wave="${wave:-0}"
+            skip=false
+            for s in $SKIP; do if [ "$name" = "$s" ]; then skip=true; break; fi; done
+            if [ "$skip" = "true" ]; then continue; fi
+            echo "$wave $name"
+          done | sort -rn | awk '{print $2}' || true)
+
+          for ADDON in $ADDONS; do
+            if KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset "$ADDON" -n argocd >/dev/null 2>&1; then
               echo "Deleting $ADDON..."
-              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
-              sleep 3
-              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset $ADDON -n argocd --timeout=180s 2>/dev/null || true
-              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=delete applications -n argocd -l addonName=$ADDON --timeout=120s 2>/dev/null || true
+              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset "$ADDON" -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
+              CHILDREN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+                -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null)
+              if [ -n "$CHILDREN" ]; then
+                ELAPSED=0
+                while [ $ELAPSED -lt 30 ]; do
+                  FINALIZERS=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+                    -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.finalizers}{end}" 2>/dev/null)
+                  if echo "$FINALIZERS" | grep -q resources-finalizer; then break; fi
+                  sleep 2; ELAPSED=$((ELAPSED + 2))
+                done
+              fi
+              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset "$ADDON" -n argocd --timeout=180s 2>&1 || true
+              if [ -n "$CHILDREN" ]; then
+                ELAPSED=0
+                while [ $ELAPSED -lt 120 ]; do
+                  REMAINING=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+                    -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{end}" 2>/dev/null)
+                  if [ -z "$REMAINING" ]; then break; fi
+                  sleep 5; ELAPSED=$((ELAPSED + 5))
+                done
+              fi
             fi
           done
-        ignore_error: true
+      # 6. Delete clusters (spoke + hub claims cleaned up before Crossplane providers are removed)
+      - printf '{{.C_ERR}}▸ Deleting clusters...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset clusters -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
+      - cmd: |
+          CHILDREN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+            -o jsonpath='{range .items[?(@.metadata.ownerReferences[0].name=="clusters")]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+          if [ -n "$CHILDREN" ]; then
+            ELAPSED=0
+            while [ $ELAPSED -lt 30 ]; do
+              FINALIZERS=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+                -o jsonpath='{range .items[?(@.metadata.ownerReferences[0].name=="clusters")]}{.metadata.finalizers}{end}' 2>/dev/null)
+              if echo "$FINALIZERS" | grep -q resources-finalizer; then break; fi
+              sleep 2; ELAPSED=$((ELAPSED + 2))
+            done
+          fi
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset clusters -n argocd --timeout=60s 2>&1 || true
+      - cmd: |
+          ELAPSED=0
+          while [ $ELAPSED -lt 600 ]; do
+            REMAINING=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+              -o jsonpath='{range .items[?(@.metadata.ownerReferences[0].name=="clusters")]}{.metadata.name}{end}' 2>/dev/null)
+            if [ -z "$REMAINING" ]; then break; fi
+            sleep 10; ELAPSED=$((ELAPSED + 10))
+          done
+      # 7. Delete Crossplane stack in reverse wave order (providers still alive for cluster cleanup)
+      - cmd: |
+          for ADDON in abstractions pod-identities crossplane-aws crossplane-base crossplane; do
+            if KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applicationset $ADDON -n argocd >/dev/null 2>&1; then
+              echo "Deleting $ADDON..."
+              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
+              CHILDREN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+                -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null)
+              if [ -n "$CHILDREN" ]; then
+                ELAPSED=0
+                while [ $ELAPSED -lt 30 ]; do
+                  FINALIZERS=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+                    -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.finalizers}{end}" 2>/dev/null)
+                  if echo "$FINALIZERS" | grep -q resources-finalizer; then break; fi
+                  sleep 2; ELAPSED=$((ELAPSED + 2))
+                done
+              fi
+              KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset $ADDON -n argocd --timeout=180s 2>&1 || true
+              if [ -n "$CHILDREN" ]; then
+                ELAPSED=0
+                while [ $ELAPSED -lt 120 ]; do
+                  REMAINING=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+                    -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{end}" 2>/dev/null)
+                  if [ -z "$REMAINING" ]; then break; fi
+                  sleep 5; ELAPSED=$((ELAPSED + 5))
+                done
+              fi
+            fi
+          done
       # 8. Delete fleet-secrets
       - printf '{{.C_ERR}}▸ Deleting fleet-secrets...{{.C_RESET}}\n'
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset fleet-secrets -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
-      - sleep 3
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch applicationset fleet-secrets -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
+      - cmd: |
+          CHILDREN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+            -o jsonpath='{range .items[?(@.metadata.ownerReferences[0].name=="fleet-secrets")]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+          if [ -n "$CHILDREN" ]; then
+            ELAPSED=0
+            while [ $ELAPSED -lt 30 ]; do
+              FINALIZERS=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd \
+                -o jsonpath='{range .items[?(@.metadata.ownerReferences[0].name=="fleet-secrets")]}{.metadata.finalizers}{end}' 2>/dev/null)
+              if echo "$FINALIZERS" | grep -q resources-finalizer; then break; fi
+              sleep 2; ELAPSED=$((ELAPSED + 2))
+            done
+          fi
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete applicationset fleet-secrets -n argocd --timeout=180s 2>&1 || true
       # 9. Cleanup remaining applications
       - cmd: |
-          for app in $(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+          APPS=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+          for app in $APPS; do
             echo "Deleting leftover app $app..."
-            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application $app -n argocd --timeout=300s 2>/dev/null || \
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application $app -n argocd --timeout=300s 2>&1 || \
             (echo "Force-deleting stuck app $app (stripping finalizers)..." && \
-             KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
-             KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application $app -n argocd --wait=false 2>/dev/null) || true
+             KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>&1 && \
+             KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete application $app -n argocd --wait=false 2>&1) || true
           done
-        ignore_error: true
       - printf '{{.C_ERR}}▸ Cleaning up AWS resources...{{.C_RESET}}\n'
-      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
-      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
-      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>&1 || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>&1 || true
+      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak-clients --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>&1 || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Hub addons destroyed.{{.C_RESET}}\n'

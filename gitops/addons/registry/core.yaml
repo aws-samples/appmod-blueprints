@@ -319,6 +319,22 @@ external-dns:
       timeoutSeconds: 10
     serviceAccount:
       name: external-dns-sa
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: http
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: http
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 5
   additionalResources:
     - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
       helm:
