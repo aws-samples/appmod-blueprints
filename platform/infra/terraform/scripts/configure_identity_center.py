@@ -47,6 +47,13 @@ SCIM_DATA_FILE = "/tmp/scim-data.json"
 ASSUME_ROLE_CREDENTIALS_FILE = '/tmp/keycloak-idc-integration-credentials.json'
 
 
+def _write_credentials_file(content: str):
+    """Write credentials to file with restrictive permissions (owner-only read/write)."""
+    fd = os.open(ASSUME_ROLE_CREDENTIALS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
+
+
 def _install_system_deps():
     print("Installing Chromium system dependencies via yum...", file=sys.stderr)
     subprocess.run(["sudo", "yum", "install", "-y"] + _CHROMIUM_YUM_DEPS, capture_output=True)
@@ -114,8 +121,7 @@ def _refresh_credentials_via_lambda():
         })
         param_name = f"/{prefix}/keycloak-idc-integration-credentials"
         ssm.put_parameter(Name=param_name, Value=fresh, Type="SecureString", Overwrite=True)
-        with open(ASSUME_ROLE_CREDENTIALS_FILE, "w") as f:
-            f.write(fresh)
+        _write_credentials_file(fresh)
         print("Credentials refreshed via instance profile", file=sys.stderr)
         return
 
@@ -151,8 +157,7 @@ def _refresh_credentials_via_lambda():
 
     # Re-read the refreshed credentials from SSM
     fresh = ssm.get_parameter(Name=param_name, WithDecryption=True)["Parameter"]["Value"]
-    with open(ASSUME_ROLE_CREDENTIALS_FILE, "w") as f:
-        f.write(fresh)
+    _write_credentials_file(fresh)
     print("Credentials refreshed via Lambda", file=sys.stderr)
 
 
