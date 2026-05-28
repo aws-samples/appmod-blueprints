@@ -37,7 +37,7 @@ enabledAddons:
   crossplane: true
   kro: false
   kro_manifests: false
-  kro_manifests_hub: false
+  kro_manifests_hub: true
   multi_acct: false
   platform_manifests: true
   backstage: true
