@@ -79,7 +79,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def _refresh_credentials_via_lambda():
-    """Invoke the KeycloakIDCIntegration Lambda to refresh SSM credentials."""
+    """Refresh credentials — try Lambda first, fall back to instance profile."""
+    import urllib.request
     print("Refreshing IDC credentials via Lambda...", file=sys.stderr)
     client = boto3.client("lambda")
     ssm = boto3.client("ssm")
@@ -87,9 +88,36 @@ def _refresh_credentials_via_lambda():
     # Discover Lambda function name
     prefix = os.environ.get("RESOURCE_PREFIX", "peeks")
     funcs = client.list_functions()["Functions"]
-    func_name = next((f["FunctionName"] for f in funcs if "KeycloakIDCIntegration" in f["FunctionName"]), None)
+    func_name = next((f["FunctionName"] for f in funcs if "KeycloakIDCIntegration" in f["FunctionName"] or "IdentityCenterFn" in f["FunctionName"]), None)
+
     if not func_name:
-        raise RuntimeError("KeycloakIDCIntegration Lambda function not found")
+        # Fall back to instance profile credentials
+        print("No credential-refresh Lambda found, using instance profile...", file=sys.stderr)
+        token = urllib.request.urlopen(urllib.request.Request(
+            "http://169.254.169.254/latest/api/token",
+            method="PUT", headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"}
+        )).read().decode()
+        role = urllib.request.urlopen(urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+            headers={"X-aws-ec2-metadata-token": token}
+        )).read().decode()
+        creds_raw = urllib.request.urlopen(urllib.request.Request(
+            f"http://169.254.169.254/latest/meta-data/iam/security-credentials/{role}",
+            headers={"X-aws-ec2-metadata-token": token}
+        )).read().decode()
+        creds_json = json.loads(creds_raw)
+        fresh = json.dumps({
+            "AccessKeyId": creds_json["AccessKeyId"],
+            "SecretAccessKey": creds_json["SecretAccessKey"],
+            "SessionToken": creds_json["Token"],
+            "Expiration": creds_json["Expiration"],
+        })
+        param_name = f"/{prefix}/keycloak-idc-integration-credentials"
+        ssm.put_parameter(Name=param_name, Value=fresh, Type="SecureString", Overwrite=True)
+        with open(ASSUME_ROLE_CREDENTIALS_FILE, "w") as f:
+            f.write(fresh)
+        print("Credentials refreshed via instance profile", file=sys.stderr)
+        return
 
     # Discover the RoleArn from the SSM parameter description
     param_name = f"/{prefix}/keycloak-idc-integration-credentials"
@@ -679,13 +707,38 @@ async def configure_identity_center(
             await page.wait_for_timeout(500)
             await page.evaluate("document.querySelectorAll('[class*=\"popover\"], [class*=\"hotspot\"], [class*=\"tutorial-overlay\"]').forEach(e => e.remove())")
             await dismiss_overlays(page)
-            provisioning_url = f"{sso_url}#/instances/{instance_id}/settings/provisioning"
-            await page.goto(provisioning_url, wait_until="domcontentloaded")
-            await wait_for_stable(page)
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(1000)
+            # Click Settings in left nav (use CSS selector for the nav link)
+            settings_clicked = False
+            for sel in ['nav a:text-is("Settings")', 'aside a:text-is("Settings")',
+                        '[class*="navigation"] a:text-is("Settings")', 'a:text-is("Settings")']:
+                try:
+                    link = await page.wait_for_selector(sel, state="visible", timeout=3000)
+                    if link:
+                        await link.click()
+                        await wait_for_stable(page)
+                        settings_clicked = True
+                        break
+                except Exception:
+                    continue
+            if not settings_clicked:
+                # Try direct URL navigation
+                await page.goto(f"{sso_url}#/instances/{instance_id}/settings", wait_until="domcontentloaded")
+                await wait_for_stable(page)
             await dismiss_overlays(page)
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(2000)
+            # Click Provisioning tab/link
+            for tab_sel in ['a:text-is("Provisioning")', 'button:text-is("Provisioning")',
+                            '[role="tab"]:has-text("Provisioning")', 'a:has-text("Provisioning")',
+                            'span:text-is("Provisioning")']:
+                try:
+                    tab = await page.wait_for_selector(tab_sel, state="visible", timeout=3000)
+                    if tab:
+                        await tab.click()
+                        await wait_for_stable(page)
+                        break
+                except Exception:
+                    continue
+            await page.wait_for_timeout(2000)
             await dismiss_overlays(page)
 
             # Click Enable button
