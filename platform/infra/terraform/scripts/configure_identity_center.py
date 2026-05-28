@@ -234,6 +234,11 @@ async def dismiss_overlays(page):
             'button:has-text("Dismiss")',
             'button:has-text("Try now")',  # "Account color" promo
             'button:has-text("Not now")',
+            '[class*="hotspot"] button:has-text("Next")',  # Service menu tooltip
+            '[class*="tutorial"] button:has-text("Next")',  # Tutorial tooltip
+            '[class*="popover"] button:has-text("Next")',  # Popover tooltip
+            '[role="dialog"] button:has-text("Next")',  # Dialog tooltip
+            '[class*="awsui-popover"] button:has-text("Next")',  # CloudScape popover
         ]:
             try:
                 btn = await page.wait_for_selector(sel, state="visible", timeout=1500)
@@ -669,22 +674,22 @@ async def configure_identity_center(
 
             # --- Step 9: Enable automatic provisioning ---
             print("Enabling automatic provisioning...", file=sys.stderr)
-            await page.goto(settings_url, wait_until="domcontentloaded")
-            await wait_for_stable(page)
+            # Dismiss any overlays/tooltips aggressively
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(500)
+            await page.evaluate("document.querySelectorAll('[class*=\"popover\"], [class*=\"hotspot\"], [class*=\"tutorial-overlay\"]').forEach(e => e.remove())")
             await dismiss_overlays(page)
-            # Click the Provisioning tab if it exists
-            for tab_sel in ['[data-testid="provisioning"]', 'button:has-text("Provisioning")',
-                            'a:has-text("Provisioning")', '[role="tab"]:has-text("Provisioning")']:
-                try:
-                    tab = await page.wait_for_selector(tab_sel, state="visible", timeout=3000)
-                    if tab:
-                        await tab.click()
-                        await wait_for_stable(page)
-                        break
-                except Exception:
-                    continue
+            provisioning_url = f"{sso_url}#/instances/{instance_id}/settings/provisioning"
+            await page.goto(provisioning_url, wait_until="domcontentloaded")
+            await wait_for_stable(page)
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(1000)
+            await dismiss_overlays(page)
+            await page.wait_for_timeout(3000)
+            await dismiss_overlays(page)
 
             # Click Enable button
+            await screenshot(page, "/tmp/step9_before_enable.png", debug)
             await click_first_visible(page, [
                 'button:has-text("Enable")',
                 'button:has-text("Enable automatic provisioning")',

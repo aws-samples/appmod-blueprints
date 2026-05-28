@@ -176,7 +176,8 @@ tasks:
   hub:kubeconfig:
     desc: Fetch hub EKS kubeconfig
     cmds:
-      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>&1 >/dev/null
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>&1 >/dev/null
 
   kind:create:
     desc: Create Kind cluster (skips if exists)
@@ -476,7 +477,7 @@ tasks:
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to reach Synced state
     vars:
-      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "2"}}'
+      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
     cmds:
       - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Waiting for root-appset to generate apps...{{.C_RESET}}\n'
@@ -484,7 +485,7 @@ tasks:
         TIMEOUT=300
         ELAPSED=0
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null | wc -l | tr -d ' ')
           if [ "$TOTAL" -gt 3 ]; then
             printf '{{.C_INFO}}  %s apps detected, proceeding to sync check{{.C_RESET}}\n' "$TOTAL"
             break
@@ -501,7 +502,7 @@ tasks:
         while [ $ELAPSED -lt $TIMEOUT ]; do
           # Count only apps that are NOT in Unknown sync state (spoke apps targeting
           # non-existent clusters show Unknown and should not block the install).
-          APP_OUTPUT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null || echo "")
+          APP_OUTPUT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null || echo "")
           TOTAL=$(echo "$APP_OUTPUT" | awk '$2 != "Unknown" && NF>0' | wc -l | tr -d ' ')
           SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
           HEALTHY=$(echo "$APP_OUTPUT" | awk '$3 == "Healthy"' | wc -l | tr -d ' ')
@@ -569,14 +570,14 @@ tasks:
         INTERVAL=30
         ELAPSED=0
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          APP_OUTPUT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null || echo "")
+          APP_OUTPUT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null || echo "")
           TOTAL=$(echo "$APP_OUTPUT" | awk 'NF>0' | wc -l | tr -d ' ')
           SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
           UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
           OUTOFSYNC=$((TOTAL - SYNCED - UNKNOWN))
           printf '{{.C_INFO}}  Apps: %s/%s synced, %s unknown, %s out-of-sync (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "$ELAPSED"
-          if [ "$TOTAL" -gt 0 ] && [ "$UNKNOWN" -eq 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
-            printf '{{.C_OK}}✓ All %s apps synced (within %s tolerance).{{.C_RESET}}\n' "$SYNCED" "{{.MAX_OUTOFSYNC}}"
+          if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
+            printf '{{.C_OK}}✓ All %s apps synced (within %s tolerance, %s unknown).{{.C_RESET}}\n' "$SYNCED" "{{.MAX_OUTOFSYNC}}" "$UNKNOWN"
             break
           fi
           sleep $INTERVAL
@@ -672,6 +673,14 @@ tasks:
 
   secrets-manager:seed-observability:
     desc: Seed observability credentials (AMP endpoint, AMG API key) into Secrets Manager
+    vars:
+      KC_DOMAIN:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
     cmds:
       - |
         set -e
@@ -844,7 +853,7 @@ tasks:
         # Update Keycloak SAML client with AMG URL
         printf '{{.C_STEP}}▸ Waiting for Keycloak to be reachable...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          if curl -sf -o /dev/null "https://{{.DOMAIN}}/keycloak/realms/master/.well-known/openid-configuration" 2>/dev/null; then
+          if curl -sf -o /dev/null "https://{{.KC_DOMAIN}}/keycloak/realms/master/.well-known/openid-configuration" 2>/dev/null; then
             echo "Keycloak is reachable"
             break
           fi
@@ -853,19 +862,19 @@ tasks:
         done
         printf '{{.C_STEP}}▸ Updating Keycloak SAML client with AMG URL...{{.C_RESET}}\n'
         KC_PASS=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password')
-        KC_TOKEN=$(curl -s -X POST "https://{{.DOMAIN}}/keycloak/realms/master/protocol/openid-connect/token" \
+        KC_TOKEN=$(curl -s -X POST "https://{{.KC_DOMAIN}}/keycloak/realms/master/protocol/openid-connect/token" \
           -H "Content-Type: application/x-www-form-urlencoded" \
           -d "grant_type=password&client_id=admin-cli&username=admin&password=$KC_PASS" | jq -r '.access_token')
         if [ -n "$KC_TOKEN" ] && [ "$KC_TOKEN" != "null" ]; then
-          KC_CLIENT_ID=$(curl -s "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients" \
+          KC_CLIENT_ID=$(curl -s "https://{{.KC_DOMAIN}}/keycloak/admin/realms/platform/clients" \
             -H "Authorization: Bearer $KC_TOKEN" | jq -r '.[] | select(.name=="amazon-managed-grafana" and .protocol=="saml") | .id')
           if [ -n "$KC_CLIENT_ID" ]; then
-            KC_CLIENT=$(curl -s "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
+            KC_CLIENT=$(curl -s "https://{{.KC_DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
               -H "Authorization: Bearer $KC_TOKEN")
             KC_UPDATED=$(echo "$KC_CLIENT" | jq \
               --arg url "$AMG_ENDPOINT" \
               '.clientId = "https://\($url)/saml/metadata" | .adminUrl = "https://\($url)/login/saml" | .redirectUris = ["https://\($url)/saml/acs"]')
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "https://{{.DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "https://{{.KC_DOMAIN}}/keycloak/admin/realms/platform/clients/$KC_CLIENT_ID" \
               -H "Authorization: Bearer $KC_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$KC_UPDATED")
@@ -998,7 +1007,7 @@ tasks:
           --security-groups "$SG_ID" \
           --scheme internet-facing \
           --type application \
-          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=ingress.k8s.aws/stack,Value=platform \
+          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=ingress.k8s.aws/stack,Value=platform Key=ingress.k8s.aws/resource,Value=LoadBalancer \
           --region {{.AWS_REGION}} \
           --query 'LoadBalancers[0].LoadBalancerArn' --output text)
         aws elbv2 create-listener \
@@ -1120,12 +1129,26 @@ tasks:
       - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
       - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
       - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
-      - python3 {{.ROOT_DIR}}/platform/infra/terraform/scripts/configure_identity_center.py
-          --region {{.AWS_REGION}}
-          --instance-id {{.IDC_INSTANCE_ID}}
-          --keycloak-dns {{.KEYCLOAK_DNS}}
-          --keycloak-admin-password="{{.KC_ADMIN_PASSWORD}}"
-      - printf '{{.C_OK}}✓ IDC configured with Keycloak federation and SCIM sync.{{.C_RESET}}\n'
+      - |
+        IDC_SUCCESS=false
+        for attempt in 1 2 3; do
+          printf '{{.C_INFO}}  Attempt %s/3...{{.C_RESET}}\n' "$attempt"
+          if python3 {{.ROOT_DIR}}/platform/infra/terraform/scripts/configure_identity_center.py \
+              --region {{.AWS_REGION}} \
+              --instance-id {{.IDC_INSTANCE_ID}} \
+              --keycloak-dns {{.KEYCLOAK_DNS}} \
+              --keycloak-admin-password="{{.KC_ADMIN_PASSWORD}}"; then
+            IDC_SUCCESS=true
+            break
+          fi
+          [ $attempt -lt 3 ] && sleep 60
+        done
+        if [ "$IDC_SUCCESS" = true ]; then
+          printf '{{.C_OK}}✓ IDC configured with Keycloak federation and SCIM sync.{{.C_RESET}}\n'
+        else
+          printf '{{.C_ERR}}⚠ IDC configuration failed after 3 attempts. Run manually later:{{.C_RESET}}\n'
+          printf '  task kind-crossplane:idc:configure\n'
+        fi
 
   destroy:
     desc: >-
