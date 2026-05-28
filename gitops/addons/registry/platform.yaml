@@ -484,6 +484,10 @@ platform-manifests:
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/platform-manifests'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '6'
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
   selector:
     matchExpressions:
       - key: enable_platform_manifests
