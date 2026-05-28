@@ -109,6 +109,7 @@ tasks:
       - task: secrets-manager:seed-observability
       - task: hub:restart-langfuse
       - task: idc:configure
+      - task: urls
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
 
   credentials:setup:
@@ -520,6 +521,58 @@ tasks:
           printf '{{.C_STEP}}▸ Continuing with remaining steps (spoke apps will sync when clusters are ready)...{{.C_RESET}}\n'
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+  urls:
+    desc: Export platform URLs to ~/.bashrc.d/platform.sh
+    vars:
+      INGRESS_DOMAIN:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GITLAB_DOMAIN:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      KC_ADMIN_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.keycloak_admin_password // empty'
+      USER_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // "workshop-user-2026"'
+      ARGOCD_URL:
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
+    cmds:
+      - |
+        PLATFORM_FILE="$HOME/.bashrc.d/platform.sh"
+        update_var() {
+          local name="$1" value="$2"
+          if grep -q "^export ${name}=" "$PLATFORM_FILE" 2>/dev/null; then
+            sed -i "s|^export ${name}=.*|export ${name}=\"${value}\"|" "$PLATFORM_FILE"
+          else
+            echo "export ${name}=\"${value}\"" >> "$PLATFORM_FILE"
+          fi
+        }
+        update_var "INGRESS_DOMAIN" "{{.INGRESS_DOMAIN}}"
+        update_var "BACKSTAGE_URL" "https://{{.INGRESS_DOMAIN}}/backstage"
+        update_var "KEYCLOAK_ADMIN_URL" "https://{{.INGRESS_DOMAIN}}/keycloak/admin"
+        update_var "WORKFLOWS_URL" "https://{{.INGRESS_DOMAIN}}/argo-workflows"
+        update_var "GITLAB_URL" "https://{{.GITLAB_DOMAIN}}"
+        update_var "GITLAB_DOMAIN" "{{.GITLAB_DOMAIN}}"
+        update_var "ARGOCD_URL" "{{.ARGOCD_URL}}"
+        update_var "ARGOCD_DOMAIN" "$(echo '{{.ARGOCD_URL}}' | sed 's|https://||')"
+        update_var "KEYCLOAK_ADMIN_PASSWORD" "{{.KC_ADMIN_PASSWORD}}"
+        update_var "USER_PASSWORD" "{{.USER_PASSWORD}}"
+        update_var "HUB_CLUSTER_NAME" "{{.HUB_CLUSTER_NAME}}"
+        printf '{{.C_OK}}✓ Platform URLs exported to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
+        printf '  Backstage:  https://{{.INGRESS_DOMAIN}}/backstage\n'
+        printf '  Keycloak:   https://{{.INGRESS_DOMAIN}}/keycloak\n'
+        printf '  Argo WF:    https://{{.INGRESS_DOMAIN}}/argo-workflows\n'
+        printf '  GitLab:     https://{{.GITLAB_DOMAIN}}\n'
+        printf '  ArgoCD:     {{.ARGOCD_URL}}\n'
 
   hub:restart-identity-pods:
     desc: Restart pods that depend on Pod Identity (external-dns, LBC, Crossplane providers) after identities are ready
