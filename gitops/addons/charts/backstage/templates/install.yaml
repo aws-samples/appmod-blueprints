@@ -719,6 +719,11 @@ metadata:
   name: backstage
   namespace: backstage
   annotations:
+{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /backstage
+{{- else }}
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /$2
     nginx.ingress.kubernetes.io/affinity: "cookie"
@@ -726,7 +731,21 @@ metadata:
     nginx.ingress.kubernetes.io/session-cookie-expires: "86400"
     nginx.ingress.kubernetes.io/session-cookie-max-age: "86400"
     nginx.ingress.kubernetes.io/session-cookie-path: "/backstage"
+{{- end }}
 spec:
+{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+  ingressClassName: "platform"
+  rules:
+    - http:
+        paths:
+          - path: /backstage
+            pathType: Prefix
+            backend:
+              service:
+                name: backstage
+                port:
+                  name: http
+{{- else }}
   ingressClassName: "nginx"
   rules:
     - host: {{ .Values.ingress_domain_name }}
@@ -739,3 +758,4 @@ spec:
                 name: backstage
                 port:
                   name: http
+{{- end }}
