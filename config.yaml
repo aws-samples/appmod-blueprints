@@ -35,7 +35,7 @@ aws:
   profile: "default"                         # AWS CLI profile (local dev only)
 
 # Domain and networking
-domain: "<your-domain>"                      # e.g. idp.example.com — must be unique per stack
+domain: "<your-domain>"                      # e.g. idp.example.com — leave empty for CloudFront mode (auto-created)
 resourcePrefix: "<prefix>"                   # Used for KRO tenant-facing resources only
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
@@ -49,10 +49,6 @@ identityCenter:
 # EKS ArgoCD Capability
 argocdCapability:
   name: "argocd"
-
-# Exposure mode: "domain" (HTTPS + ACM cert + custom domain) or "cloudfront" (HTTP ALB behind CloudFront)
-exposure:
-  mode: "domain"
 
 # Console admin role name (used by Backstage templates and added as cluster admin if specified)
 adminRoleName: "<console-role-name>"       # e.g. WSParticipantRole

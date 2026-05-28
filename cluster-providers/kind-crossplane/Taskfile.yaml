@@ -44,7 +44,7 @@ vars:
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
   EXPOSURE_MODE:
-    sh: yq '.exposure.mode // "domain"' {{.CONFIG_FILE}}
+    sh: 'if [ -z "$(yq ''.domain // ""'' {{.CONFIG_FILE}})" ]; then echo "cloudfront"; else echo "domain"; fi'
   CAPABILITY_NAME:
     sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
@@ -378,13 +378,7 @@ tasks:
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io --all
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s podidentityassociations.eks.aws.upbound.io --all
       - task: argocd:capability
-      - cmd: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
-            cd {{.ROOT_DIR}} && task kind-crossplane:hub:create-alb
-            cd {{.ROOT_DIR}} && task kind-crossplane:hub:cloudfront
-            cd {{.ROOT_DIR}} && task kind-crossplane:gitlab:create-nlb
-            cd {{.ROOT_DIR}} && task kind-crossplane:gitlab:cloudfront
-          fi
+      - task: hub:setup-cloudfront-exposure
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
       - task: hub:install-eso
@@ -980,6 +974,16 @@ tasks:
               echo "GitLab CloudFront origin OK"
             fi
           fi
+
+  hub:setup-cloudfront-exposure:
+    desc: Pre-create ALB and CloudFront distributions (cloudfront mode only)
+    status:
+      - '[ "{{.EXPOSURE_MODE}}" != "cloudfront" ]'
+    cmds:
+      - task: hub:create-alb
+      - task: hub:cloudfront
+      - task: gitlab:create-nlb
+      - task: gitlab:cloudfront
 
   hub:create-alb:
     desc: Pre-create the platform ALB for CloudFront (cloudfront mode only)
