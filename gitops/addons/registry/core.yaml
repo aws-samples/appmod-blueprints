@@ -63,7 +63,7 @@ argocd:
   chartName: argo-cd
   releaseName: argocd
   chartRepository: https://argoproj.github.io/argo-helm
-  defaultVersion: '7.9.1'
+  defaultVersion: '9.5.12'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '0'
   selector:
@@ -89,7 +89,7 @@ metrics-server:
   namespace: kube-system
   chartName: metrics-server
   chartRepository: https://kubernetes-sigs.github.io/metrics-server
-  defaultVersion: '3.12.1'
+  defaultVersion: '3.13.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '0'
   selector:
@@ -103,7 +103,7 @@ cert-manager:
   chartName: cert-manager
   releaseName: cert-manager
   chartRepository: https://charts.jetstack.io
-  defaultVersion: 'v1.15.2'
+  defaultVersion: 'v1.20.2'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '2'
   selector:
@@ -116,7 +116,7 @@ external-secrets:
   namespace: external-secrets
   chartName: external-secrets
   chartRepository: https://charts.external-secrets.io
-  defaultVersion: '0.19.2'
+  defaultVersion: '2.4.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1'
   syncPolicy:
@@ -245,7 +245,7 @@ aws-efs-csi-driver:
   namespace: kube-system
   chartName: aws-efs-csi-driver
   chartRepository: https://kubernetes-sigs.github.io/aws-efs-csi-driver
-  defaultVersion: '3.0.7'
+  defaultVersion: '4.1.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '4'
   selector:
@@ -269,7 +269,7 @@ external-dns:
   namespace: kube-system
   chartName: external-dns
   chartRepository: https://kubernetes-sigs.github.io/external-dns
-  defaultVersion: '1.14.5'
+  defaultVersion: '1.21.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5'
   selector:
