@@ -53,7 +53,7 @@ kyverno:
   chartName: kyverno
   releaseName: kyverno
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3'
   syncPolicy:
@@ -83,7 +83,7 @@ kyverno-policies:
   chartName: kyverno-policies
   releaseName: kyverno-policies
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '4'
   selector:
@@ -102,7 +102,7 @@ kyverno-policy-reporter:
   chartName: policy-reporter
   releaseName: kyverno-policy-reporter
   chartRepository: https://kyverno.github.io/policy-reporter
-  defaultVersion: '3.1.0'
+  defaultVersion: '3.7.4'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '4'
   selector:
