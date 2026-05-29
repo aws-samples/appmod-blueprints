@@ -17,14 +17,53 @@ identities:
             {
               "Effect": "Allow",
               "Action": [
-                "secretsmanager:GetSecretValue",
                 "secretsmanager:ListSecrets",
+                "secretsmanager:BatchGetSecretValue",
+                "secretsmanager:ListSecretVersionIds",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:GetResourcePolicy",
+                "secretsmanager:DescribeSecret",
                 "secretsmanager:CreateSecret",
                 "secretsmanager:PutSecretValue",
-                "secretsmanager:DescribeSecret",
-                "secretsmanager:TagResource"
+                "secretsmanager:TagResource",
+                "secretsmanager:DeleteResourcePolicy"
               ],
               "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:DeleteSecret"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "secretsmanager:ResourceTag/managed-by": "external-secrets"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ssm:DescribeParameters"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ssm:GetParametersByPath",
+                "ssm:GetParameters",
+                "ssm:GetParameter"
+              ],
+              "Resource": "arn:aws:ssm:*:*:parameter/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "kms:Decrypt"
+              ],
+              "Resource": "arn:aws:kms:*:*:key/*"
             }
           ]
         }
