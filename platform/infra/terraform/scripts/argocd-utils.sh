@@ -648,13 +648,8 @@ sync_argocd_app() {
             local start_epoch=$(date -d "$operation_started" +%s 2>/dev/null || echo "0")
             local now_epoch=$(date +%s)
             local elapsed=$((now_epoch - start_epoch))
-            # Keycloak PostSync hook (config job + PushSecret) needs 10+ minutes — use 20min timeout
-            local stuck_threshold=300
-            if [[ "$app_name" == *"keycloak"* ]]; then
-                stuck_threshold=1200
-            fi
-            if [ $elapsed -gt $stuck_threshold ]; then
-                print_warning "App $app_name stuck in Running state for ${elapsed}s (>${stuck_threshold}s)"
+            if [ $elapsed -gt 300 ]; then  # 5 minutes
+                print_warning "App $app_name stuck in Running state for ${elapsed}s (>5min)"
                 stuck_running=true
             fi
         fi
@@ -703,7 +698,7 @@ sync_argocd_app() {
         fi
         
         # Skip if already healthy and synced with no running operations (unless we just fixed revision mismatch)
-        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ] && [ "$operation_phase" != "Failed" ] && [ "$revision_mismatch" = false ]; then
+        if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ] && [ "$operation_phase" != "Running" ] && [ "$revision_mismatch" = false ]; then
             print_info "App $app_name already healthy and synced, skipping sync"
             
             # Check Keycloak PostSync hook even if app is synced
@@ -769,7 +764,7 @@ sync_argocd_app() {
     fi
 }
 
-# Handle stuck operations (terminate if running > 3 mins, except keycloak which needs longer for PostSync)
+# Handle stuck operations (terminate if running > 3 mins)
 handle_stuck_operations() {
     # Get stuck operations using both methods for better detection
     local stuck_apps_jq=$(kubectl get applications -n argocd -o json 2>/dev/null | \
@@ -786,15 +781,6 @@ handle_stuck_operations() {
     if [ -n "$all_stuck_apps" ]; then
         echo "$all_stuck_apps" | while read -r app; do
             if [ -n "$app" ]; then
-                # Keycloak PostSync hook needs 10+ minutes — only intervene after 20min
-                if [[ "$app" == *"keycloak"* ]]; then
-                    local kc_started=$(kubectl get application "$app" -n argocd -o jsonpath='{.status.operationState.startedAt}' 2>/dev/null)
-                    local kc_elapsed=$(( $(date +%s) - $(date -d "$kc_started" +%s 2>/dev/null || echo "0") ))
-                    if [ $kc_elapsed -lt 1200 ]; then
-                        print_info "Keycloak $app running for ${kc_elapsed}s, allowing up to 20min for PostSync"
-                        continue
-                    fi
-                fi
                 print_warning "Terminating stuck operation for $app (running > 3 minutes)"
                 terminate_argocd_operation "$app"
                 sleep 2
@@ -1778,10 +1764,9 @@ wait_for_keycloak_ready() {
         local kc_condition_message=$(echo "$kc_app_json" | jq -r '(.status.conditions[]?.message // "")' 2>/dev/null | head -1)
         local kc_finished=$(echo "$kc_app_json" | jq -r '.status.operationState.finishedAt // "none"')
 
-        # Ready criteria: Healthy AND (Synced OR operation Succeeded OR OutOfSync with no active operation)
-        # The OutOfSync case handles persistent StatefulSet drift (K8s-defaulted fields like
-        # revisionHistoryLimit/persistentVolumeClaimRetentionPolicy that aren't in the chart).
-        if [ "$kc_health" = "Healthy" ] && { [ "$kc_sync" = "Synced" ] || [ "$kc_operation" = "Succeeded" ] || { [ "$kc_sync" = "OutOfSync" ] && [ "$kc_operation" != "Running" ]; }; }; then
+        # Ready criteria (consistent with wait_for_sync_wave_completion and show_final_status):
+        # Healthy AND (Synced OR last operation Succeeded)
+        if [ "$kc_health" = "Healthy" ] && { [ "$kc_sync" = "Synced" ] || [ "$kc_operation" = "Succeeded" ]; }; then
             print_success "Keycloak is healthy and ready (health=$kc_health, sync=$kc_sync, operation=$kc_operation)"
             return 0
         fi
