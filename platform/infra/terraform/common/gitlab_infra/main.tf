@@ -207,7 +207,7 @@ resource "helm_release" "gitlab" {
 
   name       = "gitlab"
   chart      = "${path.module}/../../../../../gitops/addons/charts/gitlab"
-  timeout    = 1200
+  timeout    = 600
   values     = [local.gitlab_values]
   create_namespace = false
   namespace  = kubernetes_namespace.gitlab.metadata[0].name

@@ -89,13 +89,6 @@ resource "aws_eks_capability" "argocd" {
   role_arn                  = aws_iam_role.eks_capability_argocd[each.key].arn
   delete_propagation_policy = "RETAIN"
 
-  # Ensure policies remain attached during capability cleanup
-  depends_on = [
-    aws_iam_role_policy.eks_capability_argocd_codeconnections,
-    aws_iam_role_policy_attachment.eks_capability_argocd_secrets,
-    aws_iam_role_policy_attachment.eks_capability_argocd_codecommit
-  ]
-
   configuration {
     argo_cd {
       aws_idc {
@@ -137,12 +130,7 @@ resource "aws_eks_capability" "ack" {
   role_arn                  = aws_iam_role.eks_capability_ack[each.key].arn
   delete_propagation_policy = "RETAIN"
 
-  # Ensure policies remain attached during capability cleanup
-  depends_on = [
-    module.eks,
-    aws_iam_role_policy.eks_capability_ack_assume_workload_roles,
-    aws_iam_role_policy.eks_capability_ack_manage_irsa_roles
-  ]
+  depends_on = [module.eks]
   tags = local.tags
 }
 
@@ -156,11 +144,7 @@ resource "aws_eks_capability" "kro" {
   role_arn                  = aws_iam_role.eks_capability_kro[each.key].arn
   delete_propagation_policy = "RETAIN"
 
-  # Ensure policies remain attached during capability cleanup
-  depends_on = [
-    module.eks,
-    aws_iam_role_policy_attachment.eks_capability_kro_cluster_admin
-  ]
+  depends_on = [module.eks]
   tags = local.tags
 }
 
