@@ -5,7 +5,7 @@ argo-rollouts:
   namespace: argo-rollouts
   chartName: argo-rollouts
   chartRepository: https://argoproj.github.io/argo-helm
-  defaultVersion: '2.39.5'
+  defaultVersion: '2.40.9'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3'
   selector:
@@ -22,7 +22,7 @@ argo-events:
   namespace: argo-events
   chartName: argo-events
   chartRepository: https://argoproj.github.io/argo-helm
-  defaultVersion: '2.4.20'
+  defaultVersion: '2.4.21'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3'
   selector:
