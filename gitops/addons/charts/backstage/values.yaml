@@ -4,6 +4,11 @@ gitlab_domain_name: ""
 working_repo: ""
 ingress_domain_name: ""
 workshop_git_branch: "main"
+# spoke_clusters: list of {name, url, token} entries.
+# Each entry registers a remote cluster in Backstage's Kubernetes plugin
+# (kubernetes.clusters), kubernetesIngestor.clusters, and the k8s-config.yaml
+# ConfigMap consumed by Argo CD. Empty list (default) means hub-only mode.
+spoke_clusters: []
 global:
   aws_cluster_name: ""
   clusterName: ""
