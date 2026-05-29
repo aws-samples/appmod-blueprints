@@ -20,6 +20,7 @@ spec:
       managementAccountId: string
       managementRegion: string | default="us-west-2"
       argoCdHubRoleArn: string
+      argoCdCapabilityRoleArn: string
       k8sVersion: string
       adminRoleName: string
       fleetSecretManagerSecretNameSuffix: string
@@ -687,6 +688,32 @@ spec:
                 type: "cluster"
               policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
           principalARN: "arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.adminRoleName}"
+          type: STANDARD
+
+    - id: accessEntryArgoCdCapability
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-access-entry-argocd-capability"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${ekscluster.spec.name}"
+          accessPolicies:
+            - accessScope:
+                type: "cluster"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          principalARN: "${schema.spec.argoCdCapabilityRoleArn}"
           type: STANDARD
 
 

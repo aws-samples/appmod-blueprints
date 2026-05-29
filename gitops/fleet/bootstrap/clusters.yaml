@@ -47,6 +47,7 @@ spec:
           values: |
             global:
               argoCdHubRoleArn: '{{.metadata.annotations.argocd_hub_role_arn}}'
+              argoCdCapabilityRoleArn: '{{.metadata.annotations.argocd_capability_role_arn}}'
               targetCluster: '{{.clusterName}}'
       destination:
         namespace: argocd
