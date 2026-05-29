@@ -6,6 +6,28 @@
 **Merge-base:** `b219604e` (PR #570)
 **Branch divergence at start:** 173 ahead, 98 behind main
 
+## Status
+
+- ✅ Phase 1 — Chart version bumps (commits `5209db8c`, `85f4ba5f`, `17e8adac`, `b6519ded`, `01642006`, `70539d8b`)
+- ✅ Phase 2 — ESO pod identity policy fix (commit `21027cc2`)
+- ✅ Phase 3 — Chart template ports (commits `e7af10d0`, `95e36f4c`, `77b48d4d`, `53ef6b5c`, `4cc2f2a1`, `1fb85f0a`)
+- ✅ Phase 4 — Terraform / scripts (commits `67e0cf62`, `5bb97ca5`)
+- ⏳ Phase 5 — Validation (deploy + smoke test, requires cluster access)
+- ⏳ Phase 6 — `external-secrets` schema reconciliation (deferred sub-task per user direction)
+
+15 commits applied. 31 files changed, 735 insertions, 265 deletions.
+
+## Deviations from the original plan
+
+| Item | Plan said | Outcome | Reason |
+|---|---|---|---|
+| `aws-for-fluentbit` version bump | 0.1.34 → 0.2.0 in `observability.yaml` | **Skipped** | Feature was already at `0.2.0` (ahead of main's prior state) |
+| `ack-ecr` / `ack-s3` regression fix | Not in plan | **Added** to Phase 1e | Discovered feature had regressed `ack-ecr 1.0.19` (vs main `1.5.1`) and `ack-s3 1.0.14` (vs main `1.3.1`) at the registry split — fixed in same `platform.yaml` commit |
+| `kro/resource-groups/manifests/appmod-service.yaml` rateInterval port | Plan listed it as 3-way merge | **Skipped** | Feature branch removed the CEL `evaluationCriteria` mechanism that main's change extends. Not portable. The kubevela `appmod-service.yaml` rateInterval port was applied (commit `77b48d4d`). |
+| `mlflow` 1.7.2 → 1.8.1 | Plan listed in `ml.yaml` | **Skipped** | Feature uses a local wrapper chart with subchart `mlflow:0.7.19` (different version track from upstream's 1.x line). Needs manual review of how to bump the wrapper. |
+| Backstage `startupProbe` path | Plan said port main's `/.backstage/health/v1/readiness` | **Kept feature's** `/backstage/api/catalog/entities/by-query?limit=0` | Feature deliberately changed it (commit ca6e4649). Both branches modified the same line; feature's choice is more recent and intentional. |
+| Backstage spoke clusters | Plan said apply main's parameterization | **Applied + documented** | Added `spoke_clusters: []` default in `values.yaml` so the new `{{- range .Values.spoke_clusters }}` blocks render safely with no input (hub-only mode preserved). |
+
 ## Why this porting is needed
 
 Since the merge-base, `main` has received **chart version bumps for 19 addons**, **5 chart-template fixes**, an **ESO pod-identity policy security fix**, and **16 Terraform/script updates**. The feature branch independently restructured the addons layout (registry split, `default/addons` → `configs`, `crossplane-aws` refactored to `crossplane-base` + `crossplane-pod-identity`, ingress-nginx moved to direct Terraform install), so a straight merge is not viable — each change must be ported to its new location in the feature branch.
