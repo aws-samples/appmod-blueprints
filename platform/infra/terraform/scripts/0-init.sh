@@ -334,9 +334,63 @@ APPPROJ
         print_status "INFO" "default AppProject already exists"
     fi
 
+    # ---------------------------------------------------------------------------
+    # Phase: GitLab repos setup
+    # The platform repo was already pushed to GitLab by deploy.sh (CodeBuild),
+    # giving ArgoCD a head start while the IDE boots. Here we just set up the
+    # local git remote and create the application repos.
+    # ---------------------------------------------------------------------------
+    # Get GitLab domain from CloudFront distribution
+    if [ -z "$GITLAB_DOMAIN" ]; then
+        print_status "INFO" "Retrieving GitLab domain from CloudFront..."
+        GITLAB_DOMAIN=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName" --output text)
+        if [ -z "$GITLAB_DOMAIN" ]; then
+            print_status "ERROR" "Failed to retrieve GitLab domain from CloudFront"
+            exit 1
+        fi
+        print_status "SUCCESS" "GitLab domain: $GITLAB_DOMAIN"
+        update_workshop_var "GITLAB_DOMAIN" "$GITLAB_DOMAIN"
+    fi
+
+    # Setup GitLab remote for local environment (deploy.sh already pushed, just configure the remote)
+    cd "$GIT_ROOT_PATH"
+    git config --global credential.helper store
+    git config --global user.name "$GIT_USERNAME"
+    git config --global user.email "$GIT_USERNAME@workshop.local"
+    
+    GITLAB_URL="https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
+    
+    # Preserve GitHub as 'github' remote if origin points to GitHub
+    if git remote get-url origin 2>/dev/null | grep -q "github.com"; then
+        if ! git remote get-url github >/dev/null 2>&1; then
+            git remote rename origin github
+        fi
+    fi
+    
+    # Set GitLab as origin
+    if git remote get-url origin >/dev/null 2>&1; then
+        git remote set-url origin "$GITLAB_URL"
+    else
+        git remote add origin "$GITLAB_URL"
+    fi
+    
+    git checkout -B main
+    cd -
+
+    # Initialize GitLab configuration (creates app repos — platform repo already pushed by deploy.sh)
+    bash "$SCRIPT_DIR/2-gitlab-init.sh"
+
+    # Generate backstage spoke cluster values (tokens for k8s plugin)
+    log_timestamp "Phase: Generating Backstage spoke cluster values"
+    generate_backstage_spoke_values
+    cd "$GIT_ROOT_PATH"
+    git add -A
+    git commit -m "chore: add backstage spoke cluster values" || true
+    git push origin main
+    cd -
+
     # Dependency-aware ArgoCD app synchronization
-    # NOTE: IDC configuration + ArgoCD token retrieval is deferred to AFTER app sync
-    # because Keycloak must be healthy first (it often takes longer than the initial wait)
+    # NOTE: IDC configuration is deferred to AFTER app sync because Keycloak must be healthy first
     wait_for_argocd_apps_with_dependencies
 
     # Run enhanced recovery to handle any remaining issues
@@ -367,53 +421,33 @@ APPPROJ
     log_timestamp "Phase: IAM Identity Center configuration and ArgoCD token retrieval"
     configure_idc_and_argocd_token
 
-    # Get GitLab domain from CloudFront distribution
-    if [ -z "$GITLAB_DOMAIN" ]; then
-        print_status "INFO" "Retrieving GitLab domain from CloudFront..."
-        GITLAB_DOMAIN=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'gitlab')].DomainName" --output text)
-        if [ -z "$GITLAB_DOMAIN" ]; then
-            print_status "ERROR" "Failed to retrieve GitLab domain from CloudFront"
-            exit 1
-        fi
-        print_status "SUCCESS" "GitLab domain: $GITLAB_DOMAIN"
-        update_workshop_var "GITLAB_DOMAIN" "$GITLAB_DOMAIN"
-    fi
+    # Schedule ArgoCD token refresh every 4 hours via systemd timer
+    # (crontab/crond not available on Workshop Studio AMI - Amazon Linux 2023)
+    sudo tee /etc/systemd/system/argocd-refresh-token.service >/dev/null <<SVCEOF
+[Unit]
+Description=Refresh ArgoCD auth token
 
-    # Setup GitLab remote for local environment
-    cd "$GIT_ROOT_PATH"
-    git config --global credential.helper store
-    git config --global user.name "$GIT_USERNAME"
-    git config --global user.email "$GIT_USERNAME@workshop.local"
-    
-    GITLAB_URL="https://${GIT_USERNAME}:${USER1_PASSWORD}@${GITLAB_DOMAIN}/${GIT_USERNAME}/${WORKING_REPO}.git"
-    
-    # Preserve GitHub as 'github' remote if origin points to GitHub
-    if git remote get-url origin 2>/dev/null | grep -q "github.com"; then
-        if ! git remote get-url github >/dev/null 2>&1; then
-            git remote rename origin github
-        fi
-    fi
-    
-    # Set GitLab as origin
-    if git remote get-url origin >/dev/null 2>&1; then
-        git remote set-url origin "$GITLAB_URL"
-    else
-        git remote add origin "$GITLAB_URL"
-    fi
-    
-    # Try to fetch from GitLab, but don't fail if repository doesn't exist yet
-    if git fetch origin 2>/dev/null; then
-        print_status "INFO" "Fetched from GitLab repository"
-        git checkout -B main origin/main 2>/dev/null || git checkout -B main
-    else
-        print_status "WARNING" "GitLab repository not accessible yet, will be initialized by 2-gitlab-init.sh"
-        git checkout -B main 2>/dev/null || true
-    fi
-    cd -
+[Service]
+Type=oneshot
+User=ec2-user
+Environment=HOME=/home/ec2-user
+ExecStart=/bin/bash -lc "source $HOME/.bashrc.d/ssm-setup-ide-logs.sh && source $HOME/.bashrc.d/platform.sh && argocd-refresh-token"
+SVCEOF
+    sudo tee /etc/systemd/system/argocd-refresh-token.timer >/dev/null <<TMREOF
+[Unit]
+Description=Refresh ArgoCD token every 4 hours
 
-    # Initialize GitLab configuration
-    bash "$SCRIPT_DIR/2-gitlab-init.sh"
-    
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=4h
+
+[Install]
+WantedBy=timers.target
+TMREOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now argocd-refresh-token.timer
+    print_status "SUCCESS" "ArgoCD token refresh timer scheduled (every 4h)"
+
     # Wait for Backstage build to complete if it has started
     # Uncomment this if you want to build backstage locally
     # if [[ -n $BACKSTAGE_BUILD_PID ]]; then
