@@ -539,6 +539,24 @@ spec:
             }
 
 
+    - id: clusterConfigK8sSecret
+      template:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.name}-config-data
+          namespace: ${schema.spec.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+        type: Opaque
+        stringData:
+          config: |
+            {"vpc":{"id":"${schema.spec.network.vpcID}","cluster_security_group_id":"","subnet_ids":["${schema.spec.network.subnets.workers.subnet1ID}","${schema.spec.network.subnets.workers.subnet2ID}"]},"server":"${ekscluster.status.ackResourceMetadata.arn}","metadata":{"cluster_name":"${schema.spec.name}","region":"${schema.spec.region}","account_id":"${schema.spec.accountId}"}}
+
     - id: clusterConfigSecret
       readyWhen:
       - ${clusterConfigSecret.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
@@ -559,8 +577,10 @@ spec:
               blockOwnerDeletion: true
         spec:
           name: ${schema.spec.name}/config
-          secretString: |
-            {"vpc":{"id":"${schema.spec.network.vpcID}","cluster_security_group_id":"${ekscluster.status.clusterSecurityGroupID}","subnet_ids":["${schema.spec.network.subnets.workers.subnet1ID}","${schema.spec.network.subnets.workers.subnet2ID}"]},"server":"${ekscluster.status.ackResourceMetadata.arn}","metadata":{"cluster_name":"${schema.spec.name}","region":"${schema.spec.region}","account_id":"${schema.spec.accountId}"}}
+          secretString:
+            name: ${schema.spec.name}-config-data
+            namespace: ${schema.spec.name}
+            key: config
 
     - id: hubSecretsExternal
       readyWhen:

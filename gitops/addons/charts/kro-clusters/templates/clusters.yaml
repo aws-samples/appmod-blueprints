@@ -1,4 +1,5 @@
 {{- range $name, $cluster := .Values.clusters }}
+{{- if or (not $.Values.global.targetCluster) (eq $name $.Values.global.targetCluster) }}
 ---
 apiVersion: kro.run/v1alpha1
 kind: EksclusterWithVpc
@@ -43,4 +44,5 @@ spec:
   {{- else }}
   addons: {}
   {{- end }}
+{{- end }}
 {{- end }}
