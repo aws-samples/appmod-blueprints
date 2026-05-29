@@ -11,8 +11,8 @@
 - ✅ Phase 1 — Chart version bumps (commits `5209db8c`, `85f4ba5f`, `17e8adac`, `b6519ded`, `01642006`, `70539d8b`)
 - ✅ Phase 2 — ESO pod identity policy fix (commit `21027cc2`)
 - ✅ Phase 3 — Chart template ports (commits `e7af10d0`, `95e36f4c`, `77b48d4d`, `53ef6b5c`, `4cc2f2a1`, `1fb85f0a`)
-- ✅ Phase 4 — Terraform / scripts (commits `67e0cf62`, `5bb97ca5`)
-- ⏳ Phase 5 — Validation (deploy + smoke test, requires cluster access)
+- ⛔ Phase 4 — Terraform / scripts: **mostly reverted** (commits `e2465cd3`, `f8320f8a`). The original goal was gitops-only; `platform/infra/terraform/` ports went beyond scope. This branch's primary deploy path is `task install` via the kind-crossplane provider, not terraform. Kept only `utils.sh` and `argocd_token_automation.py` because they remain actively used by the workshop IDE.
+- ⏳ Phase 5 — Validation (use `task validate` / `task install` / `task status`, not `deploy.sh`)
 - ⏳ Phase 6 — `external-secrets` schema reconciliation (deferred sub-task per user direction)
 
 15 commits applied. 31 files changed, 735 insertions, 265 deletions.
