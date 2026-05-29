@@ -1,0 +1,5 @@
+customNodepools:
+  enabled: true
+
+# Disable HuggingFace models until ray-system namespace exists
+huggingfaceModels: []
