@@ -45,6 +45,33 @@ main() {
   fi
   cd -
 
+  # Drain nodes before terraform destroy. Terraform deletes VPC routes concurrently
+  # with EKS cluster deletion, which can strand nodes without network connectivity.
+  # Disabling built-in nodepools ensures nodes are terminated before VPC teardown.
+  log "Disabling built-in nodepools and draining nodes from all clusters..."
+  for cluster_name in "${CLUSTER_NAMES[@]}"; do
+    log "Disabling built-in nodepools for cluster: $cluster_name"
+    aws eks update-cluster-config \
+      --name "$cluster_name" \
+      --region "${AWS_REGION}" \
+      --compute-config '{"enabled":true,"nodePools":[]}' 2>&1 || log_warning "Failed to disable nodepools for $cluster_name"
+    log "Waiting for cluster update to complete: $cluster_name"
+    aws eks wait cluster-active --name "$cluster_name" --region "${AWS_REGION}" 2>&1 || log_warning "Wait timed out for $cluster_name"
+
+    # Delete any remaining nodepools (custom/GitOps-managed) via kubectl.
+    if configure_kubectl_with_fallback "$cluster_name"; then
+      log "Deleting any remaining nodepools from cluster: $cluster_name"
+      kubectl delete nodepool --all \
+        --context "$cluster_name" \
+        --wait=true \
+        --timeout=300s 2>&1 || log_warning "Failed to delete nodepools from $cluster_name (may already be empty)"
+      log_success "Node drain complete for cluster: $cluster_name"
+    else
+      log_warning "Could not configure kubectl for $cluster_name, skipping remaining nodepool cleanup"
+    fi
+  done
+  log "Pre-destroy node drain complete"
+
   # Destroy Terraform resources
   log "Destroying clusters stack..."
   if ! terraform -chdir=$DEPLOY_SCRIPTDIR destroy \
