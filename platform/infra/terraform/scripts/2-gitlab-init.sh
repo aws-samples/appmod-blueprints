@@ -129,14 +129,17 @@ set_gitlab_remote_for_peeks() {
   git config user.email "participants@workshops.aws"
   git config user.name "Workshop Participant"
   
-  # deploy.sh already pushed to GitLab with fleet/backstage content.
-  # Reset local to match GitLab (avoids rebase conflicts from bootstrap's initial commit).
-  git checkout -B main
-  git fetch origin main
-  git reset --hard origin/main
+  # Fetch from GitLab (origin now points to GitLab)
+  if git fetch origin 2>/dev/null; then
+    # Switch to main branch from GitLab (creates if doesn't exist)
+    git checkout -B main origin/main
+  else
+    echo "GitLab repository not accessible yet, staying on current branch"
+    git checkout -B main 2>/dev/null || true
+  fi
   
   popd
-  echo "GitLab remote set for ~/environment/$WORKING_REPO - synced with GitLab"
+  echo "GitLab remote set for ~/environment/$WORKING_REPO - switched to main branch"
 }
 
 # Main execution
