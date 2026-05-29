@@ -160,6 +160,17 @@
         }
       }
     },
+    "exposure": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["domain", "cloudfront"],
+          "default": "domain",
+          "description": "Exposure mode. 'domain' uses HTTPS with ACM cert and custom domain. 'cloudfront' uses HTTP ALB behind CloudFront (no custom domain needed)."
+        }
+      }
+    },
     "argocdCapability": {
       "type": "object",
       "properties": {
