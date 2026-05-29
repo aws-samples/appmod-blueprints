@@ -388,7 +388,7 @@ ack-ecr:
   chartName: ecr-chart
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
-  defaultVersion: '1.0.19'
+  defaultVersion: '1.5.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1'
   selector:
@@ -412,7 +412,7 @@ ack-s3:
   chartName: s3-chart
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
-  defaultVersion: '1.0.14'
+  defaultVersion: '1.3.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1'
   selector:
