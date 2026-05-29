@@ -201,7 +201,7 @@ kube-state-metrics:
   chartName: kube-state-metrics
   releaseName: kube-state-metrics
   chartRepository: https://prometheus-community.github.io/helm-charts
-  defaultVersion: "5.25.1"
+  defaultVersion: "7.3.0"
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: "3"
   selector:
@@ -215,7 +215,7 @@ prometheus-node-exporter:
   chartName: prometheus-node-exporter
   releaseName: prometheus-node-exporter
   chartRepository: https://prometheus-community.github.io/helm-charts
-  defaultVersion: "4.39.0"
+  defaultVersion: "4.55.0"
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: "3"
   selector:
@@ -229,7 +229,7 @@ opentelemetry-operator:
   chartName: opentelemetry-operator
   releaseName: opentelemetry-operator
   chartRepository: https://open-telemetry.github.io/opentelemetry-helm-charts
-  defaultVersion: "0.71.1"
+  defaultVersion: "0.112.1"
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: "3"
   selector:
@@ -269,7 +269,7 @@ cni-metrics-helper:
   namespace: kube-system
   chartName: cni-metrics-helper
   chartRepository: https://aws.github.io/eks-charts
-  defaultVersion: "1.19.2"
+  defaultVersion: "1.21.1"
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: "5"
   selector:
