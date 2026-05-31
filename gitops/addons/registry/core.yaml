@@ -27,6 +27,8 @@ pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      keycloak:
+        enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
   ignoreDifferences:
     - group: iam.aws.upbound.io
       kind: Role
