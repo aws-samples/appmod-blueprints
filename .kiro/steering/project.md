@@ -55,3 +55,12 @@ This repo is used in two ways:
 2. **Workshop IDE** (ec2-user, on the Code Editor instance) — workshop participants interact with the deployed platform. The `hack/` directory configures this environment, including `hack/.kiro/` for the IDE's Kiro agent.
 
 The root `.kiro/` is for local dev. `hack/.kiro/` is for the workshop IDE — they serve different audiences.
+
+## Platform Manifests ApplicationSets (naming convention)
+
+| ApplicationSet Name | Label Selector | Deploys To | Contents |
+|---------------------|---------------|------------|----------|
+| `platform-manifests-bootstrap` | `enable_platform_manifests_bootstrap: "true"` | ALL clusters (hub + spokes) | NodePools (EKS Auto Mode), ClusterSecretStore |
+| `platform-manifests` | `enable_platform_manifests_hub: "true"` | Hub only | Ray IAMRoleSelectors, HuggingFace models |
+
+Note: The `-bootstrap` suffix is misleading — it's not hub-only bootstrap, it's the base infrastructure required on every cluster. Renaming is deferred to avoid disruption (deleting the ApplicationSet would temporarily remove NodePools, causing all pods to go Pending).
