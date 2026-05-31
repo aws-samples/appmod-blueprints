@@ -375,3 +375,56 @@ identities:
             }
           ]
         }
+
+  keycloak:
+    enabled: false
+    roleName: KeycloakConfigPodIdentityRole
+    namespace: keycloak
+    serviceAccount: keycloak-config
+    tags:
+      managed-by: crossplane
+      purpose: keycloak-config-pod-identity
+    policy:
+      name: KeycloakConfigSecretsPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:TagResource"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sso:CreateApplication",
+                "sso:PutApplicationGrant",
+                "sso:PutApplicationAuthenticationMethod",
+                "sso:PutApplicationAccessScope",
+                "sso:DescribeApplication",
+                "sso:ListApplications",
+                "sso-directory:SearchUsers",
+                "sso-directory:SearchGroups",
+                "sso-directory:CreateUser",
+                "sso-directory:DescribeUser",
+                "sso-directory:UpdateUser",
+                "sso-directory:ListGroupMemberships",
+                "sso-directory:AddMemberToGroup",
+                "identitystore:CreateUser",
+                "identitystore:DescribeUser",
+                "identitystore:ListUsers",
+                "identitystore:CreateGroupMembership",
+                "identitystore:ListGroupMemberships",
+                "identitystore:ListGroups"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
