@@ -61,6 +61,7 @@ EOF
   MANAGED_POLICIES[ecr]="arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
   MANAGED_POLICIES[s3]="arn:aws:iam::aws:policy/AmazonS3FullAccess"
   MANAGED_POLICIES[dynamodb]="arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+  MANAGED_POLICIES[secretsmanager]="arn:aws:iam::aws:policy/SecretsManagerReadWrite"
 
   declare -A INLINE_POLICIES
   INLINE_POLICIES[ec2]='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ec2:*","elasticloadbalancing:*"],"Resource":"*"}]}'
@@ -69,8 +70,9 @@ EOF
   INLINE_POLICIES[ecr]='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ecr:*"],"Resource":"*"}]}'
   INLINE_POLICIES[s3]='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":"*"}]}'
   INLINE_POLICIES[dynamodb]='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:*"],"Resource":"*"}]}'
+  INLINE_POLICIES[secretsmanager]='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["secretsmanager:*"],"Resource":"*"}]}'
 
-  for service in ec2 eks iam ecr s3 dynamodb; do
+  for service in ec2 eks iam ecr s3 dynamodb secretsmanager; do
     ROLE_NAME="${RESOURCE_PREFIX}-cluster-mgmt-${service}"
     if aws iam get-role --role-name "$ROLE_NAME" &>/dev/null; then
       aws iam update-assume-role-policy --role-name "$ROLE_NAME" --policy-document "$TRUST_POLICY"
