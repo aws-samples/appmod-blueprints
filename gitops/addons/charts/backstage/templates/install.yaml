@@ -667,6 +667,7 @@ spec:
     #     decodingStrategy: None
     #     key: {{ .Values.global.aws_cluster_name }}/secrets
     #     metadataPolicy: None
+        nullBytePolicy: Ignore
     #     property: argocd_auth_token
     - secretKey: BACKSTAGE_CLIENT_SECRET
       remoteRef:
@@ -674,6 +675,7 @@ spec:
         decodingStrategy: None
         key: {{ .Values.global.aws_cluster_name }}/keycloak-clients
         metadataPolicy: None
+        nullBytePolicy: Ignore
         property: BACKSTAGE_CLIENT_SECRET
 ---
 apiVersion: external-secrets.io/v1
@@ -700,6 +702,7 @@ spec:
         decodingStrategy: None
         key: {{ .Values.global.aws_cluster_name }}/secrets
         metadataPolicy: None
+        nullBytePolicy: Ignore
         property: backstage_postgres_password
 ---
 apiVersion: v1
