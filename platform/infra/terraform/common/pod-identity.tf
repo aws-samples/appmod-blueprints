@@ -290,7 +290,7 @@ data "http" "inline_policy" {
 # Create locals for ACK cluster-service combinations
 locals {
   # Centralized list of ACK services
-  ack_services = ["iam", "ec2", "eks", "ecr", "s3", "dynamodb"]
+  ack_services = ["iam", "ec2", "eks", "ecr", "s3", "dynamodb", "secretsmanager"]
   
   ack_combinations = {
     for combination in flatten([
@@ -419,6 +419,9 @@ locals {
     ]
     dynamodb = [
       "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+    ]
+    secretsmanager = [
+      "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
     ]
   }
 

@@ -250,6 +250,13 @@ spec:
     #   input:
     #     message: |
     #       Content: `${{ steps['parse'].output.content }}`
+    - id: addClusterJsonForAppSet
+      name: Add cluster JSON for ApplicationSet discovery
+      action: roadiehq:utils:fs:write
+      input:
+        path: ./repo/gitops/fleet/kro-values/tenants/${{ parameters.tenant }}/kro-clusters/clusters/${{ parameters.clusterName }}.json
+        content: |
+          {"clusterName": "${{ parameters.clusterName }}"}
     - id: createGitlabMergeRequest
       name: Create a Merge Request
       action: publish:gitlab:merge-request
