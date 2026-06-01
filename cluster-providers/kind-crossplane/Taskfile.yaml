@@ -813,13 +813,25 @@ tasks:
         # we start from `{}`, and `put-secret-value` would fail with
         # ResourceNotFoundException, so create-then-put.
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text 2>/dev/null || echo "{}")
+        # Pull user_password from keycloak secret for backstage ExternalSecrets
+        KC_SECRET=$(aws secretsmanager get-secret-value --secret-id "{{.HUB_CLUSTER_NAME}}/keycloak" --region {{.AWS_REGION}} --query "SecretString" --output text 2>/dev/null || echo "{}")
+        USER_PASS=$(echo "$KC_SECRET" | jq -r '.user_password // "workshop-user-2026"')
+        # Generate backstage_postgres_password if not already present
+        if ! echo "$EXISTING" | jq -e 'has("backstage_postgres_password")' >/dev/null 2>&1; then
+          BS_PG_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+        else
+          BS_PG_PASS=$(echo "$EXISTING" | jq -r '.backstage_postgres_password')
+        fi
         UPDATED=$(echo "$EXISTING" | jq \
           --arg amp_url "${AMP_ENDPOINT}api/v1/remote_write" \
           --arg amp_query_url "$AMP_ENDPOINT" \
           --arg amp_region "{{.AWS_REGION}}" \
           --arg grafana_api_key "$AMG_API_KEY" \
           --arg grafana_url "$AMG_ENDPOINT" \
-          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url}')
+          --arg user_password "$USER_PASS" \
+          --arg git_token "$USER_PASS" \
+          --arg backstage_postgres_password "$BS_PG_PASS" \
+          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url, user_password: $user_password, git_token: $git_token, backstage_postgres_password: $backstage_postgres_password}')
         # Generate the grafana_mysql_password the grafana-dashboards
         # ExternalSecret expects, but only if it isn't already there
         # (so re-runs don't rotate it out from under live consumers).
