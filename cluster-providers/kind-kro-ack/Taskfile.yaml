@@ -118,9 +118,7 @@ tasks:
       - kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind.yaml --kubeconfig {{.KUBECONFIG}}
 
   credentials:setup:
-    desc: Create AWS credentials secret (skips if exists)
-    status:
-      - kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials 2>/dev/null
+    desc: Create or refresh AWS credentials secret (always re-runs to avoid stale STS tokens)
     cmds:
       - task: credentials:refresh
 
