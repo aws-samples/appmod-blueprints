@@ -31,7 +31,6 @@ spec:
         publicSubnet2Cidr: string | default="10.0.2.0/24"
         privateSubnet1Cidr: string | default="10.0.11.0/24"
         privateSubnet2Cidr: string | default="10.0.12.0/24"
-      natGateways: integer | default=1
       workloads: string | default="false" # Define if we want to deploy workloads application
       gitops:
         addonsRepoBasePath: string | default="gitops/addons/"
@@ -130,7 +129,6 @@ spec:
           publicSubnet2Cidr: ${schema.spec.cidr.publicSubnet2Cidr}
           privateSubnet1Cidr: ${schema.spec.cidr.privateSubnet1Cidr}
           privateSubnet2Cidr: ${schema.spec.cidr.privateSubnet2Cidr}
-        natGateways: ${schema.spec.natGateways}
   - id: eks
     readyWhen:
     - ${eks.status.state == "ACTIVE"}
