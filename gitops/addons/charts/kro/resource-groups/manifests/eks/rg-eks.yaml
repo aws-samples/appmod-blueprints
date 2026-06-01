@@ -18,7 +18,9 @@ spec:
       region: string
       accountId: string
       managementAccountId: string
+      managementRegion: string | default="us-west-2"
       argoCdHubRoleArn: string
+      argoCdCapabilityRoleArn: string
       k8sVersion: string
       adminRoleName: string
       fleetSecretManagerSecretNameSuffix: string
@@ -524,7 +526,7 @@ spec:
         type: Opaque
         stringData:
           name: "${schema.spec.name}"
-          server: "${ekscluster.status.endpoint}"
+          server: "${ekscluster.status.ackResourceMetadata.arn}"
           config: |
             {
               "awsAuthConfig": {
@@ -537,6 +539,96 @@ spec:
               }
             }
 
+
+    - id: clusterConfigK8sSecret
+      template:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.name}-config-data
+          namespace: ${schema.spec.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+        type: Opaque
+        stringData:
+          config: |
+            {"vpc":{"id":"${schema.spec.network.vpcID}","cluster_security_group_id":"","subnet_ids":["${schema.spec.network.subnets.workers.subnet1ID}","${schema.spec.network.subnets.workers.subnet2ID}"]},"server":"${ekscluster.status.ackResourceMetadata.arn}","metadata":{"cluster_name":"${schema.spec.name}","region":"${schema.spec.region}","account_id":"${schema.spec.accountId}"}}
+
+    - id: clusterConfigSecret
+      readyWhen:
+      - ${clusterConfigSecret.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: secretsmanager.services.k8s.aws/v1alpha1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.name}-config
+          namespace: ${schema.spec.name}
+          annotations:
+            services.k8s.aws/region: ${schema.spec.managementRegion}
+            services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+        spec:
+          name: ${schema.spec.name}/config
+          secretString:
+            name: ${schema.spec.name}-config-data
+            namespace: ${schema.spec.name}
+            key: config
+
+    - id: hubSecretsExternal
+      readyWhen:
+      - ${hubSecretsExternal.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
+      template:
+        apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: ${schema.spec.name}-hub-secrets
+          namespace: ${schema.spec.name}
+        spec:
+          secretStoreRef:
+            kind: ClusterSecretStore
+            name: aws-secrets-manager
+          refreshInterval: "1h"
+          target:
+            name: ${schema.spec.name}-hub-secrets
+            creationPolicy: Owner
+          data:
+            - secretKey: secrets
+              remoteRef:
+                key: ${schema.spec.resourcePrefix}-hub/secrets
+
+    - id: clusterSecretsSecret
+      readyWhen:
+      - ${clusterSecretsSecret.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: secretsmanager.services.k8s.aws/v1alpha1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.name}-secrets
+          namespace: ${schema.spec.name}
+          annotations:
+            services.k8s.aws/region: ${schema.spec.managementRegion}
+            services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+        spec:
+          name: ${schema.spec.name}/secrets
+          secretString:
+            name: ${schema.spec.name}-hub-secrets
+            namespace: ${schema.spec.name}
+            key: secrets
 
     - id: accessEntry
       template:
@@ -596,6 +688,32 @@ spec:
                 type: "cluster"
               policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
           principalARN: "arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.adminRoleName}"
+          type: STANDARD
+
+    - id: accessEntryArgoCdCapability
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-access-entry-argocd-capability"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${ekscluster.spec.name}"
+          accessPolicies:
+            - accessScope:
+                type: "cluster"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          principalARN: "${schema.spec.argoCdCapabilityRoleArn}"
           type: STANDARD
 
 
@@ -1275,6 +1393,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+              services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
         spec:
@@ -1302,6 +1421,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+              services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
         spec:

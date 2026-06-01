@@ -83,4 +83,18 @@ spec:
     - group: dynamodb.services.k8s.aws
       kind: ""
       version: ""
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: secretsmanager-{{ $key }}
+spec:
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-secretsmanager"
+  namespaceSelector:
+    names:
+      - {{ $key }}
+  resourceTypeSelector:
+    - group: secretsmanager.services.k8s.aws
+      kind: ""
+      version: ""
 {{- end }}

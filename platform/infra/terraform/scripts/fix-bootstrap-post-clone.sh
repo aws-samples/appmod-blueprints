@@ -43,7 +43,7 @@ uv tool install awslabs.aws-iac-mcp-server || true
 
 # Kiro config
 mkdir -p ~/.kiro
-cp -r $BASE_DIR/hack/.kiro/* ~/.kiro/
+cp -r $BASE_DIR/.kiro/* ~/.kiro/
 
 # k9s plugins
 mkdir -p ~/.config/k9s

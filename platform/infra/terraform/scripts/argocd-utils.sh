@@ -1201,13 +1201,13 @@ recover_stuck_workflows() {
         ) | .metadata.name' 2>/dev/null || echo "")
     
     if [ -n "$stuck_workflows" ]; then
-        echo "$stuck_workflows" | while read -r workflow; do
+        while read -r workflow; do
             if [ -n "$workflow" ]; then
                 print_warning "[$namespace] Deleting stuck workflow: $workflow (running > ${max_age_minutes}min)"
                 kubectl delete workflow "$workflow" -n "$namespace" --ignore-not-found=true 2>/dev/null || true
                 workflows_deleted=true
             fi
-        done
+        done <<< "$stuck_workflows"
     fi
     
     # Find workflows in Error or Failed phase
@@ -1215,13 +1215,13 @@ recover_stuck_workflows() {
         jq -r '.items[] | select(.status.phase == "Error" or .status.phase == "Failed") | .metadata.name' 2>/dev/null || echo "")
     
     if [ -n "$failed_workflows" ]; then
-        echo "$failed_workflows" | while read -r workflow; do
+        while read -r workflow; do
             if [ -n "$workflow" ]; then
                 print_warning "[$namespace] Deleting failed workflow: $workflow (phase: Error/Failed)"
                 kubectl delete workflow "$workflow" -n "$namespace" --ignore-not-found=true 2>/dev/null || true
                 workflows_deleted=true
             fi
-        done
+        done <<< "$failed_workflows"
     fi
     
     # If workflows were deleted, trigger sync of applications that manage them

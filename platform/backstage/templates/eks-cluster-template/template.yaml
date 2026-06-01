@@ -12,6 +12,16 @@ metadata:
     - **GitOps**: Automatically registers the new cluster with ArgoCD hub for continuous deployment
     
     The cluster will be fully configured with networking, IAM roles, and ready for workload deployment.
+
+    **Cross-account prerequisite**: If deploying to a different AWS account, run `scripts/create-cross-account-roles.sh` first:
+    1. From the **target account** (first time only): `./scripts/create-cross-account-roles.sh --target-only` to create IAM roles
+    2. From the **hub account**: `./scripts/create-cross-account-roles.sh` to configure hub capability roles
+
+    ```
+    export TARGET_ACCOUNT_ID=<target-account-id>
+    export RESOURCE_PREFIX=peeks
+    export HUB_CLUSTER_NAME=peeks-hub
+    ```
 spec:
   owner: user:guest
   type: service
@@ -240,6 +250,13 @@ spec:
     #   input:
     #     message: |
     #       Content: `${{ steps['parse'].output.content }}`
+    - id: addClusterJsonForAppSet
+      name: Add cluster JSON for ApplicationSet discovery
+      action: roadiehq:utils:fs:write
+      input:
+        path: ./repo/gitops/fleet/kro-values/tenants/${{ parameters.tenant }}/kro-clusters/clusters/${{ parameters.clusterName }}.json
+        content: |
+          {"clusterName": "${{ parameters.clusterName }}"}
     - id: createGitlabMergeRequest
       name: Create a Merge Request
       action: publish:gitlab:merge-request
