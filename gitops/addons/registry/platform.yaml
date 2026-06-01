@@ -99,6 +99,7 @@ backstage:
     global:
       aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      ingress_name: '{{.metadata.annotations.ingress_name}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -216,6 +217,8 @@ multi-acct:
   valuesObject:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
 
 kubevela:
   namespace: vela-system

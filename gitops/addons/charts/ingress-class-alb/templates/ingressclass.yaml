@@ -1,22 +1,27 @@
-{{- if eq (default "auto" .Values.controllerMode) "oss" }}
+{{- $mode := default "auto" .Values.controllerMode }}
+{{- range $idx, $c := .Values.classes }}
+{{- if $idx }}
+---
+{{- end }}
+{{- if eq $mode "oss" }}
 apiVersion: elbv2.k8s.aws/v1beta1
 {{- else }}
 apiVersion: eks.amazonaws.com/v1
 {{- end }}
 kind: IngressClassParams
 metadata:
-  name: platform
+  name: {{ $c.name }}
 spec:
   group:
-    name: platform
-  scheme: internet-facing
+    name: {{ $c.group | default $c.name }}
+  scheme: {{ $c.scheme | default "internet-facing" }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: IngressClass
 metadata:
-  name: platform
+  name: {{ $c.name }}
 spec:
-{{- if eq (default "auto" .Values.controllerMode) "oss" }}
+{{- if eq $mode "oss" }}
   controller: ingress.k8s.aws/alb
   parameters:
     apiGroup: elbv2.k8s.aws
@@ -26,4 +31,5 @@ spec:
     apiGroup: eks.amazonaws.com
 {{- end }}
     kind: IngressClassParams
-    name: platform
+    name: {{ $c.name }}
+{{- end }}

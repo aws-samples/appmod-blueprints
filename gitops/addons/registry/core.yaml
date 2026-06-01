@@ -158,6 +158,20 @@ ingress-class-alb:
         values: ['true']
   valuesObject:
     controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
+    classes:
+      # 'platform' class — group.name aligned on the cluster ingress_name annotation
+      # so the LBC can adopt a pre-created ALB (Taskfile hub:ingress) OR provision its
+      # own when none exists. scheme follows exposure_mode:
+      #   - exposure_mode=cloudfront-alb -> internal (ALB behind CloudFront VPC Origin)
+      #   - anything else (tls/direct)   -> internet-facing
+      - name: platform
+        group: '{{default "platform" .metadata.annotations.ingress_name}}'
+        scheme: '{{if eq (default "" .metadata.annotations.exposure_mode) "cloudfront-alb"}}internal{{else}}internet-facing{{end}}'
+      # 'agent' class — dedicated group for the agentic platform Ingresses so
+      # they don't pollute the shared 'platform' ALB.
+      - name: agent
+        group: agent
+        scheme: '{{if eq (default "" .metadata.annotations.exposure_mode) "cloudfront-alb"}}internal{{else}}internet-facing{{end}}'
 
 aws-load-balancer-controller:
   namespace: kube-system
