@@ -219,7 +219,6 @@ metadata:
     service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
 spec:
   type: LoadBalancer
-  loadBalancerClass: eks.amazonaws.com/nlb
   ports:
   - name: http
     port: 80
