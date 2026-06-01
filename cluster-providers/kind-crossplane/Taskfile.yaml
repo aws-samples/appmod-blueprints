@@ -702,7 +702,7 @@ tasks:
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/keycloak"
         ADMIN_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
         DB_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
-        USER_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
+        USER_PASS=${IDE_PASSWORD:-$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)}
         SECRET_VALUE=$(jq -n \
           --arg admin "$ADMIN_PASS" \
           --arg db "$DB_PASS" \
