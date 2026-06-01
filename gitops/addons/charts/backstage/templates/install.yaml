@@ -667,7 +667,6 @@ spec:
     #     decodingStrategy: None
     #     key: {{ .Values.global.aws_cluster_name }}/secrets
     #     metadataPolicy: None
-        nullBytePolicy: Ignore
     #     property: argocd_auth_token
     - secretKey: BACKSTAGE_CLIENT_SECRET
       remoteRef:
