@@ -128,6 +128,9 @@ for ns in $workflow_namespaces; do
         print_info "Checking namespace: $ns"
         verify_kubevela_dependencies "$ns" || true
         
+        # Recover stuck or failed workflows
+        recover_stuck_workflows "$ns" || true
+        
         # Detect null-phase workflows
         null_workflows=$(detect_null_phase_workflows "$ns" 2>/dev/null || echo "")
         
