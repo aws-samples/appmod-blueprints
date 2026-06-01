@@ -47,7 +47,7 @@ spec:
           values: |
             global:
               argoCdHubRoleArn: '{{.metadata.annotations.argocd_hub_role_arn}}'
-              argoCdCapabilityRoleArn: '{{.metadata.annotations.argocd_capability_role_arn}}'
+              argoCdCapabilityRoleArn: 'arn:aws:iam::{{.metadata.annotations.aws_account_id}}:role/{{.metadata.annotations.resource_prefix}}-{{.metadata.annotations.aws_cluster_name}}-argocd-capability-role'
               targetCluster: '{{.clusterName}}'
       destination:
         namespace: argocd
