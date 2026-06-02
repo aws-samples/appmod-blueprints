@@ -97,6 +97,12 @@ ray-operator:
       - key: enable_ray_operator
         operator: In
         values: ['true']
+  syncPolicy:
+    automated:
+      allowEmpty: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
   valuesObject:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
