@@ -35,6 +35,7 @@ Kind cluster → Crossplane provisions VPC+EKS → ArgoCD Capability created (+ 
 | Path | Mechanism | Use Case |
 |------|-----------|----------|
 | `abstractions/crossplane/platform-cluster/` | Crossplane XRD + Composition | Platform team creates spokes (values in `fleet/kro-values/tenants/`) |
+| `abstractions/kro/kro-clusters/` | KRO cluster provisioning chart | Platform team creates spokes via KRO (values in `fleet/kro-values/tenants/*/kro-clusters-kro/`) |
 | `addons/charts/kro/resource-groups/manifests/eks/` | KRO ResourceGraphDefinition + ACK | Self-service via Backstage templates |
 
 Both coexist. Crossplane path creates `PlatformCluster` claims. KRO path creates `EksCluster` custom resources reconciled by ACK.
