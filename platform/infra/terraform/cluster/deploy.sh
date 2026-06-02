@@ -119,6 +119,32 @@ main() {
   
   # Apply Terraform configuration
   log "Applying clusters stack..."
+
+  # Helper: wait for any CREATING clusters to reach a terminal state before retrying.
+  # Without this, a retry after a Terraform timeout hits ResourceInUseException because
+  # the clusters are still being created by AWS in the background.
+  wait_for_clusters() {
+    log "Waiting for in-progress EKS clusters to reach a terminal state before retrying..."
+    local cluster_names
+    cluster_names=$(aws eks list-clusters --query 'clusters[]' --output text 2>/dev/null || echo "")
+    for cluster in $cluster_names; do
+      local status
+      status=$(aws eks describe-cluster --name "$cluster" --query 'cluster.status' --output text 2>/dev/null || echo "")
+      if [[ "$status" == "CREATING" || "$status" == "UPDATING" ]]; then
+        log "  Cluster $cluster is $status — waiting up to 30m..."
+        local waited=0
+        while [[ "$status" == "CREATING" || "$status" == "UPDATING" ]] && (( waited < 1800 )); do
+          sleep 30
+          waited=$((waited + 30))
+          status=$(aws eks describe-cluster --name "$cluster" --query 'cluster.status' --output text 2>/dev/null || echo "")
+        done
+        log "  Cluster $cluster is now $status"
+      fi
+    done
+  }
+
+
+  log "Applying clusters stack..."
   if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
     -var-file="${GENERATED_TFVAR_FILE}" \
     -var="hub_vpc_id=${HUB_VPC_ID}" \
@@ -127,6 +153,7 @@ main() {
     -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
     -parallelism=3 -auto-approve; then
     log_warning "Terraform apply for clusters stack failed, trying again..."
+    wait_for_clusters
     if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
       -var-file="${GENERATED_TFVAR_FILE}" \
       -var="hub_vpc_id=${HUB_VPC_ID}" \

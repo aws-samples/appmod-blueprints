@@ -66,6 +66,15 @@ module "eks" {
     node_pools = ["system"]
   }
 
+  # Increase EKS cluster creation timeout — Auto Mode clusters in fresh accounts
+  # can take longer than the 30m default, causing the deploy to fail with a timeout
+  # and triggering a retry that hits ResourceInUseException (cluster still CREATING).
+  cluster_timeouts = {
+    create = "60m"
+    update = "60m"
+    delete = "30m"
+  }
+
   tags = {
     Blueprint  = local.context_prefix
     GithubRepo = "https://registry.terraform.io/modules/terraform-aws-modules/eks/aws/latest"
