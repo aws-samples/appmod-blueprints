@@ -117,75 +117,7 @@ main() {
   fi
   cd -
   
-  # Import any EKS clusters that already exist in AWS but are missing from Terraform state.
-  # This handles the case where a previous apply timed out after creating the clusters
-  # but before saving state — preventing ResourceInUseException on the next apply.
-  import_existing_clusters() {
-    log "Checking for existing EKS clusters not yet in Terraform state..."
-    local state_clusters
-    state_clusters=$(terraform -chdir="$DEPLOY_SCRIPTDIR" state list 2>/dev/null | grep 'aws_eks_cluster' | sed 's/.*\["\(.*\)"\].*/\1/' || echo "")
-
-    # Get cluster names from config
-    local config_clusters
-    config_clusters=$(jq -r '.[].name' "$GENERATED_TFVAR_FILE" 2>/dev/null || echo "")
-
-    for cluster_name in $config_clusters; do
-      # Check if cluster exists in AWS
-      local status
-      status=$(aws eks describe-cluster --name "$cluster_name" --query 'cluster.status' --output text 2>/dev/null || echo "")
-      if [[ -z "$status" ]]; then
-        continue  # doesn't exist in AWS, nothing to import
-      fi
-
-      # Check if already in TF state
-      local tf_key
-      tf_key=$(terraform -chdir="$DEPLOY_SCRIPTDIR" state list 2>/dev/null | grep "aws_eks_cluster" | grep "$cluster_name" || echo "")
-      if [[ -z "$tf_key" ]]; then
-        log "  Importing existing cluster $cluster_name (status: $status) into Terraform state..."
-        # Find the for_each key for this cluster name
-        local for_each_key
-        for_each_key=$(jq -r "to_entries[] | select(.value.name==\"$cluster_name\") | .key" "$GENERATED_TFVAR_FILE" 2>/dev/null || echo "")
-        if [[ -n "$for_each_key" ]]; then
-          terraform -chdir="$DEPLOY_SCRIPTDIR" import \
-            -var-file="${GENERATED_TFVAR_FILE}" \
-            -var="hub_vpc_id=${HUB_VPC_ID}" \
-            -var="hub_subnet_ids=$(echo "${HUB_SUBNET_IDS}" | sed "s/'/\"/g")" \
-            -var="resource_prefix=${RESOURCE_PREFIX}" \
-            -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
-            "module.eks[\"${for_each_key}\"].aws_eks_cluster.this[0]" "$cluster_name" || \
-            log_warning "  Import of $cluster_name failed, continuing anyway"
-        fi
-      else
-        log "  Cluster $cluster_name already in Terraform state"
-      fi
-    done
-  }
-  import_existing_clusters
-
-
-  # Without this, a retry after a Terraform timeout hits ResourceInUseException because
-  # the clusters are still being created by AWS in the background.
-  wait_for_clusters() {
-    log "Waiting for in-progress EKS clusters to reach a terminal state before retrying..."
-    local cluster_names
-    cluster_names=$(aws eks list-clusters --query 'clusters[]' --output text 2>/dev/null || echo "")
-    for cluster in $cluster_names; do
-      local status
-      status=$(aws eks describe-cluster --name "$cluster" --query 'cluster.status' --output text 2>/dev/null || echo "")
-      if [[ "$status" == "CREATING" || "$status" == "UPDATING" ]]; then
-        log "  Cluster $cluster is $status — waiting up to 30m..."
-        local waited=0
-        while [[ "$status" == "CREATING" || "$status" == "UPDATING" ]] && (( waited < 1800 )); do
-          sleep 30
-          waited=$((waited + 30))
-          status=$(aws eks describe-cluster --name "$cluster" --query 'cluster.status' --output text 2>/dev/null || echo "")
-        done
-        log "  Cluster $cluster is now $status"
-      fi
-    done
-  }
-
-
+  # Apply Terraform configuration
   log "Applying clusters stack..."
   if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
     -var-file="${GENERATED_TFVAR_FILE}" \
@@ -195,7 +127,6 @@ main() {
     -var="workshop_participant_role_arn=${WS_PARTICIPANT_ROLE_ARN}" \
     -parallelism=3 -auto-approve; then
     log_warning "Terraform apply for clusters stack failed, trying again..."
-    wait_for_clusters
     if ! terraform -chdir=$DEPLOY_SCRIPTDIR apply \
       -var-file="${GENERATED_TFVAR_FILE}" \
       -var="hub_vpc_id=${HUB_VPC_ID}" \
