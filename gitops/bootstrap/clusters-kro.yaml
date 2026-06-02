@@ -1,0 +1,64 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: clusters-kro
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  fleet_member: control-plane
+          - git:
+              repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+              revision: '{{ .metadata.annotations.fleetRepoRevision }}'
+              files:
+                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/*/kro-clusters-kro/values.yaml'
+  template:
+    metadata:
+      name: 'clusters-kro-{{ index (splitList "/" .path.path) 4 }}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      sources:
+        - repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+          targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+          ref: values
+        - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+          path: '{{ .metadata.annotations.addonsRepoBasepath }}addons/charts/kro-clusters'
+          targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+          helm:
+            releaseName: 'clusters-kro-{{ index (splitList "/" .path.path) 4 }}'
+            ignoreMissingValueFiles: true
+            valuesObject:
+              global:
+                argoCdHubRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
+                defaultRegion: '{{ .metadata.annotations.aws_region }}'
+            valueFiles:
+              - '$values/{{ .path.path }}/values.yaml'
+      destination:
+        namespace: argocd
+        name: '{{ .name }}'
+      syncPolicy:
+        automated:
+          selfHeal: false
+          allowEmpty: true
+          prune: true
+        retry:
+          limit: -1
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 10m
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
