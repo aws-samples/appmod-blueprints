@@ -1,6 +1,6 @@
 # KRO Clusters
 
-Helm chart that renders `EksclusterWithVpc` KRO instances for provisioning EKS clusters via the KRO EKS Capability. This is an alternative to the Crossplane-based `abstractions/resource-groups/platform-cluster/` — both can coexist on the same hub.
+Helm chart that renders `EksclusterWithVpc` KRO instances for provisioning EKS clusters via the KRO EKS Capability. This is an alternative to the Crossplane-based `abstractions/crossplane/platform-cluster/` — both can coexist on the same hub.
 
 ## How It Works
 

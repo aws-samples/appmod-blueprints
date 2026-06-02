@@ -291,17 +291,17 @@ tasks:
     cmds:
       # Apply XRD and Composition first (rendered via helm template since files contain Go templates)
       - cmd: |
-          helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster \
+          helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/crossplane/platform-cluster \
             --set clusters.hub.region={{.AWS_REGION}} \
             --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}} \
             --show-only templates/xrd.yaml | kubectl apply -f -
-          helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster \
+          helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/crossplane/platform-cluster \
             --set clusters.hub.region={{.AWS_REGION}} \
             --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}} \
             --show-only templates/composition.yaml | kubectl apply -f -
       # Wait for XRD to generate the PlatformCluster CRD before applying the claim
       - kubectl wait --for=condition=Established xrd/xplatformclusters.platform.gitops.io --timeout=60s
-      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
+      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/crossplane/platform-cluster
           --set clusters.hub.region={{.AWS_REGION}}
           --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
           --set clusters.hub.kubernetesVersion={{.HUB_K8S_VERSION}}
@@ -1276,7 +1276,7 @@ tasks:
         ignore_error: true
       # Phase 4: Delete EKS cluster + VPC (needs providers alive to reconcile deletion)
       - cmd: |
-          helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster \
+          helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/crossplane/platform-cluster \
             --set clusters.hub.region={{.AWS_REGION}} \
             --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}} \
             --show-only templates/claim.yaml \
@@ -1299,8 +1299,8 @@ tasks:
             sleep 30
           done
         ignore_error: true
-      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/composition.yaml --ignore-not-found 2>/dev/null || true
-      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/xrd.yaml --ignore-not-found 2>/dev/null || true
+      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/crossplane/platform-cluster/templates/composition.yaml --ignore-not-found 2>/dev/null || true
+      - kubectl delete -f {{.GITOPS_ROOT}}/abstractions/crossplane/platform-cluster/templates/xrd.yaml --ignore-not-found 2>/dev/null || true
       # Phase 5: Delete crossplane-base provider pod identities and providers (safe — no managed resources left)
       - cmd: |
           helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base \
@@ -1495,8 +1495,8 @@ tasks:
       - task: crossplane:helm
       - task: crossplane:providers
       - task: crossplane:provider-config
-      - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster/templates/ 2>/dev/null || true
-      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/resource-groups/platform-cluster
+      - kubectl apply -f {{.GITOPS_ROOT}}/abstractions/crossplane/platform-cluster/templates/ 2>/dev/null || true
+      - helm template hub-cluster {{.GITOPS_ROOT}}/abstractions/crossplane/platform-cluster
           --set clusters.hub.region={{.AWS_REGION}}
           --set clusters.hub.clusterName={{.HUB_CLUSTER_NAME}}
           --set clusters.hub.kubernetesVersion={{.HUB_K8S_VERSION}}
