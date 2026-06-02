@@ -1,18 +1,24 @@
 # Abstractions
 
-Crossplane Composite Resource Definitions (XRDs) and Compositions for provisioning fleet infrastructure. These are shared abstractions used by both the Kind bootstrap process and the hub's Crossplane instance.
+Infrastructure abstractions for provisioning fleet clusters. Supports two engines — Crossplane and KRO — which can coexist on the same hub.
 
 ## Directory Structure
 
 ```
 abstractions/
-└── resource-groups/
-    └── platform-cluster/       Helm chart containing XRD + Composition
+├── crossplane/
+│   └── platform-cluster/       Helm chart containing XRD + Composition
+│       ├── Chart.yaml
+│       ├── values.yaml          Default: no clusters (empty map)
+│       ├── templates/
+│       │   ├── xrd.yaml         PlatformCluster CRD definition
+│       │   └── composition.yaml What AWS resources to create
+└── kro/
+    └── kro-clusters/           Helm chart rendering EksclusterWithVpc instances
         ├── Chart.yaml
-        ├── values.yaml          Default: no clusters (empty map)
-        ├── templates/
-        │   ├── xrd.yaml         PlatformCluster CRD definition
-        │   └── composition.yaml What AWS resources to create
+        ├── README.md
+        └── templates/
+            └── clusters.yaml    Renders KRO custom resources
 ```
 
 ## PlatformCluster
