@@ -69,7 +69,7 @@ module "eks" {
   # Increase EKS cluster creation timeout — Auto Mode clusters in fresh accounts
   # can take longer than the 30m default, causing the deploy to fail with a timeout
   # and triggering a retry that hits ResourceInUseException (cluster still CREATING).
-  cluster_timeouts = {
+  timeouts = {
     create = "60m"
     update = "60m"
     delete = "30m"
