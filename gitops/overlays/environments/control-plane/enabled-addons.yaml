@@ -56,7 +56,7 @@ enabledAddons:
   jupyterhub: false
   kubeflow: false
   mlflow: false
-  ray_operator: false
+  ray_operator: true
   spark_operator: false
   airflow: false
   # AWS Resources (Crossplane-managed VPC secrets etc.)
