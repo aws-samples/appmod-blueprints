@@ -13,7 +13,7 @@ enabledAddons:
   aws_efs_csi_driver: false
   image_prepuller: false
   # GitOps
-  argo_events: false
+  argo_events: true
   argo_rollouts: false
   argo_workflows: true
   kargo: false
