@@ -1178,20 +1178,34 @@ tasks:
             echo "{{.DOMAIN}}"
           fi
     cmds:
-      - printf '{{.C_STEP}}▸ Seeding IDC integration credentials into SSM...{{.C_RESET}}\n'
+      - printf '{{.C_STEP}}▸ Refreshing IDC integration credentials via Lambda...{{.C_RESET}}\n'
       - |
-        TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-        ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
-        CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
-        CREDENTIALS_JSON=$(echo "$CREDS" | jq '{AccessKeyId: .AccessKeyId, SecretAccessKey: .SecretAccessKey, SessionToken: .Token, Expiration: .Expiration}')
-        aws ssm put-parameter \
-          --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
-          --value "$CREDENTIALS_JSON" \
-          --type "SecureString" \
-          --overwrite \
-          --description "Keycloak IDC Integration credentials from instance profile arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ROLE" \
-          --region {{.AWS_REGION}} > /dev/null
-        echo "Credentials stored in SSM"
+        LAMBDA_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
+          --query "Stacks[?contains(StackName,'peeks-ide')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null)
+        if [ -n "$LAMBDA_ARN" ] && [ "$LAMBDA_ARN" != "None" ]; then
+          ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
+            --query "Stacks[?contains(StackName,'peeks-ide')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" --output text 2>/dev/null)
+          if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ]; then
+            ROLE_ARN=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" --output text)
+          fi
+          PAYLOAD=$(jq -n --arg role "$ROLE_ARN" --arg prefix "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
+            '{RequestType:"Update",ResourceProperties:{RoleArn:$role,ParameterPrefix:$prefix,SessionDuration:"3600"}}')
+          aws lambda invoke --function-name "$LAMBDA_ARN" --payload "$PAYLOAD" --region {{.AWS_REGION}} /tmp/lambda-response.json > /dev/null
+          echo "Credentials refreshed via Lambda"
+        else
+          echo "WARN: Lambda not found. Falling back to instance profile (may trigger Epoxy on personal accounts)."
+          TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+          ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+          CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+          CREDENTIALS_JSON=$(echo "$CREDS" | jq '{AccessKeyId: .AccessKeyId, SecretAccessKey: .SecretAccessKey, SessionToken: .Token, Expiration: .Expiration}')
+          aws ssm put-parameter \
+            --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
+            --value "$CREDENTIALS_JSON" \
+            --type "SecureString" \
+            --overwrite \
+            --region {{.AWS_REGION}} > /dev/null
+          echo "Credentials stored in SSM (fallback)"
+        fi
       - printf '{{.C_STEP}}▸ Installing Playwright dependencies...{{.C_RESET}}\n'
       - pip install playwright boto3 requests --quiet 2>/dev/null
       - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
