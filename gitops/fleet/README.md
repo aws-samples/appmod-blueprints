@@ -77,7 +77,7 @@ Missing files are silently skipped (`ignoreMissingValueFiles: true`).
 
 ## How KRO Values Feed Into Cluster Provisioning
 
-The `bootstrap/clusters.yaml` ApplicationSet renders the `abstractions/resource-groups/platform-cluster` chart for each hub cluster, layering KRO values in this order:
+The `bootstrap/clusters-crossplane.yaml` ApplicationSet renders the `abstractions/crossplane/platform-cluster` chart for each hub cluster, layering KRO values in this order:
 
 1. `fleet/kro-values/default/kro-clusters/values.yaml` -- shared defaults
 2. `fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml` -- tenant-specific overrides

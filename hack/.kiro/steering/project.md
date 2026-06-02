@@ -34,7 +34,7 @@ Kind cluster → Crossplane provisions VPC+EKS → ArgoCD Capability created (+ 
 
 | Path | Mechanism | Use Case |
 |------|-----------|----------|
-| `abstractions/resource-groups/platform-cluster/` | Crossplane XRD + Composition | Platform team creates spokes (values in `fleet/kro-values/tenants/`) |
+| `abstractions/crossplane/platform-cluster/` | Crossplane XRD + Composition | Platform team creates spokes (values in `fleet/kro-values/tenants/`) |
 | `addons/charts/kro/resource-groups/manifests/eks/` | KRO ResourceGraphDefinition + ACK | Self-service via Backstage templates |
 
 Both coexist. Crossplane path creates `PlatformCluster` claims. KRO path creates `EksCluster` custom resources reconciled by ACK.
@@ -55,7 +55,7 @@ Both coexist. Crossplane path creates `PlatformCluster` claims. KRO path creates
 | `gitops/overlays/clusters/` | Per-cluster overrides |
 | `gitops/fleet/members/` | Fleet member registration |
 | `gitops/fleet/kro-values/` | Cluster provisioning values (Crossplane path) |
-| `gitops/abstractions/resource-groups/` | Crossplane compositions (platform-cluster, aws-resources) |
+| `gitops/abstractions/crossplane/` | Crossplane compositions (platform-cluster, aws-resources) |
 | `platform/backstage/templates/` | Backstage software templates |
 | `platform/infra/terraform/scripts/` | IDC configuration, ArgoCD token automation |
 | `scripts/` | Utility scripts (keycloak-idc-credentials.sh) |

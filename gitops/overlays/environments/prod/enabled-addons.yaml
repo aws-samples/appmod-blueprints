@@ -14,3 +14,4 @@ enabledAddons:
   prometheus_node_exporter: true
   aws_for_fluentbit: true
   kubevela: true
+  argo_rollouts: true

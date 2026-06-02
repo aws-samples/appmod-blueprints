@@ -44,7 +44,7 @@ Not needed for apps that handle their own path (keycloak with `/keycloak` contex
 ### Cluster Provisioning — Two Paths
 
 **1. Crossplane (platform team)**
-- `gitops/abstractions/resource-groups/platform-cluster/` — XRD + Composition
+- `gitops/abstractions/crossplane/platform-cluster/` — XRD + Composition
 - Creates `PlatformCluster` claims in `crossplane-system` namespace
 - Provisions full stack: VPC, subnets, NAT, IGW, EKS, IAM roles, node roles
 - Triggered by `gitops/fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml`

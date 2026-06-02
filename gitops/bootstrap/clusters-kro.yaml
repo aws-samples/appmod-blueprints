@@ -34,7 +34,7 @@ spec:
           targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
           ref: values
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
-          path: '{{ .metadata.annotations.addonsRepoBasepath }}addons/charts/kro-clusters'
+          path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/kro/kro-clusters'
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
           helm:
             releaseName: 'clusters-kro-{{ index (splitList "/" .path.path) 4 }}'

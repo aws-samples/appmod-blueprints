@@ -34,7 +34,7 @@ spec:
           targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
           ref: values
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
-          path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/resource-groups/platform-cluster'
+          path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/platform-cluster'
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
           helm:
             releaseName: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
