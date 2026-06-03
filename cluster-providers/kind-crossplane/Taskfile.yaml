@@ -1189,21 +1189,9 @@ tasks:
           --subnets $PUBLIC_SUBNETS \
           --scheme internet-facing \
           --type network \
-          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=service.k8s.aws/stack,Value=gitlab/gitlab \
+          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=service.k8s.aws/stack,Value=gitlab/gitlab Key=service.k8s.aws/resource,Value=LoadBalancer \
           --region {{.AWS_REGION}} \
           --query 'LoadBalancers[0].LoadBalancerArn' --output text)
-        TG_ARN=$(aws elbv2 create-target-group \
-          --name "{{.HUB_CLUSTER_NAME}}-gitlab-http" \
-          --protocol TCP --port 80 \
-          --vpc-id "$VPC_ID" \
-          --target-type ip \
-          --region {{.AWS_REGION}} \
-          --query 'TargetGroups[0].TargetGroupArn' --output text)
-        aws elbv2 create-listener \
-          --load-balancer-arn "$NLB_ARN" \
-          --protocol TCP --port 80 \
-          --default-actions "Type=forward,TargetGroupArn=$TG_ARN" \
-          --region {{.AWS_REGION}} > /dev/null
         NLB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$NLB_ARN" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
         echo "GitLab NLB: $NLB_DNS"
       - printf '{{.C_OK}}✓ GitLab NLB ready.{{.C_RESET}}\n'
