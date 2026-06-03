@@ -746,7 +746,9 @@ metadata:
 {{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
-    alb.ingress.kubernetes.io/healthcheck-path: /backstage
+    alb.ingress.kubernetes.io/healthcheck-path: /backstage/health/v1/readiness
+    alb.ingress.kubernetes.io/transforms.backstage: |
+      [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/backstage\\/?(.*)$","replace":"/$1"}]}}]
 {{- else }}
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /$2
