@@ -113,8 +113,8 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-sync done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
       - task: hub:sync-cloudfront-origins
       - 'printf "{{.C_INFO}}  [%ds] hub:sync-cloudfront-origins done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
-      - task: backstage:update-catalog
-      - 'printf "{{.C_INFO}}  [%ds] backstage:update-catalog done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - task: hub:backstage-catalog
+      - 'printf "{{.C_INFO}}  [%ds] hub:backstage-catalog done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
       - task: hub:restart-identity-pods
       - 'printf "{{.C_INFO}}  [%ds] hub:restart-identity-pods done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
       - task: hub:wait-for-full-sync
@@ -1068,7 +1068,7 @@ tasks:
       - task: gitlab:create-nlb
       - task: gitlab:cloudfront
 
-  backstage:update-catalog:
+  hub:backstage-catalog:
     desc: Update backstage-dynamic-catalog ConfigMap with environment-specific system-info values
     vars:
       INGRESS_DOMAIN:
