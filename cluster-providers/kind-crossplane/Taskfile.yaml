@@ -1112,7 +1112,7 @@ tasks:
             workshop_git_branch: '{{.WORKSHOP_GIT_BRANCH}}'
           EOF
           )" \
-            --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+            --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply --validate=false -f -
           printf '{{.C_SUCCESS}}✔ backstage-dynamic-catalog ConfigMap updated{{.C_RESET}}\n'
 
   hub:create-alb:
