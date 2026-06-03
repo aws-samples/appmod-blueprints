@@ -113,6 +113,8 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-sync done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
       - task: hub:sync-cloudfront-origins
       - 'printf "{{.C_INFO}}  [%ds] hub:sync-cloudfront-origins done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - task: backstage:update-catalog
+      - 'printf "{{.C_INFO}}  [%ds] backstage:update-catalog done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
       - task: hub:restart-identity-pods
       - 'printf "{{.C_INFO}}  [%ds] hub:restart-identity-pods done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
       - task: hub:wait-for-full-sync
@@ -1065,6 +1067,53 @@ tasks:
       - task: hub:cloudfront
       - task: gitlab:create-nlb
       - task: gitlab:cloudfront
+
+  backstage:update-catalog:
+    desc: Update backstage-dynamic-catalog ConfigMap with environment-specific system-info values
+    vars:
+      INGRESS_DOMAIN:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GITLAB_DOMAIN:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      BS_ACCOUNT_ID:
+        sh: aws sts get-caller-identity --query Account --output text
+    cmds:
+      - cmd: |
+          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create configmap backstage-dynamic-catalog \
+            --namespace backstage \
+            --from-literal=dynamic-catalog.yaml="$(cat <<EOF
+          apiVersion: backstage.io/v1alpha1
+          kind: System
+          metadata:
+            name: system-info
+            description: Holds system information i.e, hostname, IP, OS, etc
+          spec:
+            owner: guest
+            ingress_hostname: '{{.INGRESS_DOMAIN}}'
+            gitlab_hostname: '{{.GITLAB_DOMAIN}}'
+            argocd_hostname: '{{.INGRESS_DOMAIN}}'
+            gituser: '{{.GIT_USERNAME}}'
+            aws_region: '{{.AWS_REGION}}'
+            aws_account_id: '{{.BS_ACCOUNT_ID}}'
+            admin_role_name: '$(yq '.adminRoleName // ""' {{.CONFIG_FILE}})'
+            resource_prefix: '{{.RESOURCE_PREFIX}}'
+            hub_cluster_name: '{{.HUB_CLUSTER_NAME}}'
+            model_s3_bucket: '{{.RESOURCE_PREFIX}}-ray-models-{{.BS_ACCOUNT_ID}}'
+            workshop_git_branch: '{{.WORKSHOP_GIT_BRANCH}}'
+          EOF
+          )" \
+            --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+          printf '{{.C_SUCCESS}}✔ backstage-dynamic-catalog ConfigMap updated{{.C_RESET}}\n'
 
   hub:create-alb:
     desc: Pre-create the platform ALB for CloudFront (cloudfront mode only)
