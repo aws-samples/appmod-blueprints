@@ -212,19 +212,23 @@ data:
       rules:
         - allow: [Component, System, API, Resource, Location, Template]
       locations:
-{{- if .Values.gitlab_domain_name }}
-        # Templates from GitLab.
-        - type: url
-          target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/platform/backstage/templates/catalog-info.yaml
-          rules:
-            - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
-{{- else }}
-        # Templates from GitHub (fallback when GitLab not available).
+        # Static templates from GitHub (always present)
         - type: url
           target: https://github.com/aws-samples/appmod-blueprints/blob/${WORKSHOP_GIT_BRANCH}/platform/backstage/templates/catalog-info.yaml
           rules:
             - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
+{{- if .Values.gitlab_domain_name }}
+        # Templates from GitLab (when available)
+        - type: url
+          target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/platform/backstage/templates/catalog-info.yaml
+          rules:
+            - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
 {{- end }}
+        # Dynamic system-info (injected by taskfile via ConfigMap)
+        - type: file
+          target: /app/catalog/dynamic-catalog.yaml
+          rules:
+            - allow: [ System ]
     kubernetes:
       serviceLocatorMethod:
         type: 'multiTenant'
@@ -368,6 +372,37 @@ stringData:
             apiVersion: 'v1alpha1'
             plural: 'vpcs'
       {{- end }}
+---
+# Dynamic catalog data — updated at runtime by 'task backstage:update-catalog'
+# Contains the system-info entity with environment-specific values
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backstage-dynamic-catalog
+  namespace: backstage
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+data:
+  dynamic-catalog.yaml: |
+    apiVersion: backstage.io/v1alpha1
+    kind: System
+    metadata:
+      name: system-info
+      description: Holds system information i.e, hostname, IP, OS, etc
+    spec:
+      owner: guest
+      ingress_hostname: ''
+      gitlab_hostname: ''
+      argocd_hostname: ''
+      gituser: ''
+      aws_region: ''
+      aws_account_id: ''
+      admin_role_name: ''
+      resource_prefix: ''
+      hub_cluster_name: ''
+      model_s3_bucket: ''
+      workshop_git_branch: ''
 ---
 apiVersion: v1
 kind: Service
@@ -526,6 +561,9 @@ spec:
             - mountPath: /app/config
               name: backstage-config
               readOnly: true
+            - mountPath: /app/catalog
+              name: dynamic-catalog
+              readOnly: true
       serviceAccountName: backstage
       volumes:
         - name: backstage-config
@@ -541,6 +579,9 @@ spec:
                     - key: k8s-config.yaml
                       path: k8s-config.yaml
                   name: k8s-config
+        - name: dynamic-catalog
+          configMap:
+            name: backstage-dynamic-catalog
         - name: backstage-env-vars
           secret:
             secretName: backstage-env-vars
