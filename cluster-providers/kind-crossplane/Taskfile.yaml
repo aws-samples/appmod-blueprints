@@ -1248,6 +1248,27 @@ tasks:
           printf '{{.C_ERR}}⚠ IDC configuration failed after 3 attempts. Run manually later:{{.C_RESET}}\n'
           printf '  task kind-crossplane:idc:configure\n'
         fi
+      - printf '{{.C_STEP}}▸ Syncing admin group members into IDC admin group for ArgoCD access...{{.C_RESET}}\n'
+      - |
+        ADMIN_GROUP_ID="{{.IDC_ADMIN_GROUP_ID}}"
+        IDENTITY_STORE_ID=$(aws sso-admin list-instances --region {{.IDC_REGION}} --query 'Instances[0].IdentityStoreId' --output text | head -1)
+        SCIM_ADMIN_GROUP=$(aws identitystore list-groups --identity-store-id "$IDENTITY_STORE_ID" --region {{.IDC_REGION}} \
+          --query "Groups[?DisplayName=='admin'].GroupId | [0]" --output text 2>/dev/null)
+        if [ -n "$SCIM_ADMIN_GROUP" ] && [ "$SCIM_ADMIN_GROUP" != "None" ]; then
+          EXISTING_MEMBERS=$(aws identitystore list-group-memberships --identity-store-id "$IDENTITY_STORE_ID" \
+            --group-id "$ADMIN_GROUP_ID" --region {{.IDC_REGION}} --query 'GroupMemberships[].MemberId.UserId' --output text 2>/dev/null)
+          for USER_ID in $(aws identitystore list-group-memberships --identity-store-id "$IDENTITY_STORE_ID" \
+            --group-id "$SCIM_ADMIN_GROUP" --region {{.IDC_REGION}} --query 'GroupMemberships[].MemberId.UserId' --output text 2>/dev/null); do
+            if ! echo "$EXISTING_MEMBERS" | grep -q "$USER_ID"; then
+              aws identitystore create-group-membership --identity-store-id "$IDENTITY_STORE_ID" \
+                --group-id "$ADMIN_GROUP_ID" --member-id UserId="$USER_ID" --region {{.IDC_REGION}} 2>/dev/null || true
+              echo "Added user $USER_ID to IDC admin group"
+            fi
+          done
+          printf '{{.C_OK}}✓ Admin group members synced for ArgoCD access.{{.C_RESET}}\n'
+        else
+          printf '{{.C_ERR}}⚠ SCIM admin group not found — users may need manual assignment.{{.C_RESET}}\n'
+        fi
 
   destroy:
     desc: >-

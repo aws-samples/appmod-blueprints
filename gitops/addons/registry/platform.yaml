@@ -485,6 +485,10 @@ platform-manifests:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '6'
   syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
     syncOptions:
       - CreateNamespace=true
       - SkipDryRunOnMissingResource=true
