@@ -7,6 +7,7 @@ enabledAddons:
   metrics_server: true
   ingress_class_alb: true
   aws_load_balancer_controller: true
+  default_storage_class: true
   cert_manager: false
   external_secrets: true
   external_dns: true
@@ -63,5 +64,3 @@ enabledAddons:
   aws_resources: true
   # Observability AWS (AMP + AMG via Crossplane)
   observability_aws: true
-  # Agent Platform (deploys from sample-agent-platform-on-eks repo)
-  agent_platform: true

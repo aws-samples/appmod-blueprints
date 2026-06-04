@@ -1,5 +1,18 @@
 # Core infrastructure addons
-# Wave ordering: -1 (external-secrets, pod-identities) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (efs-csi) → 5 (lbc, ingress-class-alb, external-dns)
+# Wave ordering: -1 (external-secrets, pod-identities, default-storage-class) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (efs-csi) → 5 (lbc, ingress-class-alb, external-dns)
+
+default-storage-class:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/default-storage-class'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  goTemplateOptions:
+    - "missingkey=zero"
+  selector:
+    matchExpressions:
+      - key: enable_default_storage_class
+        operator: In
+        values: ['true']
 
 pod_identities:
   namespace: crossplane-system
@@ -27,8 +40,6 @@ pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
-      litellm:
-        enabled: '{{default "false" (index .metadata.labels "enable_agent_platform")}}'
   ignoreDifferences:
     - group: iam.aws.upbound.io
       kind: Role

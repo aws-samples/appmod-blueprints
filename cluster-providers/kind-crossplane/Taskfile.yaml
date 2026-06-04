@@ -8,8 +8,8 @@ env:
   AWS_PROFILE: "{{.AWS_PROFILE}}"
 
 vars:
-  GITOPS_ROOT:
-    sh: echo "$(dirname {{.CONFIG_FILE}})/gitops"
+  CONFIG_FILE: "{{.ROOT_DIR}}/config.local.yaml"
+  GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   AWS_PROFILE:
     sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
@@ -29,6 +29,12 @@ vars:
     sh: yq '.repo.revision' {{.CONFIG_FILE}}
   REPO_BASEPATH:
     sh: yq '.repo.basepath' {{.CONFIG_FILE}}
+  FLEET_REPO_URL:
+    sh: yq '.fleetRepo.url // .repo.url' {{.CONFIG_FILE}}
+  FLEET_REPO_REVISION:
+    sh: yq '.fleetRepo.revision // .repo.revision' {{.CONFIG_FILE}}
+  FLEET_REPO_BASEPATH:
+    sh: yq '.fleetRepo.basepath // .repo.basepath' {{.CONFIG_FILE}}
   DOMAIN:
     sh: yq '.domain' {{.CONFIG_FILE}}
   RESOURCE_PREFIX:
@@ -57,7 +63,7 @@ vars:
   C_RESET:
     sh: printf '\033[0m'
   ARGOCD_VERSION:
-    sh: yq '.argocd.defaultVersion' "$(dirname {{.CONFIG_FILE}})/gitops/addons/registry/core.yaml"
+    sh: yq '.argocd.defaultVersion' "{{.ROOT_DIR}}/gitops/addons/registry/core.yaml"
 
 tasks:
   validate:
@@ -220,6 +226,8 @@ tasks:
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
+          --set providerResources.cpuRequest=100m
+          --set providerResources.memoryRequest=256Mi
           --set functions.patchAndTransform.version=v0.10.0
           --set functions.environmentConfigs.version=v0.3.0
           --set functions.celFilter.version=v0.2.0
@@ -410,7 +418,7 @@ tasks:
       - printf '{{.C_STEP}}▸ Creating seed cluster secret on hub...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|FLEET_REPO_URL|{{.FLEET_REPO_URL}}|g; s|FLEET_REPO_REVISION|{{.FLEET_REPO_REVISION}}|g; s|FLEET_REPO_BASEPATH|{{.FLEET_REPO_BASEPATH}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
@@ -421,9 +429,9 @@ tasks:
             addonsRepoURL: "REPO_URL"
             addonsRepoRevision: "REPO_REVISION"
             addonsRepoBasepath: "REPO_BASEPATH"
-            fleetRepoURL: "REPO_URL"
-            fleetRepoRevision: "REPO_REVISION"
-            fleetRepoBasepath: "REPO_BASEPATH"
+            fleetRepoURL: "FLEET_REPO_URL"
+            fleetRepoRevision: "FLEET_REPO_REVISION"
+            fleetRepoBasepath: "FLEET_REPO_BASEPATH"
             aws_cluster_name: {{.HUB_CLUSTER_NAME}}
           labels:
             argocd.argoproj.io/secret-type: cluster
@@ -588,7 +596,7 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id: $id, subnet_ids: $subnet_ids, cluster_security_group_id: $cluster_security_group_id}' | jq -c .)
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
@@ -637,11 +645,18 @@ tasks:
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/secrets"
 
         # Poll for AMP workspace (up to 30 min — Crossplane provisioning can take time)
+        # Use crossplane-name tag to identify the correct workspace (avoids ambiguity with duplicates)
         AMP_WORKSPACE_ID=""
         printf '{{.C_STEP}}▸ Waiting for AMP workspace...{{.C_RESET}}\n'
         for i in $(seq 1 60); do
-          AMP_WORKSPACE_ID=$(aws amp list-workspaces --region {{.AWS_REGION}} --query "workspaces[?alias=='{{.RESOURCE_PREFIX}}-observability-amp'].workspaceId" --output text 2>/dev/null)
-          if [ -n "$AMP_WORKSPACE_ID" ] && [ "$AMP_WORKSPACE_ID" != "None" ]; then
+          for WS_ID in $(aws amp list-workspaces --region {{.AWS_REGION}} --query "workspaces[?alias=='{{.RESOURCE_PREFIX}}-observability-amp'].workspaceId" --output text 2>/dev/null); do
+            TAG_VAL=$(aws amp list-tags-for-resource --resource-arn "arn:aws:aps:{{.AWS_REGION}}:{{.AWS_ACCOUNT_ID}}:workspace/$WS_ID" --region {{.AWS_REGION}} --query "tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+            if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amp" ]; then
+              AMP_WORKSPACE_ID="$WS_ID"
+              break
+            fi
+          done
+          if [ -n "$AMP_WORKSPACE_ID" ]; then
             break
           fi
           printf '  [%d/60] AMP workspace not ready yet...\n' "$i"
@@ -660,15 +675,19 @@ tasks:
         echo "Found AMP endpoint: $AMP_ENDPOINT"
 
         # Poll for AMG workspace (up to 15 min)
+        # Use crossplane-name tag to identify the correct workspace
         AMG_WORKSPACE_ID=""
         printf '{{.C_STEP}}▸ Waiting for AMG workspace...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          AMG_WORKSPACE_ID=$(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability' && status=='ACTIVE'].id | [0]" --output text 2>/dev/null)
-          if [ -n "$AMG_WORKSPACE_ID" ] && [ "$AMG_WORKSPACE_ID" != "None" ]; then
-            AMG_STATUS=$(aws grafana describe-workspace --workspace-id "$AMG_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.status" --output text 2>/dev/null)
-            if [ "$AMG_STATUS" = "ACTIVE" ]; then
+          for WS in $(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability' && status=='ACTIVE'].id" --output text 2>/dev/null); do
+            TAG_VAL=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query "workspace.tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+            if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amg" ]; then
+              AMG_WORKSPACE_ID="$WS"
               break
             fi
+          done
+          if [ -n "$AMG_WORKSPACE_ID" ]; then
+            break
           fi
           printf '  [%d/30] AMG workspace not ready yet...\n' "$i"
           sleep 30
@@ -993,7 +1012,39 @@ tasks:
             [ -n "$POLICY_ARN" ] && aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null || true
           done
         ignore_error: true
-      # Phase 7: VPC-level orphan cleanup. The Crossplane VPC delete in Phase 4
+      # Phase 7: Clean up observability resources (AMP scrapers, AMP workspace, AMG workspace).
+      # Scrapers hold ENIs in VPCs and must be deleted before VPC cleanup.
+      - cmd: |
+          # Delete AMP scrapers tagged by our platform
+          for SCRAPER_ID in $(aws amp list-scrapers --region {{.AWS_REGION}} --query "scrapers[?starts_with(alias,'{{.RESOURCE_PREFIX}}-')].scraperId" --output text 2>/dev/null); do
+            echo "Deleting AMP scraper $SCRAPER_ID"
+            aws amp delete-scraper --scraper-id "$SCRAPER_ID" --region {{.AWS_REGION}} 2>/dev/null || true
+          done
+          # Delete AMP workspace by crossplane-name tag
+          for WS_ID in $(aws amp list-workspaces --region {{.AWS_REGION}} --query "workspaces[].workspaceId" --output text 2>/dev/null); do
+            TAG_VAL=$(aws amp list-tags-for-resource --resource-arn "arn:aws:aps:{{.AWS_REGION}}:{{.AWS_ACCOUNT_ID}}:workspace/$WS_ID" --region {{.AWS_REGION}} --query "tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+            if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amp" ]; then
+              echo "Deleting AMP workspace $WS_ID (crossplane-name={{.RESOURCE_PREFIX}}-amp)"
+              aws amp delete-workspace --workspace-id "$WS_ID" --region {{.AWS_REGION}} 2>/dev/null || true
+            fi
+          done
+          # Delete AMG workspace by crossplane-name tag
+          for WS_ID in $(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[].id" --output text 2>/dev/null); do
+            TAG_VAL=$(aws grafana describe-workspace --workspace-id "$WS_ID" --region {{.AWS_REGION}} --query "workspace.tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+            if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amg" ]; then
+              echo "Deleting AMG workspace $WS_ID (crossplane-name={{.RESOURCE_PREFIX}}-amg)"
+              aws grafana delete-workspace --workspace-id "$WS_ID" --region {{.AWS_REGION}} 2>/dev/null || true
+            fi
+          done
+          # Wait for scrapers to fully delete (they hold ENIs in VPCs)
+          for i in $(seq 1 40); do
+            REMAINING=$(aws amp list-scrapers --region {{.AWS_REGION}} --query "scrapers[?starts_with(alias,'{{.RESOURCE_PREFIX}}-') && status.statusCode!='DELETION_FAILED'] | length(@)" --output text 2>/dev/null || echo "0")
+            [ "$REMAINING" = "0" ] && break
+            echo "Waiting for $REMAINING scraper(s) to delete... ($i/40)"
+            sleep 15
+          done
+        ignore_error: true
+      # Phase 8: VPC-level orphan cleanup. The Crossplane VPC delete in Phase 4
       # can stop reconciling once the providers are torn down in Phase 5, leaving
       # AWS-side dependencies (ELBs, NAT gateways, VPC endpoints, EIPs, subnets,
       # IGW, route tables, security groups). Tear them down by Crossplane tag so
@@ -1085,11 +1136,11 @@ tasks:
           done
           # Secrets Manager — Crossplane cluster claims also push hub/spoke config
           # secrets that survive the AWS resource teardown
-          for SECRET in {{.HUB_CLUSTER_NAME}}/config {{.HUB_CLUSTER_NAME}}/keycloak {{.HUB_CLUSTER_NAME}}/keycloak-clients spoke-dev/config spoke-prod/config; do
+          for SECRET in {{.HUB_CLUSTER_NAME}}/config {{.HUB_CLUSTER_NAME}}/keycloak {{.HUB_CLUSTER_NAME}}/keycloak-clients {{.HUB_CLUSTER_NAME}}/secrets spoke-dev/config spoke-prod/config spoke-dev/secrets spoke-prod/secrets; do
             aws secretsmanager delete-secret --secret-id "$SECRET" --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
           done
         ignore_error: true
-      # Phase 8: Clean up Kind (pass CLEANUP_KIND=true to remove)
+      # Phase 9: Clean up Kind (pass CLEANUP_KIND=true to remove)
       - cmd: |
           if [ "{{.CLEANUP_KIND}}" = "true" ]; then
             kind delete cluster --name {{.KIND_CLUSTER_NAME}}

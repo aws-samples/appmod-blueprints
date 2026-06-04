@@ -8,7 +8,5 @@ identities:
     enabled: true
   external-dns:
     enabled: true
-  litellm:
-    enabled: true
   otel-collector:
     enabled: true

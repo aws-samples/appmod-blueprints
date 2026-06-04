@@ -3,6 +3,7 @@ enabledAddons:
   metrics_server: true
   ingress_class_alb: true
   aws_load_balancer_controller: true
+  default_storage_class: true
   external_secrets: true
   external_dns: true
   cert_manager: true

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: default-storage-class
+description: Default StorageClass for EKS clusters (gp3 for EKS Auto Mode)
+type: application
+version: 0.1.0

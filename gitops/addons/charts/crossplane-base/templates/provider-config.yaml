@@ -40,8 +40,8 @@ spec:
           - name: package-runtime
             resources:
               requests:
-                cpu: 1000m
-                memory: 1Gi
+                cpu: {{ if $.Values.providerResources }}{{ $.Values.providerResources.cpuRequest | default "250m" }}{{ else }}250m{{ end }}
+                memory: {{ if $.Values.providerResources }}{{ $.Values.providerResources.memoryRequest | default "1Gi" }}{{ else }}1Gi{{ end }}
               limits:
                 memory: 2Gi
 {{- end }}
