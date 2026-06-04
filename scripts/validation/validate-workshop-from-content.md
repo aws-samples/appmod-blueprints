@@ -79,10 +79,10 @@ reliable fallback.
 
 | Service   | Username | Password          |
 |-----------|----------|-------------------|
-| Backstage | `user1`  | `$USER1_PASSWORD` |
-| GitLab    | `user1`  | `$USER1_PASSWORD` |
-| ArgoCD    | `admin`  | `$IDE_PASSWORD`   |
-| Grafana   | `user1`  | `$USER1_PASSWORD` |
+| Backstage | `user1`  | `$USER_PASSWORD` (Keycloak OIDC) |
+| GitLab    | `user1`  | `$USER_PASSWORD` (web login) / `$GIT_TOKEN` (API PAT) |
+| ArgoCD    | via IDC SSO | N/A (EKS Capability) |
+| Grafana   | `user1`  | `$USER_PASSWORD` |
 
 ## Required Environment Variables
 
@@ -90,11 +90,14 @@ Env vars are defined in `~/.bashrc.d/platform.sh` and `~/.bashrc.d/aliases.sh`.
 
 ```bash
 echo "BACKSTAGE=$BACKSTAGE_URL ARGOCD=$ARGOCD_URL WORKFLOWS=$WORKFLOWS_URL"
+echo "GITLAB=$GITLAB_URL GIT_TOKEN=$GIT_TOKEN GIT_USERNAME=$GIT_USERNAME"
 echo "DNS_DEV=$DNS_DEV DNS_PROD=$DNS_PROD ACCOUNT=$AWS_ACCOUNT_ID REGION=$AWS_REGION"
-echo "GITLAB=$GITLAB_URL GRAFANA=$GRAFANA_URL"
 ```
 
-If any are empty, stop and report.
+> **Note:** `$GIT_TOKEN` is the GitLab Personal Access Token for API calls (PRIVATE-TOKEN header).
+> `$DNS_DEV`/`$DNS_PROD` are empty until an app with Ingress is deployed on spokes.
+
+If any required vars are empty, stop and report.
 
 ---
 
@@ -514,9 +517,9 @@ trigger-devlake rust
 **Phase 70.3a — Change Failure Rate practice**: Create a GitLab issue via API:
 
 ```bash
-PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $GIT_TOKEN" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
 curl -s -X POST "$GITLAB_URL/api/v4/projects/$PROJECT_ID/issues" \
-  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "PRIVATE-TOKEN: $GIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title": "Bug: Testing Change Failure Rate", "description": "Testing for CFR Section of workshop"}'
 
@@ -527,10 +530,10 @@ hub && trigger-devlake rust
 **Phase 70.4a — Recovery Time practice**: Close the issue via API:
 
 ```bash
-PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $GIT_TOKEN" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
 # Close issue #1 (created in 70.3a)
 curl -s -X PUT "$GITLAB_URL/api/v4/projects/$PROJECT_ID/issues/1" \
-  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "PRIVATE-TOKEN: $GIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"state_event": "close"}'
 
@@ -547,9 +550,9 @@ echo "# Testing Lead Time for Changes" >> README.md
 git add . && git commit -m "test: LTFC metrics" && git push -u origin ltfc-branch
 
 # Create MR via GitLab API
-PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $GIT_TOKEN" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
 curl -s -X POST "$GITLAB_URL/api/v4/projects/$PROJECT_ID/merge_requests" \
-  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "PRIVATE-TOKEN: $GIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"source_branch": "ltfc-branch", "target_branch": "main", "title": "Testing LTFC"}'
 ```
