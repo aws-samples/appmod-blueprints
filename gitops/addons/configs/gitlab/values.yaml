@@ -6,5 +6,8 @@ git_username: ""          # Git username for repo access
 working_repo: ""          # Overlay repository name (default: fleet-config)
 initial_root_password: "" # Set via environment overlay or ExternalSecret
 application_repos:        # Application repos to create in GitLab
-  - app-java
-  - app-rust
+  - java
+  - rust
+  - golang
+  - dotnet
+  - next-js
