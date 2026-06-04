@@ -658,7 +658,7 @@ spec:
           data:
              - secretKey: GITLAB_TOKEN
                remoteRef:
-                 key: ${schema.spec.aws.resourcePrefix}-hub/secrets
+                 key: ${schema.spec.aws.clusterName}/secrets
                  property: git_token
 
     # Docker registry secret for ECR authentication - properly scoped to namespace
