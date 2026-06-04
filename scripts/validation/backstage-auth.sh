@@ -25,7 +25,7 @@ backstage_get_token() {
 
   local KC_URL NONCE SID
   KC_URL=$(grep -i "^location:" /tmp/_bs_s2.txt | sed 's/^[Ll]ocation: //' | tr -d '\r\n')
-  NONCE=$(grep "keycloak-oidc-nonce=" /tmp/_bs_s2.txt | sed 's/.*keycloak-oidc-nonce=//' | sed 's/;.*//' | tr -d '\r')
+  NONCE=$(grep "keycloak-oidc-nonce=" /tmp/_bs_s2.txt | grep -v "Max-Age=0" | sed 's/.*keycloak-oidc-nonce=//' | sed 's/;.*//' | tr -d '\r')
   SID=$(grep "connect.sid=" /tmp/_bs_s2.txt | sed 's/.*connect.sid=//' | sed 's/;.*//' | tr -d '\r')
 
   # Step 3: Get Keycloak login form
@@ -49,9 +49,9 @@ backstage_get_token() {
     -D /tmp/_bs_s5.txt -o /dev/null
 
   local BS_SERVER SCOPE REFRESH
-  BS_SERVER=$(grep "backstage-server=" /tmp/_bs_s5.txt | sed 's/.*backstage-server=//' | sed 's/;.*//' | tr -d '\r')
-  SCOPE=$(grep "keycloak-oidc-granted-scope=" /tmp/_bs_s5.txt | sed 's/.*keycloak-oidc-granted-scope=//' | sed 's/;.*//' | tr -d '\r')
-  REFRESH=$(grep "keycloak-oidc-refresh-token=" /tmp/_bs_s5.txt | sed 's/.*keycloak-oidc-refresh-token=//' | sed 's/;.*//' | tr -d '\r')
+  BS_SERVER=$(grep "backstage-server=" /tmp/_bs_s5.txt | grep -v "Max-Age=0" | sed 's/.*backstage-server=//' | sed 's/;.*//' | tr -d '\r')
+  SCOPE=$(grep "keycloak-oidc-granted-scope=" /tmp/_bs_s5.txt | grep -v "Max-Age=0" | sed 's/.*keycloak-oidc-granted-scope=//' | sed 's/;.*//' | tr -d '\r')
+  REFRESH=$(grep "keycloak-oidc-refresh-token=" /tmp/_bs_s5.txt | grep -v "Max-Age=0" | sed 's/.*keycloak-oidc-refresh-token=//' | sed 's/;.*//' | tr -d '\r')
 
   # Step 6: Refresh to get Backstage identity token
   curl -sLk "${BACKSTAGE_URL}/api/auth/keycloak-oidc/refresh?env=production" \
