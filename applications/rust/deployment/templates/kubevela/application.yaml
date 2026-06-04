@@ -51,7 +51,7 @@ spec:
       properties:
         componentNamesForAccess:
           - rust-dynamodb-<environment>
-        clusterName: peeks-spoke-dev
+        clusterName: <cluster_name>
         clusterRegion: us-west-2
 
     - name: rust-dynamodb-<environment>
