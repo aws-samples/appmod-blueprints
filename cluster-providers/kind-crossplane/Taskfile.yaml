@@ -586,6 +586,8 @@ tasks:
         update_var "KEYCLOAK_ADMIN_PASSWORD" "{{.KC_ADMIN_PASSWORD}}"
         update_var "USER_PASSWORD" "{{.USER_PASSWORD}}"
         update_var "HUB_CLUSTER_NAME" "{{.HUB_CLUSTER_NAME}}"
+        update_var "GIT_TOKEN" "{{.USER_PASSWORD}}"
+        update_var "GIT_USERNAME" "user1"
         # Spoke DNS: use ALB hostname from spoke clusters (fallback to empty)
         DNS_DEV=$(aws elbv2 describe-load-balancers --region {{.AWS_REGION}} --query "LoadBalancers[?contains(LoadBalancerName,'spoke-dev')].DNSName | [0]" --output text 2>/dev/null || echo "")
         DNS_PROD=$(aws elbv2 describe-load-balancers --region {{.AWS_REGION}} --query "LoadBalancers[?contains(LoadBalancerName,'spoke-prod')].DNSName | [0]" --output text 2>/dev/null || echo "")
