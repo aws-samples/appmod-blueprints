@@ -2675,12 +2675,12 @@ spec:
             app.kubernetes.io/managed-by: kro
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            nginx.ingress.kubernetes.io/proxy-body-size: 512m
-            nginx.ingress.kubernetes.io/use-regex: "true"
-            nginx.ingress.kubernetes.io/rewrite-target: /webhook
-            nginx.ingress.kubernetes.io/priority: "100"
+            alb.ingress.kubernetes.io/scheme: internet-facing
+            alb.ingress.kubernetes.io/target-type: ip
+            alb.ingress.kubernetes.io/healthcheck-path: /
+            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
         spec:
-          ingressClassName: nginx
+          ingressClassName: alb
           rules:
             - host: ${schema.spec.hub.hostname}
               http:
@@ -2691,7 +2691,7 @@ spec:
                         port:
                           number: 12000
                     path: /argo-events/${schema.spec.name}
-                    pathType: Exact
+                    pathType: Prefix
 
     # PodDisruptionBudget for eventbus to prevent Karpenter disruptions
     - id: eventbuspdb
