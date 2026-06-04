@@ -299,6 +299,7 @@ gitlab:
     keycloak_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     security_groups: '{{.metadata.annotations.ingress_security_groups}}'
     exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+    git_token: '{{default "" .metadata.annotations.git_token}}'
     global:
       aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
