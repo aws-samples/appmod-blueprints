@@ -405,6 +405,8 @@ data:
       admin_role_name: '{{ .Values.admin_role_name }}'
       resource_prefix: '{{ .Values.global.resource_prefix }}'
       hub_cluster_name: '{{ .Values.global.clusterName }}'
+      spoke_dev_cluster_name: '{{ .Values.spoke_dev_cluster_name | default (printf "%s-spoke-dev" .Values.global.resource_prefix) }}'
+      spoke_prod_cluster_name: '{{ .Values.spoke_prod_cluster_name | default (printf "%s-spoke-prod" .Values.global.resource_prefix) }}'
       model_s3_bucket: '{{ .Values.model_s3_bucket }}'
       workshop_git_branch: '{{ .Values.workshop_git_branch }}'
 ---

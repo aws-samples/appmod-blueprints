@@ -448,6 +448,15 @@ tasks:
           done
           echo "  ✓ $ROLE_NAME"
         done
+        # Inline policies for EKS role: AccessEntry, PodIdentity, PassRole
+        EKS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-eks"
+        aws iam put-role-policy --role-name "$EKS_ROLE" --policy-name eks-access-management --policy-document '{
+          "Version": "2012-10-17",
+          "Statement": [
+            {"Effect": "Allow", "Action": ["eks:*AccessEntry*","eks:*PodIdentity*","eks:TagResource"], "Resource": "*"},
+            {"Effect": "Allow", "Action": ["iam:PassRole","iam:GetRole"], "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-*"}
+          ]
+        }'
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
   hub:install-eso:
