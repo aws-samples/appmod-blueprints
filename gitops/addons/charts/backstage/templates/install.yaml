@@ -129,9 +129,12 @@ data:
       # Used for enabling authentication, secret is shared by all backend plugins
       # See https://backstage.io/docs/tutorials/backend-to-backend-auth for
       # information on the format
-      # auth:
-      #   keys:
-      #     - secret: ${BACKEND_SECRET}
+      auth:
+        externalAccess:
+          - type: static
+            options:
+              token: ${BACKEND_SECRET}
+              subject: external-caller
       baseUrl: https://{{ .Values.ingress_domain_name }}/backstage
       listen:
         port: 7007
@@ -766,6 +769,7 @@ stringData:
   ARGO_WORKFLOWS_URL: https://{{ .Values.ingress_domain_name }}/argo-workflows
   KEYCLOAK_NAME_METADATA: https://{{ .Values.ingress_domain_name }}/keycloak/realms/platform/.well-known/openid-configuration
   ARGO_CD_URL: 'https://argocd-server.argocd.svc.cluster.local/api/v1/'
+  BACKEND_SECRET: '{{ .Values.backend_secret | default "supersecret-backstage-backend-token" }}'
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
