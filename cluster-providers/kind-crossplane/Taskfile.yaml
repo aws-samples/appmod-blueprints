@@ -586,6 +586,13 @@ tasks:
         update_var "KEYCLOAK_ADMIN_PASSWORD" "{{.KC_ADMIN_PASSWORD}}"
         update_var "USER_PASSWORD" "{{.USER_PASSWORD}}"
         update_var "HUB_CLUSTER_NAME" "{{.HUB_CLUSTER_NAME}}"
+        # Spoke DNS: use ALB hostname from spoke clusters (fallback to empty)
+        DNS_DEV=$(aws elbv2 describe-load-balancers --region {{.AWS_REGION}} --query "LoadBalancers[?contains(LoadBalancerName,'spoke-dev')].DNSName | [0]" --output text 2>/dev/null || echo "")
+        DNS_PROD=$(aws elbv2 describe-load-balancers --region {{.AWS_REGION}} --query "LoadBalancers[?contains(LoadBalancerName,'spoke-prod')].DNSName | [0]" --output text 2>/dev/null || echo "")
+        [ "$DNS_DEV" = "None" ] && DNS_DEV=""
+        [ "$DNS_PROD" = "None" ] && DNS_PROD=""
+        update_var "DNS_DEV" "$DNS_DEV"
+        update_var "DNS_PROD" "$DNS_PROD"
         printf '{{.C_OK}}✓ Platform URLs exported to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
         printf '  Backstage:  https://{{.INGRESS_DOMAIN}}/backstage\n'
         printf '  Keycloak:   https://{{.INGRESS_DOMAIN}}/keycloak\n'
