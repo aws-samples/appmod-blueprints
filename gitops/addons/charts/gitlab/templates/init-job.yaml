@@ -160,6 +160,29 @@ data:
     curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches/main" \
       -H "PRIVATE-TOKEN: $IDE_PASSWORD" || echo "Main branch was not protected or already unprotected"
 
+    # --- Push Backstage templates into fleet-config (same path as GitHub source) ---
+    SOURCE_REPO_URL="{{ .Values.source_repo_url | default "https://github.com/aws-samples/appmod-blueprints" }}"
+    SOURCE_REPO_REVISION="{{ .Values.source_repo_revision | default "main" }}"
+    if [ ! -d "/tmp/fleet-config/platform/backstage/templates" ]; then
+      echo "Cloning Backstage templates from $SOURCE_REPO_URL ($SOURCE_REPO_REVISION)..."
+      rm -rf /tmp/source-repo /tmp/fleet-clone
+      git clone --depth 1 --branch "$SOURCE_REPO_REVISION" "$SOURCE_REPO_URL" /tmp/source-repo 2>/dev/null || git clone "$SOURCE_REPO_URL" /tmp/source-repo
+      if [ -d "/tmp/source-repo/platform/backstage/templates" ]; then
+        git clone "http://$GIT_USERNAME:$IDE_PASSWORD@gitlab.gitlab.svc.cluster.local/$GIT_USERNAME/$WORKING_REPO.git" /tmp/fleet-clone
+        mkdir -p /tmp/fleet-clone/platform/backstage
+        cp -r /tmp/source-repo/platform/backstage/templates /tmp/fleet-clone/platform/backstage/
+        cd /tmp/fleet-clone
+        git config user.email "gitlab-init@workshop.local"
+        git config user.name "gitlab-init"
+        git add platform/backstage/templates
+        git commit -m "feat: seed Backstage templates from platform source" 2>/dev/null && \
+          git push origin main && echo "Backstage templates pushed to $WORKING_REPO" || echo "Templates already up to date"
+        cd -
+      else
+        echo "WARN: platform/backstage/templates not found in source repo"
+      fi
+    fi
+
     # --- Create application repos ---
     {{- range .Values.application_repos | default (list "app-java" "app-rust") }}
     APP_REPO="{{ . }}"

@@ -215,15 +215,16 @@ data:
       rules:
         - allow: [Component, System, API, Resource, Location, Template]
       locations:
-        # Static templates from GitHub (always present)
-        - type: url
-          target: https://github.com/aws-samples/appmod-blueprints/blob/${WORKSHOP_GIT_BRANCH}/platform/backstage/templates/catalog-info.yaml
-          rules:
-            - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
 {{- if .Values.gitlab_domain_name }}
-        # Templates from GitLab (when available)
+        # Templates from GitLab (cloudfront mode — readTree works with user1 token)
         - type: url
           target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/platform/backstage/templates/catalog-info.yaml
+          rules:
+            - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
+{{- else }}
+        # Static templates from GitHub (domain mode)
+        - type: url
+          target: https://github.com/aws-samples/appmod-blueprints/blob/${WORKSHOP_GIT_BRANCH}/platform/backstage/templates/catalog-info.yaml
           rules:
             - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
 {{- end }}
