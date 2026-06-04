@@ -398,6 +398,7 @@ tasks:
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io --all
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s podidentityassociations.eks.aws.upbound.io --all
       - task: argocd:capability
+      - task: hub:create-mgmt-roles
       - task: hub:setup-cloudfront-exposure
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
@@ -405,6 +406,51 @@ tasks:
       - task: hub:cluster-secret-store
       - task: hub:seed-secret
       - task: hub:apply-root-appset
+
+  hub:create-mgmt-roles:
+    desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq)
+    vars:
+      ACK_CAPABILITY_ROLE:
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' || echo "{{.HUB_CLUSTER_NAME}}-ArgoCDCapabilityRole"
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating cluster-mgmt IAM roles for ACK...{{.C_RESET}}\n'
+      - |
+        TRUST_POLICY=$(cat <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"AWS": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:root"},
+            "Action": ["sts:AssumeRole", "sts:TagSession"],
+            "Condition": {"ArnLike": {"aws:PrincipalArn": [
+              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.ACK_CAPABILITY_ROLE}}",
+              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-ack-*"
+            ]}}
+          }]
+        }
+        EOF
+        )
+        declare -A MANAGED
+        MANAGED[ec2]="arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess"
+        MANAGED[eks]="arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        MANAGED[iam]="arn:aws:iam::aws:policy/IAMFullAccess"
+        MANAGED[ecr]="arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
+        MANAGED[s3]="arn:aws:iam::aws:policy/AmazonS3FullAccess"
+        MANAGED[dynamodb]="arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+        MANAGED[secretsmanager]="arn:aws:iam::aws:policy/SecretsManagerReadWrite"
+        for service in ec2 eks iam ecr s3 dynamodb secretsmanager; do
+          ROLE_NAME="{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}"
+          if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            aws iam update-assume-role-policy --role-name "$ROLE_NAME" --policy-document "$TRUST_POLICY"
+          else
+            aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST_POLICY" --no-cli-pager >/dev/null
+          fi
+          for arn in ${MANAGED[$service]}; do
+            aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$arn" 2>/dev/null || true
+          done
+          echo "  ✓ $ROLE_NAME"
+        done
+      - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
   hub:install-eso:
     desc: Install External Secrets Operator on the hub cluster
