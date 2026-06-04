@@ -126,6 +126,7 @@ tasks:
       - task: idc:configure
       - 'printf "{{.C_INFO}}  [%ds] idc:configure done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
       - task: urls
+      - task: gitlab:clone-repos
       - 'printf "{{.C_OK}}✓ Bootstrap complete in %ds. Run task status.{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
 
   credentials:setup:
@@ -591,6 +592,36 @@ tasks:
         printf '  Argo WF:    https://{{.INGRESS_DOMAIN}}/argo-workflows\n'
         printf '  GitLab:     https://{{.GITLAB_DOMAIN}}\n'
         printf '  ArgoCD:     {{.ARGOCD_URL}}\n'
+
+  gitlab:clone-repos:
+    desc: Clone all GitLab repos locally into ~/environment
+    vars:
+      GITLAB_DOMAIN_INT:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_USERNAME:
+        sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // "{{.HUB_CLUSTER_NAME}}"')
+      REPOS:
+        sh: echo "fleet-config java rust golang dotnet next-js"
+    cmds:
+      - printf '{{.C_STEP}}▸ Cloning GitLab repos to ~/environment...{{.C_RESET}}\n'
+      - |
+        for REPO in {{.REPOS}}; do
+          DEST="$HOME/environment/$REPO"
+          if [ -d "$DEST" ]; then
+            echo "  $REPO already cloned, skipping"
+          else
+            git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/$REPO.git" "$DEST" 2>/dev/null && \
+              echo "  ✓ $REPO cloned" || echo "  ⚠ $REPO clone failed (repo may not exist yet)"
+          fi
+        done
+      - printf '{{.C_OK}}✓ GitLab repos cloned.{{.C_RESET}}\n'
 
   hub:restart-identity-pods:
     desc: Restart pods that depend on Pod Identity (external-dns, LBC, Crossplane providers) after identities are ready
