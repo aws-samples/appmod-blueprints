@@ -113,6 +113,8 @@ backstage:
     exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
     workshop_git_branch: '{{.metadata.annotations.addonsRepoRevision}}'
     gitlab_domain_name: '{{default "" .metadata.annotations.gitlab_domain_name}}'
+    git_username: 'user1'
+    working_repo: 'fleet-config'
     global:
       aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
