@@ -19,7 +19,7 @@ backstage_get_token() {
 
   # Step 2: Start OIDC (capture nonce + session cookies from headers)
   curl -sLk -b "${COOKIE_JAR}" \
-    "${BACKSTAGE_URL}/api/auth/keycloak-oidc/start?scope=openid%20profile%20email&env=development" \
+    "${BACKSTAGE_URL}/api/auth/keycloak-oidc/start?scope=openid%20profile%20email&env=production" \
     -H "X-Requested-With: XMLHttpRequest" \
     --max-redirs 0 -D /tmp/_bs_s2.txt -o /dev/null 2>/dev/null || true
 
@@ -54,7 +54,7 @@ backstage_get_token() {
   REFRESH=$(grep "keycloak-oidc-refresh-token=" /tmp/_bs_s5.txt | sed 's/.*keycloak-oidc-refresh-token=//' | sed 's/;.*//' | tr -d '\r')
 
   # Step 6: Refresh to get Backstage identity token
-  curl -sLk "${BACKSTAGE_URL}/api/auth/keycloak-oidc/refresh?env=development" \
+  curl -sLk "${BACKSTAGE_URL}/api/auth/keycloak-oidc/refresh?env=production" \
     -H "Cookie: backstage-server=${BS_SERVER}; connect.sid=${SID}; keycloak-oidc-granted-scope=${SCOPE}; keycloak-oidc-refresh-token=${REFRESH}" \
     -H "X-Requested-With: XMLHttpRequest" | jq -r '.backstageIdentity.token'
 }
