@@ -80,3 +80,11 @@ Note: The `-bootstrap` suffix is misleading — it's not hub-only bootstrap, it'
 - **Dynamic values only in addons.yaml** — never put template expressions in values.yaml
 - **Check env vars with echo** — `echo $AWS_REGION` etc., don't dump full environment
 - **ArgoCD token refresh** — if `argocd` CLI auth fails, run `argocd-refresh-token` then `source ~/.bashrc.d/platform.sh`
+
+## ArgoCD Safety Rules
+
+- **Never delete an ApplicationSet** to fix sync errors — it orphans generated Applications, causing ClusterSecretStores and other critical resources to disappear from spoke clusters. Use `kubectl replace` or patch instead.
+- **Never delete a KRO instance** (`eksclusters.kro.run`, `vpcs.kro.run`, etc.) — deletion cascades to ACK resources which delete actual AWS infrastructure (EKS clusters, VPCs, IAM roles). To force reconciliation, patch an annotation instead.
+- **`client-side apply migration` errors** — fix by adding/updating `kubectl.kubernetes.io/last-applied-configuration` annotation on the resource, not by deleting it.
+- **Stale Degraded health** — when ArgoCD shows Degraded but 0 unhealthy resources, the health got stuck during a connectivity issue. Trigger a sync (not just refresh) to re-evaluate.
+- **ClusterSecretStore dependency** — `crossplane-aws` and `flux` apps depend on the ClusterSecretStore deployed by `platform-manifests-bootstrap`. If bootstrap is not synced, these apps fail with "ClusterSecretStore not found".
