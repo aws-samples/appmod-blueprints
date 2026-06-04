@@ -51,7 +51,7 @@ data:
     export ROOT_GITLAB_TOKEN=root-{{ .Values.initial_root_password }}
     export IDE_PASSWORD={{ .Values.initial_root_password }}
     export GIT_USERNAME="{{ .Values.git_username | default "user1" }}"
-    export WORKING_REPO="{{ .Values.working_repo | default "eks-cluster-mgmt" }}"
+    export WORKING_REPO="{{ .Values.working_repo | default "fleet-config" }}"
 
     # Check if root token already exists
     echo "Checking if root token already exists..."
@@ -119,28 +119,69 @@ data:
       echo "User $GIT_USERNAME already exists, skipping creation."
     fi
 
-    # Check if repository already exists
+    # --- Create fleet-config overlay repo ---
     echo "Checking if repository $WORKING_REPO already exists..."
-    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'length')
+    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$WORKING_REPO'")] | length')
 
     if [[ "$REPO_EXISTS" == "0" ]]; then
-      echo "Creating $WORKING_REPO Git repository..."
-      curl -Ss -X 'POST' "$GITLAB_URL/api/v4/projects/" \
+      echo "Creating $WORKING_REPO overlay repository..."
+      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/" \
         -H "PRIVATE-TOKEN: $IDE_PASSWORD" \
         -H 'accept: application/json' \
         -H 'Content-Type: application/json' \
-        -d "{
-        \"name\": \"$WORKING_REPO\"
-      }" && echo -e "\n"
+        -d "{\"name\": \"$WORKING_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
+
+      # Seed the overlay repo with initial structure
+      PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$WORKING_REPO'")][0].id')
+
+      # Create directory structure via commits API
+      echo "Seeding $WORKING_REPO with overlay structure..."
+      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/repository/commits" \
+        -H "PRIVATE-TOKEN: $IDE_PASSWORD" \
+        -H 'Content-Type: application/json' \
+        -d '{
+          "branch": "main",
+          "commit_message": "feat: initial overlay structure",
+          "actions": [
+            {"action": "update", "file_path": "README.md", "content": "# Fleet Config\n\nOverlay repository for platform addon customization.\n\n## Structure\n\n```\noverlays/\n  environments/<env>/         # per-environment overrides\n    overrides.yaml\n    <addon>/values.yaml\n  clusters/<cluster>/         # per-cluster overrides\n    overrides.yaml\n    <addon>/values.yaml\nconfigs/\n  <addon>/values.yaml         # global addon config overrides\napplications/\n  <app>/                      # application workload definitions\n```\n"},
+            {"action": "create", "file_path": "overlays/environments/control-plane/.gitkeep", "content": ""},
+            {"action": "create", "file_path": "overlays/environments/dev/.gitkeep", "content": ""},
+            {"action": "create", "file_path": "overlays/environments/prod/.gitkeep", "content": ""},
+            {"action": "create", "file_path": "overlays/clusters/.gitkeep", "content": ""},
+            {"action": "create", "file_path": "configs/.gitkeep", "content": ""}
+          ]
+        }'
     else
       echo "Repository $WORKING_REPO already exists, skipping creation."
     fi
 
-    # Make main branch unprotected
-    echo "Making main branch unprotected..."
-    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '.[0].id')
+    # Unprotect main branch on fleet-config
+    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$WORKING_REPO'")][0].id')
     curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches/main" \
       -H "PRIVATE-TOKEN: $IDE_PASSWORD" || echo "Main branch was not protected or already unprotected"
+
+    # --- Create application repos ---
+    {{- range .Values.application_repos | default (list "app-java" "app-rust") }}
+    APP_REPO="{{ . }}"
+    echo "Checking if application repo $APP_REPO already exists..."
+    APP_REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$APP_REPO'")] | length')
+
+    if [[ "$APP_REPO_EXISTS" == "0" ]]; then
+      echo "Creating application repo $APP_REPO..."
+      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/" \
+        -H "PRIVATE-TOKEN: $IDE_PASSWORD" \
+        -H 'accept: application/json' \
+        -H 'Content-Type: application/json' \
+        -d "{\"name\": \"$APP_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
+
+      # Unprotect main branch
+      APP_PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$APP_REPO'")][0].id')
+      curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$APP_PROJECT_ID/protected_branches/main" \
+        -H "PRIVATE-TOKEN: $IDE_PASSWORD" || true
+    else
+      echo "Application repo $APP_REPO already exists, skipping."
+    fi
+    {{- end }}
 
     echo "GitLab initialization completed successfully."
 ---
