@@ -120,6 +120,11 @@ backstage:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
   ignoreDifferences:
+    - group: ''
+      kind: ConfigMap
+      name: backstage-dynamic-catalog
+      jsonPointers:
+        - /data
     - group: external-secrets.io
       kind: ExternalSecret
       jsonPointers:
