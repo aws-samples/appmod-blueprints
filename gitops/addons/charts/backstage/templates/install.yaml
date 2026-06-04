@@ -396,17 +396,17 @@ data:
       description: Holds system information i.e, hostname, IP, OS, etc
     spec:
       owner: guest
-      ingress_hostname: ''
-      gitlab_hostname: ''
-      argocd_hostname: ''
-      gituser: ''
-      aws_region: ''
-      aws_account_id: ''
-      admin_role_name: ''
-      resource_prefix: ''
-      hub_cluster_name: ''
-      model_s3_bucket: ''
-      workshop_git_branch: ''
+      ingress_hostname: '{{ .Values.ingress_domain_name }}'
+      gitlab_hostname: '{{ default .Values.ingress_domain_name .Values.gitlab_domain_name }}'
+      argocd_hostname: '{{ .Values.argocd_hostname }}'
+      gituser: '{{ .Values.git_username }}'
+      aws_region: '{{ .Values.global.region }}'
+      aws_account_id: '{{ .Values.global.accountId }}'
+      admin_role_name: '{{ .Values.admin_role_name }}'
+      resource_prefix: '{{ .Values.global.resource_prefix }}'
+      hub_cluster_name: '{{ .Values.global.clusterName }}'
+      model_s3_bucket: '{{ .Values.model_s3_bucket }}'
+      workshop_git_branch: '{{ .Values.workshop_git_branch }}'
 ---
 apiVersion: v1
 kind: Service
