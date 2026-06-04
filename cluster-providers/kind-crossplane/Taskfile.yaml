@@ -1127,6 +1127,8 @@ tasks:
           fi
       BS_ACCOUNT_ID:
         sh: aws sts get-caller-identity --query Account --output text
+      ARGOCD_HOST:
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null | sed 's|https://||' || echo "{{.INGRESS_DOMAIN}}"
     cmds:
       - cmd: |
           KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create configmap backstage-dynamic-catalog \
@@ -1141,7 +1143,7 @@ tasks:
             owner: guest
             ingress_hostname: '{{.INGRESS_DOMAIN}}'
             gitlab_hostname: '{{.GITLAB_DOMAIN}}'
-            argocd_hostname: '{{.INGRESS_DOMAIN}}'
+            argocd_hostname: '{{.ARGOCD_HOST}}'
             gituser: '{{.GIT_USERNAME}}'
             aws_region: '{{.AWS_REGION}}'
             aws_account_id: '{{.BS_ACCOUNT_ID}}'
