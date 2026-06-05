@@ -935,6 +935,17 @@ tasks:
         else
           BS_PG_PASS=$(echo "$EXISTING" | jq -r '.backstage_postgres_password')
         fi
+        # Kargo admin credentials: bcrypt hash of user password + random signing key.
+        # Reuse existing values on re-runs so we don't rotate them out from under Kargo.
+        KARGO_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
+        if [ -z "$KARGO_HASH" ]; then
+          pip install bcrypt --quiet 2>/dev/null || true
+          KARGO_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(rounds=10)).decode())" "$USER_PASS" 2>/dev/null)
+        fi
+        KARGO_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
+        if [ -z "$KARGO_KEY" ]; then
+          KARGO_KEY=$(openssl rand -base64 30 | tr -d '/+=' | head -c 40)
+        fi
         UPDATED=$(echo "$EXISTING" | jq \
           --arg amp_url "${AMP_ENDPOINT}api/v1/remote_write" \
           --arg amp_query_url "$AMP_ENDPOINT" \
@@ -944,7 +955,9 @@ tasks:
           --arg user_password "$USER_PASS" \
           --arg git_token "$USER_PASS" \
           --arg backstage_postgres_password "$BS_PG_PASS" \
-          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url, user_password: $user_password, git_token: $git_token, backstage_postgres_password: $backstage_postgres_password}')
+          --arg user_password_hash "$KARGO_HASH" \
+          --arg user_password_key "$KARGO_KEY" \
+          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url, user_password: $user_password, git_token: $git_token, backstage_postgres_password: $backstage_postgres_password, user_password_hash: $user_password_hash, user_password_key: $user_password_key}')
         # Generate the grafana_mysql_password the grafana-dashboards
         # ExternalSecret expects, but only if it isn't already there
         # (so re-runs don't rotate it out from under live consumers).

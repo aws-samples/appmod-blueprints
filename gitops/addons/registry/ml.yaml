@@ -119,6 +119,10 @@ spark-operator:
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/spark-operator'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5'
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
   selector:
     matchExpressions:
       - key: enable_spark_operator
