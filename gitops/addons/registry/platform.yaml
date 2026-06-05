@@ -61,6 +61,9 @@ crossplane-base:
       rds:
         version: "v2.5.3"
         createIdentity: true
+      dynamodb:
+        version: "v2.5.3"
+        createIdentity: true
       amp:
         version: "v2.5.3"
         createIdentity: true
