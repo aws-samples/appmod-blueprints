@@ -58,6 +58,9 @@ crossplane-base:
       eks:
         version: "v2.5.3"
         createIdentity: false
+      rds:
+        version: "v2.5.3"
+        createIdentity: true
       amp:
         version: "v2.5.3"
         createIdentity: true
