@@ -42,7 +42,7 @@ enabledAddons:
   platform_manifests: true
   backstage: true
   kubevela: true
-  devlake: false
+  devlake: true
   gitlab: true
   # ACK controllers
   ack_iam: false
