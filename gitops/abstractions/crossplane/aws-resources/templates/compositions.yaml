@@ -420,8 +420,7 @@ spec:
                 fromFieldPath: spec.IngressRules
                 toFieldPath: spec.forProvider.ingress
                 policy:
-                  mergeOptions:
-                    appendSlice: true
+                  toFieldPath: MergeObjectsAppendArrays
               - fromFieldPath: "metadata.uid"
                 toFieldPath: "spec.forProvider.name"
                 transforms:
