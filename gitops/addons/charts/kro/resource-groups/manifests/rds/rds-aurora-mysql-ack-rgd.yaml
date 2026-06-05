@@ -126,7 +126,7 @@ spec:
       readyWhen:
         - ${externalsecret.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')}
       template:
-        apiVersion: external-secrets.io/v1beta1
+        apiVersion: external-secrets.io/v1
         kind: ExternalSecret
         metadata:
           name: ${schema.metadata.name}-credentials

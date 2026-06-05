@@ -82,9 +82,9 @@ spec:
           exit 1
         fi
         
-        # Check if password is available in the secret
-        endpoint=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d 2>/dev/null || true)
-        password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        # Read credentials from RGD-created secret (keys: host, password)
+        endpoint=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.host}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
 
         if [ -z "$password" ] || [ -z "$endpoint" ]; then
           echo "Secret found but values not available yet"
