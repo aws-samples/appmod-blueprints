@@ -439,7 +439,7 @@ Description=Refresh ArgoCD token every 4 hours
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=4h
+OnUnitInactiveSec=4h
 
 [Install]
 WantedBy=timers.target
