@@ -335,6 +335,7 @@ metadata:
     awsblueprints.io/createDBSubnetGroup: "true"
     awsblueprints.io/dbEngine: mysql
 spec:
+  writeConnectionSecretsToNamespace: crossplane-system
   compositeTypeRef:
     apiVersion: awsblueprints.io/v1alpha1
     kind: XRelationalDatabase
