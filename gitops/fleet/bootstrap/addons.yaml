@@ -42,7 +42,7 @@ spec:
         name: '{{.name}}'
       syncPolicy:
         automated:
-          selfHeal: false
+          selfHeal: true
           allowEmpty: true
           prune: false
         retry:
