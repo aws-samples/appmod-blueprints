@@ -3,6 +3,11 @@ aws:
   clusterName: ""
   accountId: ""
 
+# Name of the hub/control-plane cluster. The argocd-namespace secret-writer RBAC
+# (in provider-kubernetes.yaml) is only rendered when aws.clusterName == hubClusterName,
+# because spoke clusters have no "argocd" namespace and would fail to sync.
+hubClusterName: hub
+
 providerConfig:
   enabled: true
   name: default
