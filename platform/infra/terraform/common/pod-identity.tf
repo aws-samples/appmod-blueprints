@@ -44,6 +44,11 @@ module "external_secrets_pod_identity" {
       sid       = "ecr"
       actions   = ["ecr:*"]
       resources = ["*"]
+    },
+    {
+      sid       = "secretsManagerResourcePolicy"
+      actions   = ["secretsmanager:DeleteResourcePolicy", "secretsmanager:PutResourcePolicy"]
+      resources = ["arn:aws:secretsmanager:${each.value.region}:*:secret:${local.context_prefix}*"]
     }
   ]
   # Pod Identity Associations
@@ -287,6 +292,8 @@ locals {
   # Centralized list of ACK services
   ack_services = ["iam", "ec2", "eks", "ecr", "s3", "dynamodb", "rds"]
 
+  ack_services = ["iam", "ec2", "eks", "ecr", "s3", "dynamodb", "secretsmanager"]
+  
   ack_combinations = {
     for combination in flatten([
       for cluster_key, cluster_value in var.clusters : [
@@ -419,6 +426,8 @@ locals {
       "arn:aws:iam::aws:policy/AmazonRDSFullAccess",
       "arn:aws:iam::aws:policy/SecretsManagerReadWrite",
       "arn:aws:iam::aws:policy/AWSKeyManagementServicePowerUser"
+    secretsmanager = [
+      "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
     ]
   }
 
@@ -443,18 +452,24 @@ resource "aws_iam_role" "ack_workload_role" {
       {
         Effect = "Allow"
         Principal = {
-          AWS = concat(
-            [
-              for cluster_key, cluster_value in var.clusters :
-              aws_iam_role.ack_controller["${cluster_key}-${each.key}"].arn
-            ],
-            [
-              for cluster_key, cluster_value in var.clusters :
-              "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-${cluster_value.name}-ack-capability-role"
-            ]
-          )
+          AWS = [
+            for cluster_key, cluster_value in var.clusters :
+            aws_iam_role.ack_controller["${cluster_key}-${each.key}"].arn
+          ]
         }
         Action = ["sts:AssumeRole", "sts:TagSession"]
+      },
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action = ["sts:AssumeRole", "sts:TagSession"]
+        Condition = {
+          ArnLike = {
+            "aws:PrincipalArn" = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.context_prefix}-*-ack-capability-role"
+          }
+        }
       }
     ]
   })

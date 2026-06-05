@@ -12,16 +12,23 @@ spec:
   goTemplateOptions:
     - missingkey=error
   generators:
-  - clusters:
-      selector:
-        matchLabels:
-          fleet_member: control-plane      
+  - matrix:
+      generators:
+      - clusters:
+          selector:
+            matchLabels:
+              fleet_member: control-plane
+      - git:
+          repoURL: '{{.metadata.annotations.fleet_repo_url}}'
+          revision: '{{.metadata.annotations.fleet_repo_revision}}'
+          files:
+          - path: 'gitops/fleet/kro-values/tenants/{{.metadata.labels.tenant}}/kro-clusters/clusters/*.json'
   template:
     metadata:
-      name: clusters
-      labels:      
+      name: 'cluster-{{.clusterName}}'
+      labels:
         environment: '{{.metadata.labels.environment}}'
-        tenant: '{{.metadata.labels.tenant}}'      
+        tenant: '{{.metadata.labels.tenant}}'
     spec:
       project: default
       sources:
@@ -32,7 +39,7 @@ spec:
         path: 'gitops/addons/charts/kro-clusters/'
         targetRevision: '{{.metadata.annotations.fleet_repo_revision}}'
         helm:
-          releaseName: 'kro-clusters'
+          releaseName: 'kro-cluster-{{.clusterName}}'
           ignoreMissingValueFiles: true
           valueFiles:
             - '$values/{{.metadata.annotations.fleet_repo_basepath}}kro-values/default/kro-clusters/values.yaml'
@@ -40,6 +47,8 @@ spec:
           values: |
             global:
               argoCdHubRoleArn: '{{.metadata.annotations.argocd_hub_role_arn}}'
+              argoCdCapabilityRoleArn: 'arn:aws:iam::{{.metadata.annotations.aws_account_id}}:role/{{.metadata.annotations.resource_prefix}}-{{.metadata.annotations.aws_cluster_name}}-argocd-capability-role'
+              targetCluster: '{{.clusterName}}'
       destination:
         namespace: argocd
         name: '{{.name}}'

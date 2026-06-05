@@ -40,7 +40,7 @@ argocd:
   chartName: argo-cd
   namespace: argocd
   releaseName: argocd
-  defaultVersion: '9.4.5'
+  defaultVersion: '9.5.12'
   chartRepository: 'https://argoproj.github.io/argo-helm'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '0' # Default sync-wave for ArgoCD
@@ -304,7 +304,7 @@ external-secrets:
     argocd.argoproj.io/sync-wave: '-1' # Needs to be after kro RGD
   namespace: external-secrets
   chartName: external-secrets
-  defaultVersion: '0.19.2'
+  defaultVersion: '2.4.1'
   chartRepository: 'https://charts.external-secrets.io'
   selector:
     matchExpressions:
@@ -319,7 +319,7 @@ metrics-server:
   enabled: false
   namespace: kube-system
   chartName: metrics-server
-  defaultVersion: '3.12.1'
+  defaultVersion: '3.13.0'
   chartRepository: 'https://kubernetes-sigs.github.io/metrics-server'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '0' # Default sync-wave for metrics-server
@@ -389,7 +389,7 @@ aws-efs-csi-driver:
   namespace: 'kube-sytem'
   chartName: aws-efs-csi-driver
   chartRepository: https://kubernetes-sigs.github.io/aws-efs-csi-driver
-  defaultVersion: '3.0.7'
+  defaultVersion: '4.1.0'
   selector:
     matchExpressions:
       - key: enable_aws_efs_csi_driver
@@ -415,7 +415,7 @@ aws-for-fluentbit:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
   chartName: aws-for-fluent-bit
   chartRepository: https://aws.github.io/eks-charts
-  defaultVersion: '0.1.34'
+  defaultVersion: '0.2.0'
   selector:
     matchExpressions:
       - key: enable_aws_for_fluentbit
@@ -438,7 +438,7 @@ cert-manager:
   namespace: '{{ default "cert-manager" (index .metadata.annotations "cert-manager_namespace") }}'
   chartName: cert-manager
   chartRepository: https://charts.jetstack.io
-  defaultVersion: 'v1.19.4'
+  defaultVersion: 'v1.20.2'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '2'
   selector:
@@ -459,7 +459,7 @@ external-dns:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
   chartName: external-dns
   chartRepository: https://kubernetes-sigs.github.io/external-dns
-  defaultVersion: '1.14.5'
+  defaultVersion: '1.21.1'
   selector:
     matchExpressions:
       - key: enable_external_dns
@@ -481,7 +481,7 @@ opentelemetry-operator:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
   chartRepository: https://open-telemetry.github.io/opentelemetry-helm-charts
-  defaultVersion: '0.71.1'
+  defaultVersion: '0.112.1'
   values:
     manager:
       collectorImage:
@@ -500,7 +500,7 @@ kyverno:
   namespace: '{{ default "kyverno" (index .metadata.annotations "kyverno_namespace")}}'
   chartName: kyverno
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   selector:
     matchExpressions:
       - key: enable_kyverno
@@ -520,7 +520,7 @@ kyverno-policy-reporter:
   namespace: '{{ default "kyverno" (index .metadata.annotations "kyverno_namespace")}}'
   chartName: policy-reporter
   chartRepository: https://kyverno.github.io/policy-reporter
-  defaultVersion: '3.1.0'
+  defaultVersion: '3.7.4'
   selector:
     matchExpressions:
       - key: enable_kyverno_policy_reporter
@@ -563,7 +563,7 @@ kyverno-policies:
   namespace: '{{ default "kyverno" (index .metadata.annotations "kyverno_namespace")}}'
   chartName: kyverno-policies
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   selector:
     matchExpressions:
       - key: enable_kyverno_policies
@@ -587,7 +587,7 @@ cni-metrics-helper:
   namespace: '{{ default "kube-system" (index .metadata.annotations "cni_metrics_helper_namespace")}}'
   chartName: cni-metrics-helper
   chartRepository: https://aws.github.io/eks-charts
-  defaultVersion: '1.19.2'
+  defaultVersion: '1.21.1'
   valuesObject:
     env:
       AWS_CLUSTER_ID: '{{.metadata.annotations.aws_cluster_name}}'
@@ -606,7 +606,7 @@ kube-state-metrics:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3' # Needs to be after kro RGD
   chartRepository: https://prometheus-community.github.io/helm-charts
-  defaultVersion: '5.25.1'
+  defaultVersion: '7.3.0'
   selector:
     matchExpressions:
       - key: enable_kube_state_metrics
@@ -621,7 +621,7 @@ prometheus-node-exporter:
   namespace: '{{ default "kube-prometheus-stack" (index .metadata.annotations "prometheus_node_exporter_namespace")}}'
   chartName: prometheus-node-exporter
   chartRepository: https://prometheus-community.github.io/helm-charts
-  defaultVersion: '4.39.0'
+  defaultVersion: '4.55.0'
   selector:
     matchExpressions:
       - key: enable_prometheus_node_exporter
@@ -711,7 +711,7 @@ argo-rollouts:
   namespace: argo-rollouts
   chartName: argo-rollouts
   chartRepository: https://argoproj.github.io/argo-helm
-  defaultVersion: '2.39.5'
+  defaultVersion: '2.40.9'
   valuesObject:
     controller:
       resources:
@@ -767,6 +767,12 @@ argo-rollouts:
       - key: enable_argo_rollouts
         operator: In
         values: ['true']
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /spec/conversion
+        - /spec/preserveUnknownFields
 
 argo-events:
   enabled: false
@@ -775,7 +781,7 @@ argo-events:
   namespace: argo-events
   chartName: argo-events
   chartRepository: https://argoproj.github.io/argo-helm
-  defaultVersion: '2.4.20'
+  defaultVersion: '2.4.21'
   selector:
     matchExpressions:
       - key: enable_argo_events
@@ -797,7 +803,7 @@ ingress-nginx:
   namespace: ingress-nginx
   chartName: ingress-nginx
   chartRepository: https://kubernetes.github.io/ingress-nginx
-  defaultVersion: '4.12.2'
+  defaultVersion: '4.15.1'
   selector:
     matchExpressions:
       - key: enable_ingress_nginx
@@ -874,6 +880,9 @@ keycloak:
         - /metadata/generation
         - /metadata/managedFields
         - /metadata/resourceVersion
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -893,6 +902,7 @@ keycloak:
         - '.spec.template.metadata.annotations'
         - '.spec.volumeClaimTemplates[].metadata.creationTimestamp'
         - '.spec.volumeClaimTemplates[].metadata'
+        - '.spec.volumeClaimTemplates[].status'
     - group: ''
       kind: PersistentVolumeClaim
       jsonPointers:
@@ -990,6 +1000,9 @@ jupyterhub:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1055,6 +1068,15 @@ devlake:
       name: devlake-mysql-access
       jsonPointers:
         - /secrets
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
@@ -1115,6 +1137,9 @@ kubeflow:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1150,6 +1175,9 @@ argo-workflows:
         - /metadata/resourceVersion
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       name: keycloak-oidc
@@ -1245,6 +1273,16 @@ kargo:
                 conversionStrategy: Default
                 decodingStrategy: None
                 metadataPolicy: None
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
 
 kubevela:
   enabled: false
@@ -1328,7 +1366,7 @@ crossplane:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5' # Needs to be after external-secrets and before infrastructure provisioning
   namespace: crossplane-system
-  defaultVersion: '2.2.0'
+  defaultVersion: '2.2.1'
   selector:
     matchExpressions:
       - key: enable_crossplane
@@ -1393,6 +1431,15 @@ crossplane-aws:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
 
 grafana:
   enabled: false
@@ -1423,6 +1470,8 @@ grafana:
       jqPathExpressions:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
         - '.spec.versions[].schema.openAPIV3Schema | .. | .remoteRef?'
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1460,6 +1509,16 @@ grafana-dashboards:
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     grafana_url: '{{.metadata.annotations.aws_grafana_url}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
 
 grafana-operator:
   enabled: false
@@ -1538,6 +1597,9 @@ flux:
         - /spec/data/1/remoteRef/metadataPolicy
         - /spec/target/template/engineVersion
         - /spec/target/template/mergePolicy
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: source.toolkit.fluxcd.io
       kind: GitRepository
       jsonPointers:
@@ -1577,6 +1639,8 @@ backstage:
       jqPathExpressions:
         - '.spec.versions[].schema.openAPIV3Schema | .. | .description?'
         - '.spec.versions[].schema.openAPIV3Schema | .. | .remoteRef?'
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1596,6 +1660,7 @@ backstage:
         - /spec/replicas
         - /spec/template/metadata/annotations
         - /spec/volumeClaimTemplates/0/metadata
+        - /spec/volumeClaimTemplates/0/status
       jqPathExpressions:
         - '.spec.template.metadata.annotations'
     - group: rbac.authorization.k8s.io
@@ -1619,7 +1684,7 @@ mlflow:
   namespace: mlflow
   chartName: mlflow
   chartRepository: https://community-charts.github.io/helm-charts
-  defaultVersion: '1.7.2'
+  defaultVersion: '1.8.1'
   selector:
     matchExpressions:
       - key: enable_mlflow
@@ -1641,6 +1706,9 @@ mlflow:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1704,6 +1772,9 @@ spark-operator:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
@@ -1746,6 +1817,9 @@ airflow:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:

@@ -55,7 +55,7 @@ spec:
         values:
           bucket_name: ${{ parameters.bucket_name }}
           configuration: ${{ parameters.configuration }}
-          namespace: ${{ parameters.namespace }}
+          namespace: ${{ parameters.namespace | default('default') }}
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
           accountId: ${{ parameters.accountId | default(steps['fetchSystem'].output.entity.spec.aws_account_id) }}
@@ -86,7 +86,7 @@ spec:
             sourceRepos:
             - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git
             destinations:
-            - namespace: ${{parameters.namespace}}
+            - namespace: ${{ parameters.namespace | default('default') }}
               name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
             clusterResourceWhitelist:
             - group: '*'
@@ -115,7 +115,7 @@ spec:
           spec:
             project: ${{parameters.bucket_name}}-project
             destination:
-              namespace: ${{parameters.namespace}}
+              namespace: ${{ parameters.namespace | default('default') }}
               name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
             source:
               repoURL: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.bucket_name}}.git

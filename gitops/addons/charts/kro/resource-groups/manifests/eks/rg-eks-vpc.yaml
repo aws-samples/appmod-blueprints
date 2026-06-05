@@ -19,6 +19,7 @@ spec:
       accountId: string
       managementAccountId: string
       argoCdHubRoleArn: string
+      argoCdCapabilityRoleArn: string
       adminRoleName: string | default="Admin"
       fleetSecretManagerSecretNameSuffix: string | default="argocd-secret"
       domainName: string | default="cluster.example.com"
@@ -74,7 +75,10 @@ spec:
         enable_crossplane_aws: string | default="true"
         enable_flux: string | default="true"
         enable_ingress_nginx: string | default="true"
+        enable_aws_for_fluentbit: string | default="true"
+        enable_kro_manifests: string | default="true"
         enable_platform_manifests: string | default="true"
+        enable_platform_manifests_bootstrap: string | default="true"
         enable_kubevela: string | default="true"
 
         adot_collector_namespace: string | default="adot-collector-kubeprometheus"
@@ -127,7 +131,7 @@ spec:
           privateSubnet2Cidr: ${schema.spec.cidr.privateSubnet2Cidr}
   - id: eks
     readyWhen:
-    - ${eks.status.conditions.exists(x, x.type == 'InstanceSynced' && x.status == "True")} # Check on kro conditions
+    - ${eks.status.state == "ACTIVE"}
     template:
       apiVersion: kro.run/v1alpha1
       kind: EksCluster
@@ -154,6 +158,7 @@ spec:
           accountId: ${schema.spec.accountId}
           managementAccountId: ${schema.spec.managementAccountId}
           argoCdHubRoleArn: ${schema.spec.argoCdHubRoleArn}
+          argoCdCapabilityRoleArn: ${schema.spec.argoCdCapabilityRoleArn}
           k8sVersion: ${schema.spec.k8sVersion}
           adminRoleName: ${schema.spec.adminRoleName}
           fleetSecretManagerSecretNameSuffix: ${schema.spec.fleetSecretManagerSecretNameSuffix}
@@ -208,7 +213,10 @@ spec:
             enable_crossplane_aws: ${schema.spec.addons.enable_crossplane_aws}
             enable_flux: ${schema.spec.addons.enable_flux}
             enable_ingress_nginx: ${schema.spec.addons.enable_ingress_nginx}
+            enable_aws_for_fluentbit: ${schema.spec.addons.enable_aws_for_fluentbit}
+            enable_kro_manifests: ${schema.spec.addons.enable_kro_manifests}
             enable_platform_manifests: ${schema.spec.addons.enable_platform_manifests}
+            enable_platform_manifests_bootstrap: ${schema.spec.addons.enable_platform_manifests_bootstrap}
             enable_kubevela: ${schema.spec.addons.enable_kubevela}
 
             adot_collector_namespace: ${schema.spec.addons.adot_collector_namespace}

@@ -28,9 +28,6 @@ clusters:
 #     enable_kyverno: "false"
 #     enable_kyverno_policies: "false"
 #     enable_kyverno_policy_reporter: "false"
-#     enable_ack_iam: "false"
-#     enable_ack_eks: "false"
-#     enable_ack_efs: "false"
 #     enable_aws_efs_csi_driver: "false"
 # #END MARKER FOR SED
 # cluster-prod-no:
@@ -53,8 +50,5 @@ clusters:
 #     enable_kyverno: "false"
 #     enable_kyverno_policies: "false"
 #     enable_kyverno_policy_reporter: "false"
-#     enable_ack_iam: "false"
-#     enable_ack_eks: "false"
-#     enable_ack_efs: "false"
 #     enable_aws_efs_csi_driver: "false"
 # # END MARKER FOR SED
