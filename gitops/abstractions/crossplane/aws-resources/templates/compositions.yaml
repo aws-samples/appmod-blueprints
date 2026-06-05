@@ -555,10 +555,18 @@ spec:
                   type: Ready
                 type: MatchCondition
             connectionDetails:
-              - fromConnectionSecretKey: username
-              - fromConnectionSecretKey: password
-              - fromConnectionSecretKey: endpoint
-              - fromConnectionSecretKey: port
+              - type: FromConnectionSecretKey
+                name: username
+                fromConnectionSecretKey: username
+              - type: FromConnectionSecretKey
+                name: password
+                fromConnectionSecretKey: password
+              - type: FromConnectionSecretKey
+                name: endpoint
+                fromConnectionSecretKey: endpoint
+              - type: FromConnectionSecretKey
+                name: port
+                fromConnectionSecretKey: port
           - name: rds-cluster-instance
             base:
               apiVersion: rds.aws.upbound.io/v1beta1
