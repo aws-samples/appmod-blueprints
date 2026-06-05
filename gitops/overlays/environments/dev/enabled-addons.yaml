@@ -14,3 +14,5 @@ enabledAddons:
   aws_for_fluentbit: true
   kubevela: true
   argo_rollouts: true
+  # Platform
+  crossplane: true
