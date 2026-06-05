@@ -386,7 +386,8 @@ spec:
                 toFieldPath: "spec.writeConnectionSecretToRef.namespace"
                 type: FromCompositeFieldPath
         resources:
-          - base:
+          - name: subnet-group
+            base:
               apiVersion: rds.aws.upbound.io/v1beta1
               kind: SubnetGroup
               spec:
@@ -405,7 +406,8 @@ spec:
                   status: 'True'
                   type: Ready
                 type: MatchCondition
-          - base:
+          - name: security-group
+            base:
               apiVersion: ec2.aws.upbound.io/v1beta1
               kind: SecurityGroup
               spec:
@@ -437,7 +439,8 @@ spec:
                   status: 'True'
                   type: Ready
                 type: MatchCondition
-          - base:
+          - name: ingress-rule-vpc
+            base:
               apiVersion: ec2.aws.upbound.io/v1beta1
               kind: SecurityGroupIngressRule
               spec:
@@ -458,7 +461,8 @@ spec:
                   status: 'True'
                   type: Ready
                 type: MatchCondition
-          - base:
+          - name: ingress-rule-self
+            base:
               apiVersion: ec2.aws.upbound.io/v1beta1
               kind: SecurityGroupIngressRule
               metadata:
@@ -483,7 +487,8 @@ spec:
                   status: 'True'
                   type: Ready
                 type: MatchCondition
-          - base:
+          - name: rds-cluster
+            base:
               apiVersion: rds.aws.upbound.io/v1beta2
               kind: Cluster
               spec:
@@ -554,7 +559,8 @@ spec:
               - fromConnectionSecretKey: password
               - fromConnectionSecretKey: endpoint
               - fromConnectionSecretKey: port
-          - base:
+          - name: rds-cluster-instance
+            base:
               apiVersion: rds.aws.upbound.io/v1beta1
               kind: ClusterInstance
               spec:
