@@ -1666,6 +1666,63 @@ tasks:
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=1800s platformclusters.platform.gitops.io/{{.HUB_CLUSTER_NAME}}
       - task: destroy-kind
 
+  spokes:seed-provider-identity:
+    desc: >-
+      Seed the bootstrap Crossplane provider IAM roles + EKS Pod Identity
+      associations for spoke clusters (same account). The iam/eks providers are
+      createIdentity:false in the registry, so crossplane-base does NOT create
+      their roles; without this seed a spoke's iam/eks providers cannot
+      authenticate (chicken-and-egg). Mirrors the hub bootstrap. Idempotent.
+      Run after spokes are provisioned (ACTIVE). Cross-account spokes are NOT
+      handled here - their roles must be bootstrapped in the target account.
+    cmds:
+      - cmd: |
+          # provider service-account suffix -> IAM role name suffix
+          PROVIDERS="iam:CrossplaneIAMProviderRole eks:CrossplaneEKSProviderRole"
+          # Discover spokes from fleet members, excluding the hub.
+          SPOKES=$(ls "{{.GITOPS_ROOT}}/fleet/members" 2>/dev/null | grep -vx "{{.HUB_CLUSTER_NAME}}" || true)
+          if [ -z "$SPOKES" ]; then
+            printf '{{.C_INFO}}  No spoke members under fleet/members; nothing to seed.{{.C_RESET}}\n'
+            exit 0
+          fi
+          for SPOKE in $SPOKES; do
+            STATUS=$(aws eks describe-cluster --name "$SPOKE" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "NONE")
+            if [ "$STATUS" != "ACTIVE" ]; then
+              printf '{{.C_INFO}}  Skipping %s (cluster status: %s){{.C_RESET}}\n' "$SPOKE" "$STATUS"
+              continue
+            fi
+            for ENTRY in $PROVIDERS; do
+              SVC="${ENTRY%%:*}"            # iam | eks
+              ROLE_NAME="${SPOKE}-${ENTRY##*:}"
+              SA="provider-aws-${SVC}"
+              ROLE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/${ROLE_NAME}"
+              # 1. IAM role trusting EKS Pod Identity (idempotent)
+              if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+                aws iam create-role --role-name "$ROLE_NAME" \
+                  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}' \
+                  --tags Key=managed-by,Value=platform-bootstrap Key=purpose,Value="${SVC}-provider" >/dev/null
+                printf '{{.C_OK}}  ✓ %s: created role %s{{.C_RESET}}\n' "$SPOKE" "$ROLE_NAME"
+              else
+                printf '{{.C_INFO}}  %s: role %s exists{{.C_RESET}}\n' "$SPOKE" "$ROLE_NAME"
+              fi
+              # 2. AdministratorAccess (attach is idempotent)
+              aws iam attach-role-policy --role-name "$ROLE_NAME" \
+                --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null
+              # 3. Pod Identity association on the spoke (idempotent)
+              EXISTING=$(aws eks list-pod-identity-associations --cluster-name "$SPOKE" --region {{.AWS_REGION}} \
+                --namespace crossplane-system --service-account "$SA" \
+                --query 'associations[0].associationId' --output text 2>/dev/null || echo "None")
+              if [ "$EXISTING" = "None" ] || [ -z "$EXISTING" ]; then
+                aws eks create-pod-identity-association --cluster-name "$SPOKE" --region {{.AWS_REGION}} \
+                  --namespace crossplane-system --service-account "$SA" --role-arn "$ROLE_ARN" >/dev/null
+                printf '{{.C_OK}}  ✓ %s: pod identity %s -> %s{{.C_RESET}}\n' "$SPOKE" "$SA" "$ROLE_NAME"
+              else
+                printf '{{.C_INFO}}  %s: pod identity for %s exists{{.C_RESET}}\n' "$SPOKE" "$SA"
+              fi
+            done
+          done
+          printf '{{.C_OK}}✓ Spoke provider identity seeding complete.{{.C_RESET}}\n'
+
   hub:destroy-addons:
     desc: Remove all addons from the hub cluster (no git changes needed)
     vars:
