@@ -274,6 +274,16 @@ spec:
               apiVersion: ec2.aws.upbound.io/v1beta1
               kind: NATGateway
               spec:
+                # Exclude LateInitialize so the provider does not copy the observed
+                # vpcId back into spec.forProvider. availabilityMode defaults to
+                # "zonal", and a late-initialized vpcId makes (re)create fail with:
+                # "VpcId is not supported for a NAT gateway with availability mode zonal".
+                # The Composition intentionally never sets vpcId here; subnetId is enough.
+                managementPolicies:
+                  - Observe
+                  - Create
+                  - Update
+                  - Delete
                 forProvider:
                   allocationIdSelector:
                     matchControllerRef: true
