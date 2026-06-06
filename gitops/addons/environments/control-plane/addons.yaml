@@ -92,6 +92,9 @@ grafana-dashboards:
 platform-manifests-bootstrap:
   enabled: true
 
+platform-manifests-post:
+  enabled: true
+
 platform-manifests:
   enabled: true
 
