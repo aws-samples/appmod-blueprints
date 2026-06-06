@@ -1,0 +1,5 @@
+apiVersion: v2
+name: platform-manifests-post
+description: Platform resources that depend on running controllers (ClusterSecretStores, etc.)
+type: application
+version: 0.1.0
