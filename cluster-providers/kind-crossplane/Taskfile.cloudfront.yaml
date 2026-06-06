@@ -1,0 +1,157 @@
+version: "3"
+set: [errexit, nounset, pipefail]
+silent: true
+
+# CloudFront exposure-mode tasks (extracted from the main Taskfile).
+# Only run when EXPOSURE_MODE=cloudfront (guarded per-task via status:).
+# Included by the main Taskfile under the "cloudfront:" namespace.
+tasks:
+  sync-origins:
+    desc: Ensure CloudFront distributions point to the current ALB/NLB DNS (idempotent safety net)
+    cmds:
+      - cmd: |
+          if [ "{{.EXPOSURE_MODE}}" != "cloudfront" ]; then exit 0; fi
+          printf '{{.C_STEP}}▸ Syncing CloudFront origins with current LB DNS...{{.C_RESET}}\n'
+          # Platform ALB
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-platform" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+          DIST_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].Id" --output text 2>/dev/null)
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ] && [ -n "$ALB_DNS" ] && [ "$ALB_DNS" != "None" ]; then
+            CURRENT_ORIGIN=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig.Origins.Items[0].DomainName' --output text)
+            if [ "$CURRENT_ORIGIN" != "$ALB_DNS" ]; then
+              echo "Updating platform CloudFront origin: $CURRENT_ORIGIN → $ALB_DNS"
+              ETAG=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'ETag' --output text)
+              aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig' --output json | \
+                jq --arg dns "$ALB_DNS" '.Origins.Items[0].DomainName = $dns' > /tmp/cf-platform-config.json
+              aws cloudfront update-distribution --id "$DIST_ID" --if-match "$ETAG" --distribution-config file:///tmp/cf-platform-config.json > /dev/null
+              echo "Platform CloudFront updated"
+            else
+              echo "Platform CloudFront origin OK"
+            fi
+          fi
+          # GitLab NLB
+          NLB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-gitlab" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+          DIST_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-gitlab'].Id" --output text 2>/dev/null)
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ] && [ -n "$NLB_DNS" ] && [ "$NLB_DNS" != "None" ]; then
+            CURRENT_ORIGIN=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig.Origins.Items[0].DomainName' --output text)
+            if [ "$CURRENT_ORIGIN" != "$NLB_DNS" ]; then
+              echo "Updating GitLab CloudFront origin: $CURRENT_ORIGIN → $NLB_DNS"
+              ETAG=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'ETag' --output text)
+              aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig' --output json | \
+                jq --arg dns "$NLB_DNS" '.Origins.Items[0].DomainName = $dns' > /tmp/cf-gitlab-config.json
+              aws cloudfront update-distribution --id "$DIST_ID" --if-match "$ETAG" --distribution-config file:///tmp/cf-gitlab-config.json > /dev/null
+              echo "GitLab CloudFront updated"
+            else
+              echo "GitLab CloudFront origin OK"
+            fi
+          fi
+
+  setup-exposure:
+    desc: Pre-create ALB and CloudFront distributions (cloudfront mode only)
+    status:
+      - '[ "{{.EXPOSURE_MODE}}" != "cloudfront" ]'
+    cmds:
+      - task: create-alb
+      - task: hub-distribution
+      - task: gitlab-nlb
+      - task: gitlab-distribution
+  create-alb:
+    desc: Pre-create the platform ALB for CloudFront (cloudfront mode only)
+    status:
+      - aws elbv2 describe-load-balancers --names {{.HUB_CLUSTER_NAME}}-platform --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating platform ALB...{{.C_RESET}}\n'
+      - |
+        set -e
+        VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        PUBLIC_SUBNETS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' '\n')
+        PUBLIC_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $PUBLIC_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' --output text | tr '\t' ' ')
+        CLUSTER_SG=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
+        SG_NAME="{{.HUB_CLUSTER_NAME}}-platform-alb-sg"
+        SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$VPC_ID" --region {{.AWS_REGION}} --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+        if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+          SG_ID=$(aws ec2 create-security-group --group-name "$SG_NAME" --description "Platform ALB" --vpc-id "$VPC_ID" --region {{.AWS_REGION}} --query 'GroupId' --output text)
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} >/dev/null
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 443 --cidr 0.0.0.0/0 --region {{.AWS_REGION}} >/dev/null
+          aws ec2 authorize-security-group-ingress --group-id "$CLUSTER_SG" --protocol -1 --source-group "$SG_ID" --region {{.AWS_REGION}} 2>/dev/null || true
+        fi
+        ALB_ARN=$(aws elbv2 create-load-balancer \
+          --name "{{.HUB_CLUSTER_NAME}}-platform" \
+          --subnets $PUBLIC_SUBNETS \
+          --security-groups "$SG_ID" \
+          --scheme internet-facing \
+          --type application \
+          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=ingress.k8s.aws/stack,Value=platform Key=ingress.k8s.aws/resource,Value=LoadBalancer \
+          --region {{.AWS_REGION}} \
+          --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        aws elbv2 create-listener \
+          --load-balancer-arn "$ALB_ARN" \
+          --protocol HTTP --port 80 \
+          --default-actions "Type=fixed-response,FixedResponseConfig={MessageBody=Not Found,StatusCode=404,ContentType=text/plain}" \
+          --region {{.AWS_REGION}} > /dev/null
+        ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        echo "ALB created: $ALB_DNS"
+      - printf '{{.C_OK}}✓ Platform ALB ready.{{.C_RESET}}\n'
+
+  hub-distribution:
+    desc: Create CloudFront distribution for the platform ALB (idempotent)
+    status:
+      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].Id" --output text | grep -q .
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating platform CloudFront distribution...{{.C_RESET}}\n'
+      - |
+        set -e
+        ALB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-platform" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        CF_CONFIG=$(cat <<'CFEOF'
+        {"CallerReference":"{{.HUB_CLUSTER_NAME}}-TIMESTAMP","Comment":"{{.HUB_CLUSTER_NAME}}-platform","Enabled":true,"Origins":{"Quantity":1,"Items":[{"Id":"alb-origin","DomainName":"ALB_DNS_PLACEHOLDER","CustomOriginConfig":{"HTTPPort":80,"HTTPSPort":443,"OriginProtocolPolicy":"http-only","OriginSslProtocols":{"Quantity":1,"Items":["TLSv1.2"]}}}]},"DefaultCacheBehavior":{"TargetOriginId":"alb-origin","ViewerProtocolPolicy":"redirect-to-https","AllowedMethods":{"Quantity":7,"Items":["GET","HEAD","OPTIONS","PUT","POST","PATCH","DELETE"],"CachedMethods":{"Quantity":2,"Items":["GET","HEAD"]}},"CachePolicyId":"4135ea2d-6df8-44a3-9df3-4b5a84be39ad","OriginRequestPolicyId":"216adef6-5c7f-47e4-b989-5492eafa07d3","Compress":true},"ViewerCertificate":{"CloudFrontDefaultCertificate":true},"PriceClass":"PriceClass_100"}
+        CFEOF
+        )
+        CF_CONFIG=$(echo "$CF_CONFIG" | sed "s|ALB_DNS_PLACEHOLDER|$ALB_DNS|g; s|TIMESTAMP|$(date +%s)|g")
+        CF_DOMAIN=$(aws cloudfront create-distribution --distribution-config "$CF_CONFIG" --query "Distribution.DomainName" --output text)
+        mkdir -p {{.ROOT_DIR}}/private
+        echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/cloudfront-domain
+        echo "CloudFront: $CF_DOMAIN"
+      - printf '{{.C_OK}}✓ Platform CloudFront ready.{{.C_RESET}}\n'
+
+  gitlab-nlb:
+    desc: Pre-create GitLab NLB for CloudFront (cloudfront mode only)
+    status:
+      - aws elbv2 describe-load-balancers --names {{.HUB_CLUSTER_NAME}}-gitlab --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating GitLab NLB...{{.C_RESET}}\n'
+      - |
+        set -e
+        VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        PUBLIC_SUBNETS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' '\n')
+        PUBLIC_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $PUBLIC_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' --output text | tr '\t' ' ')
+        NLB_ARN=$(aws elbv2 create-load-balancer \
+          --name "{{.HUB_CLUSTER_NAME}}-gitlab" \
+          --subnets $PUBLIC_SUBNETS \
+          --scheme internet-facing \
+          --type network \
+          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=service.k8s.aws/stack,Value=gitlab/gitlab Key=service.k8s.aws/resource,Value=LoadBalancer \
+          --region {{.AWS_REGION}} \
+          --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        NLB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$NLB_ARN" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        echo "GitLab NLB: $NLB_DNS"
+      - printf '{{.C_OK}}✓ GitLab NLB ready.{{.C_RESET}}\n'
+
+  gitlab-distribution:
+    desc: Create CloudFront distribution for GitLab NLB (idempotent)
+    status:
+      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-gitlab'].Id" --output text | grep -q .
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating GitLab CloudFront distribution...{{.C_RESET}}\n'
+      - |
+        set -e
+        NLB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-gitlab" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        CF_CONFIG=$(cat <<'CFEOF'
+        {"CallerReference":"{{.HUB_CLUSTER_NAME}}-gitlab-TIMESTAMP","Comment":"{{.HUB_CLUSTER_NAME}}-gitlab","Enabled":true,"Origins":{"Quantity":1,"Items":[{"Id":"gitlab-nlb","DomainName":"NLB_DNS_PLACEHOLDER","CustomOriginConfig":{"HTTPPort":80,"HTTPSPort":443,"OriginProtocolPolicy":"http-only","OriginSslProtocols":{"Quantity":1,"Items":["TLSv1.2"]}}}]},"DefaultCacheBehavior":{"TargetOriginId":"gitlab-nlb","ViewerProtocolPolicy":"redirect-to-https","AllowedMethods":{"Quantity":7,"Items":["GET","HEAD","OPTIONS","PUT","POST","PATCH","DELETE"],"CachedMethods":{"Quantity":2,"Items":["GET","HEAD"]}},"CachePolicyId":"4135ea2d-6df8-44a3-9df3-4b5a84be39ad","OriginRequestPolicyId":"216adef6-5c7f-47e4-b989-5492eafa07d3","Compress":true},"ViewerCertificate":{"CloudFrontDefaultCertificate":true},"PriceClass":"PriceClass_100"}
+        CFEOF
+        )
+        CF_CONFIG=$(echo "$CF_CONFIG" | sed "s|NLB_DNS_PLACEHOLDER|$NLB_DNS|g; s|TIMESTAMP|$(date +%s)|g")
+        CF_DOMAIN=$(aws cloudfront create-distribution --distribution-config "$CF_CONFIG" --query "Distribution.DomainName" --output text)
+        mkdir -p {{.ROOT_DIR}}/private
+        echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+        echo "GitLab CloudFront: $CF_DOMAIN"
+      - printf '{{.C_OK}}✓ GitLab CloudFront ready.{{.C_RESET}}\n'
+
