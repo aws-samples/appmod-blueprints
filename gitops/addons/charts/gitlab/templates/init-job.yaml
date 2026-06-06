@@ -48,8 +48,8 @@ data:
     # Set variables
     export GITLAB_URL=http://gitlab.gitlab.svc.cluster.local
     export GITLAB_POD_NAME=$(kubectl get pods -n gitlab -l app=gitlab -o jsonpath='{.items[0].metadata.name}')
-    export ROOT_GITLAB_TOKEN=root-{{ .Values.git_token | default .Values.initial_root_password }}
-    export IDE_PASSWORD={{ .Values.git_token | default .Values.initial_root_password }}
+    export ROOT_GITLAB_TOKEN=root-${GITLAB_ROOT_PASSWORD}
+    export IDE_PASSWORD=${GITLAB_ROOT_PASSWORD}
     export GIT_USERNAME="{{ .Values.git_username | default "user1" }}"
     export WORKING_REPO="{{ .Values.working_repo | default "fleet-config" }}"
 
@@ -240,6 +240,12 @@ spec:
         - /bin/bash
         - -c
         - /scripts/init-gitlab.sh
+        env:
+        - name: GITLAB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: gitlab-root-credentials
+              key: GITLAB_ROOT_PASSWORD
         volumeMounts:
         - name: init-script
           mountPath: /scripts
