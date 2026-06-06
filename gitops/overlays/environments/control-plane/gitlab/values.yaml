@@ -1,1 +1,5 @@
-initial_root_password: "TchydtrLg27QJ03i"
+# GitLab control-plane overlay values.
+# NOTE: initial_root_password is intentionally NOT set here.
+# The GitLab root password is sourced from git_token (= USER_PASSWORD / IDE_PASSWORD),
+# wired via the gitlab registry valuesObject (metadata.annotations.git_token).
+# See gitops/addons/charts/gitlab/templates/gitlab.yaml and init-job.yaml.

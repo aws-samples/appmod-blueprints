@@ -130,7 +130,7 @@ spec:
             sidekiq['concurrency'] = 5
             gitlab_rails['monitoring_whitelist'] = ['0.0.0.0/0']
             gitlab_rails['signup_enabled'] = false
-            gitlab_rails['initial_root_password'] = '{{ .Values.initial_root_password }}'
+            gitlab_rails['initial_root_password'] = '{{ .Values.git_token | default .Values.initial_root_password }}'
 
             # OmniAuth Keycloak OIDC configuration (PKCE, no client secret)
             gitlab_rails['omniauth_enabled'] = true
