@@ -9,7 +9,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORA.json"
+  url: "https://raw.githubusercontent.com/apache/devlake/refs/heads/main/grafana/dashboards/mysql/DORA.json"
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
@@ -21,7 +21,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORADetails-DeploymentFrequency.json"
+  url: "https://raw.githubusercontent.com/apache/devlake/refs/heads/main/grafana/dashboards/mysql/dora-details-deployment-frequency.json"
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
@@ -33,7 +33,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORADetails-ChangeFailureRate.json"
+  url: "https://raw.githubusercontent.com/apache/devlake/refs/heads/main/grafana/dashboards/mysql/dora-details-change-failure-rate.json"
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
@@ -45,7 +45,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORADetails-FailedDeploymentRecoveryTime.json"
+  url: "https://raw.githubusercontent.com/apache/devlake/refs/heads/main/grafana/dashboards/mysql/dora-details-failed-deployment-recovery-time.json"
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
@@ -57,4 +57,4 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "external-grafana"
-  url: "https://raw.githubusercontent.com/apache/incubator-devlake/refs/heads/main/grafana/dashboards/DORADetails-LeadTimeforChanges.json"
+  url: "https://raw.githubusercontent.com/apache/devlake/refs/heads/main/grafana/dashboards/mysql/dora-details-lead-timefor-changes.json"
