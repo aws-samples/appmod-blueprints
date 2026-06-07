@@ -234,6 +234,26 @@ kubevela:
         values: ['true']
   valuesObject:
     systemDefinitionNamespace: vela-system
+  # Replicates the inherited default syncPolicy and adds ServerSideApply so the
+  # apiserver-defaulted fields on the vela-core admission webhooks
+  # (matchPolicy/namespaceSelector/objectSelector/timeoutSeconds/rules.scope) are
+  # reconciled via server-side field ownership instead of showing as permanent
+  # drift. NOTE: a per-addon syncPolicy fully overrides the default, so the
+  # default values are replicated below.
+  syncPolicy:
+    automated:
+      selfHeal: false
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
   ignoreDifferences:
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
