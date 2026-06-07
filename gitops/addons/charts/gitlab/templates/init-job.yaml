@@ -53,31 +53,27 @@ data:
     export GIT_USERNAME="{{ .Values.git_username | default "user1" }}"
     export WORKING_REPO="{{ .Values.working_repo | default "fleet-config" }}"
 
-    # Check if root token already exists
-    echo "Checking if root token already exists..."
-    TOKEN_EXISTS=$(kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "puts User.find_by_username('root').personal_access_tokens.where(name: 'initial root token').exists?" || echo "false")
-
-    if [[ "$TOKEN_EXISTS" != "true" ]]; then
-      echo "Creating GitLab API token for root..."
-      kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "
-        token = User.find_by_username('root').personal_access_tokens.create(
-          name: 'initial root token',
-          scopes: [
-            'api',
-            'read_user',
-            'read_repository',
-            'write_repository',
-            'sudo',
-            'admin_mode'
-          ],
-          expires_at: 365.days.from_now
-        )
-        token.set_token('${ROOT_GITLAB_TOKEN}')
-        token.save!
-      "
-    else
-      echo "Root token already exists, skipping creation."
-    fi
+    # Ensure root API token exists with the current value (idempotent / self-healing).
+    # Recreated every run so a rotated password (token value) stays in sync.
+    echo "Ensuring root API token..."
+    kubectl exec -i $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "
+      u = User.find_by_username('root')
+      u.personal_access_tokens.where(name: 'initial root token').delete_all
+      token = u.personal_access_tokens.create(
+        name: 'initial root token',
+        scopes: [
+          'api',
+          'read_user',
+          'read_repository',
+          'write_repository',
+          'sudo',
+          'admin_mode'
+        ],
+        expires_at: 365.days.from_now
+      )
+      token.set_token('${ROOT_GITLAB_TOKEN}')
+      token.save!
+    "
 
     # Update GitLab settings
     echo "Updating GitLab settings..."
@@ -85,7 +81,7 @@ data:
 
     # Check if user already exists
     echo "Checking if user $GIT_USERNAME already exists..."
-    USER_EXISTS=$(curl -s "$GITLAB_URL/api/v4/users?search=$GIT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'length')
+    USER_EXISTS=$(curl -s "$GITLAB_URL/api/v4/users?search=$GIT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then length else 0 end')
 
     if [[ "$USER_EXISTS" == "0" ]]; then
       echo "Creating $GIT_USERNAME..."
@@ -99,29 +95,36 @@ data:
         \"email\": \"$GIT_USERNAME@example.com\",
         \"password\": \"$IDE_PASSWORD\"
       }" && echo -e "\n"
-
-      echo "Creating GitLab API token for $GIT_USERNAME..."
-      kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "
-        token = User.find_by_username('$GIT_USERNAME').personal_access_tokens.create(
-          name: 'initial $GIT_USERNAME token',
-          scopes: [
-            'api',
-            'read_user',
-            'read_repository',
-            'write_repository'
-          ],
-          expires_at: 365.days.from_now
-        )
-        token.set_token('${IDE_PASSWORD}')
-        token.save!
-      "
     else
       echo "User $GIT_USERNAME already exists, skipping creation."
     fi
 
+    # Ensure $GIT_USERNAME password and API token match the current value
+    # (idempotent / self-healing: keeps an existing user in sync after a password rotation).
+    # Password is passed via env to be safe with special characters.
+    echo "Ensuring $GIT_USERNAME password and API token..."
+    kubectl exec -i $GITLAB_POD_NAME -n gitlab -- env NEWPW="$IDE_PASSWORD" gitlab-rails runner "
+      u = User.find_by_username('$GIT_USERNAME')
+      if u
+        u.password = ENV['NEWPW']
+        u.password_confirmation = ENV['NEWPW']
+        u.password_automatically_set = false
+        u.save!
+        u.personal_access_tokens.where(name: 'initial $GIT_USERNAME token').delete_all
+        token = u.personal_access_tokens.create(
+          name: 'initial $GIT_USERNAME token',
+          scopes: ['api', 'read_user', 'read_repository', 'write_repository'],
+          expires_at: 365.days.from_now
+        )
+        token.set_token(ENV['NEWPW'])
+        token.save!
+        puts 'ensured password + token for $GIT_USERNAME'
+      end
+    "
+
     # --- Create fleet-config overlay repo ---
     echo "Checking if repository $WORKING_REPO already exists..."
-    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$WORKING_REPO'")] | length')
+    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")] | length) else 0 end')
 
     if [[ "$REPO_EXISTS" == "0" ]]; then
       echo "Creating $WORKING_REPO overlay repository..."
@@ -132,7 +135,7 @@ data:
         -d "{\"name\": \"$WORKING_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
 
       # Seed the overlay repo with initial structure
-      PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$WORKING_REPO'")][0].id')
+      PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")][0].id // "") else "" end')
 
       # Create directory structure via commits API
       echo "Seeding $WORKING_REPO with overlay structure..."
@@ -156,7 +159,7 @@ data:
     fi
 
     # Unprotect main branch on fleet-config
-    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$WORKING_REPO'")][0].id')
+    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")][0].id // "") else "" end')
     curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches/main" \
       -H "PRIVATE-TOKEN: $IDE_PASSWORD" || echo "Main branch was not protected or already unprotected"
 
@@ -187,7 +190,7 @@ data:
     {{- range .Values.application_repos | default (list "app-java" "app-rust") }}
     APP_REPO="{{ . }}"
     echo "Checking if application repo $APP_REPO already exists..."
-    APP_REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$APP_REPO'")] | length')
+    APP_REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$APP_REPO'")] | length) else 0 end')
 
     if [[ "$APP_REPO_EXISTS" == "0" ]]; then
       echo "Creating application repo $APP_REPO..."
@@ -198,7 +201,7 @@ data:
         -d "{\"name\": \"$APP_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
 
       # Unprotect main branch
-      APP_PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '[.[] | select(.path == "'$APP_REPO'")][0].id')
+      APP_PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$APP_REPO'")][0].id // "") else "" end')
       curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$APP_PROJECT_ID/protected_branches/main" \
         -H "PRIVATE-TOKEN: $IDE_PASSWORD" || true
     else
