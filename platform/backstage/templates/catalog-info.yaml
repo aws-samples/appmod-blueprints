@@ -18,6 +18,7 @@ spec:
     - ./create-dev-and-prod-env/template-create-dev-and-prod-env.yaml
     - ./cicd-pipeline/template-cicd-pipeline.yaml
     - ./platform-entities.yaml
+    - ../customtemplates/ddb-table/template.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: System
