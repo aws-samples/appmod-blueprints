@@ -2679,8 +2679,9 @@ spec:
             alb.ingress.kubernetes.io/target-type: ip
             alb.ingress.kubernetes.io/healthcheck-path: /
             alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+            alb.ingress.kubernetes.io/transforms.${schema.spec.name}-gitlab-eventsource-eventsource-svc: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^/argo-events/${schema.spec.name}/?(.*)$","replace":"/webhook"}]}}]'
         spec:
-          ingressClassName: alb
+          ingressClassName: platform
           rules:
             - host: ${schema.spec.hub.hostname}
               http:
