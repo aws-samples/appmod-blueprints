@@ -167,7 +167,6 @@ spec:
         kind: ConfigMap
         metadata:
           name: ${schema.metadata.name}-config
-          namespace: ${schema.spec.namespace}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: RelationalDatabase
