@@ -124,8 +124,8 @@ backstage:
     argocd_hostname: '{{default .metadata.annotations.ingress_domain_name .metadata.annotations.aws_argocd_url}}'
     admin_role_name: '{{default "" .metadata.annotations.admin_role_name}}'
     model_s3_bucket: '{{.metadata.annotations.resource_prefix}}-ray-models-{{.metadata.annotations.aws_account_id}}'
-    spoke_dev_cluster_name: '{{default "spoke-dev" .metadata.annotations.spoke_dev_cluster_name}}'
-    spoke_prod_cluster_name: '{{default "spoke-prod" .metadata.annotations.spoke_prod_cluster_name}}'
+    spoke_dev_cluster_name: '{{ or (index .metadata.annotations "spoke_dev_cluster_name") (printf "%s-spoke-dev" .metadata.annotations.resource_prefix) }}'
+    spoke_prod_cluster_name: '{{ or (index .metadata.annotations "spoke_prod_cluster_name") (printf "%s-spoke-prod" .metadata.annotations.resource_prefix) }}'
     global:
       aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
