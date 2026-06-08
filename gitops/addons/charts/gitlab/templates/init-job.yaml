@@ -124,23 +124,23 @@ data:
 
     # --- Create fleet-config overlay repo ---
     echo "Checking if repository $WORKING_REPO already exists..."
-    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")] | length) else 0 end')
+    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")] | length) else 0 end')
 
     if [[ "$REPO_EXISTS" == "0" ]]; then
       echo "Creating $WORKING_REPO overlay repository..."
       curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/" \
-        -H "PRIVATE-TOKEN: $IDE_PASSWORD" \
+        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
         -H 'accept: application/json' \
         -H 'Content-Type: application/json' \
         -d "{\"name\": \"$WORKING_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
 
       # Seed the overlay repo with initial structure
-      PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")][0].id // "") else "" end')
+      PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")][0].id // "") else "" end')
 
       # Create directory structure via commits API
       echo "Seeding $WORKING_REPO with overlay structure..."
       curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/repository/commits" \
-        -H "PRIVATE-TOKEN: $IDE_PASSWORD" \
+        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
         -H 'Content-Type: application/json' \
         -d '{
           "branch": "main",
@@ -159,9 +159,9 @@ data:
     fi
 
     # Unprotect main branch on fleet-config
-    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")][0].id // "") else "" end')
+    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")][0].id // "") else "" end')
     curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches/main" \
-      -H "PRIVATE-TOKEN: $IDE_PASSWORD" || echo "Main branch was not protected or already unprotected"
+      -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" || echo "Main branch was not protected or already unprotected"
 
     # --- Push Backstage templates into fleet-config (same path as GitHub source) ---
     SOURCE_REPO_URL="{{ .Values.source_repo_url | default "https://github.com/aws-samples/appmod-blueprints" }}"
@@ -190,20 +190,20 @@ data:
     {{- range .Values.application_repos | default (list "app-java" "app-rust") }}
     APP_REPO="{{ . }}"
     echo "Checking if application repo $APP_REPO already exists..."
-    APP_REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$APP_REPO'")] | length) else 0 end')
+    APP_REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$APP_REPO'")] | length) else 0 end')
 
     if [[ "$APP_REPO_EXISTS" == "0" ]]; then
       echo "Creating application repo $APP_REPO..."
       curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/" \
-        -H "PRIVATE-TOKEN: $IDE_PASSWORD" \
+        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
         -H 'accept: application/json' \
         -H 'Content-Type: application/json' \
         -d "{\"name\": \"$APP_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
 
       # Unprotect main branch
-      APP_PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'if type=="array" then ([.[] | select(.path == "'$APP_REPO'")][0].id // "") else "" end')
+      APP_PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$APP_REPO'")][0].id // "") else "" end')
       curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$APP_PROJECT_ID/protected_branches/main" \
-        -H "PRIVATE-TOKEN: $IDE_PASSWORD" || true
+        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" || true
     else
       echo "Application repo $APP_REPO already exists, skipping."
     fi
