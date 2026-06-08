@@ -21,7 +21,7 @@ spec:
               repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
               revision: '{{ .metadata.annotations.fleetRepoRevision }}'
               files:
-                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/*/kro-clusters-kro/values.yaml'
+                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/*/kro-clusters/values.yaml'
   template:
     metadata:
       name: 'clusters-kro-{{ index (splitList "/" .path.path) 4 }}'

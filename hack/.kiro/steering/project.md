@@ -34,8 +34,8 @@ Kind cluster → Crossplane provisions VPC+EKS → ArgoCD Capability created (+ 
 
 | Path | Mechanism | Use Case |
 |------|-----------|----------|
-| `abstractions/crossplane/platform-cluster/` | Crossplane XRD + Composition | Platform team creates spokes (values in `fleet/kro-values/tenants/`) |
-| `abstractions/kro/kro-clusters/` | KRO cluster provisioning chart | Platform team creates spokes via KRO (values in `fleet/kro-values/tenants/*/kro-clusters-kro/`) |
+| `abstractions/crossplane/platform-cluster/` | Crossplane XRD + Composition | Platform team creates spokes (values in `fleet/spoke-values/tenants/`) |
+| `abstractions/kro/kro-clusters/` | KRO cluster provisioning chart | Platform team creates spokes via KRO (values in `fleet/spoke-values/tenants/*/kro-clusters/`) |
 | `addons/charts/kro/resource-groups/manifests/eks/` | KRO ResourceGraphDefinition + ACK | Self-service via Backstage templates |
 
 Both coexist. Crossplane path creates `PlatformCluster` claims. KRO path creates `EksCluster` custom resources reconciled by ACK.
@@ -55,7 +55,7 @@ Both coexist. Crossplane path creates `PlatformCluster` claims. KRO path creates
 | `gitops/overlays/environments/` | Per-environment addon enablement + overrides |
 | `gitops/overlays/clusters/` | Per-cluster overrides |
 | `gitops/fleet/members/` | Fleet member registration |
-| `gitops/fleet/kro-values/` | Cluster provisioning values (Crossplane path) |
+| `gitops/fleet/spoke-values/` | Cluster provisioning values (Crossplane path) |
 | `gitops/abstractions/crossplane/` | Crossplane compositions (platform-cluster, aws-resources) |
 | `platform/backstage/templates/` | Backstage software templates |
 | `platform/infra/terraform/scripts/` | IDC configuration, ArgoCD token automation |

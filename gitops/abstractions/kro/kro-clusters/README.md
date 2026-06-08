@@ -22,14 +22,14 @@ gitops/
 │   └── kro-clusters/                    # This chart
 │       ├── Chart.yaml
 │       └── templates/clusters.yaml      # Renders EksclusterWithVpc per entry
-└── fleet/kro-values/tenants/<tenant>/
+└── fleet/spoke-values/tenants/<tenant>/
     ├── kro-clusters/values.yaml         # Crossplane cluster definitions
     └── kro-clusters-kro/values.yaml     # KRO cluster definitions
 ```
 
 ## Usage
 
-Add a cluster entry in `gitops/fleet/kro-values/tenants/<tenant>/kro-clusters-kro/values.yaml`:
+Add a cluster entry in `gitops/fleet/spoke-values/tenants/<tenant>/kro-clusters-kro/values.yaml`:
 
 ```yaml
 clusters:

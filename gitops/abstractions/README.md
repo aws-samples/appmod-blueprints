@@ -97,8 +97,8 @@ The `kind-crossplane` provider applies the XRD and Composition directly to Kind,
 
 The `bootstrap/clusters.yaml` ApplicationSet deploys this chart as a Helm release to the hub. Values come from:
 
-1. `fleet/kro-values/default/kro-clusters/values.yaml` -- default cluster definitions
-2. `fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml` -- per-tenant overrides
+1. `fleet/spoke-values/default/crossplane-clusters/values.yaml` -- default cluster definitions
+2. `fleet/spoke-values/tenants/<tenant>/crossplane-clusters/values.yaml` -- per-tenant overrides
 
 The values file defines a `clusters` map:
 

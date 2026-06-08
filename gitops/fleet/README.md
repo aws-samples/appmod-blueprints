@@ -9,7 +9,7 @@ fleet/
 ├── members/              Cluster registration (one dir per cluster)
 │   └── <cluster>/
 │       └── values.yaml   ExternalSecret config + metadata labels
-└── kro-values/           KRO cluster provisioning config
+└── spoke-values/           KRO cluster provisioning config
     ├── default/
     │   └── kro-clusters/
     │       └── values.yaml   Default provisioning values for all clusters
@@ -79,8 +79,8 @@ Missing files are silently skipped (`ignoreMissingValueFiles: true`).
 
 The `bootstrap/clusters-crossplane.yaml` ApplicationSet renders the `abstractions/crossplane/platform-cluster` chart for each hub cluster, layering KRO values in this order:
 
-1. `fleet/kro-values/default/kro-clusters/values.yaml` -- shared defaults
-2. `fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml` -- tenant-specific overrides
+1. `fleet/spoke-values/default/crossplane-clusters/values.yaml` -- shared defaults
+2. `fleet/spoke-values/tenants/<tenant>/crossplane-clusters/values.yaml` -- tenant-specific overrides
 
 Each values file defines a `clusters` map where each key becomes a PlatformCluster Crossplane claim:
 
