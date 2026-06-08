@@ -120,6 +120,8 @@ spark-operator:
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5'
   syncPolicy:
+    automated:
+      allowEmpty: true
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
