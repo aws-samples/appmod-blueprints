@@ -1,7 +1,7 @@
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
-  name: rds-aurora-mysql-ack
+  name: rds-aurora-mysql-ack.kro.run
 spec:
   schema:
     apiVersion: v1alpha1

@@ -1,0 +1,33 @@
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: {{ .Values.namespace | default "devlake" }}-ec2
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  arn: arn:aws:iam::{{ .Values.awsAccountId }}:role/{{ .Values.resourcePrefix }}-cluster-mgmt-ec2
+  namespaceSelector:
+    names:
+      - {{ .Values.namespace | default "devlake" }}
+  resourceTypeSelector:
+    - group: ec2.services.k8s.aws
+      kind: ""
+      version: ""
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: {{ .Values.namespace | default "devlake" }}-rds
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  arn: arn:aws:iam::{{ .Values.awsAccountId }}:role/{{ .Values.resourcePrefix }}-cluster-mgmt-rds
+  namespaceSelector:
+    names:
+      - {{ .Values.namespace | default "devlake" }}
+  resourceTypeSelector:
+    - group: rds.services.k8s.aws
+      kind: ""
+      version: ""

@@ -651,7 +651,7 @@ kro-manifests:
   path: '{{.metadata.annotations.addons_repo_basepath}}charts/kro/resource-groups/manifests'
   directory:
     recurse: true
-    exclude: '{cicd-pipeline/**,huggingface/**,ray-service/**}'
+    exclude: '{cicd-pipeline/**,huggingface/**,ray-service/**,rds/**}'
   selector:
     matchExpressions:
       - key: enable_kro_manifests
@@ -1080,6 +1080,8 @@ devlake:
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
+    awsAccountId: '{{.metadata.annotations.aws_account_id}}'
+    resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     rds:
       privateSubnetIds: '{{.metadata.annotations.aws_subnet_ids}}'
       vpcId: '{{.metadata.annotations.aws_vpc_id}}'
