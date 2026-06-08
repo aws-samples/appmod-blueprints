@@ -54,7 +54,7 @@ spec:
         name: '{{.name}}'
       syncPolicy:
         automated:
-          selfHeal: false
+          selfHeal: true
           allowEmpty: true
           prune: true
         retry:
