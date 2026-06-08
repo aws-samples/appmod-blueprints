@@ -197,13 +197,22 @@ spec:
                 "type": "prometheus",
                 "uid": "$datasource"
               },
-              "expr": "histogram_quantile(0.5, rate(rocket_http_requests_duration_seconds_bucket{endpoint!=\"/metrics\"}[$__range])) * 10000",
-              "legendFormat": "{{ `{{endpoint}}` }}",
+              "expr": "histogram_quantile(0.5, sum(rate(rocket_http_requests_duration_seconds_bucket{endpoint!=\"/metrics\"}[5m])) by (le)) * 1000",
+              "legendFormat": "p50",
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "$datasource"
+              },
+              "expr": "histogram_quantile(0.95, sum(rate(rocket_http_requests_duration_seconds_bucket{endpoint!=\"/metrics\"}[5m])) by (le)) * 1000",
+              "legendFormat": "p95",
+              "refId": "B"
             }
           ],
           "title": "Response Time Distribution",
-          "type": "histogram"
+          "type": "timeseries"
         },
         {
           "datasource": {
@@ -286,18 +295,9 @@ spec:
                 "type": "prometheus",
                 "uid": "$datasource"
               },
-              "expr": "rate(process_cpu_seconds_total{container_name=\"rust-app\"}[1m])",
-              "legendFormat": "process",
+              "expr": "sum(rate(container_cpu_usage_seconds_total{container=\"rust-microservice\", namespace=\"team-rust\"}[1m])) by (pod)",
+              "legendFormat": "{{pod}}",
               "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "$datasource"
-              },
-              "expr": "sum(rate(container_cpu_usage_seconds_total{container_name=\"rust-app\"}[1m])) by (name)",
-              "legendFormat": "container",
-              "refId": "B"
             }
           ],
           "title": "CPU usage",
@@ -329,18 +329,9 @@ spec:
                 "type": "prometheus",
                 "uid": "$datasource"
               },
-              "expr": "process_resident_memory_bytes{container_name=\"rust-app\"} / 1024 / 1024",
-              "legendFormat": "process",
+              "expr": "sum(container_memory_working_set_bytes{container=\"rust-microservice\", namespace=\"team-rust\"}) by (pod) / 1024 / 1024",
+              "legendFormat": "{{pod}}",
               "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "$datasource"
-              },
-              "expr": "container_memory_usage_bytes{container_name=\"rust-app\"} / 1024 / 1024",
-              "legendFormat": "container",
-              "refId": "B"
             }
           ],
           "title": "Memory usage",
