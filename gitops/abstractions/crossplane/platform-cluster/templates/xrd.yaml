@@ -93,4 +93,6 @@ spec:
                   type: string
                 nodeRoleArn:
                   type: string
+                natGatewayId:
+                  type: string
 {{- end }}
