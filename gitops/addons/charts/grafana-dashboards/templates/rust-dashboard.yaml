@@ -296,7 +296,7 @@ spec:
                 "uid": "$datasource"
               },
               "expr": "sum(rate(container_cpu_usage_seconds_total{container=\"rust-microservice\", namespace=\"team-rust\"}[1m])) by (pod)",
-              "legendFormat": "{{pod}}",
+              "legendFormat": "{{ `{{pod}}` }}",
               "refId": "A"
             }
           ],
@@ -330,7 +330,7 @@ spec:
                 "uid": "$datasource"
               },
               "expr": "sum(container_memory_working_set_bytes{container=\"rust-microservice\", namespace=\"team-rust\"}) by (pod) / 1024 / 1024",
-              "legendFormat": "{{pod}}",
+              "legendFormat": "{{ `{{pod}}` }}",
               "refId": "A"
             }
           ],
