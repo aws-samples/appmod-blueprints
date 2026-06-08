@@ -21,7 +21,7 @@ spec:
               repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
               revision: '{{ .metadata.annotations.fleetRepoRevision }}'
               files:
-                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/*/kro-clusters/values.yaml'
+                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/tenants/*/crossplane-clusters/values.yaml'
   template:
     metadata:
       name: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
@@ -49,7 +49,7 @@ spec:
                 # in the hub's region unless a tenant values file overrides.
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
             valueFiles:
-              - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/default/kro-clusters/values.yaml'
+              - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/kro-values/default/crossplane-clusters/values.yaml'
               - '$values/{{ .path.path }}/values.yaml'
       destination:
         namespace: argocd
