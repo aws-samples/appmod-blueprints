@@ -546,6 +546,7 @@ tasks:
           name: CLUSTER_NAME
           server: "CLUSTER_ARN"
           config: '{"tlsClientConfig":{"insecure":false}}'
+          project: default
         EOF
       - printf '{{.C_OK}}✓ Seed secret created on hub{{.C_RESET}}\n'
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
