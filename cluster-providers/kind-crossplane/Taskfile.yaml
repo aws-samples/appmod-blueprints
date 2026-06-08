@@ -442,14 +442,17 @@ tasks:
         }
         EOF
         )
-        declare -A MANAGED
-        MANAGED[ec2]="arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess"
-        MANAGED[eks]="arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-        MANAGED[iam]="arn:aws:iam::aws:policy/IAMFullAccess"
-        MANAGED[ecr]="arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
-        MANAGED[s3]="arn:aws:iam::aws:policy/AmazonS3FullAccess"
-        MANAGED[dynamodb]="arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
-        MANAGED[secretsmanager]="arn:aws:iam::aws:policy/SecretsManagerReadWrite"
+        get_policies() {
+          case $1 in
+            ec2) echo "arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess";;
+            eks) echo "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";;
+            iam) echo "arn:aws:iam::aws:policy/IAMFullAccess";;
+            ecr) echo "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess";;
+            s3) echo "arn:aws:iam::aws:policy/AmazonS3FullAccess";;
+            dynamodb) echo "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess";;
+            secretsmanager) echo "arn:aws:iam::aws:policy/SecretsManagerReadWrite";;
+          esac
+        }
         for service in ec2 eks iam ecr s3 dynamodb secretsmanager; do
           ROLE_NAME="{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}"
           if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
@@ -457,7 +460,7 @@ tasks:
           else
             aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST_POLICY" --no-cli-pager >/dev/null
           fi
-          for arn in ${MANAGED[$service]}; do
+          for arn in $(get_policies $service); do
             aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$arn" 2>/dev/null || true
           done
           echo "  ✓ $ROLE_NAME"
