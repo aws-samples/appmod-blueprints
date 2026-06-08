@@ -24,8 +24,8 @@ spec:
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
           ref: defaults
-        - repoURL: '{{ dig "overlay_repo_url" .metadata.annotations.addonsRepoURL .metadata.annotations }}'
-          targetRevision: '{{ dig "overlay_repo_revision" .metadata.annotations.addonsRepoRevision .metadata.annotations }}'
+        - repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.addonsRepoURL }}'
+          targetRevision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.addonsRepoRevision }}'
           ref: overlay
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
           path: 'platform-charts/appset-chart'
@@ -44,12 +44,12 @@ spec:
               - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}addons/registry/ml.yaml
               - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml
               - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
-              - $overlay/{{ dig "overlay_repo_basepath" .metadata.annotations.addonsRepoBasepath .metadata.annotations }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml
-              - $overlay/{{ dig "overlay_repo_basepath" .metadata.annotations.addonsRepoBasepath .metadata.annotations }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
+              - $overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.addonsRepoBasepath }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml
+              - $overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.addonsRepoBasepath }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
             valuesObject:
-              overlayRepoURLGit: '{{ dig "overlay_repo_url" "" .metadata.annotations }}'
-              overlayRepoURLGitRevision: '{{ dig "overlay_repo_revision" "main" .metadata.annotations }}'
-              overlayRepoURLGitBasePath: '{{ dig "overlay_repo_basepath" "" .metadata.annotations }}'
+              overlayRepoURLGit: '{{ index .metadata.annotations "overlay_repo_url" }}'
+              overlayRepoURLGitRevision: '{{ or (index .metadata.annotations "overlay_repo_revision") "main" }}'
+              overlayRepoURLGitBasePath: '{{ index .metadata.annotations "overlay_repo_basepath" }}'
       destination:
         namespace: argocd
         name: '{{ .name }}'
