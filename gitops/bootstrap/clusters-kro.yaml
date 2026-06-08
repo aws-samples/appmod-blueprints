@@ -33,6 +33,9 @@ spec:
         - repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
           targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
           ref: values
+        - repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.fleetRepoURL }}'
+          targetRevision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.fleetRepoRevision }}'
+          ref: overlay
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
           path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/kro/kro-clusters'
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
@@ -45,6 +48,7 @@ spec:
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
             valueFiles:
               - '$values/{{ .path.path }}/values.yaml'
+              - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
       destination:
         namespace: argocd
         name: '{{ .name }}'
