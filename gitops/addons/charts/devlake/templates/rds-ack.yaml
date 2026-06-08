@@ -10,6 +10,6 @@ spec:
   engineVersion: {{ .Values.rds.engineVersion | default "8.0.mysql_aurora.3.10.0" }}
   instanceClass: {{ .Values.rds.instanceClass | default "db.r5.large" }}
   region: {{ .Values.clusterRegion }}
-  privateSubnetIds: {{ .Values.rds.privateSubnetIds | toJson }}
+  privateSubnetIds: {{ splitList "," .Values.rds.privateSubnetIds | toJson }}
   vpcId: {{ .Values.rds.vpcId }}
   createService: true

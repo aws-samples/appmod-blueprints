@@ -1080,6 +1080,9 @@ devlake:
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
+    rds:
+      privateSubnetIds: '{{.metadata.annotations.aws_subnet_ids}}'
+      vpcId: '{{.metadata.annotations.aws_vpc_id}}'
     devlake:
       grafana:
         enabled: false

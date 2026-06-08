@@ -131,7 +131,7 @@ locals {
         aws_account_id   = data.aws_caller_identity.current.account_id
         eks_oidc_issuer  = local.cluster_oidc_issuers[v.name]
         aws_vpc_id       = local.cluster_vpc_ids[v.name]
-        aws_subnet_ids   = local.cluster_subnet_ids[v.name]
+        aws_subnet_ids   = join(",", local.cluster_subnet_ids[v.name])
         aws_grafana_url  = module.managed_grafana.workspace_endpoint
         resource_prefix  = var.resource_prefix
         # Extract EKS Auto Mode node role name from cluster compute config
