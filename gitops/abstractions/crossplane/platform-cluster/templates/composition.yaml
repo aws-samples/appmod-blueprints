@@ -297,6 +297,9 @@ spec:
                 patchSetName: common
               - type: PatchSet
                 patchSetName: tags
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.natGatewayId
 
           # Public Route Table + Route
           - name: public-rt
@@ -358,8 +361,6 @@ spec:
               spec:
                 forProvider:
                   destinationCidrBlock: "0.0.0.0/0"
-                  natGatewayIdSelector:
-                    matchControllerRef: true
                   routeTableIdSelector:
                     matchControllerRef: true
                     matchLabels:
@@ -367,6 +368,11 @@ spec:
             patches:
               - type: PatchSet
                 patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.natGatewayId
+                toFieldPath: spec.forProvider.natGatewayId
+                policy:
+                  fromFieldPath: Required
 
           # Route Table Associations
           - name: public-rta-a
