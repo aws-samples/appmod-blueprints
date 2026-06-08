@@ -35,6 +35,10 @@ metadata:
 spec:
   serviceAccountName: devlake-mysql-setup-sa
   entrypoint: mysql-setup
+  ttlStrategy:
+    secondsAfterCompletion: 300
+    secondsAfterSuccess: 120
+    secondsAfterFailure: 600
   templates:
   - name: mysql-setup
     dag:
