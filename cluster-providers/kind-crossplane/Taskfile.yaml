@@ -109,37 +109,39 @@ tasks:
 
   install:
     desc: Bootstrap the platform (idempotent)
+    vars:
+      INSTALL_START:
+        sh: date +%s
     cmds:
-      - INSTALL_START=$(date +%s)
       - task: init
-      - 'printf "{{.C_INFO}}  [%ds] init done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] init done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: kind:create
-      - 'printf "{{.C_INFO}}  [%ds] kind:create done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] kind:create done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: credentials:setup
-      - 'printf "{{.C_INFO}}  [%ds] credentials:setup done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] credentials:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: argocd:install
-      - 'printf "{{.C_INFO}}  [%ds] argocd:install done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] argocd:install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: crossplane:setup
-      - 'printf "{{.C_INFO}}  [%ds] crossplane:setup done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] crossplane:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: hub:seed
-      - 'printf "{{.C_INFO}}  [%ds] hub:seed done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] hub:seed done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: hub:wait-for-sync
-      - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-sync done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-sync done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: cloudfront:sync-origins
-      - 'printf "{{.C_INFO}}  [%ds] cloudfront:sync-origins done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] cloudfront:sync-origins done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: hub:restart-identity-pods
-      - 'printf "{{.C_INFO}}  [%ds] hub:restart-identity-pods done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] hub:restart-identity-pods done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: hub:wait-for-full-sync
-      - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-full-sync done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-full-sync done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: secrets-manager:seed-observability
-      - 'printf "{{.C_INFO}}  [%ds] secrets-manager:seed-observability done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] secrets-manager:seed-observability done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: hub:restart-langfuse
-      - 'printf "{{.C_INFO}}  [%ds] hub:restart-langfuse done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] hub:restart-langfuse done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: idc:configure
-      - 'printf "{{.C_INFO}}  [%ds] idc:configure done{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_INFO}}  [%ds] idc:configure done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: urls
       - task: gitlab:clone-repos
-      - 'printf "{{.C_OK}}✓ Bootstrap complete in %ds. Run task status.{{.C_RESET}}\n" "$(($(date +%s) - INSTALL_START))"'
+      - 'printf "{{.C_OK}}✓ Bootstrap complete in %ds. Run task status.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
 
   credentials:setup:
     desc: Create AWS credentials secret (auto-detects EC2 vs local, skips if exists)
