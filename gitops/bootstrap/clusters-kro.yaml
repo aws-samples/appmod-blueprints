@@ -21,10 +21,10 @@ spec:
               repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
               revision: '{{ .metadata.annotations.fleetRepoRevision }}'
               files:
-                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/*/kro-clusters/values.yaml'
+                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/*/kro-clusters/clusters/*.json'
   template:
     metadata:
-      name: 'clusters-kro-{{ index (splitList "/" .path.path) 4 }}'
+      name: 'clusters-kro-{{ .clusterName }}'
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
@@ -40,17 +40,18 @@ spec:
           path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/kro/kro-clusters'
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
           helm:
-            releaseName: 'clusters-kro-{{ index (splitList "/" .path.path) 4 }}'
+            releaseName: 'clusters-kro-{{ .clusterName }}'
             ignoreMissingValueFiles: true
             valuesObject:
               global:
                 argoCdHubRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
+                targetCluster: '{{ .clusterName }}'
             valueFiles:
-              - '$values/{{ .path.path }}/values.yaml'
+              - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
               - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
       destination:
-        namespace: argocd
+        namespace: '{{ .clusterName }}'
         name: '{{ .name }}'
       syncPolicy:
         automated:
