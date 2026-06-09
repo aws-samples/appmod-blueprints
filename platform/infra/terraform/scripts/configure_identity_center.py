@@ -86,8 +86,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def _refresh_credentials_via_lambda():
-    """Refresh credentials — try Lambda first, fall back to instance profile."""
-    import urllib.request
+    """Invoke the KeycloakIDCIntegration Lambda to refresh SSM credentials.
+
+    IMDS fallback is intentionally NOT used here — using EC2 instance profile
+    credentials for console federation triggers Epoxy's
+    programmatic-credentials-for-console-access detector on personal accounts.
+    """
     print("Refreshing IDC credentials via Lambda...", file=sys.stderr)
     client = boto3.client("lambda")
     ssm = boto3.client("ssm")
@@ -95,35 +99,14 @@ def _refresh_credentials_via_lambda():
     # Discover Lambda function name
     prefix = os.environ.get("RESOURCE_PREFIX", "peeks")
     funcs = client.list_functions()["Functions"]
-    func_name = next((f["FunctionName"] for f in funcs if "KeycloakIDCIntegration" in f["FunctionName"] or "IdentityCenterFn" in f["FunctionName"]), None)
+    func_name = next((f["FunctionName"] for f in funcs if "KeycloakIDCIntegration" in f["FunctionName"]), None)
 
     if not func_name:
-        # Fall back to instance profile credentials
-        print("No credential-refresh Lambda found, using instance profile...", file=sys.stderr)
-        token = urllib.request.urlopen(urllib.request.Request(
-            "http://169.254.169.254/latest/api/token",
-            method="PUT", headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"}
-        )).read().decode()
-        role = urllib.request.urlopen(urllib.request.Request(
-            "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
-            headers={"X-aws-ec2-metadata-token": token}
-        )).read().decode()
-        creds_raw = urllib.request.urlopen(urllib.request.Request(
-            f"http://169.254.169.254/latest/meta-data/iam/security-credentials/{role}",
-            headers={"X-aws-ec2-metadata-token": token}
-        )).read().decode()
-        creds_json = json.loads(creds_raw)
-        fresh = json.dumps({
-            "AccessKeyId": creds_json["AccessKeyId"],
-            "SecretAccessKey": creds_json["SecretAccessKey"],
-            "SessionToken": creds_json["Token"],
-            "Expiration": creds_json["Expiration"],
-        })
-        param_name = f"/{prefix}/keycloak-idc-integration-credentials"
-        ssm.put_parameter(Name=param_name, Value=fresh, Type="SecureString", Overwrite=True)
-        _write_credentials_file(fresh)
-        print("Credentials refreshed via instance profile", file=sys.stderr)
-        return
+        raise RuntimeError(
+            "KeycloakIDCIntegration Lambda function not found. "
+            "Ensure the CDK stack is deployed with the credential-refresh Lambda. "
+            "IMDS fallback is disabled to avoid Epoxy detection."
+        )
 
     # Discover the RoleArn from the SSM parameter description
     param_name = f"/{prefix}/keycloak-idc-integration-credentials"
