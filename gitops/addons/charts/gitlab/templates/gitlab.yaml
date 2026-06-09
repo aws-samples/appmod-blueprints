@@ -172,20 +172,31 @@ spec:
         securityContext:
           privileged: false
           runAsUser: 0
+        # GitLab Omnibus first boot (reconfigure + bundled PostgreSQL init + DB
+        # migrations) can take several minutes. The startupProbe gates liveness/
+        # readiness so the container is not killed mid-initialization. It allows
+        # up to ~15 min (60 * 15s) before liveness/readiness begin enforcing.
+        startupProbe:
+          httpGet:
+            path: /-/readiness
+            port: 80
+          periodSeconds: 15
+          timeoutSeconds: 15
+          failureThreshold: 60
         livenessProbe:
           httpGet:
             path: /-/liveness
             port: 80
-          initialDelaySeconds: 180
           timeoutSeconds: 15
           periodSeconds: 30
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /-/readiness
             port: 80
-          initialDelaySeconds: 180
           timeoutSeconds: 15
           periodSeconds: 30
+          failureThreshold: 5
         volumeMounts:
         - name: gitlab-data
           mountPath: /etc/gitlab

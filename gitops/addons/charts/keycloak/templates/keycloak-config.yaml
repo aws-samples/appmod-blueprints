@@ -774,8 +774,14 @@ spec:
                 local client_id_name=$1
                 local client_name=$2
                 
-                CLIENT_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id")
-                CLIENT_SCOPE_GROUPS_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/client-scopes" '.[] | select(.name == "groups") | .id')
+                # Use '|| true' so a missing client (e.g. one whose creation
+                # failed) does not abort the whole job via 'set -e' + 'jq -e'.
+                CLIENT_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id") || true
+                if [ -z "${CLIENT_ID}" ]; then
+                  echo "Warning: client ${client_id_name} not found, skipping client scope assignment"
+                  return 0
+                fi
+                CLIENT_SCOPE_GROUPS_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/client-scopes" '.[] | select(.name == "groups") | .id') || true
                 keycloak_put "/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}" "${client_name} client scope"
               }
 
