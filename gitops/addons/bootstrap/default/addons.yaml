@@ -639,6 +639,21 @@ kro-manifests-hub:
         operator: In
         values: ['true']
 
+argocd-health-checks:
+  enabled: false
+  type: manifest
+  namespace: argocd
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-3' # Before kro RGDs so health checks are ready
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/argocd-health-checks'
+  directory:
+    recurse: false
+  selector:
+    matchExpressions:
+      - key: enable_argocd_health_checks
+        operator: In
+        values: ['true']
+
 multi-acct:
   enabled: false
   namespace: kro
