@@ -9,7 +9,8 @@ includes:
       AWS_REGION: '{{.AWS_REGION}}'
       HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
       ROOT_DIR: '{{.ROOT_DIR}}'
-      EXPOSURE_MODE: '{{.EXPOSURE_MODE}}'
+      EXPOSURE_MODE:
+        sh: 'if [ -z "$(yq ''.domain // ""'' {{.ROOT_DIR}}/config.local.yaml)" ]; then echo "cloudfront"; else echo "domain"; fi'
       C_STEP: '{{.C_STEP}}'
       C_OK: '{{.C_OK}}'
       C_RESET: '{{.C_RESET}}'
