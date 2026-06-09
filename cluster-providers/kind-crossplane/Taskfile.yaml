@@ -715,6 +715,82 @@ tasks:
         done
       - printf '{{.C_OK}}✓ GitLab repos cloned.{{.C_RESET}}\n'
 
+  spokes:enable-crossplane:
+    desc: "Enable a spoke cluster via Crossplane (usage: task spokes:enable-crossplane -- <cluster-name>)"
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+      GITLAB_DOMAIN_INT:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+    cmds:
+      - |
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:enable-crossplane -- <cluster-name>"; exit 1; fi
+        REPO_DIR=$(mktemp -d)
+        git clone "https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git" "$REPO_DIR" 2>/dev/null
+        mkdir -p "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters"
+        cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml" <<EOF
+        clusters:
+          {{.CLUSTER}}:
+            clusterName: {{.CLUSTER}}
+            vpcCidr: "10.$(shuf -i 1-254 -n 1).0.0/16"
+            kubernetesVersion: "{{.K8S_VERSION}}"
+            autoMode: true
+            resourcePrefix: {{.RESOURCE_PREFIX}}
+        EOF
+        cd "$REPO_DIR" && git add -A && git commit -m "feat: enable spoke {{.CLUSTER}} via Crossplane" && git push 2>/dev/null
+        rm -rf "$REPO_DIR"
+        printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via Crossplane in fleet-config overlay.{{.C_RESET}}\n'
+
+  spokes:enable-kro:
+    desc: "Enable a spoke cluster via KRO (usage: task spokes:enable-kro -- <cluster-name>)"
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+      GITLAB_DOMAIN_INT:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+    cmds:
+      - |
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:enable-kro -- <cluster-name>"; exit 1; fi
+        REPO_DIR=$(mktemp -d)
+        git clone "https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git" "$REPO_DIR" 2>/dev/null
+        mkdir -p "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters"
+        cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters/{{.CLUSTER}}.json" <<EOF
+        {"clusterName": "{{.CLUSTER}}"}
+        EOF
+        cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml" <<EOF
+        clusters:
+          {{.CLUSTER}}:
+            clusterName: {{.CLUSTER}}
+            tenant: workshop
+            environment: prod
+            region: {{.AWS_REGION}}
+            k8sVersion: "{{.K8S_VERSION}}"
+            accountId: "{{.AWS_ACCOUNT_ID}}"
+            managementAccountId: "{{.AWS_ACCOUNT_ID}}"
+            resourcePrefix: {{.RESOURCE_PREFIX}}
+            cidr:
+              vpcCidr: "10.$(shuf -i 1-254 -n 1).0.0/16"
+              publicSubnet1Cidr: "10.$(shuf -i 1-254 -n 1).1.0/24"
+              publicSubnet2Cidr: "10.$(shuf -i 1-254 -n 1).2.0/24"
+              privateSubnet1Cidr: "10.$(shuf -i 1-254 -n 1).11.0/24"
+              privateSubnet2Cidr: "10.$(shuf -i 1-254 -n 1).12.0/24"
+        EOF
+        cd "$REPO_DIR" && git add -A && git commit -m "feat: enable spoke {{.CLUSTER}} via KRO" && git push 2>/dev/null
+        rm -rf "$REPO_DIR"
+        printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via KRO in fleet-config overlay.{{.C_RESET}}\n'
+
   hub:restart-identity-pods:
     desc: Restart pods that depend on Pod Identity (external-dns, LBC, Crossplane providers) after identities are ready
     cmds:
