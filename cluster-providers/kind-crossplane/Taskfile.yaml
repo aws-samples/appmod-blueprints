@@ -1275,6 +1275,13 @@ tasks:
 
   idc:configure:
     desc: Configure IDC with Keycloak as external IdP and sync users via SCIM
+    status:
+      - |
+        IDENTITY_STORE_ID=$(aws sso-admin list-instances --region {{.AWS_REGION}} \
+          --query "Instances[?InstanceArn=='{{.IDC_INSTANCE_ARN}}'].IdentityStoreId" --output text 2>/dev/null)
+        aws identitystore list-users --identity-store-id "$IDENTITY_STORE_ID" --region {{.AWS_REGION}} \
+          --filters "AttributePath=UserName,AttributeValue={{.GIT_USERNAME}}" \
+          --query "Users[0].UserId" --output text 2>/dev/null | grep -qv "^None\|^$"
     vars:
       IDC_INSTANCE_ID:
         sh: echo "{{.IDC_INSTANCE_ARN}}" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//'
