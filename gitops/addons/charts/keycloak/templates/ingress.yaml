@@ -6,7 +6,8 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "10"
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/healthcheck-path: /keycloak/health
+    alb.ingress.kubernetes.io/healthcheck-path: /keycloak/realms/master
+    alb.ingress.kubernetes.io/success-codes: "200-302"
 {{- if eq (default "domain" .Values.global.exposure_mode) "cloudfront" }}
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
 {{- else }}
