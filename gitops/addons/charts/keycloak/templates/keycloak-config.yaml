@@ -350,10 +350,10 @@ data:
         "pkce.code.challenge.method": "S256"
       },
       "alwaysDisplayInConsole": false,
-      "rootUrl": "https://${DOMAIN_NAME}",
+      "rootUrl": "https://${GITLAB_DOMAIN_NAME}",
       "baseUrl": "",
       "redirectUris": [
-        "https://${DOMAIN_NAME}/users/auth/openid_connect/callback"
+        "https://${GITLAB_DOMAIN_NAME}/users/auth/openid_connect/callback"
       ],
       "webOrigins": [
         "/*"
@@ -805,6 +805,7 @@ spec:
               
               # Get Keycloak token for initial Admin user
               export DOMAIN_NAME={{ .Values.global.ingress_domain_name }}
+              export GITLAB_DOMAIN_NAME={{ .Values.global.gitlab_domain_name }}
               export GRAFANAURL={{ .Values.aws.grafana_url }}
               export KEYCLOAK_URL=http://keycloak.keycloak.svc.cluster.local:8080/keycloak
               export REALM_NAME=platform
