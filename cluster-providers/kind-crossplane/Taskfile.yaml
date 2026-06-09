@@ -448,7 +448,7 @@ tasks:
         get_policies() {
           case $1 in
             ec2) echo "arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess";;
-            eks) echo "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";;
+            eks) echo "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEKSServicePolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";;
             iam) echo "arn:aws:iam::aws:policy/IAMFullAccess";;
             ecr) echo "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess";;
             s3) echo "arn:aws:iam::aws:policy/AmazonS3FullAccess";;
@@ -473,7 +473,7 @@ tasks:
         aws iam put-role-policy --role-name "$EKS_ROLE" --policy-name eks-access-management --policy-document '{
           "Version": "2012-10-17",
           "Statement": [
-            {"Effect": "Allow", "Action": ["eks:*AccessEntry*","eks:*PodIdentity*","eks:TagResource"], "Resource": "*"},
+            {"Effect": "Allow", "Action": ["eks:*"], "Resource": "*"},
             {"Effect": "Allow", "Action": ["iam:PassRole","iam:GetRole"], "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-*"}
           ]
         }'
