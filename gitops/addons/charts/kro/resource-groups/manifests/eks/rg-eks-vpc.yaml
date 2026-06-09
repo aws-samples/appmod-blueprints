@@ -3,9 +3,8 @@ kind: ResourceGraphDefinition
 metadata:
   name: eksclusterwithvpc.kro.run
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,Replace=false
     argocd.argoproj.io/sync-wave: "-1"
-    argocd.argoproj.io/sync-options: Replace=false
 spec:
   schema:
     apiVersion: v1alpha1
@@ -131,7 +130,7 @@ spec:
           privateSubnet2Cidr: ${schema.spec.cidr.privateSubnet2Cidr}
   - id: eks
     readyWhen:
-    - ${eks.status.state == "ACTIVE"}
+    - ${eks.status.clusterState == "ACTIVE"}
     template:
       apiVersion: kro.run/v1alpha1
       kind: EksCluster
