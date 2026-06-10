@@ -142,6 +142,8 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] idc:configure done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: urls
       - task: gitlab:clone-repos
+      - task: hub:set-overlay-repo
+      - 'printf "{{.C_INFO}}  [%ds] hub:set-overlay-repo done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: spokes:enable-crossplane
         vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
       - task: spokes:enable-kro
@@ -720,6 +722,117 @@ tasks:
         done
       - printf '{{.C_OK}}✓ GitLab repos cloned.{{.C_RESET}}\n'
 
+  hub:set-overlay-repo:
+    desc: >-
+      Wire overlay_repo_url -> GitLab fleet-config on the hub cluster config so
+      every overlay-aware Argo app (incl. multi-acct) reads $overlay from
+      fleet-config instead of falling back to the GitHub addons repo. Runs LATE
+      (after GitLab + fleet-config exist) because $overlay is a real Argo source:
+      pointing it at a non-existent/unauthenticated repo breaks ALL overlay-aware
+      apps. Self-protecting: verifies reachability, registers an ArgoCD repo
+      credential, flips <hub>/config (ESO reconciles the cluster secret), then
+      verifies the flip resolved and auto-reverts if it did not. Idempotent.
+    vars:
+      GITLAB_DOMAIN_INT:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_USERNAME:
+        sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+      # Root of the fleet-config overlay structure (configs/, overlays/) per the
+      # GitLab init-job seed. Keep "" unless the overlay repo nests under a prefix.
+      OVERLAY_REPO_BASEPATH: ""
+    cmds:
+      - |
+        OVERLAY_URL="https://{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git"
+        printf '{{.C_STEP}}▸ Verifying fleet-config overlay repo is reachable...{{.C_RESET}}\n'
+        if ! git ls-remote "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}⚠ fleet-config not reachable yet — skipping overlay wiring.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Re-run later: task kind-crossplane:hub:set-overlay-repo{{.C_RESET}}\n'
+          exit 0
+        fi
+        printf '{{.C_OK}}✓ fleet-config reachable.{{.C_RESET}}\n'
+      - task: hub:kubeconfig
+      - |
+        # Register an ArgoCD repository credential for the private GitLab fleet-config
+        # repo. GitHub works anonymously; GitLab is private, so without this the
+        # $overlay source cannot be cloned by the ArgoCD repo-server.
+        printf '{{.C_STEP}}▸ Registering ArgoCD repository credential for fleet-config...{{.C_RESET}}\n'
+        cat <<EOF | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: fleet-config-repo
+          namespace: argocd
+          labels:
+            argocd.argoproj.io/secret-type: repository
+        stringData:
+          type: git
+          url: https://{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git
+          username: "{{.GIT_USERNAME}}"
+          password: "{{.GIT_PASSWORD}}"
+        EOF
+      - |
+        # Merge overlay_* into <hub>/config metadata; the fleet-secret ExternalSecret
+        # (refreshInterval 1m) reconciles these onto the hub cluster secret annotations.
+        printf '{{.C_STEP}}▸ Wiring overlay_repo_url into {{.HUB_CLUSTER_NAME}}/config...{{.C_RESET}}\n'
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        OVERLAY_URL="https://{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git"
+        EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
+        UPDATED=$(echo "$EXISTING" | jq \
+          --arg url "$OVERLAY_URL" \
+          --arg rev "main" \
+          --arg bp "{{.OVERLAY_REPO_BASEPATH}}" \
+          '.metadata = (.metadata | fromjson | . + {overlay_repo_url: $url, overlay_repo_revision: $rev, overlay_repo_basepath: $bp} | tojson)')
+        aws secretsmanager put-secret-value --secret-id "$SECRET_KEY" --secret-string "$UPDATED" --region {{.AWS_REGION}} >/dev/null
+        echo "Set overlay_repo_url=$OVERLAY_URL (basepath='{{.OVERLAY_REPO_BASEPATH}}')"
+      - |
+        # Force ESO to re-sync now, then wait for the annotation to land.
+        ES=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | head -1)
+        [ -n "$ES" ] && KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd annotate "$ES" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+        printf '{{.C_STEP}}▸ Waiting for cluster secret to pick up overlay_repo_url...{{.C_RESET}}\n'
+        for i in $(seq 1 24); do
+          VAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd get secret {{.HUB_CLUSTER_NAME}} -o jsonpath='{.metadata.annotations.overlay_repo_url}' 2>/dev/null || echo "")
+          [ -n "$VAL" ] && break
+          sleep 5
+        done
+      - |
+        # Verify the $overlay source now resolves on a representative overlay-aware
+        # app; if it errors (e.g. the managed ArgoCD capability can't auth to GitLab),
+        # auto-revert so we don't leave ~all apps broken.
+        printf '{{.C_STEP}}▸ Verifying overlay source resolves (cluster-addons)...{{.C_RESET}}\n'
+        OK=false
+        for i in $(seq 1 24); do
+          COND=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd get application cluster-addons \
+            -o jsonpath='{range .status.conditions[*]}{.type}|{.message}{"\n"}{end}' 2>/dev/null || echo "")
+          if echo "$COND" | grep -qiE "fleet-config|authentication required|repository not found|error|failed"; then
+            printf '{{.C_INFO}}  not resolved yet, retrying (%d/24)...{{.C_RESET}}\n' "$i"
+            sleep 10
+            continue
+          fi
+          OK=true; break
+        done
+        if [ "$OK" != true ]; then
+          printf '{{.C_ERR}}⚠ Overlay source not resolving — reverting overlay_repo_url.{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  Likely the ArgoCD capability cannot authenticate to GitLab fleet-config.{{.C_RESET}}\n'
+          SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+          EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
+          REVERTED=$(echo "$EXISTING" | jq '.metadata = (.metadata | fromjson | del(.overlay_repo_url, .overlay_repo_revision, .overlay_repo_basepath) | tojson)')
+          aws secretsmanager put-secret-value --secret-id "$SECRET_KEY" --secret-string "$REVERTED" --region {{.AWS_REGION}} >/dev/null
+          ES=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | head -1)
+          [ -n "$ES" ] && KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd annotate "$ES" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+          printf '{{.C_ERR}}  Reverted — apps stay on the GitHub fallback. Fix the GitLab credential, then re-run.{{.C_RESET}}\n'
+          rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+          exit 0
+        fi
+        printf '{{.C_OK}}✓ Overlay wired to fleet-config and resolving. All overlay-aware hub apps now use $overlay from GitLab.{{.C_RESET}}\n'
+        rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
   spokes:enable-crossplane:
     desc: "Enable a spoke cluster via Crossplane (usage: task spokes:enable-crossplane -- <cluster-name>)"
     vars:
@@ -792,9 +905,26 @@ tasks:
               privateSubnet1Cidr: "10.$(shuf -i 1-254 -n 1).11.0/24"
               privateSubnet2Cidr: "10.$(shuf -i 1-254 -n 1).12.0/24"
         EOF
-        cd "$REPO_DIR" && git add -A && git commit -m "feat: enable spoke {{.CLUSTER}} via KRO" && git push 2>/dev/null
+        # multi-acct (ACK CARM): map this spoke's namespace -> AWS account so the
+        # hub's ACK controllers render an IAMRoleSelector per service and assume
+        # the {{.RESOURCE_PREFIX}}-cluster-mgmt-<svc> roles when provisioning the
+        # spoke. The KRO EksclusterWithVpc lands in namespace == clusterName, which
+        # is the key the multi-acct chart selects on. Only KRO spokes need this —
+        # ACK does the provisioning; Crossplane spokes do not use CARM.
+        # Path = the appset-chart external per-addon overlay tier:
+        #   $overlay/<overlay_repo_basepath>configs/multi-acct/values.yaml
+        # The fleet-config repo (seeded by the GitLab init-job) keeps configs/ and
+        # overlays/ at the REPO ROOT (overlay_repo_basepath=""), so this lives at
+        # configs/multi-acct/values.yaml — NOT under gitops/. (Spoke cluster values
+        # use gitops/fleet/... because that appset falls back to fleetRepoBasepath.)
+        # yq merge keeps it idempotent and accumulates entries across spokes.
+        mkdir -p "$REPO_DIR/configs/multi-acct"
+        MA_FILE="$REPO_DIR/configs/multi-acct/values.yaml"
+        [ -f "$MA_FILE" ] || printf 'clusters: {}\n' > "$MA_FILE"
+        yq -i '.clusters."{{.CLUSTER}}" = "{{.AWS_ACCOUNT_ID}}"' "$MA_FILE"
+        cd "$REPO_DIR" && git add -A && git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ multi-acct CARM mapping)" && git push 2>/dev/null
         rm -rf "$REPO_DIR"
-        printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via KRO in fleet-config overlay.{{.C_RESET}}\n'
+        printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via KRO + multi-acct CARM mapping in fleet-config overlay.{{.C_RESET}}\n'
 
   hub:restart-identity-pods:
     desc: Restart pods that depend on Pod Identity (external-dns, LBC, Crossplane providers) after identities are ready
