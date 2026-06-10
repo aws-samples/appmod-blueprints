@@ -256,24 +256,36 @@ kubevela:
       - CreateNamespace=true
       - ServerSideApply=true
   ignoreDifferences:
+    # vela-core webhook configs: caBundle is injected at runtime, and the
+    # API server / vela-core default or mutate several fields (failurePolicy,
+    # matchPolicy, timeoutSeconds, reinvocationPolicy, selectors, rules.scope).
+    # Use jqPathExpressions so all webhooks (any count) are covered.
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+        - .webhooks[].failurePolicy
+        - .webhooks[].matchPolicy
+        - .webhooks[].timeoutSeconds
+        - .webhooks[].reinvocationPolicy
+        - .webhooks[].namespaceSelector
+        - .webhooks[].objectSelector
+        - .webhooks[].rules[].scope
       jsonPointers:
-        - /webhooks/0/clientConfig/caBundle
-        - /webhooks/1/clientConfig/caBundle
-        - /webhooks/2/clientConfig/caBundle
-        - /webhooks/3/clientConfig/caBundle
-        - /webhooks/4/clientConfig/caBundle
         - /metadata/generation
         - /metadata/managedFields
     - group: admissionregistration.k8s.io
       kind: ValidatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+        - .webhooks[].failurePolicy
+        - .webhooks[].matchPolicy
+        - .webhooks[].timeoutSeconds
+        - .webhooks[].reinvocationPolicy
+        - .webhooks[].namespaceSelector
+        - .webhooks[].objectSelector
+        - .webhooks[].rules[].scope
       jsonPointers:
-        - /webhooks/0/clientConfig/caBundle
-        - /webhooks/1/clientConfig/caBundle
-        - /webhooks/2/clientConfig/caBundle
-        - /webhooks/3/clientConfig/caBundle
-        - /webhooks/4/clientConfig/caBundle
         - /metadata/generation
         - /metadata/managedFields
     - group: '*'
