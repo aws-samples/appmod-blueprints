@@ -15,7 +15,7 @@ spec:
         	metadata: name: "\(parameter.name)"
         	spec: {
         		forProvider: region: "\(parameter.region)"
-        		providerConfigRef: name: "provider-aws-config"
+        		providerConfigRef: name: "default"
         	}
         }
         parameter: {
