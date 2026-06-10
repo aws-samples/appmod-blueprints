@@ -330,6 +330,20 @@ devlake:
       kind: PodIdentityAssociation
       jsonPointers:
         - /status
+    - group: ''
+      kind: Secret
+      name: devlake-grafana
+      # grafana auto-generates admin-password; ArgoCD repo-server render differs
+      # from the live (lookup-preserved) value on every sync.
+      jsonPointers:
+        - /data
+    - group: apps
+      kind: Deployment
+      name: devlake-grafana
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1secret
+        - /spec/template/metadata/annotations/checksum~1config
+        - /spec/template/metadata/annotations/checksum~1sc-dashboard-provider-config
 
 gitlab:
   namespace: gitlab

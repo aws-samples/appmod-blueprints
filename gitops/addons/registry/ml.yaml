@@ -27,11 +27,20 @@ jupyterhub:
       kind: Secret
       jsonPointers:
         - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      name: hub
+      # z2jh generates these values via Helm 'lookup'; ArgoCD's repo-server
+      # cannot lookup, so the rendered values differ from live on every sync.
+      jsonPointers:
+        - /data
     - group: apps
       kind: Deployment
       jsonPointers:
         - /spec/template/metadata/annotations/checksum~1secret
         - /spec/template/metadata/annotations/checksum~1config-map
+        - /spec/template/metadata/annotations/checksum~1auth-token
+        - /spec/template/metadata/annotations/checksum~1proxy-secret
 
 kubeflow:
   namespace: kubeflow
