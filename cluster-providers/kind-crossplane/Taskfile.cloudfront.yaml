@@ -123,9 +123,15 @@ tasks:
         VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
         PUBLIC_SUBNETS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' '\n')
         PUBLIC_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $PUBLIC_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' --output text | tr '\t' ' ')
+        # Create WITH a security group: an NLB created with zero SGs can never have
+        # SGs added later, which blocks the AWS LBC from attaching its managed
+        # frontend SG when it adopts this NLB. Seed with the cluster SG; the LBC
+        # replaces the set via SetSecurityGroups during reconcile.
+        CLUSTER_SG=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
         NLB_ARN=$(aws elbv2 create-load-balancer \
           --name "{{.HUB_CLUSTER_NAME}}-gitlab" \
           --subnets $PUBLIC_SUBNETS \
+          --security-groups "$CLUSTER_SG" \
           --scheme internet-facing \
           --type network \
           --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} Key=service.k8s.aws/stack,Value=gitlab/gitlab Key=service.k8s.aws/resource,Value=LoadBalancer \

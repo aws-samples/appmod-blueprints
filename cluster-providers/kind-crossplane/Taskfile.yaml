@@ -750,20 +750,27 @@ tasks:
     cmds:
       - |
         OVERLAY_URL="https://{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git"
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        KC="{{.ROOT_DIR}}/private/hub-kubeconfig"
+
+        # 1. Reachability guard. $overlay is a REAL Argo source — never point it at
+        #    an unreachable repo. This is one shell block, so exit 0 here correctly
+        #    skips ALL wiring below (the earlier multi-block version did not).
         printf '{{.C_STEP}}▸ Verifying fleet-config overlay repo is reachable...{{.C_RESET}}\n'
         if ! git ls-remote "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git" >/dev/null 2>&1; then
-          printf '{{.C_ERR}}⚠ fleet-config not reachable yet — skipping overlay wiring.{{.C_RESET}}\n'
+          printf '{{.C_ERR}}⚠ fleet-config not reachable — skipping overlay wiring (no change made).{{.C_RESET}}\n'
           printf '{{.C_INFO}}  Re-run later: task kind-crossplane:hub:set-overlay-repo{{.C_RESET}}\n'
           exit 0
         fi
         printf '{{.C_OK}}✓ fleet-config reachable.{{.C_RESET}}\n'
-      - task: hub:kubeconfig
-      - |
-        # Register an ArgoCD repository credential for the private GitLab fleet-config
-        # repo. GitHub works anonymously; GitLab is private, so without this the
-        # $overlay source cannot be cloned by the ArgoCD repo-server.
+
+        # 2. Hub kubeconfig (inline so the guard governs everything)
+        rm -f "$KC"
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null
+
+        # 3. ArgoCD repo credential for the private GitLab fleet-config repo
         printf '{{.C_STEP}}▸ Registering ArgoCD repository credential for fleet-config...{{.C_RESET}}\n'
-        cat <<EOF | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        cat <<EOF | KUBECONFIG="$KC" kubectl apply -f -
         apiVersion: v1
         kind: Secret
         metadata:
@@ -777,61 +784,55 @@ tasks:
           username: "{{.GIT_USERNAME}}"
           password: "{{.GIT_PASSWORD}}"
         EOF
-      - |
-        # Merge overlay_* into <hub>/config metadata; the fleet-secret ExternalSecret
-        # (refreshInterval 1m) reconciles these onto the hub cluster secret annotations.
-        printf '{{.C_STEP}}▸ Wiring overlay_repo_url into {{.HUB_CLUSTER_NAME}}/config...{{.C_RESET}}\n'
-        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
-        OVERLAY_URL="https://{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git"
+
+        # 4. Flip overlay_* in <hub>/config (ESO reconciles the cluster secret annotations)
+        printf '{{.C_STEP}}▸ Wiring overlay_repo_url into %s...{{.C_RESET}}\n' "$SECRET_KEY"
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
-        UPDATED=$(echo "$EXISTING" | jq \
-          --arg url "$OVERLAY_URL" \
-          --arg rev "main" \
-          --arg bp "{{.OVERLAY_REPO_BASEPATH}}" \
+        UPDATED=$(echo "$EXISTING" | jq --arg url "$OVERLAY_URL" --arg rev "main" --arg bp "{{.OVERLAY_REPO_BASEPATH}}" \
           '.metadata = (.metadata | fromjson | . + {overlay_repo_url: $url, overlay_repo_revision: $rev, overlay_repo_basepath: $bp} | tojson)')
         aws secretsmanager put-secret-value --secret-id "$SECRET_KEY" --secret-string "$UPDATED" --region {{.AWS_REGION}} >/dev/null
         echo "Set overlay_repo_url=$OVERLAY_URL (basepath='{{.OVERLAY_REPO_BASEPATH}}')"
-      - |
-        # Force ESO to re-sync now, then wait for the annotation to land.
-        ES=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | head -1)
-        [ -n "$ES" ] && KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd annotate "$ES" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
-        printf '{{.C_STEP}}▸ Waiting for cluster secret to pick up overlay_repo_url...{{.C_RESET}}\n'
-        for i in $(seq 1 24); do
-          VAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd get secret {{.HUB_CLUSTER_NAME}} -o jsonpath='{.metadata.annotations.overlay_repo_url}' 2>/dev/null || echo "")
-          [ -n "$VAL" ] && break
-          sleep 5
+
+        # 5. Force ESO re-sync; wait until the new overlay actually PROPAGATES to the
+        #    cluster-addons app source (avoids the false-positive the old verify had).
+        ES=$(KUBECONFIG="$KC" kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | head -1 || true)
+        [ -n "$ES" ] && KUBECONFIG="$KC" kubectl -n argocd annotate "$ES" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+        printf '{{.C_STEP}}▸ Waiting for cluster-addons to pick up the new overlay source...{{.C_RESET}}\n'
+        PROPAGATED=false
+        for i in $(seq 1 30); do
+          SRC=$(KUBECONFIG="$KC" kubectl -n argocd get application cluster-addons -o jsonpath='{.spec.sources[?(@.ref=="overlay")].repoURL}' 2>/dev/null || echo "")
+          [ "$SRC" = "$OVERLAY_URL" ] && { PROPAGATED=true; break; }
+          sleep 10
         done
-      - |
-        # Verify the $overlay source now resolves on a representative overlay-aware
-        # app; if it errors (e.g. the managed ArgoCD capability can't auth to GitLab),
-        # auto-revert so we don't leave ~all apps broken.
-        printf '{{.C_STEP}}▸ Verifying overlay source resolves (cluster-addons)...{{.C_RESET}}\n'
+
+        # 6. Verify it resolves cleanly; auto-revert on any ComparisonError/InvalidSpec.
         OK=false
-        for i in $(seq 1 24); do
-          COND=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd get application cluster-addons \
-            -o jsonpath='{range .status.conditions[*]}{.type}|{.message}{"\n"}{end}' 2>/dev/null || echo "")
-          if echo "$COND" | grep -qiE "fleet-config|authentication required|repository not found|error|failed"; then
-            printf '{{.C_INFO}}  not resolved yet, retrying (%d/24)...{{.C_RESET}}\n' "$i"
+        if [ "$PROPAGATED" = true ]; then
+          printf '{{.C_STEP}}▸ Overlay propagated; verifying clean resolution...{{.C_RESET}}\n'
+          for i in $(seq 1 24); do
+            SYNC=$(KUBECONFIG="$KC" kubectl -n argocd get application cluster-addons -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+            ERR=$(KUBECONFIG="$KC" kubectl -n argocd get application cluster-addons -o jsonpath='{range .status.conditions[*]}{.type}{"\n"}{end}' 2>/dev/null | grep -iE "error|invalid" || true)
+            if [ -z "$ERR" ] && { [ "$SYNC" = "Synced" ] || [ "$SYNC" = "OutOfSync" ]; }; then OK=true; break; fi
+            printf '{{.C_INFO}}  waiting for clean resolution (sync=%s) (%d/24)...{{.C_RESET}}\n' "$SYNC" "$i"
             sleep 10
-            continue
-          fi
-          OK=true; break
-        done
+          done
+        else
+          printf '{{.C_ERR}}⚠ Overlay did not propagate to cluster-addons in time.{{.C_RESET}}\n'
+        fi
+
         if [ "$OK" != true ]; then
-          printf '{{.C_ERR}}⚠ Overlay source not resolving — reverting overlay_repo_url.{{.C_RESET}}\n'
-          printf '{{.C_ERR}}  Likely the ArgoCD capability cannot authenticate to GitLab fleet-config.{{.C_RESET}}\n'
-          SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+          printf '{{.C_ERR}}⚠ Overlay not resolving cleanly — reverting overlay_repo_url.{{.C_RESET}}\n'
           EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
           REVERTED=$(echo "$EXISTING" | jq '.metadata = (.metadata | fromjson | del(.overlay_repo_url, .overlay_repo_revision, .overlay_repo_basepath) | tojson)')
           aws secretsmanager put-secret-value --secret-id "$SECRET_KEY" --secret-string "$REVERTED" --region {{.AWS_REGION}} >/dev/null
-          ES=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | head -1)
-          [ -n "$ES" ] && KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl -n argocd annotate "$ES" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
-          printf '{{.C_ERR}}  Reverted — apps stay on the GitHub fallback. Fix the GitLab credential, then re-run.{{.C_RESET}}\n'
-          rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+          [ -n "$ES" ] && KUBECONFIG="$KC" kubectl -n argocd annotate "$ES" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+          KUBECONFIG="$KC" kubectl -n argocd annotate secret {{.HUB_CLUSTER_NAME}} overlay_repo_url- overlay_repo_revision- overlay_repo_basepath- >/dev/null 2>&1 || true
+          printf '{{.C_ERR}}  Reverted — apps stay on the GitHub fallback. Fix GitLab reachability/credential, then re-run.{{.C_RESET}}\n'
+          rm -f "$KC"
           exit 0
         fi
-        printf '{{.C_OK}}✓ Overlay wired to fleet-config and resolving. All overlay-aware hub apps now use $overlay from GitLab.{{.C_RESET}}\n'
-        rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+        printf '{{.C_OK}}✓ Overlay wired to fleet-config and resolving fleet-wide (hub + spokes).{{.C_RESET}}\n'
+        rm -f "$KC"
 
   spokes:enable-crossplane:
     desc: "Enable a spoke cluster via Crossplane (usage: task spokes:enable-crossplane -- <cluster-name>)"
@@ -1322,6 +1323,11 @@ tasks:
           sleep 20
         done
         printf '{{.C_STEP}}▸ Updating Keycloak SAML client with AMG URL...{{.C_RESET}}\n'
+        # Best-effort, trailing block: relax errexit so a Keycloak/AMG hiccup
+        # (missing perms, duplicate SAML clients yielding a multi-line client id ->
+        # malformed curl URL, transient API error) only WARNs instead of aborting
+        # the entire install. This is the last block in the task, so set +e is safe.
+        set +e
         KC_PASS=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password')
         KC_TOKEN=$(curl -s -X POST "https://{{.KC_DOMAIN}}/keycloak/realms/master/protocol/openid-connect/token" \
           -H "Content-Type: application/x-www-form-urlencoded" \

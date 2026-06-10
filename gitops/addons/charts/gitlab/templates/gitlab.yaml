@@ -222,6 +222,12 @@ metadata:
 {{- end }}
     service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
 spec:
+  # Force the OSS AWS Load Balancer Controller to own this Service and reuse the
+  # pre-created "<cluster>-gitlab" NLB (the CloudFront origin). Without this, EKS
+  # Auto Mode's built-in LB controller (default loadBalancerClass
+  # eks.amazonaws.com/nlb) claims the Service and provisions a SEPARATE NLB,
+  # leaving the CloudFront-linked NLB with no targets (GitLab unreachable).
+  loadBalancerClass: service.k8s.aws/nlb
   type: LoadBalancer
   ports:
   - name: http
