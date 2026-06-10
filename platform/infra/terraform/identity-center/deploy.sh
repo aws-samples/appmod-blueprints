@@ -14,7 +14,7 @@ IDC_INSTANCES=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' 
 if [[ "$IDC_INSTANCES" == "None" ]]; then
   echo "📝 No Identity Center instance found. Creating one..."
   aws sso-admin create-instance --name "PEEKS-WORKSHOP" || echo "⚠️  Instance creation may be in progress or require manual setup"
-  sleep 10
+  sleep 300
 fi
 
 # Change to the identity-center directory

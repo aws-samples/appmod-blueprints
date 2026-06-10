@@ -50,6 +50,10 @@ scrape_configs:
       source_labels:
       - __meta_kubernetes_node_name
       target_label: __metrics_path__
+    # The aws-observability-accelerator recording rules and dashboards expect
+    # kubelet metrics under job="kubelet". Override the job label accordingly.
+    - replacement: kubelet
+      target_label: job
     scheme: https
     scrape_interval: 60s
     scrape_timeout: 15s
@@ -73,10 +77,14 @@ scrape_configs:
     - replacement: kubernetes.default.svc:443
       target_label: __address__
     - regex: (.+)
-      replacement: /api/v1/nodes/$${1}/proxy/metrics/cadvisor
+      replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
       source_labels:
       - __meta_kubernetes_node_name
       target_label: __metrics_path__
+    # The aws-observability-accelerator recording rules and dashboards expect
+    # cAdvisor container_* metrics under job="kubelet". Override the job label.
+    - replacement: kubelet
+      target_label: job
     scheme: https
     tls_config:
       ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
