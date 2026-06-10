@@ -122,20 +122,26 @@ data:
       end
     "
 
-    # --- Create fleet-config overlay repo ---
-    echo "Checking if repository $WORKING_REPO already exists..."
-    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")] | length) else 0 end')
+    # --- Create fleet-config overlay repo (owned by $GIT_USERNAME) ---
+    # Resolve the target user's id so repos are created in THEIR namespace.
+    # Using root's PAT against /projects/ would create them under root/, which
+    # breaks the $GIT_USERNAME/$WORKING_REPO clone/push later in this script.
+    USER1_ID=$(curl -s "$GITLAB_URL/api/v4/users?username=$GIT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then (.[0].id // "") else "" end')
+    echo "Target user $GIT_USERNAME id: $USER1_ID"
+
+    echo "Checking if repository $GIT_USERNAME/$WORKING_REPO already exists..."
+    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$WORKING_REPO'")] | length) else 0 end')
 
     if [[ "$REPO_EXISTS" == "0" ]]; then
-      echo "Creating $WORKING_REPO overlay repository..."
-      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/" \
+      echo "Creating $GIT_USERNAME/$WORKING_REPO overlay repository..."
+      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/user/$USER1_ID" \
         -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
         -H 'accept: application/json' \
         -H 'Content-Type: application/json' \
         -d "{\"name\": \"$WORKING_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
 
       # Seed the overlay repo with initial structure
-      PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")][0].id // "") else "" end')
+      PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$WORKING_REPO'")][0].id // "") else "" end')
 
       # Create directory structure via commits API
       echo "Seeding $WORKING_REPO with overlay structure..."
@@ -159,7 +165,7 @@ data:
     fi
 
     # Unprotect main branch on fleet-config
-    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$WORKING_REPO'")][0].id // "") else "" end')
+    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$WORKING_REPO'")][0].id // "") else "" end')
     curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches/main" \
       -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" || echo "Main branch was not protected or already unprotected"
 
@@ -189,19 +195,19 @@ data:
     # --- Create application repos ---
     {{- range .Values.application_repos | default (list "app-java" "app-rust") }}
     APP_REPO="{{ . }}"
-    echo "Checking if application repo $APP_REPO already exists..."
-    APP_REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$APP_REPO'")] | length) else 0 end')
+    echo "Checking if application repo $GIT_USERNAME/$APP_REPO already exists..."
+    APP_REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$APP_REPO'")] | length) else 0 end')
 
     if [[ "$APP_REPO_EXISTS" == "0" ]]; then
-      echo "Creating application repo $APP_REPO..."
-      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/" \
+      echo "Creating application repo $GIT_USERNAME/$APP_REPO..."
+      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/user/$USER1_ID" \
         -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
         -H 'accept: application/json' \
         -H 'Content-Type: application/json' \
         -d "{\"name\": \"$APP_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
 
       # Unprotect main branch
-      APP_PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path == "'$APP_REPO'")][0].id // "") else "" end')
+      APP_PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$APP_REPO'")][0].id // "") else "" end')
       curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$APP_PROJECT_ID/protected_branches/main" \
         -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" || true
     else
