@@ -18,6 +18,7 @@ spec:
   accountId: {{ $cluster.accountId | quote }}
   managementAccountId: {{ $cluster.managementAccountId | quote }}
   argoCdHubRoleArn: {{ $.Values.global.argoCdHubRoleArn | default "" | quote }}
+  argoCdCapabilityRoleArn: {{ $.Values.global.argoCdCapabilityRoleArn | default $.Values.global.argoCdHubRoleArn | default "" | quote }}
   adminRoleName: {{ $cluster.adminRoleName | default "Admin" | quote }}
   fleetSecretManagerSecretNameSuffix: {{ $cluster.fleetSecretManagerSecretNameSuffix | default "argocd-secret" | quote }}
   domainName: {{ $cluster.domainName | default "" | quote }}
