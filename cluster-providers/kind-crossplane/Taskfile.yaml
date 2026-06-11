@@ -790,6 +790,24 @@ tasks:
           password: "{{.GIT_PASSWORD}}"
         EOF
 
+        # 3b. Snapshot the CURRENT overlay wiring BEFORE touching anything. This lets us
+        #     (a) skip entirely when it is already correct, and (b) on failure restore the
+        #     PREVIOUS good value instead of dropping to the GitHub base (clusters:{}),
+        #     which is what cascade-deleted live spoke clusters on re-install.
+        EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
+        PREV_URL=$(echo "$EXISTING" | jq -r '(.metadata | fromjson).overlay_repo_url // ""')
+        PREV_REV=$(echo "$EXISTING" | jq -r '(.metadata | fromjson).overlay_repo_revision // ""')
+        PREV_BP=$(echo "$EXISTING"  | jq -r '(.metadata | fromjson).overlay_repo_basepath // ""')
+
+        # Idempotent fast-path: overlay already wired to the target repo -> leave it
+        # untouched. Never re-flip/verify/revert an already-working overlay, since a
+        # transient verify hiccup must never unset a good overlay.
+        if [ "$PREV_URL" = "$OVERLAY_URL" ]; then
+          printf '{{.C_OK}}✓ Overlay already wired to fleet-config (%s) — leaving untouched (idempotent).{{.C_RESET}}\n' "$OVERLAY_URL"
+          rm -f "$KC"
+          exit 0
+        fi
+
         # 4. Flip overlay_* in <hub>/config (ESO reconciles the cluster secret annotations)
         printf '{{.C_STEP}}▸ Wiring overlay_repo_url into %s...{{.C_RESET}}\n' "$SECRET_KEY"
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
@@ -826,13 +844,27 @@ tasks:
         fi
 
         if [ "$OK" != true ]; then
-          printf '{{.C_ERR}}⚠ Overlay not resolving cleanly — reverting overlay_repo_url.{{.C_RESET}}\n'
           EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
-          REVERTED=$(echo "$EXISTING" | jq '.metadata = (.metadata | fromjson | del(.overlay_repo_url, .overlay_repo_revision, .overlay_repo_basepath) | tojson)')
+          if [ -n "$PREV_URL" ]; then
+            # A previous overlay was already wired — RESTORE it rather than dropping to
+            # the GitHub base. Falling back to base renders clusters:{} and would
+            # cascade-delete live spoke clusters; restoring keeps them intact.
+            printf '{{.C_ERR}}⚠ New overlay not resolving cleanly — restoring previous overlay (%s).{{.C_RESET}}\n' "$PREV_URL"
+            REVERTED=$(echo "$EXISTING" | jq --arg url "$PREV_URL" --arg rev "$PREV_REV" --arg bp "$PREV_BP" \
+              '.metadata = (.metadata | fromjson | . + {overlay_repo_url: $url, overlay_repo_revision: $rev, overlay_repo_basepath: $bp} | tojson)')
+          else
+            # No overlay was set before this run — clean rollback to the GitHub base.
+            printf '{{.C_ERR}}⚠ Overlay not resolving cleanly and none was set before — rolling back to GitHub base.{{.C_RESET}}\n'
+            REVERTED=$(echo "$EXISTING" | jq '.metadata = (.metadata | fromjson | del(.overlay_repo_url, .overlay_repo_revision, .overlay_repo_basepath) | tojson)')
+          fi
           aws secretsmanager put-secret-value --secret-id "$SECRET_KEY" --secret-string "$REVERTED" --region {{.AWS_REGION}} >/dev/null
           [ -n "$ES" ] && KUBECONFIG="$KC" kubectl -n argocd annotate "$ES" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
-          KUBECONFIG="$KC" kubectl -n argocd annotate secret {{.HUB_CLUSTER_NAME}} overlay_repo_url- overlay_repo_revision- overlay_repo_basepath- >/dev/null 2>&1 || true
-          printf '{{.C_ERR}}  Reverted — apps stay on the GitHub fallback. Fix GitLab reachability/credential, then re-run.{{.C_RESET}}\n'
+          # Only strip the cluster-secret annotations on a true rollback-to-base (no prev);
+          # for a restore, let ESO reconcile the previous values back from SecretsManager.
+          if [ -z "$PREV_URL" ]; then
+            KUBECONFIG="$KC" kubectl -n argocd annotate secret {{.HUB_CLUSTER_NAME}} overlay_repo_url- overlay_repo_revision- overlay_repo_basepath- >/dev/null 2>&1 || true
+          fi
+          printf '{{.C_ERR}}  Fix GitLab reachability/credential, then re-run.{{.C_RESET}}\n'
           rm -f "$KC"
           exit 0
         fi
