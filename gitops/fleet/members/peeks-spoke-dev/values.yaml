@@ -1,0 +1,4 @@
+clusterName: peeks-spoke-dev
+labels:
+  environment: dev
+  tenant: workshop
