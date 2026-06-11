@@ -123,6 +123,30 @@ The following script will help you connect to the different tools using the SSO 
 
 The `gitops/` directory contains a complete GitOps-based addon management system using ArgoCD ApplicationSets, Helm charts, and Crossplane. See [gitops/README.md](gitops/README.md) for architecture, quick start, and operations guide.
 
+## Regenerating config.local.yaml
+
+When deployed via CloudFormation, `config.local.yaml` is generated automatically
+during IDE bootstrap. If you need to (re)create it manually — for example on a
+self-managed environment or to recover from a corrupted file — use the standalone
+helper:
+
+```bash
+# Idempotent: skips if a valid config.local.yaml already exists
+./create-config.sh
+
+# Force overwrite
+FORCE=true ./create-config.sh
+
+# Override the branch (e.g. when WORKSHOP_GIT_BRANCH points to a release tag)
+REPO_REVISION=feature/cloudfront-on-agent-platform ./create-config.sh
+```
+
+This is a standalone script (not a Taskfile task) because every task reads
+`config.local.yaml` at parse time, so a task cannot create the file when it does
+not yet exist. It auto-detects the AWS account, region, IAM Identity Center
+instance/group, and admin role name, and writes a CloudFront-mode config
+(`domain: ""`).
+
 ## Contributing
 
 We welcome contributions to the Modern Engineering on AWS initiative. Please read our [CONTRIBUTING](CONTRIBUTING.md) guide for details on our code of conduct and the process for submitting pull requests.
