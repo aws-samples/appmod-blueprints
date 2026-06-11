@@ -3,3 +3,10 @@
 identities:
   eso:
     enabled: true
+  # Bootstrap the spoke's Crossplane iam/eks providers from the hub (see chart
+  # values.yaml). Without these, the spoke's createIdentity:false providers have
+  # no credentials and all spoke Crossplane providers fail (IMDS fallback).
+  crossplane-iam-provider:
+    enabled: true
+  crossplane-eks-provider:
+    enabled: true

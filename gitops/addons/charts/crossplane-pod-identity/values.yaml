@@ -428,3 +428,33 @@ identities:
             }
           ]
         }
+
+  # Bootstrap identities for the spoke's Crossplane providers. The iam/eks
+  # providers are createIdentity:false in the addon registry (crossplane-base
+  # does NOT create their roles) because a provider cannot create the very
+  # credentials it needs to run (chicken-and-egg). These identities are
+  # provisioned from the HUB instead: the hub's provider-aws-iam/eks (which
+  # already have credentials) create the role + PodIdentityAssociation on the
+  # target spoke (clusterName=<spoke>). Disabled by default; enabled in the
+  # spoke (dev/prod) pod-identities overlays.
+  crossplane-iam-provider:
+    enabled: false
+    roleName: CrossplaneIAMProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-iam
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-iam-provider-bootstrap
+    managedPolicyArns:
+      - arn:aws:iam::aws:policy/AdministratorAccess
+
+  crossplane-eks-provider:
+    enabled: false
+    roleName: CrossplaneEKSProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-eks
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-eks-provider-bootstrap
+    managedPolicyArns:
+      - arn:aws:iam::aws:policy/AdministratorAccess
