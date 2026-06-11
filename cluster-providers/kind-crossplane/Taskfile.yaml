@@ -858,7 +858,13 @@ tasks:
         REPO_DIR=$(mktemp -d)
         git clone "https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git" "$REPO_DIR" 2>/dev/null
         mkdir -p "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters"
-        cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml" <<EOF
+        XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
+        # Idempotency: keep the existing vpcCidr if this spoke is already enabled so
+        # re-running install does not generate a new random CIDR and churn the VPC.
+        if [ -f "$XP_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}".vpcCidr' "$XP_VALUES" >/dev/null 2>&1; then
+          echo "  Spoke {{.CLUSTER}} already has a vpcCidr — keeping existing values (idempotent)."
+        else
+          cat > "$XP_VALUES" <<EOF
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
@@ -867,7 +873,14 @@ tasks:
             autoMode: true
             resourcePrefix: {{.RESOURCE_PREFIX}}
         EOF
-        cd "$REPO_DIR" && git add -A && git commit -m "feat: enable spoke {{.CLUSTER}} via Crossplane" && git push 2>/dev/null
+        fi
+        cd "$REPO_DIR"
+        git add -A
+        if git diff --cached --quiet; then
+          printf '{{.C_INFO}}  No fleet-config changes for {{.CLUSTER}} — already enabled (idempotent).{{.C_RESET}}\n'
+        else
+          git commit -m "feat: enable spoke {{.CLUSTER}} via Crossplane" && git push 2>/dev/null
+        fi
         rm -rf "$REPO_DIR"
         printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via Crossplane in fleet-config overlay.{{.C_RESET}}\n'
 
@@ -896,8 +909,15 @@ tasks:
         # Single random second octet for the VPC and all subnets so subnet CIDRs
         # stay within the VPC CIDR (a per-line shuf produced out-of-range subnets,
         # e.g. VPC 10.71.0.0/16 with subnets in 10.178/10.120/... -> InvalidSubnet.Range).
-        OCTET=$(shuf -i 2-254 -n 1)
-        cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml" <<EOF
+        # Idempotency: only generate a (new random) CIDR when this spoke is not
+        # already enabled. Re-running install must NOT churn the CIDR — an EC2 VPC
+        # cidrBlock is immutable, so a new octet would force VPC recreation/orphans.
+        KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
+        if [ -f "$KRO_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}".cidr.vpcCidr' "$KRO_VALUES" >/dev/null 2>&1; then
+          echo "  Spoke {{.CLUSTER}} already has a CIDR — keeping existing values (idempotent)."
+        else
+          OCTET=$(shuf -i 2-254 -n 1)
+          cat > "$KRO_VALUES" <<EOF
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
@@ -915,6 +935,7 @@ tasks:
               privateSubnet1Cidr: "10.${OCTET}.11.0/24"
               privateSubnet2Cidr: "10.${OCTET}.12.0/24"
         EOF
+        fi
         # multi-acct (ACK CARM): map this spoke's namespace -> AWS account so the
         # hub's ACK controllers render an IAMRoleSelector per service and assume
         # the {{.RESOURCE_PREFIX}}-cluster-mgmt-<svc> roles when provisioning the
@@ -932,7 +953,13 @@ tasks:
         MA_FILE="$REPO_DIR/configs/multi-acct/values.yaml"
         [ -f "$MA_FILE" ] || printf 'clusters: {}\n' > "$MA_FILE"
         yq -i '.clusters."{{.CLUSTER}}" = "{{.AWS_ACCOUNT_ID}}"' "$MA_FILE"
-        cd "$REPO_DIR" && git add -A && git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ multi-acct CARM mapping)" && git push 2>/dev/null
+        cd "$REPO_DIR"
+        git add -A
+        if git diff --cached --quiet; then
+          printf '{{.C_INFO}}  No fleet-config changes for {{.CLUSTER}} — already enabled (idempotent).{{.C_RESET}}\n'
+        else
+          git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ multi-acct CARM mapping)" && git push 2>/dev/null
+        fi
         rm -rf "$REPO_DIR"
         printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via KRO + multi-acct CARM mapping in fleet-config overlay.{{.C_RESET}}\n'
 
