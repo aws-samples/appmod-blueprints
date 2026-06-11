@@ -888,6 +888,10 @@ tasks:
         cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters/{{.CLUSTER}}.json" <<EOF
         {"clusterName": "{{.CLUSTER}}"}
         EOF
+        # Single random second octet for the VPC and all subnets so subnet CIDRs
+        # stay within the VPC CIDR (a per-line shuf produced out-of-range subnets,
+        # e.g. VPC 10.71.0.0/16 with subnets in 10.178/10.120/... -> InvalidSubnet.Range).
+        OCTET=$(shuf -i 2-254 -n 1)
         cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml" <<EOF
         clusters:
           {{.CLUSTER}}:
@@ -900,11 +904,11 @@ tasks:
             managementAccountId: "{{.AWS_ACCOUNT_ID}}"
             resourcePrefix: {{.RESOURCE_PREFIX}}
             cidr:
-              vpcCidr: "10.$(shuf -i 1-254 -n 1).0.0/16"
-              publicSubnet1Cidr: "10.$(shuf -i 1-254 -n 1).1.0/24"
-              publicSubnet2Cidr: "10.$(shuf -i 1-254 -n 1).2.0/24"
-              privateSubnet1Cidr: "10.$(shuf -i 1-254 -n 1).11.0/24"
-              privateSubnet2Cidr: "10.$(shuf -i 1-254 -n 1).12.0/24"
+              vpcCidr: "10.${OCTET}.0.0/16"
+              publicSubnet1Cidr: "10.${OCTET}.1.0/24"
+              publicSubnet2Cidr: "10.${OCTET}.2.0/24"
+              privateSubnet1Cidr: "10.${OCTET}.11.0/24"
+              privateSubnet2Cidr: "10.${OCTET}.12.0/24"
         EOF
         # multi-acct (ACK CARM): map this spoke's namespace -> AWS account so the
         # hub's ACK controllers render an IAMRoleSelector per service and assume
