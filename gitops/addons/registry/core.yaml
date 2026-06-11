@@ -1,5 +1,11 @@
 # Core infrastructure addons
-# Wave ordering: -1 (external-secrets, pod-identities, default-storage-class) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (efs-csi) → 5 (lbc, ingress-class-alb, external-dns)
+# Wave ordering: -1 (external-secrets, default-storage-class) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (efs-csi, pod-identities) → 5 (lbc, ingress-class-alb, external-dns)
+# NOTE: pod-identities runs at wave 4 (after crossplane-base at wave 3, defined
+# in platform.yaml) because it creates iam.aws.upbound.io / eks.aws.upbound.io
+# resources whose CRDs are registered by the Crossplane providers. A PreSync
+# CRD-readiness gate in the crossplane-pod-identity chart additionally blocks
+# its Sync phase until those CRDs are Established (cross-Application sync-waves
+# are best-effort, so the gate guarantees correctness).
 
 default-storage-class:
   namespace: kube-system
@@ -21,7 +27,11 @@ pod_identities:
   goTemplateOptions:
     - "missingkey=zero"
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '-1'
+    # Wave 4: after crossplane-base (wave 3) registers the iam/eks CRDs, and
+    # before the controllers that consume these identities (lbc/external-dns/
+    # keycloak at wave 5). A PreSync CRD-wait hook in the chart further gates
+    # the actual apply on CRD availability.
+    argocd.argoproj.io/sync-wave: '4'
   selector:
     matchExpressions:
       - key: environment
@@ -209,11 +219,21 @@ aws-load-balancer-controller:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     vpcId: '{{.metadata.annotations.aws_vpc_id}}'
     region: '{{.metadata.annotations.aws_region}}'
+    # Let cert-manager issue and rotate the webhook serving cert + inject the
+    # caBundle, instead of the chart's self-signed cert-gen Job. The cert-gen
+    # Job regenerates the cert out-of-band, which drifts the webhook caBundle
+    # away from the serving cert and breaks Ingress admission with
+    # "x509: certificate signed by unknown authority". cert-manager keeps the
+    # serving cert and the injected caBundle from the same issuer, so they
+    # always rotate together. cert-manager syncs at wave 2 (before LBC at 5).
+    enableCertManager: true
     serviceAccount:
       create: true
       name: aws-load-balancer-controller-sa
-  # The chart's cert-gen Job rotates the webhook TLS material after install,
-  # which causes Argo to see persistent OutOfSync drift on these three resources.
+  # cert-manager now owns the webhook TLS material, so the chart's self-signed
+  # cert-gen Job no longer runs and the previous caBundle drift is gone. The
+  # ignoreDifferences below are retained as a harmless safety net in case the
+  # cert is rotated by cert-manager between Argo refreshes.
   ignoreDifferences:
     - group: ''
       kind: Secret

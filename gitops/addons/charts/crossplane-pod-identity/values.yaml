@@ -1,4 +1,19 @@
 aws: {}
+
+# PreSync gate that blocks this app's Sync phase until the Crossplane provider
+# CRDs (iam.aws.upbound.io / eks.aws.upbound.io) are Established. Prevents the
+# bootstrap race where pod-identity resources are applied before the providers
+# have registered their CRDs. See templates/crd-wait-hook.yaml.
+crdWait:
+  enabled: true
+  timeoutSeconds: 600
+  image: bitnami/kubectl:latest
+  crds:
+    - policies.iam.aws.upbound.io
+    - roles.iam.aws.upbound.io
+    - rolepolicyattachments.iam.aws.upbound.io
+    - podidentityassociations.eks.aws.upbound.io
+
 identities:
   eso:
     enabled: false
