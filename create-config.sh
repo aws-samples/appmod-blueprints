@@ -25,14 +25,18 @@
 #   REPO_REVISION    (default: $WORKSHOP_GIT_BRANCH or feature/cloudfront-on-agent-platform)
 #   K8S_VERSION      (default: 1.35)
 #   VPC_CIDR         (default: 10.1.0.0/16)
-#   CONFIG_FILE      (default: <repo root>/config.local.yaml)
+#   OUTPUT_FILE      (default: <repo root>/config.local.yaml)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Defaults / overrides --------------------------------------------------
-CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.local.yaml}"
+# NOTE: deliberately NOT named CONFIG_FILE — the IDE environment exports a
+# CONFIG_FILE pointing at the terraform hub-config.yaml, which we do not use
+# here. We always target the repo-root config.local.yaml unless OUTPUT_FILE
+# is explicitly overridden.
+OUTPUT_FILE="${OUTPUT_FILE:-${SCRIPT_DIR}/config.local.yaml}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 REPO_URL="${REPO_URL:-https://github.com/aws-samples/appmod-blueprints}"
 REPO_REVISION="${REPO_REVISION:-${WORKSHOP_GIT_BRANCH:-feature/cloudfront-on-agent-platform}}"
@@ -41,8 +45,8 @@ VPC_CIDR="${VPC_CIDR:-10.1.0.0/16}"
 FORCE="${FORCE:-false}"
 
 # --- Idempotency -----------------------------------------------------------
-if [ "$FORCE" != "true" ] && [ -f "$CONFIG_FILE" ] && yq '.' "$CONFIG_FILE" >/dev/null 2>&1; then
-  echo "✓ $CONFIG_FILE already exists and is valid YAML — skipping (use FORCE=true to overwrite)"
+if [ "$FORCE" != "true" ] && [ -f "$OUTPUT_FILE" ] && yq '.' "$OUTPUT_FILE" >/dev/null 2>&1; then
+  echo "✓ $OUTPUT_FILE already exists and is valid YAML — skipping (use FORCE=true to overwrite)"
   exit 0
 fi
 
@@ -79,38 +83,38 @@ ADMIN_ROLE_NAME="${ROLE_AFTER%%/*}"
 [ -z "$ADMIN_ROLE_NAME" ] && ADMIN_ROLE_NAME="WSParticipantRole"
 
 # --- Write config.local.yaml (printf, never heredoc) -----------------------
-echo "▸ Writing $CONFIG_FILE ..."
-printf 'clusterProvider: "kind-crossplane"\n'          >  "$CONFIG_FILE"
-printf 'repo:\n'                                       >> "$CONFIG_FILE"
-printf '  url: "%s"\n'          "$REPO_URL"            >> "$CONFIG_FILE"
-printf '  revision: "%s"\n'     "$REPO_REVISION"       >> "$CONFIG_FILE"
-printf '  basepath: "gitops/"\n'                       >> "$CONFIG_FILE"
-printf 'hub:\n'                                        >> "$CONFIG_FILE"
-printf '  clusterName: "%s-hub"\n' "$RESOURCE_PREFIX"  >> "$CONFIG_FILE"
-printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"    >> "$CONFIG_FILE"
-printf '  vpcCidr: "%s"\n'      "$VPC_CIDR"            >> "$CONFIG_FILE"
-printf '  autoMode: true\n'                            >> "$CONFIG_FILE"
-printf 'aws:\n'                                        >> "$CONFIG_FILE"
-printf '  region: "%s"\n'       "$REGION"              >> "$CONFIG_FILE"
-printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$CONFIG_FILE"
-printf '  profile: "default"\n'                        >> "$CONFIG_FILE"
-printf 'domain: ""\n'                                  >> "$CONFIG_FILE"
-printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$CONFIG_FILE"
-printf 'ingressName: ""\n'                             >> "$CONFIG_FILE"
-printf 'ingressSecurityGroups: ""\n'                   >> "$CONFIG_FILE"
-printf 'identityCenter:\n'                             >> "$CONFIG_FILE"
-printf '  instanceArn: "%s"\n'  "$IDC_ARN"             >> "$CONFIG_FILE"
-printf '  region: "%s"\n'       "$REGION"              >> "$CONFIG_FILE"
-printf '  adminGroupId: "%s"\n' "$IDC_GROUP"           >> "$CONFIG_FILE"
-printf 'argocdCapability:\n'                           >> "$CONFIG_FILE"
-printf '  name: "argocd"\n'                            >> "$CONFIG_FILE"
-printf 'adminRoleName: "%s"\n'  "$ADMIN_ROLE_NAME"     >> "$CONFIG_FILE"
-printf 'modelS3Bucket:\n'                              >> "$CONFIG_FILE"
-printf '  enabled: false\n'                            >> "$CONFIG_FILE"
+echo "▸ Writing $OUTPUT_FILE ..."
+printf 'clusterProvider: "kind-crossplane"\n'          >  "$OUTPUT_FILE"
+printf 'repo:\n'                                       >> "$OUTPUT_FILE"
+printf '  url: "%s"\n'          "$REPO_URL"            >> "$OUTPUT_FILE"
+printf '  revision: "%s"\n'     "$REPO_REVISION"       >> "$OUTPUT_FILE"
+printf '  basepath: "gitops/"\n'                       >> "$OUTPUT_FILE"
+printf 'hub:\n'                                        >> "$OUTPUT_FILE"
+printf '  clusterName: "%s-hub"\n' "$RESOURCE_PREFIX"  >> "$OUTPUT_FILE"
+printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"    >> "$OUTPUT_FILE"
+printf '  vpcCidr: "%s"\n'      "$VPC_CIDR"            >> "$OUTPUT_FILE"
+printf '  autoMode: true\n'                            >> "$OUTPUT_FILE"
+printf 'aws:\n'                                        >> "$OUTPUT_FILE"
+printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
+printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
+printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
+printf 'domain: ""\n'                                  >> "$OUTPUT_FILE"
+printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
+printf 'ingressName: ""\n'                             >> "$OUTPUT_FILE"
+printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
+printf 'identityCenter:\n'                             >> "$OUTPUT_FILE"
+printf '  instanceArn: "%s"\n'  "$IDC_ARN"             >> "$OUTPUT_FILE"
+printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
+printf '  adminGroupId: "%s"\n' "$IDC_GROUP"           >> "$OUTPUT_FILE"
+printf 'argocdCapability:\n'                           >> "$OUTPUT_FILE"
+printf '  name: "argocd"\n'                            >> "$OUTPUT_FILE"
+printf 'adminRoleName: "%s"\n'  "$ADMIN_ROLE_NAME"     >> "$OUTPUT_FILE"
+printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
+printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 
 # --- Validate --------------------------------------------------------------
 echo "▸ Validating generated YAML..."
-yq '.' "$CONFIG_FILE" >/dev/null
+yq '.' "$OUTPUT_FILE" >/dev/null
 
 echo "✓ config.local.yaml created:"
 echo "    region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
