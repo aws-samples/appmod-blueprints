@@ -32,7 +32,14 @@ spec:
         privateSubnet2Cidr: string | default="10.0.12.0/24"
       workloads: string | default="false" # Define if we want to deploy workloads application
       gitops:
-        addonsRepoBasePath: string | default="gitops/addons/"
+        # Base path is the repo-root prefix that consumers append subpaths to,
+        # e.g. the addon ApplicationSet builds "<addonsRepoBasePath>addons/charts/<name>",
+        # the root appset builds "<addonsRepoBasePath>bootstrap", and the
+        # crossplane abstractions build "<addonsRepoBasePath>abstractions/...".
+        # It must therefore be "gitops/" (NOT "gitops/addons/"); otherwise every
+        # path is doubled to "gitops/addons/addons/..." which does not exist and
+        # leaves all of the cluster's Argo CD apps in "Unknown" (ComparisonError).
+        addonsRepoBasePath: string | default="gitops/"
         addonsRepoPath: string | default="bootstrap"
         addonsRepoRevision: string | default="main"
         addonsRepoUrl: string | default="https://github.com/aws-samples/appmod-blueprints"
