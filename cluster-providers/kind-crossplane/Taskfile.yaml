@@ -712,10 +712,15 @@ tasks:
       - printf '{{.C_STEP}}▸ Cloning GitLab repos to ~/environment...{{.C_RESET}}\n'
       - |
         for REPO in {{.REPOS}}; do
-          DEST="$HOME/environment/$REPO"
+          if [ "$REPO" = "fleet-config" ]; then
+            DEST="$HOME/environment/$REPO"
+          else
+            DEST="$HOME/environment/applications/$REPO"
+          fi
           if [ -d "$DEST" ]; then
             echo "  $REPO already cloned, skipping"
           else
+            mkdir -p "$(dirname "$DEST")"
             git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/$REPO.git" "$DEST" 2>/dev/null && \
               echo "  ✓ $REPO cloned" || echo "  ⚠ $REPO clone failed (repo may not exist yet)"
           fi
