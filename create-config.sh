@@ -26,6 +26,11 @@
 #   K8S_VERSION      (default: 1.35)
 #   VPC_CIDR         (default: 10.1.0.0/16)
 #   OUTPUT_FILE      (default: <repo root>/config.local.yaml)
+#   ADMIN_ROLE_NAME  (default: derived from WS_PARTICIPANT_ROLE_ARN, else WSParticipantRole)
+#                    NOTE: on the IDE, get-caller-identity returns the EC2
+#                    instance role (*SharedRole*), which is intentionally
+#                    ignored — set ADMIN_ROLE_NAME or WS_PARTICIPANT_ROLE_ARN
+#                    to control this explicitly.
 
 set -euo pipefail
 
@@ -76,10 +81,30 @@ echo "▸ Detecting Developers group..."
 IDC_GROUP="$(aws identitystore list-groups --identity-store-id "$IDC_STORE" --filters AttributePath=DisplayName,AttributeValue=Developers --query 'Groups[0].GroupId' --output text --region "$REGION" 2>/dev/null | head -1 | tr -d '[:space:]')"
 [ "$IDC_GROUP" = "None" ] && IDC_GROUP=""
 
-echo "▸ Detecting admin role name from caller identity..."
-CALLER_ARN="$(aws sts get-caller-identity --query Arn --output text)"
-ROLE_AFTER="${CALLER_ARN##*role/}"
-ADMIN_ROLE_NAME="${ROLE_AFTER%%/*}"
+echo "▸ Detecting admin role name..."
+# Priority order for the admin role name:
+#   1. ADMIN_ROLE_NAME env override (explicit)
+#   2. WS_PARTICIPANT_ROLE_ARN env (set by the workshop bootstrap from the
+#      ParticipantAssumedRoleArn CFN parameter) — this is the participant role
+#   3. Caller identity ARN — but only if it is NOT the EC2 instance/shared role
+#      (on the IDE, get-caller-identity returns the instance role, e.g.
+#      *SharedRole*, which is NOT the admin role we want)
+#   4. Fallback: WSParticipantRole
+arn_to_role() { local a="$1"; local r="${a##*role/}"; printf '%s' "${r%%/*}"; }
+
+ADMIN_ROLE_NAME="${ADMIN_ROLE_NAME:-}"
+if [ -z "$ADMIN_ROLE_NAME" ] && [ -n "${WS_PARTICIPANT_ROLE_ARN:-}" ]; then
+  ADMIN_ROLE_NAME="$(arn_to_role "$WS_PARTICIPANT_ROLE_ARN")"
+fi
+if [ -z "$ADMIN_ROLE_NAME" ]; then
+  CALLER_ARN="$(aws sts get-caller-identity --query Arn --output text)"
+  CANDIDATE="$(arn_to_role "$CALLER_ARN")"
+  # Reject the EC2 instance/shared role — it is not the participant admin role.
+  case "$CANDIDATE" in
+    *SharedRole*|*-team-stack-*|"") ;;  # ignore instance role
+    *) ADMIN_ROLE_NAME="$CANDIDATE" ;;
+  esac
+fi
 [ -z "$ADMIN_ROLE_NAME" ] && ADMIN_ROLE_NAME="WSParticipantRole"
 
 # --- Write config.local.yaml (printf, never heredoc) -----------------------
