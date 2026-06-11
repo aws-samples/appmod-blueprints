@@ -57,7 +57,11 @@ spec:
       syncPolicy:
         automated:
           selfHeal: false
-          allowEmpty: true
+          # allowEmpty:false (ArgoCD default) prevents a transient empty render
+          # (e.g. overlay values momentarily unreachable / overlay_repo_url annotation
+          # missing -> falls back to base values where clusters:{}) from pruning the
+          # EksclusterWithVpc and cascade-deleting a live EKS cluster.
+          allowEmpty: false
           prune: true
         retry:
           limit: -1
