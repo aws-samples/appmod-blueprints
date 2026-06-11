@@ -861,6 +861,16 @@ spec:
                     matchLabels:
                       role: cluster
                   bootstrapSelfManagedAddons: false
+                  # Control-plane logging (incl. kube-apiserver audit) so that
+                  # deletions/changes on cluster resources are traceable in
+                  # CloudWatch (/aws/eks/<cluster>/cluster). Applies to the hub and
+                  # all Crossplane-provisioned spokes that use this composition.
+                  enabledClusterLogTypes:
+                    - api
+                    - audit
+                    - authenticator
+                    - controllerManager
+                    - scheduler
                   accessConfig:
                     authenticationMode: API
                   vpcConfig:
