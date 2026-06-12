@@ -906,12 +906,25 @@ tasks:
             resourcePrefix: {{.RESOURCE_PREFIX}}
         EOF
         fi
+        # Fleet member file: only Crossplane/Terraform spokes need a fleet-secret
+        # ArgoCD registration. KRO spokes do NOT (their cluster Secret is created by
+        # the EksclusterWithVpc RGD). The fleet-secrets appset discovers members from
+        # the overlay (fleet-config), so write it here. environment is derived from
+        # the cluster name (dev/prod/staging/test), defaulting to dev.
+        ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
+        mkdir -p "$REPO_DIR/fleet/members/{{.CLUSTER}}"
+        cat > "$REPO_DIR/fleet/members/{{.CLUSTER}}/values.yaml" <<EOF
+        clusterName: {{.CLUSTER}}
+        labels:
+          environment: ${ENV}
+          tenant: workshop
+        EOF
         cd "$REPO_DIR"
         git add -A
         if git diff --cached --quiet; then
           printf '{{.C_INFO}}  No fleet-config changes for {{.CLUSTER}} — already enabled (idempotent).{{.C_RESET}}\n'
         else
-          git commit -m "feat: enable spoke {{.CLUSTER}} via Crossplane" && git push 2>/dev/null
+          git commit -m "feat: enable spoke {{.CLUSTER}} via Crossplane (+ fleet member)" && git push 2>/dev/null
         fi
         rm -rf "$REPO_DIR"
         # Refresh the local fleet-config checkout so the committed overlay change is
