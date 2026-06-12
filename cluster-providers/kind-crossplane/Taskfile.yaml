@@ -985,6 +985,15 @@ tasks:
         MA_FILE="$REPO_DIR/configs/multi-acct/values.yaml"
         [ -f "$MA_FILE" ] || printf 'clusters: {}\n' > "$MA_FILE"
         yq -i '.clusters."{{.CLUSTER}}" = "{{.AWS_ACCOUNT_ID}}"' "$MA_FILE"
+        # platform-manifests: disable HuggingFaceModel CRs on KRO spokes. The
+        # HuggingFaceModel CRD (kro.run) is not installed on spokes, so the chart's
+        # CRs fail to apply ("no matches for kind HuggingFaceModel"); these models
+        # target GPU/Trainium clusters, not spokes. An empty list makes the chart's
+        # huggingfaceModels guard render nothing. Written to the per-cluster overlay
+        # tier the platform-manifests appset reads last:
+        #   $overlay/overlays/clusters/<cluster>/platform-manifests/values.yaml
+        mkdir -p "$REPO_DIR/overlays/clusters/{{.CLUSTER}}/platform-manifests"
+        printf 'huggingfaceModels: []\n' > "$REPO_DIR/overlays/clusters/{{.CLUSTER}}/platform-manifests/values.yaml"
         cd "$REPO_DIR"
         git add -A
         if git diff --cached --quiet; then
