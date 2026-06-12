@@ -70,15 +70,44 @@ echo "▸ Detecting AWS account..."
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 
 echo "▸ Detecting IAM Identity Center instance..."
-IDC_ARN="$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text --region "$REGION" 2>/dev/null | head -1 | tr -d '[:space:]')"
+# Wait for the IDC instance to appear and become ACTIVE. On a fresh workshop
+# account the IDC instance + Developers group are created asynchronously by a
+# Lambda, so they may not exist the instant this script runs. Configurable via
+# IDC_WAIT_ATTEMPTS (default 30) x IDC_WAIT_INTERVAL seconds (default 10) = 5 min.
+IDC_WAIT_ATTEMPTS="${IDC_WAIT_ATTEMPTS:-30}"
+IDC_WAIT_INTERVAL="${IDC_WAIT_INTERVAL:-10}"
+IDC_ARN=""
+i=0
+while [ "$i" -lt "$IDC_WAIT_ATTEMPTS" ]; do
+  IDC_ARN="$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text --region "$REGION" 2>/dev/null | head -1 | tr -d '[:space:]')"
+  [ -n "$IDC_ARN" ] && [ "$IDC_ARN" != "None" ] && break
+  echo "  waiting for IDC instance ($i/$IDC_WAIT_ATTEMPTS)..."
+  sleep "$IDC_WAIT_INTERVAL"; i=$((i+1))
+done
 if [ -z "$IDC_ARN" ] || [ "$IDC_ARN" = "None" ]; then
-  echo "✗ No IAM Identity Center instance found in $REGION. Enable IDC before generating config." >&2
+  echo "✗ No IAM Identity Center instance found in $REGION after $((IDC_WAIT_ATTEMPTS * IDC_WAIT_INTERVAL))s. Enable IDC before generating config." >&2
   exit 1
 fi
+# Wait for the instance to report ACTIVE before querying the identity store.
+i=0
+while [ "$i" -lt "$IDC_WAIT_ATTEMPTS" ]; do
+  IDC_STATUS="$(aws sso-admin describe-instance --instance-arn "$IDC_ARN" --query 'Status' --output text --region "$REGION" 2>/dev/null | tr -d '[:space:]')"
+  [ "$IDC_STATUS" = "ACTIVE" ] && break
+  echo "  waiting for IDC status ACTIVE (current: ${IDC_STATUS:-unknown}, $i/$IDC_WAIT_ATTEMPTS)..."
+  sleep "$IDC_WAIT_INTERVAL"; i=$((i+1))
+done
 IDC_STORE="$(aws sso-admin describe-instance --instance-arn "$IDC_ARN" --query 'IdentityStoreId' --output text --region "$REGION" | head -1 | tr -d '[:space:]')"
 
 echo "▸ Detecting Developers group..."
-IDC_GROUP="$(aws identitystore list-groups --identity-store-id "$IDC_STORE" --filters AttributePath=DisplayName,AttributeValue=Developers --query 'Groups[0].GroupId' --output text --region "$REGION" 2>/dev/null | head -1 | tr -d '[:space:]')"
+# Wait for the Developers group to exist (created asynchronously alongside the instance).
+IDC_GROUP=""
+i=0
+while [ "$i" -lt "$IDC_WAIT_ATTEMPTS" ]; do
+  IDC_GROUP="$(aws identitystore list-groups --identity-store-id "$IDC_STORE" --filters AttributePath=DisplayName,AttributeValue=Developers --query 'Groups[0].GroupId' --output text --region "$REGION" 2>/dev/null | head -1 | tr -d '[:space:]')"
+  [ -n "$IDC_GROUP" ] && [ "$IDC_GROUP" != "None" ] && break
+  echo "  waiting for Developers group ($i/$IDC_WAIT_ATTEMPTS)..."
+  sleep "$IDC_WAIT_INTERVAL"; i=$((i+1))
+done
 [ "$IDC_GROUP" = "None" ] && IDC_GROUP=""
 
 echo "▸ Detecting admin role name..."
