@@ -18,10 +18,15 @@ spec:
                 matchLabels:
                   fleet_member: control-plane
           - git:
-              repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
-              revision: '{{ .metadata.annotations.fleetRepoRevision }}'
+              # Read per-cluster trigger JSONs from the overlay (fleet-config) where
+              # `task spokes:enable-kro` and users declare clusters. One JSON file per
+              # cluster keeps a separate clusters-kro Application per cluster. Falls
+              # back to the base fleet repo when no overlay is wired. Mirrors the
+              # overlay/base fallback used by the value sources below.
+              repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.fleetRepoURL }}'
+              revision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.fleetRepoRevision }}'
               files:
-                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/*/kro-clusters/clusters/*.json'
+                - path: '{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/*/kro-clusters/clusters/*.json'
   template:
     metadata:
       name: 'clusters-kro-{{ .clusterName }}'
