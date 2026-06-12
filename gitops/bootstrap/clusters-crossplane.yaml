@@ -59,12 +59,15 @@ spec:
       syncPolicy:
         automated:
           selfHeal: false
-          # allowEmpty:false (ArgoCD default) prevents a transient empty render
-          # (e.g. overlay values momentarily unreachable / overlay_repo_url annotation
-          # missing -> falls back to base values where clusters:{}) from pruning the
-          # cluster resource and cascade-deleting a live EKS cluster.
+          # prune:false is a deliberate guardrail: cluster definitions live ONLY in
+          # the overlay (fleet-config). If the overlay is ever reachable-but-empty
+          # (re-seeded, reset, overlay_repo_url unset -> falls back to base where
+          # clusters:{}), auto-prune would cascade-delete a live EKS cluster + VPC.
+          # allowEmpty:false alone does NOT protect this (the app still renders other
+          # resources, so it is never "empty"). To delete a cluster ON PURPOSE: remove
+          # it from the overlay, then run a one-off `argocd app sync <app> --prune`.
           allowEmpty: false
-          prune: true
+          prune: false
         retry:
           limit: -1
           backoff:
