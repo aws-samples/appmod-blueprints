@@ -1,4 +1,0 @@
-clusterName: peeks-spoke-prod
-labels:
-  environment: prod
-  tenant: workshop

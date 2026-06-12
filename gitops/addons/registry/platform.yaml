@@ -243,7 +243,7 @@ kubevela:
   # default values are replicated below.
   syncPolicy:
     automated:
-      selfHeal: false
+      selfHeal: true
       allowEmpty: true
       prune: false
     retry:
