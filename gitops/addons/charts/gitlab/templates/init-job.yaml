@@ -152,7 +152,7 @@ data:
           "branch": "main",
           "commit_message": "feat: initial overlay structure",
           "actions": [
-            {"action": "update", "file_path": "README.md", "content": "# Fleet Config\n\nOverlay repository for platform addon customization.\n\n## Architecture\n\nThis workshop uses a **multi-repo GitOps** approach:\n\n| Repository | Location | Access | Purpose |\n|---|---|---|---|\n| `platform-on-eks-workshop` | GitHub | **Read-only** | Platform source (charts, addons, bootstrap) — managed by platform team |\n| `fleet-config` | GitLab | **Read-write** | Your overlay customizations — this repo |\n| `java`, `rust`, etc. | GitLab | **Read-write** | Application source code |\n\n> **Important:** Do not modify `platform-on-eks-workshop/` directly. All customizations go in this repo (`fleet-config`). ArgoCD merges both sources automatically.\n\n## Structure\n\n```\nconfigs/\n  <addon>/values.yaml              # Global addon config overrides\noverlays/\n  environments/<env>/\n    overrides.yaml                  # Environment-level overrides\n    <addon>/values.yaml             # Per-addon environment overrides\n  clusters/<cluster>/\n    overrides.yaml                  # Cluster-level overrides\n    <addon>/values.yaml             # Per-addon cluster overrides\n```\n\n## How it works\n\nArgoCD resolves values in this order (last wins):\n1. `$defaults/` — Platform repo (GitHub) default configs\n2. `$overlay/configs/<addon>/values.yaml` — This repo global overrides\n3. `$overlay/overlays/environments/<env>/<addon>/values.yaml` — Environment overrides\n4. `$overlay/overlays/clusters/<cluster>/<addon>/values.yaml` — Cluster overrides\n\nMissing files are silently ignored (`ignoreMissingValueFiles: true`).\n"},
+            {"action": "update", "file_path": "README.md", "content": "# fleet-config\n\nThis README is seeded from the platform source (platform/fleet-config/README.md in aws-samples/appmod-blueprints) during platform bootstrap. Edit it there, not here.\n"},
             {"action": "create", "file_path": "overlays/environments/control-plane/.gitkeep", "content": ""},
             {"action": "create", "file_path": "overlays/environments/dev/.gitkeep", "content": ""},
             {"action": "create", "file_path": "overlays/environments/prod/.gitkeep", "content": ""},
@@ -180,12 +180,15 @@ data:
         git clone "http://$GIT_USERNAME:$IDE_PASSWORD@gitlab.gitlab.svc.cluster.local/$GIT_USERNAME/$WORKING_REPO.git" /tmp/fleet-clone
         mkdir -p /tmp/fleet-clone/platform/backstage
         cp -r /tmp/source-repo/platform/backstage/templates /tmp/fleet-clone/platform/backstage/
+        # Seed the overlay README from the platform source (single source of truth).
+        [ -f /tmp/source-repo/platform/fleet-config/README.md ] && \
+          cp /tmp/source-repo/platform/fleet-config/README.md /tmp/fleet-clone/README.md
         cd /tmp/fleet-clone
         git config user.email "gitlab-init@workshop.local"
         git config user.name "gitlab-init"
-        git add platform/backstage/templates
-        git commit -m "feat: seed Backstage templates from platform source" 2>/dev/null && \
-          git push origin main && echo "Backstage templates pushed to $WORKING_REPO" || echo "Templates already up to date"
+        git add platform/backstage/templates README.md
+        git commit -m "feat: seed README + Backstage templates from platform source" 2>/dev/null && \
+          git push origin main && echo "README + Backstage templates pushed to $WORKING_REPO" || echo "Already up to date"
         cd -
       else
         echo "WARN: platform/backstage/templates not found in source repo"
