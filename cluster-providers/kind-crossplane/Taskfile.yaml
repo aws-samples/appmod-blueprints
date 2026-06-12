@@ -914,6 +914,15 @@ tasks:
           git commit -m "feat: enable spoke {{.CLUSTER}} via Crossplane" && git push 2>/dev/null
         fi
         rm -rf "$REPO_DIR"
+        # Refresh the local fleet-config checkout so the committed overlay change is
+        # visible in ~/environment/fleet-config (the task pushes from a temp clone).
+        # Best-effort and non-fatal: skipped if absent, warns if not fast-forwardable.
+        LOCAL_FLEET="$HOME/environment/fleet-config"
+        if [ -d "$LOCAL_FLEET/.git" ]; then
+          (git -C "$LOCAL_FLEET" fetch origin -q && git -C "$LOCAL_FLEET" pull --ff-only -q) \
+            && printf '{{.C_INFO}}  Refreshed local fleet-config checkout.{{.C_RESET}}\n' \
+            || printf '{{.C_INFO}}  Local fleet-config not auto-updated — run: git -C %s pull{{.C_RESET}}\n' "$LOCAL_FLEET"
+        fi
         printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via Crossplane in fleet-config overlay.{{.C_RESET}}\n'
 
   spokes:enable-kro:
@@ -1002,6 +1011,15 @@ tasks:
           git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ multi-acct CARM mapping)" && git push 2>/dev/null
         fi
         rm -rf "$REPO_DIR"
+        # Refresh the local fleet-config checkout so the committed overlay change is
+        # visible in ~/environment/fleet-config (the task pushes from a temp clone).
+        # Best-effort and non-fatal: skipped if absent, warns if not fast-forwardable.
+        LOCAL_FLEET="$HOME/environment/fleet-config"
+        if [ -d "$LOCAL_FLEET/.git" ]; then
+          (git -C "$LOCAL_FLEET" fetch origin -q && git -C "$LOCAL_FLEET" pull --ff-only -q) \
+            && printf '{{.C_INFO}}  Refreshed local fleet-config checkout.{{.C_RESET}}\n' \
+            || printf '{{.C_INFO}}  Local fleet-config not auto-updated — run: git -C %s pull{{.C_RESET}}\n' "$LOCAL_FLEET"
+        fi
         printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via KRO + multi-acct CARM mapping in fleet-config overlay.{{.C_RESET}}\n'
 
   spokes:disable-crossplane:
