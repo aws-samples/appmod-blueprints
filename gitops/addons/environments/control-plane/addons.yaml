@@ -44,6 +44,8 @@ ack-ecr:
   enabled: true
 ack-efs:
   enabled: true
+ack-rds:
+  enabled: true
 ack-s3:
   enabled: true
 ack-dynamodb:

@@ -98,3 +98,18 @@ spec:
       kind: ""
       version: ""
 {{- end }}
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: rds-{{ $key }}
+spec:
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-rds"
+  namespaceSelector:
+    names:
+      - {{ $key }}
+  resourceTypeSelector:
+    - group: rds.services.k8s.aws
+      kind: ""
+      version: ""
+---
