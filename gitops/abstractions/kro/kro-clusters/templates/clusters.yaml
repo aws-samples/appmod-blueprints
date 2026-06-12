@@ -33,12 +33,18 @@ spec:
   {{- else }}
   cidr: {}
   {{- end }}
-  {{- if $cluster.gitops }}
   gitops:
-    {{- toYaml $cluster.gitops | nindent 4 }}
-  {{- else }}
-  gitops: {}
-  {{- end }}
+    {{- $g := $cluster.gitops | default dict }}
+    {{- $global := $.Values.global | default dict }}
+    # Inherit the deploy branch from the control-plane (passed via global) so
+    # kro-provisioned clusters track the same Git revision as the rest of the
+    # fleet, instead of falling back to the RGD's "main" default. A per-cluster
+    # JSON gitops.* value still wins; final fallback is "main".
+    addonsRepoRevision: {{ $g.addonsRepoRevision | default $global.addonsRepoRevision | default "main" | quote }}
+    fleetRepoRevision: {{ $g.fleetRepoRevision | default $global.fleetRepoRevision | default "main" | quote }}
+    {{- range $k, $v := (omit $g "addonsRepoRevision" "fleetRepoRevision") }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
   {{- if $cluster.addons }}
   addons:
     {{- toYaml $cluster.addons | nindent 4 }}

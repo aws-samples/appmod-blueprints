@@ -48,6 +48,11 @@ spec:
                 argoCdCapabilityRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
                 targetCluster: '{{ .clusterName }}'
+                # Propagate the deploy branch from the control-plane so kro spokes
+                # inherit the same Git revision as the rest of the fleet, instead
+                # of falling back to the EksclusterWithVpc RGD's "main" default.
+                addonsRepoRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+                fleetRepoRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
               - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
