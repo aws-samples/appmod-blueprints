@@ -995,6 +995,121 @@ tasks:
         rm -rf "$REPO_DIR"
         printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via KRO + multi-acct CARM mapping in fleet-config overlay.{{.C_RESET}}\n'
 
+  spokes:disable-crossplane:
+    desc: "DELETE a Crossplane spoke on purpose: remove from overlay, then prune (usage: task spokes:disable-crossplane -- <cluster-name>)"
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+      GITLAB_DOMAIN_INT:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+    cmds:
+      - |
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:disable-crossplane -- <cluster-name>"; exit 1; fi
+        # Crossplane clusters are grouped under one per-tenant app (clusters-<tenant>).
+        APP="clusters-workshop"
+
+        # 1. Declarative removal: drop the cluster entry from the overlay (Git).
+        REPO_DIR=$(mktemp -d)
+        git clone "https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git" "$REPO_DIR" 2>/dev/null
+        XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
+        if [ -f "$XP_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}"' "$XP_VALUES" >/dev/null 2>&1; then
+          yq -i 'del(.clusters."{{.CLUSTER}}")' "$XP_VALUES"
+          ( cd "$REPO_DIR" && git add -A && git commit -m "feat: disable spoke {{.CLUSTER}} (remove from Crossplane overlay)" && git push 2>/dev/null )
+          printf '{{.C_OK}}✓ Removed {{.CLUSTER}} from the Crossplane overlay (Git).{{.C_RESET}}\n'
+        else
+          printf '{{.C_INFO}}  {{.CLUSTER}} not present in Crossplane overlay — proceeding to prune any leftover resources.{{.C_RESET}}\n'
+        fi
+        rm -rf "$REPO_DIR"
+
+        # 2. Deliberate prune. With prune:false on the appset this manual --prune is
+        #    the explicit destructive step. Refresh + show the diff first so the
+        #    operator sees exactly what will be deleted.
+        printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
+        if command -v argocd >/dev/null 2>&1; then
+          argocd app get "$APP" --refresh >/dev/null 2>&1 || true
+          argocd app diff "$APP" || true
+          if ! argocd app sync "$APP" --prune --timeout 600; then
+            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Run: argocd-refresh-token && source ~/.bashrc.d/platform.sh, then:{{.C_RESET}}\n'
+            printf '    argocd app sync %s --prune\n' "$APP"
+          fi
+        else
+          printf '{{.C_INFO}}  argocd CLI not found. Finish the deletion manually:{{.C_RESET}}\n'
+          printf '    argocd app sync %s --prune\n' "$APP"
+        fi
+
+  spokes:disable-kro:
+    desc: "DELETE a KRO spoke on purpose: remove from overlay, then prune (usage: task spokes:disable-kro -- <cluster-name>)"
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+      GITLAB_DOMAIN_INT:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+    cmds:
+      - |
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:disable-kro -- <cluster-name>"; exit 1; fi
+        # KRO generates one app per cluster: clusters-kro-<name>.
+        APP="clusters-kro-{{.CLUSTER}}"
+        REPO_DIR=$(mktemp -d)
+        git clone "https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git" "$REPO_DIR" 2>/dev/null
+        BASE="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters"
+        KRO_VALUES="$BASE/values.yaml"
+        MARKER="$BASE/clusters/{{.CLUSTER}}.json"
+        MA_FILE="$REPO_DIR/configs/multi-acct/values.yaml"
+
+        # PHASE 1: remove ONLY the cluster spec from values.yaml. Keep the clusters/*.json
+        # marker for now so the appset still generates clusters-kro-<name> and we can prune
+        # through it. (Deleting the marker first would make the appset remove the app with
+        # preserveResourcesOnDeletion=true -> the EksclusterWithVpc would be ORPHANED, not
+        # deleted.)
+        if [ -f "$KRO_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}"' "$KRO_VALUES" >/dev/null 2>&1; then
+          yq -i 'del(.clusters."{{.CLUSTER}}")' "$KRO_VALUES"
+          ( cd "$REPO_DIR" && git add -A && git commit -m "feat: disable spoke {{.CLUSTER}} (remove KRO cluster spec)" && git push 2>/dev/null )
+          printf '{{.C_OK}}✓ Removed {{.CLUSTER}} spec from the KRO overlay (Git).{{.C_RESET}}\n'
+        else
+          printf '{{.C_INFO}}  {{.CLUSTER}} spec not present in KRO overlay — proceeding to prune any leftovers.{{.C_RESET}}\n'
+        fi
+
+        # PHASE 2: deliberate prune through the still-existing app.
+        printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
+        PRUNED=false
+        if command -v argocd >/dev/null 2>&1; then
+          argocd app get "$APP" --refresh >/dev/null 2>&1 || true
+          argocd app diff "$APP" || true
+          if argocd app sync "$APP" --prune --timeout 600; then PRUNED=true; else
+            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Run: argocd-refresh-token && source ~/.bashrc.d/platform.sh, then: argocd app sync %s --prune{{.C_RESET}}\n' "$APP"
+          fi
+        else
+          printf '{{.C_INFO}}  argocd CLI not found. Run manually then re-run this task to clean up: argocd app sync %s --prune{{.C_RESET}}\n' "$APP"
+        fi
+
+        # PHASE 3: cleanup the now-empty app + CARM mapping (only after a successful prune,
+        # so we never orphan a live resource). The appset removes clusters-kro-<name> once
+        # the marker is gone; its resources are already pruned.
+        if [ "$PRUNED" = true ]; then
+          CHANGED=0
+          [ -f "$MARKER" ] && { rm -f "$MARKER"; CHANGED=1; }
+          [ -f "$MA_FILE" ] && yq -e '.clusters."{{.CLUSTER}}"' "$MA_FILE" >/dev/null 2>&1 && { yq -i 'del(.clusters."{{.CLUSTER}}")' "$MA_FILE"; CHANGED=1; }
+          if [ "$CHANGED" = "1" ]; then
+            ( cd "$REPO_DIR" && git add -A && git commit -m "chore: remove {{.CLUSTER}} KRO marker + multi-acct mapping (post-prune cleanup)" && git push 2>/dev/null )
+            printf '{{.C_OK}}✓ Cleaned up {{.CLUSTER}} marker + multi-acct mapping; app will be removed by the appset.{{.C_RESET}}\n'
+          fi
+        else
+          printf '{{.C_INFO}}  Skipped marker/CARM cleanup (prune not confirmed). Re-run this task after a successful prune.{{.C_RESET}}\n'
+        fi
+        rm -rf "$REPO_DIR"
+
   hub:restart-identity-pods:
     desc: Restart pods that depend on Pod Identity (external-dns, LBC, Crossplane providers) after identities are ready
     cmds:
