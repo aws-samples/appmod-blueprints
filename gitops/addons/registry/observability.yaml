@@ -262,7 +262,10 @@ aws-for-fluentbit:
         values: ["true"]
   valuesObject:
     image:
-      tag: 3.3.1
+      # Track the latest aws-for-fluent-bit 3.x image (AL2023, fluent-bit v5.x).
+      # Bump as new patch/minor releases ship with CVE fixes:
+      # https://github.com/aws/aws-for-fluent-bit/releases
+      tag: 3.4.1
 
 cni-metrics-helper:
   namespace: kube-system
