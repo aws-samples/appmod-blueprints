@@ -789,6 +789,13 @@ spec:
                             - name: aws-creds
                               secret:
                                 secretName: aws-credentials
+                                # Optional so the Job starts even when the secret
+                                # is absent. On the hub the secret does not exist;
+                                # the AWS CLI then falls through to the crossplane
+                                # SA's Pod Identity (CrossplaneCapabilitiesRole).
+                                # On the Kind bootstrap the secret is present and
+                                # is used as before (backward compatible).
+                                optional: true
                           containers:
                             - name: create-capabilities
                               image: amazon/aws-cli:latest
