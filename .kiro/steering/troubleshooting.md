@@ -183,3 +183,62 @@ kubectl logs -n ingress-nginx deployment/ingress-nginx-controller
 - Check DNS configuration
 - Review TLS certificates
 - Validate ingress rules
+
+## ACK (AWS Controllers for Kubernetes) Issues
+
+### ACK "scheduled for deletion" loop
+**Symptoms**: ACK resource stuck with `InvalidRequestException: You can't create this secret because a secret with this name is already scheduled for deletion`
+
+**Root cause**: AWS Secrets Manager (or other services) has a deletion delay. ACK caches the error and enters a 10h backoff.
+
+**Fix**:
+1. Wait for AWS to fully purge the resource (check with `aws secretsmanager describe-secret`)
+2. Delete the K8s CR (remove finalizers first if needed)
+3. Let KRO/ArgoCD recreate the CR — **new K8s objects don't inherit the cached error**
+4. If still stuck, patch `spec.description` or `spec.tags` to bump `.metadata.generation` which forces a fresh reconciliation cycle
+
+### ACK "Resource already exists" after restore
+**Symptoms**: ACK tries `CreateSecret` but gets `Resource already exists`
+
+**Fix**: Delete the secret from AWS (`force-delete-without-recovery`), then bump the CR's generation by patching a mutable spec field.
+
+### IAMRoleSelector not taking effect
+**Symptoms**: ACK uses the default capability role instead of the cluster-mgmt role
+
+**Fix**: Verify IAMRoleSelector exists with correct `namespaceSelector` and `resourceTypeSelector`. After creating/updating selectors, delete the stuck ACK resource CR to force recreation — ACK picks up selectors only on fresh reconciliation.
+
+### Force ACK reconciliation
+The `services.k8s.aws/force-reconcile` annotation does NOT always work (especially with capability-managed ACK). The reliable method is to **patch a mutable spec field** (e.g., `spec.description`, `spec.tags`) to increment `.metadata.generation`.
+
+## ArgoCD 3.x (EKS Capability) Issues
+
+### `dig` function fails on annotations
+**Symptoms**: `error calling dig: interface conversion: interface {} is map[string]string, not map[string]interface {}`
+
+**Root cause**: ArgoCD 3.x strict Go template typing. `dig` doesn't work on `map[string]string` (annotations).
+
+**Fix**: Replace `{{ dig "key" default .metadata.annotations }}` with `{{ or (index .metadata.annotations "key") default }}`
+
+### Cluster secret ignored by ArgoCD
+**Symptoms**: `controller is configured to ignore cluster`
+
+**Fix**: Add `project: default` to the cluster secret's `stringData`. ArgoCD 3.x requires this field.
+
+### `missingkey=error` with optional annotations
+**Symptoms**: `map has no entry for key "annotation_name"`
+
+**Fix**: Use `index` instead of dot notation: `{{ or (index .metadata.annotations "key") "default" }}`
+
+### KRO RGD "breaking changes detected" on CRD update
+**Symptoms**: RGD shows `Inactive` with message `cannot update CRD: breaking changes detected: Property X was removed`
+
+**Fix**: Delete the CRD manually (`kubectl delete crd <name>.kro.run`), then sync to let KRO recreate it. **Warning**: This deletes all instances of that CRD — may trigger resource deletion in AWS. Only do this when safe.
+
+## Crossplane Issues
+
+### NAT Gateway reference resolution race condition
+**Symptoms**: Route stuck with `referenced field was empty (referenced resource may not yet be ready)` for hours
+
+**Root cause**: `managementPolicies` excludes `LateInitialize` on NATGateway, so the provider never backfills the ID field that `natGatewayIdSelector` needs.
+
+**Fix**: Use composite field patching (`ToCompositeFieldPath` from NATGateway status → `FromCompositeFieldPath` to Route) with `policy.fromFieldPath: Required`.
