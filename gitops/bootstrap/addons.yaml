@@ -55,7 +55,10 @@ spec:
         name: '{{ .name }}'
       syncPolicy:
         automated:
-          selfHeal: false
+          # selfHeal:true so addons auto-converge to Git without a manual sync
+          # (e.g. when a spoke first becomes reachable). Safe with prune:false:
+          # ArgoCD adds/updates to match Git but never deletes.
+          selfHeal: true
           allowEmpty: true
           prune: false
         retry:
