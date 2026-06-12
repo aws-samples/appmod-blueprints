@@ -912,8 +912,8 @@ tasks:
         # the overlay (fleet-config), so write it here. environment is derived from
         # the cluster name (dev/prod/staging/test), defaulting to dev.
         ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
-        mkdir -p "$REPO_DIR/fleet/members/{{.CLUSTER}}"
-        cat > "$REPO_DIR/fleet/members/{{.CLUSTER}}/values.yaml" <<EOF
+        mkdir -p "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}"
+        cat > "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}/values.yaml" <<EOF
         clusterName: {{.CLUSTER}}
         labels:
           environment: ${ENV}
