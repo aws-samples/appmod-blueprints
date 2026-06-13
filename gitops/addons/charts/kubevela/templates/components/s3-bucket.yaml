@@ -23,7 +23,5 @@ spec:
         	region: string
         }
   workload:
-    definition:
-      apiVersion: apps/v1
-      kind: Deployment
+    type: autodetects.core.oam.dev
 

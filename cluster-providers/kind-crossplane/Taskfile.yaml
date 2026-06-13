@@ -669,6 +669,7 @@ tasks:
         update_var "BACKSTAGE_URL" "https://{{.INGRESS_DOMAIN}}/backstage"
         update_var "KEYCLOAK_ADMIN_URL" "https://{{.INGRESS_DOMAIN}}/keycloak/admin"
         update_var "WORKFLOWS_URL" "https://{{.INGRESS_DOMAIN}}/argo-workflows"
+        update_var "GRAFANA_URL" "https://{{.INGRESS_DOMAIN}}/grafana"
         update_var "GITLAB_URL" "https://{{.GITLAB_DOMAIN}}"
         update_var "GITLAB_DOMAIN" "{{.GITLAB_DOMAIN}}"
         update_var "ARGOCD_URL" "{{.ARGOCD_URL}}"

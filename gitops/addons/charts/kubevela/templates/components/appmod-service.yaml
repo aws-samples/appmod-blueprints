@@ -13,8 +13,13 @@ spec:
         import "strings"
         
         let previewService = "\(context.name)-preview"
-        let ampWorkspaceUrl = "{{ "{{" }}args.amp-workspace-url{{ "}}" }}" //TODO: inconsistent with cue, needs to be looked at
-        let ampWorkspaceRegion = "{{ "{{" }}args.amp-workspace-region{{ "}}" }}" //TODO: inconsistent with cue, needs to be looked at
+        // The amp-workspace-url / amp-workspace-region values are injected at trait
+        // render time via KubeVela trait args ({{args.*}}) and consumed below by the
+        // Prometheus analysis provider used for canary metric checks. This intentionally
+        // mixes KubeVela arg templating with CUE; the args are supplied by the AppmodService
+        // RGD from the amp-workspace secret.
+        let ampWorkspaceUrl = "{{ "{{" }}args.amp-workspace-url{{ "}}" }}"
+        let ampWorkspaceRegion = "{{ "{{" }}args.amp-workspace-region{{ "}}" }}"
         let prometheusTargetQuery = "k8s_container_name=\"\(parameter.image_name)\", k8s_namespace_name=\"\(context.namespace)\""
 
         output: {
@@ -460,7 +465,5 @@ spec:
         	metrics?:         #MetricGate
         }
   workload:
-    definition:
-      apiVersion: apps/v1
-      kind: Deployment
+    type: autodetects.core.oam.dev
 
