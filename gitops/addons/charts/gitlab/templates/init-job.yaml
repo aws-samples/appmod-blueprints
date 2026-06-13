@@ -156,6 +156,7 @@ data:
             {"action": "create", "file_path": "overlays/environments/control-plane/.gitkeep", "content": ""},
             {"action": "create", "file_path": "overlays/environments/dev/.gitkeep", "content": ""},
             {"action": "create", "file_path": "overlays/environments/prod/.gitkeep", "content": ""},
+            {"action": "create", "file_path": "overlays/environments/prod/platform-manifests/values.yaml", "content": "# Disable sample HuggingFace models on prod spokes (not ML-enabled; they lack the HuggingFaceModel kro CRD, so the base sample CRs sit OutOfSync).\nhuggingfaceModels: []\n"},
             {"action": "create", "file_path": "overlays/clusters/.gitkeep", "content": ""},
             {"action": "create", "file_path": "configs/.gitkeep", "content": ""}
           ]
