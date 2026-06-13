@@ -183,6 +183,11 @@ spec:
           type: boolean
           description: Enable Cert Manager addon
           default: true
+        enableAwsEfsCsiDriver:
+          title: Enable AWS EFS CSI Driver
+          type: boolean
+          description: Enable AWS EFS CSI Driver addon
+          default: false
   steps:
     - id: fetchSystem
       name: Fetch System
@@ -223,11 +228,11 @@ spec:
               - url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/clusters
                 title: ArgoCD App URL
                 icon: externalLink
-              - url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.repoName }}/-/blob/main/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
+              - url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.repoName }}/-/blob/main/gitops/fleet/kro-values/tenants/${{ parameters.tenant }}/kro-clusters/values.yaml
                 title: Git Repo URL
                 icon: github
           spec:
-            owner: guests
+            owner: user:guest
             lifecycle: experimental
             type: service
     # - id: mergeConfig

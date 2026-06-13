@@ -430,7 +430,11 @@ update_backstage_defaults() {
   CATALOG_INFO_PATH="${GIT_ROOT_PATH}/platform/backstage/templates/catalog-info.yaml"
 
   # Get admin role name from current AWS context
-  ADMIN_ROLE_NAME=$(aws sts get-caller-identity --query 'Arn' --output text | sed 's|.*assumed-role/||' | sed 's|/.*||')
+  # Use WSParticipantRole (Workshop Studio standard role). Fallback to caller identity for self-paced deployments.
+  ADMIN_ROLE_NAME=$(aws iam list-roles --query 'Roles[?contains(RoleName,`WSParticipantRole`)].RoleName' --output text 2>/dev/null)
+  if [[ -z "$ADMIN_ROLE_NAME" ]]; then
+    ADMIN_ROLE_NAME=$(aws sts get-caller-identity --query 'Arn' --output text | sed 's|.*assumed-role/||' | sed 's|/.*||')
+  fi
 
   # Get ArgoCD URL from EKS capability if available
   ARGOCD_SERVER_URL=$(aws eks describe-capability --cluster-name ${CLUSTER_NAME:-${RESOURCE_PREFIX}-hub} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null || echo "")
