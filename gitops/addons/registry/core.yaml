@@ -241,13 +241,6 @@ aws-load-balancer-controller:
       namespace: kube-system
       jsonPointers:
         - /data
-        # enableCertManager: cert-manager populates this secret and stamps
-        # cert-manager.io/* annotations (+ labels) on it, and creates it as a
-        # kubernetes.io/tls secret, which otherwise shows as permanent OutOfSync.
-        # Ignore that managed metadata/type drift.
-        - /type
-        - /metadata/annotations
-        - /metadata/labels
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
       name: aws-load-balancer-webhook
