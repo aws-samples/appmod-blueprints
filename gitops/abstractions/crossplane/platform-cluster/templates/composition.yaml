@@ -721,6 +721,48 @@ spec:
                 fromFieldPath: spec.argoCDRoleArn
                 toFieldPath: spec.forProvider.principalArn
 
+          # Admin/IDE Access Entry (allows the workshop IDE Shared role to run
+          # kubectl against the spoke cluster). principalArn comes from
+          # spec.adminRoleArn; if it is unset the patch is skipped (Optional)
+          # and these resources are not created with a valid principal.
+          - name: admin-access-entry
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessEntry
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  type: STANDARD
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.adminRoleArn
+                toFieldPath: spec.forProvider.principalArn
+                policy:
+                  fromFieldPath: Required
+
+          - name: admin-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+                  accessScope:
+                    type: cluster
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.adminRoleArn
+                toFieldPath: spec.forProvider.principalArn
+                policy:
+                  fromFieldPath: Required
+
           # ArgoCD-specific access policies the EKS Capability needs to drive
           # remote-cluster sync (AmazonEKSClusterAdminPolicy alone is not
           # sufficient — the hub-side ArgoCD Capability fails with

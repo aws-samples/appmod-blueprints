@@ -17,3 +17,4 @@ enabledAddons:
   argo_rollouts: true
   # Platform
   crossplane: true
+  kro_manifests: true

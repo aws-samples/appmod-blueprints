@@ -51,6 +51,9 @@ spec:
                 argoCDRoleArn:
                   type: string
                   description: ARN of the hub ArgoCD capability role for spoke access
+                adminRoleArn:
+                  type: string
+                  description: ARN of the IDE/admin role granted cluster-admin access entry on the cluster (e.g. the workshop IDE Shared role)
                 managedNodeGroup:
                   type: object
                   description: Optional managed node group alongside Auto Mode

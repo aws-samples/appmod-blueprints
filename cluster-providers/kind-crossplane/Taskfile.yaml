@@ -897,6 +897,14 @@ tasks:
         if [ -f "$XP_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}".vpcCidr' "$XP_VALUES" >/dev/null 2>&1; then
           echo "  Spoke {{.CLUSTER}} already has a vpcCidr — keeping existing values (idempotent)."
         else
+          # adminRoleArn grants the workshop IDE/admin role cluster-admin access on the
+          # spoke (so participants can run kubectl from the IDE). Derived from
+          # adminRoleName in config.local.yaml; omitted if unset.
+          ADMIN_ROLE=$(yq '.adminRoleName // ""' {{.CONFIG_FILE}})
+          ADMIN_ARN_LINE=""
+          if [ -n "$ADMIN_ROLE" ]; then
+            ADMIN_ARN_LINE="    adminRoleArn: arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ADMIN_ROLE"
+          fi
           cat > "$XP_VALUES" <<EOF
         clusters:
           {{.CLUSTER}}:
@@ -905,6 +913,7 @@ tasks:
             kubernetesVersion: "{{.K8S_VERSION}}"
             autoMode: true
             resourcePrefix: {{.RESOURCE_PREFIX}}
+        $ADMIN_ARN_LINE
         EOF
         fi
         # Fleet member file: only Crossplane/Terraform spokes need a fleet-secret
