@@ -791,6 +791,27 @@ tasks:
           password: "{{.GIT_PASSWORD}}"
         EOF
 
+        # 3a. ArgoCD repo-creds credential TEMPLATE for all repos under the user's GitLab
+        #     namespace. Backstage scaffolder creates per-app GitLab repos
+        #     (https://<gitlab>/{{.GIT_USERNAME}}/<app>.git) that ArgoCD must pull; without a
+        #     matching credential template those CD Applications fail with ComparisonError.
+        #     A repo-creds secret applies to every repository whose URL starts with `url`.
+        printf '{{.C_STEP}}▸ Registering ArgoCD repo-creds for {{.GIT_USERNAME}} GitLab namespace...{{.C_RESET}}\n'
+        cat <<EOF | KUBECONFIG="$KC" kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: gitlab-user-repo-creds
+          namespace: argocd
+          labels:
+            argocd.argoproj.io/secret-type: repo-creds
+        stringData:
+          type: git
+          url: https://{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}
+          username: "{{.GIT_USERNAME}}"
+          password: "{{.GIT_PASSWORD}}"
+        EOF
+
         # 3b. Snapshot the CURRENT overlay wiring BEFORE touching anything. This lets us
         #     (a) skip entirely when it is already correct, and (b) on failure restore the
         #     PREVIOUS good value instead of dropping to the GitHub base (clusters:{}),
