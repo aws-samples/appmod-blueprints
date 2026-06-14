@@ -146,6 +146,8 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] hub:set-overlay-repo done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: spokes:enable-crossplane
         vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
+      - task: spokes:create-capabilities
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
       - task: spokes:enable-kro
         vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-prod" }
       - 'printf "{{.C_OK}}✓ Bootstrap complete in %ds. Run task status.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
@@ -968,6 +970,73 @@ tasks:
             || printf '{{.C_INFO}}  Local fleet-config not auto-updated — run: git -C %s pull{{.C_RESET}}\n' "$LOCAL_FLEET"
         fi
         printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via Crossplane in fleet-config overlay.{{.C_RESET}}\n'
+
+  spokes:create-capabilities:
+    desc: "Create KRO + ACK EKS Capabilities on a Crossplane-provisioned spoke (usage: task spokes:create-capabilities -- <cluster-name>)"
+    # KRO-path spokes get their kro/ACK capabilities declaratively from the EksclusterWithVpc
+    # RGD. Crossplane-path spokes do NOT, so create them here the same way the hub does
+    # (aws eks create-capability), with per-spoke capability IAM roles. Idempotent.
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+    cmds:
+      - |
+        set -e
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:create-capabilities -- <cluster-name>"; exit 1; fi
+        CLUSTER="{{.CLUSTER}}"
+        REGION="{{.AWS_REGION}}"
+        ACCOUNT="{{.AWS_ACCOUNT_ID}}"
+        PREFIX="{{.RESOURCE_PREFIX}}"
+        ACK_ROLE_NAME="${PREFIX}-${CLUSTER}-ack-capability-role"
+        KRO_ROLE_NAME="${PREFIX}-${CLUSTER}-kro-capability-role"
+
+        # Wait for the Crossplane-provisioned spoke EKS cluster to be ACTIVE (up to ~30 min).
+        printf '{{.C_STEP}}▸ [%s] Waiting for spoke EKS cluster ACTIVE...{{.C_RESET}}\n' "$CLUSTER"
+        i=0
+        until aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null | grep -q ACTIVE; do
+          i=$((i+1)); [ "$i" -ge 120 ] && { printf '{{.C_ERR}}⚠ %s not ACTIVE after timeout — skipping capability creation.{{.C_RESET}}\n' "$CLUSTER"; exit 0; }
+          sleep 15
+        done
+
+        ASSUME_DOC='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"capabilities.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
+
+        # --- ACK capability role (AssumeWorkloadRoles + ManageIRSARoles) ---
+        printf '{{.C_STEP}}▸ [%s] Ensuring ACK capability role %s...{{.C_RESET}}\n' "$CLUSTER" "$ACK_ROLE_NAME"
+        aws iam get-role --role-name "$ACK_ROLE_NAME" >/dev/null 2>&1 || \
+          aws iam create-role --role-name "$ACK_ROLE_NAME" --assume-role-policy-document "$ASSUME_DOC" >/dev/null
+        aws iam put-role-policy --role-name "$ACK_ROLE_NAME" --policy-name AssumeWorkloadRoles --policy-document \
+          "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\",\"sts:TagSession\"],\"Resource\":[\"arn:aws:iam::${ACCOUNT}:role/${PREFIX}-cluster-mgmt-*\"]}]}" >/dev/null
+        aws iam put-role-policy --role-name "$ACK_ROLE_NAME" --policy-name ManageIRSARoles --policy-document \
+          "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:CreateRole\",\"iam:DeleteRole\",\"iam:TagRole\",\"iam:UntagRole\",\"iam:UpdateRole\",\"iam:UpdateAssumeRolePolicy\",\"iam:AttachRolePolicy\",\"iam:DetachRolePolicy\",\"iam:ListAttachedRolePolicies\",\"iam:ListRolePolicies\",\"iam:ListRoleTags\",\"iam:ListInstanceProfilesForRole\",\"iam:PutRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:GetRolePolicy\"],\"Resource\":[\"arn:aws:iam::${ACCOUNT}:role/${CLUSTER}-*\"]}]}" >/dev/null
+        ACK_ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/${ACK_ROLE_NAME}"
+
+        # --- KRO capability role (AmazonEKSClusterPolicy) ---
+        printf '{{.C_STEP}}▸ [%s] Ensuring KRO capability role %s...{{.C_RESET}}\n' "$CLUSTER" "$KRO_ROLE_NAME"
+        aws iam get-role --role-name "$KRO_ROLE_NAME" >/dev/null 2>&1 || \
+          aws iam create-role --role-name "$KRO_ROLE_NAME" --assume-role-policy-document "$ASSUME_DOC" >/dev/null
+        aws iam attach-role-policy --role-name "$KRO_ROLE_NAME" --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy >/dev/null 2>&1 || true
+        KRO_ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/${KRO_ROLE_NAME}"
+
+        # --- Create the capabilities (idempotent) ---
+        for cap in "kro:KRO:$KRO_ROLE_ARN" "ack:ACK:$ACK_ROLE_ARN"; do
+          NAME="${cap%%:*}"; rest="${cap#*:}"; TYPE="${rest%%:*}"; ROLE_ARN="${rest#*:}"
+          STATUS=$(aws eks describe-capability --cluster-name "$CLUSTER" --capability-name "$NAME" --region "$REGION" --query 'capability.status' --output text 2>/dev/null || echo "NOT_FOUND")
+          if [ "$STATUS" = "NOT_FOUND" ]; then
+            printf '{{.C_STEP}}▸ [%s] Creating %s capability...{{.C_RESET}}\n' "$CLUSTER" "$TYPE"
+            aws eks create-capability --region "$REGION" --cluster-name "$CLUSTER" --capability-name "$NAME" --type "$TYPE" --role-arn "$ROLE_ARN" --delete-propagation-policy RETAIN >/dev/null
+          else
+            printf '{{.C_INFO}}  [%s] %s capability already exists (%s).{{.C_RESET}}\n' "$CLUSTER" "$TYPE" "$STATUS"
+          fi
+        done
+
+        # --- Wait for both ACTIVE ---
+        for NAME in kro ack; do
+          i=0
+          until aws eks describe-capability --cluster-name "$CLUSTER" --capability-name "$NAME" --region "$REGION" --query 'capability.status' --output text 2>/dev/null | grep -q ACTIVE; do
+            i=$((i+1)); [ "$i" -ge 40 ] && { printf '{{.C_ERR}}⚠ [%s] %s capability not ACTIVE after timeout.{{.C_RESET}}\n' "$CLUSTER" "$NAME"; break; }
+            sleep 15
+          done
+        done
+        printf '{{.C_OK}}✓ [%s] KRO + ACK capabilities created.{{.C_RESET}}\n' "$CLUSTER"
 
   spokes:enable-kro:
     desc: "Enable a spoke cluster via KRO (usage: task spokes:enable-kro -- <cluster-name>)"
