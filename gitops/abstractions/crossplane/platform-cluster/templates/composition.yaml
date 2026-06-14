@@ -1,0 +1,1166 @@
+{{- if .Values.xrd.enabled }}
+# Unified PlatformCluster Composition
+# Creates complete infrastructure: VPC + networking + EKS + IAM + node groups
+# All resources use matchControllerRef for cross-referencing (no manual wiring)
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xplatformclusters.aws.platform.gitops.io
+  labels:
+    provider: aws
+spec:
+  compositeTypeRef:
+    apiVersion: platform.gitops.io/v1alpha1
+    kind: XPlatformCluster
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        patchSets:
+          - name: common
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.region
+          - name: tags
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.resourcePrefix
+                toFieldPath: spec.forProvider.tags[platform.gitops.io/prefix]
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.forProvider.tags[platform.gitops.io/cluster]
+        resources:
+
+          # ===== NETWORKING =====
+
+          # VPC
+          - name: vpc
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: VPC
+              spec:
+                forProvider:
+                  enableDnsHostnames: true
+                  enableDnsSupport: true
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.vpcId
+
+          # Internet Gateway
+          - name: igw
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: InternetGateway
+              spec:
+                forProvider:
+                  vpcIdSelector:
+                    matchControllerRef: true
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+
+          # Elastic IP for NAT Gateway
+          - name: eip
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: EIP
+              spec:
+                forProvider:
+                  domain: vpc
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+
+          # Public Subnet AZ-a
+          - name: public-subnet-a
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              metadata:
+                labels:
+                  access: public
+                  zone: a
+              spec:
+                forProvider:
+                  mapPublicIpOnLaunch: true
+                  cidrBlock: "10.0.0.0/19"
+                  vpcIdSelector:
+                    matchControllerRef: true
+                  tags:
+                    "kubernetes.io/role/elb": "1"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+                transforms:
+                  - type: string
+                    string:
+                      type: Regexp
+                      regexp:
+                        match: '^(\d+\.\d+)\.'
+                        group: 1
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s.0.0/19"
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.availabilityZone
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%sa"
+
+          # Public Subnet AZ-b
+          - name: public-subnet-b
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              metadata:
+                labels:
+                  access: public
+                  zone: b
+              spec:
+                forProvider:
+                  mapPublicIpOnLaunch: true
+                  cidrBlock: "10.0.32.0/19"
+                  vpcIdSelector:
+                    matchControllerRef: true
+                  tags:
+                    "kubernetes.io/role/elb": "1"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+                transforms:
+                  - type: string
+                    string:
+                      type: Regexp
+                      regexp:
+                        match: '^(\d+\.\d+)\.'
+                        group: 1
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s.32.0/19"
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.availabilityZone
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%sb"
+
+          # Private Subnet AZ-a
+          - name: private-subnet-a
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              metadata:
+                labels:
+                  access: private
+                  zone: a
+              spec:
+                forProvider:
+                  cidrBlock: "10.0.128.0/19"
+                  vpcIdSelector:
+                    matchControllerRef: true
+                  tags:
+                    "kubernetes.io/role/internal-elb": "1"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+                transforms:
+                  - type: string
+                    string:
+                      type: Regexp
+                      regexp:
+                        match: '^(\d+\.\d+)\.'
+                        group: 1
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s.128.0/19"
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.availabilityZone
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%sa"
+
+          # Private Subnet AZ-b
+          - name: private-subnet-b
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              metadata:
+                labels:
+                  access: private
+                  zone: b
+              spec:
+                forProvider:
+                  cidrBlock: "10.0.160.0/19"
+                  vpcIdSelector:
+                    matchControllerRef: true
+                  tags:
+                    "kubernetes.io/role/internal-elb": "1"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+                transforms:
+                  - type: string
+                    string:
+                      type: Regexp
+                      regexp:
+                        match: '^(\d+\.\d+)\.'
+                        group: 1
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s.160.0/19"
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.availabilityZone
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%sb"
+
+          # NAT Gateway
+          - name: natgw
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: NATGateway
+              spec:
+                # Exclude LateInitialize so the provider does not copy the observed
+                # vpcId back into spec.forProvider. availabilityMode defaults to
+                # "zonal", and a late-initialized vpcId makes (re)create fail with:
+                # "VpcId is not supported for a NAT gateway with availability mode zonal".
+                # The Composition intentionally never sets vpcId here; subnetId is enough.
+                managementPolicies:
+                  - Observe
+                  - Create
+                  - Update
+                  - Delete
+                forProvider:
+                  allocationIdSelector:
+                    matchControllerRef: true
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                      zone: a
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.natGatewayId
+
+          # Public Route Table + Route
+          - name: public-rt
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTable
+              metadata:
+                labels:
+                  access: public
+              spec:
+                forProvider:
+                  vpcIdSelector:
+                    matchControllerRef: true
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+
+          - name: public-route
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: "0.0.0.0/0"
+                  gatewayIdSelector:
+                    matchControllerRef: true
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          # Private Route Table + Route
+          - name: private-rt
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTable
+              metadata:
+                labels:
+                  access: private
+              spec:
+                forProvider:
+                  vpcIdSelector:
+                    matchControllerRef: true
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+
+          - name: private-route
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: "0.0.0.0/0"
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.natGatewayId
+                toFieldPath: spec.forProvider.natGatewayId
+                policy:
+                  fromFieldPath: Required
+
+          # Route Table Associations
+          - name: public-rta-a
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                      zone: a
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: public-rta-b
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: public
+                      zone: b
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: private-rta-a
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                      zone: a
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: private-rta-b
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                      zone: b
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          # ===== EKS CLUSTER (Auto Mode) =====
+
+          # EKS Cluster IAM Role
+          - name: cluster-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels:
+                  role: cluster
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"Service": "eks.amazonaws.com"},
+                        "Action": ["sts:AssumeRole", "sts:TagSession"]
+                      }]
+                    }
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-cluster-role"
+              - type: PatchSet
+                patchSetName: tags
+
+          - name: cluster-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
+
+          - name: cluster-compute-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSComputePolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
+
+          - name: cluster-networking-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSNetworkingPolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
+
+          - name: cluster-block-storage-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
+
+          - name: cluster-lb-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
+
+          # EKS Auto Mode Node Role
+          - name: node-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels:
+                  role: node
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"Service": ["ec2.amazonaws.com", "eks.amazonaws.com"]},
+                        "Action": ["sts:AssumeRole", "sts:TagSession"]
+                      }]
+                    }
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-node-role"
+              - type: PatchSet
+                patchSetName: tags
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.arn
+                toFieldPath: status.nodeRoleArn
+
+          - name: node-policy-worker
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: node
+
+          - name: node-policy-ecr
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: node
+
+          # Managed Node Group IAM Role (separate from Auto Mode)
+          - name: mng-node-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels:
+                  role: mng-node
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"Service": "ec2.amazonaws.com"},
+                        "Action": "sts:AssumeRole"
+                      }]
+                    }
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-mng-node-role"
+              - type: PatchSet
+                patchSetName: tags
+
+          - name: mng-node-policy-worker
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: mng-node
+
+          - name: mng-node-policy-cni
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: mng-node
+
+          - name: mng-node-policy-ecr
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: mng-node
+
+          - name: mng-access-entry
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessEntry
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  principalArnFromRoleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: mng-node
+                  type: EC2_LINUX
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          # ArgoCD Capability Access Entry (allows hub ArgoCD to manage spoke)
+          - name: argocd-access-entry
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessEntry
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  type: STANDARD
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
+          - name: argocd-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+                  accessScope:
+                    type: cluster
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
+          # Admin/IDE Access Entry (allows the workshop IDE Shared role to run
+          # kubectl against the spoke cluster). principalArn comes from
+          # spec.adminRoleArn; if it is unset the patch is skipped (Optional)
+          # and these resources are not created with a valid principal.
+          - name: admin-access-entry
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessEntry
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  type: STANDARD
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.adminRoleArn
+                toFieldPath: spec.forProvider.principalArn
+                policy:
+                  fromFieldPath: Required
+
+          - name: admin-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+                  accessScope:
+                    type: cluster
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.adminRoleArn
+                toFieldPath: spec.forProvider.principalArn
+                policy:
+                  fromFieldPath: Required
+
+          # ArgoCD-specific access policies the EKS Capability needs to drive
+          # remote-cluster sync (AmazonEKSClusterAdminPolicy alone is not
+          # sufficient — the hub-side ArgoCD Capability fails with
+          # "failed to verify the access entry" without these two).
+          - name: argocd-cluster-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDClusterPolicy
+                  accessScope:
+                    type: cluster
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
+          - name: argocd-namespace-access-policy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: AccessPolicyAssociation
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  policyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDPolicy
+                  accessScope:
+                    type: namespace
+                    namespaces:
+                      - argocd
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.principalArn
+
+          # Create KRO and ACK EKS Capabilities on the spoke cluster
+          - name: eks-capabilities-job
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                providerConfigRef:
+                  name: default
+                forProvider:
+                  manifest:
+                    apiVersion: batch/v1
+                    kind: Job
+                    metadata:
+                      name: ""
+                      namespace: crossplane-system
+                    spec:
+                      backoffLimit: 5
+                      ttlSecondsAfterFinished: 300
+                      template:
+                        spec:
+                          serviceAccountName: crossplane
+                          restartPolicy: OnFailure
+                          volumes:
+                            - name: aws-creds
+                              secret:
+                                secretName: aws-credentials
+                                # Optional so the Job starts even when the secret
+                                # is absent. On the hub the secret does not exist;
+                                # the AWS CLI then falls through to the crossplane
+                                # SA's Pod Identity (CrossplaneCapabilitiesRole).
+                                # On the Kind bootstrap the secret is present and
+                                # is used as before (backward compatible).
+                                optional: true
+                          containers:
+                            - name: create-capabilities
+                              image: amazon/aws-cli:latest
+                              env:
+                                - name: AWS_SHARED_CREDENTIALS_FILE
+                                  value: /tmp/.aws/credentials
+                                - name: CLUSTER_NAME
+                                  value: ""
+                                - name: AWS_REGION
+                                  value: ""
+                                - name: ROLE_ARN
+                                  value: ""
+                              volumeMounts:
+                                - name: aws-creds
+                                  mountPath: /tmp/.aws
+                                  readOnly: true
+                              command: ["/bin/bash", "-c"]
+                              args:
+                                - |
+                                  set -euo pipefail
+                                  aws eks wait cluster-active --name "$CLUSTER_NAME" --region "$AWS_REGION"
+                                  for CAP_TYPE in KRO ACK; do
+                                    CAP_NAME=$(echo "$CAP_TYPE" | tr '[:upper:]' '[:lower:]')
+                                    EXISTING=$(aws eks describe-capability --cluster-name "$CLUSTER_NAME" --capability-name "$CAP_NAME" --region "$AWS_REGION" --query 'capability.status' --output text 2>/dev/null || echo "NOT_FOUND")
+                                    if [ "$EXISTING" = "NOT_FOUND" ]; then
+                                      aws eks create-capability --region "$AWS_REGION" --cluster-name "$CLUSTER_NAME" --capability-name "$CAP_NAME" --type "$CAP_TYPE" --role-arn "$ROLE_ARN" --delete-propagation-policy RETAIN
+                                      echo "$CAP_NAME capability created"
+                                    else
+                                      echo "$CAP_NAME capability exists: $EXISTING"
+                                    fi
+                                  done
+                                  for CAP_NAME in kro ack; do
+                                    for i in $(seq 1 40); do
+                                      S=$(aws eks describe-capability --cluster-name "$CLUSTER_NAME" --capability-name "$CAP_NAME" --region "$AWS_REGION" --query 'capability.status' --output text 2>/dev/null || echo "UNKNOWN")
+                                      [ "$S" = "ACTIVE" ] && echo "$CAP_NAME: ACTIVE" && break
+                                      sleep 15
+                                    done
+                                  done
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.forProvider.manifest.metadata.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-capabilities"
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.forProvider.manifest.spec.template.spec.containers[0].env[1].value
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.manifest.spec.template.spec.containers[0].env[2].value
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.manifest.spec.template.spec.containers[0].env[3].value
+
+          # EKS Cluster with Auto Mode enabled
+          - name: eks-cluster
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta2
+              kind: Cluster
+              spec:
+                forProvider:
+                  roleArnSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: cluster
+                  bootstrapSelfManagedAddons: false
+                  # Control-plane logging (incl. kube-apiserver audit) so that
+                  # deletions/changes on cluster resources are traceable in
+                  # CloudWatch (/aws/eks/<cluster>/cluster). Applies to the hub and
+                  # all Crossplane-provisioned spokes that use this composition.
+                  enabledClusterLogTypes:
+                    - api
+                    - audit
+                    - authenticator
+                    - controllerManager
+                    - scheduler
+                  accessConfig:
+                    authenticationMode: API
+                  vpcConfig:
+                    endpointPrivateAccess: true
+                    endpointPublicAccess: true
+                    subnetIdSelector:
+                      matchControllerRef: true
+                  computeConfig:
+                    enabled: true
+                    nodePools:
+                      - general-purpose
+                      - system
+                  storageConfig:
+                    blockStorage:
+                      enabled: true
+                  kubernetesNetworkConfig:
+                    elasticLoadBalancing:
+                      enabled: true
+                writeConnectionSecretToRef:
+                  name: eks-connection
+                  namespace: crossplane-system
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.writeConnectionSecretToRef.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-eks-connection"
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.kubernetesVersion
+                toFieldPath: spec.forProvider.version
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.nodeRoleArn
+                toFieldPath: spec.forProvider.computeConfig.nodeRoleArn
+                policy:
+                  fromFieldPath: Optional
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.endpoint
+                toFieldPath: status.clusterEndpoint
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
+                toFieldPath: status.oidcIssuer
+
+          # Publish status.vpcId onto the ArgoCD cluster Secret (argocd/<clusterName>).
+          # Composition is the source of truth for VPC id; this annotation is consumed
+          # by addon ApplicationSets (e.g. aws-load-balancer-controller --vpc-id).
+          # Uses provider-kubernetes Object with Observe+Update so the Secret must
+          # already exist (created by the fleet-secret Helm chart) — the Object only
+          # patches the single annotation via Server-Side Apply.
+          - name: cluster-secret-vpc-annotation
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                managementPolicies: ["Observe", "Update"]
+                providerConfigRef:
+                  name: default
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: Secret
+                    metadata:
+                      name: ""
+                      namespace: argocd
+                      annotations:
+                        aws_vpc_id: ""
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.forProvider.manifest.metadata.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.vpcId
+                toFieldPath: spec.forProvider.manifest.metadata.annotations[aws_vpc_id]
+                policy:
+                  fromFieldPath: Required
+
+          # ===== EKS MANAGED ADD-ONS (required for managed node group nodes) =====
+
+          - name: addon-vpc-cni
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Addon
+              spec:
+                forProvider:
+                  addonName: vpc-cni
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  resolveConflictsOnCreate: OVERWRITE
+                  resolveConflictsOnUpdate: OVERWRITE
+                  configurationValues: |
+                    {"tolerations":[{"operator":"Exists"}]}
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: addon-kube-proxy
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Addon
+              spec:
+                forProvider:
+                  addonName: kube-proxy
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  resolveConflictsOnCreate: OVERWRITE
+                  resolveConflictsOnUpdate: OVERWRITE
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: addon-coredns
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Addon
+              spec:
+                forProvider:
+                  addonName: coredns
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  resolveConflictsOnCreate: OVERWRITE
+                  resolveConflictsOnUpdate: OVERWRITE
+                  configurationValues: |
+                    {"tolerations":[{"operator":"Exists"}]}
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          - name: addon-pod-identity-agent
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Addon
+              spec:
+                forProvider:
+                  addonName: eks-pod-identity-agent
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  resolveConflictsOnCreate: OVERWRITE
+                  resolveConflictsOnUpdate: OVERWRITE
+                  configurationValues: |
+                    {"tolerations":[{"operator":"Exists"}]}
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          # ===== MANAGED NODE GROUP (optional) =====
+
+          - name: managed-nodegroup
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: NodeGroup
+              spec:
+                forProvider:
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  nodeRoleArnSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: mng-node
+                  subnetIdSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      access: private
+                  scalingConfig:
+                    - desiredSize: 2
+                      minSize: 1
+                      maxSize: 5
+                  diskSize: 50
+                  instanceTypes:
+                    - m5.large
+                  capacityType: ON_DEMAND
+                  taint:
+                    - effect: NO_SCHEDULE
+                      key: workload
+                      value: managednodes
+                    - effect: NO_EXECUTE
+                      key: workload
+                      value: managednodes
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.desiredSize
+                toFieldPath: spec.forProvider.scalingConfig[0].desiredSize
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.minSize
+                toFieldPath: spec.forProvider.scalingConfig[0].minSize
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.maxSize
+                toFieldPath: spec.forProvider.scalingConfig[0].maxSize
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.diskSize
+                toFieldPath: spec.forProvider.diskSize
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.instanceTypes
+                toFieldPath: spec.forProvider.instanceTypes
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.managedNodeGroup.capacityType
+                toFieldPath: spec.forProvider.capacityType
+                policy:
+                  fromFieldPath: Optional
+    - step: filter-mng-resources
+      functionRef:
+        name: function-cel-filter
+      input:
+        apiVersion: cel.fn.crossplane.io/v1beta1
+        kind: Filters
+        filters:
+          - name: "^mng-.*"
+            expression: >-
+              has(observed.composite.resource.spec.managedNodeGroup) &&
+              observed.composite.resource.spec.managedNodeGroup.enabled == true
+          - name: "^managed-nodegroup$"
+            expression: >-
+              has(observed.composite.resource.spec.managedNodeGroup) &&
+              observed.composite.resource.spec.managedNodeGroup.enabled == true
+          - name: "^addon-.*"
+            expression: >-
+              has(observed.composite.resource.spec.managedNodeGroup) &&
+              observed.composite.resource.spec.managedNodeGroup.enabled == true
+{{- end }}

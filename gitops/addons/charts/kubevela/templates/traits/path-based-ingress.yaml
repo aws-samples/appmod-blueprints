@@ -18,7 +18,7 @@ spec:
         parameter: {
         	domain: string
         	http: [string]: int
-        	class:         *"nginx" | string
+        	class:         *"alb" | string
         	rewritePath:   *true | bool
         	createService: *false | bool
         }
@@ -49,10 +49,9 @@ spec:
         	metadata: {
         		name: context.name
         		annotations: {
-              "nginx.ingress.kubernetes.io/use-regex": "true"
-              if parameter.rewritePath {
-                "nginx.ingress.kubernetes.io/rewrite-target": "/$2"
-              }
+              "alb.ingress.kubernetes.io/scheme": "internet-facing"
+              "alb.ingress.kubernetes.io/target-type": "ip"
+              "alb.ingress.kubernetes.io/healthcheck-path": "/"
             }
         	}
         	spec: {
@@ -61,8 +60,8 @@ spec:
         			host: parameter.domain
         			http: paths: [
         				for k, v in parameter.http {
-        					path:     "\(k)(/|$)(.*)"
-        					pathType: "ImplementationSpecific"
+        					path:     k
+        					pathType: "Prefix"
         					backend: service: {
         						name: context.name
         						port: number: v

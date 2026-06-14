@@ -1,0 +1,101 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: clusters
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    # Deletion-safety posture (TWO-WAY DOOR — flip to change behavior):
+    #   * spec.syncPolicy.applicationsSync: create-update -> the appset NEVER deletes
+    #     Applications, so a transient empty/failed generation cannot remove a cluster.
+    #   * the Application template carries NO resources-finalizer -> deleting an App
+    #     never cascade-deletes the live cluster claim / EKS cluster + VPC.
+    # To intentionally delete a cluster, see the DELETION RUNBOOK on the template
+    # syncPolicy below. To restore appset-managed (destructive) deletion, set
+    # applicationsSync: sync AND re-add the resources-finalizer to the template.
+    platform.gitops.io/deletion-safety: protected
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+    # create-update: controller may create/update Applications but NEVER delete them
+    # — the primary guard against an empty/failed generation tearing down a live
+    # cluster. TWO-WAY DOOR: set to `sync` to restore delete-on-degenerate behavior.
+    applicationsSync: create-update
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  fleet_member: control-plane
+          - git:
+              repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+              revision: '{{ .metadata.annotations.fleetRepoRevision }}'
+              files:
+                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/*/crossplane-clusters/values.yaml'
+  template:
+    metadata:
+      name: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
+      # resources-finalizer intentionally OMITTED (deletion safety): without it,
+      # deleting this Application orphans (preserves) the live cluster instead of
+      # cascade-deleting it. TWO-WAY DOOR: re-add
+      #   finalizers: [resources-finalizer.argocd.argoproj.io]
+      # to make App deletion cascade-delete the cluster again.
+    spec:
+      project: default
+      sources:
+        - repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+          targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+          ref: values
+        - repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.fleetRepoURL }}'
+          targetRevision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.fleetRepoRevision }}'
+          ref: overlay
+        - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+          path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/platform-cluster'
+          targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+          helm:
+            releaseName: 'clusters-{{ index (splitList "/" .path.path) 4 }}'
+            ignoreMissingValueFiles: true
+            valuesObject:
+              xrd:
+                enabled: false
+              global:
+                argoCDRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
+                defaultRegion: '{{ .metadata.annotations.aws_region }}'
+            valueFiles:
+              - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/default/crossplane-clusters/values.yaml'
+              - '$values/{{ .path.path }}/values.yaml'
+              - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/default/crossplane-clusters/values.yaml'
+              - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/crossplane-clusters/values.yaml'
+      destination:
+        namespace: argocd
+        name: '{{ .name }}'
+      syncPolicy:
+        automated:
+          selfHeal: false
+          # prune:false is one of several deliberate guardrails: auto-prune must never
+          # cascade-delete a live EKS cluster + VPC. Combined with the appset
+          # applicationsSync:create-update and NO resources-finalizer (see top of file),
+          # de-generating or removing an App never destroys the cluster.
+          #
+          # DELETION RUNBOOK (intentional, two steps):
+          #   1. Remove the cluster from the overlay crossplane-clusters/values.yaml
+          #      and push. The claim stops being desired but is NOT pruned and the App
+          #      is NOT auto-deleted.
+          #   2. Explicitly tear it down: delete the platform-cluster claim for the
+          #      cluster (kubectl delete <claim> -n argocd), then if the App is no
+          #      longer needed: argocd app delete clusters-<tenant> --cascade
+          #   3. Verify the EKS cluster and VPC are removed in AWS.
+          allowEmpty: false
+          prune: false
+        retry:
+          limit: -1
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 10m
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

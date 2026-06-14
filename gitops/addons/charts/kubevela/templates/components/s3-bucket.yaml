@@ -15,7 +15,7 @@ spec:
         	metadata: name: "\(parameter.name)"
         	spec: {
         		forProvider: region: "\(parameter.region)"
-        		providerConfigRef: name: "provider-aws-config"
+        		providerConfigRef: name: "default"
         	}
         }
         parameter: {
@@ -23,7 +23,5 @@ spec:
         	region: string
         }
   workload:
-    definition:
-      apiVersion: apps/v1
-      kind: Deployment
+    type: autodetects.core.oam.dev
 

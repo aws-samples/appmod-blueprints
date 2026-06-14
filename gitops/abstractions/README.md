@@ -1,18 +1,24 @@
 # Abstractions
 
-Crossplane Composite Resource Definitions (XRDs) and Compositions for provisioning fleet infrastructure. These are shared abstractions used by both the Kind bootstrap process and the hub's Crossplane instance.
+Infrastructure abstractions for provisioning fleet clusters. Supports two engines — Crossplane and KRO — which can coexist on the same hub.
 
 ## Directory Structure
 
 ```
 abstractions/
-└── resource-groups/
-    └── platform-cluster/       Helm chart containing XRD + Composition
+├── crossplane/
+│   └── platform-cluster/       Helm chart containing XRD + Composition
+│       ├── Chart.yaml
+│       ├── values.yaml          Default: no clusters (empty map)
+│       ├── templates/
+│       │   ├── xrd.yaml         PlatformCluster CRD definition
+│       │   └── composition.yaml What AWS resources to create
+└── kro/
+    └── kro-clusters/           Helm chart rendering EksclusterWithVpc instances
         ├── Chart.yaml
-        ├── values.yaml          Default: no clusters (empty map)
-        ├── templates/
-        │   ├── xrd.yaml         PlatformCluster CRD definition
-        │   └── composition.yaml What AWS resources to create
+        ├── README.md
+        └── templates/
+            └── clusters.yaml    Renders KRO custom resources
 ```
 
 ## PlatformCluster
@@ -91,8 +97,8 @@ The `kind-crossplane` provider applies the XRD and Composition directly to Kind,
 
 The `bootstrap/clusters.yaml` ApplicationSet deploys this chart as a Helm release to the hub. Values come from:
 
-1. `fleet/kro-values/default/kro-clusters/values.yaml` -- default cluster definitions
-2. `fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml` -- per-tenant overrides
+1. `fleet/spoke-values/default/crossplane-clusters/values.yaml` -- default cluster definitions
+2. `fleet/spoke-values/tenants/<tenant>/crossplane-clusters/values.yaml` -- per-tenant overrides
 
 The values file defines a `clusters` map:
 

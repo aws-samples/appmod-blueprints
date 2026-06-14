@@ -57,6 +57,14 @@ tasks:
     cmds:
       - task: "{{.PROVIDER}}:status"
 
+  backstage-catalog:
+    desc: Update backstage-dynamic-catalog ConfigMap with environment-specific values
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:hub:backstage-catalog"
+
   destroy-kind:
     desc: Delete the Kind cluster (hub persists)
     vars:

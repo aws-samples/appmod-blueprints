@@ -8,16 +8,16 @@ enabledAddons:
   ingress_class_alb: true
   aws_load_balancer_controller: true
   default_storage_class: true
-  cert_manager: false
+  cert_manager: true
   external_secrets: true
   external_dns: true
   aws_efs_csi_driver: false
-  image_prepuller: false
+  image_prepuller: true
   # GitOps
-  argo_events: false
-  argo_rollouts: false
+  argo_events: true
+  argo_rollouts: true
   argo_workflows: true
-  kargo: false
+  kargo: true
   flux: false
   # Security
   keycloak: true
@@ -38,13 +38,13 @@ enabledAddons:
   crossplane: true
   kro: false
   kro_manifests: false
-  kro_manifests_hub: false
-  multi_acct: false
-  platform_manifests: false
-  backstage: false
-  kubevela: false
-  devlake: false
-  gitlab: false
+  kro_manifests_hub: true
+  multi_acct: true
+  platform_manifests: true
+  backstage: true
+  kubevela: true
+  devlake: true
+  gitlab: true
   # ACK controllers
   ack_iam: false
   ack_eks: false
@@ -54,13 +54,15 @@ enabledAddons:
   ack_dynamodb: false
   ack_efs: false
   # ML/AI
-  jupyterhub: false
+  jupyterhub: true
   kubeflow: false
   mlflow: false
-  ray_operator: false
-  spark_operator: false
+  ray_operator: true
+  spark_operator: true
   airflow: false
   # AWS Resources (Crossplane-managed VPC secrets etc.)
   aws_resources: true
   # Observability AWS (AMP + AMG via Crossplane)
   observability_aws: true
+  # Agent Platform (deploys from sample-agent-platform-on-eks repo)
+  agent_platform: false
