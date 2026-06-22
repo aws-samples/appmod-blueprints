@@ -206,7 +206,7 @@ kubevela:
   namespace: vela-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kubevela'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '3'
+    argocd.argoproj.io/sync-wave: '4'  # after argo-rollouts (wave 3) — chart ships ComponentDefinitions emitting Rollout
   selector:
     matchExpressions:
       - key: enable_kubevela
