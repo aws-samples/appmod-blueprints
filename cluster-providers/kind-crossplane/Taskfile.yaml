@@ -102,6 +102,7 @@ tasks:
       - task: hub:seed
       - task: hub:wait-for-sync
       - task: hub:restart-identity-pods
+      - task: cloudfront:update-origin
       - task: hub:wait-for-full-sync
       - task: secrets-manager:seed-observability
       - task: hub:restart-langfuse
@@ -847,6 +848,64 @@ tasks:
         else
           echo "WARN: Could not get Keycloak admin token. SAML client not updated."
         fi
+
+  cloudfront:update-origin:
+    desc: Update CloudFront distribution origin to the ALB (skips if not a cloudfront.net domain)
+    cmds:
+      - |
+        DOMAIN="{{.DOMAIN}}"
+        if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "null" ]; then
+          printf '{{.C_INFO}}  No domain configured, skipping CloudFront update.{{.C_RESET}}\n'
+          exit 0
+        fi
+        if ! echo "$DOMAIN" | grep -q "cloudfront.net"; then
+          printf '{{.C_INFO}}  Domain %s is not CloudFront, skipping origin update.{{.C_RESET}}\n' "$DOMAIN"
+          exit 0
+        fi
+        printf '{{.C_STEP}}▸ Updating CloudFront origin to ALB...{{.C_RESET}}\n'
+        # Discover the ALB
+        ALB_DNS=""
+        for i in $(seq 1 24); do
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --region "{{.AWS_REGION}}" \
+            --query "LoadBalancers[?contains(LoadBalancerName, 'k8s-platform')].DNSName | [0]" \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$ALB_DNS" ] && [ "$ALB_DNS" != "None" ] && [ "$ALB_DNS" != "null" ]; then
+            break
+          fi
+          printf '{{.C_INFO}}  [%d/24] ALB not ready yet...{{.C_RESET}}\n' "$i"
+          sleep 10
+        done
+        if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ] || [ "$ALB_DNS" = "null" ]; then
+          printf '{{.C_ERR}}⚠ ALB not found. CloudFront origin not updated.{{.C_RESET}}\n'
+          exit 0
+        fi
+        # Find and update distribution
+        DIST_ID=$(aws cloudfront list-distributions \
+          --query "DistributionList.Items[?DomainName=='${DOMAIN}'].Id" \
+          --output text 2>/dev/null)
+        if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
+          printf '{{.C_ERR}}⚠ CloudFront distribution not found for %s{{.C_RESET}}\n' "$DOMAIN"
+          exit 0
+        fi
+        CURRENT_ORIGIN=$(aws cloudfront get-distribution-config --id "$DIST_ID" \
+          --query "DistributionConfig.Origins.Items[0].DomainName" --output text 2>/dev/null)
+        if [ "$CURRENT_ORIGIN" = "$ALB_DNS" ]; then
+          printf '{{.C_OK}}✓ CloudFront origin already points to %s{{.C_RESET}}\n' "$ALB_DNS"
+          exit 0
+        fi
+        ETAG=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query "ETag" --output text)
+        aws cloudfront get-distribution-config --id "$DIST_ID" --query "DistributionConfig" > /tmp/cf-dist-config.json
+        jq --arg domain "$ALB_DNS" '.Origins.Items[0].DomainName = $domain' \
+          /tmp/cf-dist-config.json > /tmp/cf-dist-config-updated.json
+        aws cloudfront update-distribution \
+          --id "$DIST_ID" \
+          --if-match "$ETAG" \
+          --distribution-config file:///tmp/cf-dist-config-updated.json > /dev/null
+        rm -f /tmp/cf-dist-config.json /tmp/cf-dist-config-updated.json
+        printf '{{.C_OK}}✓ CloudFront origin updated to %s (propagating ~2min){{.C_RESET}}\n' "$ALB_DNS"
+        # Wait briefly for propagation before Keycloak check
+        sleep 30
 
   argocd:capability:
     desc: Create EKS ArgoCD Capability (skips if done)
