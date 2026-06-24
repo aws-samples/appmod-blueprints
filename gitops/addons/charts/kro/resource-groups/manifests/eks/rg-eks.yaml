@@ -29,6 +29,7 @@ spec:
       git_username: string | default="user1"
       aws_partition: string | default="aws"
       aws_dns_suffix: string | default="amazonaws.com"
+      protectFromDeletion: string | default="true"
       network:
         vpcID: string
         subnets:
@@ -350,6 +351,7 @@ spec:
             kro-management: ${schema.spec.name}
             tenant: ${schema.spec.tenant}
             environment: ${schema.spec.environment}
+            auto-delete: ${schema.spec.protectFromDeletion == "true" ? "no" : "yes"}
 
     - id: podIdentityAddon
       template:
