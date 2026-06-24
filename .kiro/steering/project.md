@@ -55,3 +55,28 @@ This repo is used in two ways:
 2. **Workshop IDE** (ec2-user, on the Code Editor instance) — workshop participants interact with the deployed platform. The `hack/` directory configures this environment, including `hack/.kiro/` for the IDE's Kiro agent.
 
 The root `.kiro/` is for local dev. `hack/.kiro/` is for the workshop IDE — they serve different audiences.
+
+
+## Operational Invariants (binding — do not re-investigate)
+
+These are facts about the deployed platform that have been confirmed multiple times. Treat as ground truth and avoid re-asking the user about them.
+
+### ArgoCD on the hub is the EKS managed ArgoCD Capability
+
+- ArgoCD on `peeks-hub` is **provisioned as an EKS managed Capability**, not as Helm-installed pods in the cluster.
+- The control-plane components (`argo-cd-argocd-server`, `argo-cd-argocd-application-controller`, `argo-cd-argocd-repo-server`, etc.) **run inside the AWS-managed control plane** and are **not visible** via `kubectl get pods -n argocd`. That namespace looks empty for pods even when ArgoCD is fully operational.
+- What IS visible in the `argocd` namespace: `Application`, `ApplicationSet`, `AppProject`, and cluster `Secret` objects — these are user-facing CRDs that ArgoCD reconciles from outside.
+- "ArgoCD is broken because the namespace is empty" is **always wrong**. Verify ArgoCD health by checking that `Application` resources are reconciling (sync/health status) rather than by looking for pods.
+- Self-managed ArgoCD values files (e.g. anything under `gitops/addons/configs/argo-cd/values.yaml` or `platform/infra/terraform/common/manifests/argocd-initial-values.yaml`) are **dead code** from a prior install path and have been removed. The Capability does not consume them.
+- Capability configuration lives in `platform/infra/terraform/common/argocd.tf` and the EKS cluster module — not in Helm values files.
+
+### Multi-cluster register pattern
+
+- Cluster secrets in the hub's `argocd` namespace use **EKS ARNs** as the cluster `server` value, not `kubernetes.default.svc`.
+- Duplicate cluster secrets with the same ARN are rejected by ArgoCD.
+- Spokes (`spoke-dev`, `spoke-prod`) run their own workloads but **do not run ArgoCD**. The hub's ArgoCD reconciles into them via the registered cluster secrets.
+
+### Pod Identity, not IRSA
+
+- The platform uses EKS Pod Identity (not IRSA) for pod-level AWS credentials on EKS Auto Mode.
+- When provisioning IAM access for a workload, use `aws eks create-pod-identity-association` (not OIDC trust policies).
