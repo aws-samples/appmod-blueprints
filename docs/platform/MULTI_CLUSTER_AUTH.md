@@ -215,10 +215,31 @@ domain. Hub keeps the bare base domain to preserve workshop convention.
 | Spoke-prod | `prod.peeks.dev.<base-domain>` |
 
 ExternalDNS on each cluster manages records in the same Route 53
-hosted zone. TLS is satisfied by either a wildcard ACM cert
-(`*.peeks.dev.<base-domain>`) or per-env ACM certs (one per
-`<env>.peeks.dev.<base-domain>`); ingress charts accept a configurable
-certificate ARN so either model works.
+hosted zone. TLS is satisfied by an ACM cert covering the three
+hostnames. There are three viable approaches:
+
+1. **Single SAN cert** — recommended. One ACM certificate with two
+   subject alternative names: `*.peeks.dev.<base-domain>` (covers
+   spoke-dev/spoke-prod) and `peeks.dev.<base-domain>` (the hub bare
+   name). One cert ARN, one Crossplane resource, two Route 53
+   validation records. The wildcard alone is **not sufficient** —
+   per RFC 1034, `*.peeks.dev.<base-domain>` matches exactly one
+   label and therefore covers the spoke names but **not** the hub's
+   bare parent name.
+2. **Two certs** — a wildcard `*.peeks.dev.<base-domain>` plus a
+   bare-name `peeks.dev.<base-domain>` cert. Two ARNs to manage; only
+   useful if hub and spokes have different rotation/governance.
+3. **Per-env certs** — one cert per hostname, no wildcard. Required
+   if AWS limits or compliance forbid wildcards.
+
+Ingress charts accept a configurable certificate ARN so any of these
+models works. The platform's reference Crossplane chart implements
+option 1.
+
+In CloudFront mode (`domain: ""`), this section does not apply: the
+CloudFront distribution serves the platform under a CloudFront-issued
+hostname (`d-xxx.cloudfront.net`) with the default CloudFront
+certificate, and no ACM cert is provisioned by the platform.
 
 **Alternatives considered**:
 
