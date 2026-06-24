@@ -236,10 +236,15 @@ Ingress charts accept a configurable certificate ARN so any of these
 models works. The platform's reference Crossplane chart implements
 option 1.
 
-In CloudFront mode (`domain: ""`), this section does not apply: the
-CloudFront distribution serves the platform under a CloudFront-issued
-hostname (`d-xxx.cloudfront.net`) with the default CloudFront
-certificate, and no ACM cert is provisioned by the platform.
+The platform treats `domain` as an opaque customer input — it does not
+care how the customer obtained it (Route 53 hosted zone, third-party
+DNS, CDN-issued, etc.). Customers who do not own a custom domain front
+the platform with their own infrastructure (e.g., a CDN distribution
+that issues a hostname); see D7 for the platform's `oidc_insecure_origin`
+flag covering the case where TLS terminates upstream of the cluster.
+
+For the hub VPC ownership question (platform-created vs. customer-
+supplied), see [`HUB_NETWORKING.md`](./HUB_NETWORKING.md).
 
 **Alternatives considered**:
 
@@ -344,6 +349,62 @@ Default `groups`. Customers configure per provider.
 **Rationale**: Keycloak realm roles live at `realm_access.roles`,
 Okta groups at `groups`, Azure AD app roles at `roles`. Hard-coding
 any of these breaks the others.
+
+### D7: Insecure origin mode — for exploration deployments only
+
+**Decision**: when TLS terminates upstream of the cluster (e.g., a
+CDN distribution, WAF, or corporate proxy fronts the platform's
+ingress) and the link between that termination point and the cluster
+itself is plain HTTP, the platform exposes an opt-in
+`oidc_insecure_origin` flag that lets workloads on the cluster
+validate JWTs without verifying the issuer's TLS certificate.
+
+> **For exploration only — not production-safe.** Use only in
+> non-production deployments where the threat model accepts the gap
+> described below.
+
+**Mechanism**:
+
+- New cluster-secret label: `oidc_insecure_origin: "true"` (default
+  `"false"`).
+- When `"true"`, JWT-validating workloads on the cluster are
+  configured to **skip TLS verification** on the JWKS fetch. The
+  issuer URL the platform publishes in the OIDC contract
+  (`peeks/<env>/oidc/<client>`) remains the customer's HTTPS-facing
+  hostname — that is what external viewers and clients see when
+  obtaining tokens.
+- Workloads running on the cluster that need to fetch JWKS to
+  validate inbound tokens use the standard issuer URL with TLS
+  verification disabled (or, if the IdP exposes a separate in-cluster
+  HTTP endpoint, fetch from there).
+- The flag is consumed by chart templates that emit JWT validation
+  policy (e.g., agentgateway JWT filter, oauth2-proxy upstream config,
+  any custom resource server). Templates default to verify-on; the
+  flag flips them to verify-off.
+
+**Threat model gap**: an attacker with network access to the link
+between the upstream TLS terminator and the cluster can substitute a
+forged JWKS endpoint and present forged tokens. The mitigations for
+this gap (mTLS to origin, VPC-internal-only origin, end-to-end TLS) are
+explicitly out of scope of an exploration deployment.
+
+**Default**: `oidc_insecure_origin` is unset/false. The reference
+workshop and any production-bound deployment must use TLS end-to-end —
+or, equivalently, the upstream terminator must use mTLS or a private
+network path to reach the cluster's load balancer so the link cannot
+be tampered with.
+
+**Alternatives considered**:
+
+- **Always require end-to-end TLS** — rejected because it forces
+  customers exploring the platform to set up ACM certs and DNS before
+  they can see how the auth pieces fit together. Adoption friction
+  for what should be a "kick the tires" path.
+- **Publish a separate `internal_issuer_url`** that points at an
+  in-cluster HTTP endpoint of the IdP — rejected as Phase 1 scope
+  creep. Most IdPs (especially external SaaS providers like Okta) do
+  not expose an in-cluster endpoint. The verify-off approach is
+  uniform across providers.
 
 ---
 
