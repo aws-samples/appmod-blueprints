@@ -1,0 +1,22 @@
+# Mode du contrôleur ALB :
+#   - "auto" (defaut) : sélection auto par le rendu (compat existant)
+#   - "oss"  : AWS Load Balancer Controller open-source (apiGroup elbv2.k8s.aws)
+#   - "eks-auto" / autre : EKS Auto Mode (apiGroup eks.amazonaws.com)
+controllerMode: auto
+
+# Liste des IngressClass / IngressClassParams à provisionner.
+# Chaque entrée génère :
+#   - 1 IngressClassParams (nom = .name, group.name = .group, scheme = .scheme)
+#   - 1 IngressClass        (nom = .name, parameters -> IngressClassParams ci-dessus)
+#
+# Le defaut reproduit l'ancien comportement (une seule classe "platform")
+# tout en ajoutant une classe "agent" pour isoler les Ingress de la plateforme
+# agentique (group.name=agent) — évite qu'une Ingress "agent" ne pollue
+# l'ALB partagé "platform".
+classes:
+  - name: platform
+    group: platform
+    scheme: internet-facing
+  - name: agent
+    group: agent
+    scheme: internet-facing
