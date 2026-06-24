@@ -110,7 +110,7 @@ This contract is a schema of credentials and metadata stored in
 **AWS Secrets Manager**, written by a provisioner and consumed by
 ExternalSecrets on each cluster.
 
-**Path convention**: `peeks/<env>/oidc/<client-name>`
+**Path convention**: `peeks/<environment>/oidc/<client-name>`
 
 Examples: `peeks/dev/oidc/my-service-client`,
 `peeks/prod/oidc/checkout-api-client`.
@@ -303,7 +303,7 @@ provisioner Helm release:
 ```yaml
 clients:
   - name: my-service
-    env: dev
+    environment: dev
     type: confidential                  # or "public"
     flows: [resource_server]            # or client_credentials,
                                         #    authorization_code, etc.
@@ -311,7 +311,7 @@ clients:
     consumerSecretPath: peeks/dev/oidc/my-service-client
 ```
 
-The provisioner ensures one client exists per `(name, env)` pair and
+The provisioner ensures one client exists per `(name, environment)` pair and
 publishes the contract entry at `consumerSecretPath`.
 
 This is a reasonable starting point. Consumers can adjust granularity
@@ -370,7 +370,7 @@ validate JWTs without verifying the issuer's TLS certificate.
 - When `"true"`, JWT-validating workloads on the cluster are
   configured to **skip TLS verification** on the JWKS fetch. The
   issuer URL the platform publishes in the OIDC contract
-  (`peeks/<env>/oidc/<client>`) remains the customer's HTTPS-facing
+  (`peeks/<environment>/oidc/<client>`) remains the customer's HTTPS-facing
   hostname — that is what external viewers and clients see when
   obtaining tokens.
 - Workloads running on the cluster that need to fetch JWKS to
@@ -449,7 +449,7 @@ spec:
     name: my-service-oidc-client
   dataFrom:
     - extract:
-        key: peeks/{{ .Values.env }}/oidc/my-service-client
+        key: peeks/{{ .Values.environment }}/oidc/my-service-client
 ```
 
 The consumer chart consumes the resulting K8s Secret. No Keycloak
@@ -512,7 +512,7 @@ Customer steps:
    - Reads consumer client declarations.
    - Calls their IdP's admin API to create the required clients.
    - Writes the contract schema to
-     `peeks/<env>/oidc/<client-name>` in AWS Secrets Manager.
+     `peeks/<environment>/oidc/<client-name>` in AWS Secrets Manager.
 3. **Deploy as a Helm chart** alongside the platform (e.g.,
    `okta-client-provisioner`, `azure-ad-client-provisioner`).
 
@@ -562,7 +562,7 @@ mechanism by:
 3. **Configuring its own JWT validation** using the issuer, JWKS URL,
    audience, and group claim path provided by the contract.
 4. **Configuring its own ingress hostname** as
-   `<env>.peeks.dev.<base-domain>` (or service-prefixed subdomain if
+   `<environment>.peeks.dev.<base-domain>` (or service-prefixed subdomain if
    needed).
 
 Workloads do not embed Keycloak-specific URLs or admin-API calls. They
@@ -572,10 +572,10 @@ with.
 ### Example consumers
 
 - **[Open Agentic Platform](https://github.com/aws-samples/sample-open-agentic-platform)** — declares
-  `agentgateway-<env>` and `agent-runtime-<env>` clients. See its
+  `agentgateway-<environment>` and `agent-runtime-<environment>` clients. See its
   consumption doc for specifics.
 - **Customer applications** — register their own clients (one or more
-  per env) and configure their middleware (e.g., oauth2-proxy, Envoy
+  per environment) and configure their middleware (e.g., oauth2-proxy, Envoy
   JWT filter, Spring Security, ASP.NET JwtBearer) against the contract.
 
 ---
@@ -593,8 +593,15 @@ Goal: working multi-cluster auth with Keycloak as the IdP.
    - Idempotent client creation against Keycloak admin API
    - Reads consumer client declarations from values, materializes them
    - Writes contract schema entries
-2. **Modify** `gitops/fleet/members/spoke-{dev,prod}/values.yaml`
-   - Add `env: dev` / `env: prod` labels
+2. **Verify** `gitops/fleet/members/spoke-{dev,prod}/values.yaml`
+   - The existing `labels.environment: dev` / `labels.environment: prod`
+     are the canonical per-cluster environment label and are read by
+     the `fleet-secrets` ApplicationSet at
+     `{{ .labels.environment }}` to look up
+     `overlays/environments/<environment>/enabled-addons.yaml`. They are
+     also the value that the consumer guide expects in its
+     `peeks/<environment>/oidc/<client>` Secrets Manager paths. No
+     changes needed here for Phase 1.
 3. **TLS certificate**: provision an ACM cert covering the per-env
    hostnames. Reference module uses a wildcard
    `*.peeks.dev.<base-domain>`; per-env certs are equally supported.
