@@ -113,15 +113,20 @@ resource "kubectl_manifest" "crossplane_provider" {
 }
 
 # Also install the provider-family-aws (required dependency)
+# Name must match crossplane-base chart (upbound-provider-family-aws) to avoid
+# duplicate package lock entries when ArgoCD syncs the same chart later.
 resource "kubectl_manifest" "crossplane_provider_family" {
   yaml_body = yamlencode({
     apiVersion = "pkg.crossplane.io/v1"
     kind       = "Provider"
     metadata = {
-      name = "provider-family-aws"
+      name = "upbound-provider-family-aws"
     }
     spec = {
       package = "xpkg.upbound.io/upbound/provider-family-aws:v2.5.3"
+      runtimeConfigRef = {
+        name = "iam-drc"
+      }
     }
   })
 
