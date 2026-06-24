@@ -25,6 +25,8 @@ hub:
   fleetRepoBasepath: ""
   domain: ""
   resourcePrefix: ""
+  oidcIssuerUrl: ""
+  oidcInsecureOrigin: "false"
 
 # Addon enablement map — populated from enabled-addons.yaml via valueFiles
 enabledAddons: {}
