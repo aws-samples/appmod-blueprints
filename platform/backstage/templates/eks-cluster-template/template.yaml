@@ -85,10 +85,7 @@ spec:
           type: string
           default: platform-on-eks-workshop
           ui:widget: hidden
-        ingressDomainName:
-          type: string
-          default: <ingress_domain_name>
-          ui:widget: hidden
+
     - title: Git Repository URLs
       properties:
         addonsRepoUrl:
@@ -277,7 +274,7 @@ spec:
           - Added Backstage component definition
         sourcePath: ./repo
         targetPath: .
-        branchName: cluster-${{ parameters.clusterName }}-${{ parameters.environment }}
+        branchName: cluster-${{ parameters.clusterName }}
         removeSourceBranch: true
         commitAction: auto
     - id: register
