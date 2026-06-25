@@ -3,3 +3,48 @@
 identities:
   eso:
     enabled: true
+  crossplane-ec2:
+    enabled: true
+    roleName: CrossplaneEC2ProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-ec2
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-ec2-provider
+    policy:
+      name: CrossplaneEC2ProviderPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
+        }
+  crossplane-amp:
+    enabled: true
+    roleName: CrossplaneAMPProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-amp
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-amp-provider
+    policy:
+      name: CrossplaneAMPProviderPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
+        }
+  crossplane-grafana:
+    enabled: true
+    roleName: CrossplaneGrafanaProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-grafana
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-grafana-provider
+    policy:
+      name: CrossplaneGrafanaProviderPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
+        }

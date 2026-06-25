@@ -21,10 +21,12 @@ metadata:
 spec:
   credentials:
     source: InjectedIdentity
+{{- if .Values.providers.kubernetes.createArgoCDRBAC }}
 ---
 # RBAC: provider-kubernetes patches ArgoCD cluster Secrets to publish
 # Composition-derived facts (e.g. aws_vpc_id) onto the spoke Secret used by
 # ApplicationSets. Scoped to argocd-namespace Secrets only.
+# Only enabled on the hub cluster where the argocd namespace exists.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -54,4 +56,5 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.providers.kubernetes.serviceAccount }}
     namespace: {{ .Values.namespace }}
+{{- end }}
 {{- end }}
