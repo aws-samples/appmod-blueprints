@@ -10,6 +10,13 @@ data:
     #!/bin/bash
     set -euo pipefail
 
+    # ── ensure dependencies (amazon/aws-cli image lacks jq) ─────────────────────
+    if ! command -v jq >/dev/null 2>&1; then
+      dnf install -y jq >/dev/null 2>&1 \
+        || (curl -fsSL https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 \
+              -o /usr/local/bin/jq && chmod +x /usr/local/bin/jq)
+    fi
+
     # ── helpers ────────────────────────────────────────────────────────────────
 
     kc_post() {
