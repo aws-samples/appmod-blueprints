@@ -57,6 +57,41 @@ This repo is used in two ways:
 The root `.kiro/` is for local dev. `hack/.kiro/` is for the workshop IDE — they serve different audiences.
 
 
+## Working Agreement (how to operate in this repo)
+
+Binding behavioral expectations, learned from working sessions. Follow these.
+
+### Verify, do not speculate
+- Replace guesses and "I think / it should" with **actual evidence**: command output, test results, rendered manifests, file contents, live cluster state.
+- Before claiming a cause or a fix works, prove it (e.g. `helm template`, `kubectl get`, read the file, check the live resource).
+- If something cannot be verified, say so plainly. An honest "I haven't verified X / I don't know" is required over a confident-sounding guess.
+- When stating a root cause, cite the specific evidence that establishes it.
+
+### Do not waste time
+- **Never use `sleep` to wait for reconciliation.** Trigger the action (sync/patch/refresh) and check status directly. If a result isn't ready, re-check on the next action — do not block on timers.
+- Don't poll in loops. Take the direct action.
+
+### Don't go in circles — find the root cause
+- If an approach fails twice, stop repeating variations. Step back and diagnose the underlying cause with evidence, then fix that.
+- Trace problems to their source (e.g. which repo/branch/cache actually serves a value) rather than patching symptoms.
+
+### Solutions live in git
+- Fixes must be committed to git and applied via GitOps. **Do not use `kubectl patch`/`edit`/`apply` as a fix.**
+- `kubectl` is for diagnosis and for triggering ArgoCD syncs/refreshes only — never for mutating desired state as the solution.
+
+### Question necessity; remove redundancy
+- Before adding code, check whether it is actually needed (e.g. RBAC may already be granted by an existing ClusterRole).
+- Prefer **removing** redundant or workaround code over gating it behind flags. If a change isn't needed, drop it.
+
+### One consistent model, no per-case workarounds
+- Apply a single uniform pattern across the board rather than special-casing individual workloads.
+- If a workaround was introduced under pressure, revisit and replace it with the consistent approach.
+
+### Professional, customer-neutral output
+- No workshop/demo artifacts leaking into the solution (e.g. avoid `tenant: workshop`; use neutral defaults like `default`).
+- **Do not force platform conventions onto customers.** Cluster names are customer-supplied and arbitrary — never derive or enforce them from `resourcePrefix`. The prefix exists only to scope account/region-global AWS resource names (IAM roles, AMP/AMG workspaces, security groups, ECR) to avoid collisions across installs.
+
+
 ## Operational Invariants (binding — do not re-investigate)
 
 These are facts about the deployed platform that have been confirmed multiple times. Treat as ground truth and avoid re-asking the user about them.
