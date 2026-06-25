@@ -9,5 +9,5 @@ description: >
   spoke environment. Replace this chart with your own IdP provisioner;
   the Secrets Manager path and contract schema are the fixed contract.
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "24.0"
