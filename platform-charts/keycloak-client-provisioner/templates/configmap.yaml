@@ -104,17 +104,15 @@ data:
       PUBLIC=$([ "$TYPE" = "public" ] && echo "true" || echo "false")
 
       echo "Provisioning client: ${CLIENT_ID}"
-      cat > /tmp/client.json <<EOF
-{
-  "clientId": "${CLIENT_ID}",
-  "protocol": "openid-connect",
-  "publicClient": ${PUBLIC},
-  "standardFlowEnabled": ${STD_FLOW},
-  "serviceAccountsEnabled": ${SVC_ACCT},
-  "directAccessGrantsEnabled": ${DIRECT},
-  "redirectUris": ${REDIRECT}
-}
-EOF
+      jq -n \
+        --arg cid "${CLIENT_ID}" \
+        --argjson pub "${PUBLIC}" \
+        --argjson std "${STD_FLOW}" \
+        --argjson svc "${SVC_ACCT}" \
+        --argjson direct "${DIRECT}" \
+        --argjson redirect "${REDIRECT}" \
+        '{clientId:$cid,protocol:"openid-connect",publicClient:$pub,standardFlowEnabled:$std,serviceAccountsEnabled:$svc,directAccessGrantsEnabled:$direct,redirectUris:$redirect}' \
+        > /tmp/client.json
       kc_post "/admin/realms/${REALM}/clients" "/tmp/client.json" "client ${CLIENT_ID}"
 
       # Fetch generated client secret (empty for public clients)
