@@ -71,9 +71,5 @@ providers:
     version: ""
     serviceAccount: provider-kubernetes
     createIdentity: false
-    # createArgoCDRBAC: true only on hub — spokes have no argocd namespace.
-    # provider-kubernetes needs this RBAC to patch spoke cluster Secrets
-    # (e.g. writing aws_vpc_id from Crossplane Composition status).
-    createArgoCDRBAC: false
 
 namespace: crossplane-system

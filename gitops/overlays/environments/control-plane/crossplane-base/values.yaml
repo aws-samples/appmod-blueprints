@@ -1,7 +1,0 @@
-# Hub (control-plane) crossplane-base overrides.
-# provider-kubernetes needs RBAC in the argocd namespace to patch spoke cluster
-# Secrets with Composition-derived values (e.g. aws_vpc_id).
-# This flag must remain false on spoke overlays — spokes have no argocd namespace.
-providers:
-  kubernetes:
-    createArgoCDRBAC: true
