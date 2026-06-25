@@ -66,3 +66,25 @@ identities:
           "Version": "2012-10-17",
           "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
         }
+  # BedrockAgentCore provider runs on the spoke and manages AgentCore
+  # resources. Its Pod Identity is created here (by the hub's Crossplane)
+  # because spokes have no EKS-API provider to self-provision it.
+  crossplane-agentcore:
+    enabled: true
+    roleName: CrossplaneAgentCoreProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-bedrockagentcore
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-agentcore-provider
+    policy:
+      name: CrossplaneAgentCoreProviderPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Action": ["bedrock-agentcore:*","bedrock:InvokeAgentCoreTool"],
+            "Resource": "*"
+          }]
+        }
