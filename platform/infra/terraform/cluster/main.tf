@@ -3,7 +3,7 @@ module "eks" {
   #checkov:skip=CKV_TF_2:We are using version control for those modules
   for_each = var.clusters
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.15"
+  version = "~> 21.23.0"
 
   name                   = each.value.name
   kubernetes_version     = each.value.kubernetes_version
