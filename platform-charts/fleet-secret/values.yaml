@@ -25,8 +25,16 @@ hub:
   fleetRepoBasepath: ""
   domain: ""
   resourcePrefix: ""
-  oidcIssuerUrl: ""
-  oidcInsecureOrigin: "false"
 
 # Addon enablement map — populated from enabled-addons.yaml via valueFiles
 enabledAddons: {}
+
+# OIDC configuration — used to derive oidc_issuer_url on spoke cluster secrets.
+# oidcIssuerUrlTemplate is a Go template evaluated with:
+#   .domain   = hub.domain (ingress_domain_name)
+#   .environment = labels.environment from the fleet-member values file
+# Default assumes reference Keycloak at https://<domain>/keycloak/realms/<environment>.
+# Override per cluster via overlays/clusters/<name>/addon-overrides.yaml.
+oidc:
+  issuerUrlTemplate: "https://{{ .domain }}/keycloak/realms/{{ .environment }}"
+  insecureOrigin: "false"

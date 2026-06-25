@@ -1,0 +1,49 @@
+{{- $realm := .Values.realmName | default (printf "%s%s" .Values.realmPrefix .Values.environment) -}}
+{{- $secretPrefix := .Values.secretPathPrefix | default "oidc" -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-client-provisioner-{{ .Values.environment }}
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: {{ .Values.serviceAccountName }}
+      restartPolicy: Never
+      volumes:
+        - name: admin-secret
+          secret:
+            secretName: {{ .Values.adminSecretName }}
+        - name: script
+          configMap:
+            name: keycloak-client-provisioner-{{ .Values.environment }}
+            defaultMode: 0755
+      containers:
+        - name: provisioner
+          image: docker.io/amazon/aws-cli:2.22.35
+          command: ["/bin/bash", "/scripts/provision.sh"]
+          volumeMounts:
+            - name: admin-secret
+              mountPath: /var/secrets
+              readOnly: true
+            - name: script
+              mountPath: /scripts
+          env:
+            - name: KC_URL
+              value: {{ required "keycloakUrl is required" .Values.keycloakUrl | quote }}
+            - name: REALM
+              value: {{ $realm | quote }}
+            - name: ENVIRONMENT
+              value: {{ required "environment is required" .Values.environment | quote }}
+            - name: AWS_REGION
+              value: {{ required "region is required" .Values.region | quote }}
+            - name: SECRET_PREFIX
+              value: {{ $secretPrefix | quote }}
+            - name: CLIENTS_JSON
+              value: {{ .Values.clients | toJson | quote }}
