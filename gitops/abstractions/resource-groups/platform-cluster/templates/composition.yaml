@@ -847,7 +847,12 @@ spec:
                 policy:
                   fromFieldPath: Required
 
-          # ===== EKS MANAGED ADD-ONS (required for managed node group nodes) =====
+          # ===== EKS MANAGED ADD-ONS =====
+          # vpc-cni, kube-proxy, coredns are only needed when a managed node
+          # group is present (Auto Mode manages its own networking). They are
+          # filtered out below when managedNodeGroup is disabled.
+          # pod-identity-agent is NOT filtered — it is required on all clusters
+          # (including Auto Mode) for EKS Pod Identity to function.
 
           - name: addon-vpc-cni
             base:
@@ -998,7 +1003,7 @@ spec:
             expression: >-
               has(observed.composite.resource.spec.managedNodeGroup) &&
               observed.composite.resource.spec.managedNodeGroup.enabled == true
-          - name: "^addon-.*"
+          - name: "^addon-(vpc-cni|kube-proxy|coredns).*"
             expression: >-
               has(observed.composite.resource.spec.managedNodeGroup) &&
               observed.composite.resource.spec.managedNodeGroup.enabled == true
