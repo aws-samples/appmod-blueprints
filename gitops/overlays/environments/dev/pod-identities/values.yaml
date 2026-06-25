@@ -3,9 +3,24 @@
 identities:
   eso:
     enabled: true
-  # Crossplane providers on spoke-dev need Pod Identity so they can
-  # create IAM resources (roles, policy attachments) for the spoke.
-  # These are created by the hub's Crossplane targeting spoke-dev.
+  # Crossplane providers on spoke need Pod Identity so they can
+  # create/manage AWS resources (IAM roles, policy attachments, etc.).
+  # These associations are created by the hub's Crossplane targeting the spoke.
+  crossplane-iam:
+    enabled: true
+    roleName: CrossplaneIAMProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-iam
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-iam-provider
+    policy:
+      name: CrossplaneIAMProviderPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
+        }
   crossplane-ec2:
     enabled: true
     roleName: CrossplaneEC2ProviderRole

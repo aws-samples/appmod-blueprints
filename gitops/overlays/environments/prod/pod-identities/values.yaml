@@ -3,6 +3,21 @@
 identities:
   eso:
     enabled: true
+  crossplane-iam:
+    enabled: true
+    roleName: CrossplaneIAMProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-iam
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-iam-provider
+    policy:
+      name: CrossplaneIAMProviderPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
+        }
   crossplane-ec2:
     enabled: true
     roleName: CrossplaneEC2ProviderRole
