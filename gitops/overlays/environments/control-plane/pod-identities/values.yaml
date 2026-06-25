@@ -10,3 +10,28 @@ identities:
     enabled: true
   otel-collector:
     enabled: true
+  keycloak-client-provisioner:
+    enabled: true
+    roleName: KeycloakClientProvisionerRole
+    namespace: keycloak
+    serviceAccount: keycloak-client-provisioner
+    tags:
+      managed-by: crossplane
+      purpose: keycloak-client-provisioner
+    policy:
+      name: KeycloakClientProvisionerPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:DescribeSecret"
+              ],
+              "Resource": "arn:aws:secretsmanager:*:*:secret:*/oidc/*"
+            }
+          ]
+        }
