@@ -602,6 +602,16 @@ locals {
             "iam:GetRole"
           ]
           Resource = "*"
+        },
+        {
+          Effect   = "Allow"
+          Action   = "iam:PassRole"
+          Resource = "*"
+          Condition = {
+            StringEquals = {
+              "iam:PassedToService" = "pods.eks.amazonaws.com"
+            }
+          }
         }
       ]
     }
@@ -728,7 +738,7 @@ resource "aws_iam_role" "kargo_controller_role" {
 
 resource "aws_iam_role_policy_attachment" "kargo_ecr_policy" {
   role       = aws_iam_role.kargo_controller_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
 resource "aws_eks_pod_identity_association" "kargo_controller" {
