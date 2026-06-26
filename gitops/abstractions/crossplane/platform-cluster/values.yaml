@@ -1,0 +1,16 @@
+# Default values — no clusters provisioned by default.
+# Override per-environment via fleet/spoke-values/default/crossplane-clusters/values.yaml
+# or per-tenant via fleet/spoke-values/tenants/<tenant>/crossplane-clusters/values.yaml
+
+global:
+  argoCDRoleArn: ""
+  # Default AWS region for clusters that don't set their own.
+  # Injected by the bootstrap ApplicationSet from the hub cluster's
+  # aws_region annotation. Per-cluster `region` in
+  # fleet/spoke-values/.../crossplane-clusters/values.yaml takes precedence.
+  defaultRegion: ""
+
+xrd:
+  enabled: true
+
+clusters: {}

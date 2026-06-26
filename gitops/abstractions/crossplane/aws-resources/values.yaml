@@ -1,0 +1,10 @@
+aws:
+  region: ""
+
+global:
+  clusterName: ""
+
+namespace: crossplane-system
+
+compositions:
+  enabled: true
