@@ -800,29 +800,26 @@ tasks:
         # before the string is passed to gitlab-rails runner as a Ruby script.
         docker exec gitlab-gitlab-1 gitlab-rails runner "
           # Disable default branch protection so user1 can push to main
-          ApplicationSetting.first.update!(
-            default_branch_protection: 0,
-            default_branch_protection_defaults: {
-              allowed_to_push: [{ access_level: 0 }],
-              allow_force_push: true,
-              allowed_to_merge: [{ access_level: 0 }],
-              developer_can_initial_push: true
-            }
-          )
+          s = ApplicationSetting.first
+          s.password_authentication_enabled_for_git = true
+          s.default_branch_protection = 0
+          s.save(validate: false)
           pat = User.find(1).personal_access_tokens.find_or_initialize_by(name: 'initial-root-token')
           pat.scopes = ['api','write_repository','sudo']
           pat.expires_at = 365.days.from_now
           pat.save!
           u = User.find_by(username: '{{.GIT_USERNAME}}')
           if u.nil?
-            u = User.create!(
-              name: 'Workshop User', username: '{{.GIT_USERNAME}}',
+            u = User.new(name: 'Workshop User', username: '{{.GIT_USERNAME}}',
               email: '{{.GIT_USERNAME}}@workshop.local',
               password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}',
-              skip_confirmation: true
-            )
+              skip_confirmation: true)
+            u.save(validate: false)
           else
-            u.update!(password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}')
+            u.password = '{{.GIT_PASSWORD}}'
+            u.password_confirmation = '{{.GIT_PASSWORD}}'
+            u.password_automatically_set = false
+            u.save(validate: false)
           end
           u1pat = u.personal_access_tokens.find_or_initialize_by(name: 'workshop-token')
           u1pat.scopes = ['api','write_repository']
