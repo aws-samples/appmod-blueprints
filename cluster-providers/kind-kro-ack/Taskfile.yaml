@@ -219,6 +219,14 @@ tasks:
       - kubectl -n {{.ACK_NAMESPACE}} create secret generic aws-credentials
           --from-file=credentials={{.ROOT_DIR}}/private/aws-creds.ini
           --dry-run=client -o yaml | kubectl apply -f -
+      - |
+        # Also refresh eso-aws-credentials (ESO needs individual keys, not INI format)
+        CREDS=$(kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials -o jsonpath='{.data.credentials}' | base64 -d)
+        kubectl -n {{.ACK_NAMESPACE}} create secret generic eso-aws-credentials \
+          --from-literal=access-key-id="$(echo "$CREDS" | grep aws_access_key_id | awk '{print $3}')" \
+          --from-literal=secret-access-key="$(echo "$CREDS" | grep aws_secret_access_key | awk '{print $3}')" \
+          --from-literal=session-token="$(echo "$CREDS" | grep aws_session_token | awk '{print $3}')" \
+          --dry-run=client -o yaml | kubectl apply -f -
       - rm -f {{.ROOT_DIR}}/private/aws-creds.ini
 
   argocd:install:
