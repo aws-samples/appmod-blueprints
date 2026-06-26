@@ -7,11 +7,12 @@ environment: ""
 # Example: http://keycloak.keycloak.svc.cluster.local:8080/keycloak
 keycloakUrl: ""
 
-# Realm name to create/use for this environment.
-# Defaults to the environment value (e.g. "dev", "prod").
-# Override with realmPrefix if you want "peeks-dev" etc.
-realmName: ""        # empty = use environment value
-realmPrefix: ""      # optional prefix, e.g. "peeks-" → "peeks-dev"
+# Keycloak realm the clients are created in.
+# Defaults to the shared "platform" realm (where the keycloak config Job
+# provisions users, groups, roles, and mappers). Customers can override
+# per hub/spoke — set this to their own realm name via the fleet-member
+# values (oidc.realm) which the client-provisioner ApplicationSet passes through.
+realmName: "platform"
 
 # AWS region for Secrets Manager writes.
 region: ""

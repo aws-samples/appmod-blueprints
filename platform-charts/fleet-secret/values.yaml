@@ -30,11 +30,15 @@ hub:
 enabledAddons: {}
 
 # OIDC configuration — used to derive oidc_issuer_url on spoke cluster secrets.
-# oidcIssuerUrlTemplate is a Go template evaluated with:
-#   .domain   = hub.domain (ingress_domain_name)
+# issuerUrlTemplate is a Go template evaluated with:
+#   .domain      = hub.domain (ingress_domain_name)
 #   .environment = labels.environment from the fleet-member values file
-# Default assumes reference Keycloak at https://<domain>/keycloak/realms/<environment>.
-# Override per cluster via overlays/clusters/<name>/addon-overrides.yaml.
+#   .realm       = oidc.realm (below)
+# The issuer realm MUST match the realm where the client is created by the
+# client-provisioner. Both default to the shared "platform" realm.
+# Customers override .realm per hub/spoke via the fleet-member values
+# (oidc.realm), or swap issuerUrlTemplate entirely for an external IdP.
 oidc:
-  issuerUrlTemplate: "https://{{ .domain }}/keycloak/realms/{{ .environment }}"
+  realm: "platform"
+  issuerUrlTemplate: "https://{{ .domain }}/keycloak/realms/{{ .realm }}"
   insecureOrigin: "false"

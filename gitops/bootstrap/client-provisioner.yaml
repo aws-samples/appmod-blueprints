@@ -49,6 +49,13 @@ spec:
               clusterName: '{{ .metadata.annotations.aws_cluster_name }}'
               keycloakUrl: 'http://keycloak.keycloak.svc.cluster.local:8080/keycloak'
               secretPathPrefix: '{{ or (index .metadata.annotations "resource_prefix") "oidc" }}'
+              # Realm defaults to the shared "platform" realm; a fleet member can
+              # override per hub/spoke by declaring oidc.realm in its values file.
+              realmName: '{{ dig "oidc" "realm" "platform" . }}'
+              # Generic passthrough of whatever clients the fleet member declares.
+              # Not provisioner-specific — the fleet repo owns the client list.
+              # Serialized to JSON here; the chart normalizes string-or-list.
+              clients: '{{ index . "clients" | default list | toJson }}'
       # The Job runs on the hub where Keycloak lives, not on the spoke
       destination:
         name: '{{ .name }}'

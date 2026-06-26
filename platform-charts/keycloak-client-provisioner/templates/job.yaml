@@ -1,5 +1,10 @@
-{{- $realm := .Values.realmName | default (printf "%s%s" .Values.realmPrefix .Values.environment) -}}
+{{- $realm := .Values.realmName | default "platform" -}}
 {{- $secretPrefix := .Values.secretPathPrefix | default "oidc" -}}
+{{- /* clients may arrive as a list (standalone) or a JSON string (from the
+       ApplicationSet valuesObject). Normalize to a list so CLIENTS_JSON is a
+       proper JSON array, never a double-encoded string. */ -}}
+{{- $clients := .Values.clients -}}
+{{- if kindIs "string" $clients -}}{{- $clients = $clients | fromJsonArray -}}{{- end -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -46,4 +51,4 @@ spec:
             - name: SECRET_PREFIX
               value: {{ $secretPrefix | quote }}
             - name: CLIENTS_JSON
-              value: {{ .Values.clients | toJson | quote }}
+              value: {{ $clients | toJson | quote }}
