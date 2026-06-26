@@ -1,0 +1,28 @@
+version: "3"
+set: [errexit, nounset, pipefail]
+silent: true
+
+# Workshop-specific setup tasks (AWS Workshop Studio / kind-crossplane variant).
+# Included by the main Taskfile under the "workshop:" namespace.
+# These tasks create AWS resources that are required by the workshop content
+# but are not part of the platform itself (e.g. model staging buckets).
+tasks:
+  setup:
+    desc: Create workshop-specific AWS resources (idempotent)
+    cmds:
+      - task: create-ray-models-bucket
+
+  create-ray-models-bucket:
+    desc: Create the Ray model staging S3 bucket for AI/ML modules
+    status:
+      - aws s3api head-bucket --bucket {{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}} --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating Ray model staging bucket...{{.C_RESET}}\n'
+      - |
+        BUCKET="{{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}}"
+        aws s3api create-bucket --bucket "$BUCKET" --region {{.AWS_REGION}} \
+          {{if ne .AWS_REGION "us-east-1"}}--create-bucket-configuration LocationConstraint={{.AWS_REGION}}{{end}} \
+          --no-cli-pager >/dev/null
+        aws s3api put-public-access-block --bucket "$BUCKET" --region {{.AWS_REGION}} \
+          --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" >/dev/null
+      - printf '{{.C_OK}}✓ s3://{{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}} ready.{{.C_RESET}}\n'
