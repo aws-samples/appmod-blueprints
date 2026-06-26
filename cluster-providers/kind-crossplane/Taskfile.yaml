@@ -837,7 +837,7 @@ tasks:
           %w[fleet-config java rust golang dotnet next-js].each do |repo|
             p = Project.find_by(path: repo, namespace_id: u.namespace_id)
             if p.nil?
-              p = Projects::CreateService.new(u, name: repo, path: repo, visibility_level: 0, initialize_with_readme: true).execute
+              p = Projects::CreateService.new(u, name: repo, path: repo, visibility_level: 0, initialize_with_readme: false).execute
             end
             ProtectedBranch.where(project: p).destroy_all if p.persisted?
             puts 'repo: ' + repo + ' ok=' + p.persisted?.to_s
@@ -854,11 +854,10 @@ tasks:
           fi
           [ -d "$SRC" ] || continue
           TMP=$(mktemp -d)
-          # Clone existing repo (has README from initialize_with_readme) then add source files
-          git clone -q "$REMOTE_URL" "$TMP" 2>/dev/null || { cp -r "$SRC/." "$TMP/"; git -C "$TMP" init -q; git -C "$TMP" remote add origin "$REMOTE_URL"; }
           cp -r "$SRC/." "$TMP/"
           cd "$TMP"
-          git add -A && git commit -qm "seed: add application source" 2>/dev/null || true
+          git init -q && git add -A && git commit -qm "init" 2>/dev/null || true
+          git remote add origin "$REMOTE_URL"
           git push origin HEAD:main
           cd - >/dev/null; rm -rf "$TMP"
           echo "  seeded: $REPO"
