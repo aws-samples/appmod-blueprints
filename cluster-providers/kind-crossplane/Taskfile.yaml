@@ -822,6 +822,14 @@ tasks:
             u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
             u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
           end
+          # Ensure namespace exists (GitLab CE requires Organization; use default org)
+          if u.namespace_id.nil?
+            org_id = Organizations::Organization.find_by(id: 1)&.id || 1
+            ns = Namespace.new(owner: u, path: u.username, name: u.username, type: 'User', organization_id: org_id)
+            ns.save(validate: false)
+            u.update_columns(namespace_id: ns.id) if ns.persisted?
+            u.reload
+          end
           u1pat = u.personal_access_tokens.find_or_initialize_by(name: 'workshop-token')
           u1pat.scopes = ['api','write_repository']
           u1pat.expires_at = 365.days.from_now
