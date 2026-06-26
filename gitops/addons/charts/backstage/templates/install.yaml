@@ -129,9 +129,12 @@ data:
       # Used for enabling authentication, secret is shared by all backend plugins
       # See https://backstage.io/docs/tutorials/backend-to-backend-auth for
       # information on the format
-      # auth:
-      #   keys:
-      #     - secret: ${BACKEND_SECRET}
+      auth:
+        externalAccess:
+          - type: static
+            options:
+              token: ${BACKEND_SECRET}
+              subject: external-caller
       baseUrl: https://{{ .Values.ingress_domain_name }}/backstage
       listen:
         port: 7007
@@ -157,32 +160,17 @@ data:
       # workingDirectory: /tmp # Use this to configure a working directory for the scaffolder, defaults to the OS temp-dir
 
     integrations:
+{{- if .Values.gitlab_domain_name }}
       gitlab:
         - token: ${GIT_PASSWORD}
           apiBaseUrl: https://${GIT_HOSTNAME}/api/v4
           baseUrl: https://${GIT_HOSTNAME}
           host: ${GIT_HOSTNAME}
-    #  gitea:
-    #   - baseUrl: https://cnoe.localtest.me:8443/gitea
-    #     host: cnoe.localtest.me:8443
-    #     username: ${GITEA_USERNAME}
-    #     password: ${GIT_PASSWORD}
-    #   - baseUrl: https://cnoe.localtest.me/gitea
-    #     host: cnoe.localtest.me
-    #     username: ${GITEA_USERNAME}
-    #     password: ${GIT_PASSWORD}
-    #  github:
-    #    - host: github.com
-    #      apps:
-    #        - $include: github-integration.yaml
-    #    - host: github.com
-    #      # This is a Personal Access Token or PAT from GitHub. You can find out how to generate this token, and more information
-    #      # about setting up the GitHub integration here: https://backstage.io/docs/getting-started/configuration#setting-up-a-github-integration
-    #      token: ${GITHUB_TOKEN}
-        ### Example for how to add your GitHub Enterprise instance using the API:
-        # - host: ghe.example.net
-        #   apiBaseUrl: https://ghe.example.net/api/v3
-        #   token: ${GHE_TOKEN}
+{{- else }}
+      github:
+        - host: github.com
+          token: ${GIT_PASSWORD}
+{{- end }}
 
     proxy:
       ### Example for how to add a proxy endpoint for the frontend.
@@ -202,12 +190,13 @@ data:
         type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
 
     auth:
-      environment: development
+      environment: production
       session:
         secret: MW2sV-sIPngEl26vAzatV-6VqfsgAx4bPIz7PuE_2Lk=
+      signInPage: keycloak-oidc
       providers:
         keycloak-oidc:
-          development:
+          production:
             metadataUrl: ${KEYCLOAK_NAME_METADATA}
             clientId: backstage
             clientSecret: ${KEYCLOAK_CLIENT_SECRET}
@@ -226,11 +215,24 @@ data:
       rules:
         - allow: [Component, System, API, Resource, Location, Template]
       locations:
-        # Templates from Gitlab.
+{{- if .Values.gitlab_domain_name }}
+        # Templates from GitLab (cloudfront mode — readTree works with user1 token)
         - type: url
           target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/platform/backstage/templates/catalog-info.yaml
           rules:
             - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
+{{- else }}
+        # Static templates from GitHub (domain mode)
+        - type: url
+          target: https://github.com/aws-samples/appmod-blueprints/blob/${WORKSHOP_GIT_BRANCH}/platform/backstage/templates/catalog-info.yaml
+          rules:
+            - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
+{{- end }}
+        # Dynamic system-info (injected by taskfile via ConfigMap)
+        - type: file
+          target: /app/catalog/dynamic-catalog.yaml
+          rules:
+            - allow: [ System ]
     kubernetes:
       serviceLocatorMethod:
         type: 'multiTenant'
@@ -249,11 +251,13 @@ data:
             $file: /var/run/secrets/kubernetes.io/serviceaccount/token
           caData:
             $file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-        - name: workshop
-          url: K8S_SERVER
+        {{- range .Values.spoke_clusters }}
+        - name: {{ .name }}
+          url: {{ .url }}
           authProvider: 'serviceAccount'
           skipTLSVerify: true
-          serviceAccountToken: SA_TOKEN
+          serviceAccountToken: {{ .token }}
+        {{- end }}
       # ResourceGraphDefinition entity processing configuration
       entityProcessing:
         # Enable automatic catalog ingestion of ResourceGraphDefinitions
@@ -275,9 +279,7 @@ data:
     kubernetesIngestor:
       refreshInterval: 300 # 5 minutes in seconds
       resources:
-        - apiVersion: 'kro.run/v1alpha1'
-          kind: 'ResourceGraphDefinition'
-        # Kro instances (these will be discovered dynamically based on ResourceGraphDefinitions)
+        # Kro instances (namespaced resources created from ResourceGraphDefinitions)
         - apiVersion: 'kro.run/v1alpha1'
           kind: 'CICDPipeline'
         - apiVersion: 'kro.run/v1alpha1'
@@ -301,11 +303,13 @@ data:
           skipTLSVerify: true
           serviceAccountToken:
             $file: /var/run/secrets/kubernetes.io/serviceaccount/token
-        - name: workshop
-          url: K8S_SERVER
+        {{- range .Values.spoke_clusters }}
+        - name: {{ .name }}
+          url: {{ .url }}
           authProvider: 'serviceAccount'
           skipTLSVerify: true
-          serviceAccountToken: SA_TOKEN
+          serviceAccountToken: {{ .token }}
+        {{- end }}
     argocd:
       username: admin
       password: ${ARGOCD_ADMIN_PASSWORD}
@@ -341,9 +345,6 @@ stringData:
         customResources:
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
-            plural: 'resourcegraphdefinitions'
-          - group: 'kro.run'
-            apiVersion: 'v1alpha1'
             plural: 'cicdpipelines'
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
@@ -354,17 +355,14 @@ stringData:
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
             plural: 'vpcs'
-      - url: K8S_SERVER
-        name: workshop
+      {{- range .Values.spoke_clusters }}
+      - url: {{ .url }}
+        name: {{ .name }}
         authProvider: 'serviceAccount'
         skipTLSVerify: true
         skipMetricsLookup: true
-        serviceAccountToken: SA_TOKEN
-        # Additional configuration for Kro resources
+        serviceAccountToken: {{ .token }}
         customResources:
-          - group: 'kro.run'
-            apiVersion: 'v1alpha1'
-            plural: 'resourcegraphdefinitions'
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
             plural: 'cicdpipelines'
@@ -377,6 +375,40 @@ stringData:
           - group: 'kro.run'
             apiVersion: 'v1alpha1'
             plural: 'vpcs'
+      {{- end }}
+---
+# Dynamic catalog data — updated at runtime by 'task backstage:update-catalog'
+# Contains the system-info entity with environment-specific values
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backstage-dynamic-catalog
+  namespace: backstage
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+data:
+  dynamic-catalog.yaml: |
+    apiVersion: backstage.io/v1alpha1
+    kind: System
+    metadata:
+      name: system-info
+      description: Holds system information i.e, hostname, IP, OS, etc
+    spec:
+      owner: guest
+      ingress_hostname: '{{ .Values.ingress_domain_name }}'
+      gitlab_hostname: '{{ default .Values.ingress_domain_name .Values.gitlab_domain_name }}'
+      argocd_hostname: '{{ .Values.argocd_hostname }}'
+      gituser: '{{ .Values.git_username }}'
+      aws_region: '{{ .Values.global.region }}'
+      aws_account_id: '{{ .Values.global.accountId }}'
+      admin_role_name: '{{ .Values.admin_role_name }}'
+      resource_prefix: '{{ .Values.global.resource_prefix }}'
+      hub_cluster_name: '{{ .Values.global.clusterName }}'
+      spoke_dev_cluster_name: '{{ .Values.spoke_dev_cluster_name | default (printf "%s-spoke-dev" .Values.global.resource_prefix) }}'
+      spoke_prod_cluster_name: '{{ .Values.spoke_prod_cluster_name | default (printf "%s-spoke-prod" .Values.global.resource_prefix) }}'
+      model_s3_bucket: '{{ .Values.model_s3_bucket }}'
+      workshop_git_branch: '{{ .Values.workshop_git_branch }}'
 ---
 apiVersion: v1
 kind: Service
@@ -487,6 +519,12 @@ spec:
               value: "/app/config/ca.crt"
             - name: DOMAIN_NAME
               value: {{ .Values.ingress_domain_name }}
+            - name: KEYCLOAK_URL
+              value: "https://{{ .Values.ingress_domain_name }}/keycloak"
+            - name: GIT_HOSTNAME
+              value: {{ .Values.gitlab_domain_name }}
+            - name: WORKSHOP_GIT_BRANCH
+              value: {{ .Values.workshop_git_branch | default "main" }}
             - name: NODE_ENV
               value: development
             - name: NODE_OPTIONS
@@ -521,11 +559,16 @@ spec:
               memory: 2Gi
           startupProbe:
             httpGet:
-              path: /api/auth/keycloak-oidc/start?scope=openid%20profile%20email%20groups&flow=popup&env=development
+              path: /backstage/api/catalog/entities/by-query?limit=0
               port: http
+            failureThreshold: 30
+            periodSeconds: 10
           volumeMounts:
             - mountPath: /app/config
               name: backstage-config
+              readOnly: true
+            - mountPath: /app/catalog
+              name: dynamic-catalog
               readOnly: true
       serviceAccountName: backstage
       volumes:
@@ -542,6 +585,9 @@ spec:
                     - key: k8s-config.yaml
                       path: k8s-config.yaml
                   name: k8s-config
+        - name: dynamic-catalog
+          configMap:
+            name: backstage-dynamic-catalog
         - name: backstage-env-vars
           secret:
             secretName: backstage-env-vars
@@ -560,6 +606,15 @@ metadata:
     argocd.argoproj.io/sync-wave: "10"
 spec:
   replicas: 1
+  revisionHistoryLimit: 10
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   selector:
     matchLabels:
       app: postgresql
@@ -575,6 +630,11 @@ spec:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
         effect: "NoSchedule"
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
       containers:
         - env:
             - name: PGDATA
@@ -595,16 +655,20 @@ spec:
                   name: backstage-postgres-vars
                   key: POSTGRES_PASSWORD
           image: docker.io/library/postgres:17.4-alpine3.21
+          imagePullPolicy: IfNotPresent
           name: postgres
           ports:
             - containerPort: 5432
               name: postgresdb
+              protocol: TCP
           resources:
             limits:
               memory: 500Mi
             requests:
               cpu: 100m
               memory: 300Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
@@ -657,6 +721,7 @@ spec:
         decodingStrategy: None
         key: {{ .Values.global.aws_cluster_name }}/keycloak-clients
         metadataPolicy: None
+        nullBytePolicy: Ignore
         property: BACKSTAGE_CLIENT_SECRET
 ---
 apiVersion: external-secrets.io/v1
@@ -683,6 +748,7 @@ spec:
         decodingStrategy: None
         key: {{ .Values.global.aws_cluster_name }}/secrets
         metadataPolicy: None
+        nullBytePolicy: Ignore
         property: backstage_postgres_password
 ---
 apiVersion: v1
@@ -706,6 +772,7 @@ stringData:
   ARGO_WORKFLOWS_URL: https://{{ .Values.ingress_domain_name }}/argo-workflows
   KEYCLOAK_NAME_METADATA: https://{{ .Values.ingress_domain_name }}/keycloak/realms/platform/.well-known/openid-configuration
   ARGO_CD_URL: 'https://argocd-server.argocd.svc.cluster.local/api/v1/'
+  BACKEND_SECRET: '{{ .Values.backend_secret | default "supersecret-backstage-backend-token" }}'
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -724,6 +791,13 @@ metadata:
   name: backstage
   namespace: backstage
   annotations:
+{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /backstage/health/v1/readiness
+    alb.ingress.kubernetes.io/transforms.backstage: |
+      [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/backstage\\/?(.*)$","replace":"/$1"}]}}]
+{{- else }}
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /$2
     nginx.ingress.kubernetes.io/affinity: "cookie"
@@ -731,7 +805,21 @@ metadata:
     nginx.ingress.kubernetes.io/session-cookie-expires: "86400"
     nginx.ingress.kubernetes.io/session-cookie-max-age: "86400"
     nginx.ingress.kubernetes.io/session-cookie-path: "/backstage"
+{{- end }}
 spec:
+{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+  ingressClassName: "platform"
+  rules:
+    - http:
+        paths:
+          - path: /backstage
+            pathType: Prefix
+            backend:
+              service:
+                name: backstage
+                port:
+                  name: http
+{{- else }}
   ingressClassName: "nginx"
   rules:
     - host: {{ .Values.ingress_domain_name }}
@@ -744,3 +832,4 @@ spec:
                 name: backstage
                 port:
                   name: http
+{{- end }}

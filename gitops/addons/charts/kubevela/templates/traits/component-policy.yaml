@@ -29,7 +29,7 @@ spec:
         			kind:       "Policy"
         			metadata: name: "\(context.appName)-\(context.name)-iam-policy"
         			spec: {
-        				providerConfigRef: name: "provider-aws-config"
+        				providerConfigRef: name: "default"
         				forProvider: policy: {"""
                       {
                         "Version": "2012-10-17",
@@ -54,7 +54,7 @@ spec:
         			kind:       "Policy"
         			metadata: name: "\(context.appName)-\(context.name)-iam-policy"
         			spec: {
-        				providerConfigRef: name: "provider-aws-config"
+        				providerConfigRef: name: "default"
         				forProvider: policy: "\(parameter.policy)"
         			}
         		}

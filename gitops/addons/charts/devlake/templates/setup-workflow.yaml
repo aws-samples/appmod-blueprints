@@ -35,6 +35,10 @@ metadata:
 spec:
   serviceAccountName: devlake-mysql-setup-sa
   entrypoint: mysql-setup
+  # NOTE: no ttlStrategy. This Workflow is a sync-wave -1 resource tracked by
+  # ArgoCD; if the workflow-controller TTL-deletes it after completion, ArgoCD
+  # reports it as Missing/OutOfSync and re-applies it in a loop. Keeping it
+  # persisted (Succeeded) lets ArgoCD see it Healthy/Synced.
   templates:
   - name: mysql-setup
     dag:

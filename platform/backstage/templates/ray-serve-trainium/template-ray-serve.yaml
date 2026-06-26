@@ -331,7 +331,7 @@ spec:
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.name }}-ray-service
         icon: git
       - title: ArgoCD Project
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/settings/argocd/projects/${{ parameters.name }}-ray-project
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/settings/projects/${{ parameters.name }}-ray-project
         icon: web
       - title: Ray Serve Endpoint (After Deployment)
         url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/ray-serve/${{ parameters.name }}/

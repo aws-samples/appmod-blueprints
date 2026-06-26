@@ -10,7 +10,7 @@ spec:
   port: 8080
   targetPort: 8080
   serviceAccount: rust-service-account-<environment>
-  clusterName: peeks-spoke-dev
+  clusterName: <cluster_name>
   accountId: "${AWS_ACCOUNT_ID}"
   env:
     - name: TABLE_NAME
@@ -29,6 +29,7 @@ spec:
     enabled: true
     path: /rust-app
     rewrite: true
+    healthcheckPath: /rust-app/
   ## Uncomment the sections below to enable metrics-driven progressive delivery (Module 30)
   # functionalGate:
   #   enabled: true

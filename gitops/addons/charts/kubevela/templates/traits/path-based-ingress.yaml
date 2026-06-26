@@ -18,7 +18,7 @@ spec:
         parameter: {
         	domain: string
         	http: [string]: int
-        	class:         *"nginx" | string
+        	class:         *"alb" | string
         	rewritePath:   *true | bool
         	createService: *false | bool
         }
@@ -49,9 +49,18 @@ spec:
         	metadata: {
         		name: context.name
         		annotations: {
-              "nginx.ingress.kubernetes.io/use-regex": "true"
+              "alb.ingress.kubernetes.io/scheme": "internet-facing"
+              "alb.ingress.kubernetes.io/target-type": "ip"
+              "alb.ingress.kubernetes.io/healthcheck-path": "/"
+              // URL rewrite: strip the ingress path prefix before forwarding to
+              // the pod. The transforms annotation key MUST include the backend
+              // service name as suffix (ALB controller requirement). CUE's native
+              // key interpolation ("\(expr)") makes this straightforward — unlike
+              // kro which cannot template annotation keys.
               if parameter.rewritePath {
-                "nginx.ingress.kubernetes.io/rewrite-target": "/$2"
+                for k, _ in parameter.http {
+                  "alb.ingress.kubernetes.io/transforms.\(context.name)": "[{\"type\":\"url-rewrite\",\"urlRewriteConfig\":{\"rewrites\":[{\"regex\":\"^\(k)/?(.*)$\",\"replace\":\"/$1\"}]}}]"
+                }
               }
             }
         	}
@@ -61,8 +70,8 @@ spec:
         			host: parameter.domain
         			http: paths: [
         				for k, v in parameter.http {
-        					path:     "\(k)(/|$)(.*)"
-        					pathType: "ImplementationSpecific"
+        					path:     k
+        					pathType: "Prefix"
         					backend: service: {
         						name: context.name
         						port: number: v

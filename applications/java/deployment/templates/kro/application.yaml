@@ -21,6 +21,7 @@ spec:
     enabled: true
     path: /java-app
     rewrite: true
+    healthcheckPath: /java-app/
   functionalGate:
     enabled: true
     image: "httpd:alpine"
