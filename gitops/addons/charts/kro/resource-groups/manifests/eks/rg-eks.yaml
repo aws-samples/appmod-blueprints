@@ -581,8 +581,6 @@ spec:
             {"vpc":{"id":"${schema.spec.network.vpcID}","cluster_security_group_id":"","subnet_ids":["${schema.spec.network.subnets.workers.subnet1ID}","${schema.spec.network.subnets.workers.subnet2ID}"]},"server":"${ekscluster.status.ackResourceMetadata.arn}","metadata":{"cluster_name":"${schema.spec.name}","region":"${schema.spec.region}","account_id":"${schema.spec.accountId}"}}
 
     - id: clusterConfigSecret
-      readyWhen:
-      - ${clusterConfigSecret.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       template:
         apiVersion: secretsmanager.services.k8s.aws/v1alpha1
         kind: Secret
@@ -606,8 +604,6 @@ spec:
             key: config
 
     - id: hubSecretsExternal
-      readyWhen:
-      - ${hubSecretsExternal.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
       template:
         apiVersion: external-secrets.io/v1
         kind: ExternalSecret
