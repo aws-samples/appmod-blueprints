@@ -858,7 +858,7 @@ tasks:
           cd "$TMP"
           git init -q && git add -A && git commit -qm "init" 2>/dev/null || true
           git remote add origin "$REMOTE_URL"
-          git push -f origin HEAD:main
+          git push origin HEAD:main
           cd - >/dev/null; rm -rf "$TMP"
           echo "  seeded: $REPO"
         done
