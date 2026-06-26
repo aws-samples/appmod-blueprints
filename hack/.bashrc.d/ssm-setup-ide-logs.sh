@@ -21,7 +21,11 @@ argocd-sync() {
     echo ""
     print_info "Final ArgoCD Applications Status:"
     echo "----------------------------------------"
-    kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.phase // "")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
+    # ArgoCD apps live on the hub cluster. Force the hub context — after init the
+    # current kubeconfig context is often peeks-spoke-prod, where there are no
+    # argocd Applications, which made this report "0 applications".
+    local hub_ctx="${RESOURCE_PREFIX:-peeks}-hub"
+    kubectl --context "$hub_ctx" get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.phase // "")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
     while IFS='|' read -r name sync health operation message; do
         if [ "$health" = "Healthy" ] && { [ "$sync" = "Synced" ] || [ "$operation" = "Succeeded" ]; }; then
             print_success "$name: OK"
@@ -99,4 +103,14 @@ argocd-refresh-token() {
     fi
 
     echo "ArgoCD token refreshed. Server: $ARGOCD_SERVER"
+
+    # Also update the argocd CLI config file so 'argocd app sync' etc. work
+    # without requiring env vars. The CLI prefers its config file over env vars
+    # when a server entry exists — leaving a stale token there causes
+    # "Unauthenticated: invalid session" even when ARGOCD_AUTH_TOKEN is correct.
+    argocd login "$ARGOCD_SERVER" \
+        --auth-token "$token" \
+        --grpc-web \
+        --skip-test-tls \
+        2>/dev/null || true
 }

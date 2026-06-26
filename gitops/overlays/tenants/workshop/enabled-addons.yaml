@@ -1,0 +1,14 @@
+# Tenant-wide addon enablement for the "workshop" tenant.
+#
+# Applied to every cluster labelled tenant=workshop (i.e. all workshop spokes,
+# any environment) IN ADDITION to its per-environment enabled-addons. This
+# avoids duplicating tenant-wide addons across dev/prod/staging overlays.
+#
+# Per-environment (overlays/environments/<env>) and per-cluster
+# (overlays/clusters/<cluster>) files are merged AFTER this one and can still
+# override these values.
+enabledAddons:
+  # cert-manager is required by the AWS Load Balancer Controller webhook serving
+  # certificate (cert-manager Certificate/Issuer rendered by the LBC chart). LBC
+  # runs on every spoke, so cert-manager must be present on every spoke too.
+  cert_manager: true

@@ -5,19 +5,23 @@ metadata:
   namespace: argo
   annotations:
     alb.ingress.kubernetes.io/target-type: ip
-    {{- if contains "cloudfront.net" .Values.ingress_domain_name }}
+{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
-    {{- else }}
+{{- else }}
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
-    {{- end }}
+{{- end }}
     alb.ingress.kubernetes.io/transforms.argo-server: |
       [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/argo-workflows\\/?(.*)$","replace":"/$1"}]}}]
 spec:
-  ingressClassName: "platform"
+  ingressClassName: platform
   rules:
+{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+    - http:
+{{- else }}
     - host: {{ .Values.ingress_domain_name }}
       http:
+{{- end }}
         paths:
           - path: /argo-workflows
             pathType: Prefix

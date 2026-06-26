@@ -1,0 +1,110 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: clusters-kro
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    # Deletion-safety posture (TWO-WAY DOOR — flip to change behavior):
+    #   * spec.syncPolicy.applicationsSync: create-update -> the appset NEVER deletes
+    #     Applications, so a transient empty/failed generation cannot remove a cluster.
+    #   * the Application template carries NO resources-finalizer -> deleting an App
+    #     never cascade-deletes the live EksclusterWithVpc / EKS cluster + VPC.
+    # To intentionally delete a cluster, see the DELETION RUNBOOK on the template
+    # syncPolicy below. To restore appset-managed (destructive) deletion, set
+    # applicationsSync: sync AND re-add the resources-finalizer to the template.
+    platform.gitops.io/deletion-safety: protected
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+    # create-update: controller may create/update Applications but NEVER delete them
+    # — the primary guard against an empty/failed generation tearing down a live
+    # cluster. TWO-WAY DOOR: set to `sync` to restore delete-on-degenerate behavior.
+    applicationsSync: create-update
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  fleet_member: control-plane
+          - git:
+              # Read per-cluster trigger JSONs from the overlay (fleet-config) where
+              # `task spokes:enable-kro` and users declare clusters. One JSON file per
+              # cluster keeps a separate clusters-kro Application per cluster. Falls
+              # back to the base fleet repo when no overlay is wired. Mirrors the
+              # overlay/base fallback used by the value sources below.
+              repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.fleetRepoURL }}'
+              revision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.fleetRepoRevision }}'
+              files:
+                - path: '{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/*/kro-clusters/clusters/*.json'
+  template:
+    metadata:
+      name: 'clusters-kro-{{ .clusterName }}'
+      # resources-finalizer intentionally OMITTED (deletion safety): without it,
+      # deleting this Application orphans (preserves) the live cluster instead of
+      # cascade-deleting it. TWO-WAY DOOR: re-add
+      #   finalizers: [resources-finalizer.argocd.argoproj.io]
+      # to make App deletion cascade-delete the cluster again.
+    spec:
+      project: default
+      sources:
+        - repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+          targetRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+          ref: values
+        - repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.fleetRepoURL }}'
+          targetRevision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.fleetRepoRevision }}'
+          ref: overlay
+        - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+          path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/kro/kro-clusters'
+          targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+          helm:
+            releaseName: 'clusters-kro-{{ .clusterName }}'
+            ignoreMissingValueFiles: true
+            valuesObject:
+              global:
+                argoCdHubRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
+                argoCdCapabilityRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
+                defaultRegion: '{{ .metadata.annotations.aws_region }}'
+                targetCluster: '{{ .clusterName }}'
+                # Propagate the deploy branch from the control-plane so kro spokes
+                # inherit the same Git revision as the rest of the fleet, instead
+                # of falling back to the EksclusterWithVpc RGD's "main" default.
+                addonsRepoRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+                fleetRepoRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+            valueFiles:
+              - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
+              - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
+      destination:
+        namespace: '{{ .clusterName }}'
+        name: '{{ .name }}'
+      syncPolicy:
+        automated:
+          selfHeal: false
+          # prune:false is one of several deliberate guardrails: auto-prune must never
+          # cascade-delete a live EKS cluster + VPC. Combined with the appset
+          # applicationsSync:create-update and NO resources-finalizer (see top of file),
+          # de-generating or removing an App never destroys the cluster.
+          #
+          # DELETION RUNBOOK (intentional, two steps):
+          #   1. Remove the cluster from the overlay (its
+          #      kro-clusters/clusters/<name>.json and values.yaml entry) and push, so
+          #      the generator stops producing the App. The App is NOT auto-deleted.
+          #   2. Explicitly tear it down:
+          #        argocd app delete clusters-kro-<name> --cascade
+          #      (or: kubectl delete eksclusterwithvpc <name> -n <name>, then
+          #       kubectl delete application clusters-kro-<name> -n argocd)
+          #   3. Verify the EKS cluster and VPC are removed in AWS.
+          allowEmpty: false
+          prune: false
+        retry:
+          limit: -1
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 10m
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

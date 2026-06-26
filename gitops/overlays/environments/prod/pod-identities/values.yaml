@@ -1,5 +1,14 @@
-# Spoke prod clusters get their own ESO pod identity provisioned by
-# Crossplane on the hub (chart default is false; opt in here).
+# Spoke PROD clusters are provisioned by KRO/ACK (not Crossplane), so the
+# external-secrets (eso) pod identity is created by the EksCluster RGD via ACK.
+# Do NOT also provision it with Crossplane here, or both fight over external-secrets-sa
+# (one service account = one pod identity association -> ResourceInUseException).
 identities:
   eso:
+    enabled: false
+  # Bootstrap the spoke's Crossplane iam/eks providers from the hub (see chart
+  # values.yaml). Without these, the spoke's createIdentity:false providers have
+  # no credentials and all spoke Crossplane providers fail (IMDS fallback).
+  crossplane-iam-provider:
+    enabled: true
+  crossplane-eks-provider:
     enabled: true

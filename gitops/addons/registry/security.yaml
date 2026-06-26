@@ -14,6 +14,8 @@ keycloak:
   valuesObject:
     global:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      gitlab_domain_name: '{{ or (index .metadata.annotations "gitlab_domain_name") .metadata.annotations.ingress_domain_name }}'
+      exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
@@ -52,9 +54,15 @@ kyverno:
   chartName: kyverno
   releaseName: kyverno
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
   syncPolicy:
     automated:
       selfHeal: false
@@ -82,7 +90,7 @@ kyverno-policies:
   chartName: kyverno-policies
   releaseName: kyverno-policies
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '4'
   selector:
@@ -101,7 +109,7 @@ kyverno-policy-reporter:
   chartName: policy-reporter
   releaseName: kyverno-policy-reporter
   chartRepository: https://kyverno.github.io/policy-reporter
-  defaultVersion: '3.1.0'
+  defaultVersion: '3.7.4'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '4'
   selector:
