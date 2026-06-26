@@ -99,6 +99,7 @@ tasks:
         sh: date +%s
     cmds:
       - task: kind:create
+      - task: kind:kubeconfig
       - task: credentials:setup
       - task: argocd:install
       - task: ack:install
@@ -152,6 +153,12 @@ tasks:
       - kind get clusters 2>/dev/null | grep -q "^{{.KIND_CLUSTER_NAME}}$"
     cmds:
       - kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind.yaml --kubeconfig {{.KUBECONFIG}}
+
+  kind:kubeconfig:
+    desc: Ensure kind cluster kubeconfig is present (idempotent)
+    cmds:
+      - mkdir -p {{.ROOT_DIR}}/private
+      - kind export kubeconfig --name {{.KIND_CLUSTER_NAME}} --kubeconfig {{.KUBECONFIG}} 2>/dev/null || true
 
   credentials:setup:
     desc: Create AWS credentials secret (skips if exists)
