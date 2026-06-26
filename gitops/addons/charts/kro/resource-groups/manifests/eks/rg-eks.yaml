@@ -639,31 +639,6 @@ spec:
               remoteRef:
                 key: ${schema.spec.resourcePrefix}-hub/secrets
 
-    - id: clusterSecretsSecret
-      readyWhen:
-      - ${clusterSecretsSecret.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
-      template:
-        apiVersion: secretsmanager.services.k8s.aws/v1alpha1
-        kind: Secret
-        metadata:
-          name: ${schema.spec.name}-secrets
-          namespace: ${schema.spec.name}
-          annotations:
-            services.k8s.aws/region: ${schema.spec.managementRegion}
-            services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-        spec:
-          name: ${schema.spec.name}/secrets
-          secretString:
-            name: ${schema.spec.name}-hub-secrets
-            namespace: ${schema.spec.name}
-            key: secrets
-
     - id: accessEntry
       template:
         apiVersion: eks.services.k8s.aws/v1alpha1
