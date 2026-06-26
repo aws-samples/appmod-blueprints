@@ -825,6 +825,9 @@ tasks:
           u1pat.scopes = ['api','write_repository']
           u1pat.expires_at = 365.days.from_now
           u1pat.save!
+          # Ensure user namespace exists (created lazily by GitLab)
+          u.ensure_namespace!
+          u.reload
           %w[fleet-config java rust golang dotnet next-js].each do |repo|
             p = Project.find_by(path: repo, namespace_id: u.namespace_id)
             if p.nil?
