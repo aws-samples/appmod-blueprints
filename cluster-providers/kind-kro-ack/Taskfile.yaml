@@ -296,6 +296,12 @@ tasks:
       - kubectl wait --for=condition=Ready resourcegraphdefinition/eksclusterwithvpc.kro.run --timeout=300s
       - printf '{{.C_OK}}✓ ResourceGraphDefinitions applied.{{.C_RESET}}\n'
 
+  kro:reset-crds:
+    desc: Delete KRO-managed CRDs on the bootstrap kind cluster to allow breaking schema changes (run before kro:apply-rgds)
+    cmds:
+      - kubectl delete crd eksclusters.kro.run eksclusterwithvpcs.kro.run --ignore-not-found
+      - printf '{{.C_OK}}✓ KRO CRDs deleted — re-run task install.{{.C_RESET}}\n'
+
   idc:setup:
     desc: Create IDC groups if they don't exist (idempotent)
     vars:
