@@ -1,8 +1,0 @@
-clusterName: spoke-prod
-# region: defaults to hub region (set in fleet-secrets ApplicationSet
-# valuesObject from the hub cluster secret's aws_region annotation).
-# Uncomment + set explicitly only if this spoke must run in a different region.
-# region: us-east-1
-labels:
-  environment: prod
-  tenant: workshop
