@@ -813,19 +813,26 @@ tasks:
           pat.scopes = ['api','write_repository','sudo']
           pat.expires_at = 365.days.from_now
           pat.save!
-          u = User.find_by(username: '{{.GIT_USERNAME}}') || User.create!(
-            name: 'Workshop User', username: '{{.GIT_USERNAME}}',
-            email: '{{.GIT_USERNAME}}@workshop.local',
-            password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}',
-            skip_confirmation: true
-          )
+          u = User.find_by(username: '{{.GIT_USERNAME}}')
+          if u.nil?
+            u = User.create!(
+              name: 'Workshop User', username: '{{.GIT_USERNAME}}',
+              email: '{{.GIT_USERNAME}}@workshop.local',
+              password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}',
+              skip_confirmation: true
+            )
+          else
+            u.update!(password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}')
+          end
           u1pat = u.personal_access_tokens.find_or_initialize_by(name: 'workshop-token')
           u1pat.scopes = ['api','write_repository']
           u1pat.expires_at = 365.days.from_now
           u1pat.save!
           %w[fleet-config java rust golang dotnet next-js].each do |repo|
-            p = Project.find_by(path: repo, namespace_id: u.namespace_id) ||
-              Projects::CreateService.new(u, name: repo, path: repo, visibility_level: 0, initialize_with_readme: true).execute
+            p = Project.find_by(path: repo, namespace_id: u.namespace_id)
+            if p.nil?
+              p = Projects::CreateService.new(u, name: repo, path: repo, visibility_level: 0, initialize_with_readme: true).execute
+            end
             ProtectedBranch.where(project: p).destroy_all
             puts 'repo: ' + repo
           end
