@@ -1,0 +1,22 @@
+# KRO-managed cluster provisioning values.
+# Clusters defined here use the KRO ResourceGraphDefinition (EksclusterWithVpc)
+# instead of Crossplane. Both can coexist.
+#
+# Example:
+# clusters:
+#   spoke-kro-test:
+#     tenant: workshop
+#     environment: dev
+#     region: us-west-2
+#     k8sVersion: "1.35"
+#     accountId: "123456789012"
+#     managementAccountId: "123456789012"
+#     resourcePrefix: peeks
+#     cidr:
+#       vpcCidr: "10.3.0.0/16"
+#       publicSubnet1Cidr: "10.3.1.0/24"
+#       publicSubnet2Cidr: "10.3.2.0/24"
+#       privateSubnet1Cidr: "10.3.11.0/24"
+#       privateSubnet2Cidr: "10.3.12.0/24"
+
+clusters: {}

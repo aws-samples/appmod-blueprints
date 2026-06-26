@@ -1,0 +1,5 @@
+apiVersion: v2
+name: eks-capabilities-rbac
+description: ClusterRole + ClusterRoleBindings for EKS kro/ACK capabilities (spoke clusters)
+type: application
+version: 0.1.0

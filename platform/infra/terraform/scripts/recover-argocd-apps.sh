@@ -27,6 +27,16 @@ for context in $(kubectl config get-contexts -o name 2>/dev/null | grep -E "${RE
 done
 echo ""
 
+# All ArgoCD Applications live on the hub cluster. Switch to the hub context for
+# the remainder of this script — after init the active kubeconfig context is often
+# a spoke (e.g. peeks-spoke-prod) where there are no argocd Applications, which
+# made every 'kubectl get applications -n argocd' below return nothing (reported
+# as "0 applications healthy").
+HUB_CONTEXT="${RESOURCE_PREFIX:-peeks}-hub"
+if kubectl config get-contexts -o name 2>/dev/null | grep -qx "$HUB_CONTEXT"; then
+    kubectl config use-context "$HUB_CONTEXT" >/dev/null 2>&1 || true
+fi
+
 # Find stuck apps with their status (including revision conflicts and stale finished operations)
 stuck_apps_time=$(kubectl get applications -n argocd -o json 2>/dev/null | \
     jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

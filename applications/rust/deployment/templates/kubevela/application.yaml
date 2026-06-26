@@ -41,7 +41,7 @@ spec:
       traits:
         - type: path-based-ingress
           properties:
-            domain: "*.elb.us-west-2.amazonaws.com"
+            domain: ""
             rewritePath: true
             http:
               /rust-app: 8080
@@ -51,7 +51,7 @@ spec:
       properties:
         componentNamesForAccess:
           - rust-dynamodb-<environment>
-        clusterName: peeks-spoke-dev
+        clusterName: <cluster_name>
         clusterRegion: us-west-2
 
     - name: rust-dynamodb-<environment>

@@ -1,0 +1,99 @@
+{{- if (default dict .Values.crdWait).enabled }}
+# PreSync gate: block this app's Sync phase until the Crossplane provider CRDs
+# that the Policy/Role/RolePolicyAttachment/PodIdentityAssociation resources
+# depend on are actually Established on the API server.
+#
+# Why this exists:
+#   This chart and the Crossplane providers (crossplane-base) are SEPARATE Argo
+#   CD Applications. Argo CD sync-waves only order resources WITHIN a single
+#   Application; they do not coordinate across Applications. During initial
+#   bootstrap the providers take several minutes to install and register their
+#   CRDs. Without this gate the first Sync attempts fail with
+#   "no matches for kind Policy in version iam.aws.upbound.io/v1beta1", and the
+#   stale API-discovery cache can prevent self-healing until a hard refresh.
+#   Gating on the real dependency (CRD Established) makes convergence
+#   deterministic instead of relying on retry/backoff luck.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crossplane-crd-wait-sa
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-20"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.aws.clusterName }}-crossplane-crd-wait
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-20"
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.aws.clusterName }}-crossplane-crd-wait
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-20"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.aws.clusterName }}-crossplane-crd-wait
+subjects:
+  - kind: ServiceAccount
+    name: crossplane-crd-wait-sa
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: crossplane-crd-wait
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-19"
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: {{ add (default 600 (default dict .Values.crdWait).timeoutSeconds) 60 }}
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      serviceAccountName: crossplane-crd-wait-sa
+      restartPolicy: Never
+      containers:
+        - name: wait
+          image: {{ (default dict .Values.crdWait).image | default "bitnami/kubectl:latest" }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              TIMEOUT={{ default 600 (default dict .Values.crdWait).timeoutSeconds }}
+              CRDS="{{ join " " (default (list "policies.iam.aws.upbound.io" "roles.iam.aws.upbound.io" "rolepolicyattachments.iam.aws.upbound.io" "podidentityassociations.eks.aws.upbound.io") (default dict .Values.crdWait).crds) }}"
+              echo "Waiting up to ${TIMEOUT}s for Crossplane CRDs to be Established: ${CRDS}"
+              for crd in $CRDS; do
+                echo "  -> waiting for ${crd}"
+                # Poll for existence first: 'kubectl wait' errors immediately if
+                # the CRD object does not exist yet, so we loop until it appears.
+                deadline=$(( $(date +%s) + TIMEOUT ))
+                until kubectl get crd "$crd" >/dev/null 2>&1; do
+                  if [ "$(date +%s)" -ge "$deadline" ]; then
+                    echo "ERROR: timed out waiting for CRD ${crd} to be created"
+                    exit 1
+                  fi
+                  sleep 5
+                done
+                kubectl wait --for=condition=Established "crd/${crd}" --timeout="${TIMEOUT}s"
+              done
+              echo "All required Crossplane CRDs are Established."
+{{- end }}

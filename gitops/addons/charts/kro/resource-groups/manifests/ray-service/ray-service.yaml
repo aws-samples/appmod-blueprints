@@ -37,9 +37,9 @@ spec:
             - region ${schema.spec.?awsRegion.orValue('us-west-2')}
           csi:
             driver: s3.csi.aws.com
-            volumeHandle: ${schema.spec.?s3ModelBucket.orValue('peeks-ray-models')}
+            volumeHandle: ${schema.spec.?s3ModelBucket.orValue('peeks-hub-ray-models')}
             volumeAttributes:
-              bucketName: ${schema.spec.?s3ModelBucket.orValue('peeks-ray-models')}
+              bucketName: ${schema.spec.?s3ModelBucket.orValue('peeks-hub-ray-models')}
 
     # S3 PersistentVolumeClaim
     - id: s3pvc
@@ -584,11 +584,10 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             backstage.io/created-by: ${schema.spec.createdBy}
             backstage.io/template-version: 1.0.0
-            nginx.ingress.kubernetes.io/rewrite-target: /$2
-            nginx.ingress.kubernetes.io/use-regex: 'true'
-            nginx.ingress.kubernetes.io/proxy-connect-timeout: '600'
-            nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
-            nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
+            alb.ingress.kubernetes.io/scheme: internet-facing
+            alb.ingress.kubernetes.io/target-type: ip
+            alb.ingress.kubernetes.io/healthcheck-path: /
+            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
           labels:
             app.kubernetes.io/component: ray-service
             app.kubernetes.io/managed-by: kro
@@ -604,7 +603,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
         spec:
-          ingressClassName: nginx
+          ingressClassName: alb
           rules:
             - host: ${schema.spec.ingressHostname}
               http:
@@ -614,15 +613,15 @@ spec:
                         name: ${schema.spec.name}-ray-serve-svc
                         port:
                           number: 8000
-                    path: /ray-serve/${schema.spec.name}(/|$)(.*)
-                    pathType: ImplementationSpecific
+                    path: /ray-serve/${schema.spec.name}
+                    pathType: Prefix
                   - backend:
                       service:
                         name: ${schema.spec.name}-ray-serve-svc
                         port:
                           number: 8265
-                    path: /ray-dashboard/${schema.spec.name}(/|$)(.*)
-                    pathType: ImplementationSpecific
+                    path: /ray-dashboard/${schema.spec.name}
+                    pathType: Prefix
     # PodDisruptionBudget for head pod
     - id: headpdb
       readyWhen:
@@ -691,7 +690,7 @@ spec:
       name: string
       modelName: string | default="tinyllama"
       maxLength: string | default="100"
-      s3ModelBucket: string | default="peeks-ray-models"
+      s3ModelBucket: string | default="peeks-hub-ray-models"
       awsRegion: string | default="us-west-2"
       awsAccountId: string | default="ACCOUNT_ID"
       resourcePrefix: string | default="peeks"

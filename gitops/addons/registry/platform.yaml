@@ -58,6 +58,12 @@ crossplane-base:
       eks:
         version: "v2.5.3"
         createIdentity: false
+      rds:
+        version: "v2.5.3"
+        createIdentity: true
+      dynamodb:
+        version: "v2.5.3"
+        createIdentity: true
       amp:
         version: "v2.5.3"
         createIdentity: true
@@ -110,9 +116,23 @@ backstage:
         values: ['true']
   valuesObject:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+    workshop_git_branch: '{{.metadata.annotations.addonsRepoRevision}}'
+    gitlab_domain_name: '{{default "" .metadata.annotations.gitlab_domain_name}}'
+    git_username: 'user1'
+    working_repo: 'fleet-config'
+    argocd_hostname: '{{default .metadata.annotations.ingress_domain_name .metadata.annotations.aws_argocd_url}}'
+    admin_role_name: '{{default "" .metadata.annotations.admin_role_name}}'
+    model_s3_bucket: '{{.metadata.annotations.resource_prefix}}-ray-models-{{.metadata.annotations.aws_account_id}}'
+    spoke_dev_cluster_name: '{{ or (index .metadata.annotations "spoke_dev_cluster_name") (printf "%s-spoke-dev" .metadata.annotations.resource_prefix) }}'
+    spoke_prod_cluster_name: '{{ or (index .metadata.annotations "spoke_prod_cluster_name") (printf "%s-spoke-prod" .metadata.annotations.resource_prefix) }}'
     global:
       aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      region: '{{.metadata.annotations.aws_region}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      resource_prefix: '{{.metadata.annotations.resource_prefix}}'
+      exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -188,6 +208,21 @@ kro-manifests-hub:
         operator: In
         values: ['true']
 
+eks-capabilities-rbac:
+  namespace: kro
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/eks-capabilities-rbac'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-3'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+
 multi-acct:
   namespace: kro
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/multi-acct'
@@ -201,12 +236,13 @@ multi-acct:
   valuesObject:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
 
 kubevela:
   namespace: vela-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kubevela'
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '4'  # after argo-rollouts (wave 3) — chart ships ComponentDefinitions emitting Rollout
+    argocd.argoproj.io/sync-wave: '3'
   selector:
     matchExpressions:
       - key: enable_kubevela
@@ -214,25 +250,57 @@ kubevela:
         values: ['true']
   valuesObject:
     systemDefinitionNamespace: vela-system
+  # Replicates the inherited default syncPolicy and adds ServerSideApply so the
+  # apiserver-defaulted fields on the vela-core admission webhooks
+  # (matchPolicy/namespaceSelector/objectSelector/timeoutSeconds/rules.scope) are
+  # reconciled via server-side field ownership instead of showing as permanent
+  # drift. NOTE: a per-addon syncPolicy fully overrides the default, so the
+  # default values are replicated below.
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
   ignoreDifferences:
+    # vela-core webhook configs: caBundle is injected at runtime, and the
+    # API server / vela-core default or mutate several fields (failurePolicy,
+    # matchPolicy, timeoutSeconds, reinvocationPolicy, selectors, rules.scope).
+    # Use jqPathExpressions so all webhooks (any count) are covered.
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+        - .webhooks[].failurePolicy
+        - .webhooks[].matchPolicy
+        - .webhooks[].timeoutSeconds
+        - .webhooks[].reinvocationPolicy
+        - .webhooks[].namespaceSelector
+        - .webhooks[].objectSelector
+        - .webhooks[].rules[].scope
       jsonPointers:
-        - /webhooks/0/clientConfig/caBundle
-        - /webhooks/1/clientConfig/caBundle
-        - /webhooks/2/clientConfig/caBundle
-        - /webhooks/3/clientConfig/caBundle
-        - /webhooks/4/clientConfig/caBundle
         - /metadata/generation
         - /metadata/managedFields
     - group: admissionregistration.k8s.io
       kind: ValidatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+        - .webhooks[].failurePolicy
+        - .webhooks[].matchPolicy
+        - .webhooks[].timeoutSeconds
+        - .webhooks[].reinvocationPolicy
+        - .webhooks[].namespaceSelector
+        - .webhooks[].objectSelector
+        - .webhooks[].rules[].scope
       jsonPointers:
-        - /webhooks/0/clientConfig/caBundle
-        - /webhooks/1/clientConfig/caBundle
-        - /webhooks/2/clientConfig/caBundle
-        - /webhooks/3/clientConfig/caBundle
-        - /webhooks/4/clientConfig/caBundle
         - /metadata/generation
         - /metadata/managedFields
     - group: '*'
@@ -277,6 +345,20 @@ devlake:
       kind: PodIdentityAssociation
       jsonPointers:
         - /status
+    - group: ''
+      kind: Secret
+      name: devlake-grafana
+      # grafana auto-generates admin-password; ArgoCD repo-server render differs
+      # from the live (lookup-preserved) value on every sync.
+      jsonPointers:
+        - /data
+    - group: apps
+      kind: Deployment
+      name: devlake-grafana
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1secret
+        - /spec/template/metadata/annotations/checksum~1config
+        - /spec/template/metadata/annotations/checksum~1sc-dashboard-provider-config
 
 gitlab:
   namespace: gitlab
@@ -289,9 +371,15 @@ gitlab:
         operator: In
         values: ['true']
   valuesObject:
-    domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    domain_name: '{{default .metadata.annotations.ingress_domain_name .metadata.annotations.gitlab_domain_name}}'
     keycloak_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     security_groups: '{{.metadata.annotations.ingress_security_groups}}'
+    exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+    git_token: '{{default "" .metadata.annotations.git_token}}'
+    source_repo_url: '{{.metadata.annotations.addonsRepoURL}}'
+    source_repo_revision: '{{.metadata.annotations.addonsRepoRevision}}'
+    global:
+      aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -381,7 +469,7 @@ ack-ecr:
   chartName: ecr-chart
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
-  defaultVersion: '1.0.19'
+  defaultVersion: '1.5.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1'
   selector:
@@ -405,7 +493,7 @@ ack-s3:
   chartName: s3-chart
   chartNamespace: aws-controllers-k8s
   chartRepository: public.ecr.aws
-  defaultVersion: '1.0.14'
+  defaultVersion: '1.3.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-1'
   selector:
@@ -477,6 +565,14 @@ platform-manifests:
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/platform-manifests'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '6'
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
   selector:
     matchExpressions:
       - key: enable_platform_manifests

@@ -14,6 +14,7 @@ jupyterhub:
   valuesObject:
     global:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io
@@ -26,11 +27,20 @@ jupyterhub:
       kind: Secret
       jsonPointers:
         - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      name: hub
+      # z2jh generates these values via Helm 'lookup'; ArgoCD's repo-server
+      # cannot lookup, so the rendered values differ from live on every sync.
+      jsonPointers:
+        - /data
     - group: apps
       kind: Deployment
       jsonPointers:
         - /spec/template/metadata/annotations/checksum~1secret
         - /spec/template/metadata/annotations/checksum~1config-map
+        - /spec/template/metadata/annotations/checksum~1auth-token
+        - /spec/template/metadata/annotations/checksum~1proxy-secret
 
 kubeflow:
   namespace: kubeflow
@@ -45,6 +55,7 @@ kubeflow:
   valuesObject:
     global:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io
@@ -95,6 +106,12 @@ ray-operator:
       - key: enable_ray_operator
         operator: In
         values: ['true']
+  syncPolicy:
+    automated:
+      allowEmpty: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
   valuesObject:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
@@ -111,6 +128,12 @@ spark-operator:
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/spark-operator'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5'
+  syncPolicy:
+    automated:
+      allowEmpty: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
   selector:
     matchExpressions:
       - key: enable_spark_operator

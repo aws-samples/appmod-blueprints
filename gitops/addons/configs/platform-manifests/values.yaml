@@ -7,16 +7,9 @@ gpu:
 customNodepools:
   enabled: false  # Enable custom Karpenter nodepools — set true per environment
 
-# Hugging Face models to download and store in S3
-huggingfaceModels:
-  - name: gpt2-neuron
-    modelId: "gpt2"
-    namespace: "ray-system"
-
-  - name: mistral-7b-neuron
-    modelId: "mistralai/Mistral-7B-v0.1"
-    namespace: "ray-system"
-
-  - name: tinyllama
-    modelId: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    namespace: "ray-system"
+# Hugging Face models to download and store in S3.
+# Default is EMPTY (opt-in): the HuggingFaceModel kro CRD is only installed on the
+# control-plane/hub (kro-manifests-hub deploys the huggingface RGD; spokes exclude it),
+# so sample model CRs must only be enabled where the CRD exists. Enable per environment
+# via overlays/environments/<env>/platform-manifests/values.yaml when ML is required.
+huggingfaceModels: []

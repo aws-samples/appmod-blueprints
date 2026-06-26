@@ -48,36 +48,32 @@ data:
     # Set variables
     export GITLAB_URL=http://gitlab.gitlab.svc.cluster.local
     export GITLAB_POD_NAME=$(kubectl get pods -n gitlab -l app=gitlab -o jsonpath='{.items[0].metadata.name}')
-    export ROOT_GITLAB_TOKEN=root-{{ .Values.initial_root_password }}
-    export IDE_PASSWORD={{ .Values.initial_root_password }}
+    export ROOT_GITLAB_TOKEN=root-${GITLAB_ROOT_PASSWORD}
+    export IDE_PASSWORD=${GITLAB_ROOT_PASSWORD}
     export GIT_USERNAME="{{ .Values.git_username | default "user1" }}"
-    export WORKING_REPO="{{ .Values.working_repo | default "eks-cluster-mgmt" }}"
+    export WORKING_REPO="{{ .Values.working_repo | default "fleet-config" }}"
 
-    # Check if root token already exists
-    echo "Checking if root token already exists..."
-    TOKEN_EXISTS=$(kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "puts User.find_by_username('root').personal_access_tokens.where(name: 'initial root token').exists?" || echo "false")
-
-    if [[ "$TOKEN_EXISTS" != "true" ]]; then
-      echo "Creating GitLab API token for root..."
-      kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "
-        token = User.find_by_username('root').personal_access_tokens.create(
-          name: 'initial root token',
-          scopes: [
-            'api',
-            'read_user',
-            'read_repository',
-            'write_repository',
-            'sudo',
-            'admin_mode'
-          ],
-          expires_at: 365.days.from_now
-        )
-        token.set_token('${ROOT_GITLAB_TOKEN}')
-        token.save!
-      "
-    else
-      echo "Root token already exists, skipping creation."
-    fi
+    # Ensure root API token exists with the current value (idempotent / self-healing).
+    # Recreated every run so a rotated password (token value) stays in sync.
+    echo "Ensuring root API token..."
+    kubectl exec -i $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "
+      u = User.find_by_username('root')
+      u.personal_access_tokens.where(name: 'initial root token').delete_all
+      token = u.personal_access_tokens.create(
+        name: 'initial root token',
+        scopes: [
+          'api',
+          'read_user',
+          'read_repository',
+          'write_repository',
+          'sudo',
+          'admin_mode'
+        ],
+        expires_at: 365.days.from_now
+      )
+      token.set_token('${ROOT_GITLAB_TOKEN}')
+      token.save!
+    "
 
     # Update GitLab settings
     echo "Updating GitLab settings..."
@@ -85,7 +81,7 @@ data:
 
     # Check if user already exists
     echo "Checking if user $GIT_USERNAME already exists..."
-    USER_EXISTS=$(curl -s "$GITLAB_URL/api/v4/users?search=$GIT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'length')
+    USER_EXISTS=$(curl -s "$GITLAB_URL/api/v4/users?search=$GIT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then length else 0 end')
 
     if [[ "$USER_EXISTS" == "0" ]]; then
       echo "Creating $GIT_USERNAME..."
@@ -99,48 +95,165 @@ data:
         \"email\": \"$GIT_USERNAME@example.com\",
         \"password\": \"$IDE_PASSWORD\"
       }" && echo -e "\n"
-
-      echo "Creating GitLab API token for $GIT_USERNAME..."
-      kubectl exec -it $GITLAB_POD_NAME -n gitlab -- gitlab-rails runner "
-        token = User.find_by_username('$GIT_USERNAME').personal_access_tokens.create(
-          name: 'initial $GIT_USERNAME token',
-          scopes: [
-            'api',
-            'read_user',
-            'read_repository',
-            'write_repository'
-          ],
-          expires_at: 365.days.from_now
-        )
-        token.set_token('${IDE_PASSWORD}')
-        token.save!
-      "
     else
       echo "User $GIT_USERNAME already exists, skipping creation."
     fi
 
-    # Check if repository already exists
-    echo "Checking if repository $WORKING_REPO already exists..."
-    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r 'length')
+    # Ensure $GIT_USERNAME password and API token match the current value
+    # (idempotent / self-healing: keeps an existing user in sync after a password rotation).
+    # Password is passed via env to be safe with special characters.
+    echo "Ensuring $GIT_USERNAME password and API token..."
+    kubectl exec -i $GITLAB_POD_NAME -n gitlab -- env NEWPW="$IDE_PASSWORD" gitlab-rails runner "
+      u = User.find_by_username('$GIT_USERNAME')
+      if u
+        u.password = ENV['NEWPW']
+        u.password_confirmation = ENV['NEWPW']
+        u.password_automatically_set = false
+        u.save!
+        u.personal_access_tokens.where(name: 'initial $GIT_USERNAME token').delete_all
+        token = u.personal_access_tokens.create(
+          name: 'initial $GIT_USERNAME token',
+          scopes: ['api', 'read_user', 'read_repository', 'write_repository'],
+          expires_at: 365.days.from_now
+        )
+        token.set_token(ENV['NEWPW'])
+        token.save!
+        puts 'ensured password + token for $GIT_USERNAME'
+      end
+    "
+
+    # --- Create fleet-config overlay repo (owned by $GIT_USERNAME) ---
+    # Resolve the target user's id so repos are created in THEIR namespace.
+    # Using root's PAT against /projects/ would create them under root/, which
+    # breaks the $GIT_USERNAME/$WORKING_REPO clone/push later in this script.
+    USER1_ID=$(curl -s "$GITLAB_URL/api/v4/users?username=$GIT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then (.[0].id // "") else "" end')
+    echo "Target user $GIT_USERNAME id: $USER1_ID"
+
+    echo "Checking if repository $GIT_USERNAME/$WORKING_REPO already exists..."
+    REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$WORKING_REPO'")] | length) else 0 end')
 
     if [[ "$REPO_EXISTS" == "0" ]]; then
-      echo "Creating $WORKING_REPO Git repository..."
-      curl -Ss -X 'POST' "$GITLAB_URL/api/v4/projects/" \
-        -H "PRIVATE-TOKEN: $IDE_PASSWORD" \
+      echo "Creating $GIT_USERNAME/$WORKING_REPO overlay repository..."
+      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/user/$USER1_ID" \
+        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
         -H 'accept: application/json' \
         -H 'Content-Type: application/json' \
-        -d "{
-        \"name\": \"$WORKING_REPO\"
-      }" && echo -e "\n"
+        -d "{\"name\": \"$WORKING_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
+
+      # Seed the overlay repo with initial structure
+      PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$WORKING_REPO'")][0].id // "") else "" end')
+
+      # Create directory structure via commits API
+      echo "Seeding $WORKING_REPO with overlay structure..."
+      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/repository/commits" \
+        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
+        -H 'Content-Type: application/json' \
+        -d '{
+          "branch": "main",
+          "commit_message": "feat: initial overlay structure",
+          "actions": [
+            {"action": "update", "file_path": "README.md", "content": "# fleet-config\n\nThis README is seeded from the platform source (platform/fleet-config/README.md in aws-samples/appmod-blueprints) during platform bootstrap. Edit it there, not here.\n"},
+            {"action": "create", "file_path": "overlays/environments/control-plane/.gitkeep", "content": ""},
+            {"action": "create", "file_path": "overlays/environments/dev/.gitkeep", "content": ""},
+            {"action": "create", "file_path": "overlays/environments/prod/.gitkeep", "content": ""},
+            {"action": "create", "file_path": "overlays/environments/prod/platform-manifests/values.yaml", "content": "# Disable sample HuggingFace models on prod spokes (not ML-enabled; they lack the HuggingFaceModel kro CRD, so the base sample CRs sit OutOfSync).\nhuggingfaceModels: []\n"},
+            {"action": "create", "file_path": "overlays/clusters/.gitkeep", "content": ""},
+            {"action": "create", "file_path": "configs/.gitkeep", "content": ""}
+          ]
+        }'
     else
       echo "Repository $WORKING_REPO already exists, skipping creation."
     fi
 
-    # Make main branch unprotected
-    echo "Making main branch unprotected..."
-    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $IDE_PASSWORD" | jq -r '.[0].id')
+    # Unprotect main branch on fleet-config
+    PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$WORKING_REPO'")][0].id // "") else "" end')
     curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches/main" \
-      -H "PRIVATE-TOKEN: $IDE_PASSWORD" || echo "Main branch was not protected or already unprotected"
+      -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" || echo "Main branch was not protected or already unprotected"
+
+    # --- Push Backstage templates into fleet-config (same path as GitHub source) ---
+    SOURCE_REPO_URL="{{ .Values.source_repo_url | default "https://github.com/aws-samples/appmod-blueprints" }}"
+    SOURCE_REPO_REVISION="{{ .Values.source_repo_revision | default "main" }}"
+    # Clone the platform source once; reused below for both the Backstage templates
+    # push (into fleet-config) and the application source seeding (into the app repos).
+    if [ ! -d "/tmp/source-repo/.git" ]; then
+      echo "Cloning platform source from $SOURCE_REPO_URL ($SOURCE_REPO_REVISION)..."
+      rm -rf /tmp/source-repo
+      git clone --depth 1 --branch "$SOURCE_REPO_REVISION" "$SOURCE_REPO_URL" /tmp/source-repo 2>/dev/null || git clone "$SOURCE_REPO_URL" /tmp/source-repo
+    fi
+    if [ ! -d "/tmp/fleet-config/platform/backstage/templates" ]; then
+      rm -rf /tmp/fleet-clone
+      if [ -d "/tmp/source-repo/platform/backstage/templates" ]; then
+        git clone "http://$GIT_USERNAME:$IDE_PASSWORD@gitlab.gitlab.svc.cluster.local/$GIT_USERNAME/$WORKING_REPO.git" /tmp/fleet-clone
+        mkdir -p /tmp/fleet-clone/platform/backstage
+        cp -r /tmp/source-repo/platform/backstage/templates /tmp/fleet-clone/platform/backstage/
+        # Seed the overlay README from the platform source (single source of truth).
+        [ -f /tmp/source-repo/platform/fleet-config/README.md ] && \
+          cp /tmp/source-repo/platform/fleet-config/README.md /tmp/fleet-clone/README.md
+        cd /tmp/fleet-clone
+        git config user.email "gitlab-init@workshop.local"
+        git config user.name "gitlab-init"
+        git add platform/backstage/templates README.md
+        git commit -m "feat: seed README + Backstage templates from platform source" 2>/dev/null && \
+          git push origin main && echo "README + Backstage templates pushed to $WORKING_REPO" || echo "Already up to date"
+        cd -
+      else
+        echo "WARN: platform/backstage/templates not found in source repo"
+      fi
+    fi
+
+    # --- Create application repos ---
+    {{- range .Values.application_repos | default (list "app-java" "app-rust") }}
+    APP_REPO="{{ . }}"
+    echo "Checking if application repo $GIT_USERNAME/$APP_REPO already exists..."
+    APP_REPO_EXISTS=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$APP_REPO'")] | length) else 0 end')
+
+    if [[ "$APP_REPO_EXISTS" == "0" ]]; then
+      echo "Creating application repo $GIT_USERNAME/$APP_REPO..."
+      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/user/$USER1_ID" \
+        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
+        -H 'accept: application/json' \
+        -H 'Content-Type: application/json' \
+        -d "{\"name\": \"$APP_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
+
+      # Unprotect main branch
+      APP_PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$APP_REPO'")][0].id // "") else "" end')
+      curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$APP_PROJECT_ID/protected_branches/main" \
+        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" || true
+    else
+      echo "Application repo $APP_REPO already exists, skipping creation."
+    fi
+
+    # --- Seed application source code (idempotent) ---
+    # The repo is created with only a README. Push the reference application
+    # source from the platform repo (applications/<app>/) so participants have
+    # working code to deploy. Only seeds when the repo has no app code yet
+    # (detected by absence of any non-README/.git tracked file), so re-runs and
+    # participant commits are never overwritten.
+    if [ -d "/tmp/source-repo/applications/$APP_REPO" ]; then
+      rm -rf "/tmp/app-clone-$APP_REPO"
+      if git clone "http://$GIT_USERNAME:$IDE_PASSWORD@gitlab.gitlab.svc.cluster.local/$GIT_USERNAME/$APP_REPO.git" "/tmp/app-clone-$APP_REPO" 2>/dev/null; then
+        TRACKED=$(cd "/tmp/app-clone-$APP_REPO" && git ls-files | grep -v -i '^readme' | head -1)
+        if [ -z "$TRACKED" ]; then
+          echo "Seeding $APP_REPO with application source from platform repo..."
+          cp -r /tmp/source-repo/applications/$APP_REPO/. "/tmp/app-clone-$APP_REPO/"
+          cd "/tmp/app-clone-$APP_REPO"
+          git config user.email "gitlab-init@workshop.local"
+          git config user.name "gitlab-init"
+          git add -A
+          git commit -m "feat: seed $APP_REPO application source from platform repo" 2>/dev/null && \
+            git push origin HEAD:main && echo "  ✓ $APP_REPO source pushed" || echo "  $APP_REPO: nothing to push"
+          cd -
+        else
+          echo "  $APP_REPO already has source code — skipping seed (idempotent)."
+        fi
+        rm -rf "/tmp/app-clone-$APP_REPO"
+      else
+        echo "  ⚠ could not clone $APP_REPO to seed source (will retry on next run)"
+      fi
+    else
+      echo "  WARN: applications/$APP_REPO not found in source repo — skipping code seed"
+    fi
+    {{- end }}
 
     echo "GitLab initialization completed successfully."
 ---
@@ -176,6 +289,12 @@ spec:
         - /bin/bash
         - -c
         - /scripts/init-gitlab.sh
+        env:
+        - name: GITLAB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: gitlab-root-credentials
+              key: GITLAB_ROOT_PASSWORD
         volumeMounts:
         - name: init-script
           mountPath: /scripts

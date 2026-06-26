@@ -33,7 +33,7 @@ spec:
         		tags: Environment: parameter.environment
         		writeCapacity: parameter.writeCapacity
         		}
-        		providerConfigRef: name: "provider-aws-config"
+        		providerConfigRef: name: "default"
         	}
         }
 

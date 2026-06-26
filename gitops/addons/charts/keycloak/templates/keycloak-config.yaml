@@ -350,10 +350,10 @@ data:
         "pkce.code.challenge.method": "S256"
       },
       "alwaysDisplayInConsole": false,
-      "rootUrl": "https://${DOMAIN_NAME}",
+      "rootUrl": "https://${GITLAB_DOMAIN_NAME}",
       "baseUrl": "",
       "redirectUris": [
-        "https://${DOMAIN_NAME}/users/auth/openid_connect/callback"
+        "https://${GITLAB_DOMAIN_NAME}/users/auth/openid_connect/callback"
       ],
       "webOrigins": [
         "/*"
@@ -694,7 +694,7 @@ spec:
               export DEBIAN_FRONTEND=noninteractive
               export TZ=UTC
 
-              apt -qq update && apt -qq install curl jq gettext-base -y
+              apt -qq update && apt -qq install curl jq gettext-base unzip -y
 
               # Helper functions
               keycloak_post() {
@@ -769,13 +769,62 @@ spec:
                 keycloak_post "/admin/realms/${REALM_NAME}/clients" "${payload_file}" "${client_name} client"
               }
 
+              # Upsert client matched by its stable "name" field.
+              # Needed for clients whose clientId can change between runs — e.g.
+              # amazon-managed-grafana, whose clientId is the AMG workspace endpoint.
+              # On a fresh bootstrap the grafana_url annotation may not be seeded yet,
+              # so the client is first created with the fallback (<ingress>/grafana).
+              # Once aws_grafana_url is present, a re-sync (once keycloak re-runs)
+              # repairs the clientId/adminUrl/redirectUris via PUT instead of leaving
+              # the stale value that breaks SAML login.
+              upsert_client() {
+                local match_name=$1
+                local payload_file=$2
+
+                envsubst < ${payload_file} > /tmp/upsert-payload.json
+
+                EXISTING_ID=$(curl -sS \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
+                  | jq -r ".[] | select(.name == \"${match_name}\") | .id" 2>/dev/null || true)
+
+                if [ -n "${EXISTING_ID}" ]; then
+                  echo "upserting ${match_name} client (id=${EXISTING_ID})"
+                  HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt \
+                    -H "Content-Type: application/json" \
+                    -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                    -X PUT --data @/tmp/upsert-payload.json \
+                    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${EXISTING_ID}")
+                  if [ "$HTTP_STATUS" -ne 204 ] && [ "$HTTP_STATUS" -ne 200 ]; then
+                    echo "Error upserting ${match_name}: HTTP $HTTP_STATUS"; cat /tmp/response.txt
+                  fi
+                else
+                  echo "creating ${match_name} client (not found)"
+                  HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt \
+                    -H "Content-Type: application/json" \
+                    -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                    -X POST --data @/tmp/upsert-payload.json \
+                    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients")
+                  if [ "$HTTP_STATUS" -ne 201 ] && [ "$HTTP_STATUS" -ne 200 ]; then
+                    echo "Error creating ${match_name}: HTTP $HTTP_STATUS"; cat /tmp/response.txt
+                  fi
+                fi
+              }
+
               # Add client scope function
               add_client_scope() {
                 local client_id_name=$1
                 local client_name=$2
                 
-                CLIENT_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id")
-                CLIENT_SCOPE_GROUPS_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/client-scopes" '.[] | select(.name == "groups") | .id')
+                # Use '|| true' so a missing client (e.g. one whose creation
+                # failed) does not abort the whole job via 'set -e' + 'jq -e'.
+                CLIENT_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id") || true
+                if [ -z "${CLIENT_ID}" ]; then
+                  echo "Warning: client ${client_id_name} not found, skipping client scope assignment"
+                  return 0
+                fi
+                CLIENT_SCOPE_GROUPS_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/client-scopes" '.[] | select(.name == "groups") | .id') || true
                 keycloak_put "/admin/realms/${REALM_NAME}/clients/${CLIENT_ID}/default-client-scopes/${CLIENT_SCOPE_GROUPS_ID}" "${client_name} client scope"
               }
 
@@ -805,6 +854,7 @@ spec:
               
               # Get Keycloak token for initial Admin user
               export DOMAIN_NAME={{ .Values.global.ingress_domain_name }}
+              export GITLAB_DOMAIN_NAME={{ .Values.global.gitlab_domain_name }}
               export GRAFANAURL={{ .Values.aws.grafana_url }}
               export KEYCLOAK_URL=http://keycloak.keycloak.svc.cluster.local:8080/keycloak
               export REALM_NAME=platform
@@ -888,7 +938,7 @@ spec:
               create_client "Langfuse" "/var/config/langfuse-client-payload.json"
               # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
-              create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
+              upsert_client "amazon-managed-grafana" "/var/config/grafana-client-payload.json"
               create_client "GitLab" "/var/config/gitlab-client-payload.json"
 
               echo "adding client scopes to clients"
@@ -963,134 +1013,36 @@ spec:
               " > /tmp/secret.yaml
 
               ./kubectl apply -f /tmp/secret.yaml
-              echo "✓ Kubernetes secret created and available for applications"
-              echo "✓ Keycloak configuration completed successfully!"
-              echo "✓ OIDC secrets available in both AWS Secrets Manager and Kubernetes"
-              echo "✓ Applications can now use External Secrets to consume from AWS Secrets Manager"
----
-apiVersion: external-secrets.io/v1alpha1
-kind: PushSecret
-metadata:
-  name: keycloak-clients
-  namespace: keycloak
-  annotations:
-    argocd.argoproj.io/sync-wave: "11" # Sync after config job
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookFailed
-spec:
-  updatePolicy: Replace
-  deletionPolicy: None
-  refreshInterval: 30s
-  secretStoreRefs:
-    - name: aws-secrets-manager
-      kind: ClusterSecretStore
-  selector:
-    secret:
-      name: keycloak-clients # Source Kubernetes secret to be pushed
-  template:
-    data:
-      ARGO_WORKFLOWS_CLIENT_SECRET: "{{ `{{.ARGO_WORKFLOWS_CLIENT_SECRET}}` }}"
-      ARGO_WORKFLOWS_CLIENT_ID: "{{ `{{.ARGO_WORKFLOWS_CLIENT_ID}}` }}"
-      BACKSTAGE_CLIENT_SECRET: "{{ `{{.BACKSTAGE_CLIENT_SECRET}}` }}"
-      JUPYTERHUB_CLIENT_SECRET: "{{ `{{.JUPYTERHUB_CLIENT_SECRET}}` }}"
-      JUPYTERHUB_CLIENT_ID: "{{ `{{.JUPYTERHUB_CLIENT_ID}}` }}"
-      KUBEFLOW_CLIENT_SECRET: "{{ `{{.KUBEFLOW_CLIENT_SECRET}}` }}"
-      KUBEFLOW_CLIENT_ID: "{{ `{{.KUBEFLOW_CLIENT_ID}}` }}"
-      MLFLOW_CLIENT_SECRET: "{{ `{{.MLFLOW_CLIENT_SECRET}}` }}"
-      MLFLOW_CLIENT_ID: "{{ `{{.MLFLOW_CLIENT_ID}}` }}"
-      SPARK_CLIENT_SECRET: "{{ `{{.SPARK_CLIENT_SECRET}}` }}"
-      SPARK_CLIENT_ID: "{{ `{{.SPARK_CLIENT_ID}}` }}"
-      AIRFLOW_CLIENT_SECRET: "{{ `{{.AIRFLOW_CLIENT_SECRET}}` }}"
-      AIRFLOW_CLIENT_ID: "{{ `{{.AIRFLOW_CLIENT_ID}}` }}"
-  data:
-    - conversionStrategy: None
-      match:
-        secretKey: ARGO_WORKFLOWS_CLIENT_SECRET
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: ARGO_WORKFLOWS_CLIENT_SECRET
-    - conversionStrategy: None
-      match:
-        secretKey: ARGO_WORKFLOWS_CLIENT_ID
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: ARGO_WORKFLOWS_CLIENT_ID
-    - conversionStrategy: None
-      match:
-        secretKey: BACKSTAGE_CLIENT_SECRET
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: BACKSTAGE_CLIENT_SECRET
-    - conversionStrategy: None
-      match:
-        secretKey: JUPYTERHUB_CLIENT_SECRET
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: JUPYTERHUB_CLIENT_SECRET
-    - conversionStrategy: None
-      match:
-        secretKey: JUPYTERHUB_CLIENT_ID
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: JUPYTERHUB_CLIENT_ID
-    - conversionStrategy: None
-      match:
-        secretKey: KUBEFLOW_CLIENT_SECRET
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: KUBEFLOW_CLIENT_SECRET
-    - conversionStrategy: None
-      match:
-        secretKey: KUBEFLOW_CLIENT_ID
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: KUBEFLOW_CLIENT_ID
-    - conversionStrategy: None
-      match:
-        secretKey: MLFLOW_CLIENT_SECRET
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: MLFLOW_CLIENT_SECRET
-    - conversionStrategy: None
-      match:
-        secretKey: MLFLOW_CLIENT_ID
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: MLFLOW_CLIENT_ID
-    - conversionStrategy: None
-      match:
-        secretKey: SPARK_CLIENT_SECRET
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: SPARK_CLIENT_SECRET
-    - conversionStrategy: None
-      match:
-        secretKey: SPARK_CLIENT_ID
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: SPARK_CLIENT_ID
-    - conversionStrategy: None
-      match:
-        secretKey: AIRFLOW_CLIENT_SECRET
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: AIRFLOW_CLIENT_SECRET
-    - conversionStrategy: None
-      match:
-        secretKey: AIRFLOW_CLIENT_ID
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: AIRFLOW_CLIENT_ID
-    - conversionStrategy: None
-      match:
-        secretKey: LANGFUSE_CLIENT_SECRET
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: LANGFUSE_CLIENT_SECRET
-    - conversionStrategy: None
-      match:
-        secretKey: LANGFUSE_CLIENT_ID
-        remoteRef:
-          remoteKey: {{ .Values.aws.cluster_name}}/keycloak-clients
-          property: LANGFUSE_CLIENT_ID
+              echo "✓ Kubernetes secret created"
 
+              # Push to AWS Secrets Manager (synchronous — no PushSecret race condition)
+              echo "Pushing OIDC secrets to AWS Secrets Manager..."
+              curl -sS "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+              unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install --bin-dir /usr/local/bin --install-dir /tmp/aws-cli 2>/dev/null
+
+              SM_SECRET_NAME="{{ .Values.aws.cluster_name }}/keycloak-clients"
+              SM_SECRET_VALUE=$(jq -n \
+                --arg aws "$ARGO_WORKFLOWS_CLIENT_SECRET" \
+                --arg awi "argo-workflows" \
+                --arg bs "$BACKSTAGE_CLIENT_SECRET" \
+                --arg jh "$JUPYTERHUB_CLIENT_SECRET" \
+                --arg jhi "jupyterhub" \
+                --arg kf "$KUBEFLOW_CLIENT_SECRET" \
+                --arg kfi "kubeflow" \
+                --arg ml "$MLFLOW_CLIENT_SECRET" \
+                --arg mli "mlflow" \
+                --arg sp "$SPARK_CLIENT_SECRET" \
+                --arg spi "spark" \
+                --arg af "$AIRFLOW_CLIENT_SECRET" \
+                --arg afi "airflow" \
+                --arg lf "$LANGFUSE_CLIENT_SECRET" \
+                --arg lfi "langfuse" \
+                '{ARGO_WORKFLOWS_CLIENT_SECRET:$aws,ARGO_WORKFLOWS_CLIENT_ID:$awi,BACKSTAGE_CLIENT_SECRET:$bs,JUPYTERHUB_CLIENT_SECRET:$jh,JUPYTERHUB_CLIENT_ID:$jhi,KUBEFLOW_CLIENT_SECRET:$kf,KUBEFLOW_CLIENT_ID:$kfi,MLFLOW_CLIENT_SECRET:$ml,MLFLOW_CLIENT_ID:$mli,SPARK_CLIENT_SECRET:$sp,SPARK_CLIENT_ID:$spi,AIRFLOW_CLIENT_SECRET:$af,AIRFLOW_CLIENT_ID:$afi,LANGFUSE_CLIENT_SECRET:$lf,LANGFUSE_CLIENT_ID:$lfi}')
+
+              if aws secretsmanager describe-secret --secret-id "$SM_SECRET_NAME" --region {{ .Values.aws.region }} >/dev/null 2>&1; then
+                aws secretsmanager put-secret-value --secret-id "$SM_SECRET_NAME" --secret-string "$SM_SECRET_VALUE" --region {{ .Values.aws.region }}
+              else
+                aws secretsmanager create-secret --name "$SM_SECRET_NAME" --secret-string "$SM_SECRET_VALUE" --region {{ .Values.aws.region }}
+              fi
+              echo "✓ AWS Secrets Manager secret created: $SM_SECRET_NAME"
+              echo "✓ Keycloak configuration completed successfully!"

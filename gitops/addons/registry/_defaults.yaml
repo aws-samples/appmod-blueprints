@@ -3,7 +3,11 @@
 
 syncPolicy:
   automated:
-    selfHeal: false
+    # Default selfHeal:true so addons auto-converge to Git without a manual sync
+    # (e.g. when a spoke first becomes reachable). Safe with prune:false: ArgoCD
+    # adds/updates to match Git but never deletes. Individual addons may still pin
+    # selfHeal:false in their registry entry (e.g. external-secrets, kubevela, kyverno).
+    selfHeal: true
     allowEmpty: true
     prune: false
   retry:

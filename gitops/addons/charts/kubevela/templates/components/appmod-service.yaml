@@ -13,8 +13,13 @@ spec:
         import "strings"
         
         let previewService = "\(context.name)-preview"
-        let ampWorkspaceUrl = "{{ "{{" }}args.amp-workspace-url{{ "}}" }}" //TODO: inconsistent with cue, needs to be looked at
-        let ampWorkspaceRegion = "{{ "{{" }}args.amp-workspace-region{{ "}}" }}" //TODO: inconsistent with cue, needs to be looked at
+        // The amp-workspace-url / amp-workspace-region values are injected at trait
+        // render time via KubeVela trait args and consumed below by the
+        // Prometheus analysis provider used for canary metric checks. This intentionally
+        // mixes KubeVela arg templating with CUE; the args are supplied by the AppmodService
+        // RGD from the amp-workspace secret.
+        let ampWorkspaceUrl = "{{ "{{" }}args.amp-workspace-url{{ "}}" }}"
+        let ampWorkspaceRegion = "{{ "{{" }}args.amp-workspace-region{{ "}}" }}"
         let prometheusTargetQuery = "k8s_container_name=\"\(parameter.image_name)\", k8s_namespace_name=\"\(context.namespace)\""
 
         output: {
@@ -144,6 +149,17 @@ spec:
         						resources: parameter.resources
         					}
         				}]
+        				// Wait for EKS Pod Identity credentials before the app starts.
+        				// 169.254.170.23/v1/credentials is served by the agent only after the
+        				// PodIdentityAssociation is active — eliminates the startup race.
+        				if parameter.serviceAccount != _|_ {
+        					initContainers: [{
+        						name:  "wait-pod-identity"
+        						image: "busybox:1.36"
+        						command: ["sh", "-c",
+        							"for i in $(seq 1 30); do wget -q -O- http://169.254.170.23/v1/credentials >/dev/null 2>&1 && echo 'credentials ready' && exit 0; echo \"waiting ($i/30)...\"; sleep 10; done; exit 0"]
+        					}]
+        				}
         				serviceAccountName: parameter.serviceAccount
         				topologySpreadConstraints: [{
         					maxSkew:           1
@@ -251,10 +267,16 @@ spec:
         						provider: prometheus: {
         							address: ampWorkspaceUrl
         							query:   [
-        									if criteria.function != _|_ {
+        									if criteria.function != _|_ if criteria.rateInterval != _|_ {
+        									"\(criteria.function)(rate(\(criteria.metric){\(prometheusTargetQuery)}[\(criteria.rateInterval)]))"
+        								},
+        									if criteria.function != _|_ if criteria.rateInterval == _|_ {
         									"\(criteria.function)(\(criteria.metric){\(prometheusTargetQuery)})"
         								},
-        								if criteria.function == _|_ {
+        								if criteria.function == _|_ if criteria.rateInterval != _|_ {
+        									"rate(\(criteria.metric){\(prometheusTargetQuery)}[\(criteria.rateInterval)])"
+        								},
+        								if criteria.function == _|_ if criteria.rateInterval == _|_ {
         									"\(criteria.metric){\(prometheusTargetQuery)}"
         								},
         							][0]
@@ -421,6 +443,7 @@ spec:
         		interval:               *"1s" | string
         		count:                  *1 | int
         		function?:              "sum" | "avg" | "max" | "min" | "count"
+        		rateInterval?:          string
         		successOrFailCondition: *"success" | "fail"
         		metric:                 string
         		comparisonType:         *">" | ">=" | "<" | "<=" | "==" | "!="
@@ -453,7 +476,5 @@ spec:
         	metrics?:         #MetricGate
         }
   workload:
-    definition:
-      apiVersion: apps/v1
-      kind: Deployment
+    type: autodetects.core.oam.dev
 

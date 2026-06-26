@@ -45,9 +45,29 @@ tasks:
     vars:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+      INSTALL_START:
+        sh: date +%s
     cmds:
       - echo "Using cluster provider {{.PROVIDER}}"
       - task: "{{.PROVIDER}}:install"
+      # Activate EKS Capability (kro) controller log delivery for all provisioned
+      # clusters. Idempotent; skips clusters whose kro capability is not yet
+      # ACTIVE (re-run `task enable-capability-logs` after enabling more spokes).
+      # NOTE: imperative for now because ACK/Crossplane lack DeliverySource/
+      # DeliveryDestination/Delivery CRDs. Tracking issue to move this into the
+      # RGD/composition (option 2) or declarative CRs (option 3).
+      - task: enable-capability-logs
+      # Final, unmistakable completion marker + total elapsed time. This is the
+      # LAST line of `task install`; anything after it means a step ran post-install.
+      - |
+        ELAPSED=$(($(date +%s) - {{.INSTALL_START}}))
+        H=$((ELAPSED/3600)); M=$(((ELAPSED%3600)/60)); S=$((ELAPSED%60))
+        printf '\n'
+        printf '\033[1;32m============================================================\033[0m\n'
+        printf '\033[1;32m✓✓✓  TASK INSTALL COMPLETE  ✓✓✓\033[0m\n'
+        printf '\033[1;32m     Total time: %02dh%02dm%02ds (%ds)\033[0m\n' "$H" "$M" "$S" "$ELAPSED"
+        printf '\033[1;32m     Next: run `task status` to check the platform.\033[0m\n'
+        printf '\033[1;32m============================================================\033[0m\n'
 
   status:
     desc: Check bootstrap and cluster status
@@ -56,6 +76,14 @@ tasks:
         sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:status"
+
+  backstage-catalog:
+    desc: Update backstage-dynamic-catalog ConfigMap with environment-specific values
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:hub:backstage-catalog"
 
   destroy-kind:
     desc: Delete the Kind cluster (hub persists)
@@ -97,21 +125,105 @@ tasks:
     cmds:
       - task: "{{.PROVIDER}}:hub:destroy-addons"
 
-  kubeconfig:
-    desc: Get kubeconfig for the hub EKS cluster
+  grant-ide-access:
+    desc: Grant the current caller (IDE) role cluster-admin access entries on the hub and all spoke clusters
     vars:
       RESOURCE_PREFIX:
         sh: yq '.resourcePrefix' {{.CONFIG_FILE}}
-      HUB_CLUSTER_NAME:
-        sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
       AWS_REGION:
         sh: yq '.aws.region' {{.CONFIG_FILE}}
     cmds:
-      - aws eks update-kubeconfig
-          --name {{.HUB_CLUSTER_NAME}}
-          --region {{.AWS_REGION}}
-          --alias {{.RESOURCE_PREFIX}}-{{.HUB_CLUSTER_NAME}}
+      - |
+        # The RGD (spokes) and terraform (hub) already grant cluster-admin to the
+        # participant SSO role via `adminRoleName`. The IDE, however, runs kubectl
+        # as the EC2 instance role (e.g. *SharedRole*), which create-config.sh
+        # intentionally excludes from adminRoleName — so it has NO access entry on
+        # KRO-provisioned spokes and kubectl returns 401 there. This task adds the
+        # *current caller* role as a cluster-admin access entry on every
+        # {{.RESOURCE_PREFIX}}-* cluster. Idempotent and additive (does not touch
+        # the participant adminRoleName entry).
+        CALLER_ARN="$(aws sts get-caller-identity --query Arn --output text)"
+        ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+        ROLE_NAME="${CALLER_ARN##*assumed-role/}"; ROLE_NAME="${ROLE_NAME%%/*}"
+        if [ -z "$ROLE_NAME" ] || [ "$ROLE_NAME" = "$CALLER_ARN" ]; then
+          echo "✗ Caller is not an assumed-role ARN ($CALLER_ARN); cannot derive role." >&2
+          exit 1
+        fi
+        ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
+        POLICY_ARN="arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+        echo "▸ Ensuring cluster-admin for ${ROLE_ARN} on {{.RESOURCE_PREFIX}}-* clusters"
+        for CLUSTER in $(aws eks list-clusters --region {{.AWS_REGION}} --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text); do
+          echo "  • ${CLUSTER}"
+          if aws eks create-access-entry --cluster-name "$CLUSTER" --region {{.AWS_REGION}} \
+               --principal-arn "$ROLE_ARN" --type STANDARD >/dev/null 2>&1; then
+            echo "    ✓ access entry created"
+          else
+            echo "    • access entry already present"
+          fi
+          if aws eks associate-access-policy --cluster-name "$CLUSTER" --region {{.AWS_REGION}} \
+               --principal-arn "$ROLE_ARN" --policy-arn "$POLICY_ARN" \
+               --access-scope type=cluster >/dev/null 2>&1; then
+            echo "    ✓ cluster-admin policy associated"
+          else
+            echo "    • cluster-admin policy already associated"
+          fi
+        done
+        echo "✓ IDE access ensured"
+
+  enable-capability-logs:
+    desc: 'Enable EKS Capability controller log delivery to CloudWatch for hub + all spokes (CAP=kro|ack, default kro)'
+    vars:
+      RESOURCE_PREFIX:
+        sh: yq '.resourcePrefix' {{.CONFIG_FILE}}
+      AWS_REGION:
+        sh: yq '.aws.region' {{.CONFIG_FILE}}
+      AWS_ACCOUNT_ID:
+        sh: aws sts get-caller-identity --query Account --output text
+      CAP: '{{.CAP | default "kro"}}'
+    cmds:
+      - |
+        REGION="{{.AWS_REGION}}"; ACCT="{{.AWS_ACCOUNT_ID}}"; CAP="{{.CAP}}"
+        case "$CAP" in
+          kro) LOGTYPE=EKS_CAPABILITY_KRO_LOGS ;;
+          ack) LOGTYPE=EKS_CAPABILITY_ACK_LOGS ;;
+          *) echo "Unsupported CAP '$CAP' (use kro|ack)"; exit 1 ;;
+        esac
+        # Account-level CloudWatch Vended Logs resource policy (idempotent) letting
+        # the delivery service write to any EKS capability log group in this region.
+        POLICY='{"Version":"2012-10-17","Statement":[{"Sid":"EKSCapabilityVendedLogsDelivery","Effect":"Allow","Principal":{"Service":"delivery.logs.amazonaws.com"},"Action":["logs:CreateLogStream","logs:PutLogEvents"],"Resource":"arn:aws:logs:'"$REGION"':'"$ACCT"':log-group:/aws/eks/*/capability/*:*","Condition":{"StringEquals":{"aws:SourceAccount":"'"$ACCT"'"}}}]}'
+        aws logs put-resource-policy --policy-name EKSCapabilityVendedLogs --policy-document "$POLICY" --region "$REGION" >/dev/null
+        for C in $(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text); do
+          CAP_ARN=$(aws eks describe-capability --cluster-name "$C" --capability-name "$CAP" --region "$REGION" --query 'capability.arn' --output text 2>/dev/null || echo "")
+          if [ -z "$CAP_ARN" ] || [ "$CAP_ARN" = "None" ]; then echo "  $C: no '$CAP' capability — skipping"; continue; fi
+          LG="/aws/eks/$C/capability/$CAP"; LG_ARN="arn:aws:logs:$REGION:$ACCT:log-group:$LG"
+          aws logs create-log-group --log-group-name "$LG" --region "$REGION" 2>/dev/null || true
+          aws logs put-retention-policy --log-group-name "$LG" --retention-in-days 30 --region "$REGION" >/dev/null 2>&1 || true
+          aws logs put-delivery-source --name "$C-$CAP" --resource-arn "$CAP_ARN" --log-type "$LOGTYPE" --region "$REGION" >/dev/null
+          aws logs put-delivery-destination --name "$C-$CAP-cwl" --delivery-destination-configuration "destinationResourceArn=$LG_ARN" --region "$REGION" >/dev/null
+          DEST_ARN=$(aws logs describe-delivery-destinations --region "$REGION" --query "deliveryDestinations[?name=='$C-$CAP-cwl'].arn | [0]" --output text)
+          EXISTS=$(aws logs describe-deliveries --region "$REGION" --query "deliveries[?deliverySourceName=='$C-$CAP' && deliveryDestinationArn=='$DEST_ARN'] | [0].id" --output text 2>/dev/null || echo "None")
+          if [ "$EXISTS" = "None" ] || [ -z "$EXISTS" ]; then
+            aws logs create-delivery --delivery-source-name "$C-$CAP" --delivery-destination-arn "$DEST_ARN" --region "$REGION" >/dev/null
+            echo "  $C: $CAP log delivery created -> $LG"
+          else
+            echo "  $C: $CAP log delivery already present -> $LG"
+          fi
+        done
+        echo "✓ $CAP capability logs enabled for {{.RESOURCE_PREFIX}}-* clusters (CloudWatch Vended Logs; billable)"
+
+  kubeconfig:
+    desc: Grant IDE access and write kubeconfig contexts for the hub and all spoke clusters
+    vars:
+      RESOURCE_PREFIX:
+        sh: yq '.resourcePrefix' {{.CONFIG_FILE}}
+      AWS_REGION:
+        sh: yq '.aws.region' {{.CONFIG_FILE}}
+    cmds:
+      - task: grant-ide-access
+      - |
+        for CLUSTER in $(aws eks list-clusters --region {{.AWS_REGION}} --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text); do
+          aws eks update-kubeconfig --name "$CLUSTER" --region {{.AWS_REGION}} --alias "$CLUSTER"
+        done
       - echo ""
-      - echo "Kubeconfig written to ~/.kube/config"
-      - echo "Context alias {{.RESOURCE_PREFIX}}-{{.HUB_CLUSTER_NAME}}"
+      - echo "Kubeconfig contexts written for all {{.RESOURCE_PREFIX}}-* clusters"
       - echo ""

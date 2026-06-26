@@ -7,14 +7,23 @@ metadata:
   namespace: kubeflow
   annotations:
     argocd.argoproj.io/sync-wave: "6"
+{{- if eq (default "domain" .Values.global.exposure_mode) "cloudfront" }}
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+{{- else }}
     {{- with .Values.kubeflow.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- end }}
 spec:
-  ingressClassName: {{ .Values.kubeflow.ingress.className }}
+  ingressClassName: platform
   rules:
+{{- if eq (default "domain" .Values.global.exposure_mode) "cloudfront" }}
+  - http:
+{{- else }}
   - host: {{ .Values.kubeflow.ingress.host }}
     http:
+{{- end }}
       paths:
       - path: {{ .Values.kubeflow.ingress.path }}
         pathType: {{ .Values.kubeflow.ingress.pathType }}
