@@ -94,6 +94,9 @@ tasks:
 
   install:
     desc: Bootstrap the platform (idempotent)
+    vars:
+      INSTALL_START:
+        sh: date +%s
     cmds:
       - task: kind:create
       - task: credentials:setup
@@ -107,7 +110,41 @@ tasks:
       - task: hub:cloudfront
       - task: hub:seed
       - task: hub:wait-for-sync
-      - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
+      - task: install:phase1-parallel
+      - task: hub:wait-for-full-sync
+      - task: hub:set-overlay-repo
+      - task: install:phase2-parallel
+      - |
+        LOCAL_FLEET="$HOME/environment/fleet-config"
+        if [ -d "$LOCAL_FLEET/.git" ]; then
+          git -C "$LOCAL_FLEET" pull --ff-only -q 2>/dev/null || true
+        fi
+      - printf '{{.C_OK}}✓ Bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
+
+  install:phase1-parallel:
+    internal: true
+    deps:
+      - hub:restart-identity-pods
+
+  install:phase2-parallel:
+    internal: true
+    cmds:
+      - task: install:phase2-spoke-dev
+      - task: install:phase2-spoke-prod
+
+  install:phase2-spoke-dev:
+    internal: true
+    cmds:
+      - task: spokes:enable-crossplane
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
+      - task: spokes:create-capabilities
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
+
+  install:phase2-spoke-prod:
+    internal: true
+    cmds:
+      - task: spokes:enable-kro
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-prod" }
 
   kind:create:
     desc: Create Kind cluster (skips if exists)
