@@ -1384,6 +1384,9 @@ tasks:
   # ---- from kind-crossplane ----
   secrets-manager:seed-secrets:
     desc: Seed platform user credentials into Secrets Manager for ExternalSecrets
+    # TODO(#757): gitlab_root_password and git_token should move to peeks-hub/gitlab
+    # (separate secret, gated on enable_gitlab) so the platform can run without GitLab.
+    # https://github.com/aws-samples/appmod-blueprints/issues/757
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/secrets"
