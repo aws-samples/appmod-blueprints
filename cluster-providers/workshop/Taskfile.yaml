@@ -222,35 +222,46 @@ tasks:
         # Shell variables (ROOT_TOKEN, GIT_USERNAME, GIT_PASSWORD) are expanded by bash
         # before the string is passed to gitlab-rails runner as a Ruby script.
         docker exec gitlab-gitlab-1 gitlab-rails runner "
-          # Disable default branch protection so user1 can push to main
-          ApplicationSetting.first.update!(
-            default_branch_protection: 0,
-            default_branch_protection_defaults: {
-              allowed_to_push: [{ access_level: 0 }],
-              allow_force_push: true,
-              allowed_to_merge: [{ access_level: 0 }],
-              developer_can_initial_push: true
-            }
-          )
+          # Disable default branch protection + enable password auth for git
+          s = ApplicationSetting.first
+          s.password_authentication_enabled_for_git = true
+          s.default_branch_protection = 0
+          s.save(validate: false)
           pat = User.find(1).personal_access_tokens.find_or_initialize_by(name: 'initial-root-token')
           pat.scopes = ['api','write_repository','sudo']
           pat.expires_at = 365.days.from_now
           pat.save!
-          u = User.find_by(username: '{{.GIT_USERNAME}}') || User.create!(
-            name: 'Workshop User', username: '{{.GIT_USERNAME}}',
-            email: '{{.GIT_USERNAME}}@workshop.local',
-            password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}',
-            skip_confirmation: true
-          )
+          u = User.find_by(username: '{{.GIT_USERNAME}}')
+          if u.nil?
+            svc = Users::CreateService.new(User.find(1), {
+              name: 'Workshop User', username: '{{.GIT_USERNAME}}',
+              email: '{{.GIT_USERNAME}}@workshop.local',
+              password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}',
+              skip_confirmation: true
+            }).execute
+            u = User.find_by(username: '{{.GIT_USERNAME}}')
+          else
+            u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
+            u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
+          end
+          if u.namespace_id.nil?
+            org_id = Organizations::Organization.find_by(id: 1)&.id || 1
+            ns = Namespace.new(owner: u, path: u.username, name: u.username, type: 'User', organization_id: org_id)
+            ns.save(validate: false)
+            u.update_columns(namespace_id: ns.id) if ns.persisted?
+            u.reload
+          end
           u1pat = u.personal_access_tokens.find_or_initialize_by(name: 'workshop-token')
           u1pat.scopes = ['api','write_repository']
           u1pat.expires_at = 365.days.from_now
           u1pat.save!
           %w[fleet-config java rust golang dotnet next-js].each do |repo|
-            p = Project.find_by(path: repo, namespace_id: u.namespace_id) ||
-              Projects::CreateService.new(u, name: repo, path: repo, visibility_level: 0, initialize_with_readme: true).execute
-            ProtectedBranch.where(project: p).destroy_all
-            puts 'repo: ' + repo
+            p = Project.find_by(path: repo, namespace_id: u.namespace_id)
+            if p.nil?
+              p = Projects::CreateService.new(u, name: repo, path: repo, visibility_level: 0, initialize_with_readme: true).execute
+            end
+            ProtectedBranch.where(project: p).destroy_all if p.persisted?
+            puts 'repo: ' + repo + ' ok=' + p.persisted?.to_s
           end
           puts 'init done'
         " 2>&1 | tail -20 || true
