@@ -15,6 +15,8 @@ vars:
     sh: yq '.hub.kubernetesVersion // "1.35"' {{.CONFIG_FILE}}
   HUB_VPC_CIDR:
     sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}}
+  HUB_VPC_PREFIX:
+    sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}} | cut -d. -f1-2
   AWS_ACCOUNT_ID:
     sh: yq '.aws.accountId' {{.CONFIG_FILE}}
   AWS_REGION:
@@ -400,6 +402,7 @@ tasks:
           -e "s|AWS_ACCOUNT_ID|{{.AWS_ACCOUNT_ID}}|g" \
           -e "s|HUB_K8S_VERSION|{{.HUB_K8S_VERSION}}|g" \
           -e "s|HUB_VPC_CIDR|{{.HUB_VPC_CIDR}}|g" \
+          -e "s|HUB_VPC_PREFIX|{{.HUB_VPC_PREFIX}}|g" \
           -e "s|RESOURCE_PREFIX|{{.RESOURCE_PREFIX}}|g" \
           -e "s|CALLER_ROLE_ARN|{{.CALLER_ROLE_ARN}}|g" \
           -e "s|IDC_INSTANCE_ARN|{{.IDC_INSTANCE_ARN}}|g" \
@@ -436,10 +439,10 @@ tasks:
             adminGroupId: IDC_ADMIN_GROUP_ID
           cidr:
             vpcCidr: HUB_VPC_CIDR
-            publicSubnet1Cidr: "10.0.1.0/24"
-            publicSubnet2Cidr: "10.0.2.0/24"
-            privateSubnet1Cidr: "10.0.11.0/24"
-            privateSubnet2Cidr: "10.0.12.0/24"
+            publicSubnet1Cidr: "HUB_VPC_PREFIX.1.0/24"
+            publicSubnet2Cidr: "HUB_VPC_PREFIX.2.0/24"
+            privateSubnet1Cidr: "HUB_VPC_PREFIX.11.0/24"
+            privateSubnet2Cidr: "HUB_VPC_PREFIX.12.0/24"
           gitops:
             addonsRepoUrl: REPO_URL
             addonsRepoRevision: REPO_REVISION
