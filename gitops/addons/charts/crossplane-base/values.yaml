@@ -3,6 +3,11 @@ aws:
   clusterName: ""
   accountId: ""
 
+# Name of the hub/control-plane cluster. The argocd-namespace secret-writer RBAC
+# (in provider-kubernetes.yaml) is only rendered when aws.clusterName == hubClusterName,
+# because spoke clusters have no "argocd" namespace and would fail to sync.
+hubClusterName: hub
+
 providerConfig:
   enabled: true
   name: default
@@ -73,3 +78,12 @@ providers:
     createIdentity: false
 
 namespace: crossplane-system
+
+# Default reconcile tuning applied to every provider's DeploymentRuntimeConfig.
+# Lower maxReconcileRate reduces concurrent AWS API calls during the initial bootstrap
+# burst, avoiding IAM/EKS throttling that leaves resources stuck in
+# 'crossplane.io/external-create-pending'. The Upbound provider default is 100 (very
+# aggressive for global, rate-limited IAM). Override per-provider with
+# providers.<name>.maxReconcileRate.
+providerDefaults:
+  maxReconcileRate: 6

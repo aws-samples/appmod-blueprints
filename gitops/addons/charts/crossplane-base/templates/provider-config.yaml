@@ -38,6 +38,15 @@ spec:
           serviceAccountName: {{ $provider.serviceAccount }}
           containers:
           - name: package-runtime
+            # Tune reconcile concurrency to avoid IAM/EKS API throttling during the initial
+            # bootstrap burst. IAM is a global, low-limit, token-bucket-rate-limited service;
+            # the provider default --max-reconcile-rate=100 fires far too many concurrent
+            # CreateRole/AttachRolePolicy calls, causing throttled/timed-out Create calls that
+            # Crossplane records as a stuck 'crossplane.io/external-create-pending' annotation
+            # (it then refuses to retry, to avoid duplicate creation). Lowering the rate spreads
+            # the writes out. Override per-provider via providers.<name>.maxReconcileRate.
+            args:
+              - --max-reconcile-rate={{ $provider.maxReconcileRate | default ($.Values.providerDefaults).maxReconcileRate | default 6 }}
             resources:
               requests:
                 cpu: {{ if $.Values.providerResources }}{{ $.Values.providerResources.cpuRequest | default "250m" }}{{ else }}250m{{ end }}

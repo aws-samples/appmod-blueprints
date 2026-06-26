@@ -33,6 +33,11 @@ spec:
         enabled: boolean | default=false
         path: string | default="/"
         rewrite: boolean | default=true
+        # ALB target-group health check path. Apps that do not serve 200 at "/"
+        # (e.g. the Rust sample only serves /collection/*) must set this to a
+        # path the app actually returns 200 for, otherwise all targets stay
+        # unhealthy and the ALB returns 404/503 for every request.
+        healthcheckPath: string | default="/"
       functionalGate:
         enabled: boolean | default=false
         image: string | default="httpd:alpine"
@@ -531,16 +536,18 @@ spec:
               controller: false
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            nginx.ingress.kubernetes.io/rewrite-target: /$2
-            nginx.ingress.kubernetes.io/use-regex: "true"
+            alb.ingress.kubernetes.io/scheme: internet-facing
+            alb.ingress.kubernetes.io/target-type: ip
+            alb.ingress.kubernetes.io/healthcheck-path: ${schema.spec.ingress.healthcheckPath}
+            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
         spec:
-          ingressClassName: nginx
+          ingressClassName: alb
           rules:
             - host: ${schema.spec.ingress.host}
               http:
                 paths:
-                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
-                    pathType: ImplementationSpecific
+                  - path: ${schema.spec.ingress.path}
+                    pathType: Prefix
                     backend:
                       service:
                         name: ${schema.metadata.name}
@@ -565,15 +572,18 @@ spec:
               controller: false
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            nginx.ingress.kubernetes.io/use-regex: "true"
+            alb.ingress.kubernetes.io/scheme: internet-facing
+            alb.ingress.kubernetes.io/target-type: ip
+            alb.ingress.kubernetes.io/healthcheck-path: ${schema.spec.ingress.healthcheckPath}
+            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
         spec:
-          ingressClassName: nginx
+          ingressClassName: alb
           rules:
             - host: ${schema.spec.ingress.host}
               http:
                 paths:
-                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
-                    pathType: ImplementationSpecific
+                  - path: ${schema.spec.ingress.path}
+                    pathType: Prefix
                     backend:
                       service:
                         name: ${schema.metadata.name}

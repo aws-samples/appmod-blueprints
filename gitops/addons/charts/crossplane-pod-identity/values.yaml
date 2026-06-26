@@ -1,4 +1,19 @@
 aws: {}
+
+# PreSync gate that blocks this app's Sync phase until the Crossplane provider
+# CRDs (iam.aws.upbound.io / eks.aws.upbound.io) are Established. Prevents the
+# bootstrap race where pod-identity resources are applied before the providers
+# have registered their CRDs. See templates/crd-wait-hook.yaml.
+crdWait:
+  enabled: true
+  timeoutSeconds: 600
+  image: bitnami/kubectl:latest
+  crds:
+    - policies.iam.aws.upbound.io
+    - roles.iam.aws.upbound.io
+    - rolepolicyattachments.iam.aws.upbound.io
+    - podidentityassociations.eks.aws.upbound.io
+
 identities:
   eso:
     enabled: false
@@ -17,14 +32,53 @@ identities:
             {
               "Effect": "Allow",
               "Action": [
-                "secretsmanager:GetSecretValue",
                 "secretsmanager:ListSecrets",
+                "secretsmanager:BatchGetSecretValue",
+                "secretsmanager:ListSecretVersionIds",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:GetResourcePolicy",
+                "secretsmanager:DescribeSecret",
                 "secretsmanager:CreateSecret",
                 "secretsmanager:PutSecretValue",
-                "secretsmanager:DescribeSecret",
-                "secretsmanager:TagResource"
+                "secretsmanager:TagResource",
+                "secretsmanager:DeleteResourcePolicy"
               ],
               "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:DeleteSecret"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "secretsmanager:ResourceTag/managed-by": "external-secrets"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ssm:DescribeParameters"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ssm:GetParametersByPath",
+                "ssm:GetParameters",
+                "ssm:GetParameter"
+              ],
+              "Resource": "arn:aws:ssm:*:*:parameter/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "kms:Decrypt"
+              ],
+              "Resource": "arn:aws:kms:*:*:key/*"
             }
           ]
         }
@@ -336,3 +390,86 @@ identities:
             }
           ]
         }
+
+  keycloak:
+    enabled: false
+    roleName: KeycloakConfigPodIdentityRole
+    namespace: keycloak
+    serviceAccount: keycloak-config
+    tags:
+      managed-by: crossplane
+      purpose: keycloak-config-pod-identity
+    policy:
+      name: KeycloakConfigSecretsPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:TagResource"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sso:CreateApplication",
+                "sso:PutApplicationGrant",
+                "sso:PutApplicationAuthenticationMethod",
+                "sso:PutApplicationAccessScope",
+                "sso:DescribeApplication",
+                "sso:ListApplications",
+                "sso-directory:SearchUsers",
+                "sso-directory:SearchGroups",
+                "sso-directory:CreateUser",
+                "sso-directory:DescribeUser",
+                "sso-directory:UpdateUser",
+                "sso-directory:ListGroupMemberships",
+                "sso-directory:AddMemberToGroup",
+                "identitystore:CreateUser",
+                "identitystore:DescribeUser",
+                "identitystore:ListUsers",
+                "identitystore:CreateGroupMembership",
+                "identitystore:ListGroupMemberships",
+                "identitystore:ListGroups"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+
+  # Bootstrap identities for the spoke's Crossplane providers. The iam/eks
+  # providers are createIdentity:false in the addon registry (crossplane-base
+  # does NOT create their roles) because a provider cannot create the very
+  # credentials it needs to run (chicken-and-egg). These identities are
+  # provisioned from the HUB instead: the hub's provider-aws-iam/eks (which
+  # already have credentials) create the role + PodIdentityAssociation on the
+  # target spoke (clusterName=<spoke>). Disabled by default; enabled in the
+  # spoke (dev/prod) pod-identities overlays.
+  crossplane-iam-provider:
+    enabled: false
+    roleName: CrossplaneIAMProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-iam
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-iam-provider-bootstrap
+    managedPolicyArns:
+      - arn:aws:iam::aws:policy/AdministratorAccess
+
+  crossplane-eks-provider:
+    enabled: false
+    roleName: CrossplaneEKSProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-eks
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-eks-provider-bootstrap
+    managedPolicyArns:
+      - arn:aws:iam::aws:policy/AdministratorAccess
