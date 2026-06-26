@@ -854,6 +854,8 @@ tasks:
           fi
           [ -d "$SRC" ] || continue
           TMP=$(mktemp -d)
+          # Unprotect main branch right before pushing (protection may be re-applied by GitLab)
+          docker exec gitlab-gitlab-1 gitlab-rails runner "p=Project.find_by(path:'$REPO',namespace_id:User.find_by(username:'{{.GIT_USERNAME}}').namespace_id); ProtectedBranch.where(project:p).destroy_all if p" 2>/dev/null || true
           # Clone existing repo (has README from initialize_with_readme) then add source files
           git clone -q "$REMOTE_URL" "$TMP" 2>/dev/null || { cp -r "$SRC/." "$TMP/"; git -C "$TMP" init -q; git -C "$TMP" remote add origin "$REMOTE_URL"; }
           cp -r "$SRC/." "$TMP/"
