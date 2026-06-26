@@ -847,6 +847,42 @@ spec:
                 policy:
                   fromFieldPath: Required
 
+          # Publish status.oidcIssuer onto the ArgoCD cluster Secret as
+          # eks_oidc_provider. Consumed by the agent-gateway addon (OAP) to
+          # trust the cluster's EKS OIDC issuer as a workload-identity JWT
+          # provider (secretless ServiceAccount-token auth). Same Observe+Update
+          # pattern as the VPC annotation; the Secret is created by the
+          # fleet-secret Helm chart and patched here via Server-Side Apply.
+          - name: cluster-secret-oidc-annotation
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                managementPolicies: ["Observe", "Update"]
+                providerConfigRef:
+                  name: default
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: Secret
+                    metadata:
+                      name: ""
+                      namespace: argocd
+                      annotations:
+                        eks_oidc_provider: ""
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: spec.forProvider.manifest.metadata.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.oidcIssuer
+                toFieldPath: spec.forProvider.manifest.metadata.annotations[eks_oidc_provider]
+                policy:
+                  fromFieldPath: Required
+
           # ===== EKS MANAGED ADD-ONS =====
           # vpc-cni, kube-proxy, coredns are only needed when a managed node
           # group is present (Auto Mode manages its own networking). They are
