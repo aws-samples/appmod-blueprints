@@ -5,7 +5,7 @@ metadata:
   namespace: team-java
 spec:
   image: argoproj/rollouts-demo:blue
-  image_name: rollout-demo
+  image_name: progressive-app
   replicas: 2
   port: 8080
   targetPort: 8080
@@ -25,11 +25,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: rollout-demo
+  name: progressive-app
   namespace: team-java
 spec:
   selector:
-    app: rollout-demo
+    app: progressive-app
   ports:
     - port: 8080
       targetPort: 8080
@@ -38,11 +38,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: rollout-demo-preview
+  name: progressive-app-preview
   namespace: team-java
 spec:
   selector:
-    app: rollout-demo
+    app: progressive-app
   ports:
     - port: 8080
       targetPort: 8080
