@@ -850,6 +850,7 @@ tasks:
     desc: Install ArgoCD on the hub cluster (OSS mode, skipped when EKS Capability is used)
     status:
       - test "$(yq '.argocdCapability.enabled // "false"' {{.CONFIG_FILE}} 2>/dev/null || echo false)" = "true"
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get crd applications.argoproj.io 2>/dev/null | grep -q applications
     cmds:
       - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm repo add argo https://argoproj.github.io/argo-helm --force-update
