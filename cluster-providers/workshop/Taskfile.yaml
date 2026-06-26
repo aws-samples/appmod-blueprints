@@ -226,6 +226,7 @@ tasks:
           s = ApplicationSetting.first
           s.password_authentication_enabled_for_git = true
           s.default_branch_protection = 0
+          s.default_branch_protection_defaults = {allowed_to_push: [{access_level: 0}], allow_force_push: true, allowed_to_merge: [{access_level: 0}], developer_can_initial_push: true}
           s.save(validate: false)
           pat = User.find(1).personal_access_tokens.find_or_initialize_by(name: 'initial-root-token')
           pat.scopes = ['api','write_repository','sudo']
