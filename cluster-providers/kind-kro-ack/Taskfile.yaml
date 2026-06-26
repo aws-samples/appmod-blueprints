@@ -769,28 +769,6 @@ tasks:
     cmds:
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig 2>&1 >/dev/null
 
-  argocd:capability:
-    desc: Create EKS ArgoCD Capability via Job
-    status:
-      - kubectl -n {{.ACK_NAMESPACE}} get job create-argocd-capability -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q 1
-    vars:
-      CAPABILITY_ROLE_ARN:
-        sh: kubectl get role.iam.services.k8s.aws/{{.HUB_CLUSTER_NAME}}-argocd-role -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.ackResourceMetadata.arn}' 2>/dev/null || echo ""
-    cmds:
-      - kubectl -n {{.ACK_NAMESPACE}} create configmap argocd-capability-config
-          --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
-          --from-literal=AWS_REGION={{.AWS_REGION}}
-          --from-literal=AWS_ACCOUNT_ID={{.AWS_ACCOUNT_ID}}
-          --from-literal=CAPABILITY_NAME={{.CAPABILITY_NAME}}
-          --from-literal=CAPABILITY_ROLE_ARN={{.CAPABILITY_ROLE_ARN}}
-          --from-literal=IDC_INSTANCE_ARN={{.IDC_INSTANCE_ARN}}
-          --from-literal=IDC_REGION={{.IDC_REGION}}
-          --from-literal=IDC_ADMIN_GROUP_ID={{.IDC_ADMIN_GROUP_ID}}
-          --dry-run=client -o yaml | kubectl apply -f -
-      - kubectl delete job create-argocd-capability -n {{.ACK_NAMESPACE}} 2>/dev/null || true
-      - kubectl apply -f manifests/argocd/create-capability.yaml
-      - kubectl -n {{.ACK_NAMESPACE}} wait --for=condition=Complete --timeout=2400s job/create-argocd-capability
-
   secrets-manager:seed:
     desc: Seed hub config into AWS Secrets Manager
     vars:
