@@ -945,7 +945,12 @@ spec:
           # Uses provider-kubernetes Object with Observe+Update so the Secret must
           # already exist (created by the fleet-secret Helm chart) — the Object only
           # patches the single annotation via Server-Side Apply.
+          # readinessCheck: none — the argocd namespace is created by the EKS ArgoCD
+          # Capability *after* the XR reaches Ready. Blocking XR readiness on this
+          # Object creates a circular dependency that stalls the install for 90+ min.
           - name: cluster-secret-vpc-annotation
+            readinessChecks:
+              - type: None
             base:
               apiVersion: kubernetes.crossplane.io/v1alpha2
               kind: Object

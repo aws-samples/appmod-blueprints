@@ -103,14 +103,4 @@ argocd-refresh-token() {
     fi
 
     echo "ArgoCD token refreshed. Server: $ARGOCD_SERVER"
-
-    # Also update the argocd CLI config file so 'argocd app sync' etc. work
-    # without requiring env vars. The CLI prefers its config file over env vars
-    # when a server entry exists — leaving a stale token there causes
-    # "Unauthenticated: invalid session" even when ARGOCD_AUTH_TOKEN is correct.
-    argocd login "$ARGOCD_SERVER" \
-        --auth-token "$token" \
-        --grpc-web \
-        --skip-test-tls \
-        2>/dev/null || true
 }

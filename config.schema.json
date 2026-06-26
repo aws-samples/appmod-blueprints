@@ -138,6 +138,25 @@
       "default": "",
       "description": "Comma-separated security group IDs for the ALB"
     },
+    "cloudfront": {
+      "type": "object",
+      "description": "CloudFront mode pre-requisites. Required when domain is empty.",
+      "properties": {
+        "vpcId": {
+          "type": "string",
+          "pattern": "^vpc-[0-9a-f]+$",
+          "description": "Pre-created VPC ID with min 2 public + 2 private subnets"
+        },
+        "cloudfrontDomain": {
+          "type": "string",
+          "description": "CloudFront distribution domain (e.g. xxxx.cloudfront.net)"
+        }
+      }
+    },
+    "adminRoleName": {
+      "type": "string",
+      "description": "IAM role name added as cluster admin and used by Backstage templates (e.g. WSParticipantRole)"
+    },
     "identityCenter": {
       "type": "object",
       "required": ["instanceArn", "region", "adminGroupId"],

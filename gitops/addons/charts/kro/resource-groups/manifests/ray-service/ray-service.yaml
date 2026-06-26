@@ -37,9 +37,9 @@ spec:
             - region ${schema.spec.?awsRegion.orValue('us-west-2')}
           csi:
             driver: s3.csi.aws.com
-            volumeHandle: ${schema.spec.?s3ModelBucket.orValue('peeks-hub-ray-models')}
+            volumeHandle: ${schema.spec.?s3ModelBucket.orValue('peeks-ray-models')}
             volumeAttributes:
-              bucketName: ${schema.spec.?s3ModelBucket.orValue('peeks-hub-ray-models')}
+              bucketName: ${schema.spec.?s3ModelBucket.orValue('peeks-ray-models')}
 
     # S3 PersistentVolumeClaim
     - id: s3pvc
@@ -690,7 +690,7 @@ spec:
       name: string
       modelName: string | default="tinyllama"
       maxLength: string | default="100"
-      s3ModelBucket: string | default="peeks-hub-ray-models"
+      s3ModelBucket: string | default="peeks-ray-models"
       awsRegion: string | default="us-west-2"
       awsAccountId: string | default="ACCOUNT_ID"
       resourcePrefix: string | default="peeks"

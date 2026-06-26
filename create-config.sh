@@ -156,6 +156,18 @@ printf 'domain: ""\n'                                  >> "$OUTPUT_FILE"
 printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
 printf 'ingressName: ""\n'                             >> "$OUTPUT_FILE"
 printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
+
+# CloudFront domain — read from CLOUDFRONT_DOMAIN env var (preferred, set by SSM from IDE_DOMAIN)
+# with fallback to the private/gitlab-cloudfront-domain file written by bootstrap.sh.
+CF_DOMAIN="${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}"
+if [ -z "$CF_DOMAIN" ]; then
+  PRIVATE_DIR="${SCRIPT_DIR}/private"
+  [ -f "${PRIVATE_DIR}/gitlab-cloudfront-domain" ] &&     CF_DOMAIN="$(cat "${PRIVATE_DIR}/gitlab-cloudfront-domain" | tr -d '[:space:]')"
+fi
+if [ -n "$CF_DOMAIN" ]; then
+  printf 'cloudfront:\n'                               >> "$OUTPUT_FILE"
+  printf '  cloudfrontDomain: "%s"\n' "$CF_DOMAIN"    >> "$OUTPUT_FILE"
+fi
 printf 'identityCenter:\n'                             >> "$OUTPUT_FILE"
 printf '  instanceArn: "%s"\n'  "$IDC_ARN"             >> "$OUTPUT_FILE"
 printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
@@ -174,4 +186,4 @@ echo "✓ config.local.yaml created:"
 echo "    region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
 echo "    clusterName=${RESOURCE_PREFIX}-hub adminRole=$ADMIN_ROLE_NAME"
 echo "    idcInstance=$IDC_ARN adminGroupId=${IDC_GROUP:-<empty>}"
-echo '    domain="" (CloudFront exposure mode)'
+echo "    domain=\"\" (CloudFront exposure mode) cloudfrontDomain=${CF_DOMAIN:-<not detected>}"

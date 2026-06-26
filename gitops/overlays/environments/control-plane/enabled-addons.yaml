@@ -44,7 +44,7 @@ enabledAddons:
   backstage: true
   kubevela: true
   devlake: true
-  gitlab: true
+  gitlab: false  # GitLab runs on EC2 (docker-compose), not EKS
   # ACK controllers
   ack_iam: false
   ack_eks: false

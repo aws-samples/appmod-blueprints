@@ -360,37 +360,8 @@ devlake:
         - /spec/template/metadata/annotations/checksum~1config
         - /spec/template/metadata/annotations/checksum~1sc-dashboard-provider-config
 
-gitlab:
-  namespace: gitlab
-  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/gitlab'
-  annotationsAppSet:
-    argocd.argoproj.io/sync-wave: '2'
-  selector:
-    matchExpressions:
-      - key: enable_gitlab
-        operator: In
-        values: ['true']
-  valuesObject:
-    domain_name: '{{default .metadata.annotations.ingress_domain_name .metadata.annotations.gitlab_domain_name}}'
-    keycloak_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
-    security_groups: '{{.metadata.annotations.ingress_security_groups}}'
-    exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
-    git_token: '{{default "" .metadata.annotations.git_token}}'
-    source_repo_url: '{{.metadata.annotations.addonsRepoURL}}'
-    source_repo_revision: '{{.metadata.annotations.addonsRepoRevision}}'
-    global:
-      aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
-  ignoreDifferences:
-    - group: external-secrets.io
-      kind: ExternalSecret
-      jsonPointers:
-        - /status
-        - /metadata/generation
-        - /metadata/managedFields
-    - group: ''
-      kind: Secret
-      jsonPointers:
-        - /metadata/managedFields
+# GitLab is no longer deployed as an EKS addon — it runs via docker-compose on the IDE EC2 instance.
+# The CloudFront distribution and NLB are created by CDK (team-stack.ts).
 
 ack-iam:
   namespace: ack-system
