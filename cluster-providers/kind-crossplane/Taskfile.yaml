@@ -799,7 +799,7 @@ tasks:
         # Shell variables (ROOT_TOKEN, GIT_USERNAME, GIT_PASSWORD) are expanded by bash
         # before the string is passed to gitlab-rails runner as a Ruby script.
         docker exec gitlab-gitlab-1 gitlab-rails runner "
-          # Disable default branch protection so user1 can push to main
+          # Disable default branch protection + enable password auth for git
           s = ApplicationSetting.first
           s.password_authentication_enabled_for_git = true
           s.default_branch_protection = 0
@@ -810,31 +810,29 @@ tasks:
           pat.save!
           u = User.find_by(username: '{{.GIT_USERNAME}}')
           if u.nil?
-            u = User.new(name: 'Workshop User', username: '{{.GIT_USERNAME}}',
+            # Use Users::CreateService which properly sets up the namespace
+            svc = Users::CreateService.new(User.find(1), {
+              name: 'Workshop User', username: '{{.GIT_USERNAME}}',
               email: '{{.GIT_USERNAME}}@workshop.local',
               password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}',
-              skip_confirmation: true)
-            u.save(validate: false)
+              skip_confirmation: true
+            }).execute
+            u = User.find_by(username: '{{.GIT_USERNAME}}')
           else
-            u.password = '{{.GIT_PASSWORD}}'
-            u.password_confirmation = '{{.GIT_PASSWORD}}'
-            u.password_automatically_set = false
-            u.save(validate: false)
+            u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
+            u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
           end
           u1pat = u.personal_access_tokens.find_or_initialize_by(name: 'workshop-token')
           u1pat.scopes = ['api','write_repository']
           u1pat.expires_at = 365.days.from_now
           u1pat.save!
-          # Ensure user namespace exists (created lazily by GitLab)
-          u.ensure_namespace!
-          u.reload
           %w[fleet-config java rust golang dotnet next-js].each do |repo|
             p = Project.find_by(path: repo, namespace_id: u.namespace_id)
             if p.nil?
               p = Projects::CreateService.new(u, name: repo, path: repo, visibility_level: 0, initialize_with_readme: true).execute
             end
-            ProtectedBranch.where(project: p).destroy_all
-            puts 'repo: ' + repo
+            ProtectedBranch.where(project: p).destroy_all if p.persisted?
+            puts 'repo: ' + repo + ' ok=' + p.persisted?.to_s
           end
           puts 'init done'
         " 2>&1 | tail -20 || true
