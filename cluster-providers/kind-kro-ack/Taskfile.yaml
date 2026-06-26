@@ -346,6 +346,9 @@ tasks:
 
   kro:reset-crds:
     desc: Delete KRO-managed CRDs on the bootstrap kind cluster to allow breaking schema changes (run before kro:apply-rgds)
+    preconditions:
+      - sh: "! kubectl get ekscluster,eksclusterwithvpc -A --no-headers 2>/dev/null | grep -qv '^$'"
+        msg: "Live EksCluster/EksclusterWithVpc instances exist — delete them first (task kind-kro-ack:destroy) before resetting CRDs."
     cmds:
       - kubectl delete crd eksclusters.kro.run eksclusterwithvpcs.kro.run --ignore-not-found
       - printf '{{.C_OK}}✓ KRO CRDs deleted — re-run task install.{{.C_RESET}}\n'
