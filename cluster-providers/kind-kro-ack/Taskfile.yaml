@@ -108,6 +108,7 @@ tasks:
       - task: ack:install
       - task: kro:install
       - task: kro:install-eso-bootstrap
+      - task: kro:install-cluster-secret-store-bootstrap
       - task: kro:apply-rgds
       - task: hub:claim
       - task: hub:wait-for-eks
@@ -285,6 +286,51 @@ tasks:
           --set serviceAccount.name=external-secrets-sa
           --wait --timeout 5m
       - printf '{{.C_OK}}✓ ESO installed on bootstrap cluster.{{.C_RESET}}\n'
+
+  kro:install-cluster-secret-store-bootstrap:
+    desc: Apply aws-secrets-manager ClusterSecretStore on the bootstrap kind cluster (required for RGD ESO resources)
+    status:
+      - kubectl get clustersecretstore aws-secrets-manager 2>/dev/null | grep -q aws-secrets-manager
+    cmds:
+      - |
+        # Extract individual credential keys from the ACK credentials file and
+        # create a separate secret for ESO (ESO needs individual keys, not INI format)
+        CREDS=$(kubectl get secret aws-credentials -n ack-system -o jsonpath='{.data.credentials}' | base64 -d)
+        ACCESS_KEY=$(echo "$CREDS" | grep aws_access_key_id | awk '{print $3}')
+        SECRET_KEY=$(echo "$CREDS" | grep aws_secret_access_key | awk '{print $3}')
+        SESSION_TOKEN=$(echo "$CREDS" | grep aws_session_token | awk '{print $3}')
+        kubectl create secret generic eso-aws-credentials -n ack-system \
+          --from-literal=access-key-id="$ACCESS_KEY" \
+          --from-literal=secret-access-key="$SECRET_KEY" \
+          --from-literal=session-token="$SESSION_TOKEN" \
+          --dry-run=client -o yaml | kubectl apply -f -
+      - |
+        cat <<'EOF' | sed "s|AWS_REGION|{{.AWS_REGION}}|g" | kubectl apply -f -
+        apiVersion: external-secrets.io/v1
+        kind: ClusterSecretStore
+        metadata:
+          name: aws-secrets-manager
+        spec:
+          provider:
+            aws:
+              service: SecretsManager
+              region: AWS_REGION
+              auth:
+                secretRef:
+                  accessKeyIDSecretRef:
+                    name: eso-aws-credentials
+                    namespace: ack-system
+                    key: access-key-id
+                  secretAccessKeySecretRef:
+                    name: eso-aws-credentials
+                    namespace: ack-system
+                    key: secret-access-key
+                  sessionTokenSecretRef:
+                    name: eso-aws-credentials
+                    namespace: ack-system
+                    key: session-token
+        EOF
+      - printf '{{.C_OK}}✓ ClusterSecretStore applied on bootstrap cluster.{{.C_RESET}}\n'
 
   kro:apply-rgds:
     desc: Apply KRO ResourceGraphDefinitions for VPC and EKS
