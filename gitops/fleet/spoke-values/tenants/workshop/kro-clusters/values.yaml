@@ -9,8 +9,8 @@
 #     environment: dev
 #     region: us-west-2
 #     k8sVersion: "1.35"
-#     accountId: "134136091485"
-#     managementAccountId: "134136091485"
+#     accountId: "123456789012"
+#     managementAccountId: "123456789012"
 #     resourcePrefix: peeks
 #     cidr:
 #       vpcCidr: "10.3.0.0/16"
