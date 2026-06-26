@@ -18,6 +18,7 @@ spec:
       accountId: string
       managementAccountId: string
       argoCdHubRoleArn: string
+      argoCdCapabilityRoleArn: string | default=""
       adminRoleName: string | default="Admin"
       # Optional second cluster-admin role (e.g. the IDE/instance *SharedRole*),
       # passed through to the nested EksCluster. See rg-eks.yaml for rationale.

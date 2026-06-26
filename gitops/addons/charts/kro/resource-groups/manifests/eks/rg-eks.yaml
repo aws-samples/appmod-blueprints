@@ -20,6 +20,7 @@ spec:
       managementAccountId: string
       managementRegion: string | default="us-west-2"
       argoCdHubRoleArn: string
+      argoCdCapabilityRoleArn: string | default=""
       argocdCapability:
         enabled: string | default="false"
         idcInstanceArn: string | default=""
