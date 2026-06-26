@@ -882,6 +882,7 @@ tasks:
           --arg addons '' \
           --arg vpc '{{.VPC_ID}}' \
           '{metadata: $metadata, config: $config, server: $server, addons: $addons, vpc: $vpc}')
+        aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}} 2>/dev/null \
         || aws secretsmanager put-secret-value \
@@ -899,6 +900,7 @@ tasks:
         SECRET_VALUE=$(jq -n \
           --arg admin "$ADMIN_PASS" --arg db "$DB_PASS" --arg user "$USER_PASS" \
           '{keycloak_admin_password: $admin, keycloak_postgres_password: $db, user_password: $user}')
+        aws secretsmanager restore-secret --secret-id "{{.HUB_CLUSTER_NAME}}/keycloak" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
           --name "{{.HUB_CLUSTER_NAME}}/keycloak" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}} 2>/dev/null \
         || aws secretsmanager put-secret-value \
@@ -1458,6 +1460,7 @@ tasks:
           UPDATED=$(echo "$UPDATED" | jq --arg p "$BS_PG_PASS" '. + {backstage_postgres_password: $p}')
         fi
         # git_token is seeded by CDK at deploy time (root-<ide_password>) — no runtime seeding needed.
+        aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" \
           --secret-string "$UPDATED" \
@@ -1617,6 +1620,7 @@ tasks:
           DEVLAKE_MYSQL=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
           UPDATED=$(echo "$UPDATED" | jq --arg p "$DEVLAKE_MYSQL" '. + {devlake_mysql_password: $p}')
         fi
+        aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" \
           --secret-string "$UPDATED" \
