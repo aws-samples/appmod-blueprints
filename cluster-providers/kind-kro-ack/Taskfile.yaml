@@ -687,7 +687,7 @@ tasks:
       - |
         # 1. Create or reuse VPC Origin pointing at the internal ALB
         VPC_ORIGIN_ID=$(aws cloudfront list-vpc-origins --region {{.AWS_REGION}} \
-          --query "Items[?Name=='{{.VPC_ORIGIN_NAME}}'].Id" --output text 2>/dev/null || echo "")
+          --query "VpcOriginList.Items[?Name=='{{.VPC_ORIGIN_NAME}}'].Id" --output text 2>/dev/null || echo "")
         if [ -z "$VPC_ORIGIN_ID" ] || [ "$VPC_ORIGIN_ID" = "None" ]; then
           VPC_ORIGIN_ID=$(aws cloudfront create-vpc-origin --region {{.AWS_REGION}} \
             --vpc-origin-endpoint-config "{
