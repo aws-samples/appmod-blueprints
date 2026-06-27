@@ -958,6 +958,8 @@ tasks:
     vars:
       CLUSTER_ARN:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text
+      CLUSTER_ENDPOINT:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.endpoint' --output text
       ARGOCD_ROLE_ARN:
         sh: aws iam get-role --role-name {{.HUB_CLUSTER_NAME}}-argocd-role --query 'Role.Arn' --output text 2>/dev/null || echo ""
       ADMIN_ROLE_NAME:
@@ -998,7 +1000,7 @@ tasks:
         printf '    exposure_mode       = %s\n' "{{.EXPOSURE_MODE}}"
         printf '    alb_listener_arn    = %s\n' "{{.ALB_LISTENER_ARN}}"
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|EXPOSURE_MODE|{{.EXPOSURE_MODE}}|g; s|EDGE_DOMAIN|{{.EDGE_DOMAIN}}|g; s|ALB_LISTENER_ARN|{{.ALB_LISTENER_ARN}}|g; s|VPC_ID_VAL|{{.VPC_ID}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID_VAL|{{.AWS_ACCOUNT_ID}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|INGRESS_SECURITY_GROUPS_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|ADMIN_ROLE_NAME_VAL|{{.ADMIN_ROLE_NAME}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|CLUSTER_ENDPOINT|{{.CLUSTER_ENDPOINT}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|EXPOSURE_MODE|{{.EXPOSURE_MODE}}|g; s|EDGE_DOMAIN|{{.EDGE_DOMAIN}}|g; s|ALB_LISTENER_ARN|{{.ALB_LISTENER_ARN}}|g; s|VPC_ID_VAL|{{.VPC_ID}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID_VAL|{{.AWS_ACCOUNT_ID}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|INGRESS_SECURITY_GROUPS_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|ADMIN_ROLE_NAME_VAL|{{.ADMIN_ROLE_NAME}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
@@ -1036,7 +1038,7 @@ tasks:
             exposure_mode: "EXPOSURE_MODE"
         stringData:
           name: CLUSTER_NAME
-          server: "CLUSTER_ARN"
+          server: "CLUSTER_ENDPOINT"
           config: '{"awsAuthConfig":{"clusterName":"CLUSTER_NAME","roleARN":"ARGOCD_ROLE_ARN"},"tlsClientConfig":{"insecure":false}}'
         EOF
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
