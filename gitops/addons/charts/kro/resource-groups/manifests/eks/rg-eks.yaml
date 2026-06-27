@@ -423,7 +423,10 @@ spec:
                 {
                   "Effect": "Allow",
                   "Principal": {
-                    "AWS": "${schema.spec.argoCdHubRoleArn}"
+                    "AWS": [
+                      "${schema.spec.argoCdHubRoleArn}",
+                      "arn:${schema.spec.aws_partition}:iam::${schema.spec.accountId}:role/${schema.spec.name}-argocd-capability-role"
+                    ]
                   },
                   "Action": [
                     "sts:TagSession",
