@@ -857,7 +857,6 @@ tasks:
       - task: secrets-manager:seed-secrets
       - task: hub:install-eso
       - task: hub:cluster-secret-store
-      - task: hub:install-argocd
       - task: hub:seed-secret
       - task: hub:apply-root-appset
 
