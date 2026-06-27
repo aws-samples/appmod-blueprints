@@ -163,6 +163,7 @@ tasks:
     cmds:
       - mkdir -p {{.ROOT_DIR}}/private
       - kind export kubeconfig --name {{.KIND_CLUSTER_NAME}} --kubeconfig {{.KUBECONFIG}} 2>/dev/null || true
+      - kubectl config use-context kind-{{.KIND_CLUSTER_NAME}} --kubeconfig {{.KUBECONFIG}} 2>/dev/null || true
 
   credentials:setup:
     desc: Create AWS credentials secret (skips if exists)
