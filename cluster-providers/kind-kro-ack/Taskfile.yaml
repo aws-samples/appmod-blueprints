@@ -1037,8 +1037,8 @@ tasks:
             exposure_mode: "EXPOSURE_MODE"
         stringData:
           name: CLUSTER_NAME
-          server: "CLUSTER_ENDPOINT"
-          config: '{"awsAuthConfig":{"clusterName":"CLUSTER_NAME","roleARN":"ARGOCD_ROLE_ARN"},"tlsClientConfig":{"insecure":false}}'
+          server: "CLUSTER_ARN"
+          config: '{"tlsClientConfig":{"insecure":false}}'
         EOF
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
