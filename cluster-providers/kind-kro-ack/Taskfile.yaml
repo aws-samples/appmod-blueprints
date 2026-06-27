@@ -876,7 +876,7 @@ tasks:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}/","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}/","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.RESOURCE_PREFIX}}-hub-ingress","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.RESOURCE_PREFIX}}-hub-ingress","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
@@ -998,7 +998,7 @@ tasks:
         printf '    exposure_mode       = %s\n' "{{.EXPOSURE_MODE}}"
         printf '    alb_listener_arn    = %s\n' "{{.ALB_LISTENER_ARN}}"
       - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}/|g; s|EXPOSURE_MODE|{{.EXPOSURE_MODE}}|g; s|EDGE_DOMAIN|{{.EDGE_DOMAIN}}|g; s|ALB_LISTENER_ARN|{{.ALB_LISTENER_ARN}}|g; s|VPC_ID_VAL|{{.VPC_ID}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID_VAL|{{.AWS_ACCOUNT_ID}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|INGRESS_SECURITY_GROUPS_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|ADMIN_ROLE_NAME_VAL|{{.ADMIN_ROLE_NAME}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|EXPOSURE_MODE|{{.EXPOSURE_MODE}}|g; s|EDGE_DOMAIN|{{.EDGE_DOMAIN}}|g; s|ALB_LISTENER_ARN|{{.ALB_LISTENER_ARN}}|g; s|VPC_ID_VAL|{{.VPC_ID}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID_VAL|{{.AWS_ACCOUNT_ID}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|INGRESS_SECURITY_GROUPS_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|ADMIN_ROLE_NAME_VAL|{{.ADMIN_ROLE_NAME}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
