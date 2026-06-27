@@ -104,7 +104,6 @@ tasks:
       - task: kind:create
       - task: kind:kubeconfig
       - task: credentials:setup
-      - task: argocd:install
       - task: ack:install
       - task: kro:install
       - task: kro:install-eso-bootstrap
