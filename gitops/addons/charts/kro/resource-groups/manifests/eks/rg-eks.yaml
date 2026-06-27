@@ -386,7 +386,6 @@ spec:
           name: eks-pod-identity-agent
           addonVersion: v1.3.4-eksbuild.1
           clusterName: "${schema.spec.name}"
-          configurationValues: '{"tolerations":[{"operator":"Exists"}]}'
 
     ###########################################################
     # ArgoCD Integration
