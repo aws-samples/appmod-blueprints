@@ -234,11 +234,13 @@ tasks:
           pat.save!
           u = User.find_by(username: '{{.GIT_USERNAME}}')
           if u.nil?
+            Namespace.where(path: '{{.GIT_USERNAME}}', type: 'User').destroy_all
             svc = Users::CreateService.new(User.find(1), {
               name: 'Workshop User', username: '{{.GIT_USERNAME}}',
               email: '{{.GIT_USERNAME}}@workshop.local',
               password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}',
-              skip_confirmation: true
+              skip_confirmation: true,
+              organization_id: (Organizations::Organization.find_by(id: 1)&.id || 1)
             }).execute
             u = svc.respond_to?(:payload) ? svc.payload[:user] : User.find_by(username: '{{.GIT_USERNAME}}')
           else
