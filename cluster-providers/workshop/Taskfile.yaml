@@ -246,7 +246,6 @@ tasks:
             u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
           end
           if u.namespace_id.nil?
-          if u.namespace_id.nil?
             org_id = Organizations::Organization.find_by(id: 1)&.id || 1
             ns = Namespace.new(owner: u, path: u.username, name: u.username, type: 'User', organization_id: org_id)
             ns.save(validate: false)
