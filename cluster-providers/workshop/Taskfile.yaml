@@ -242,7 +242,7 @@ tasks:
               skip_confirmation: true,
               organization_id: (Organizations::Organization.find_by(id: 1)&.id || 1)
             }).execute
-            u = svc.respond_to?(:payload) ? svc.payload[:user] : User.find_by(username: '{{.GIT_USERNAME}}')
+            u = svc.respond_to?(:payload) ? (svc.payload[:user] || User.find_by(username: '{{.GIT_USERNAME}}')) : User.find_by(username: '{{.GIT_USERNAME}}')
           else
             u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
             u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
@@ -262,6 +262,7 @@ tasks:
             p = Project.find_by(path: repo, namespace_id: u.namespace_id)
             if p.nil?
               p = Projects::CreateService.new(u, name: repo, path: repo, visibility_level: 0, initialize_with_readme: false).execute
+              sleep 1
             end
             ProtectedBranch.where(project: p).destroy_all if p.persisted?
             puts 'repo: ' + repo + ' ok=' + p.persisted?.to_s
