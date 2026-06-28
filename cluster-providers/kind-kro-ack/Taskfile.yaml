@@ -984,12 +984,6 @@ tasks:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.endpoint' --output text
       ARGOCD_ROLE_ARN:
         sh: aws iam get-role --role-name {{.HUB_CLUSTER_NAME}}-argocd-role --query 'Role.Arn' --output text 2>/dev/null || echo ""
-    status:
-      # Skip if the cluster secret already has the correct server ARN — avoids triggering
-      # a 20+ minute ArgoCD cache invalidation on every re-run of task install.
-      - |
-        CURRENT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get secret {{.HUB_CLUSTER_NAME}} -n argocd -o jsonpath='{.data.server}' 2>/dev/null | base64 -d 2>/dev/null)
-        [ "$CURRENT" = "{{.CLUSTER_ARN}}" ]
       ADMIN_ROLE_NAME:
         sh: yq '.hub.adminRoleName // "Admin"' {{.CONFIG_FILE}}
       # Edge metadata — populated by hub:ingress + hub:cloudfront before hub:seed runs.
@@ -1017,6 +1011,12 @@ tasks:
             --query "Listeners[?Port==\`$PORT\`].ListenerArn | [0]" --output text 2>/dev/null || echo ""
       VPC_ID:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null || echo ""
+    status:
+      # Skip if the cluster secret already has the correct server ARN — avoids triggering
+      # a 20+ minute ArgoCD cache invalidation on every re-run of task install.
+      - |
+        CURRENT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get secret {{.HUB_CLUSTER_NAME}} -n argocd -o jsonpath='{.data.server}' 2>/dev/null | base64 -d 2>/dev/null)
+        [ "$CURRENT" = "{{.CLUSTER_ARN}}" ]
     cmds:
       - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
