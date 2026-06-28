@@ -3050,12 +3050,8 @@ metadata:
 data:
   config: |-
     sso:
-      {{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
       insecureSkipVerify: true
-      issuer: http://keycloak.keycloak.svc.cluster.local:8080/keycloak/realms/platform
-      {{- else }}
       issuer: https://{{ .Values.ingress_domain_name | default .Values.gitlab_domain_name }}/keycloak/realms/platform
-      {{- end }}
       clientId:
         name: keycloak-oidc
         key: client-id
