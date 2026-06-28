@@ -245,7 +245,7 @@ tasks:
             u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
             u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
           end
-          abort "user {{.GIT_USERNAME}} not found" if u.nil?
+          if u.namespace_id.nil?
           if u.namespace_id.nil?
             org_id = Organizations::Organization.find_by(id: 1)&.id || 1
             ns = Namespace.new(owner: u, path: u.username, name: u.username, type: 'User', organization_id: org_id)
