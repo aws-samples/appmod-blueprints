@@ -43,6 +43,34 @@ vars:
 
 tasks:
   # ============================================================
+  # FULL WORKSHOP INSTALL
+  # Single entry point: task workshop:install
+  # Orchestrates platform install + workshop-specific setup
+  # ============================================================
+
+  install:
+    desc: "Full workshop install (platform + GitLab + Ray + IDC federation)"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - printf '{{.C_STEP}}▸ Workshop install starting...{{.C_RESET}}\n'
+      # 1. Platform install (EKS cluster, addons, spokes)
+      - task: ":{{.PROVIDER}}:install"
+      - printf '{{.C_OK}}✓ Platform install complete.{{.C_RESET}}\n'
+      # 2. GitLab init (create repos, seed content)
+      - task: gitlab:init-ec2
+      # 3. Ray ML infrastructure (image builds in background)
+      - task: ":{{.PROVIDER}}:ray:setup"
+      # 4. IDC/Keycloak federation (ArgoCD SSO)
+      - task: post-install
+      # 5. Wait for Ray image to be ready
+      - task: ":{{.PROVIDER}}:ray:wait-image"
+      # 6. Download ML models to S3
+      - task: ":{{.PROVIDER}}:ray:prestage-models"
+      - printf '{{.C_OK}}✓ Workshop install complete.{{.C_RESET}}\n'
+
+  # ============================================================
   # PRE-REQUISITES
   # Run before task install to prepare workshop-specific resources
   # ============================================================
