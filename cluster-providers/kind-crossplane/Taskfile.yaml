@@ -2825,17 +2825,17 @@ tasks:
               --image-tag-mutability MUTABLE --output text >/dev/null
             echo "  ✓ ECR repo {{.RAY_ECR_REPO}} created"
           fi
-      # 3. Build and push vLLM image
+      # 3. Build and push vLLM image (background - non-blocking)
       - cmd: |
           IMAGE_URI="{{.AWS_ACCOUNT_ID}}.dkr.ecr.{{.AWS_REGION}}.amazonaws.com/{{.RAY_ECR_REPO}}:latest"
           if aws ecr describe-images --repository-name "{{.RAY_ECR_REPO}}" --image-ids imageTag=latest --region {{.AWS_REGION}} >/dev/null 2>&1; then
             echo "  ✓ vLLM image already exists"
           else
-            echo "  ▸ Building vLLM image (5-10 min)..."
-            aws ecr get-login-password --region {{.AWS_REGION}} | docker login --username AWS --password-stdin {{.AWS_ACCOUNT_ID}}.dkr.ecr.{{.AWS_REGION}}.amazonaws.com
-            docker build -t "$IMAGE_URI" -f "{{.DOCKERFILE_PATH}}" "$(dirname {{.DOCKERFILE_PATH}})"
-            docker push "$IMAGE_URI"
-            echo "  ✓ vLLM image pushed"
+            echo "  ▸ Building vLLM image in background (5-10 min)..."
+            aws ecr get-login-password --region {{.AWS_REGION}} | docker login --username AWS --password-stdin {{.AWS_ACCOUNT_ID}}.dkr.ecr.{{.AWS_REGION}}.amazonaws.com >/dev/null 2>&1
+            nohup bash -c "docker build -t '$IMAGE_URI' -f '{{.DOCKERFILE_PATH}}' '$(dirname {{.DOCKERFILE_PATH}})' && docker push '$IMAGE_URI' && echo '[ray] ✓ vLLM image pushed' >> /tmp/ray-build.log" > /tmp/ray-build.log 2>&1 &
+            echo "  ✓ Build started (PID $!, log: /tmp/ray-build.log)"
+            echo "  Run 'task ray:wait-image' to wait for completion."
           fi
       # 4. S3 CSI driver addon
       - cmd: |
@@ -2889,6 +2889,27 @@ tasks:
           aws s3 sync /tmp/tinyllama/ s3://{{.RAY_BUCKET}}/models/tinyllama/ --region {{.AWS_REGION}} --no-progress
           rm -rf /tmp/tinyllama
           echo "✓ TinyLlama model uploaded"
+
+
+  ray:wait-image:
+    desc: "Wait for the background vLLM image build to complete"
+    vars:
+      RAY_ECR_REPO: "{{.RESOURCE_PREFIX}}-ray-vllm-custom"
+    cmds:
+      - cmd: |
+          echo "Waiting for vLLM image build..."
+          for i in $(seq 1 60); do
+            if aws ecr describe-images --repository-name "{{.RAY_ECR_REPO}}" --image-ids imageTag=latest --region {{.AWS_REGION}} >/dev/null 2>&1; then
+              echo "✓ vLLM image ready in ECR"
+              exit 0
+            fi
+            if [ -f /tmp/ray-build.log ]; then
+              tail -1 /tmp/ray-build.log
+            fi
+            sleep 10
+          done
+          echo "✗ Timeout waiting for image (check /tmp/ray-build.log)"
+          exit 1
 
   hub:destroy-addons:
     desc: Remove all addons from the hub cluster (no git changes needed)
