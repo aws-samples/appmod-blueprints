@@ -972,6 +972,12 @@ tasks:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.endpoint' --output text
       ARGOCD_ROLE_ARN:
         sh: aws iam get-role --role-name {{.HUB_CLUSTER_NAME}}-argocd-role --query 'Role.Arn' --output text 2>/dev/null || echo ""
+    status:
+      # Skip if the cluster secret already has the correct server ARN — avoids triggering
+      # a 20+ minute ArgoCD cache invalidation on every re-run of task install.
+      - |
+        CURRENT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get secret {{.HUB_CLUSTER_NAME}} -n argocd -o jsonpath='{.data.server}' 2>/dev/null | base64 -d 2>/dev/null)
+        [ "$CURRENT" = "{{.CLUSTER_ARN}}" ]
       ADMIN_ROLE_NAME:
         sh: yq '.hub.adminRoleName // "Admin"' {{.CONFIG_FILE}}
       # Edge metadata — populated by hub:ingress + hub:cloudfront before hub:seed runs.
@@ -1063,26 +1069,36 @@ tasks:
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to sync
+    vars:
+      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
     cmds:
       - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Waiting for apps to appear...{{.C_RESET}}\n'
       - |
-        for i in $(seq 1 30); do
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
-          [ "$TOTAL" -gt 3 ] && break
-          sleep 10
+        TIMEOUT=300; ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          [ "$TOTAL" -gt 3 ] && printf '{{.C_INFO}}  %s apps detected{{.C_RESET}}\n' "$TOTAL" && break
+          printf '{{.C_INFO}}  %s apps so far, waiting...{{.C_RESET}}\n' "$TOTAL"
+          sleep 10; ELAPSED=$((ELAPSED + 10))
         done
       - printf '{{.C_STEP}}▸ Waiting for apps to sync...{{.C_RESET}}\n'
       - |
-        TIMEOUT=1800; ELAPSED=0
+        TIMEOUT=1800; INTERVAL=15; ELAPSED=0
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
-          SYNCED=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '{print $2}' | grep -c "Synced" || true)
+          APP_OUTPUT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null || echo "")
+          TOTAL=$(echo "$APP_OUTPUT" | awk '$2 != "Unknown" && NF>0' | wc -l | tr -d ' ')
+          SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
+          UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
           OUTOFSYNC=$((TOTAL - SYNCED))
-          printf '{{.C_INFO}}  %s/%s synced (%ss){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$ELAPSED"
-          [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le 2 ] && break
-          sleep 15; ELAPSED=$((ELAPSED + 15))
+          printf '{{.C_INFO}}  Apps: %s/%s synced, %s unknown, %s out-of-sync (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "$ELAPSED"
+          if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
+            printf '{{.C_OK}}✓ All %s apps synced (within %s tolerance, %s unknown).{{.C_RESET}}\n' "$SYNCED" "{{.MAX_OUTOFSYNC}}" "$UNKNOWN"
+            break
+          fi
+          sleep $INTERVAL; ELAPSED=$((ELAPSED + INTERVAL))
         done
+        [ $ELAPSED -ge $TIMEOUT ] && printf '{{.C_WARN}}⚠ Sync wait timed out after %ss — continuing.{{.C_RESET}}\n' "$TIMEOUT" || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   status:
