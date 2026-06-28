@@ -835,6 +835,8 @@ tasks:
           u1pat.scopes = ['api','write_repository']
           u1pat.expires_at = 365.days.from_now
           u1pat.save!
+          # Output the plaintext token on creation (only available once)
+          puts 'GIT_TOKEN=' + (u1pat.token || '')
           %w[fleet-config java rust golang dotnet next-js].each do |repo|
             p = Project.find_by(path: repo, namespace_id: u.namespace_id)
             if p.nil?
@@ -845,6 +847,18 @@ tasks:
           end
           puts 'init done'
         " 2>&1 | tail -20 || true
+        # Capture user1 PAT and update git_token in peeks-hub/secrets for webhook creation
+        GIT_TOKEN=$(docker exec gitlab-gitlab-1 gitlab-rails runner '
+          u = User.find_by(username: "user1")
+          pat = u&.personal_access_tokens&.find_by(name: "workshop-token")
+          puts pat ? pat.token.to_s : ""
+        ' 2>/dev/null | tail -1)
+        if [ -n "$GIT_TOKEN" ]; then
+          SECRET_KEY="{{.HUB_CLUSTER_NAME}}/secrets"
+          EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text 2>/dev/null || echo "{}")
+          UPDATED=$(echo "$EXISTING" | python3 -c "import json,sys; d=json.load(sys.stdin); d['git_token']='$GIT_TOKEN'; print(json.dumps(d))" 2>/dev/null)
+          [ -n "$UPDATED" ] && aws secretsmanager put-secret-value --secret-id "$SECRET_KEY" --secret-string "$UPDATED" --region {{.AWS_REGION}} >/dev/null 2>&1 && printf '  git_token updated in peeks-hub/secrets\n' || true
+        fi
         WORKSHOP_DIR="$HOME/environment/{{.WORKING_REPO}}"
         for REPO in {{.REPOS}}; do
           REMOTE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/$REPO.git"
