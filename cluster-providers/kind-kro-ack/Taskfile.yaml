@@ -131,6 +131,16 @@ tasks:
     internal: true
     deps:
       - hub:restart-identity-pods
+      - install:phase1-observability-bg
+
+  install:phase1-observability-bg:
+    internal: true
+    desc: Seed observability in background — non-blocking so slow AMP provisioning doesn't delay install
+    cmds:
+      - |
+        REPO_ROOT="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}"
+        ( cd "$REPO_ROOT" && task kind-kro-ack:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &
+        printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'
 
   install:phase1b-parallel:
     internal: true
