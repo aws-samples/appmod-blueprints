@@ -3109,7 +3109,9 @@ spec:
         - server
         - --configmap=workflow-controller-configmap
         - --auth-mode=client
+        {{- if ne (default "domain" .Values.exposure_mode) "cloudfront" }}
         - --auth-mode=sso
+        {{- end }}
         - "--base-href=/argo-workflows/"
         - "--secure=false"
         - "--loglevel"
