@@ -51,6 +51,7 @@ argo-workflows:
         values: ['true']
   valuesObject:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    gitlab_domain_name: '{{.metadata.annotations.gitlab_domain_name}}'
     exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
     aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
