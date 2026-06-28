@@ -317,7 +317,12 @@ tasks:
           cd "$TMP"
           git init -q && git add -A && git commit -qm "init" 2>/dev/null || true
           git remote add origin "$REMOTE_URL"
-          git push -f origin HEAD:main
+          REMOTE_EMPTY=$(git ls-remote "$REMOTE_URL" HEAD 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$REMOTE_EMPTY" = "0" ]; then
+            git push -f origin HEAD:main
+          else
+            echo "  skipped (already populated): $REPO"
+          fi
           cd - >/dev/null; rm -rf "$TMP"
           echo "  seeded: $REPO"
         done
