@@ -856,6 +856,11 @@ tasks:
           [ -d "$SRC" ] || continue
           TMP=$(mktemp -d)
           cp -r "$SRC/." "$TMP/"
+          # Also seed Backstage templates into fleet-config so Backstage catalog works in cloudfront mode
+          if [ "$REPO" = "fleet-config" ] && [ -d "$WORKSHOP_DIR/platform/backstage/templates" ]; then
+            mkdir -p "$TMP/platform/backstage"
+            cp -r "$WORKSHOP_DIR/platform/backstage/templates" "$TMP/platform/backstage/"
+          fi
           cd "$TMP"
           git init -q && git add -A && git commit -qm "init" 2>/dev/null || true
           git remote add origin "$REMOTE_URL"
