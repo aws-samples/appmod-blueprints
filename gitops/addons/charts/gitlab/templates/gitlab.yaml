@@ -67,6 +67,8 @@ spec:
             external_url 'https://{{ .Values.domain_name }}'
             gitlab_rails['gitlab_shell_ssh_port'] = 22
             gitlab_rails['gitlab_shell_git_timeout'] = 800
+            gitlab_rails['initial_default_branch_protection'] = 0
+            gitlab_rails['password_authentication_enabled_for_git'] = true
 {{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
             gitlab_rails['enabled_git_access_protocol'] = 'http'
 {{- else }}
