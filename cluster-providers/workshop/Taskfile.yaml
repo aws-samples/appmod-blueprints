@@ -298,7 +298,7 @@ tasks:
           puts 'init done'
         " 2>&1 | tail -20 || true
         WORKSHOP_DIR="$HOME/environment/{{.WORKING_REPO}}"
-        ROOT_TOKEN=$(docker exec gitlab-gitlab-1 gitlab-rails runner "puts User.find(1).personal_access_tokens.find_by(name: 'initial-root-token')&.token.to_s" 2>/dev/null | tail -1)
+        ROOT_TOKEN=$(docker exec gitlab-gitlab-1 gitlab-rails runner "puts User.find(1).personal_access_tokens.find_or_initialize_by(name: 'root-api').tap{|p| p.scopes=['api','sudo']; p.expires_at=365.days.from_now; p.save!}.token" 2>/dev/null | tail -1)
         for REPO in {{.REPOS}}; do
           REMOTE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/$REPO.git"
           # Unprotect via API (synchronous, handles Sidekiq async protection)
