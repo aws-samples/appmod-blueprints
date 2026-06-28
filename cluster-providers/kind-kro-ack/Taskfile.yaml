@@ -117,6 +117,7 @@ tasks:
       - task: hub:wait-for-sync
       - task: install:phase1-parallel
       - task: hub:wait-for-full-sync
+      - task: install:phase1b-parallel
       - task: hub:set-overlay-repo
       - task: install:phase2-parallel
       - |
@@ -130,6 +131,11 @@ tasks:
     internal: true
     deps:
       - hub:restart-identity-pods
+
+  install:phase1b-parallel:
+    internal: true
+    deps:
+      - workshop:gitlab:init-ec2
 
   install:phase2-parallel:
     internal: true
