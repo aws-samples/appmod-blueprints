@@ -298,8 +298,14 @@ tasks:
           puts 'init done'
         " 2>&1 | tail -20 || true
         WORKSHOP_DIR="$HOME/environment/{{.WORKING_REPO}}"
+        ROOT_TOKEN=$(docker exec gitlab-gitlab-1 gitlab-rails runner "puts User.find(1).personal_access_tokens.find_by(name: 'initial-root-token')&.token.to_s" 2>/dev/null | tail -1)
         for REPO in {{.REPOS}}; do
           REMOTE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/$REPO.git"
+          # Unprotect via API (synchronous, handles Sidekiq async protection)
+          if [ -n "$ROOT_TOKEN" ]; then
+            curl -sf -X DELETE -H "PRIVATE-TOKEN: $ROOT_TOKEN" \
+              "https://{{.GITLAB_CF_DOMAIN}}/api/v4/projects/{{.GIT_USERNAME}}%2F$REPO/protected_branches/main" 2>/dev/null || true
+          fi
           if [ "$REPO" = "fleet-config" ]; then
             SRC="$WORKSHOP_DIR/gitops/fleet"
           else
