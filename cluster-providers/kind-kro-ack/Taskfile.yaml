@@ -115,6 +115,7 @@ tasks:
       - task: hub:cloudfront
       - task: hub:seed
       - task: hub:wait-for-sync
+        vars: { MAX_OUTOFSYNC: "20" }
       - task: install:phase1-parallel
       - task: hub:wait-for-full-sync
       - task: install:phase1b-parallel
