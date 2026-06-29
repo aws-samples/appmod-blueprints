@@ -1221,7 +1221,7 @@ tasks:
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
-            vpcCidr: "10.$(shuf -i 1-254 -n 1).0.0/16"
+            vpcCidr: "10.$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}').0.0/16"
             kubernetesVersion: "{{.K8S_VERSION}}"
             autoMode: true
             resourcePrefix: {{.RESOURCE_PREFIX}}
@@ -1403,17 +1403,13 @@ tasks:
         cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters/{{.CLUSTER}}.json" <<EOF
         {"clusterName": "{{.CLUSTER}}"}
         EOF
-        # Single random second octet for the VPC and all subnets so subnet CIDRs
-        # stay within the VPC CIDR (a per-line shuf produced out-of-range subnets,
-        # e.g. VPC 10.71.0.0/16 with subnets in 10.178/10.120/... -> InvalidSubnet.Range).
-        # Idempotency: only generate a (new random) CIDR when this spoke is not
-        # already enabled. Re-running install must NOT churn the CIDR — an EC2 VPC
-        # cidrBlock is immutable, so a new octet would force VPC recreation/orphans.
+        # Deterministic second octet derived from cluster name (stable across re-runs).
+        # Uses cksum to hash the name into a value 2-254.
         KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
         if [ -f "$KRO_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}".cidr.vpcCidr' "$KRO_VALUES" >/dev/null 2>&1; then
           echo "  Spoke {{.CLUSTER}} already has a CIDR — keeping existing values (idempotent)."
         else
-          OCTET=$(shuf -i 2-254 -n 1)
+          OCTET=$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}')
           cat > "$KRO_VALUES" <<EOF
         clusters:
           {{.CLUSTER}}:
