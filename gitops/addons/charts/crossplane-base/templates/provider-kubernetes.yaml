@@ -1,4 +1,15 @@
 {{- if .Values.providers.kubernetes.version }}
+# Ensure the argocd namespace exists on spoke clusters so that the
+# Role/RoleBinding below can be applied without failure.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/managed-by: crossplane-base
+---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
