@@ -70,6 +70,8 @@ tasks:
       - task: ":{{.PROVIDER}}:ray:wait-image"
       # Download ML models to S3
       - task: ":{{.PROVIDER}}:ray:prestage-models"
+      # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
+      - task: setup-env
       - printf '{{.C_OK}}✓ Workshop install complete.{{.C_RESET}}\n'
 
   # ============================================================
@@ -122,6 +124,47 @@ tasks:
     desc: Workshop post-install steps (IDC/Keycloak federation for ArgoCD SSO)
     cmds:
       - task: idc:configure
+
+
+  setup-env:
+    desc: Write platform URLs and credentials to ~/.bashrc.d/platform.sh (workshop IDE env vars)
+    vars:
+      ARGOCD_URL:
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
+      CF_DOMAIN:
+        sh: yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}}
+      USER_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // ""'
+      KC_ADMIN_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.keycloak_admin_password // ""'
+    cmds:
+      - |
+        PLATFORM_FILE="$HOME/.bashrc.d/platform.sh"
+        set_var() { local n="$1" v="$2"
+          grep -q "^export ${n}=" "$PLATFORM_FILE" 2>/dev/null             && sed -i "s|^export ${n}=.*|export ${n}=\"${v}\"|" "$PLATFORM_FILE"             || echo "export ${n}=\"${v}\"" >> "$PLATFORM_FILE"
+        }
+        CF="{{.CF_DOMAIN}}"
+        ARGOCD="{{.ARGOCD_URL}}"
+        ARGOCD_SERVER=$(echo "$ARGOCD" | sed 's|https://||;s|/.*||')
+        UP="{{.USER_PASSWORD}}"
+        KC="{{.KC_ADMIN_PASSWORD}}"
+        set_var BACKSTAGE_URL "https://${CF}/backstage"
+        set_var KEYCLOAK_ADMIN_URL "https://${CF}/keycloak/admin"
+        set_var WORKFLOWS_URL "https://${CF}/argo-workflows"
+        set_var KARGO_URL "https://${CF}"
+        set_var GRAFANA_URL "https://${CF}/grafana"
+        set_var GITLAB_URL "https://${CF}"
+        set_var GITLAB_DOMAIN "${CF}"
+        set_var ARGOCD_URL "${ARGOCD}"
+        set_var ARGOCD_SERVER "${ARGOCD_SERVER}"
+        set_var ARGOCD_OPTS "--grpc-web"
+        set_var USER_PASSWORD "${UP}"
+        set_var USER1_PASSWORD "${UP}"
+        set_var GIT_TOKEN "${UP}"
+        set_var GIT_USERNAME "user1"
+        set_var KEYCLOAK_ADMIN_PASSWORD "${KC}"
+        printf '{{.C_OK}}✓ Platform env vars written to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
+        source "$PLATFORM_FILE" 2>/dev/null || true
 
   # ============================================================
   # IDC / KEYCLOAK FEDERATION
