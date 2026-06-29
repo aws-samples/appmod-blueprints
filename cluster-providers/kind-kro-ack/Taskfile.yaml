@@ -844,7 +844,7 @@ tasks:
         CF_DOMAIN=$(echo "$DIST_OUT" | awk '{print $2}')
         printf '{{.C_OK}}✓ CloudFront created: %s{{.C_RESET}}\n' "$CF_DOMAIN"
         # Store domain in config for hub:seed to use
-        yq -i ".cloudfront.domain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
+        yq -i ".cloudfront.cloudfrontDomain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
         rm -f /tmp/hub-vpc-origin-id
 
   hub:seed:
