@@ -245,6 +245,14 @@ tasks:
           [ "$i" -eq 120 ] && { printf '  ⚠ GitLab not ready after 20min — continuing anyway.\n'; }
           sleep 10
         done
+        # Run reconfigure to ensure internal secrets (workhorse/gitaly-hooks) are consistent.
+        # On first boot these can be mismatched, causing git push pre-receive hooks to fail.
+        docker exec gitlab-gitlab-1 gitlab-ctl reconfigure 2>/dev/null | tail -3 || true
+        # Wait for GitLab to be ready again after reconfigure
+        for i in $(seq 1 30); do
+          curl -sf --max-time 5 "$GITLAB_URL/users/sign_in" >/dev/null 2>&1 && break
+          sleep 10
+        done
         ROOT_TOKEN="root-{{.GIT_PASSWORD}}"
         # Bootstrap via gitlab-rails runner: create root PAT, user1, repos, unprotect branches.
         # Shell variables (ROOT_TOKEN, GIT_USERNAME, GIT_PASSWORD) are expanded by bash
