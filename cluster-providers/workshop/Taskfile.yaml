@@ -330,7 +330,8 @@ tasks:
             u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
             u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
           elsif u && !u.persisted?
-            raise "user1 not persisted: #{u.errors.full_messages.join(', ')}"
+            $stderr.puts 'ERROR: user1 not persisted: ' + u.errors.full_messages.inspect
+            exit 1
           end
           if u.namespace_id.nil?
             org_id = Organizations::Organization.find_by(id: 1)&.id || 1
