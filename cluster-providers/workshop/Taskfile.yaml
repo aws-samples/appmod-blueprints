@@ -278,7 +278,11 @@ tasks:
             echo "{{.DOMAIN}}"
           fi
       GIT_PASSWORD:
-        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // "{{.HUB_CLUSTER_NAME}}"')
+        sh: |
+          P=$(yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$')
+          [ -z "$P" ] && P=$(aws secretsmanager get-secret-value --secret-id peeks-ide-password --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.password // empty')
+          [ -z "$P" ] && P=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty')
+          echo "$P"
       GIT_USERNAME:
         sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
       REPOS:
@@ -407,7 +411,11 @@ tasks:
       GIT_USERNAME:
         sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
       GIT_PASSWORD:
-        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // "{{.HUB_CLUSTER_NAME}}"')
+        sh: |
+          P=$(yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$')
+          [ -z "$P" ] && P=$(aws secretsmanager get-secret-value --secret-id peeks-ide-password --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.password // empty')
+          [ -z "$P" ] && P=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty')
+          echo "$P"
       REPOS:
         sh: echo "fleet-config java rust golang dotnet next-js"
     cmds:
