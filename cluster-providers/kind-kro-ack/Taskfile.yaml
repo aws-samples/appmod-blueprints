@@ -746,9 +746,10 @@ tasks:
         sh: aws elbv2 describe-load-balancers --names "{{.RESOURCE_PREFIX}}-hub-ingress" --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo ""
       VPC_ORIGIN_NAME: "{{.RESOURCE_PREFIX}}-hub-vpc-origin"
     status:
-      # Skip entirely when not in cloudfront mode (idempotent no-op for tls)
-      - test "{{.INGRESS_MODE}}" != "cloudfront"
-      - aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.RESOURCE_PREFIX}}-hub-ingress'].Id" --output text | grep -q .
+      # Skip when not in cloudfront mode OR when distribution already exists
+      - |
+        test "{{.INGRESS_MODE}}" != "cloudfront" || \
+        aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.RESOURCE_PREFIX}}-hub-ingress'].Id" --output text 2>/dev/null | grep -q .
     cmds:
       - |
         if [ "{{.INGRESS_MODE}}" != "cloudfront" ]; then
