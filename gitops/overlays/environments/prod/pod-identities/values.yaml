@@ -1,5 +1,46 @@
-# Spoke prod clusters get their own ESO pod identity provisioned by
-# Crossplane on the hub (chart default is false; opt in here).
+# Spoke prod Pod Identity bootstrap.
+#
+# The hub's Crossplane provisions ONLY the foundational provider identities
+# that have a genuine chicken-and-egg on the spoke:
+#   - provider-aws-iam : needed before any IAM Role can be created
+#   - provider-aws-eks : needed before any PodIdentityAssociation can be created
+#   - external-secrets : foundational; reads Secrets Manager before Crossplane
+#
+# Everything else self-provisions its own IAM Role + PodIdentityAssociation
+# via its own chart (crossplane-base for ec2/amp/grafana providers; workload
+# charts like bifrost and agentcore for their own identities), reconciled by
+# these credentialed iam/eks providers. Do not add per-workload identities
+# here — that path is reserved for the bootstrap providers only.
 identities:
   eso:
     enabled: true
+  crossplane-iam:
+    enabled: true
+    roleName: CrossplaneIAMProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-iam
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-iam-provider
+    policy:
+      name: CrossplaneIAMProviderPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
+        }
+  crossplane-eks:
+    enabled: true
+    roleName: CrossplaneEKSProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-eks
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-eks-provider
+    policy:
+      name: CrossplaneEKSProviderPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
+        }

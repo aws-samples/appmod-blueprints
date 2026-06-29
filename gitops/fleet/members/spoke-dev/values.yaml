@@ -5,4 +5,5 @@ clusterName: spoke-dev
 # region: us-east-1
 labels:
   environment: dev
-  tenant: workshop
+  tenant: default
+  client_provisioner: keycloak

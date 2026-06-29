@@ -1,0 +1,69 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: client-provisioner
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - matrix:
+        generators:
+          # Outer: the hub cluster (source of repo URLs, region, account, etc.)
+          - clusters:
+              selector:
+                matchLabels:
+                  fleet_member: control-plane
+          # Inner: one values file per spoke fleet member
+          - git:
+              repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
+              revision: '{{ .metadata.annotations.fleetRepoRevision }}'
+              files:
+                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/members/*/values.yaml'
+  # Only generate an Application when the fleet member has a client_provisioner declared
+  selector:
+    matchExpressions:
+      - key: client_provisioner
+        operator: Exists
+  template:
+    metadata:
+      name: 'client-provisioner-{{ .clusterName }}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      sources:
+        - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+          targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
+          # Path selects the provisioner chart by type, e.g. platform-charts/keycloak-client-provisioner
+          path: 'platform-charts/{{ index .labels "client_provisioner" }}-client-provisioner'
+          helm:
+            releaseName: 'client-provisioner-{{ .clusterName }}'
+            valuesObject:
+              environment: '{{ index .labels "environment" }}'
+              region: '{{ .metadata.annotations.aws_region }}'
+              clusterName: '{{ .metadata.annotations.aws_cluster_name }}'
+              keycloakUrl: 'http://keycloak.keycloak.svc.cluster.local:8080/keycloak'
+              secretPathPrefix: '{{ or (index .metadata.annotations "resource_prefix") "oidc" }}'
+              # Realm defaults to the shared "platform" realm; a fleet member can
+              # override per hub/spoke by declaring oidc.realm in its values file.
+              realmName: '{{ dig "oidc" "realm" "platform" . }}'
+              # Generic passthrough of whatever clients the fleet member declares.
+              # Not provisioner-specific — the fleet repo owns the client list.
+              # Serialized to JSON here; the chart normalizes string-or-list.
+              clients: '{{ index . "clients" | default list | toJson }}'
+      # The Job runs on the hub where Keycloak lives, not on the spoke
+      destination:
+        name: '{{ .name }}'
+        namespace: keycloak
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

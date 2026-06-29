@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-client-provisioner-{{ .Values.environment }}
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+data:
+  provision.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    # ── ensure dependencies (amazon/aws-cli image lacks jq) ─────────────────────
+    if ! command -v jq >/dev/null 2>&1; then
+      dnf install -y jq >/dev/null 2>&1 \
+        || (curl -fsSL https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 \
+              -o /usr/local/bin/jq && chmod +x /usr/local/bin/jq)
+    fi
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    kc_post() {
+      local endpoint=$1 payload=$2 label=$3
+      HTTP_STATUS=$(curl -sSf -w "%{http_code}" -o /tmp/kc_resp.json \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${KC_TOKEN}" \
+        -X POST --data @"${payload}" \
+        "${KC_URL}${endpoint}" || true)
+      case "$HTTP_STATUS" in
+        201|200) ;;
+        409) echo "  [skip] ${label} already exists" ;;
+        *)   echo "  [error] ${label}: HTTP ${HTTP_STATUS}"; cat /tmp/kc_resp.json; exit 1 ;;
+      esac
+    }
+
+    kc_get() {
+      curl -sSf \
+        -H "Authorization: Bearer ${KC_TOKEN}" \
+        "${KC_URL}$1" | jq -r "$2"
+    }
+
+    kc_get_client_id() {
+      kc_get "/admin/realms/${REALM}/clients?clientId=$1" '.[0].id'
+    }
+
+    sm_put() {
+      local path=$1 json=$2
+      if aws secretsmanager describe-secret --secret-id "${path}" \
+           --region "${AWS_REGION}" >/dev/null 2>&1; then
+        aws secretsmanager put-secret-value \
+          --secret-id "${path}" \
+          --secret-string "${json}" \
+          --region "${AWS_REGION}"
+      else
+        aws secretsmanager create-secret \
+          --name "${path}" \
+          --secret-string "${json}" \
+          --region "${AWS_REGION}"
+      fi
+    }
+
+    # ── authenticate ───────────────────────────────────────────────────────────
+
+    ADMIN_PASSWORD=$(cat /var/secrets/KC_BOOTSTRAP_ADMIN_PASSWORD)
+    KC_TOKEN=$(curl -sSf -X POST \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      --data-urlencode "username=admin" \
+      --data-urlencode "password=${ADMIN_PASSWORD}" \
+      --data-urlencode "grant_type=password" \
+      --data-urlencode "client_id=admin-cli" \
+      "${KC_URL}/realms/master/protocol/openid-connect/token" | jq -r '.access_token')
+
+    echo "Authenticated to Keycloak as admin"
+
+    # ── ensure realm exists ────────────────────────────────────────────────────
+
+    HTTP_STATUS=$(curl -sSf -w "%{http_code}" -o /dev/null \
+      -H "Authorization: Bearer ${KC_TOKEN}" \
+      "${KC_URL}/admin/realms/${REALM}" || echo "000")
+
+    if [ "$HTTP_STATUS" != "200" ]; then
+      echo "Creating realm ${REALM}"
+      echo "{\"realm\":\"${REALM}\",\"enabled\":true,\"accessTokenLifespan\":3600}" \
+        > /tmp/realm.json
+      kc_post "/admin/realms" "/tmp/realm.json" "realm ${REALM}"
+    else
+      echo "Realm ${REALM} already exists"
+    fi
+
+    # ── provision clients ──────────────────────────────────────────────────────
+
+    ISSUER="${KC_URL}/realms/${REALM}"
+    JWKS_URI="${ISSUER}/protocol/openid-connect/certs"
+    TOKEN_ENDPOINT="${ISSUER}/protocol/openid-connect/token"
+    GROUPS_CLAIM="${GROUPS_CLAIM_DEFAULT:-realm_access.roles}"
+
+    echo "CLIENTS_JSON: ${CLIENTS_JSON}"
+
+    echo "${CLIENTS_JSON}" | jq -c '.[]' | while IFS= read -r client; do
+      NAME=$(echo "$client"        | jq -r '.name')
+      TYPE=$(echo "$client"        | jq -r '.type // "confidential"')
+      AUDIENCE=$(echo "$client"    | jq -r '.audience // "\(.name)-\(env.ENVIRONMENT)"')
+      REDIRECT=$(echo "$client"    | jq -r '[.redirectUris // [] | .[]] | @json')
+      FLOWS=$(echo "$client"       | jq -r '.flows // ["authorization_code"] | @json')
+      CLIENT_ID="${NAME}-${ENVIRONMENT}"
+      SECRET_PATH="${SECRET_PREFIX}/${ENVIRONMENT}/oidc/${NAME}"
+
+      STD_FLOW=$(echo "$FLOWS"     | jq 'map(. == "authorization_code") | any | if . then "true" else "false" end')
+      SVC_ACCT=$(echo "$FLOWS"     | jq 'map(. == "client_credentials")  | any | if . then "true" else "false" end')
+      DIRECT=$(echo "$FLOWS"       | jq 'map(. == "direct_access")       | any | if . then "true" else "false" end')
+      PUBLIC=$([ "$TYPE" = "public" ] && echo "true" || echo "false")
+
+      echo "Provisioning client: ${CLIENT_ID}"
+      jq -n \
+        --arg cid "${CLIENT_ID}" \
+        --argjson pub "${PUBLIC}" \
+        --argjson std "${STD_FLOW}" \
+        --argjson svc "${SVC_ACCT}" \
+        --argjson direct "${DIRECT}" \
+        --argjson redirect "${REDIRECT}" \
+        '{clientId:$cid,protocol:"openid-connect",publicClient:$pub,standardFlowEnabled:$std,serviceAccountsEnabled:$svc,directAccessGrantsEnabled:$direct,redirectUris:$redirect}' \
+        > /tmp/client.json
+      kc_post "/admin/realms/${REALM}/clients" "/tmp/client.json" "client ${CLIENT_ID}"
+
+      # Fetch generated client secret (empty for public clients)
+      KC_CLIENT_UUID=$(kc_get_client_id "${CLIENT_ID}")
+      if [ "$TYPE" = "confidential" ]; then
+        CLIENT_SECRET=$(kc_get "/admin/realms/${REALM}/clients/${KC_CLIENT_UUID}/client-secret" '.value')
+      else
+        CLIENT_SECRET=""
+      fi
+
+      # Write contract to Secrets Manager
+      CONTRACT=$(jq -n \
+        --arg cid    "${CLIENT_ID}" \
+        --arg csec   "${CLIENT_SECRET}" \
+        --arg issuer "${ISSUER}" \
+        --arg jwks   "${JWKS_URI}" \
+        --arg tok    "${TOKEN_ENDPOINT}" \
+        --arg aud    "${AUDIENCE}" \
+        --arg gclaim "${GROUPS_CLAIM}" \
+        '{client_id:$cid,client_secret:$csec,issuer:$issuer,jwks_uri:$jwks,token_endpoint:$tok,audience:$aud,groups_claim:$gclaim}')
+
+      echo "Writing contract to ${SECRET_PATH}"
+      sm_put "${SECRET_PATH}" "${CONTRACT}"
+      echo "  ✓ ${CLIENT_ID}"
+    done
+
+    echo "Provisioning complete for environment: ${ENVIRONMENT}"
