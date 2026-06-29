@@ -1830,6 +1830,22 @@ platform-manifests-bootstrap:
     gpu:
       enabled: true
 
+platform-manifests-post:
+  enabled: false
+  namespace: external-secrets
+  defaultVersion: '0.1.0'
+  path: '{{.metadata.annotations.addons_repo_basepath}}charts/platform-manifests-post'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '1'  # After external-secrets is running
+  syncOptions:
+    - ServerSideApply=true
+    - SkipDryRunOnMissingResource=true
+  selector:
+    matchExpressions:
+      - key: enable_external_secrets
+        operator: In
+        values: ['true']
+
 platform-manifests:
   enabled: false
   namespace: default
