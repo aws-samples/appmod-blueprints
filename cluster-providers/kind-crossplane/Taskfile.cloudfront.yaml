@@ -34,7 +34,9 @@ tasks:
   setup-exposure:
     desc: Pre-create ALB and CloudFront distributions (cloudfront mode only, skipped if cloudfrontDomain already set in config)
     status:
-      - '[ "{{.EXPOSURE_MODE}}" != "cloudfront" ] || aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='"'"'{{.HUB_CLUSTER_NAME}}-platform'"'"'].Id" --output text | grep -q .'
+      - |
+        [ "{{.EXPOSURE_MODE}}" != "cloudfront" ] || \
+        aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].Id" --output text | grep -q .
     cmds:
       - task: create-alb
       - task: hub-distribution
