@@ -172,6 +172,7 @@ spec:
           accountId: ${schema.spec.accountId}
           managementAccountId: ${schema.spec.managementAccountId}
           argoCdHubRoleArn: ${schema.spec.argoCdHubRoleArn}
+          argoCdCapabilityRoleArn: ${schema.spec.argoCdCapabilityRoleArn}
           k8sVersion: ${schema.spec.k8sVersion}
           adminRoleName: ${schema.spec.adminRoleName}
           adminInstanceRoleName: ${schema.spec.adminInstanceRoleName}
