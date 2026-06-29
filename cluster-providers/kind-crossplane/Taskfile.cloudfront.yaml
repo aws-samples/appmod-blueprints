@@ -97,6 +97,8 @@ tasks:
         CF_DOMAIN=$(aws cloudfront create-distribution --distribution-config "$CF_CONFIG" --query "Distribution.DomainName" --output text)
         mkdir -p {{.ROOT_DIR}}/private
         echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/cloudfront-domain
+        # Write cloudfrontDomain into config.local.yaml so all tasks use the ALB domain
+        yq -i ".cloudfront.cloudfrontDomain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
         echo "CloudFront: $CF_DOMAIN (copy this to config.local.yaml cloudfront.cloudfrontDomain)"
       - printf '{{.C_OK}}✓ Platform CloudFront ready.{{.C_RESET}}\n'
 # gitlab-nlb and gitlab-distribution removed — GitLab CloudFront is now managed by CDK (team-stack.ts).
