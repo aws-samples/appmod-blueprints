@@ -55,9 +55,11 @@ tasks:
         sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
     cmds:
       - printf '{{.C_STEP}}▸ Workshop install starting...{{.C_RESET}}\n'
+      # Initialize GitLab FIRST — it starts at EC2 boot and is ready before platform install.
+      # This ensures fleet-config exists when hub:set-overlay-repo and spokes run inside
+      # {{.PROVIDER}}:install (which needs fleet-config during phase2).
+      - task: gitlab:init-ec2
       # Platform install (EKS cluster, addons, spokes)
-      # Note: gitlab:init-ec2 is called from within {{.PROVIDER}}:install:phase1b-parallel
-      # via workshop:gitlab:init-ec2, so it runs at the right time (after hub sync, before overlay wiring)
       - task: ":{{.PROVIDER}}:install"
       - printf '{{.C_OK}}✓ Platform install complete.{{.C_RESET}}\n'
       # Ray ML infrastructure (image builds in background)

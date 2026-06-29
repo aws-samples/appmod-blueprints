@@ -147,8 +147,6 @@ tasks:
     deps:
       - hub:restart-langfuse
       - urls
-    cmds:
-      - task: ":workshop:gitlab:init-ec2"
 
   install:phase2-parallel:
     internal: true
