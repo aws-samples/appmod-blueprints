@@ -55,18 +55,18 @@ tasks:
         sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
     cmds:
       - printf '{{.C_STEP}}▸ Workshop install starting...{{.C_RESET}}\n'
-      # 1. Platform install (EKS cluster, addons, spokes)
+      # Platform install (EKS cluster, addons, spokes)
+      # Note: gitlab:init-ec2 is called from within {{.PROVIDER}}:install:phase1b-parallel
+      # via workshop:gitlab:init-ec2, so it runs at the right time (after hub sync, before overlay wiring)
       - task: ":{{.PROVIDER}}:install"
       - printf '{{.C_OK}}✓ Platform install complete.{{.C_RESET}}\n'
-      # 2. GitLab init (create repos, seed content)
-      - task: gitlab:init-ec2
-      # 3. Ray ML infrastructure (image builds in background)
+      # Ray ML infrastructure (image builds in background)
       - task: ":{{.PROVIDER}}:ray:setup"
-      # 4. IDC/Keycloak federation (ArgoCD SSO)
+      # IDC/Keycloak federation (ArgoCD SSO)
       - task: post-install
-      # 5. Wait for Ray image to be ready
+      # Wait for Ray image to be ready
       - task: ":{{.PROVIDER}}:ray:wait-image"
-      # 6. Download ML models to S3
+      # Download ML models to S3
       - task: ":{{.PROVIDER}}:ray:prestage-models"
       - printf '{{.C_OK}}✓ Workshop install complete.{{.C_RESET}}\n'
 
