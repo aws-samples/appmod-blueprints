@@ -291,41 +291,17 @@ tasks:
           [ "$i" -eq 120 ] && { printf '  ⚠ GitLab not ready after 20min — continuing anyway.\n'; }
           sleep 10
         done
-        # Run reconfigure to ensure internal secrets (workhorse/gitaly-hooks) are consistent.
-        # On first boot these can be mismatched, causing git push pre-receive hooks to fail.
-        docker exec gitlab-gitlab-1 gitlab-ctl reconfigure 2>/dev/null | tail -3 || true
-        # Wait for GitLab to be ready again after reconfigure
-        for i in $(seq 1 30); do
-          curl -sf --max-time 5 "$GITLAB_URL/users/sign_in" >/dev/null 2>&1 && break
+        # Wipe and restart GitLab to ensure internal secrets are consistent.
+        # docker compose down -v reinitializes gitaly/workhorse/gitlab-shell secrets
+        # which prevents the misleading "protected branch" error on git pushes.
+        set +e
+        cd /home/ec2-user/gitlab && docker compose down -v && docker compose up -d
+        printf '  Waiting for GitLab to reinitialize (~10min)...\n'
+        for i in $(seq 1 80); do
+          curl -sf --max-time 5 "$GITLAB_URL/users/sign_in" >/dev/null 2>&1 && printf '  GitLab ready.\n' && break
           sleep 10
         done
-        # Test if git HTTP push works (internal/allowed check). If not, wipe and restart.
-        # This detects the workhorse/gitaly-hooks secret mismatch that survives reconfigure.
-        set +e
-        _TEST_REPO=$(mktemp -d)
-        git init -q "$_TEST_REPO" && cd "$_TEST_REPO"
-        git commit --allow-empty -qm "test" 2>/dev/null || true
-        git remote add origin "http://root:{{.GIT_PASSWORD}}@localhost:8929/root/test-push-check.git" 2>/dev/null || true
-        # Create a test repo and push to it as root
-        docker exec gitlab-gitlab-1 gitlab-rails runner "
-          r = Project.find_by_full_path('root/test-push-check')
-          r ||= Projects::CreateService.new(User.find(1), name: 'test-push-check', path: 'test-push-check', visibility_level: 0, initialize_with_readme: false).execute
-          puts r.persisted? ? 'ok' : 'fail'
-        " 2>/dev/null | grep -q ok && \
-        git push -f origin HEAD:main >/dev/null 2>&1
-        PUSH_OK=$?
-        cd - >/dev/null; rm -rf "$_TEST_REPO"
-        docker exec gitlab-gitlab-1 gitlab-rails runner "Project.find_by_full_path('root/test-push-check')&.destroy" 2>/dev/null || true
         set -e
-        if [ "$PUSH_OK" -ne 0 ]; then
-          printf '{{.C_ERR}}⚠ GitLab internal/allowed broken — wiping and restarting...{{.C_RESET}}\n'
-          cd /home/ec2-user/gitlab && docker compose down -v && docker compose up -d
-          printf '  Waiting for GitLab to reinitialize (~10min)...\n'
-          for i in $(seq 1 80); do
-            curl -sf --max-time 5 "$GITLAB_URL/users/sign_in" >/dev/null 2>&1 && printf '  GitLab ready after reinit\n' && break
-            sleep 10
-          done
-        fi
         ROOT_TOKEN="root-{{.GIT_PASSWORD}}"
         # Bootstrap via gitlab-rails runner: create root PAT, user1, repos, unprotect branches.
         # Shell variables (ROOT_TOKEN, GIT_USERNAME, GIT_PASSWORD) are expanded by bash
