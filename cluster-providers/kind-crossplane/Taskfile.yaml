@@ -819,7 +819,9 @@ tasks:
               skip_confirmation: true
             }).execute
             u = User.find_by(username: '{{.GIT_USERNAME}}')
-          else
+          end
+          # Always ensure password is correctly hashed (CreateService may fail silently)
+          if u
             u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
             u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
           end
