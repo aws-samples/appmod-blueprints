@@ -326,9 +326,11 @@ tasks:
             u = svc.respond_to?(:payload) ? (svc.payload[:user] || User.find_by(username: '{{.GIT_USERNAME}}')) : User.find_by(username: '{{.GIT_USERNAME}}')
           end
           # Always ensure password is correctly hashed (CreateService may not hash correctly)
-          if u
+          if u && u.persisted?
             u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
             u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
+          elsif u && !u.persisted?
+            raise "user1 not persisted: #{u.errors.full_messages.join(', ')}"
           end
           if u.namespace_id.nil?
             org_id = Organizations::Organization.find_by(id: 1)&.id || 1
