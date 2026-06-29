@@ -139,6 +139,7 @@ tasks:
         sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.keycloak_admin_password // ""'
     cmds:
       - |
+        set +e
         PLATFORM_FILE="$HOME/.bashrc.d/platform.sh"
         set_var() { local n="$1" v="$2"
           grep -q "^export ${n}=" "$PLATFORM_FILE" 2>/dev/null             && sed -i "s|^export ${n}=.*|export ${n}=\"${v}\"|" "$PLATFORM_FILE"             || echo "export ${n}=\"${v}\"" >> "$PLATFORM_FILE"
