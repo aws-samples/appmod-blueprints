@@ -147,12 +147,6 @@ tasks:
     deps:
       - hub:restart-langfuse
       - urls
-      - gitlab:init-ec2
-
-  gitlab:init-ec2:
-    desc: Wait for GitLab CE on IDE EC2 to be ready and initialize (delegates to workshop provider)
-    cmds:
-      - cd {{.ROOT_DIR}} && task workshop:gitlab:init-ec2
 
   install:phase2-parallel:
     internal: true

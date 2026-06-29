@@ -415,7 +415,7 @@ tasks:
         done
         if [ -n "$FAILED" ]; then
           printf '{{.C_ERR}}⚠ Some GitLab repos were not cloned:%s{{.C_RESET}}\n' "$FAILED"
-          printf '{{.C_INFO}}  Re-run later: task kind-crossplane:gitlab:clone-repos{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Re-run later: task workshop:gitlab:clone-repos{{.C_RESET}}\n'
         else
           printf '{{.C_OK}}✓ GitLab repos cloned.{{.C_RESET}}\n'
         fi
