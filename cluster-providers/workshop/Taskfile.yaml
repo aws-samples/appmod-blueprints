@@ -301,6 +301,7 @@ tasks:
         done
         # Test if git HTTP push works (internal/allowed check). If not, wipe and restart.
         # This detects the workhorse/gitaly-hooks secret mismatch that survives reconfigure.
+        set +e
         _TEST_REPO=$(mktemp -d)
         git init -q "$_TEST_REPO" && cd "$_TEST_REPO"
         git commit --allow-empty -qm "test" 2>/dev/null || true
@@ -315,16 +316,15 @@ tasks:
         PUSH_OK=$?
         cd - >/dev/null; rm -rf "$_TEST_REPO"
         docker exec gitlab-gitlab-1 gitlab-rails runner "Project.find_by_full_path('root/test-push-check')&.destroy" 2>/dev/null || true
+        set -e
         if [ "$PUSH_OK" -ne 0 ]; then
           printf '{{.C_ERR}}⚠ GitLab internal/allowed broken — wiping and restarting...{{.C_RESET}}\n'
-          set +e
           cd /home/ec2-user/gitlab && docker compose down -v && docker compose up -d
           printf '  Waiting for GitLab to reinitialize (~10min)...\n'
           for i in $(seq 1 80); do
             curl -sf --max-time 5 "$GITLAB_URL/users/sign_in" >/dev/null 2>&1 && printf '  GitLab ready after reinit\n' && break
             sleep 10
           done
-          set -e
         fi
         ROOT_TOKEN="root-{{.GIT_PASSWORD}}"
         # Bootstrap via gitlab-rails runner: create root PAT, user1, repos, unprotect branches.
