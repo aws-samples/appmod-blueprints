@@ -798,7 +798,7 @@ tasks:
         # Bootstrap via gitlab-rails runner: create root PAT, user1, repos, unprotect branches.
         # Shell variables (ROOT_TOKEN, GIT_USERNAME, GIT_PASSWORD) are expanded by bash
         # before the string is passed to gitlab-rails runner as a Ruby script.
-        docker exec gitlab-gitlab-1 gitlab-rails runner "
+        docker exec -e GIT_PASSWORD="{{.GIT_PASSWORD}}" -e GIT_USERNAME="{{.GIT_USERNAME}}" gitlab-gitlab-1 gitlab-rails runner "
           # Disable default branch protection + enable password auth for git
           s = ApplicationSetting.first
           s.password_authentication_enabled_for_git = true
@@ -809,20 +809,22 @@ tasks:
           pat.scopes = ['api','write_repository','sudo']
           pat.expires_at = 365.days.from_now
           pat.save!
-          u = User.find_by(username: '{{.GIT_USERNAME}}')
+          pwd = ENV['GIT_PASSWORD']
+          uname = ENV['GIT_USERNAME']
+          u = User.find_by(username: uname)
           if u.nil?
             # Use Users::CreateService which properly sets up the namespace
             svc = Users::CreateService.new(User.find(1), {
-              name: 'Workshop User', username: '{{.GIT_USERNAME}}',
-              email: '{{.GIT_USERNAME}}@workshop.local',
-              password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}',
+              name: 'Workshop User', username: uname,
+              email: uname + '@workshop.local',
+              password: pwd, password_confirmation: pwd,
               skip_confirmation: true
             }).execute
-            u = User.find_by(username: '{{.GIT_USERNAME}}')
+            u = User.find_by(username: uname)
           end
           # Always ensure password is correctly hashed (CreateService may fail silently)
           if u
-            u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
+            u.encrypted_password = Devise::Encryptor.digest(User, pwd)
             u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
           end
           # Ensure namespace exists (GitLab CE requires Organization; use default org)
