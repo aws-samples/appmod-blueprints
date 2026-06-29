@@ -329,6 +329,11 @@ tasks:
           echo "  seeded: $REPO"
         done
         printf '{{.C_OK}}✓ GitLab init done.{{.C_RESET}}\n'
+        # Unprotect branches again after seeding (seed push creates main which triggers auto-protection)
+        docker exec gitlab-gitlab-1 gitlab-rails runner "
+          u = User.find_by(username: ENV['GIT_USERNAME'] || 'user1')
+          Project.where(namespace_id: u.namespace_id).each{|p| ProtectedBranch.where(project: p).destroy_all}
+        " 2>/dev/null || true
       # After init, clone repos locally
       - task: gitlab:clone-repos
 
