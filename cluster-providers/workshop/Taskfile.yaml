@@ -296,22 +296,8 @@ tasks:
           [ "$i" -eq 120 ] && { printf '  ⚠ GitLab not ready after 20min — continuing anyway.\n'; }
           sleep 10
         done
-        # Wipe and restart GitLab ONLY on first run (no existing repos/data).
-        # On retries, the data is already there — skip the wipe to preserve repos.
-        # Detection: check if fleet-config repo exists (seeded on first successful init).
-        ALREADY_SEEDED=$(docker exec gitlab-gitlab-1 gitlab-rails runner \
-          "puts Project.find_by_full_path('user1/fleet-config') ? 'yes' : 'no'" 2>/dev/null | grep -E '^yes|^no' | tail -1)
-        if [ "$ALREADY_SEEDED" = "yes" ]; then
-          printf '  GitLab already initialized — skipping wipe+restart.\n'
-        else
-          printf '{{.C_STEP}}  First run — reinitializing GitLab secrets (down -v + up)...{{.C_RESET}}\n'
-          cd /home/ec2-user/gitlab && docker compose down -v && docker compose up -d
-          printf '  Waiting for GitLab to reinitialize (~10min)...\n'
-          for i in $(seq 1 80); do
-            curl -sf --max-time 5 "$GITLAB_URL/users/sign_in" >/dev/null 2>&1 && printf '  GitLab ready.\n' && break
-            sleep 10
-          done
-        fi
+        # GitLab was started fresh by CDK bootstrap.sh — secrets are consistent on new events.
+        # No need to wipe and restart.
         ROOT_TOKEN="root-{{.GIT_PASSWORD}}"
         # Bootstrap via gitlab-rails runner: create root PAT, user1, repos, unprotect branches.
         # Shell variables (ROOT_TOKEN, GIT_USERNAME, GIT_PASSWORD) are expanded by bash
