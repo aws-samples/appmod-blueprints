@@ -731,13 +731,22 @@ spec:
                 keycloak_post "/admin/realms/${REALM_NAME}/roles" "role-${role_name}-payload.json" "Role ${role_name}"
               }
 
-              # Create client function
+              # Create or update client function (idempotent upsert)
               create_client() {
                 local client_name=$1
                 local payload_file=$2
+                local client_id_name
+                client_id_name=$(jq -r '.clientId' "${payload_file}")
                 
-                echo "creating ${client_name} client"
-                keycloak_post "/admin/realms/${REALM_NAME}/clients" "${payload_file}" "${client_name} client"
+                # Check if client already exists
+                EXISTING_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id" 2>/dev/null) || true
+                if [ -n "${EXISTING_ID}" ]; then
+                  echo "updating ${client_name} client (exists: ${EXISTING_ID})"
+                  keycloak_put "/admin/realms/${REALM_NAME}/clients/${EXISTING_ID}" "${payload_file}" "${client_name} client"
+                else
+                  echo "creating ${client_name} client"
+                  keycloak_post "/admin/realms/${REALM_NAME}/clients" "${payload_file}" "${client_name} client"
+                fi
               }
 
               # Add client scope function
