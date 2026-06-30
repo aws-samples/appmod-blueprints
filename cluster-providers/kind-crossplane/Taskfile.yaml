@@ -666,7 +666,7 @@ tasks:
       - printf '{{.C_OK}}✓ Root appset applied. Hub is now self-managing.{{.C_RESET}}\n'
 
   hub:update-ingress-domain:
-    desc: Patch ingress_domain_name in ArgoCD cluster secrets with the CloudFront platform domain
+    desc: Update ingress_domain_name in Secrets Manager metadata so ESO propagates the CloudFront domain to cluster secrets
     internal: true
     vars:
       CF_DOMAIN:
@@ -676,19 +676,22 @@ tasks:
         CF="{{.CF_DOMAIN}}"
         [ -z "$CF" ] && CF=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true)
         [ -z "$CF" ] && printf '{{.C_INFO}}  Skipping ingress_domain_name update — cloudfrontDomain not set yet{{.C_RESET}}\n' && exit 0
-        KC={{.ROOT_DIR}}/private/hub-kubeconfig
-        [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
-        for CLUSTER in peeks-hub peeks-spoke-dev peeks-spoke-prod; do
-          CURRENT=$(kubectl --kubeconfig "$KC" get secret "$CLUSTER" -n argocd \
-            -o jsonpath='{.data.ingress_domain_name}' 2>/dev/null | base64 -d 2>/dev/null || true)
-          if [ "$CURRENT" != "$CF" ]; then
-            kubectl --kubeconfig "$KC" patch secret "$CLUSTER" -n argocd \
-              --type='json' -p="[{\"op\":\"replace\",\"path\":\"/data/ingress_domain_name\",\"value\":\"$(echo -n "$CF" | base64)\"}]" \
-              2>/dev/null || true
-            printf '  Updated ingress_domain_name=%s on %s\n' "$CF" "$CLUSTER"
+        for SECRET_ID in {{.HUB_CLUSTER_NAME}}/config; do
+          CUR=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region {{.AWS_REGION}} --query SecretString --output text 2>/dev/null)
+          [ -z "$CUR" ] && printf '  Skipping %s — not found\n' "$SECRET_ID" && continue
+          CURRENT_VAL=$(echo "$CUR" | jq -r '.metadata | fromjson | .ingress_domain_name // empty' 2>/dev/null)
+          if [ "$CURRENT_VAL" = "$CF" ]; then
+            printf '  ingress_domain_name already correct in %s\n' "$SECRET_ID"
+            continue
           fi
+          NEW=$(echo "$CUR" | jq -c --arg cf "$CF" '.metadata = ((.metadata | fromjson | .ingress_domain_name = $cf) | tojson)')
+          printf '%s' "$NEW" > /tmp/secret_ingress_update.json
+          aws secretsmanager put-secret-value --secret-id "$SECRET_ID" --region {{.AWS_REGION}} \
+            --secret-string file:///tmp/secret_ingress_update.json --query 'Name' --output text
+          rm -f /tmp/secret_ingress_update.json
+          printf '  Updated ingress_domain_name=%s in %s\n' "$CF" "$SECRET_ID"
         done
-        printf '{{.C_OK}}✓ ingress_domain_name patched on cluster secrets{{.C_RESET}}\n'
+        printf '{{.C_OK}}✓ ingress_domain_name updated in Secrets Manager (ESO will propagate within 1min){{.C_RESET}}\n'
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to reach Synced state
