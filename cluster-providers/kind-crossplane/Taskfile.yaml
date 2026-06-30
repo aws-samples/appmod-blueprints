@@ -206,6 +206,7 @@ tasks:
   install:phase1-cloudfront:
     internal: true
     cmds:
+      - task: cloudfront:hub-distribution
       - task: hub:restart-identity-pods
 
   install:phase2-parallel:
