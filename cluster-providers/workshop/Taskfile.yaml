@@ -269,6 +269,12 @@ tasks:
   # ---- Workshop: GitLab CE on EC2 (workshop-specific) ----
   gitlab:init-ec2:
     desc: Wait for GitLab CE (docker-compose on IDE EC2) to be ready, then initialise root token + user1 + repos
+    status:
+      # Skip if user1 PAT already exists and fleet-config repo is seeded — already initialized
+      - |
+        GIT_PASS=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty')
+        GITLAB_URL=$(cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain 2>/dev/null || echo "{{.DOMAIN}}")
+        [ -n "$GIT_PASS" ] && curl -sf --max-time 5 "http://localhost:8929/api/v4/projects/user1%2Ffleet-config" -H "PRIVATE-TOKEN: $GIT_PASS" | jq -e '.id' >/dev/null 2>&1
     vars:
       GITLAB_CF_DOMAIN:
         sh: |
