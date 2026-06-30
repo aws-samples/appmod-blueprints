@@ -128,6 +128,8 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] credentials:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: crossplane:setup
       - 'printf "{{.C_INFO}}  [%ds] crossplane:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Create ALB + CloudFront BEFORE hub:seed so ingress_domain_name is correct from the start
+      - task: cloudfront:setup-exposure
       - task: hub:seed
       - 'printf "{{.C_INFO}}  [%ds] hub:seed done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: hub:wait-for-sync
@@ -206,8 +208,8 @@ tasks:
   install:phase1-cloudfront:
     internal: true
     cmds:
-      - task: cloudfront:hub-distribution
-      # Update ingress_domain_name in the ArgoCD cluster secret now that CloudFront domain is known
+      # setup-exposure (create-alb + hub-distribution) now runs before hub:seed
+      # This task only handles pod identity restart
       - task: hub:update-ingress-domain
       - task: hub:restart-identity-pods
 
