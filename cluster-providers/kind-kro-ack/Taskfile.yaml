@@ -119,7 +119,6 @@ tasks:
       - task: install:phase1-parallel
       - task: hub:wait-for-full-sync
       - task: install:phase1b-parallel
-      - task: workshop:gitlab:clone-repos
       - task: hub:set-overlay-repo
       - task: install:phase2-parallel
       - |
@@ -149,7 +148,6 @@ tasks:
     deps:
       - hub:restart-langfuse
       - urls
-      - workshop:gitlab:init-ec2
 
   install:phase2-parallel:
     internal: true
@@ -975,59 +973,17 @@ tasks:
         EOF
 
   hub:seed-secret:
-    desc: Create seed cluster secret on hub (with edge metadata for AppExposure RGD)
+    desc: Create minimal seed cluster secret on the hub (repo coords + fleet labels only)
     vars:
       CLUSTER_ARN:
-        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text
-      CLUSTER_ENDPOINT:
-        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.endpoint' --output text
-      ARGOCD_ROLE_ARN:
-        sh: aws iam get-role --role-name {{.HUB_CLUSTER_NAME}}-argocd-role --query 'Role.Arn' --output text 2>/dev/null || echo ""
-      ADMIN_ROLE_NAME:
-        sh: yq '.hub.adminRoleName // "Admin"' {{.CONFIG_FILE}}
-      # Edge metadata — populated by hub:ingress + hub:cloudfront before hub:seed runs.
-      # Consumed by ApplicationSets enrolling RGDs that need to know how the cluster is
-      # exposed (e.g. AppExposure RGD reads {{.metadata.annotations.ingress_domain_name}}
-      # via the ArgoCD clusters generator — gitops-bridge pattern).
-      EXPOSURE_MODE:
-        sh: |
-          if [ "{{.INGRESS_MODE}}" = "tls" ]; then echo "tls-alb"; else echo "cloudfront-alb"; fi
-      EDGE_DOMAIN:
-        sh: |
-          if [ "{{.INGRESS_MODE}}" = "tls" ]; then
-            echo "{{.DOMAIN}}"
-          else
-            echo "{{.CLOUDFRONT_DOMAIN}}"
-          fi
-      ALB_LISTENER_ARN:
-        sh: |
-          ALB_NAME="{{.RESOURCE_PREFIX}}-hub-ingress"
-          ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --region {{.AWS_REGION}} --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
-          if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then echo ""; exit 0; fi
-          # Pick listener matching the mode: HTTP:80 for cloudfront-alb, HTTPS:443 for tls-alb
-          if [ "{{.INGRESS_MODE}}" = "tls" ]; then PORT=443; else PORT=80; fi
-          aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --region {{.AWS_REGION}} \
-            --query "Listeners[?Port==\`$PORT\`].ListenerArn | [0]" --output text 2>/dev/null || echo ""
-      VPC_ID:
-        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null || echo ""
-    status:
-      # Skip if the cluster secret already has the correct server ARN — avoids triggering
-      # a 20+ minute ArgoCD cache invalidation on every re-run of task install.
-      - |
-        CURRENT=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get secret {{.HUB_CLUSTER_NAME}} -n argocd -o jsonpath='{.data.server}' 2>/dev/null | base64 -d 2>/dev/null)
-        [ "$CURRENT" = "{{.CLUSTER_ARN}}" ]
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:{{.AWS_ACCOUNT_ID}}:cluster/{{.HUB_CLUSTER_NAME}}"
     cmds:
+      - printf '{{.C_STEP}}▸ Getting hub kubeconfig...{{.C_RESET}}\n'
       - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Creating seed cluster secret on hub...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl create namespace argocd --dry-run=client -o yaml | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
       - |
-        printf '{{.C_INFO}}  Seeding cluster secret with gitops-bridge metadata:{{.C_RESET}}\n'
-        printf '    aws_region          = %s\n' "{{.AWS_REGION}}"
-        printf '    aws_vpc_id          = %s\n' "{{.VPC_ID}}"
-        printf '    ingress_domain_name = %s\n' "{{.EDGE_DOMAIN}}"
-        printf '    exposure_mode       = %s\n' "{{.EXPOSURE_MODE}}"
-        printf '    alb_listener_arn    = %s\n' "{{.ALB_LISTENER_ARN}}"
-      - |
-        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|CLUSTER_ENDPOINT|{{.CLUSTER_ENDPOINT}}|g; s|ARGOCD_ROLE_ARN|{{.ARGOCD_ROLE_ARN}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g; s|EXPOSURE_MODE|{{.EXPOSURE_MODE}}|g; s|EDGE_DOMAIN|{{.EDGE_DOMAIN}}|g; s|ALB_LISTENER_ARN|{{.ALB_LISTENER_ARN}}|g; s|VPC_ID_VAL|{{.VPC_ID}}|g; s|AWS_REGION_VAL|{{.AWS_REGION}}|g; s|AWS_ACCOUNT_ID_VAL|{{.AWS_ACCOUNT_ID}}|g; s|RESOURCE_PREFIX_VAL|{{.RESOURCE_PREFIX}}|g; s|INGRESS_SECURITY_GROUPS_VAL|{{.INGRESS_SECURITY_GROUPS}}|g; s|ADMIN_ROLE_NAME_VAL|{{.ADMIN_ROLE_NAME}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
+        cat <<'EOF' | sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g; s|CLUSTER_ARN|{{.CLUSTER_ARN}}|g; s|FLEET_REPO_URL|{{.FLEET_REPO_URL}}|g; s|FLEET_REPO_REVISION|{{.FLEET_REPO_REVISION}}|g; s|FLEET_REPO_BASEPATH|{{.FLEET_REPO_BASEPATH}}|g; s|REPO_URL|{{.REPO_URL}}|g; s|REPO_REVISION|{{.REPO_REVISION}}|g; s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
         apiVersion: v1
         kind: Secret
         type: Opaque
@@ -1035,39 +991,24 @@ tasks:
           name: CLUSTER_NAME
           namespace: argocd
           annotations:
-            # Repo coordinates (gitops-bridge contract)
             addonsRepoURL: "REPO_URL"
             addonsRepoRevision: "REPO_REVISION"
             addonsRepoBasepath: "REPO_BASEPATH"
-            fleetRepoURL: "REPO_URL"
-            fleetRepoRevision: "REPO_REVISION"
-            fleetRepoBasepath: "REPO_BASEPATH"
-            # Cluster identity (gitops-bridge contract — consumed by AppSets)
-            aws_cluster_name: "CLUSTER_NAME"
-            aws_account_id: "AWS_ACCOUNT_ID_VAL"
-            aws_region: "AWS_REGION_VAL"
-            aws_vpc_id: "VPC_ID_VAL"
-            admin_role_name: "ADMIN_ROLE_NAME_VAL"
-            resource_prefix: "RESOURCE_PREFIX_VAL"
-            # Ingress / edge metadata (gitops-bridge contract — consumed by AppSets)
-            ingress_domain_name: "EDGE_DOMAIN"
-            ingress_name: "RESOURCE_PREFIX_VAL-hub-ingress"
-            ingress_security_groups: "INGRESS_SECURITY_GROUPS_VAL"
-            alb_controller_mode: "oss"
-            # Exposure metadata (PeEKS extension — consumed by AppExposure RGD)
-            exposure_mode: "EXPOSURE_MODE"
-            alb_listener_arn: "ALB_LISTENER_ARN"
+            fleetRepoURL: "FLEET_REPO_URL"
+            fleetRepoRevision: "FLEET_REPO_REVISION"
+            fleetRepoBasepath: "FLEET_REPO_BASEPATH"
+            aws_cluster_name: {{.HUB_CLUSTER_NAME}}
           labels:
             argocd.argoproj.io/secret-type: cluster
             environment: control-plane
             fleet_member: control-plane
-            enable_kroack_abstractions: "true"
-            exposure_mode: "EXPOSURE_MODE"
         stringData:
           name: CLUSTER_NAME
           server: "CLUSTER_ARN"
           config: '{"tlsClientConfig":{"insecure":false}}'
+          project: default
         EOF
+      - printf '{{.C_OK}}✓ Seed secret created on hub{{.C_RESET}}\n'
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   hub:apply-root-appset:
@@ -1945,7 +1886,7 @@ tasks:
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
-            vpcCidr: "10.$(shuf -i 1-254 -n 1).0.0/16"
+            vpcCidr: "10.$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}').0.0/16"
             kubernetesVersion: "{{.K8S_VERSION}}"
             autoMode: true
             resourcePrefix: {{.RESOURCE_PREFIX}}
@@ -2131,17 +2072,17 @@ tasks:
         cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters/{{.CLUSTER}}.json" <<EOF
         {"clusterName": "{{.CLUSTER}}"}
         EOF
-        # Single random second octet for the VPC and all subnets so subnet CIDRs
-        # stay within the VPC CIDR (a per-line shuf produced out-of-range subnets,
-        # e.g. VPC 10.71.0.0/16 with subnets in 10.178/10.120/... -> InvalidSubnet.Range).
-        # Idempotency: only generate a (new random) CIDR when this spoke is not
-        # already enabled. Re-running install must NOT churn the CIDR — an EC2 VPC
-        # cidrBlock is immutable, so a new octet would force VPC recreation/orphans.
+        # Deterministic second octet derived from the cluster name via cksum so the
+        # VPC and all subnets share one octet and stay within the VPC CIDR. Deterministic
+        # (not random) so re-runs are stable and parallel spoke enables never collide.
+        # Idempotency: only generate when this spoke is not already enabled. Re-running
+        # install must NOT churn the CIDR — an EC2 VPC cidrBlock is immutable, so a new
+        # octet would force VPC recreation/orphans.
         KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
         if [ -f "$KRO_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}".cidr.vpcCidr' "$KRO_VALUES" >/dev/null 2>&1; then
           echo "  Spoke {{.CLUSTER}} already has a CIDR — keeping existing values (idempotent)."
         else
-          OCTET=$(shuf -i 2-254 -n 1)
+          OCTET=$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}')
           cat > "$KRO_VALUES" <<EOF
         clusters:
           {{.CLUSTER}}:
