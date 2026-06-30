@@ -108,62 +108,63 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(bifrost_request_duration_seconds_count[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
+            {"expr": "sum(rate(bifrost_success_requests_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
           ]
         },
         {
-          "title": "LLM Request Latency P95 (per model)",
+          "title": "Upstream Latency P95 (per model)",
           "type": "timeseries",
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_request_duration_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ "{{" }}model{{ "}}" }} P95"}
+            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_upstream_latency_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ "{{" }}model{{ "}}" }} P95"}
           ]
         },
         {
-          "title": "Total Tokens (input + output)",
+          "title": "Input Tokens (per model)",
           "type": "timeseries",
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(bifrost_tokens_total[5m])) by (model, type)", "legendFormat": "{{ "{{" }}model{{ "}}" }} ({{ "{{" }}type{{ "}}" }})"}
+            {"expr": "sum(rate(bifrost_input_tokens_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }} input"},
+            {"expr": "sum(rate(bifrost_output_tokens_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }} output"}
           ]
         },
         {
-          "title": "Estimated Cost ($) per Model",
+          "title": "Cost ($) per Model",
           "type": "timeseries",
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(increase(bifrost_cost_dollars[1h])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
+            {"expr": "sum(increase(bifrost_cost_total[1h])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
           ]
         },
         {
-          "title": "Cache Hit Ratio",
-          "type": "gauge",
+          "title": "First Token Latency P95",
+          "type": "timeseries",
           "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(bifrost_cache_hits_total[5m])) / (sum(rate(bifrost_cache_hits_total[5m])) + sum(rate(bifrost_cache_misses_total[5m])))", "legendFormat": "Hit Ratio"}
-          ],
-          "fieldConfig": {"defaults": {"min": 0, "max": 1, "unit": "percentunit"}}
-        },
-        {
-          "title": "Active Connections",
-          "type": "stat",
-          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
-          "datasource": {"uid": "prometheus"},
-          "targets": [
-            {"expr": "sum(bifrost_active_connections)", "legendFormat": "Active"}
+            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_stream_first_token_latency_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
           ]
         },
         {
-          "title": "Error Rate",
+          "title": "Success vs Error Requests",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(bifrost_success_requests_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }} success"},
+            {"expr": "sum(rate(bifrost_error_requests_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }} error"}
+          ]
+        },
+        {
+          "title": "Inter-Token Latency P95 (streaming)",
           "type": "timeseries",
           "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(bifrost_request_errors_total[5m])) by (model, error_type)", "legendFormat": "{{ "{{" }}model{{ "}}" }} ({{ "{{" }}error_type{{ "}}" }})"}
+            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_stream_inter_token_latency_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
           ]
         }
       ]
