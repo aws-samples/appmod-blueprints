@@ -108,7 +108,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(bifrost_request_duration_seconds_count[5m])) by (model)", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }}"}
+            {"expr": "sum(rate(bifrost_request_duration_seconds_count[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
           ]
         },
         {
@@ -117,7 +117,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_request_duration_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }} P95"}
+            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_request_duration_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ "{{" }}model{{ "}}" }} P95"}
           ]
         },
         {
@@ -126,7 +126,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(bifrost_tokens_total[5m])) by (model, type)", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }} ({{ \"{{\" }}type{{ \"}}\" }})"}
+            {"expr": "sum(rate(bifrost_tokens_total[5m])) by (model, type)", "legendFormat": "{{ "{{" }}model{{ "}}" }} ({{ "{{" }}type{{ "}}" }})"}
           ]
         },
         {
@@ -135,7 +135,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(increase(bifrost_cost_dollars[1h])) by (model)", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }}"}
+            {"expr": "sum(increase(bifrost_cost_dollars[1h])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
           ]
         },
         {
@@ -163,7 +163,7 @@ spec:
           "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(bifrost_request_errors_total[5m])) by (model, error_type)", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }} ({{ \"{{\" }}error_type{{ \"}}\" }})"}
+            {"expr": "sum(rate(bifrost_request_errors_total[5m])) by (model, error_type)", "legendFormat": "{{ "{{" }}model{{ "}}" }} ({{ "{{" }}error_type{{ "}}" }})"}
           ]
         }
       ]
