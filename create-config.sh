@@ -160,10 +160,14 @@ printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
 
 # CloudFront domain is NOT written here — it is set by the hub-distribution task
 # after the platform ALB CloudFront is created (pointing to the EKS ALB, not EC2/GitLab).
-# The GitLab/IDE CloudFront domain is available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars.
-if [ -n "${CLOUDFRONT_DOMAIN:-}" ] || [ -n "${IDE_DOMAIN:-}" ]; then
+# The GitLab/IDE CloudFront domain is available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,
+# or from the private/gitlab-cloudfront-domain file written by bootstrap.sh.
+GITLAB_CF_DOMAIN="${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}"
+[ -z "$GITLAB_CF_DOMAIN" ] && [ -f "${SCRIPT_DIR}/private/gitlab-cloudfront-domain" ] && \
+  GITLAB_CF_DOMAIN="$(cat "${SCRIPT_DIR}/private/gitlab-cloudfront-domain" | tr -d '[:space:]')"
+if [ -n "$GITLAB_CF_DOMAIN" ]; then
   printf 'cloudfront:\n'                               >> "$OUTPUT_FILE"
-  printf '  gitlabDomain: "%s"\n' "${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}" >> "$OUTPUT_FILE"
+  printf '  gitlabDomain: "%s"\n' "$GITLAB_CF_DOMAIN" >> "$OUTPUT_FILE"
 fi
 printf 'identityCenter:\n'                             >> "$OUTPUT_FILE"
 printf '  instanceArn: "%s"\n'  "$IDC_ARN"             >> "$OUTPUT_FILE"
