@@ -308,6 +308,7 @@ tasks:
         # Bootstrap via gitlab-rails runner: create root PAT, user1, repos, unprotect branches.
         # Shell variables (ROOT_TOKEN, GIT_USERNAME, GIT_PASSWORD) are expanded by bash
         # before the string is passed to gitlab-rails runner as a Ruby script.
+        printf '  Running GitLab Rails bootstrap (~60s)...\n'
         docker exec gitlab-gitlab-1 gitlab-rails runner "
           # Disable default branch protection + enable password auth for git
           s = ApplicationSetting.first
