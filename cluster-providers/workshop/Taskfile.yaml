@@ -363,6 +363,20 @@ tasks:
           end
           puts 'init done'
         " 2>&1 | tail -20 || true
+        # Capture user1's PAT token and update peeks-hub/secrets so Backstage/ESO use the real PAT
+        USER1_PAT=$(docker exec gitlab-gitlab-1 gitlab-rails runner \
+          "puts User.find_by(username:'{{.GIT_USERNAME}}').personal_access_tokens.find_by(name:'workshop-token')&.token" \
+          2>/dev/null | tail -1)
+        if [ -n "$USER1_PAT" ] && [ ${#USER1_PAT} -gt 10 ]; then
+          CURRENT=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets \
+            --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null)
+          if [ -n "$CURRENT" ]; then
+            NEW=$(echo "$CURRENT" | jq -c --arg pat "$USER1_PAT" '.git_token = $pat')
+            aws secretsmanager put-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets \
+              --region {{.AWS_REGION}} --secret-string "$NEW" >/dev/null 2>&1 && \
+              printf '  Updated peeks-hub/secrets.git_token with real GitLab PAT\n'
+          fi
+        fi
         WORKSHOP_DIR="$HOME/environment/{{.WORKING_REPO}}"
         ROOT_TOKEN=$(docker exec gitlab-gitlab-1 gitlab-rails runner "puts User.find(1).personal_access_tokens.find_or_initialize_by(name: 'root-api').tap{|p| p.scopes=['api','sudo']; p.expires_at=365.days.from_now; p.save!}.token" 2>/dev/null | tail -1)
         for REPO in {{.REPOS}}; do
