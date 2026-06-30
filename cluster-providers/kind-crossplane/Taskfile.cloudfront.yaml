@@ -43,19 +43,25 @@ tasks:
           VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
         fi
         VPC_CIDR=$(aws ec2 describe-vpcs --vpc-ids "$VPC_ID" --region {{.AWS_REGION}} --query 'Vpcs[0].CidrBlock' --output text)
-        # Use private subnets for internal ALB (CloudFront VPC Origin reaches via private IP)
+        # Use private subnets for internal ALB — one per AZ
         PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
           --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=*private*" "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
-          --region {{.AWS_REGION}} --query 'Subnets[].SubnetId' --output text | tr '\t' ' ')
+          --region {{.AWS_REGION}} \
+          --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text | \
+          sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
         if [ -z "$PRIVATE_SUBNETS" ]; then
           PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
             --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=*private*" \
-            --region {{.AWS_REGION}} --query 'Subnets[].SubnetId' --output text | tr '\t' ' ')
+            --region {{.AWS_REGION}} \
+            --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text | \
+            sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
         fi
         if [ -z "$PRIVATE_SUBNETS" ]; then
-          printf '{{.C_ERR}}✗ No private subnets found in VPC %s — falling back to all subnets{{.C_RESET}}\n' "$VPC_ID"
+          printf '{{.C_ERR}}✗ No private subnets found in VPC %s — falling back to all subnets (one per AZ){{.C_RESET}}\n' "$VPC_ID"
           PRIVATE_SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
-            --region {{.AWS_REGION}} --query 'Subnets[].SubnetId' --output text | tr '\t' ' ')
+            --region {{.AWS_REGION}} \
+            --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text | \
+            sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
         fi
         SG_NAME="{{.HUB_CLUSTER_NAME}}-platform-alb-sg"
         SG_ID=$(aws ec2 describe-security-groups \
