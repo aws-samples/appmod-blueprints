@@ -38,7 +38,7 @@ tasks:
       - printf '{{.C_STEP}}▸ Creating platform ALB (internal, CloudFront VPC Origin mode)...{{.C_RESET}}\n'
       - |
         set -e
-        VPC_ID="${{.CLOUDFRONT_VPC_ID}}"
+        VPC_ID="{{.CLOUDFRONT_VPC_ID}}"
         if [ -z "$VPC_ID" ]; then
           VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
         fi
