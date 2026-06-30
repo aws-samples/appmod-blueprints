@@ -162,6 +162,8 @@ tasks:
             --protocol tcp --port 80 --source-group "$CF_SG" --region {{.AWS_REGION}} 2>/dev/null || true
           printf '{{.C_OK}}✓ Authorized %s → %s:80 (post VPC Origin){{.C_RESET}}\n' "$CF_SG" "$ALB_SG"
         fi
+        ALB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-platform" \
+          --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
         # Create CloudFront distribution with VPC Origin
         CF_DOMAIN=$(aws cloudfront create-distribution \
           --distribution-config "{
@@ -170,7 +172,7 @@ tasks:
             \"Enabled\": true,
             \"Origins\": {\"Quantity\": 1, \"Items\": [{
               \"Id\": \"vpc-origin\",
-              \"DomainName\": \"$ALB_ARN\",
+              \"DomainName\": \"$ALB_DNS\",
               \"VpcOriginConfig\": {\"VpcOriginId\": \"$VPC_ORIGIN_ID\", \"OriginReadTimeout\": 60, \"OriginKeepaliveTimeout\": 5}
             }]},
             \"DefaultCacheBehavior\": {
