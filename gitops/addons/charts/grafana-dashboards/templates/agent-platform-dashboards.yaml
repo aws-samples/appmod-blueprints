@@ -87,7 +87,7 @@ spec:
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
-  name: agent-platform-xray-traces
+  name: agent-platform-bifrost-llm
   namespace: grafana-operator
 spec:
   folder: "Agent Platform"
@@ -96,25 +96,75 @@ spec:
       dashboards: "external-grafana"
   json: |
     {
-      "title": "Agent Platform - X-Ray Traces",
-      "uid": "agent-platform-xray",
-      "tags": ["agent-platform", "tracing"],
+      "title": "Agent Platform - Bifrost LLM Metrics",
+      "uid": "agent-platform-bifrost-llm",
+      "tags": ["agent-platform", "bifrost", "llm"],
       "timezone": "browser",
       "schemaVersion": 39,
       "panels": [
         {
-          "title": "Service Map",
-          "type": "nodeGraph",
-          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
-          "datasource": {"uid": "xray"},
-          "targets": [{"queryType": "getServiceMap", "refId": "A", "region": "us-east-1"}]
+          "title": "LLM Request Rate (per model)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(bifrost_request_duration_seconds_count[5m])) by (model)", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }}"}
+          ]
         },
         {
-          "title": "Recent Traces",
-          "type": "table",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 12},
-          "datasource": {"uid": "xray"},
-          "targets": [{"queryType": "getTraceSummaries", "refId": "A", "query": "", "region": "us-east-1"}]
+          "title": "LLM Request Latency P95 (per model)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_request_duration_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }} P95"}
+          ]
+        },
+        {
+          "title": "Total Tokens (input + output)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(bifrost_tokens_total[5m])) by (model, type)", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }} ({{ \"{{\" }}type{{ \"}}\" }})"}
+          ]
+        },
+        {
+          "title": "Estimated Cost ($) per Model",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(increase(bifrost_cost_dollars[1h])) by (model)", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }}"}
+          ]
+        },
+        {
+          "title": "Cache Hit Ratio",
+          "type": "gauge",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(bifrost_cache_hits_total[5m])) / (sum(rate(bifrost_cache_hits_total[5m])) + sum(rate(bifrost_cache_misses_total[5m])))", "legendFormat": "Hit Ratio"}
+          ],
+          "fieldConfig": {"defaults": {"min": 0, "max": 1, "unit": "percentunit"}}
+        },
+        {
+          "title": "Active Connections",
+          "type": "stat",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(bifrost_active_connections)", "legendFormat": "Active"}
+          ]
+        },
+        {
+          "title": "Error Rate",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(bifrost_request_errors_total[5m])) by (model, error_type)", "legendFormat": "{{ \"{{\" }}model{{ \"}}\" }} ({{ \"{{\" }}error_type{{ \"}}\" }})"}
+          ]
         }
       ]
     }
