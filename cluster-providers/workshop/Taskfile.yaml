@@ -394,6 +394,11 @@ tasks:
           [ -d "$SRC" ] || continue
           TMP=$(mktemp -d)
           cp -r "$SRC/." "$TMP/"
+          # For fleet-config also seed platform/backstage/templates (Backstage scaffolder catalog)
+          if [ "$REPO" = "fleet-config" ] && [ -d "$WORKSHOP_DIR/platform/backstage/templates" ]; then
+            mkdir -p "$TMP/platform/backstage/templates"
+            cp -r "$WORKSHOP_DIR/platform/backstage/templates/." "$TMP/platform/backstage/templates/"
+          fi
           cd "$TMP"
           git init -q && git add -A && git commit -qm "init" 2>/dev/null || true
           git remote add origin "$REMOTE_URL"
