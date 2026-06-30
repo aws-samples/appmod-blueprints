@@ -207,6 +207,8 @@ tasks:
     internal: true
     cmds:
       - task: cloudfront:hub-distribution
+      # Update ingress_domain_name in the ArgoCD cluster secret now that CloudFront domain is known
+      - task: hub:update-ingress-domain
       - task: hub:restart-identity-pods
 
   install:phase2-parallel:
@@ -662,6 +664,31 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Root appset applied. Hub is now self-managing.{{.C_RESET}}\n'
+
+  hub:update-ingress-domain:
+    desc: Patch ingress_domain_name in ArgoCD cluster secrets with the CloudFront platform domain
+    internal: true
+    vars:
+      CF_DOMAIN:
+        sh: yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}}
+    cmds:
+      - |
+        CF="{{.CF_DOMAIN}}"
+        [ -z "$CF" ] && CF=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true)
+        [ -z "$CF" ] && printf '{{.C_INFO}}  Skipping ingress_domain_name update — cloudfrontDomain not set yet{{.C_RESET}}\n' && exit 0
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
+        for CLUSTER in peeks-hub peeks-spoke-dev peeks-spoke-prod; do
+          CURRENT=$(kubectl --kubeconfig "$KC" get secret "$CLUSTER" -n argocd \
+            -o jsonpath='{.data.ingress_domain_name}' 2>/dev/null | base64 -d 2>/dev/null || true)
+          if [ "$CURRENT" != "$CF" ]; then
+            kubectl --kubeconfig "$KC" patch secret "$CLUSTER" -n argocd \
+              --type='json' -p="[{\"op\":\"replace\",\"path\":\"/data/ingress_domain_name\",\"value\":\"$(echo -n "$CF" | base64)\"}]" \
+              2>/dev/null || true
+            printf '  Updated ingress_domain_name=%s on %s\n' "$CF" "$CLUSTER"
+          fi
+        done
+        printf '{{.C_OK}}✓ ingress_domain_name patched on cluster secrets{{.C_RESET}}\n'
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to reach Synced state
