@@ -1530,9 +1530,22 @@ tasks:
     status:
       - |
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
-        # Skip if all providers are Healthy and have been running > 5min (pod identity already active)
-        UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' -n crossplane-system 2>/dev/null | wc -w)
-        [ "$UNHEALTHY" = "0" ] && OLDEST=$(KUBECONFIG=$KC kubectl get pods -n crossplane-system -l pkg.crossplane.io/revision --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null) && [ -n "$OLDEST" ] && AGE=$(( $(date +%s) - $(date -d "$OLDEST" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$OLDEST" +%s 2>/dev/null) )) && [ "$AGE" -gt 300 ]
+        # Skip if all providers are Healthy and oldest provider pod is >5min old
+        UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io \
+          -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' \
+          2>/dev/null | wc -w)
+        [ "$UNHEALTHY" != "0" ] && exit 1
+        # Use kubectl to get pod start time as epoch via jsonpath, then compare
+        OLDEST_EPOCH=$(KUBECONFIG=$KC kubectl get pods -n crossplane-system \
+          -l pkg.crossplane.io/revision \
+          --sort-by=.metadata.creationTimestamp \
+          -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null)
+        [ -z "$OLDEST_EPOCH" ] && exit 1
+        # Convert ISO8601 to epoch (GNU date)
+        POD_START=$(date -d "$OLDEST_EPOCH" +%s 2>/dev/null || echo 0)
+        NOW=$(date +%s)
+        AGE=$(( NOW - POD_START ))
+        [ "$AGE" -gt 300 ]
     cmds:
       - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Terminating any stuck ArgoCD sync operations on pod-identities apps...{{.C_RESET}}\n'
