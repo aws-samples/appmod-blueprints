@@ -35,7 +35,7 @@ module "external_secrets_pod_identity" {
 
   attach_external_secrets_policy        = true
   external_secrets_kms_key_arns         = ["arn:aws:kms:${each.value.region}:*:key/${each.value.name}/*"]
-  external_secrets_secrets_manager_arns = ["arn:aws:secretsmanager:${each.value.region}:*:secret:${local.context_prefix}*"]
+  external_secrets_secrets_manager_arns = ["arn:aws:secretsmanager:${each.value.region}:*:secret:${local.context_prefix}*", "arn:aws:secretsmanager:${each.value.region}:*:secret:rds!cluster*"]
   external_secrets_ssm_parameter_arns   = ["arn:aws:ssm:${each.value.region}:*:parameter/${each.value.name}/*"]
   external_secrets_create_permission    = each.value.environment == "control-plane" ? true : false #only for hub
   attach_custom_policy                  = each.value.environment == "control-plane" ? true : false #only for hub
@@ -290,8 +290,8 @@ data "http" "inline_policy" {
 # Create locals for ACK cluster-service combinations
 locals {
   # Centralized list of ACK services
-  ack_services = ["iam", "ec2", "eks", "ecr", "s3", "dynamodb", "secretsmanager"]
-  
+  ack_services = ["iam", "ec2", "eks", "ecr", "s3", "dynamodb", "rds", "secretsmanager"]
+
   ack_combinations = {
     for combination in flatten([
       for cluster_key, cluster_value in var.clusters : [
@@ -419,6 +419,11 @@ locals {
     ]
     dynamodb = [
       "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+    ]
+    rds = [
+      "arn:aws:iam::aws:policy/AmazonRDSFullAccess",
+      "arn:aws:iam::aws:policy/SecretsManagerReadWrite",
+      "arn:aws:iam::aws:policy/AWSKeyManagementServicePowerUser"
     ]
     secretsmanager = [
       "arn:aws:iam::aws:policy/SecretsManagerReadWrite"

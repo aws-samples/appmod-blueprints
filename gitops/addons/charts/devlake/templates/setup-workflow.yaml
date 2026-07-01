@@ -44,7 +44,7 @@ spec:
         arguments:
           parameters:
           - name: connection-secret-namespace
-            value: "crossplane-system"
+            value: {{ .Values.namespace | default "devlake" }}
       - name: create-secrets
         template: create-secrets
         arguments:
@@ -75,16 +75,16 @@ spec:
       command: ["/bin/sh", "-c"]
       args:
       - |
-        SECRET_NAME=$(kubectl get secrets -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o name | grep "devlake-mysql.*cluster-mysql-connection$" | head -1 | cut -d'/' -f2)
+        SECRET_NAME=$(kubectl get secrets -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o name | grep "devlake-mysql-credentials" | head -1 | cut -d'/' -f2)
         
         if [ -z "$SECRET_NAME" ]; then
           echo "Secret not found yet"
           exit 1
         fi
         
-        # Check if password is available in the secret
-        endpoint=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d 2>/dev/null || true)
-        password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.attribute\.master_password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        # Read credentials from RGD-created secret (keys: host, password)
+        endpoint=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.host}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        password=$(kubectl get secret ${SECRET_NAME} -n {{`{{inputs.parameters.connection-secret-namespace}}`}} -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
 
         if [ -z "$password" ] || [ -z "$endpoint" ]; then
           echo "Secret found but values not available yet"
@@ -129,10 +129,6 @@ spec:
         # Read external passwords secret
         merico_password=$(kubectl get secret mysql-passwords -n devlake -o jsonpath='{.data.DEVLAKE_MYSQL_PASSWORD}' | base64 -d)
         grafana_password=$(kubectl get secret mysql-passwords -n devlake -o jsonpath='{.data.GRAFANA_MYSQL_PASSWORD}' | base64 -d)
-        
-        # Create service pointing to the RDS endpoint
-        kubectl delete service devlake-mysql-service -n devlake --ignore-not-found
-        kubectl create service externalname devlake-mysql-service --external-name="${endpoint}" -n devlake --dry-run=client -o yaml | kubectl apply -f -
         
         # Create auth secret with credentials
         kubectl delete secret devlake-mysql-auth -n devlake --ignore-not-found
