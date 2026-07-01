@@ -1216,7 +1216,6 @@ tasks:
           sleep 15
         done
         printf '{{.C_WARN}}  Providers wait complete.{{.C_RESET}}\n'
-      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
 
   # ---- from kind-crossplane ----
