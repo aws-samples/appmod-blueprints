@@ -20,6 +20,14 @@ includes:
       C_INFO: '{{.C_INFO}}'
       C_WARN: '{{.C_WARN}}'
       CLOUDFRONT_VPC_ID: ''
+  ray:
+    taskfile: ../common/Taskfile.ray.yaml
+    vars:
+      AWS_REGION: '{{.AWS_REGION}}'
+      AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
+      HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
+      RESOURCE_PREFIX: '{{.RESOURCE_PREFIX}}'
+      ROOT_DIR: '{{.ROOT_DIR}}'
 
 env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
