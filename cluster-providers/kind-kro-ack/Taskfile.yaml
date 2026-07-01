@@ -146,6 +146,8 @@ tasks:
         vars: { MAX_OUTOFSYNC: "20" }
       - task: install:phase1-parallel
       - task: hub:wait-for-full-sync
+      # Wait for ALL Crossplane providers (including ec2) to be Healthy before spoke provisioning
+      - task: hub:wait-for-providers
       - task: install:phase1b-parallel
       - task: hub:set-overlay-repo
       - task: install:phase2-parallel
@@ -1187,6 +1189,31 @@ tasks:
           echo "$APP_OUTPUT" | awk '$2 != "Synced" && NF>0 {printf "  - %s (%s/%s)\n", $1, $3, $2}'
           printf '{{.C_STEP}}▸ Continuing — spoke clusters may still be provisioning.{{.C_RESET}}\n'
         fi
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+
+  # ---- from kind-crossplane ----
+  hub:wait-for-providers:
+    desc: Wait for all Crossplane providers to be Healthy (ensures ec2/rds/etc. CRDs available before spoke provisioning)
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
+        printf '{{.C_STEP}}▸ Waiting for all Crossplane providers to be Healthy...{{.C_RESET}}\n'
+        for i in $(seq 1 60); do
+          UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io             -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}'             2>/dev/null | wc -w | tr -d ' ')
+          TOTAL=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ] &&             printf '{{.C_OK}}✓ All %s Crossplane providers Healthy.{{.C_RESET}}\n' "$TOTAL" && exit 0
+          [ $((i % 4)) -eq 0 ] &&             printf '{{.C_INFO}}  [%ds] %s/%s providers Healthy...{{.C_RESET}}\n' "$((i*15))" "$((TOTAL-UNHEALTHY))" "$TOTAL"
+          # After 5min, force-sync crossplane-base to unblock stuck ArgoCD retry loops
+          if [ "$i" -eq 20 ]; then
+            printf '{{.C_WARN}}  Providers not all Healthy after 5min — force-syncing crossplane-base...{{.C_RESET}}\n'
+            KUBECONFIG=$KC kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+          fi
+          sleep 15
+        done
+        printf '{{.C_WARN}}  Providers not all Healthy after 15min — continuing anyway.{{.C_RESET}}\n'
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
 
@@ -2277,6 +2304,11 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kagent litellm --timeout=120s 2>/dev/null || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Identity-dependent pods restarted.{{.C_RESET}}\n'
+      # Wait 60s for EKS Pod Identity agent to inject credentials into new pods
+      # before ArgoCD syncs crossplane-base and tries to create IAM roles
+      - printf '{{.C_INFO}}  Waiting 90s for Pod Identity credentials to be injected...{{.C_RESET}}\n'
+      - sleep 90
+      - printf '{{.C_OK}}✓ Pod Identity credentials ready.{{.C_RESET}}\n'
 
 
   hub:update:
