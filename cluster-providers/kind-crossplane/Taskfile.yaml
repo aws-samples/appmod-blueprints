@@ -61,7 +61,7 @@ vars:
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
   INGRESS_NAME:
-    sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
+    sh: yq '.ingressName // ""' {{.CONFIG_FILE}} | grep -v '^$' || echo "{{.HUB_CLUSTER_NAME}}-platform"
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
   EXPOSURE_MODE:
