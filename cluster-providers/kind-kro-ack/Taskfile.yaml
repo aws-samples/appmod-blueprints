@@ -1867,10 +1867,12 @@ tasks:
         # repo to be reachable, then verify the clone produced a git repo.
         printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          git ls-remote "$FLEET_URL" >/dev/null 2>&1 && break
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
           if [ "$i" -eq 30 ]; then
             printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot enable spoke {{.CLUSTER}} via Crossplane.{{.C_RESET}}\n'
             printf '{{.C_INFO}}  GitLab/gitlab-init may still be initializing. Re-run later: task kind-crossplane:spokes:enable-crossplane -- {{.CLUSTER}}{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Last error: %s{{.C_RESET}}\n' "$ERR"
+            printf '{{.C_INFO}}  URL checked: %s{{.C_RESET}}\n' "$FLEET_URL"
             exit 1
           fi
           sleep 10
@@ -2076,7 +2078,7 @@ tasks:
         # verify the clone actually produced a git repo before proceeding.
         printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          git ls-remote "$FLEET_URL" >/dev/null 2>&1 && break
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
           if [ "$i" -eq 30 ]; then
             printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot enable spoke {{.CLUSTER}} via KRO.{{.C_RESET}}\n'
             printf '{{.C_INFO}}  GitLab/gitlab-init may still be initializing. Re-run later: task kind-crossplane:spokes:enable-kro -- {{.CLUSTER}}{{.C_RESET}}\n'
@@ -2225,7 +2227,7 @@ tasks:
         # removal (stale overlay left behind). Wait for fleet-config then verify.
         printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          git ls-remote "$FLEET_URL" >/dev/null 2>&1 && break
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
           if [ "$i" -eq 30 ]; then
             printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot disable spoke {{.CLUSTER}} via Crossplane.{{.C_RESET}}\n'
             exit 1
@@ -2290,7 +2292,7 @@ tasks:
         # Wait for fleet-config then verify the clone produced a git repo.
         printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          git ls-remote "$FLEET_URL" >/dev/null 2>&1 && break
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
           if [ "$i" -eq 30 ]; then
             printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot disable spoke {{.CLUSTER}} via KRO.{{.C_RESET}}\n'
             exit 1
