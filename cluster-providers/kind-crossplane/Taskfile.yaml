@@ -144,6 +144,10 @@ tasks:
       - task: cloudfront:setup-exposure
       - task: hub:seed
       - 'printf "{{.C_INFO}}  [%ds] hub:seed done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Force ESO to immediately refresh the cluster secret from Secrets Manager
+      # so all annotations (exposure_mode, ingress_domain_name, etc.) are populated
+      # before ArgoCD generates ApplicationSet child apps at wave 5+
+      - task: hub:force-eso-refresh
       - task: hub:wait-for-sync
       - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-sync done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Phase 1 (parallel): CloudFront+identity restart || observability seeding
@@ -683,6 +687,32 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Root appset applied. Hub is now self-managing.{{.C_RESET}}\n'
+
+  hub:force-eso-refresh:
+    desc: Force ESO to immediately refresh cluster secret so annotations are populated before ArgoCD wave 5 apps render
+    internal: true
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        printf '{{.C_STEP}}▸ Forcing ESO refresh of cluster secret annotations...{{.C_RESET}}\n'
+        # Force-refresh the fleet-secret ExternalSecret so ESO pulls latest metadata from Secrets Manager
+        ES=$(KUBECONFIG=$KC kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | grep {{.HUB_CLUSTER_NAME}} | head -1 || true)
+        if [ -n "$ES" ]; then
+          KUBECONFIG=$KC kubectl -n argocd annotate "$ES" \
+            force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+          # Wait up to 60s for annotations to be populated
+          for i in $(seq 1 12); do
+            VAL=$(KUBECONFIG=$KC kubectl get secret {{.HUB_CLUSTER_NAME}} -n argocd \
+              -o jsonpath='{.metadata.annotations.exposure_mode}' 2>/dev/null)
+            [ -n "$VAL" ] && printf '{{.C_OK}}✓ Cluster secret annotations populated (exposure_mode=%s){{.C_RESET}}\n' "$VAL" && break
+            sleep 5
+          done
+        else
+          printf '{{.C_INFO}}  fleet-secret ESO not found yet — waiting 30s for initial sync{{.C_RESET}}\n'
+          sleep 30
+        fi
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   hub:update-ingress-domain:
     desc: Update ingress_domain_name in Secrets Manager metadata so ESO propagates the CloudFront domain to cluster secrets

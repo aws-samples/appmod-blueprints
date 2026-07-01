@@ -141,6 +141,7 @@ tasks:
       - task: cloudfront:setup-exposure
       - task: cloudfront:sync-domain
       - task: hub:seed
+      - task: hub:force-eso-refresh
       - task: hub:wait-for-sync
         vars: { MAX_OUTOFSYNC: "20" }
       - task: install:phase1-parallel
@@ -809,6 +810,30 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Root appset applied. Hub is now self-managing.{{.C_RESET}}\n'
+
+  hub:force-eso-refresh:
+    desc: Force ESO to immediately refresh cluster secret so annotations are populated before ArgoCD wave 5 apps render
+    internal: true
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        printf '{{.C_STEP}}▸ Forcing ESO refresh of cluster secret annotations...{{.C_RESET}}\n'
+        ES=$(KUBECONFIG=$KC kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | grep {{.HUB_CLUSTER_NAME}} | head -1 || true)
+        if [ -n "$ES" ]; then
+          KUBECONFIG=$KC kubectl -n argocd annotate "$ES" \
+            force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+          for i in $(seq 1 12); do
+            VAL=$(KUBECONFIG=$KC kubectl get secret {{.HUB_CLUSTER_NAME}} -n argocd \
+              -o jsonpath='{.metadata.annotations.exposure_mode}' 2>/dev/null)
+            [ -n "$VAL" ] && printf '{{.C_OK}}✓ Cluster secret annotations populated (exposure_mode=%s){{.C_RESET}}\n' "$VAL" && break
+            sleep 5
+          done
+        else
+          printf '{{.C_INFO}}  fleet-secret ESO not found yet — waiting 30s{{.C_RESET}}\n'
+          sleep 30
+        fi
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to sync
