@@ -188,9 +188,7 @@ tasks:
   install:phase2-spoke-dev:
     internal: true
     cmds:
-      - task: spokes:enable-crossplane
-        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
-      - task: spokes:create-capabilities
+      - task: spokes:enable-kro
         vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
 
   install:phase2-spoke-prod:
@@ -1929,12 +1927,13 @@ tasks:
           echo "  Spoke {{.CLUSTER}} already has a CIDR — keeping existing values (idempotent)."
         else
           OCTET=$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}')
+          ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
           cat > "$KRO_VALUES" <<EOF
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
             tenant: workshop
-            environment: prod
+            environment: ${ENV}
             region: {{.AWS_REGION}}
             k8sVersion: "{{.K8S_VERSION}}"
             accountId: "{{.AWS_ACCOUNT_ID}}"
