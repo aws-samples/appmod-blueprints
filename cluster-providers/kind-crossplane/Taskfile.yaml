@@ -4,18 +4,22 @@ silent: true
 
 includes:
   cloudfront:
-    taskfile: ./Taskfile.cloudfront.yaml
+    taskfile: ../common/Taskfile.cloudfront.yaml
     vars:
       AWS_REGION: '{{.AWS_REGION}}'
       HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
+      RESOURCE_PREFIX: '{{.RESOURCE_PREFIX}}'
+      AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
       ROOT_DIR: '{{.ROOT_DIR}}'
+      CONFIG_FILE: '{{.CONFIG_FILE}}'
       EXPOSURE_MODE:
         sh: 'if [ -z "$(yq ''.domain // ""'' {{.ROOT_DIR}}/config.local.yaml)" ]; then echo "cloudfront"; else echo "domain"; fi'
       C_STEP: '{{.C_STEP}}'
       C_OK: '{{.C_OK}}'
+      C_ERR: '{{.C_ERR}}'
       C_RESET: '{{.C_RESET}}'
       C_INFO: '{{.C_INFO}}'
-      CLOUDFRONT_DOMAIN: '{{.CLOUDFRONT_DOMAIN}}'
+      C_WARN: '{{.C_WARN}}'
       CLOUDFRONT_VPC_ID: '{{.CLOUDFRONT_VPC_ID}}'
 
 
@@ -208,8 +212,8 @@ tasks:
   install:phase1-cloudfront:
     internal: true
     cmds:
-      # setup-exposure (create-alb + hub-distribution) now runs before hub:seed
-      # This task only handles pod identity restart
+      # Ensure cloudfrontDomain is in config + private/cloudfront-domain (safety net for retries)
+      - task: cloudfront:sync-domain
       - task: hub:update-ingress-domain
       - task: hub:restart-identity-pods
 

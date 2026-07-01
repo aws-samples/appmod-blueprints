@@ -2,6 +2,25 @@ version: "3"
 set: [errexit, nounset, pipefail]
 silent: true
 
+includes:
+  cloudfront:
+    taskfile: ../common/Taskfile.cloudfront.yaml
+    vars:
+      AWS_REGION: '{{.AWS_REGION}}'
+      HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
+      RESOURCE_PREFIX: '{{.RESOURCE_PREFIX}}'
+      AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
+      ROOT_DIR: '{{.ROOT_DIR}}'
+      CONFIG_FILE: '{{.CONFIG_FILE}}'
+      EXPOSURE_MODE: '{{.INGRESS_MODE}}'
+      C_STEP: '{{.C_STEP}}'
+      C_OK: '{{.C_OK}}'
+      C_ERR: '{{.C_ERR}}'
+      C_RESET: '{{.C_RESET}}'
+      C_INFO: '{{.C_INFO}}'
+      C_WARN: '{{.C_WARN}}'
+      CLOUDFRONT_VPC_ID: ''
+
 env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
   AWS_PAGER: ""
@@ -111,9 +130,8 @@ tasks:
       - task: kro:apply-rgds
       - task: hub:claim
       - task: hub:wait-for-eks
-      - task: hub:ingress
-      - task: hub:cloudfront
-      - task: hub:sync-cloudfront-domain
+      - task: cloudfront:setup-exposure
+      - task: cloudfront:sync-domain
       - task: hub:seed
       - task: hub:wait-for-sync
         vars: { MAX_OUTOFSYNC: "20" }
