@@ -752,6 +752,7 @@ tasks:
   hub:wait-for-providers:
     desc: Wait for all Crossplane providers to be Healthy (ensures ec2/rds/etc. CRDs available before spoke provisioning)
     cmds:
+      - task: hub:kubeconfig
       - |
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
         [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
@@ -769,6 +770,7 @@ tasks:
           sleep 15
         done
         printf '{{.C_WARN}}  Providers not all Healthy after 15min — continuing anyway.{{.C_RESET}}\n'
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to reach Synced state
