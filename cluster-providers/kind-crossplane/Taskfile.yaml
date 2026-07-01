@@ -1647,6 +1647,11 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kagent litellm --timeout=120s 2>/dev/null || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Identity-dependent pods restarted.{{.C_RESET}}\n'
+      # Wait 60s for EKS Pod Identity agent to inject credentials into new pods
+      # before ArgoCD syncs crossplane-base and tries to create IAM roles
+      - printf '{{.C_INFO}}  Waiting 60s for Pod Identity credentials to be injected...{{.C_RESET}}\n'
+      - sleep 60
+      - printf '{{.C_OK}}✓ Pod Identity credentials ready.{{.C_RESET}}\n'
 
   hub:restart-langfuse:
     desc: Restart Langfuse to pick up Keycloak client secret (created by config job after initial deploy)
