@@ -728,7 +728,6 @@ tasks:
           if [ "$i" -eq 20 ]; then
             printf '{{.C_WARN}}  Providers not all Healthy after 5min — force-syncing crossplane-base...{{.C_RESET}}\n'
             KUBECONFIG=$KC kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
-              2>/dev/null || true
           fi
           sleep 15
         done
