@@ -66,16 +66,19 @@ tasks:
       - task: ":{{.PROVIDER}}:install"
       - 'printf "{{.C_INFO}}  [%ds] {{.PROVIDER}}:install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - printf '{{.C_OK}}✓ Platform install complete.{{.C_RESET}}\n'
-      # Ray ML infrastructure (image builds in background)
-      - task: ":{{.PROVIDER}}:ray:setup"
+      # Ray ML infrastructure (image builds in background) — optional, skip if not supported by provider
+      - cmd: task ":{{.PROVIDER}}:ray:setup" 2>/dev/null || printf '{{.C_INFO}}  ray:setup not available for {{.PROVIDER}} — skipping{{.C_RESET}}\n'
+        ignore_error: true
       - 'printf "{{.C_INFO}}  [%ds] ray:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # IDC/Keycloak federation (ArgoCD SSO)
       - task: post-install
       - 'printf "{{.C_INFO}}  [%ds] post-install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Wait for Ray image to be ready
-      - task: ":{{.PROVIDER}}:ray:wait-image"
+      - cmd: task ":{{.PROVIDER}}:ray:wait-image" 2>/dev/null || true
+        ignore_error: true
       # Download ML models to S3
-      - task: ":{{.PROVIDER}}:ray:prestage-models"
+      - cmd: task ":{{.PROVIDER}}:ray:prestage-models" 2>/dev/null || true
+        ignore_error: true
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
       - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
