@@ -1750,6 +1750,7 @@ tasks:
         i=0
         until aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null | grep -q ACTIVE; do
           i=$((i+1)); [ "$i" -ge 360 ] && { printf '{{.C_ERR}}⚠ %s not ACTIVE after timeout — skipping capability creation.{{.C_RESET}}\n' "$CLUSTER"; exit 0; }
+          if [ $((i % 8)) -eq 0 ]; then STATUS=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND"); printf '{{.C_INFO}}  [%s] status: %s (%ds){{.C_RESET}}\n' "$CLUSTER" "$STATUS" "$((i*15))"; fi
           sleep 15
         done
 
