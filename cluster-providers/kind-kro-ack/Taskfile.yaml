@@ -677,7 +677,7 @@ tasks:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.HUB_CLUSTER_NAME}}-platform","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.HUB_CLUSTER_NAME}}-platform","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}","exposure_mode":"{{if .CLOUDFRONT_DOMAIN}}cloudfront{{else}}domain{{end}}"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '' \
