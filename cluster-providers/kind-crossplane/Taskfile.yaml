@@ -348,6 +348,8 @@ tasks:
     status:
       - kubectl get providers.pkg.crossplane.io provider-aws-iam -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null | grep -q True
       - kubectl get providerconfig.kubernetes.crossplane.io default 2>/dev/null
+      # Also verify pod identity associations exist in AWS (not just provider Healthy)
+      - aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --namespace crossplane-system --query 'length(associations)' --output text 2>/dev/null | grep -qv '^0$'
     vars:
       K8S_PROVIDER_VERSION:
         sh: yq '.crossplane-base.valuesObject.providers.kubernetes.version // "v1.2.1"' {{.GITOPS_ROOT}}/addons/registry/platform.yaml
