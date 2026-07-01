@@ -53,26 +53,32 @@ tasks:
     vars:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+      INSTALL_START:
+        sh: date +%s
     cmds:
       - printf '{{.C_STEP}}▸ Workshop install starting...{{.C_RESET}}\n'
       # Initialize GitLab FIRST — it starts at EC2 boot and is ready before platform install.
       # This ensures fleet-config exists when hub:set-overlay-repo and spokes run inside
       # {{.PROVIDER}}:install (which needs fleet-config during phase2).
       - task: gitlab:init-ec2
+      - 'printf "{{.C_INFO}}  [%ds] gitlab:init-ec2 done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Platform install (EKS cluster, addons, spokes)
       - task: ":{{.PROVIDER}}:install"
+      - 'printf "{{.C_INFO}}  [%ds] {{.PROVIDER}}:install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - printf '{{.C_OK}}✓ Platform install complete.{{.C_RESET}}\n'
       # Ray ML infrastructure (image builds in background)
       - task: ":{{.PROVIDER}}:ray:setup"
+      - 'printf "{{.C_INFO}}  [%ds] ray:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # IDC/Keycloak federation (ArgoCD SSO)
       - task: post-install
+      - 'printf "{{.C_INFO}}  [%ds] post-install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Wait for Ray image to be ready
       - task: ":{{.PROVIDER}}:ray:wait-image"
       # Download ML models to S3
       - task: ":{{.PROVIDER}}:ray:prestage-models"
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
-      - printf '{{.C_OK}}✓ Workshop install complete.{{.C_RESET}}\n'
+      - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
 
   # ============================================================
   # PRE-REQUISITES
