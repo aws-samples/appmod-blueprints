@@ -1731,7 +1731,10 @@ tasks:
       INGRESS_DOMAIN:
         sh: |
           if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
-            echo ""
+            # In cloudfront mode, ingress_domain = platform CloudFront domain
+            # written by cloudfront:setup-exposure before hub:seed runs
+            yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || \
+            cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true
           else
             echo "{{.DOMAIN}}"
           fi
