@@ -277,13 +277,11 @@ tasks:
   gitlab:init-ec2:
     desc: Wait for GitLab CE (docker-compose on IDE EC2) to be ready, then initialise root token + user1 + repos
     status:
-      # Skip if fleet-config git repo exists on disk AND git_token in secrets is a real PAT (not user password)
-      # A real GitLab PAT is exactly 20 chars; user password is 32 chars
+      # Skip if fleet-config git repo exists on disk AND git_token is a real GitLab PAT (starts with glpat-)
       - |
         docker exec gitlab-gitlab-1 test -d /var/opt/gitlab/git-data/repositories/@hashed 2>/dev/null && \
         docker exec gitlab-gitlab-1 find /var/opt/gitlab/git-data/repositories/@hashed -name "*.git" -maxdepth 3 | grep -q . && \
-        PAT=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty') && \
-        [ ${#PAT} -le 25 ] && [ ${#PAT} -gt 10 ]
+        aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -q '^glpat-'
     vars:
       GITLAB_CF_DOMAIN:
         sh: |
