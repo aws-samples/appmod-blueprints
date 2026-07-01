@@ -143,6 +143,8 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] phase1-parallel done (cloudfront+restart || observability){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: hub:wait-for-full-sync
       - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-full-sync done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Wait for ALL Crossplane providers (including ec2) to be Healthy before spoke provisioning
+      - task: hub:wait-for-providers
       # Phase 1b (parallel): langfuse restart || urls || gitlab clone — all independent
       - task: install:phase1b-parallel
       - task: hub:set-overlay-repo
@@ -699,6 +701,26 @@ tasks:
           printf '  Updated ingress_domain_name=%s in %s\n' "$CF" "$SECRET_ID"
         done
         printf '{{.C_OK}}✓ ingress_domain_name updated in Secrets Manager (ESO will propagate within 1min){{.C_RESET}}\n'
+
+  hub:wait-for-providers:
+    desc: Wait for all Crossplane providers to be Healthy (ensures ec2/rds/etc. CRDs available before spoke provisioning)
+    cmds:
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
+        printf '{{.C_STEP}}▸ Waiting for all Crossplane providers to be Healthy...{{.C_RESET}}
+'
+        for i in $(seq 1 60); do
+          UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io             -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}'             2>/dev/null | wc -w | tr -d ' ')
+          TOTAL=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ] &&             printf '{{.C_OK}}✓ All %s Crossplane providers Healthy.{{.C_RESET}}
+' "$TOTAL" && exit 0
+          [ $((i % 4)) -eq 0 ] &&             printf '{{.C_INFO}}  [%ds] %s/%s providers Healthy...{{.C_RESET}}
+' "$((i*15))" "$((TOTAL-UNHEALTHY))" "$TOTAL"
+          sleep 15
+        done
+        printf '{{.C_WARN}}  Providers not all Healthy after 15min — continuing anyway.{{.C_RESET}}
+'
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to reach Synced state
