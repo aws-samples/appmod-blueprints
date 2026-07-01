@@ -535,7 +535,8 @@ tasks:
             "Action": ["sts:AssumeRole", "sts:TagSession"],
             "Condition": {"ArnLike": {"aws:PrincipalArn": [
               "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.ACK_CAPABILITY_ROLE}}",
-              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-ack-*"
+              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-ack-*",
+              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-spoke-*-ack-capability-role"
             ]}}
           }]
         }
@@ -570,7 +571,7 @@ tasks:
           "Version": "2012-10-17",
           "Statement": [
             {"Effect": "Allow", "Action": ["eks:*"], "Resource": "*"},
-            {"Effect": "Allow", "Action": ["iam:PassRole","iam:GetRole"], "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-*"}
+            {"Effect": "Allow", "Action": ["iam:PassRole","iam:GetRole","iam:ListRoleTags"], "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-*"}
           ]
         }'
         # Allow ACK capability role to assume cluster-mgmt roles
