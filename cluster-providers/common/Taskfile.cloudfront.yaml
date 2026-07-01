@@ -42,6 +42,15 @@ tasks:
       - printf '{{.C_STEP}}▸ Creating platform ALB (internal, CloudFront VPC Origin mode)...{{.C_RESET}}\n'
       - |
         set -e
+        # Wait for EKS cluster to be ACTIVE (may still be provisioning when this runs)
+        for i in $(seq 1 60); do
+          STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+          [ "$STATUS" = "ACTIVE" ] && break
+          [ $((i % 4)) -eq 0 ] && printf '{{.C_INFO}}  [%ds] Waiting for EKS cluster ACTIVE (status: %s)...{{.C_RESET}}\n' "$((i*15))" "$STATUS"
+          sleep 15
+        done
+        [ "$STATUS" != "ACTIVE" ] && echo "ERROR: EKS cluster not ACTIVE after 15min" && exit 1
         VPC_ID="{{.CLOUDFRONT_VPC_ID}}"
         if [ -z "$VPC_ID" ]; then
           VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
