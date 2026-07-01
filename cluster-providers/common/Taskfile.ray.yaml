@@ -6,7 +6,7 @@ silent: true
 # Provider-agnostic — used by both kind-crossplane and kind-kro-ack.
 # Required vars: HUB_CLUSTER_NAME, RESOURCE_PREFIX, AWS_ACCOUNT_ID, AWS_REGION, ROOT_DIR
 tasks:
-  ray:setup:
+  setup:
     desc: "Set up Ray ML infrastructure: S3 bucket, ECR repo, vLLM image, S3 CSI driver, IAM + Pod Identity"
     vars:
       RAY_BUCKET: "{{.RESOURCE_PREFIX}}-ray-models-{{.AWS_ACCOUNT_ID}}"
@@ -87,7 +87,7 @@ tasks:
           done
       - echo "✓ Ray ML infrastructure ready (bucket={{.RAY_BUCKET}}, image={{.RAY_ECR_REPO}}:latest)"
 
-  ray:prestage-models:
+  prestage-models:
     desc: "Download ML models to S3 bucket for Ray serving"
     vars:
       RAY_BUCKET: "{{.RESOURCE_PREFIX}}-ray-models-{{.AWS_ACCOUNT_ID}}"
@@ -102,7 +102,7 @@ tasks:
           echo "✓ TinyLlama model uploaded"
 
 
-  ray:wait-image:
+  wait-image:
     desc: "Wait for the background vLLM image build to complete"
     vars:
       RAY_ECR_REPO: "{{.RESOURCE_PREFIX}}-ray-vllm-custom"
