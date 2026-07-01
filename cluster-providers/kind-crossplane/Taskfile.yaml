@@ -703,11 +703,13 @@ tasks:
             printf '  ingress_domain_name already correct in %s\n' "$SECRET_ID"
             continue
           fi
-          NEW=$(echo "$CUR" | jq -c --arg cf "$CF"             --arg em "cloudfront"             --arg arn "{{.ADMIN_ROLE_NAME}}"             --arg rp "{{.RESOURCE_PREFIX}}"             '.metadata = ((.metadata | fromjson |
+          NEW=$(echo "$CUR" | jq -c --arg cf "$CF" --arg em "cloudfront" --arg arn "{{.ADMIN_ROLE_NAME}}" --arg rp "{{.RESOURCE_PREFIX}}" --arg gd "{{.GITLAB_DOMAIN}}" --arg alb "oss" '.metadata = ((.metadata | fromjson |
               .ingress_domain_name = $cf |
               .exposure_mode = $em |
               .admin_role_name = (if $arn != "" then $arn else .admin_role_name end) |
-              .resource_prefix = (if $rp != "" then $rp else .resource_prefix end)
+              .resource_prefix = (if $rp != "" then $rp else (.resource_prefix // "") end) |
+              .gitlab_domain_name = (if $gd != "" then $gd else (.gitlab_domain_name // "") end) |
+              .alb_controller_mode = $alb
             ) | tojson)')
           printf '%s' "$NEW" > /tmp/secret_ingress_update.json
           aws secretsmanager put-secret-value --secret-id "$SECRET_ID" --region {{.AWS_REGION}} \
