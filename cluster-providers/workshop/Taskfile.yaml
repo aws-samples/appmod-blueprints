@@ -168,6 +168,7 @@ tasks:
         set_var GRAFANA_URL "https://${CF}/grafana"
         set_var GITLAB_URL "https://${GITLAB_CF}"
         set_var GITLAB_DOMAIN "${GITLAB_CF}"
+        set_var CLOUDFRONT_DOMAIN "${CF}"
         set_var ARGOCD_URL "${ARGOCD}"
         set_var ARGOCD_SERVER "${ARGOCD_SERVER}"
         set_var ARGOCD_OPTS "--grpc-web"
