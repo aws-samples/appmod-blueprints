@@ -277,8 +277,13 @@ tasks:
   gitlab:init-ec2:
     desc: Wait for GitLab CE (docker-compose on IDE EC2) to be ready, then initialise root token + user1 + repos
     status:
-      # Fast check: if fleet-config git repo exists on disk, init already ran
-      - docker exec gitlab-gitlab-1 test -d /var/opt/gitlab/git-data/repositories/@hashed 2>/dev/null && docker exec gitlab-gitlab-1 find /var/opt/gitlab/git-data/repositories/@hashed -name "*.git" -maxdepth 3 | grep -q .
+      # Skip if fleet-config git repo exists on disk AND git_token in secrets is a real PAT (not user password)
+      # A real GitLab PAT is exactly 20 chars; user password is 32 chars
+      - |
+        docker exec gitlab-gitlab-1 test -d /var/opt/gitlab/git-data/repositories/@hashed 2>/dev/null && \
+        docker exec gitlab-gitlab-1 find /var/opt/gitlab/git-data/repositories/@hashed -name "*.git" -maxdepth 3 | grep -q . && \
+        PAT=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty') && \
+        [ ${#PAT} -le 25 ] && [ ${#PAT} -gt 10 ]
     vars:
       GITLAB_CF_DOMAIN:
         sh: |
@@ -354,10 +359,16 @@ tasks:
             u.update_columns(namespace_id: ns.id) if ns.persisted?
             u.reload
           end
-          u1pat = u.personal_access_tokens.find_or_initialize_by(name: 'workshop-token')
-          u1pat.scopes = ['api','write_repository']
-          u1pat.expires_at = 365.days.from_now
-          u1pat.save!
+          # Always recreate workshop-token PAT so we can capture the plaintext token value
+          # (GitLab only exposes plaintext token at creation time — find_or_initialize reuses
+          # an existing hashed token where .token returns nil)
+          u.personal_access_tokens.where(name: 'workshop-token').delete_all
+          u1pat = u.personal_access_tokens.create!(
+            name: 'workshop-token',
+            scopes: ['api','write_repository','read_repository'],
+            expires_at: 365.days.from_now
+          )
+          puts 'user1_pat=' + u1pat.token.to_s
           %w[fleet-config java rust golang dotnet next-js].each do |repo|
             p = Project.find_by(path: repo, namespace_id: u.namespace_id)
             if p.nil?
@@ -371,7 +382,7 @@ tasks:
         " 2>&1 | tail -20 || true
         # Capture user1's PAT token and update peeks-hub/secrets so Backstage/ESO use the real PAT
         USER1_PAT=$(docker exec gitlab-gitlab-1 gitlab-rails runner \
-          "puts User.find_by(username:'{{.GIT_USERNAME}}').personal_access_tokens.find_by(name:'workshop-token')&.token" \
+          "puts User.find_by(username:'{{.GIT_USERNAME}}').personal_access_tokens.where(name:'workshop-token').delete_all; pat=User.find_by(username:'{{.GIT_USERNAME}}').personal_access_tokens.create!(name:'workshop-token',scopes:['api','write_repository','read_repository'],expires_at:365.days.from_now); puts pat.token" \
           2>/dev/null | tail -1)
         if [ -n "$USER1_PAT" ] && [ ${#USER1_PAT} -gt 10 ]; then
           CURRENT=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets \
