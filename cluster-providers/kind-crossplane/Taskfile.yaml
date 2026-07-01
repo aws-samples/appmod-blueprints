@@ -63,7 +63,7 @@ vars:
   EXPOSURE_MODE:
     sh: 'if [ -z "$(yq ''.domain // ""'' {{.CONFIG_FILE}})" ]; then echo "cloudfront"; else echo "domain"; fi'
   CLOUDFRONT_DOMAIN:
-    sh: yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}}
+    sh: yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true
   CLOUDFRONT_VPC_ID:
     sh: yq '.cloudfront.vpcId // ""' {{.CONFIG_FILE}}
   CAPABILITY_NAME:

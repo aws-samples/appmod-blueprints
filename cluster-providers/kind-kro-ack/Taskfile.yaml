@@ -30,7 +30,7 @@ vars:
   DOMAIN:
     sh: yq '.domain' {{.CONFIG_FILE}}
   CLOUDFRONT_DOMAIN:
-    sh: yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}}
+    sh: yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
   INGRESS_NAME:
@@ -844,29 +844,31 @@ tasks:
           }" --query 'Distribution.[Id,DomainName]' --output text)
         CF_DOMAIN=$(echo "$DIST_OUT" | awk '{print $2}')
         printf '{{.C_OK}}✓ CloudFront created: %s{{.C_RESET}}\n' "$CF_DOMAIN"
-        # Store domain in config for hub:seed to use
+        # Store domain in config and private file for hub:seed and retries to use
         yq -i ".cloudfront.cloudfrontDomain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
+        mkdir -p {{.ROOT_DIR}}/private
+        echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/cloudfront-domain
         rm -f /tmp/hub-vpc-origin-id
 
   hub:sync-cloudfront-domain:
-    desc: Ensure cloudfrontDomain is written to config (idempotent, runs even if hub:cloudfront was skipped)
+    desc: Ensure cloudfrontDomain is written to config AND private/cloudfront-domain file (idempotent)
     internal: true
     cmds:
       - |
-        CURRENT=$(yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}})
-        if [ -n "$CURRENT" ]; then
-          printf '{{.C_INFO}}  cloudfrontDomain already set: %s{{.C_RESET}}\n' "$CURRENT"
-          exit 0
+        CURRENT=$(yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true)
+        if [ -z "$CURRENT" ]; then
+          # Look up the existing CloudFront distribution
+          CURRENT=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='{{.RESOURCE_PREFIX}}-hub-ingress'].DomainName" \
+            --output text 2>/dev/null | tr -d '[:space:]')
         fi
-        # Look up the existing CloudFront distribution for this cluster
-        CF_DOMAIN=$(aws cloudfront list-distributions \
-          --query "DistributionList.Items[?Comment=='{{.RESOURCE_PREFIX}}-hub-ingress'].DomainName" \
-          --output text 2>/dev/null | tr -d '[:space:]')
-        if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
-          yq -i ".cloudfront.cloudfrontDomain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
-          printf '{{.C_OK}}✓ cloudfrontDomain synced to config: %s{{.C_RESET}}\n' "$CF_DOMAIN"
+        if [ -n "$CURRENT" ] && [ "$CURRENT" != "None" ]; then
+          yq -i ".cloudfront.cloudfrontDomain = \"$CURRENT\"" {{.CONFIG_FILE}}
+          mkdir -p {{.ROOT_DIR}}/private
+          echo -n "$CURRENT" > {{.ROOT_DIR}}/private/cloudfront-domain
+          printf '{{.C_OK}}✓ cloudfrontDomain: %s{{.C_RESET}}\n' "$CURRENT"
         else
-          printf '{{.C_WARN}}  No peeks-hub-ingress CloudFront distribution found{{.C_RESET}}\n'
+          printf '{{.C_WARN}}  No CloudFront distribution found for {{.RESOURCE_PREFIX}}-hub-ingress{{.C_RESET}}\n'
         fi
 
   hub:seed:
