@@ -113,6 +113,7 @@ tasks:
       - task: hub:wait-for-eks
       - task: hub:ingress
       - task: hub:cloudfront
+      - task: hub:sync-cloudfront-domain
       - task: hub:seed
       - task: hub:wait-for-sync
         vars: { MAX_OUTOFSYNC: "20" }
@@ -846,6 +847,27 @@ tasks:
         # Store domain in config for hub:seed to use
         yq -i ".cloudfront.cloudfrontDomain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
         rm -f /tmp/hub-vpc-origin-id
+
+  hub:sync-cloudfront-domain:
+    desc: Ensure cloudfrontDomain is written to config (idempotent, runs even if hub:cloudfront was skipped)
+    internal: true
+    cmds:
+      - |
+        CURRENT=$(yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}})
+        if [ -n "$CURRENT" ]; then
+          printf '{{.C_INFO}}  cloudfrontDomain already set: %s{{.C_RESET}}\n' "$CURRENT"
+          exit 0
+        fi
+        # Look up the existing CloudFront distribution for this cluster
+        CF_DOMAIN=$(aws cloudfront list-distributions \
+          --query "DistributionList.Items[?Comment=='{{.RESOURCE_PREFIX}}-hub-ingress'].DomainName" \
+          --output text 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
+          yq -i ".cloudfront.cloudfrontDomain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
+          printf '{{.C_OK}}✓ cloudfrontDomain synced to config: %s{{.C_RESET}}\n' "$CF_DOMAIN"
+        else
+          printf '{{.C_WARN}}  No peeks-hub-ingress CloudFront distribution found{{.C_RESET}}\n'
+        fi
 
   hub:seed:
     desc: Seed hub cluster after EKS is ACTIVE
