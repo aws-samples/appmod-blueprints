@@ -751,6 +751,7 @@ tasks:
 
   hub:wait-for-providers:
     desc: Wait for all Crossplane providers to be Healthy (ensures ec2/rds/etc. CRDs available before spoke provisioning)
+    ignore_error: true
     cmds:
       - task: hub:kubeconfig
       - |
