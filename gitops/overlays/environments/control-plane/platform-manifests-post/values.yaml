@@ -1,0 +1,16 @@
+# HuggingFace models are in platform-manifests-post (wave 8) to ensure the
+# HuggingFaceModel KRO RGD is fully processed before these resources are applied.
+# kro-manifests-hub (wave -2) installs the RGD but KRO needs time to reconcile it
+# into a CRD — wave 8 gives sufficient buffer after wave -2.
+huggingfaceModels:
+  - name: gpt2-neuron
+    modelId: "gpt2"
+    namespace: "ray-system"
+
+  - name: mistral-7b-neuron
+    modelId: "mistralai/Mistral-7B-v0.1"
+    namespace: "ray-system"
+
+  - name: tinyllama
+    modelId: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    namespace: "ray-system"

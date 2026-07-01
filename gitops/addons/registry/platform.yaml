@@ -555,3 +555,27 @@ platform-manifests:
       accountId: '{{.metadata.annotations.aws_account_id}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       region: '{{.metadata.annotations.aws_region}}'
+
+platform-manifests-post:
+  namespace: default
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/platform-manifests-post'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '8'
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+  selector:
+    matchExpressions:
+      - key: enable_platform_manifests
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      region: '{{.metadata.annotations.aws_region}}'

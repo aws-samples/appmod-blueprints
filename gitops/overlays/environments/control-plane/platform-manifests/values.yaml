@@ -1,18 +1,2 @@
 customNodepools:
   enabled: true
-
-# HuggingFace models are enabled here on the control-plane/hub, which is the only
-# place the HuggingFaceModel kro CRD is installed (via kro-manifests-hub). The base
-# default is empty; enable the sample models here for the ML use cases.
-huggingfaceModels:
-  - name: gpt2-neuron
-    modelId: "gpt2"
-    namespace: "ray-system"
-
-  - name: mistral-7b-neuron
-    modelId: "mistralai/Mistral-7B-v0.1"
-    namespace: "ray-system"
-
-  - name: tinyllama
-    modelId: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    namespace: "ray-system"
