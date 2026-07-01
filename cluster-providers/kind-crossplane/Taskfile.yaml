@@ -695,7 +695,7 @@ tasks:
             printf '  ingress_domain_name already correct in %s\n' "$SECRET_ID"
             continue
           fi
-          NEW=$(echo "$CUR" | jq -c --arg cf "$CF" '.metadata = ((.metadata | fromjson | .ingress_domain_name = $cf) | tojson)')
+          NEW=$(echo "$CUR" | jq -c --arg cf "$CF" '.metadata = ((.metadata | fromjson | .ingress_domain_name = $cf | .exposure_mode = "cloudfront") | tojson)')
           printf '%s' "$NEW" > /tmp/secret_ingress_update.json
           aws secretsmanager put-secret-value --secret-id "$SECRET_ID" --region {{.AWS_REGION}} \
             --secret-string file:///tmp/secret_ingress_update.json --query 'Name' --output text
