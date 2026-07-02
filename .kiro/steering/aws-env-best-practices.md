@@ -28,6 +28,14 @@ Enforces environment variable usage for all AWS operations to prevent hardcoded 
 - When using Terraform specifically, use deployment scripts instead of direct terraform commands (ID: AWS_ENV_TF_SCRIPTS)
 - NEVER commit files containing actual AWS account IDs, access keys, or other sensitive data (ID: AWS_ENV_NO_COMMIT_SENSITIVE)
 
+### Troubleshooting and Reconciliation Best Practices
+
+- AWS controllers (ACK, Kro, ArgoCD via EKS Capabilities) reconcile asynchronously - ALWAYS wait for natural reconciliation before attempting destructive actions (ID: AWS_RECONCILE_PATIENCE)
+- When changes are made (IAM roles, policies, selectors), expect 15-30 minutes for full reconciliation across distributed controllers (ID: AWS_RECONCILE_TIME_EXPECTATION)
+- Troubleshooting should be non-destructive: check status, events, logs, describe resources - NEVER delete resources to "force" reconciliation (ID: AWS_TROUBLESHOOT_NON_DESTRUCTIVE)
+- If a resource appears stuck: (1) Check events with get_k8s_events, (2) Check logs, (3) Verify IAM permissions, (4) Wait longer - do NOT delete (ID: AWS_TROUBLESHOOT_SEQUENCE)
+- Resource deletion breaks status propagation in resource graphs (Kro), disrupts GitOps sync (ArgoCD), and can orphan AWS resources - avoid unless explicitly cleaning up (ID: AWS_DELETE_CONSEQUENCES)
+
 ## Priority
 
 Critical
