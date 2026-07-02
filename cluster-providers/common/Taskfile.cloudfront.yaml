@@ -58,18 +58,23 @@ tasks:
         fi
         VPC_CIDR=$(aws ec2 describe-vpcs --vpc-ids "$VPC_ID" --region {{.AWS_REGION}} \
           --query 'Vpcs[0].CidrBlock' --output text)
-        # Use private subnets — one per AZ (avoids "multiple subnets in same AZ" error)
+        # Select PRIVATE subnets (one per AZ), matching how the AWS LBC discovers subnets for
+        # an INTERNAL scheme ALB. If create-alb and the LBC disagree on the subnet set, the LBC
+        # calls SetSubnets on the adopted ALB (churn) and the ALB can land in public subnets,
+        # breaking the CloudFront VPC-Origin path. Prefer the canonical internal-elb role tag,
+        # then fall back to private-by-attribute (no public IP on launch) — NOT a *private* name
+        # tag, which many VPCs don't set.
         PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
-          --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=*private*" \
+          --filters "Name=vpc-id,Values=$VPC_ID" \
                     "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
           --region {{.AWS_REGION}} \
           --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text | \
           sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
         if [ -z "$PRIVATE_SUBNETS" ]; then
           PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
-            --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=*private*" \
+            --filters "Name=vpc-id,Values=$VPC_ID" \
             --region {{.AWS_REGION}} \
-            --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text | \
+            --query 'Subnets[?MapPublicIpOnLaunch==`false`].[SubnetId,AvailabilityZone]' --output text | \
             sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
         fi
         if [ -z "$PRIVATE_SUBNETS" ]; then
@@ -79,6 +84,14 @@ tasks:
             --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text | \
             sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
         fi
+        # Tag the chosen subnets with the canonical internal-elb role tag so the AWS LBC
+        # discovers the SAME subnets when it adopts this ALB. Without this the LBC computes its
+        # own subnet set and calls SetSubnets, churning the ALB (which orphans the CloudFront
+        # VPC Origin bound to the old ALB — see steering/troubleshooting.md).
+        for _sn in $PRIVATE_SUBNETS; do
+          aws ec2 create-tags --resources "$_sn" --region {{.AWS_REGION}} \
+            --tags Key=kubernetes.io/role/internal-elb,Value=1 >/dev/null 2>&1 || true
+        done
         SG_NAME="{{.HUB_CLUSTER_NAME}}-platform-alb-sg"
         SG_ID=$(aws ec2 describe-security-groups \
           --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$VPC_ID" \

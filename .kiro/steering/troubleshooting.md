@@ -322,6 +322,30 @@ aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,Attribut
   **cannot be updated in place while attached to a distribution** (`CannotUpdateEntityWhileInUse`),
   so you must create-new / swap / delete-old rather than edit its ARN.
 
+**Prevention (root cause) — implemented**:
+- `IngressClassParams.spec.scheme = internal` in cloudfront mode so the LBC adopts the internal
+  ALB in place instead of delete-recreating it (scheme is immutable).
+- `create-alb` selects PRIVATE subnets (by `kubernetes.io/role/internal-elb` tag, then by
+  `MapPublicIpOnLaunch==false`) and **tags them `kubernetes.io/role/internal-elb=1`**, so the LBC
+  discovers the same subnet set and does not `SetSubnets`/churn the ALB. See
+  `cluster-providers/common/Taskfile.cloudfront.yaml` (`create-alb`).
+
+**Future hardening (NOT yet implemented) — `cloudfront:sync-vpc-origin` reconcile**:
+If an ALB is ever recreated despite the above (re-runs, other immutable-attr drift), a reconcile
+task would self-heal the stale origin. Proposed design (idempotent; no-op when the ARN already
+matches, so cheap on healthy installs):
+1. Guard on `EXPOSURE_MODE == cloudfront`; resolve current `<hub>-platform` ALB ARN + DNS; resolve
+   the distribution (`Comment == <hub>-platform`) and its origin `VpcOriginId` → that VPC origin's ARN.
+2. If `VPC-origin ARN == current ALB ARN` → **no-op** (done).
+3. Else drift → create-new / swap / delete-old (a VPC origin can't be edited in place while
+   attached): `create-vpc-origin` for the current ALB → poll `Deployed` → `update-distribution`
+   origin to the new `VpcOriginId` + current ALB DNS → poll `Deployed` → `delete-vpc-origin` (old)
+   → re-authorize `CloudFront-VPCOrigins-Service-SG → <current ALB SG>:80`.
+Wire into `install:phase1-cloudfront` (both providers) after `sync-domain`. Cost is one or two
+CloudFront deploys (~5–15 min each) ONLY on drift; a no-op otherwise. Deliberately left
+unimplemented for now — the prevention above should keep the ALB stable; add this only if churn
+recurs.
+
 ## ACK (AWS Controllers for Kubernetes) Issues
 
 ### ACK "scheduled for deletion" loop
