@@ -683,6 +683,26 @@ tasks:
     desc: Apply root-appset to the hub cluster
     cmds:
       - task: hub:kubeconfig
+      # Gate: the ArgoCD EKS Capability status can report ACTIVE before its CRDs are served in the
+      # cluster. root-appset.yaml contains an ApplicationSet, so we must wait until
+      # applicationsets.argoproj.io is registered and Established before applying, otherwise kubectl
+      # fails with "no matches for kind ApplicationSet in version argoproj.io/v1alpha1".
+      - printf '{{.C_STEP}}▸ Waiting for ArgoCD capability CRDs (ApplicationSet/Application) to be served...{{.C_RESET}}\n'
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        for i in $(seq 1 60); do
+          if KUBECONFIG=$KC kubectl get crd applicationsets.argoproj.io applications.argoproj.io >/dev/null 2>&1; then
+            break
+          fi
+          printf '{{.C_INFO}}  [%s/60] ArgoCD CRDs not ready yet...{{.C_RESET}}\n' "$i"
+          sleep 10
+        done
+        if ! KUBECONFIG=$KC kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1; then
+          printf '{{.C_ERR}}ERROR: ArgoCD ApplicationSet CRD never became available — the argocd EKS Capability has not reconciled.{{.C_RESET}}\n'
+          exit 1
+        fi
+        KUBECONFIG=$KC kubectl wait --for=condition=Established \
+          crd/applicationsets.argoproj.io crd/applications.argoproj.io --timeout=120s
       - printf '{{.C_STEP}}▸ Applying root-appset to hub...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
