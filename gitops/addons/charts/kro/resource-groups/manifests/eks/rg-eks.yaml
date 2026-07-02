@@ -1068,6 +1068,334 @@ spec:
 
 
     ###########################################################
+    # AWS Load Balancer Controller Pod Identity
+    # The LBC service account (kube-system/aws-load-balancer-controller-sa)
+    # needs ELB/EC2/ACM/WAF/Shield permissions. Without this association the
+    # controller runs credential-less (IMDS fallback fails), builds no ingress
+    # model, and every platform ingress (keycloak, backstage, grafana, ...) gets
+    # no listener rule -> the platform ALB serves its default 404 for everything.
+    ###########################################################
+    - id: lbcPolicy
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-lbc"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-lbc"
+          policyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["iam:CreateServiceLinkedRole"],
+                  "Resource": "*",
+                  "Condition": {"StringEquals": {"iam:AWSServiceName": "elasticloadbalancing.amazonaws.com"}}
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:DescribeAccountAttributes","ec2:DescribeAddresses","ec2:DescribeAvailabilityZones",
+                    "ec2:DescribeInternetGateways","ec2:DescribeVpcs","ec2:DescribeVpcPeeringConnections",
+                    "ec2:DescribeSubnets","ec2:DescribeSecurityGroups","ec2:DescribeInstances",
+                    "ec2:DescribeNetworkInterfaces","ec2:DescribeTags","ec2:DescribeCoipPools",
+                    "ec2:GetCoipPoolUsage","ec2:DescribeInstanceTypes","ec2:GetSecurityGroupsForVpc",
+                    "elasticloadbalancing:DescribeLoadBalancers","elasticloadbalancing:DescribeLoadBalancerAttributes",
+                    "elasticloadbalancing:DescribeListeners","elasticloadbalancing:DescribeListenerAttributes",
+                    "elasticloadbalancing:DescribeListenerCertificates","elasticloadbalancing:DescribeSSLPolicies",
+                    "elasticloadbalancing:DescribeRules","elasticloadbalancing:DescribeTargetGroups",
+                    "elasticloadbalancing:DescribeTargetGroupAttributes","elasticloadbalancing:DescribeTargetHealth",
+                    "elasticloadbalancing:DescribeTags","elasticloadbalancing:DescribeTrustStores"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cognito-idp:DescribeUserPoolClient","acm:ListCertificates","acm:DescribeCertificate",
+                    "iam:ListServerCertificates","iam:GetServerCertificate","waf-regional:GetWebACL",
+                    "waf-regional:GetWebACLForResource","waf-regional:AssociateWebACL","waf-regional:DisassociateWebACL",
+                    "wafv2:GetWebACL","wafv2:GetWebACLForResource","wafv2:AssociateWebACL","wafv2:DisassociateWebACL",
+                    "shield:GetSubscriptionState","shield:DescribeProtection","shield:CreateProtection","shield:DeleteProtection"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["ec2:AuthorizeSecurityGroupIngress","ec2:RevokeSecurityGroupIngress"],
+                  "Resource": "*"
+                },
+                {"Effect": "Allow", "Action": ["ec2:CreateSecurityGroup"], "Resource": "*"},
+                {
+                  "Effect": "Allow",
+                  "Action": ["ec2:CreateTags"],
+                  "Resource": "arn:aws:ec2:*:*:security-group/*",
+                  "Condition": {
+                    "StringEquals": {"ec2:CreateAction": "CreateSecurityGroup"},
+                    "Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "false"}
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["ec2:CreateTags","ec2:DeleteTags"],
+                  "Resource": "arn:aws:ec2:*:*:security-group/*",
+                  "Condition": {"Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "true","aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["ec2:AuthorizeSecurityGroupIngress","ec2:RevokeSecurityGroupIngress","ec2:DeleteSecurityGroup"],
+                  "Resource": "*",
+                  "Condition": {"Null": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["elasticloadbalancing:CreateLoadBalancer","elasticloadbalancing:CreateTargetGroup"],
+                  "Resource": "*",
+                  "Condition": {"Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "false"}}
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["elasticloadbalancing:CreateListener","elasticloadbalancing:DeleteListener","elasticloadbalancing:CreateRule","elasticloadbalancing:DeleteRule"],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["elasticloadbalancing:AddTags","elasticloadbalancing:RemoveTags"],
+                  "Resource": [
+                    "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
+                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
+                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
+                  ],
+                  "Condition": {"Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "true","aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["elasticloadbalancing:AddTags","elasticloadbalancing:RemoveTags"],
+                  "Resource": [
+                    "arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*",
+                    "arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*",
+                    "arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*",
+                    "arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*"
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "elasticloadbalancing:ModifyLoadBalancerAttributes","elasticloadbalancing:SetIpAddressType",
+                    "elasticloadbalancing:SetSecurityGroups","elasticloadbalancing:SetSubnets","elasticloadbalancing:DeleteLoadBalancer",
+                    "elasticloadbalancing:ModifyTargetGroup","elasticloadbalancing:ModifyTargetGroupAttributes","elasticloadbalancing:DeleteTargetGroup"
+                  ],
+                  "Resource": "*",
+                  "Condition": {"Null": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["elasticloadbalancing:AddTags"],
+                  "Resource": [
+                    "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
+                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
+                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
+                  ],
+                  "Condition": {
+                    "StringEquals": {"elasticloadbalancing:CreateAction": ["CreateTargetGroup","CreateLoadBalancer"]},
+                    "Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "false"}
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["elasticloadbalancing:RegisterTargets","elasticloadbalancing:DeregisterTargets"],
+                  "Resource": "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "elasticloadbalancing:SetWebAcl","elasticloadbalancing:ModifyListener","elasticloadbalancing:AddListenerCertificates",
+                    "elasticloadbalancing:RemoveListenerCertificates","elasticloadbalancing:ModifyRule","elasticloadbalancing:SetRulePriorities"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+
+    - id: lbcRole
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-lbc-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            policy: "${lbcPolicy.status.ackResourceMetadata.arn}"
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-lbc-role"
+          policyRefs:
+            - from:
+                name: "${schema.spec.name}-lbc"
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {"Service": "pods.eks.amazonaws.com"},
+                  "Action": ["sts:AssumeRole","sts:TagSession"]
+                }
+              ]
+            }
+
+    - id: lbcPodIdentityAssociation
+      readyWhen:
+      - ${lbcPodIdentityAssociation.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-lbc"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${ekscluster.spec.name}"
+          namespace: kube-system
+          roleARN: "${lbcRole.status.ackResourceMetadata.arn}"
+          serviceAccount: aws-load-balancer-controller-sa
+
+
+    ###########################################################
+    # Keycloak Config Pod Identity
+    # The keycloak-config job (keycloak/keycloak-config SA) publishes the
+    # keycloak-clients secret to Secrets Manager (aws secretsmanager
+    # create/put-secret-value). Without credentials it cannot write the secret,
+    # so ESO never syncs keycloak-clients and Backstage / Argo-Workflows SSO break.
+    ###########################################################
+    - id: keycloakConfigPolicy
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-keycloak-config"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-keycloak-config"
+          policyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "secretsmanager:CreateSecret",
+                    "secretsmanager:PutSecretValue",
+                    "secretsmanager:GetSecretValue",
+                    "secretsmanager:DescribeSecret",
+                    "secretsmanager:TagResource"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+
+    - id: keycloakConfigRole
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-keycloak-config-role"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            policy: "${keycloakConfigPolicy.status.ackResourceMetadata.arn}"
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-keycloak-config-role"
+          policyRefs:
+            - from:
+                name: "${schema.spec.name}-keycloak-config"
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {"Service": "pods.eks.amazonaws.com"},
+                  "Action": ["sts:AssumeRole","sts:TagSession"]
+                }
+              ]
+            }
+
+    - id: keycloakConfigPodIdentityAssociation
+      readyWhen:
+      - ${keycloakConfigPodIdentityAssociation.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-keycloak-config"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${ekscluster.spec.name}"
+          namespace: keycloak
+          roleARN: "${keycloakConfigRole.status.ackResourceMetadata.arn}"
+          serviceAccount: keycloak-config
+
+
+    ###########################################################
     # ADOT Collector Pod Identity
     ###########################################################
     - id: adotCollectorRole
