@@ -266,6 +266,62 @@ annotations:
 For Kargo specifically this lives in
 `gitops/overlays/environments/control-plane/kargo/values.yaml` under `api.ingress.annotations`.
 
+### CloudFront platform URLs hang (curl 000): VPC origin points to a stale/recreated ALB
+
+**Symptom**: In cloudfront exposure mode, every platform URL (`https://$CF/keycloak/...`,
+`/backstage`, `/grafana`, `/argo-workflows`, ...) times out with curl **`000`** — not `404`,
+not `5xx`. `idc:configure` loops forever on "Keycloak not ready" (the SAML descriptor never
+returns 200). A **direct in-cluster** curl to the internal ALB DNS returns `200/302`, proving
+the ALB, targets and LBC listener rules are healthy — only the **CloudFront → ALB** hop fails.
+
+**Root cause**: The platform ALB (`<hub>-platform`) was **deleted and recreated** (new
+ARN/DNS), but the CloudFront **VPC Origin is still bound to the OLD (deleted) ALB ARN**.
+`hub-distribution` only acts when no `<hub>-platform` distribution exists yet, so on a re-run it
+**skips** and never re-points the VPC origin → CloudFront keeps sending traffic to a dead ALB →
+the connection hangs → `000`.
+
+Who recreates the ALB: the **AWS Load Balancer Controller**. When the pre-created ALB's
+*immutable* attributes don't match the `platform` IngressClassParams, the LBC can't modify them
+in place, so it **deletes and recreates** the ALB. The classic trigger is a **scheme mismatch**:
+`create-alb` builds the ALB `internal` (required for a CloudFront VPC-Origin backend), but if
+`IngressClassParams.spec.scheme` is `internet-facing`, scheme is immutable → LBC delete+recreate
+loop. Every recreation orphans the VPC origin. (CloudTrail shows `DeleteLoadBalancer` by
+`<hub>-LBCPodIdentityRole` with userAgent `elbv2.k8s.aws/...`.)
+
+**Diagnosis**:
+```bash
+HUB=peeks-hub   # adjust to your resource prefix
+
+# 1. Direct in-cluster hit to the internal ALB (bypasses CloudFront). 200/302 => ALB is fine,
+#    so the break is the CloudFront->ALB hop (stale VPC origin), NOT the ALB/targets/rules.
+ALB_DNS=$(aws elbv2 describe-load-balancers --names "$HUB-platform" --query 'LoadBalancers[0].DNSName' --output text)
+kubectl --context "$HUB" -n keycloak run curltest --rm -i --restart=Never --image=curlimages/curl --command -- \
+  curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 "http://$ALB_DNS/keycloak/realms/master"
+
+# 2. THE check: does the VPC origin's ARN match the CURRENT ALB ARN? (mismatch = stale = the bug)
+ALB_ARN=$(aws elbv2 describe-load-balancers --names "$HUB-platform" --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+DIST=$(aws cloudfront list-distributions --query "DistributionList.Items[?Comment=='$HUB-platform'].Id" --output text)
+VO=$(aws cloudfront get-distribution --id "$DIST" --query 'Distribution.DistributionConfig.Origins.Items[0].VpcOriginConfig.VpcOriginId' --output text)
+echo "VPC origin ARN : $(aws cloudfront get-vpc-origin --id "$VO" --query 'VpcOrigin.VpcOriginEndpointConfig.Arn' --output text)"
+echo "current ALB ARN: $ALB_ARN"     # if these differ, CloudFront points at a dead ALB
+
+# 3. Confirm the LBC is the one deleting/recreating the ALB (and when)
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=DeleteLoadBalancer \
+  --max-results 5 --query 'Events[].{Time:EventTime,User:Username}' --output table
+```
+
+**Fix**:
+- **Stop the churn at the source**: ensure the `platform` IngressClassParams `scheme` is
+  `internal` in cloudfront mode so the LBC **adopts** the pre-created internal ALB instead of
+  delete-recreating it (`gitops/addons/registry/core.yaml` `ingress-class-alb.valuesObject.scheme`
+  + `gitops/addons/charts/ingress-class-alb/templates/ingressclass.yaml`). After this, CloudTrail
+  should show **no recurring** `DeleteLoadBalancer` events and the ALB ARN stays stable.
+- **If a stale VPC origin already exists**, re-point CloudFront at the current ALB: create a NEW
+  VPC origin for the current ALB ARN → update the distribution's origin to the new `VpcOriginId`
+  and current ALB DNS → wait for `Deployed` → delete the old VPC origin. Note a VPC origin
+  **cannot be updated in place while attached to a distribution** (`CannotUpdateEntityWhileInUse`),
+  so you must create-new / swap / delete-old rather than edit its ARN.
+
 ## ACK (AWS Controllers for Kubernetes) Issues
 
 ### ACK "scheduled for deletion" loop
