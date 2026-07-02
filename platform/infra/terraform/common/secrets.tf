@@ -112,6 +112,13 @@ resource "aws_secretsmanager_secret_version" "cluster_config" {
       }
     }
   })
+
+  # Workaround for hashicorp/terraform-provider-aws#31216
+  # The provider has a race condition where version_stages transitions from known to unknown
+  # between plan and apply phases, causing "Provider produced inconsistent final plan" errors.
+  lifecycle {
+    ignore_changes = [version_stages]
+  }
 }
 
 # Platform Configuration
@@ -148,6 +155,13 @@ resource "aws_secretsmanager_secret_version" "git_secret" {
     amp_endpoint_url          = module.managed_service_prometheus.workspace_prometheus_endpoint
     amp_region                = each.value.region
   })
+
+  # Workaround for hashicorp/terraform-provider-aws#31216
+  # The provider has a race condition where version_stages transitions from known to unknown
+  # between plan and apply phases, causing "Provider produced inconsistent final plan" errors.
+  lifecycle {
+    ignore_changes = [version_stages]
+  }
 }
 
 # Create the secret for AMP endpoint to be used in Kubevela service
@@ -166,4 +180,11 @@ resource "aws_secretsmanager_secret_version" "argorollouts_secret_version" {
     amp-region    = local.hub_cluster.region
     amp-workspace = module.managed_service_prometheus.workspace_prometheus_endpoint
   })
+
+  # Workaround for hashicorp/terraform-provider-aws#31216
+  # The provider has a race condition where version_stages transitions from known to unknown
+  # between plan and apply phases, causing "Provider produced inconsistent final plan" errors.
+  lifecycle {
+    ignore_changes = [version_stages]
+  }
 }
