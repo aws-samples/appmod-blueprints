@@ -200,6 +200,11 @@ ingress-class-alb:
   valuesObject:
     controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
     loadBalancerName: '{{if eq (default "domain" .metadata.annotations.exposure_mode) "cloudfront"}}{{.metadata.annotations.aws_cluster_name}}-platform{{end}}'
+    # In cloudfront mode the platform ALB is created internal (CloudFront VPC Origin
+    # backend). The IngressClassParams scheme MUST match the adopted ALB's scheme —
+    # ALB scheme is immutable, so a mismatch makes the LBC refuse to attach listener
+    # rules, leaving every ingress with no address and the ALB's default 404 action.
+    scheme: '{{if eq (default "domain" .metadata.annotations.exposure_mode) "cloudfront"}}internal{{else}}internet-facing{{end}}'
 
 aws-load-balancer-controller:
   namespace: kube-system

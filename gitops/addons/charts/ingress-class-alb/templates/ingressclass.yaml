@@ -9,7 +9,7 @@ metadata:
 spec:
   group:
     name: platform
-  scheme: internet-facing
+  scheme: {{ .Values.scheme | default "internet-facing" }}
 {{- if .Values.loadBalancerName }}
   loadBalancerName: {{ .Values.loadBalancerName | quote }}
 {{- end }}
