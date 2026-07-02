@@ -1991,6 +1991,7 @@ tasks:
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
+            provider: kro-ack
             tenant: workshop
             environment: ${ENV}
             region: {{.AWS_REGION}}

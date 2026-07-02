@@ -15,6 +15,10 @@ spec:
       name: string
       tenant: string
       environment: string
+      # Identity backend for this cluster's addons: "kro-ack" (pod identities created
+      # by this ACK RGD) or "crossplane"/"" (crossplane-pod-identity app). Stamped onto
+      # the argocd cluster secret label so the pod_identities app excludes kro-ack.
+      provider: string | default=""
       region: string
       accountId: string
       managementAccountId: string
@@ -449,6 +453,7 @@ spec:
             fleet_member: spoke
             tenant: "${schema.spec.tenant}"
             environment: "${schema.spec.environment}"
+            provider: "${schema.spec.provider}"
             aws_cluster_name: "${schema.spec.name}"
             workloads: "${schema.spec.workloads}"
             #using : useSelector: true for centralized mode

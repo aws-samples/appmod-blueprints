@@ -13,6 +13,7 @@ spec:
       name: string
       tenant: string | default="auto1"
       environment: string | default="staging"
+      provider: string | default=""
       region: string | default="us-west-2"
       k8sVersion: string | default="1.34"
       accountId: string
@@ -168,6 +169,7 @@ spec:
           name: ${schema.spec.name}
           tenant: ${schema.spec.tenant}
           environment: ${schema.spec.environment}
+          provider: ${schema.spec.provider}
           region: ${schema.spec.region}
           accountId: ${schema.spec.accountId}
           managementAccountId: ${schema.spec.managementAccountId}
