@@ -1401,6 +1401,111 @@ spec:
 
 
     ###########################################################
+    # Crossplane provider bootstrap Pod Identity (TEMPORARY BRIDGE)
+    # On kro-ack, Crossplane's provider-aws-iam/eks have no credentials — their own
+    # pod identities are crossplane CRs (chicken-and-egg) — so every downstream
+    # crossplane role/PIA (amp/rds/grafana/devlake) stays SYNCED=False and devlake
+    # RDS / AMP / Grafana break. Seed the two ROOT providers' pod identities via ACK
+    # here to break the cycle; Crossplane then reconciles the rest itself.
+    #
+    # Gated on provider=="kro-ack" AND enable_crossplane_aws=="true":
+    #  - provider=="kro-ack" ensures we do NOT run on crossplane-provisioned clusters
+    #    (incl. crossplane's KRO-provisioned spoke-prod), where crossplane-pod-identity
+    #    already creates these same associations — otherwise AWS 409 ResourceInUseException.
+    #  - enable_crossplane_aws limits it to clusters that actually run Crossplane.
+    # REMOVE once devlake (and other data resources) are migrated off Crossplane to ACK/KRO.
+    ###########################################################
+    - id: crossplaneProviderRole
+      includeWhen:
+        - ${schema.spec.provider == "kro-ack" && schema.spec.addons.enable_crossplane_aws == "true"}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-crossplane-provider"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          name: "${schema.spec.name}-crossplane-provider"
+          policies:
+            - arn:aws:iam::aws:policy/AdministratorAccess
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {"Service": "pods.eks.amazonaws.com"},
+                  "Action": ["sts:AssumeRole","sts:TagSession"]
+                }
+              ]
+            }
+
+    - id: crossplaneIamProviderPodIdentity
+      includeWhen:
+        - ${schema.spec.provider == "kro-ack" && schema.spec.addons.enable_crossplane_aws == "true"}
+      readyWhen:
+      - ${crossplaneIamProviderPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-crossplane-iam-provider"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${ekscluster.spec.name}"
+          namespace: crossplane-system
+          roleARN: "${crossplaneProviderRole.status.ackResourceMetadata.arn}"
+          serviceAccount: provider-aws-iam
+
+    - id: crossplaneEksProviderPodIdentity
+      includeWhen:
+        - ${schema.spec.provider == "kro-ack" && schema.spec.addons.enable_crossplane_aws == "true"}
+      readyWhen:
+      - ${crossplaneEksProviderPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-crossplane-eks-provider"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${ekscluster.spec.name}"
+          namespace: crossplane-system
+          roleARN: "${crossplaneProviderRole.status.ackResourceMetadata.arn}"
+          serviceAccount: provider-aws-eks
+
+
+    ###########################################################
     # ADOT Collector Pod Identity
     ###########################################################
     - id: adotCollectorRole
