@@ -149,17 +149,6 @@ spec:
         						resources: parameter.resources
         					}
         				}]
-        				// Wait for EKS Pod Identity credentials before the app starts.
-        				// 169.254.170.23/v1/credentials is served by the agent only after the
-        				// PodIdentityAssociation is active — eliminates the startup race.
-        				if parameter.serviceAccount != _|_ {
-        					initContainers: [{
-        						name:  "wait-pod-identity"
-        						image: "busybox:1.36"
-        						command: ["sh", "-c",
-        							"for i in $(seq 1 30); do wget -q -O- http://169.254.170.23/v1/credentials >/dev/null 2>&1 && echo 'credentials ready' && exit 0; echo \"waiting ($i/30)...\"; sleep 10; done; exit 0"]
-        					}]
-        				}
         				serviceAccountName: parameter.serviceAccount
         				topologySpreadConstraints: [{
         					maxSkew:           1

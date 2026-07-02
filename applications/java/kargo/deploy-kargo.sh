@@ -33,9 +33,8 @@ if ! aws iam get-role --role-name "$KARGO_ROLE" --region "$AWS_REGION" >/dev/nul
   echo "  ✓ IAM role $KARGO_ROLE created"
 fi
 KARGO_ROLE_ARN=$(aws iam get-role --role-name "$KARGO_ROLE" --query 'Role.Arn' --output text --region "$AWS_REGION")
-
 if ! aws eks list-pod-identity-associations --cluster-name "$HUB_CLUSTER" --region "$AWS_REGION" \
-    --query "associations[?namespace=='kargo'&&serviceAccount=='kargo-controller']" --output text 2>/dev/null | grep -q .; then
+  --query "associations[?namespace=='kargo'&&serviceAccount=='kargo-controller']" --output text 2>/dev/null | grep -q .; then
   aws eks create-pod-identity-association \
     --cluster-name "$HUB_CLUSTER" --namespace kargo --service-account kargo-controller \
     --role-arn "$KARGO_ROLE_ARN" --region "$AWS_REGION" >/dev/null
@@ -44,7 +43,6 @@ if ! aws eks list-pod-identity-associations --cluster-name "$HUB_CLUSTER" --regi
   kubectl rollout restart deployment -n kargo 2>/dev/null || true
   kubectl rollout status deployment -n kargo --timeout=60s 2>/dev/null || true
 fi
-
 
 # Deploy the project (creates namespace)
 echo "Creating Kargo project..."

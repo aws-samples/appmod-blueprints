@@ -1,0 +1,123 @@
+version: "3"
+set: [errexit, nounset, pipefail]
+silent: true
+
+# Shared Ray ML infrastructure tasks.
+# Provider-agnostic — used by both kind-crossplane and kind-kro-ack.
+# Required vars: HUB_CLUSTER_NAME, RESOURCE_PREFIX, AWS_ACCOUNT_ID, AWS_REGION, ROOT_DIR
+tasks:
+  setup:
+    desc: "Set up Ray ML infrastructure: S3 bucket, ECR repo, vLLM image, S3 CSI driver, IAM + Pod Identity"
+    vars:
+      RAY_BUCKET: "{{.RESOURCE_PREFIX}}-ray-models-{{.AWS_ACCOUNT_ID}}"
+      RAY_ECR_REPO: "{{.RESOURCE_PREFIX}}-ray-vllm-custom"
+      RAY_ROLE_PRESTAGE: "{{.RESOURCE_PREFIX}}-model-prestage-role"
+      RAY_ROLE_WORKER: "{{.RESOURCE_PREFIX}}-ray-worker-role"
+      DOCKERFILE_PATH: "{{.ROOT_DIR}}/platform/infra/terraform/common/Dockerfile.ray-vllm"
+    cmds:
+      - echo "▸ Setting up Ray ML infrastructure..."
+      # 1. S3 bucket
+      - cmd: |
+          if aws s3api head-bucket --bucket "{{.RAY_BUCKET}}" --region {{.AWS_REGION}} 2>/dev/null; then
+            echo "  ✓ S3 bucket {{.RAY_BUCKET}} exists"
+          else
+            aws s3api create-bucket --bucket "{{.RAY_BUCKET}}" --region {{.AWS_REGION}} \
+              --create-bucket-configuration LocationConstraint={{.AWS_REGION}} --output text >/dev/null
+            aws s3api put-public-access-block --bucket "{{.RAY_BUCKET}}" \
+              --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+            echo "  ✓ S3 bucket {{.RAY_BUCKET}} created"
+          fi
+      # 2. ECR repo
+      - cmd: |
+          if aws ecr describe-repositories --repository-names "{{.RAY_ECR_REPO}}" --region {{.AWS_REGION}} >/dev/null 2>&1; then
+            echo "  ✓ ECR repo {{.RAY_ECR_REPO}} exists"
+          else
+            aws ecr create-repository --repository-name "{{.RAY_ECR_REPO}}" --region {{.AWS_REGION}} \
+              --image-tag-mutability MUTABLE --output text >/dev/null
+            echo "  ✓ ECR repo {{.RAY_ECR_REPO}} created"
+          fi
+      # 3. Build and push vLLM image (background - non-blocking)
+      - cmd: |
+          IMAGE_URI="{{.AWS_ACCOUNT_ID}}.dkr.ecr.{{.AWS_REGION}}.amazonaws.com/{{.RAY_ECR_REPO}}:latest"
+          if aws ecr describe-images --repository-name "{{.RAY_ECR_REPO}}" --image-ids imageTag=latest --region {{.AWS_REGION}} >/dev/null 2>&1; then
+            echo "  ✓ vLLM image already exists"
+          else
+            echo "  ▸ Building vLLM image in background (5-10 min)..."
+            aws ecr get-login-password --region {{.AWS_REGION}} | docker login --username AWS --password-stdin {{.AWS_ACCOUNT_ID}}.dkr.ecr.{{.AWS_REGION}}.amazonaws.com >/dev/null 2>&1
+            nohup bash -c "docker build -t '$IMAGE_URI' -f '{{.DOCKERFILE_PATH}}' '$(dirname {{.DOCKERFILE_PATH}})' && docker push '$IMAGE_URI' && echo '[ray] ✓ vLLM image pushed' >> /tmp/ray-build.log" > /tmp/ray-build.log 2>&1 &
+            echo "  ✓ Build started (PID $!, log: /tmp/ray-build.log)"
+            echo "  Run 'task ray:wait-image' to wait for completion."
+          fi
+      # 4. S3 CSI driver addon
+      - cmd: |
+          if aws eks describe-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} >/dev/null 2>&1; then
+            echo "  ✓ S3 CSI driver addon installed"
+          else
+            aws eks create-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} --output text >/dev/null
+            aws eks wait addon-active --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} 2>/dev/null || true
+            echo "  ✓ S3 CSI driver addon installed"
+          fi
+      # 5. IAM roles
+      - cmd: |
+          TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
+          S3_RW='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:ListBucket"],"Resource":["arn:aws:s3:::{{.RAY_BUCKET}}","arn:aws:s3:::{{.RAY_BUCKET}}/*"]}]}'
+          S3_RO='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:ListBucket"],"Resource":["arn:aws:s3:::{{.RAY_BUCKET}}","arn:aws:s3:::{{.RAY_BUCKET}}/*"]}]}'
+          for ROLE_INFO in "{{.RAY_ROLE_PRESTAGE}}|$S3_RW" "{{.RAY_ROLE_WORKER}}|$S3_RO"; do
+            ROLE="${ROLE_INFO%%|*}"; POLICY="${ROLE_INFO#*|}"
+            if aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
+              echo "  ✓ IAM role $ROLE exists"
+            else
+              aws iam create-role --role-name "$ROLE" --assume-role-policy-document "$TRUST" --output text >/dev/null
+              aws iam put-role-policy --role-name "$ROLE" --policy-name s3-access --policy-document "$POLICY"
+              echo "  ✓ IAM role $ROLE created"
+            fi
+          done
+      # 6. Pod Identity associations
+      - cmd: |
+          PRESTAGE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RAY_ROLE_PRESTAGE}}"
+          WORKER_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RAY_ROLE_WORKER}}"
+          for SA_INFO in "ray-system|model-prestage-sa|$PRESTAGE_ARN" "ray-system|ray-worker-sa|$WORKER_ARN" "kube-system|s3-csi-driver-sa|$WORKER_ARN"; do
+            NS="${SA_INFO%%|*}"; REST="${SA_INFO#*|}"; SA="${REST%%|*}"; ARN="${REST#*|}"
+            if aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --namespace "$NS" --service-account "$SA" --region {{.AWS_REGION}} --query 'associations[0].associationId' --output text 2>/dev/null | grep -q "^a-"; then
+              echo "  ✓ PIA $SA in $NS exists"
+            else
+              aws eks create-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --namespace "$NS" --service-account "$SA" --role-arn "$ARN" --region {{.AWS_REGION}} --output text >/dev/null 2>&1
+              echo "  ✓ PIA $SA in $NS created"
+            fi
+          done
+      - echo "✓ Ray ML infrastructure ready (bucket={{.RAY_BUCKET}}, image={{.RAY_ECR_REPO}}:latest)"
+
+  prestage-models:
+    desc: "Download ML models to S3 bucket for Ray serving"
+    vars:
+      RAY_BUCKET: "{{.RESOURCE_PREFIX}}-ray-models-{{.AWS_ACCOUNT_ID}}"
+    cmds:
+      - cmd: |
+          pip3 install -q huggingface_hub 2>/dev/null
+          echo "Downloading TinyLlama..."
+          python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='TinyLlama/TinyLlama-1.1B-Chat-v1.0', local_dir='/tmp/tinyllama', local_dir_use_symlinks=False)"
+          echo "Uploading to s3://{{.RAY_BUCKET}}/models/tinyllama/..."
+          aws s3 sync /tmp/tinyllama/ s3://{{.RAY_BUCKET}}/models/tinyllama/ --region {{.AWS_REGION}} --no-progress
+          rm -rf /tmp/tinyllama
+          echo "✓ TinyLlama model uploaded"
+
+
+  wait-image:
+    desc: "Wait for the background vLLM image build to complete"
+    vars:
+      RAY_ECR_REPO: "{{.RESOURCE_PREFIX}}-ray-vllm-custom"
+    cmds:
+      - cmd: |
+          echo "Waiting for vLLM image build..."
+          for i in $(seq 1 60); do
+            if aws ecr describe-images --repository-name "{{.RAY_ECR_REPO}}" --image-ids imageTag=latest --region {{.AWS_REGION}} >/dev/null 2>&1; then
+              echo "✓ vLLM image ready in ECR"
+              exit 0
+            fi
+            if [ -f /tmp/ray-build.log ]; then
+              tail -1 /tmp/ray-build.log
+            fi
+            sleep 10
+          done
+          echo "✗ Timeout waiting for image (check /tmp/ray-build.log)"
+          exit 1

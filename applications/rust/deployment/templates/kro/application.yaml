@@ -29,7 +29,7 @@ spec:
     enabled: true
     path: /rust-app
     rewrite: true
-    healthcheckPath: /rust-app/
+    healthcheckPath: /collection/FRONT_PAGE
   ## Uncomment the sections below to enable metrics-driven progressive delivery (Module 30)
   # functionalGate:
   #   enabled: true

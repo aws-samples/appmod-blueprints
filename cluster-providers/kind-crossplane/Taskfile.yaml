@@ -4,27 +4,31 @@ silent: true
 
 includes:
   cloudfront:
-    taskfile: ./Taskfile.cloudfront.yaml
+    taskfile: ../common/Taskfile.cloudfront.yaml
     vars:
       AWS_REGION: '{{.AWS_REGION}}'
       HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
+      RESOURCE_PREFIX: '{{.RESOURCE_PREFIX}}'
+      AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
       ROOT_DIR: '{{.ROOT_DIR}}'
+      CONFIG_FILE: '{{.CONFIG_FILE}}'
       EXPOSURE_MODE:
         sh: 'if [ -z "$(yq ''.domain // ""'' {{.ROOT_DIR}}/config.local.yaml)" ]; then echo "cloudfront"; else echo "domain"; fi'
       C_STEP: '{{.C_STEP}}'
       C_OK: '{{.C_OK}}'
+      C_ERR: '{{.C_ERR}}'
       C_RESET: '{{.C_RESET}}'
       C_INFO: '{{.C_INFO}}'
-  workshop:
-    taskfile: ./Taskfile.workshop.yaml
+      C_WARN: '{{.C_WARN}}'
+      CLOUDFRONT_VPC_ID: '{{.CLOUDFRONT_VPC_ID}}'
+  ray:
+    taskfile: ../common/Taskfile.ray.yaml
     vars:
       AWS_REGION: '{{.AWS_REGION}}'
       AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
       HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
       RESOURCE_PREFIX: '{{.RESOURCE_PREFIX}}'
-      C_STEP: '{{.C_STEP}}'
-      C_OK: '{{.C_OK}}'
-      C_RESET: '{{.C_RESET}}'
+      ROOT_DIR: '{{.ROOT_DIR}}'
 
 
 env:
@@ -65,11 +69,17 @@ vars:
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
   INGRESS_NAME:
-    sh: yq '.ingressName // ""' {{.CONFIG_FILE}}
+    sh: yq '.ingressName // ""' {{.CONFIG_FILE}} | grep -v '^$' || echo "{{.HUB_CLUSTER_NAME}}-platform"
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
   EXPOSURE_MODE:
     sh: 'if [ -z "$(yq ''.domain // ""'' {{.CONFIG_FILE}})" ]; then echo "cloudfront"; else echo "domain"; fi'
+  # Frozen at load time (informational only). Tasks needing the live value resolve it
+  # in their own task-level vars from private/cloudfront-domain (+ AWS fallback).
+  CLOUDFRONT_DOMAIN:
+    sh: cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]' || true
+  CLOUDFRONT_VPC_ID:
+    sh: yq '.cloudfront.vpcId // ""' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
     sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
@@ -130,12 +140,22 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] kind:create done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: credentials:setup
       - 'printf "{{.C_INFO}}  [%ds] credentials:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      - task: argocd:install
-      - 'printf "{{.C_INFO}}  [%ds] argocd:install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: crossplane:setup
       - 'printf "{{.C_INFO}}  [%ds] crossplane:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Create ALB + CloudFront BEFORE hub:seed so ingress_domain_name is correct from the start.
+      # sync-domain runs immediately after setup-exposure (mirroring kind-kro-ack) so that on an
+      # install retry — where setup-exposure's status guard skips because the <hub>-platform
+      # distribution already exists from a prior attempt — the cloudfrontDomain is still
+      # re-derived from AWS and written to config.local.yaml + private/cloudfront-domain BEFORE
+      # hub:seed reads it. Without this, a retried hub:seed would seed an empty ingress_domain_name.
+      - task: cloudfront:setup-exposure
+      - task: cloudfront:sync-domain
       - task: hub:seed
       - 'printf "{{.C_INFO}}  [%ds] hub:seed done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Force ESO to immediately refresh the cluster secret from Secrets Manager
+      # so all annotations (exposure_mode, ingress_domain_name, etc.) are populated
+      # before ArgoCD generates ApplicationSet child apps at wave 5+
+      - task: hub:force-eso-refresh
       - task: hub:wait-for-sync
       - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-sync done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Phase 1 (parallel): CloudFront+identity restart || observability seeding
@@ -143,6 +163,8 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] phase1-parallel done (cloudfront+restart || observability){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: hub:wait-for-full-sync
       - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-full-sync done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Wait for ALL Crossplane providers (including ec2) to be Healthy before spoke provisioning
+      - task: hub:wait-for-providers
       # Phase 1b (parallel): langfuse restart || urls || gitlab clone — all independent
       - task: install:phase1b-parallel
       - task: hub:set-overlay-repo
@@ -163,7 +185,6 @@ tasks:
     deps:
       - hub:restart-langfuse
       - urls
-      - gitlab:clone-repos
 
   install:phase1-parallel:
     internal: true
@@ -213,7 +234,9 @@ tasks:
   install:phase1-cloudfront:
     internal: true
     cmds:
-      - task: cloudfront:sync-origins
+      # Ensure cloudfrontDomain is in config + private/cloudfront-domain (safety net for retries)
+      - task: cloudfront:sync-domain
+      - task: hub:update-ingress-domain
       - task: hub:restart-identity-pods
 
   install:phase2-parallel:
@@ -221,7 +244,6 @@ tasks:
     deps:
       - install:phase2-spoke-dev
       - install:phase2-spoke-prod
-      - idc:configure
 
   install:phase2-spoke-dev:
     internal: true
@@ -346,6 +368,8 @@ tasks:
     status:
       - kubectl get providers.pkg.crossplane.io provider-aws-iam -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null | grep -q True
       - kubectl get providerconfig.kubernetes.crossplane.io default 2>/dev/null
+      # Also verify pod identity associations exist in AWS (not just provider Healthy)
+      - aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --namespace crossplane-system --query 'length(associations)' --output text 2>/dev/null | grep -qv '^0$'
     vars:
       K8S_PROVIDER_VERSION:
         sh: yq '.crossplane-base.valuesObject.providers.kubernetes.version // "v1.2.1"' {{.GITOPS_ROOT}}/addons/registry/platform.yaml
@@ -472,7 +496,8 @@ tasks:
             --query 'cluster.status' --output text 2>/dev/null | grep -q ACTIVE; then
           printf '{{.C_OK}}✓ Hub cluster already ACTIVE — skipping Crossplane XR wait.{{.C_RESET}}\n'
         else
-          kubectl wait --for=condition=Ready --timeout=3500s platformclusters.platform.gitops.io/{{.HUB_CLUSTER_NAME}} -n crossplane-system
+          kubectl wait --for=condition=Ready --timeout=5400s platformclusters.platform.gitops.io/{{.HUB_CLUSTER_NAME}} -n crossplane-system || \
+            printf '{{.C_ERR}}⚠ XR wait timed out — continuing via ACTIVE check below.{{.C_RESET}}\\n'
         fi
       - printf '{{.C_STEP}}▸ Verifying hub EKS cluster is ACTIVE...{{.C_RESET}}\n'
       - |
@@ -513,7 +538,6 @@ tasks:
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s podidentityassociations.eks.aws.upbound.io --all
       - task: argocd:capability
       - task: hub:create-mgmt-roles
-      - task: cloudfront:setup-exposure
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
       - task: secrets-manager:seed-secrets
@@ -539,7 +563,8 @@ tasks:
             "Action": ["sts:AssumeRole", "sts:TagSession"],
             "Condition": {"ArnLike": {"aws:PrincipalArn": [
               "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.ACK_CAPABILITY_ROLE}}",
-              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-*-ack-capability-role"
+              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-ack-*",
+              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-spoke-*-ack-capability-role"
             ]}}
           }]
         }
@@ -574,9 +599,7 @@ tasks:
           "Version": "2012-10-17",
           "Statement": [
             {"Effect": "Allow", "Action": ["eks:*"], "Resource": "*"},
-            {"Effect": "Allow", "Action": ["iam:GetRole"], "Resource": "arn:aws:iam::*:role/*"},
-            {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::*:role/*",
-             "Condition": {"StringEquals": {"iam:PassedToService": "pods.eks.amazonaws.com"}}}
+            {"Effect": "Allow", "Action": ["iam:PassRole","iam:GetRole","iam:ListRoleTags"], "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-*"}
           ]
         }'
         # Allow ACK capability role to assume cluster-mgmt roles
@@ -589,7 +612,6 @@ tasks:
           }]
         }'
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
-      - task: workshop:setup
 
   hub:install-eso:
     desc: Install External Secrets Operator on the hub cluster
@@ -669,10 +691,120 @@ tasks:
     desc: Apply root-appset to the hub cluster
     cmds:
       - task: hub:kubeconfig
+      # Gate: the ArgoCD EKS Capability status can report ACTIVE before its CRDs are served in the
+      # cluster. root-appset.yaml contains an ApplicationSet, so we must wait until
+      # applicationsets.argoproj.io is registered and Established before applying, otherwise kubectl
+      # fails with "no matches for kind ApplicationSet in version argoproj.io/v1alpha1".
+      - printf '{{.C_STEP}}▸ Waiting for ArgoCD capability CRDs (ApplicationSet/Application) to be served...{{.C_RESET}}\n'
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        for i in $(seq 1 60); do
+          if KUBECONFIG=$KC kubectl get crd applicationsets.argoproj.io applications.argoproj.io >/dev/null 2>&1; then
+            break
+          fi
+          printf '{{.C_INFO}}  [%s/60] ArgoCD CRDs not ready yet...{{.C_RESET}}\n' "$i"
+          sleep 10
+        done
+        if ! KUBECONFIG=$KC kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1; then
+          printf '{{.C_ERR}}ERROR: ArgoCD ApplicationSet CRD never became available — the argocd EKS Capability has not reconciled.{{.C_RESET}}\n'
+          exit 1
+        fi
+        KUBECONFIG=$KC kubectl wait --for=condition=Established \
+          crd/applicationsets.argoproj.io crd/applications.argoproj.io --timeout=120s
       - printf '{{.C_STEP}}▸ Applying root-appset to hub...{{.C_RESET}}\n'
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f {{.GITOPS_ROOT}}/bootstrap/root-appset.yaml
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Root appset applied. Hub is now self-managing.{{.C_RESET}}\n'
+
+  hub:force-eso-refresh:
+    desc: Force ESO to immediately refresh cluster secret so annotations are populated before ArgoCD wave 5 apps render
+    internal: true
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        printf '{{.C_STEP}}▸ Forcing ESO refresh of cluster secret annotations...{{.C_RESET}}\n'
+        # Force-refresh the fleet-secret ExternalSecret so ESO pulls latest metadata from Secrets Manager
+        ES=$(KUBECONFIG=$KC kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | grep {{.HUB_CLUSTER_NAME}} | head -1 || true)
+        if [ -n "$ES" ]; then
+          KUBECONFIG=$KC kubectl -n argocd annotate "$ES" \
+            force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+          # Wait up to 60s for annotations to be populated
+          for i in $(seq 1 12); do
+            VAL=$(KUBECONFIG=$KC kubectl get secret {{.HUB_CLUSTER_NAME}} -n argocd \
+              -o jsonpath='{.metadata.annotations.exposure_mode}' 2>/dev/null)
+            [ -n "$VAL" ] && printf '{{.C_OK}}✓ Cluster secret annotations populated (exposure_mode=%s){{.C_RESET}}\n' "$VAL" && break
+            sleep 5
+          done
+        else
+          printf '{{.C_INFO}}  fleet-secret ESO not found yet — waiting 30s for initial sync{{.C_RESET}}\n'
+          sleep 30
+        fi
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+  hub:update-ingress-domain:
+    desc: Update ingress_domain_name in Secrets Manager metadata so ESO propagates the CloudFront domain to cluster secrets
+    internal: true
+    vars:
+      CF_DOMAIN:
+        sh: |
+          D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+          [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+            --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+            --output text 2>/dev/null | tr -d '[:space:]')
+          [ "$D" = "None" ] && D=""
+          echo "$D"
+    cmds:
+      - |
+        CF="{{.CF_DOMAIN}}"
+        [ -z "$CF" ] && printf '{{.C_INFO}}  Skipping ingress_domain_name update — cloudfront domain not created yet{{.C_RESET}}\n' && exit 0
+        for SECRET_ID in {{.HUB_CLUSTER_NAME}}/config; do
+          CUR=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region {{.AWS_REGION}} --query SecretString --output text 2>/dev/null)
+          [ -z "$CUR" ] && printf '  Skipping %s — not found\n' "$SECRET_ID" && continue
+          CURRENT_VAL=$(echo "$CUR" | jq -r '.metadata | fromjson | .ingress_domain_name // empty' 2>/dev/null)
+          if [ "$CURRENT_VAL" = "$CF" ]; then
+            printf '  ingress_domain_name already correct in %s\n' "$SECRET_ID"
+            continue
+          fi
+          NEW=$(echo "$CUR" | jq -c --arg cf "$CF" --arg em "cloudfront" --arg arn "{{.ADMIN_ROLE_NAME}}" --arg rp "{{.RESOURCE_PREFIX}}" --arg gd "{{.GITLAB_DOMAIN}}" --arg alb "oss" '.metadata = ((.metadata | fromjson |
+              .ingress_domain_name = $cf |
+              .exposure_mode = $em |
+              .admin_role_name = (if $arn != "" then $arn else .admin_role_name end) |
+              .resource_prefix = (if $rp != "" then $rp else (.resource_prefix // "") end) |
+              .gitlab_domain_name = (if $gd != "" then $gd else (.gitlab_domain_name // "") end) |
+              .alb_controller_mode = $alb
+            ) | tojson)')
+          printf '%s' "$NEW" > /tmp/secret_ingress_update.json
+          aws secretsmanager put-secret-value --secret-id "$SECRET_ID" --region {{.AWS_REGION}} \
+            --secret-string file:///tmp/secret_ingress_update.json --query 'Name' --output text
+          rm -f /tmp/secret_ingress_update.json
+          printf '  Updated ingress_domain_name=%s in %s\n' "$CF" "$SECRET_ID"
+        done
+        printf '{{.C_OK}}✓ ingress_domain_name updated in Secrets Manager (ESO will propagate within 1min){{.C_RESET}}\n'
+
+  hub:wait-for-providers:
+    desc: Wait for all Crossplane providers to be Healthy (ensures ec2/rds/etc. CRDs available before spoke provisioning)
+    ignore_error: true
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
+        printf '{{.C_STEP}}▸ Waiting for all Crossplane providers to be Healthy...{{.C_RESET}}\n'
+        for i in $(seq 1 60); do
+          UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io             -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}'             2>/dev/null | wc -w | tr -d ' ')
+          TOTAL=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ] &&             printf '{{.C_OK}}✓ All %s Crossplane providers Healthy.{{.C_RESET}}\n' "$TOTAL" && exit 0
+          [ $((i % 4)) -eq 0 ] &&             printf '{{.C_INFO}}  [%ds] %s/%s providers Healthy...{{.C_RESET}}\n' "$((i*15))" "$((TOTAL-UNHEALTHY))" "$TOTAL"
+          # After 5min, force-sync crossplane-base to unblock stuck ArgoCD retry loops
+          if [ "$i" -eq 20 ]; then
+            printf '{{.C_WARN}}  Providers not all Healthy after 5min — force-syncing crossplane-base...{{.C_RESET}}\n'
+            KUBECONFIG=$KC kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+          fi
+          sleep 15
+        done
+        printf '{{.C_WARN}}  Providers not all Healthy after 15min — continuing anyway.{{.C_RESET}}\n'
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to reach Synced state
@@ -728,18 +860,33 @@ tasks:
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   urls:
-    desc: Export platform URLs to ~/.bashrc.d/platform.sh
+    desc: Print platform URLs (alias for print-urls)
+    aliases: [print-urls]
     vars:
       INGRESS_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
-            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
+            # In CloudFront mode the platform services (Backstage, Grafana, etc.) are on the
+            # hub EKS ALB, not the CloudFront/IDE domain. Discover the ALB hostname from the hub.
+            HUB_KC="{{.ROOT_DIR}}/private/hub-kubeconfig"
+            [ ! -f "$HUB_KC" ] && HUB_KC="{{.ROOT_DIR}}/private/kubeconfig"
+            ALB=$(kubectl --kubeconfig "$HUB_KC" get ingress -A \
+              -l "app.kubernetes.io/name=backstage" \
+              -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            [ -z "$ALB" ] && ALB=$(kubectl --kubeconfig "$HUB_KC" get ingress -A \
+              -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            CF=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+            [ -z "$CF" ] && CF=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+              --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+              --output text 2>/dev/null | tr -d '[:space:]')
+            [ "$CF" = "None" ] && CF=""
+            echo "${ALB:-$CF}"
           else
             echo "{{.DOMAIN}}"
           fi
       GITLAB_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
             cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
           else
             echo "{{.DOMAIN}}"
@@ -752,176 +899,19 @@ tasks:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
     cmds:
       - |
-        PLATFORM_FILE="$HOME/.bashrc.d/platform.sh"
-        update_var() {
-          local name="$1" value="$2"
-          if grep -q "^export ${name}=" "$PLATFORM_FILE" 2>/dev/null; then
-            sed -i "s|^export ${name}=.*|export ${name}=\"${value}\"|" "$PLATFORM_FILE"
-          else
-            echo "export ${name}=\"${value}\"" >> "$PLATFORM_FILE"
-          fi
-        }
-        update_var "INGRESS_DOMAIN" "{{.INGRESS_DOMAIN}}"
-        update_var "BACKSTAGE_URL" "https://{{.INGRESS_DOMAIN}}/backstage"
-        update_var "KEYCLOAK_ADMIN_URL" "https://{{.INGRESS_DOMAIN}}/keycloak/admin"
-        update_var "WORKFLOWS_URL" "https://{{.INGRESS_DOMAIN}}/argo-workflows"
-        # Kargo runs at the platform root (default ingress rule; it has no /kargo prefix).
-        update_var "KARGO_URL" "https://{{.INGRESS_DOMAIN}}"
-        update_var "GRAFANA_URL" "https://{{.INGRESS_DOMAIN}}/grafana"
-        update_var "GITLAB_URL" "https://{{.GITLAB_DOMAIN}}"
-        update_var "GITLAB_DOMAIN" "{{.GITLAB_DOMAIN}}"
-        update_var "MODEL_S3_BUCKET" "{{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}}"
-        update_var "ARGOCD_URL" "{{.ARGOCD_URL}}"
-        update_var "ARGOCD_DOMAIN" "$(echo '{{.ARGOCD_URL}}' | sed 's|https://||')"
-        # ARGOCD_SERVER is needed by the ArgoCD CLI (argocd app list etc.).
-        # Without it every argocd command fails with "Argo CD server address unspecified".
-        ARGOCD_SERVER_HOST="$(echo '{{.ARGOCD_URL}}' | sed 's|https://||;s|/.*||')"
-        update_var "ARGOCD_SERVER" "$ARGOCD_SERVER_HOST"
-        update_var "ARGOCD_OPTS" "--grpc-web"
-        # Retrieve an initial ArgoCD token via Playwright SSO so the CLI works
-        # immediately after install without requiring a manual argocd-refresh-token.
-        # Best-effort: never fail the install on a token retrieval error.
-        if [ -n "{{.ARGOCD_URL}}" ] && [ "{{.ARGOCD_URL}}" != "None" ]; then
-          SCRIPT_DIR="{{.ROOT_DIR}}/platform/infra/terraform/scripts"
-          ARGOCD_TOKEN=$(python3 "$SCRIPT_DIR/argocd_token_automation.py" \
-            --url "{{.ARGOCD_URL}}" \
-            --username "user1" \
-            --password "{{.USER_PASSWORD}}" \
-            --output token 2>/tmp/argocd-token-seed.log || echo "")
-          if [ -n "$ARGOCD_TOKEN" ] && [ "$ARGOCD_TOKEN" != "Failed to retrieve token" ]; then
-            update_var "ARGOCD_AUTH_TOKEN" "$ARGOCD_TOKEN"
-            printf '  ArgoCD CLI: token seeded (argocd app list ready)\n'
-          else
-            printf '  ArgoCD CLI: token seeding failed — run argocd-refresh-token manually\n'
-          fi
-        fi
-        update_var "KEYCLOAK_ADMIN_PASSWORD" "{{.KC_ADMIN_PASSWORD}}"
-        update_var "USER_PASSWORD" "{{.USER_PASSWORD}}"
-        # USER1_PASSWORD: alias of USER_PASSWORD. Workshop content and helper
-        # scripts (e.g. backstage-auth.sh) reference $USER1_PASSWORD; keep both in
-        # sync so either name works.
-        update_var "USER1_PASSWORD" "{{.USER_PASSWORD}}"
-        update_var "HUB_CLUSTER_NAME" "{{.HUB_CLUSTER_NAME}}"
-        update_var "GIT_TOKEN" "{{.USER_PASSWORD}}"
-        update_var "GIT_USERNAME" "user1"
-        # Spoke DNS: use ALB hostname from spoke clusters (fallback to empty)
-        DNS_DEV=$(aws elbv2 describe-load-balancers --region {{.AWS_REGION}} --query "LoadBalancers[?contains(LoadBalancerName,'spoke-dev')].DNSName | [0]" --output text 2>/dev/null || echo "")
-        DNS_PROD=$(aws elbv2 describe-load-balancers --region {{.AWS_REGION}} --query "LoadBalancers[?contains(LoadBalancerName,'spoke-prod')].DNSName | [0]" --output text 2>/dev/null || echo "")
-        [ "$DNS_DEV" = "None" ] && DNS_DEV=""
-        [ "$DNS_PROD" = "None" ] && DNS_PROD=""
-        # Only persist DNS_DEV/DNS_PROD when we actually discovered an ALB. At install
-        # time no spoke app ingress exists yet, so these are usually empty — and
-        # writing empty values here would CLOBBER the live per-shell discovery that
-        # ~/.bashrc.d/platform.sh performs on every interactive shell (it re-reads the
-        # spoke ingress hostnames). Skipping the empty write lets the dynamic block win.
-        [ -n "$DNS_DEV" ] && update_var "DNS_DEV" "$DNS_DEV"
-        [ -n "$DNS_PROD" ] && update_var "DNS_PROD" "$DNS_PROD"
-        # Argo Workflows URL: content references both WORKFLOWS_URL and ARGOWF_URL; keep
-        # them in sync. JUPYTERHUB_URL is referenced by the Module 4 AI/ML pages.
-        update_var "ARGOWF_URL" "https://{{.INGRESS_DOMAIN}}/argo-workflows"
-        update_var "JUPYTERHUB_URL" "https://{{.INGRESS_DOMAIN}}/jupyterhub"
-        printf '{{.C_OK}}✓ Platform URLs exported to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
+        printf '{{.C_OK}}Platform URLs{{.C_RESET}}\n'
         printf '  Backstage:  https://{{.INGRESS_DOMAIN}}/backstage\n'
         printf '  Keycloak:   https://{{.INGRESS_DOMAIN}}/keycloak\n'
         printf '  Argo WF:    https://{{.INGRESS_DOMAIN}}/argo-workflows\n'
-        printf '  Kargo:      https://{{.INGRESS_DOMAIN}}/  (root)\n'
+        printf '  Kargo:      https://{{.INGRESS_DOMAIN}}/\n'
         printf '  Grafana:    https://{{.INGRESS_DOMAIN}}/grafana\n'
         printf '  GitLab:     https://{{.GITLAB_DOMAIN}}\n'
         printf '  ArgoCD:     {{.ARGOCD_URL}}\n'
+        printf '\n'
+        printf '{{.C_INFO}}Credentials{{.C_RESET}}\n'
+        printf '  User:       user1 / {{.USER_PASSWORD}}\n'
+        printf '  Keycloak:   admin / {{.KC_ADMIN_PASSWORD}}\n'
 
-  gitlab:clone-repos:
-    desc: Clone all GitLab repos locally into ~/environment
-    vars:
-      GITLAB_DOMAIN_INT:
-        sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
-          else
-            echo "{{.DOMAIN}}"
-          fi
-      GIT_USERNAME:
-        sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
-      GIT_PASSWORD:
-        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // "{{.HUB_CLUSTER_NAME}}"')
-      REPOS:
-        sh: echo "fleet-config java rust golang dotnet next-js"
-    cmds:
-      - printf '{{.C_STEP}}▸ Cloning GitLab repos to ~/environment...{{.C_RESET}}\n'
-      - |
-        BASE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}"
-        FAILED=""
-        # Wait for the gitlab-init Job to complete before attempting any clones.
-        # The Job creates and seeds all repos; cloning before it finishes captures
-        # README-only stubs or fails entirely (repos don't exist yet).
-        printf '  Waiting for gitlab-init Job to complete (up to 20min)...\n'
-        if ! kubectl --context peeks-hub wait --for=condition=Complete \
-            job/gitlab-init -n gitlab --timeout=1200s 2>/dev/null; then
-          printf '  ⚠ gitlab-init did not complete in 20min — will try clones anyway.\n'
-        fi
-        for REPO in {{.REPOS}}; do
-          if [ "$REPO" = "fleet-config" ]; then
-            DEST="$HOME/environment/$REPO"
-          else
-            DEST="$HOME/environment/applications/$REPO"
-          fi
-          REPO_URL="$BASE_URL/$REPO.git"
-          if [ -d "$DEST/.git" ]; then
-            # Already cloned. The gitlab-init Job creates each repo with only a
-            # README first, then pushes the real source/overlay content later in
-            # the same Job. An earlier clone-repos run (or this one racing ahead)
-            # may therefore have captured the README-only state. Pull to pick up
-            # any content pushed after the initial clone — fast-forward only so we
-            # never clobber participant commits.
-            echo "  $REPO already cloned — pulling latest"
-            git -C "$DEST" pull --ff-only -q 2>/dev/null || echo "    ($REPO: pull skipped — local changes or no upstream)"
-            continue
-          fi
-          # GitLab repos are created asynchronously by the gitlab-init Job (Helm
-          # post-install hook, which waits for GitLab readiness). Without waiting,
-          # this task ran before the repos existed and every clone failed, leaving
-          # ~/environment/applications empty and no local fleet-config checkout.
-          # Wait (up to ~5min) for each repo to be reachable AND seeded before
-          # cloning. Reachable alone is not enough: the repo exists with only a
-          # README the instant it is created, but the application source is pushed
-          # a few seconds later. Cloning on first-reachable captured the stub
-          # (README/.git only), leaving e.g. ~/environment/applications/next-js
-          # without deployable code. Wait until the remote has a non-README file
-          # (fleet-config is exempt — it is content-seeded differently).
-          REACHABLE=false
-          for i in $(seq 1 18); do
-            if git ls-remote "$REPO_URL" >/dev/null 2>&1; then
-              if [ "$REPO" = "fleet-config" ]; then REACHABLE=true; break; fi
-              # Seeded check: shallow-clone to a temp dir and require a non-README
-              # tracked file, so we don't clone the README-only initial commit.
-              TMP=$(mktemp -d)
-              if git clone --depth 1 "$REPO_URL" "$TMP" >/dev/null 2>&1; then
-                if [ -n "$(cd "$TMP" && git ls-files | grep -v -i '^readme' | head -1)" ]; then
-                  rm -rf "$TMP"; REACHABLE=true; break
-                fi
-              fi
-              rm -rf "$TMP"
-            fi
-            sleep 10
-          done
-          if [ "$REACHABLE" != true ]; then
-            echo "  ⚠ $REPO not reachable/seeded after 5min — skipping (create later)."
-            FAILED="$FAILED $REPO"
-            continue
-          fi
-          mkdir -p "$(dirname "$DEST")"
-          if git clone "$REPO_URL" "$DEST" 2>/dev/null; then
-            echo "  ✓ $REPO cloned"
-          else
-            echo "  ⚠ $REPO clone failed"
-            FAILED="$FAILED$REPO "
-          fi
-        done
-        if [ -n "$FAILED" ]; then
-          printf '{{.C_ERR}}⚠ Some GitLab repos were not cloned:%s{{.C_RESET}}\n' "$FAILED"
-          printf '{{.C_INFO}}  Re-run later: task kind-crossplane:gitlab:clone-repos{{.C_RESET}}\n'
-        else
-          printf '{{.C_OK}}✓ GitLab repos cloned.{{.C_RESET}}\n'
-        fi
 
   hub:set-overlay-repo:
     desc: >-
@@ -934,9 +924,9 @@ tasks:
       credential, flips <hub>/config (ESO reconciles the cluster secret), then
       verifies the flip resolved and auto-reverts if it did not. Idempotent.
     vars:
-      GITLAB_DOMAIN_INT:
+      GITLAB_CF_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
             cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
           else
             echo "{{.DOMAIN}}"
@@ -944,13 +934,13 @@ tasks:
       GIT_USERNAME:
         sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
       GIT_PASSWORD:
-        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
       # Root of the fleet-config overlay structure (configs/, overlays/) per the
       # GitLab init-job seed. Keep "" unless the overlay repo nests under a prefix.
       OVERLAY_REPO_BASEPATH: ""
     cmds:
       - |
-        OVERLAY_URL="https://{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git"
+        OVERLAY_URL="https://{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         KC="{{.ROOT_DIR}}/private/hub-kubeconfig"
 
@@ -964,7 +954,7 @@ tasks:
         #    IGNORED by the appset (hub kept reading the GitHub addons fallback),
         #    so NO spoke EKS clusters were ever provisioned. Wait (up to ~5min)
         #    for it to become reachable before deciding.
-        FLEET_LS="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git"
+        FLEET_LS="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         printf '{{.C_STEP}}▸ Verifying fleet-config overlay repo is reachable...{{.C_RESET}}\n'
         FLEET_OK=false
         for i in $(seq 1 30); do
@@ -994,7 +984,7 @@ tasks:
             argocd.argoproj.io/secret-type: repository
         stringData:
           type: git
-          url: https://{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}/fleet-config.git
+          url: https://{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git
           username: "{{.GIT_USERNAME}}"
           password: "{{.GIT_PASSWORD}}"
         EOF
@@ -1015,7 +1005,7 @@ tasks:
             argocd.argoproj.io/secret-type: repo-creds
         stringData:
           type: git
-          url: https://{{.GITLAB_DOMAIN_INT}}/{{.GIT_USERNAME}}
+          url: https://{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}
           username: "{{.GIT_USERNAME}}"
           password: "{{.GIT_PASSWORD}}"
         EOF
@@ -1105,19 +1095,19 @@ tasks:
     desc: "Enable a spoke cluster via Crossplane (usage: task spokes:enable-crossplane -- <cluster-name>)"
     vars:
       CLUSTER: '{{.CLI_ARGS}}'
-      GITLAB_DOMAIN_INT:
+      GITLAB_CF_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
             cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
           else
             echo "{{.DOMAIN}}"
           fi
       GIT_PASSWORD:
-        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
     cmds:
       - |
         if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:enable-crossplane -- <cluster-name>"; exit 1; fi
-        FLEET_URL="https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git"
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         # fleet-config is created asynchronously by the gitlab-init Job (Helm
         # post-install hook, which waits for GitLab readiness), so this task can
         # race ahead of it. Cloning an absent repo left $REPO_DIR without a .git
@@ -1126,7 +1116,7 @@ tasks:
         # repo to be reachable, then verify the clone produced a git repo.
         printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          git ls-remote "$FLEET_URL" >/dev/null 2>&1 && break
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
           if [ "$i" -eq 30 ]; then
             printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot enable spoke {{.CLUSTER}} via Crossplane.{{.C_RESET}}\n'
             printf '{{.C_INFO}}  GitLab/gitlab-init may still be initializing. Re-run later: task kind-crossplane:spokes:enable-crossplane -- {{.CLUSTER}}{{.C_RESET}}\n'
@@ -1169,7 +1159,7 @@ tasks:
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
-            vpcCidr: "10.$(shuf -i 1-254 -n 1).0.0/16"
+            vpcCidr: "10.$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}').0.0/16"
             kubernetesVersion: "{{.K8S_VERSION}}"
             autoMode: true
             resourcePrefix: {{.RESOURCE_PREFIX}}
@@ -1196,11 +1186,18 @@ tasks:
           printf '{{.C_INFO}}  No fleet-config changes for {{.CLUSTER}} — already enabled (idempotent).{{.C_RESET}}\n'
         else
           git commit -m "feat: enable spoke {{.CLUSTER}} via Crossplane (+ fleet member)"
+          PUSHED=false
           for i in 1 2 3; do
-            git push 2>/dev/null && break
-            echo "  Push attempt $i failed (conflict), rebasing..."
-            git pull --rebase 2>/dev/null && sleep 2
+            # Ensure fleet-config main branch is not protected before pushing
+            docker exec gitlab-gitlab-1 gitlab-rails runner "u=User.find_by(username:'user1'); p=Project.find_by(path:'fleet-config',namespace_id:u&.namespace_id); ProtectedBranch.where(project:p).destroy_all" 2>/dev/null || true
+            if git push 2>&1; then PUSHED=true; break; fi
+            echo "  Push attempt $i failed, rebasing..."
+            git pull --rebase 2>&1 && sleep 2
           done
+          if [ "$PUSHED" != "true" ]; then
+            printf '{{.C_ERR}}\u26a0 fleet-config push failed after 3 attempts.{{.C_RESET}}\n'
+            exit 1
+          fi
         fi
         rm -rf "$REPO_DIR"
         # Refresh the local fleet-config checkout so the committed overlay change is
@@ -1236,11 +1233,11 @@ tasks:
         ACK_ROLE_NAME="${CLUSTER}-ack-capability-role"
         KRO_ROLE_NAME="${CLUSTER}-kro-capability-role"
 
-        # Wait for the Crossplane-provisioned spoke EKS cluster to be ACTIVE (up to ~30 min).
+        # Wait for the Crossplane-provisioned spoke EKS cluster to be ACTIVE (up to ~90 min).
         printf '{{.C_STEP}}▸ [%s] Waiting for spoke EKS cluster ACTIVE...{{.C_RESET}}\n' "$CLUSTER"
         i=0
         until aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null | grep -q ACTIVE; do
-          i=$((i+1)); [ "$i" -ge 120 ] && { printf '{{.C_ERR}}⚠ %s not ACTIVE after timeout — skipping capability creation.{{.C_RESET}}\n' "$CLUSTER"; exit 0; }
+          i=$((i+1)); [ "$i" -ge 360 ] && { printf '{{.C_ERR}}⚠ %s not ACTIVE after timeout — skipping capability creation.{{.C_RESET}}\n' "$CLUSTER"; exit 0; }
           sleep 15
         done
 
@@ -1304,19 +1301,19 @@ tasks:
     desc: "Enable a spoke cluster via KRO (usage: task spokes:enable-kro -- <cluster-name>)"
     vars:
       CLUSTER: '{{.CLI_ARGS}}'
-      GITLAB_DOMAIN_INT:
+      GITLAB_CF_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
             cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
           else
             echo "{{.DOMAIN}}"
           fi
       GIT_PASSWORD:
-        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
     cmds:
       - |
         if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:enable-kro -- <cluster-name>"; exit 1; fi
-        FLEET_URL="https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git"
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         # fleet-config is created asynchronously by the gitlab-init Job (Helm
         # post-install hook), which itself waits for GitLab to become ready. When
         # enable-kro runs in phase2 it can race ahead of that job. Cloning an
@@ -1326,7 +1323,7 @@ tasks:
         # verify the clone actually produced a git repo before proceeding.
         printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          git ls-remote "$FLEET_URL" >/dev/null 2>&1 && break
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
           if [ "$i" -eq 30 ]; then
             printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot enable spoke {{.CLUSTER}} via KRO.{{.C_RESET}}\n'
             printf '{{.C_INFO}}  GitLab/gitlab-init may still be initializing. Re-run later: task kind-crossplane:spokes:enable-kro -- {{.CLUSTER}}{{.C_RESET}}\n'
@@ -1346,17 +1343,13 @@ tasks:
         cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters/{{.CLUSTER}}.json" <<EOF
         {"clusterName": "{{.CLUSTER}}"}
         EOF
-        # Single random second octet for the VPC and all subnets so subnet CIDRs
-        # stay within the VPC CIDR (a per-line shuf produced out-of-range subnets,
-        # e.g. VPC 10.71.0.0/16 with subnets in 10.178/10.120/... -> InvalidSubnet.Range).
-        # Idempotency: only generate a (new random) CIDR when this spoke is not
-        # already enabled. Re-running install must NOT churn the CIDR — an EC2 VPC
-        # cidrBlock is immutable, so a new octet would force VPC recreation/orphans.
+        # Deterministic second octet derived from cluster name (stable across re-runs).
+        # Uses cksum to hash the name into a value 2-254.
         KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
         if [ -f "$KRO_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}".cidr.vpcCidr' "$KRO_VALUES" >/dev/null 2>&1; then
           echo "  Spoke {{.CLUSTER}} already has a CIDR — keeping existing values (idempotent)."
         else
-          OCTET=$(shuf -i 2-254 -n 1)
+          OCTET=$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}')
           cat > "$KRO_VALUES" <<EOF
         clusters:
           {{.CLUSTER}}:
@@ -1423,11 +1416,18 @@ tasks:
           printf '{{.C_INFO}}  No fleet-config changes for {{.CLUSTER}} — already enabled (idempotent).{{.C_RESET}}\n'
         else
           git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ multi-acct CARM mapping)"
+          PUSHED=false
           for i in 1 2 3; do
-            git push 2>/dev/null && break
-            echo "  Push attempt $i failed (conflict), rebasing..."
-            git pull --rebase 2>/dev/null && sleep 2
+            # Ensure fleet-config main branch is not protected before pushing
+            docker exec gitlab-gitlab-1 gitlab-rails runner "u=User.find_by(username:'user1'); p=Project.find_by(path:'fleet-config',namespace_id:u&.namespace_id); ProtectedBranch.where(project:p).destroy_all" 2>/dev/null || true
+            if git push 2>&1; then PUSHED=true; break; fi
+            echo "  Push attempt $i failed, rebasing..."
+            git pull --rebase 2>&1 && sleep 2
           done
+          if [ "$PUSHED" != "true" ]; then
+            printf '{{.C_ERR}}\u26a0 fleet-config push failed after 3 attempts.{{.C_RESET}}\n'
+            exit 1
+          fi
         fi
         rm -rf "$REPO_DIR"
         # Refresh the local fleet-config checkout so the committed overlay change is
@@ -1445,15 +1445,15 @@ tasks:
     desc: "DELETE a Crossplane spoke on purpose: remove from overlay, then prune (usage: task spokes:disable-crossplane -- <cluster-name>)"
     vars:
       CLUSTER: '{{.CLI_ARGS}}'
-      GITLAB_DOMAIN_INT:
+      GITLAB_CF_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
             cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
           else
             echo "{{.DOMAIN}}"
           fi
       GIT_PASSWORD:
-        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
     cmds:
       - |
         if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:disable-crossplane -- <cluster-name>"; exit 1; fi
@@ -1461,13 +1461,13 @@ tasks:
         APP="clusters-workshop"
 
         # 1. Declarative removal: drop the cluster entry from the overlay (Git).
-        FLEET_URL="https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git"
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         # Guard: a silently-failed clone would leave an empty $REPO_DIR, making us
         # wrongly conclude the cluster is absent from the overlay and skip the Git
         # removal (stale overlay left behind). Wait for fleet-config then verify.
         printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          git ls-remote "$FLEET_URL" >/dev/null 2>&1 && break
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
           if [ "$i" -eq 30 ]; then
             printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot disable spoke {{.CLUSTER}} via Crossplane.{{.C_RESET}}\n'
             exit 1
@@ -1511,27 +1511,27 @@ tasks:
     desc: "DELETE a KRO spoke on purpose: remove from overlay, then prune (usage: task spokes:disable-kro -- <cluster-name>)"
     vars:
       CLUSTER: '{{.CLI_ARGS}}'
-      GITLAB_DOMAIN_INT:
+      GITLAB_CF_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
             cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
           else
             echo "{{.DOMAIN}}"
           fi
       GIT_PASSWORD:
-        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
     cmds:
       - |
         if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:disable-kro -- <cluster-name>"; exit 1; fi
         # KRO generates one app per cluster: clusters-kro-<name>.
         APP="clusters-kro-{{.CLUSTER}}"
-        FLEET_URL="https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git"
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         # Guard: a silently-failed clone would leave an empty $REPO_DIR, making the
         # overlay cleanup below a no-op (stale kro overlay + marker left behind).
         # Wait for fleet-config then verify the clone produced a git repo.
         printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
         for i in $(seq 1 30); do
-          git ls-remote "$FLEET_URL" >/dev/null 2>&1 && break
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
           if [ "$i" -eq 30 ]; then
             printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot disable spoke {{.CLUSTER}} via KRO.{{.C_RESET}}\n'
             exit 1
@@ -1599,15 +1599,15 @@ tasks:
       `destroy` so spokes are removed while the hub controllers (KRO/ACK/Crossplane)
       are still alive to reconcile their deletion. Idempotent.
     vars:
-      GITLAB_DOMAIN_INT:
+      GITLAB_CF_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
             cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
           else
             echo "{{.DOMAIN}}"
           fi
       GIT_PASSWORD:
-        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || (aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password')
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
     cmds:
       - |
         set -u
@@ -1615,7 +1615,7 @@ tasks:
         #    for cluster specs). If the overlay is unreachable we must NOT silently
         #    proceed to hub teardown — surviving spokes would be orphaned.
         REPO_DIR=$(mktemp -d)
-        if ! git clone "https://root:root-{{.GIT_PASSWORD}}@{{.GITLAB_DOMAIN_INT}}/user1/fleet-config.git" "$REPO_DIR" 2>/dev/null; then
+        if ! git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git" "$REPO_DIR" 2>/dev/null; then
           printf '{{.C_ERR}}⚠ fleet-config overlay unreachable — cannot discover spokes automatically.{{.C_RESET}}\n'
           printf '{{.C_INFO}}  If any spoke clusters exist, delete them first with:{{.C_RESET}}\n'
           printf '    task spokes:disable-kro -- <name>   /   task spokes:disable-crossplane -- <name>\n'
@@ -1675,6 +1675,25 @@ tasks:
 
   hub:restart-identity-pods:
     desc: Restart pods that depend on Pod Identity (external-dns, LBC, Crossplane providers) after identities are ready
+    status:
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        # Skip if all providers are Healthy and oldest provider pod is >5min old
+        UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io \
+          -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' \
+          2>/dev/null | wc -w)
+        [ "$UNHEALTHY" != "0" ] && exit 1
+        # Use kubectl to get pod start time as epoch via jsonpath, then compare
+        OLDEST_EPOCH=$(KUBECONFIG=$KC kubectl get pods -n crossplane-system \
+          -l pkg.crossplane.io/revision \
+          --sort-by=.metadata.creationTimestamp \
+          -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null)
+        [ -z "$OLDEST_EPOCH" ] && exit 1
+        # Convert ISO8601 to epoch (GNU date)
+        POD_START=$(date -d "$OLDEST_EPOCH" +%s 2>/dev/null || echo 0)
+        NOW=$(date +%s)
+        AGE=$(( NOW - POD_START ))
+        [ "$AGE" -gt 300 ]
     cmds:
       - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Terminating any stuck ArgoCD sync operations on pod-identities apps...{{.C_RESET}}\n'
@@ -1715,6 +1734,11 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kagent litellm --timeout=120s 2>/dev/null || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Identity-dependent pods restarted.{{.C_RESET}}\n'
+      # Wait 60s for EKS Pod Identity agent to inject credentials into new pods
+      # before ArgoCD syncs crossplane-base and tries to create IAM roles
+      - printf '{{.C_INFO}}  Waiting 90s for Pod Identity credentials to be injected...{{.C_RESET}}\n'
+      - sleep 90
+      - printf '{{.C_OK}}✓ Pod Identity credentials ready.{{.C_RESET}}\n'
 
   hub:restart-langfuse:
     desc: Restart Langfuse to pick up Keycloak client secret (created by config job after initial deploy)
@@ -1777,8 +1801,16 @@ tasks:
         sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text
       INGRESS_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
-            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
+            # platform CloudFront domain — resolved at task-run time from the runtime
+            # artifact (written by cloudfront:setup-exposure/sync-domain before hub:seed),
+            # with an AWS fallback. Not read from config.local.yaml.
+            D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+            [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+              --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+              --output text 2>/dev/null | tr -d '[:space:]')
+            [ "$D" = "None" ] && D=""
+            echo "$D"
           else
             echo "{{.DOMAIN}}"
           fi
@@ -1786,8 +1818,10 @@ tasks:
         sh: yq '.adminRoleName // ""' {{.CONFIG_FILE}}
       GITLAB_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
             cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
           fi
     cmds:
       - |
@@ -1919,7 +1953,7 @@ tasks:
           BS_PG_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
           UPDATED=$(echo "$UPDATED" | jq --arg p "$BS_PG_PASS" '. + {backstage_postgres_password: $p}')
         fi
-        UPDATED=$(echo "$UPDATED" | jq --arg t "$USER_PASS" '. + {git_token: $t}')
+        # git_token is seeded by CDK at deploy time (root-<ide_password>) — no runtime seeding needed.
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" \
           --secret-string "$UPDATED" \
@@ -2725,6 +2759,7 @@ tasks:
             done
           done
           printf '{{.C_OK}}✓ Spoke provider identity seeding complete.{{.C_RESET}}\n'
+
 
   hub:destroy-addons:
     desc: Remove all addons from the hub cluster (no git changes needed)

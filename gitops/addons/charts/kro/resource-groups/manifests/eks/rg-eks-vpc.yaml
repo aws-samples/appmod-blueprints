@@ -18,7 +18,7 @@ spec:
       accountId: string
       managementAccountId: string
       argoCdHubRoleArn: string
-      argoCdCapabilityRoleArn: string
+      argoCdCapabilityRoleArn: string | default=""
       adminRoleName: string | default="Admin"
       # Optional second cluster-admin role (e.g. the IDE/instance *SharedRole*),
       # passed through to the nested EksCluster. See rg-eks.yaml for rationale.
@@ -27,6 +27,11 @@ spec:
       domainName: string | default="cluster.example.com"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
+      argocdCapability:
+        enabled: string | default="false"
+        idcInstanceArn: string | default=""
+        idcRegion: string | default=""
+        adminGroupId: string | default=""
       cidr:
         vpcCidr: string | default="10.0.0.0/16"
         publicSubnet1Cidr: string | default="10.0.1.0/24"
@@ -175,6 +180,11 @@ spec:
           domainName: ${schema.spec.domainName}
           resourcePrefix: ${schema.spec.resourcePrefix}
           git_username: ${schema.spec.git_username}
+          argocdCapability:
+            enabled: ${schema.spec.argocdCapability.enabled}
+            idcInstanceArn: ${schema.spec.argocdCapability.idcInstanceArn}
+            idcRegion: ${schema.spec.argocdCapability.idcRegion}
+            adminGroupId: ${schema.spec.argocdCapability.adminGroupId}
           network:
             vpcID: ${vpc.status.vpcID}
             subnets:

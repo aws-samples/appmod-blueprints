@@ -62,7 +62,7 @@ spec:
               xrd:
                 enabled: false
               global:
-                argoCDRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
+                argoCDRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-argocd-capability-role'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/default/crossplane-clusters/values.yaml'

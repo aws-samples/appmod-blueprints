@@ -65,8 +65,8 @@ spec:
             ignoreMissingValueFiles: true
             valuesObject:
               global:
-                argoCdHubRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
-                argoCdCapabilityRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
+                argoCdHubRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-argocd-capability-role'
+                argoCdCapabilityRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-argocd-capability-role'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
                 targetCluster: '{{ .clusterName }}'
                 # Propagate the deploy branch from the control-plane so kro spokes

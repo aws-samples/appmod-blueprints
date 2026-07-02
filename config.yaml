@@ -35,10 +35,17 @@ aws:
   profile: "default"                         # AWS CLI profile (local dev only)
 
 # Domain and networking
-domain: "<your-domain>"                      # e.g. idp.example.com — leave empty for CloudFront mode (auto-created)
+# Leave domain empty to use CloudFront mode — provide cloudfront.vpcId + cloudfront.cloudfrontDomain below.
+domain: "<your-domain>"                      # e.g. idp.example.com — leave empty for CloudFront mode
 resourcePrefix: "<prefix>"                   # Used for KRO tenant-facing resources only
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
+
+# CloudFront mode pre-requisites (required when domain is empty)
+# These are created before running task install (see docs/platform/cloudfront-setup.md).
+# cloudfront:
+#   vpcId: "vpc-xxxxxxxxxxxxxxxxx"           # VPC with min 2 public + 2 private subnets
+#   cloudfrontDomain: "xxxx.cloudfront.net"  # CloudFront distribution domain for the platform ALB
 
 # AWS Identity Center (required for EKS ArgoCD Capability)
 identityCenter:

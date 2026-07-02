@@ -60,14 +60,6 @@ rules:
 - apiGroups: ["iam.services.k8s.aws"]
   resources: ["*"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-# ACK adoption API (IAMRoleSelector, etc.)
-- apiGroups: ["services.k8s.aws"]
-  resources: ["*"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-# ACK DynamoDB
-- apiGroups: ["dynamodb.services.k8s.aws"]
-  resources: ["*"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # ACK ECR
 - apiGroups: ["ecr.services.k8s.aws"]
   resources: ["*"]
@@ -78,6 +70,14 @@ rules:
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # ACK Secrets Manager
 - apiGroups: ["secretsmanager.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK DynamoDB
+- apiGroups: ["dynamodb.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK Services (IAMRoleSelector and other cross-service CRDs)
+- apiGroups: ["services.k8s.aws"]
   resources: ["*"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---

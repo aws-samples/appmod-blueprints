@@ -150,7 +150,8 @@ data:
     # The username of the database user.
     db-url=jdbc:postgresql://postgresql.keycloak.svc.cluster.local:5432/postgres
 
-    # hostname settings
+    # hostname settings — must use ingress_domain_name (platform CloudFront domain)
+    # Do NOT fall back to gitlab_domain_name — that domain routes to GitLab, not Keycloak
     hostname=https://{{ .Values.global.ingress_domain_name }}/keycloak
     hostname-admin=https://{{ .Values.global.ingress_domain_name }}/keycloak
     hostname-strict=false

@@ -1,0 +1,47 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.clusterName }}
+---
+apiVersion: kro.run/v1alpha1
+kind: EksclusterWithVpc
+metadata:
+  name: {{ .Values.clusterName }}
+  namespace: {{ .Values.clusterName }}
+spec:
+  name: {{ .Values.clusterName }}
+  tenant: {{ .Values.tenant | default "workshop" }}
+  environment: {{ .Values.environment | default "dev" }}
+  region: {{ .Values.region | default $.Values.global.region | default "us-west-2" }}
+  k8sVersion: {{ .Values.kubernetesVersion | default "1.32" | quote }}
+  accountId: {{ .Values.accountId | default $.Values.global.accountId | quote }}
+  managementAccountId: {{ .Values.managementAccountId | default $.Values.global.accountId | quote }}
+  argoCdHubRoleArn: {{ .Values.argoCdHubRoleArn | default $.Values.global.argoCDRoleArn | default "" }}
+  adminRoleName: {{ .Values.adminRoleName | default $.Values.global.adminRoleName | default "Admin" }}
+  fleetSecretManagerSecretNameSuffix: {{ .Values.fleetSecretManagerSecretNameSuffix | default "argocd-secret" }}
+  domainName: {{ .Values.domainName | default $.Values.global.domainName | default "example.com" }}
+  resourcePrefix: {{ .Values.resourcePrefix | default $.Values.global.resourcePrefix | default "peeks" }}
+  cidr:
+    vpcCidr: {{ .Values.vpcCidr | default "10.0.0.0/16" | quote }}
+    publicSubnet1Cidr: {{ .Values.publicSubnet1Cidr | default "10.0.1.0/24" | quote }}
+    publicSubnet2Cidr: {{ .Values.publicSubnet2Cidr | default "10.0.2.0/24" | quote }}
+    privateSubnet1Cidr: {{ .Values.privateSubnet1Cidr | default "10.0.11.0/24" | quote }}
+    privateSubnet2Cidr: {{ .Values.privateSubnet2Cidr | default "10.0.12.0/24" | quote }}
+  gitops:
+    addonsRepoUrl: {{ .Values.addonsRepoUrl | default $.Values.global.repoUrl }}
+    addonsRepoRevision: {{ .Values.addonsRepoRevision | default $.Values.global.repoRevision }}
+    addonsRepoBasePath: {{ .Values.addonsRepoBasePath | default $.Values.global.repoBasePath | default "gitops/addons/" }}
+    addonsRepoPath: bootstrap
+    fleetRepoUrl: {{ .Values.fleetRepoUrl | default $.Values.global.repoUrl }}
+    fleetRepoRevision: {{ .Values.fleetRepoRevision | default $.Values.global.repoRevision }}
+    fleetRepoBasePath: {{ .Values.fleetRepoBasePath | default $.Values.global.repoBasePath | default "gitops/fleet/" }}
+    fleetRepoPath: bootstrap
+    platformRepoUrl: {{ .Values.platformRepoUrl | default $.Values.global.repoUrl }}
+    platformRepoRevision: {{ .Values.platformRepoRevision | default $.Values.global.repoRevision }}
+    platformRepoBasePath: {{ .Values.platformRepoBasePath | default $.Values.global.repoBasePath | default "gitops/platform/" }}
+    platformRepoPath: bootstrap
+    workloadRepoUrl: {{ .Values.workloadRepoUrl | default $.Values.global.repoUrl }}
+    workloadRepoRevision: {{ .Values.workloadRepoRevision | default $.Values.global.repoRevision }}
+    workloadRepoBasePath: {{ .Values.workloadRepoBasePath | default $.Values.global.repoBasePath | default "gitops/apps/" }}
+    workloadRepoPath: ""

@@ -22,7 +22,6 @@ spec:
     enabled: true
     path: /unicorn
     rewrite: false
-    healthcheckPath: /unicorn
 ---
 apiVersion: v1
 kind: Service

@@ -20,7 +20,12 @@ spec:
       managementAccountId: string
       managementRegion: string | default="us-west-2"
       argoCdHubRoleArn: string
-      argoCdCapabilityRoleArn: string
+      argoCdCapabilityRoleArn: string | default=""
+      argocdCapability:
+        enabled: string | default="false"
+        idcInstanceArn: string | default=""
+        idcRegion: string | default=""
+        adminGroupId: string | default=""
       k8sVersion: string
       adminRoleName: string
       # Optional second cluster-admin role. kro SimpleSchema cannot express a
@@ -418,7 +423,10 @@ spec:
                 {
                   "Effect": "Allow",
                   "Principal": {
-                    "AWS": "${schema.spec.argoCdHubRoleArn}"
+                    "AWS": [
+                      "${schema.spec.argoCdHubRoleArn}",
+                      "arn:${schema.spec.aws_partition}:iam::${schema.spec.accountId}:role/${schema.spec.name}-argocd-capability-role"
+                    ]
                   },
                   "Action": [
                     "sts:TagSession",
@@ -547,8 +555,7 @@ spec:
           config: |
             {
               "awsAuthConfig": {
-                "clusterName": "${schema.spec.name}",
-                "roleARN": "${argocdRole.status.ackResourceMetadata.arn}"
+                "clusterName": "${schema.spec.name}"
               },
               "tlsClientConfig": {
                 "caData": "${ekscluster.status.certificateAuthority.data}",
@@ -576,8 +583,6 @@ spec:
             {"vpc":{"id":"${schema.spec.network.vpcID}","cluster_security_group_id":"","subnet_ids":["${schema.spec.network.subnets.workers.subnet1ID}","${schema.spec.network.subnets.workers.subnet2ID}"]},"server":"${ekscluster.status.ackResourceMetadata.arn}","metadata":{"cluster_name":"${schema.spec.name}","region":"${schema.spec.region}","account_id":"${schema.spec.accountId}"}}
 
     - id: clusterConfigSecret
-      readyWhen:
-      - ${clusterConfigSecret.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       template:
         apiVersion: secretsmanager.services.k8s.aws/v1alpha1
         kind: Secret
@@ -601,8 +606,6 @@ spec:
             key: config
 
     - id: hubSecretsExternal
-      readyWhen:
-      - ${hubSecretsExternal.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
       template:
         apiVersion: external-secrets.io/v1
         kind: ExternalSecret
@@ -634,31 +637,6 @@ spec:
               remoteRef:
                 key: ${schema.spec.resourcePrefix}-hub/secrets
 
-    - id: clusterSecretsSecret
-      readyWhen:
-      - ${clusterSecretsSecret.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
-      template:
-        apiVersion: secretsmanager.services.k8s.aws/v1alpha1
-        kind: Secret
-        metadata:
-          name: ${schema.spec.name}-secrets
-          namespace: ${schema.spec.name}
-          annotations:
-            services.k8s.aws/region: ${schema.spec.managementRegion}
-            services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-        spec:
-          name: ${schema.spec.name}/secrets
-          secretString:
-            name: ${schema.spec.name}-hub-secrets
-            namespace: ${schema.spec.name}
-            key: secrets
-
     - id: accessEntry
       template:
         apiVersion: eks.services.k8s.aws/v1alpha1
@@ -687,6 +665,34 @@ spec:
                 type: "cluster"
               policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
           principalARN: "${argocdRole.status.ackResourceMetadata.arn}"
+          type: STANDARD
+
+    - id: accessEntryArgocdCapability
+      includeWhen:
+        - ${schema.spec.argoCdCapabilityRoleArn != ""}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-access-entry-argocd-capability"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
+          accessPolicies:
+            - accessScope:
+                type: "cluster"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          principalARN: "${schema.spec.argoCdCapabilityRoleArn}"
           type: STANDARD
 
     - id: accessEntryAdmin
@@ -750,13 +756,18 @@ spec:
           principalARN: "arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.adminInstanceRoleName}"
           type: STANDARD
 
-    - id: accessEntryArgoCdCapability
+    ###########################################################
+    # ArgoCD Capability (optional, for hub clusters)
+    ###########################################################
+    - id: argocdCapabilityRole
+      includeWhen:
+        - ${schema.spec.argocdCapability.enabled == "true"}
       template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: AccessEntry
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
         metadata:
           namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-access-entry-argocd-capability"
+          name: "${schema.spec.name}-argocd-capability-role"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -768,12 +779,92 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          clusterName: "${ekscluster.spec.name}"
+          name: "${schema.spec.name}-argocd-capability-role"
+          policies:
+            - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+          assumeRolePolicyDocument: |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "capabilities.eks.amazonaws.com"
+                  },
+                  "Action": [
+                    "sts:AssumeRole",
+                    "sts:TagSession"
+                  ]
+                }
+              ]
+            }
+
+    - id: argocdCapability
+      includeWhen:
+        - ${schema.spec.argocdCapability.enabled == "true"}
+      readyWhen:
+        - ${argocdCapability.metadata.name != ""}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: Capability
+        metadata:
+          name: ${schema.spec.name}-argocd
+          namespace: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/instance: ${schema.spec.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: EksCluster
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            argocd.argoproj.io/sync-options: Prune=false
+        spec:
+          clusterName: ${schema.spec.name}
+          name: argocd
+          type: ARGOCD
+          roleARN: ${argocdCapabilityRole.status.ackResourceMetadata.arn}
+          deletePropagationPolicy: RETAIN
+          configuration:
+            argoCD:
+              awsIDC:
+                idcInstanceARN: ${schema.spec.argocdCapability.idcInstanceArn}
+                idcRegion: ${schema.spec.argocdCapability.idcRegion}
+              rbacRoleMappings:
+                - role: ADMIN
+                  identities:
+                    - id: ${schema.spec.argocdCapability.adminGroupId}
+                      type: SSO_GROUP
+
+    - id: argocdCapabilityAccessEntry
+      includeWhen:
+        - ${schema.spec.argocdCapability.enabled == "true"}
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-argocd-capability-access"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
           accessPolicies:
             - accessScope:
                 type: "cluster"
               policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-          principalARN: "${schema.spec.argoCdCapabilityRoleArn}"
+          principalARN: "${argocdCapabilityRole.status.ackResourceMetadata.arn}"
           type: STANDARD
 
 

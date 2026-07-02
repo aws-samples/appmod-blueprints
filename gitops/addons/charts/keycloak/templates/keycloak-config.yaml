@@ -330,35 +330,6 @@ data:
         "https://${DOMAIN_NAME}"
       ]
     }
-  gitlab-client-payload.json: |
-    {
-      "protocol": "openid-connect",
-      "clientId": "gitlab",
-      "name": "GitLab Client",
-      "description": "Used for GitLab SSO with PKCE",
-      "publicClient": true,
-      "authorizationServicesEnabled": false,
-      "serviceAccountsEnabled": false,
-      "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": true,
-      "standardFlowEnabled": true,
-      "frontchannelLogout": true,
-      "attributes": {
-        "saml_idp_initiated_sso_url_name": "",
-        "oauth2.device.authorization.grant.enabled": false,
-        "oidc.ciba.grant.enabled": false,
-        "pkce.code.challenge.method": "S256"
-      },
-      "alwaysDisplayInConsole": false,
-      "rootUrl": "https://${GITLAB_DOMAIN_NAME}",
-      "baseUrl": "",
-      "redirectUris": [
-        "https://${GITLAB_DOMAIN_NAME}/users/auth/openid_connect/callback"
-      ],
-      "webOrigins": [
-        "/*"
-      ]
-    }
   argocd-client-payload.json: |
     {
       "protocol": "openid-connect",
@@ -760,55 +731,21 @@ spec:
                 keycloak_post "/admin/realms/${REALM_NAME}/roles" "role-${role_name}-payload.json" "Role ${role_name}"
               }
 
-              # Create client function
+              # Create or update client function (idempotent upsert)
               create_client() {
                 local client_name=$1
                 local payload_file=$2
+                local client_id_name
+                client_id_name=$(jq -r '.clientId' "${payload_file}")
                 
-                echo "creating ${client_name} client"
-                keycloak_post "/admin/realms/${REALM_NAME}/clients" "${payload_file}" "${client_name} client"
-              }
-
-              # Upsert client matched by its stable "name" field.
-              # Needed for clients whose clientId can change between runs — e.g.
-              # amazon-managed-grafana, whose clientId is the AMG workspace endpoint.
-              # On a fresh bootstrap the grafana_url annotation may not be seeded yet,
-              # so the client is first created with the fallback (<ingress>/grafana).
-              # Once aws_grafana_url is present, a re-sync (once keycloak re-runs)
-              # repairs the clientId/adminUrl/redirectUris via PUT instead of leaving
-              # the stale value that breaks SAML login.
-              upsert_client() {
-                local match_name=$1
-                local payload_file=$2
-
-                envsubst < ${payload_file} > /tmp/upsert-payload.json
-
-                EXISTING_ID=$(curl -sS \
-                  -H "Content-Type: application/json" \
-                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
-                  | jq -r ".[] | select(.name == \"${match_name}\") | .id" 2>/dev/null || true)
-
+                # Check if client already exists
+                EXISTING_ID=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" ".[] | select(.clientId == \"${client_id_name}\") | .id" 2>/dev/null) || true
                 if [ -n "${EXISTING_ID}" ]; then
-                  echo "upserting ${match_name} client (id=${EXISTING_ID})"
-                  HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt \
-                    -H "Content-Type: application/json" \
-                    -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                    -X PUT --data @/tmp/upsert-payload.json \
-                    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${EXISTING_ID}")
-                  if [ "$HTTP_STATUS" -ne 204 ] && [ "$HTTP_STATUS" -ne 200 ]; then
-                    echo "Error upserting ${match_name}: HTTP $HTTP_STATUS"; cat /tmp/response.txt
-                  fi
+                  echo "updating ${client_name} client (exists: ${EXISTING_ID})"
+                  keycloak_put "/admin/realms/${REALM_NAME}/clients/${EXISTING_ID}" "${payload_file}" "${client_name} client"
                 else
-                  echo "creating ${match_name} client (not found)"
-                  HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt \
-                    -H "Content-Type: application/json" \
-                    -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
-                    -X POST --data @/tmp/upsert-payload.json \
-                    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients")
-                  if [ "$HTTP_STATUS" -ne 201 ] && [ "$HTTP_STATUS" -ne 200 ]; then
-                    echo "Error creating ${match_name}: HTTP $HTTP_STATUS"; cat /tmp/response.txt
-                  fi
+                  echo "creating ${client_name} client"
+                  keycloak_post "/admin/realms/${REALM_NAME}/clients" "${payload_file}" "${client_name} client"
                 fi
               }
 
@@ -938,8 +875,7 @@ spec:
               create_client "Langfuse" "/var/config/langfuse-client-payload.json"
               # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
-              upsert_client "amazon-managed-grafana" "/var/config/grafana-client-payload.json"
-              create_client "GitLab" "/var/config/gitlab-client-payload.json"
+              create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
 
               echo "adding client scopes to clients"
               add_client_scope "argo-workflows" "Argo Workflows"
@@ -952,7 +888,6 @@ spec:
               add_client_scope "kargo" "Kargo"
               # add_client_scope "argocd" "Argo CD"  # Disabled - using EKS Marina managed ArgoCD
               add_client_scope "account-console" "Account Console"
-              add_client_scope "gitlab" "GitLab"
               add_client_scope "mcp-client" "MCP Client"
 
               echo "adding user1 to admin group"

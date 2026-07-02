@@ -1,0 +1,246 @@
+version: "3"
+set: [errexit, nounset, pipefail]
+silent: true
+
+# Shared CloudFront exposure-mode tasks.
+# Used by both kind-crossplane and kind-kro-ack providers.
+# Creates an internal ALB + CloudFront VPC Origin for platform services
+# (Backstage, Keycloak, Grafana, etc.) only when EXPOSURE_MODE=cloudfront.
+#
+# Required vars (passed by the including Taskfile):
+#   HUB_CLUSTER_NAME    e.g. peeks-hub
+#   RESOURCE_PREFIX     e.g. peeks
+#   AWS_REGION          e.g. us-west-2
+#   AWS_ACCOUNT_ID
+#   EXPOSURE_MODE       cloudfront | tls | domain
+#   CLOUDFRONT_VPC_ID   optional — derived from EKS cluster if empty
+#   CONFIG_FILE         path to config.local.yaml
+#   ROOT_DIR            root of the repo
+#   C_STEP, C_OK, C_ERR, C_INFO, C_RESET   colour vars
+#
+# ALB name: {{.HUB_CLUSTER_NAME}}-platform
+# CF comment: {{.HUB_CLUSTER_NAME}}-platform
+
+tasks:
+  setup-exposure:
+    desc: Pre-create internal ALB and CloudFront VPC Origin distribution (cloudfront mode, idempotent)
+    status:
+      - |
+        [ "{{.EXPOSURE_MODE}}" != "cloudfront" ] || \
+        aws cloudfront list-distributions \
+          --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].Id" \
+          --output text | grep -q .
+    cmds:
+      - task: create-alb
+      - task: hub-distribution
+
+  create-alb:
+    desc: Pre-create the internal platform ALB for CloudFront VPC Origin (cloudfront mode only)
+    status:
+      - aws elbv2 describe-load-balancers --names {{.HUB_CLUSTER_NAME}}-platform --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating platform ALB (internal, CloudFront VPC Origin mode)...{{.C_RESET}}\n'
+      - |
+        set -e
+        # Wait for EKS cluster to be ACTIVE (may still be provisioning when this runs)
+        for i in $(seq 1 60); do
+          STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+          [ "$STATUS" = "ACTIVE" ] && break
+          [ $((i % 4)) -eq 0 ] && printf '{{.C_INFO}}  [%ds] Waiting for EKS cluster ACTIVE (status: %s)...{{.C_RESET}}\n' "$((i*15))" "$STATUS"
+          sleep 15
+        done
+        [ "$STATUS" != "ACTIVE" ] && echo "ERROR: EKS cluster not ACTIVE after 15min" && exit 1
+        VPC_ID="{{.CLOUDFRONT_VPC_ID}}"
+        if [ -z "$VPC_ID" ]; then
+          VPC_ID=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+        fi
+        VPC_CIDR=$(aws ec2 describe-vpcs --vpc-ids "$VPC_ID" --region {{.AWS_REGION}} \
+          --query 'Vpcs[0].CidrBlock' --output text)
+        # Use private subnets — one per AZ (avoids "multiple subnets in same AZ" error)
+        PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
+          --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=*private*" \
+                    "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
+          --region {{.AWS_REGION}} \
+          --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text | \
+          sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
+        if [ -z "$PRIVATE_SUBNETS" ]; then
+          PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Name,Values=*private*" \
+            --region {{.AWS_REGION}} \
+            --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text | \
+            sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
+        fi
+        if [ -z "$PRIVATE_SUBNETS" ]; then
+          printf '{{.C_ERR}}✗ No private subnets found — falling back to all subnets (one per AZ){{.C_RESET}}\n'
+          PRIVATE_SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
+            --region {{.AWS_REGION}} \
+            --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text | \
+            sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
+        fi
+        SG_NAME="{{.HUB_CLUSTER_NAME}}-platform-alb-sg"
+        SG_ID=$(aws ec2 describe-security-groups \
+          --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$VPC_ID" \
+          --region {{.AWS_REGION}} --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+        if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+          SG_ID=$(aws ec2 create-security-group \
+            --group-name "$SG_NAME" \
+            --description "Platform ALB (internal, CloudFront VPC Origin)" \
+            --vpc-id "$VPC_ID" --region {{.AWS_REGION}} \
+            --query 'GroupId' --output text)
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+            --protocol tcp --port 80 --cidr "$VPC_CIDR" --region {{.AWS_REGION}} >/dev/null
+          CF_SG=$(aws ec2 describe-security-groups --region {{.AWS_REGION}} \
+            --filters "Name=vpc-id,Values=$VPC_ID" \
+                      "Name=group-name,Values=CloudFront-VPCOrigins-Service-SG" \
+            --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+          if [ -n "$CF_SG" ] && [ "$CF_SG" != "None" ]; then
+            aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+              --protocol tcp --port 80 --source-group "$CF_SG" \
+              --region {{.AWS_REGION}} >/dev/null 2>&1 || true
+            printf '{{.C_OK}}✓ Authorized CloudFront-VPCOrigins-Service-SG → ALB:80{{.C_RESET}}\n'
+          fi
+          CLUSTER_SG=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text 2>/dev/null || echo "")
+          [ -n "$CLUSTER_SG" ] && [ "$CLUSTER_SG" != "None" ] && \
+            aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+              --protocol -1 --source-group "$CLUSTER_SG" \
+              --region {{.AWS_REGION}} 2>/dev/null || true
+        fi
+        ALB_ARN=$(aws elbv2 create-load-balancer \
+          --name "{{.HUB_CLUSTER_NAME}}-platform" \
+          --subnets $PRIVATE_SUBNETS \
+          --security-groups "$SG_ID" \
+          --scheme internal \
+          --type application \
+          --tags Key=elbv2.k8s.aws/cluster,Value={{.HUB_CLUSTER_NAME}} \
+                 Key=ingress.k8s.aws/stack,Value=platform \
+                 Key=ingress.k8s.aws/resource,Value=LoadBalancer \
+          --region {{.AWS_REGION}} \
+          --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        aws elbv2 create-listener \
+          --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
+          --default-actions "Type=fixed-response,FixedResponseConfig={MessageBody=Not Found,StatusCode=404,ContentType=text/plain}" \
+          --region {{.AWS_REGION}} > /dev/null
+        printf '{{.C_OK}}✓ ALB created: {{.HUB_CLUSTER_NAME}}-platform (scheme=internal){{.C_RESET}}\n'
+      - printf '{{.C_OK}}✓ Platform ALB ready.{{.C_RESET}}\n'
+
+  hub-distribution:
+    desc: Create CloudFront distribution with VPC Origin pointing to the internal ALB (idempotent)
+    status:
+      - |
+        [ "{{.EXPOSURE_MODE}}" != "cloudfront" ] || \
+        aws cloudfront list-distributions \
+          --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].Id" \
+          --output text | grep -q .
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating platform CloudFront distribution (VPC Origin)...{{.C_RESET}}\n'
+      - |
+        set -e
+        ALB_ARN=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-platform" \
+          --region {{.AWS_REGION}} --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        VPC_ORIGIN_NAME="{{.HUB_CLUSTER_NAME}}-platform-vpc-origin"
+        VPC_ORIGIN_ID=$(aws cloudfront list-vpc-origins \
+          --query "VpcOriginList.Items[?Name=='$VPC_ORIGIN_NAME'].Id" \
+          --output text 2>/dev/null || echo "")
+        if [ -z "$VPC_ORIGIN_ID" ] || [ "$VPC_ORIGIN_ID" = "None" ]; then
+          VPC_ORIGIN_ID=$(aws cloudfront create-vpc-origin \
+            --vpc-origin-endpoint-config "{
+              \"Name\": \"$VPC_ORIGIN_NAME\",
+              \"Arn\": \"$ALB_ARN\",
+              \"HTTPPort\": 80,
+              \"HTTPSPort\": 443,
+              \"OriginProtocolPolicy\": \"http-only\",
+              \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
+            }" --query 'VpcOrigin.Id' --output text)
+          printf '{{.C_OK}}✓ VPC Origin created: %s{{.C_RESET}}\n' "$VPC_ORIGIN_ID"
+        else
+          printf '{{.C_INFO}}↻ Reusing VPC Origin: %s{{.C_RESET}}\n' "$VPC_ORIGIN_ID"
+        fi
+        printf '{{.C_STEP}}▸ Waiting for VPC Origin Deployed...{{.C_RESET}}\n'
+        for i in $(seq 1 60); do
+          STATE=$(aws cloudfront get-vpc-origin --id "$VPC_ORIGIN_ID" \
+            --query 'VpcOrigin.Status' --output text 2>/dev/null || echo "Pending")
+          printf '{{.C_INFO}}  [%s/60] VPC Origin status: %s{{.C_RESET}}\n' "$i" "$STATE"
+          [ "$STATE" = "Deployed" ] && break
+          sleep 15
+        done
+        [ "$STATE" != "Deployed" ] && echo "ERROR: VPC Origin not Deployed within 15min" && exit 1
+        # Authorize CloudFront VPC Origins SG on ALB SG (AWS creates this SG after first VPC Origin)
+        VPC_ID=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-platform" \
+          --region {{.AWS_REGION}} --query 'LoadBalancers[0].VpcId' --output text)
+        ALB_SG=$(aws ec2 describe-security-groups --region {{.AWS_REGION}} \
+          --filters "Name=group-name,Values={{.HUB_CLUSTER_NAME}}-platform-alb-sg" \
+                    "Name=vpc-id,Values=$VPC_ID" \
+          --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+        CF_SG=$(aws ec2 describe-security-groups --region {{.AWS_REGION}} \
+          --filters "Name=vpc-id,Values=$VPC_ID" \
+                    "Name=group-name,Values=CloudFront-VPCOrigins-Service-SG" \
+          --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+        if [ -n "$CF_SG" ] && [ "$CF_SG" != "None" ] && \
+           [ -n "$ALB_SG" ] && [ "$ALB_SG" != "None" ]; then
+          aws ec2 authorize-security-group-ingress --group-id "$ALB_SG" \
+            --protocol tcp --port 80 --source-group "$CF_SG" \
+            --region {{.AWS_REGION}} 2>/dev/null || true
+          printf '{{.C_OK}}✓ Authorized %s → %s:80 (post VPC Origin){{.C_RESET}}\n' "$CF_SG" "$ALB_SG"
+        fi
+        ALB_DNS=$(aws elbv2 describe-load-balancers --names "{{.HUB_CLUSTER_NAME}}-platform" \
+          --region {{.AWS_REGION}} --query 'LoadBalancers[0].DNSName' --output text)
+        CF_DOMAIN=$(aws cloudfront create-distribution \
+          --distribution-config "{
+            \"CallerReference\": \"{{.HUB_CLUSTER_NAME}}-platform-$(date +%s)\",
+            \"Comment\": \"{{.HUB_CLUSTER_NAME}}-platform\",
+            \"Enabled\": true,
+            \"Origins\": {\"Quantity\": 1, \"Items\": [{
+              \"Id\": \"vpc-origin\",
+              \"DomainName\": \"$ALB_DNS\",
+              \"VpcOriginConfig\": {
+                \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
+                \"OriginReadTimeout\": 60,
+                \"OriginKeepaliveTimeout\": 5
+              }
+            }]},
+            \"DefaultCacheBehavior\": {
+              \"TargetOriginId\": \"vpc-origin\",
+              \"ViewerProtocolPolicy\": \"redirect-to-https\",
+              \"AllowedMethods\": {
+                \"Quantity\": 7,
+                \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"],
+                \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}
+              },
+              \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
+              \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
+              \"Compress\": true
+            },
+            \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
+            \"PriceClass\": \"PriceClass_100\"
+          }" \
+          --query "Distribution.DomainName" --output text)
+        # Single source of truth for the platform CloudFront domain is the runtime
+        # artifact private/cloudfront-domain — NOT config.local.yaml. Consumers
+        # (idc:configure, hub:seed, urls, setup-env) resolve it lazily at task-run
+        # time from this file (with an AWS lookup fallback), so it must never be a
+        # config input/parameter.
+        mkdir -p {{.ROOT_DIR}}/private
+        echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/cloudfront-domain
+        printf '{{.C_OK}}✓ CloudFront created: %s{{.C_RESET}}\n' "$CF_DOMAIN"
+      - printf '{{.C_OK}}✓ Platform CloudFront ready (VPC Origin).{{.C_RESET}}\n'
+
+  sync-domain:
+    desc: Ensure private/cloudfront-domain holds the platform CloudFront domain (idempotent safety net)
+    cmds:
+      - |
+        CURRENT=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+        if [ -z "$CURRENT" ]; then
+          CURRENT=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName" \
+            --output text 2>/dev/null | tr -d '[:space:]')
+        fi
+        if [ -n "$CURRENT" ] && [ "$CURRENT" != "None" ]; then
+          mkdir -p {{.ROOT_DIR}}/private
+          echo -n "$CURRENT" > {{.ROOT_DIR}}/private/cloudfront-domain
+          printf '{{.C_OK}}✓ cloudfrontDomain: %s{{.C_RESET}}\n' "$CURRENT"
+        else
+          printf '{{.C_WARN}}  No {{.HUB_CLUSTER_NAME}}-platform CloudFront distribution found{{.C_RESET}}\n'
+        fi

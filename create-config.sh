@@ -45,6 +45,7 @@ OUTPUT_FILE="${OUTPUT_FILE:-${SCRIPT_DIR}/config.local.yaml}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 REPO_URL="${REPO_URL:-https://github.com/aws-samples/appmod-blueprints}"
 REPO_REVISION="${REPO_REVISION:-${WORKSHOP_GIT_BRANCH:-feature/cloudfront-on-agent-platform}}"
+CLUSTER_PROVIDER="${CLUSTER_PROVIDER:-kind-crossplane}"
 K8S_VERSION="${K8S_VERSION:-1.35}"
 VPC_CIDR="${VPC_CIDR:-10.1.0.0/16}"
 FORCE="${FORCE:-false}"
@@ -138,7 +139,7 @@ fi
 
 # --- Write config.local.yaml (printf, never heredoc) -----------------------
 echo "▸ Writing $OUTPUT_FILE ..."
-printf 'clusterProvider: "kind-crossplane"\n'          >  "$OUTPUT_FILE"
+printf 'clusterProvider: "%s"\n' "$CLUSTER_PROVIDER"  >  "$OUTPUT_FILE"
 printf 'repo:\n'                                       >> "$OUTPUT_FILE"
 printf '  url: "%s"\n'          "$REPO_URL"            >> "$OUTPUT_FILE"
 printf '  revision: "%s"\n'     "$REPO_REVISION"       >> "$OUTPUT_FILE"
@@ -156,6 +157,18 @@ printf 'domain: ""\n'                                  >> "$OUTPUT_FILE"
 printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
 printf 'ingressName: ""\n'                             >> "$OUTPUT_FILE"
 printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
+
+# CloudFront domain is NOT written here — it is set by the hub-distribution task
+# after the platform ALB CloudFront is created (pointing to the EKS ALB, not EC2/GitLab).
+# The GitLab/IDE CloudFront domain is available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,
+# or from the private/gitlab-cloudfront-domain file written by bootstrap.sh.
+GITLAB_CF_DOMAIN="${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}"
+[ -z "$GITLAB_CF_DOMAIN" ] && [ -f "${SCRIPT_DIR}/private/gitlab-cloudfront-domain" ] && \
+  GITLAB_CF_DOMAIN="$(cat "${SCRIPT_DIR}/private/gitlab-cloudfront-domain" | tr -d '[:space:]')"
+if [ -n "$GITLAB_CF_DOMAIN" ]; then
+  printf 'cloudfront:\n'                               >> "$OUTPUT_FILE"
+  printf '  gitlabDomain: "%s"\n' "$GITLAB_CF_DOMAIN" >> "$OUTPUT_FILE"
+fi
 printf 'identityCenter:\n'                             >> "$OUTPUT_FILE"
 printf '  instanceArn: "%s"\n'  "$IDC_ARN"             >> "$OUTPUT_FILE"
 printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
@@ -171,7 +184,7 @@ echo "▸ Validating generated YAML..."
 yq '.' "$OUTPUT_FILE" >/dev/null
 
 echo "✓ config.local.yaml created:"
-echo "    region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
+echo "    clusterProvider=$CLUSTER_PROVIDER region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
 echo "    clusterName=${RESOURCE_PREFIX}-hub adminRole=$ADMIN_ROLE_NAME"
 echo "    idcInstance=$IDC_ARN adminGroupId=${IDC_GROUP:-<empty>}"
-echo '    domain="" (CloudFront exposure mode)'
+echo "    domain=\"\" (CloudFront exposure mode) cloudfrontDomain=${CF_DOMAIN:-<not detected>}"

@@ -1,0 +1,552 @@
+version: "3"
+set: [errexit, nounset, pipefail]
+silent: true
+
+# Workshop-specific Taskfile for Platform Engineering on EKS (PEEKS).
+# Covers workshop pre-requisites and post-install steps that are NOT
+# part of the generic appmod-blueprints platform installation.
+#
+# Included by the root Taskfile under the 'workshop:' namespace.
+
+vars:
+  CONFIG_FILE: "{{.ROOT_DIR}}/config.local.yaml"
+  AWS_REGION:
+    sh: yq '.aws.region' {{.CONFIG_FILE}}
+  AWS_ACCOUNT_ID:
+    sh: yq '.aws.accountId' {{.CONFIG_FILE}}
+  HUB_CLUSTER_NAME:
+    sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
+  RESOURCE_PREFIX:
+    sh: yq '.resourcePrefix // "peeks"' {{.CONFIG_FILE}}
+  IDC_INSTANCE_ARN:
+    sh: yq '.identityCenter.instanceArn' {{.CONFIG_FILE}}
+  IDC_REGION:
+    sh: yq '.identityCenter.region' {{.CONFIG_FILE}}
+  IDC_ADMIN_GROUP_ID:
+    sh: yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}}
+  GIT_USERNAME:
+    sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
+  EXPOSURE_MODE:
+    sh: 'if [ -z "$(yq ''.domain // ""'' {{.CONFIG_FILE}})" ]; then echo "cloudfront"; else echo "domain"; fi'
+  # NOTE: this taskfile-level var is evaluated ONCE at load time (before the platform
+  # CloudFront is created mid-install), so it is only used for informational messaging
+  # in pre-install. Tasks that need the LIVE value (idc:configure, setup-env) resolve it
+  # in their own task-level vars from private/cloudfront-domain (+ AWS fallback).
+  CLOUDFRONT_DOMAIN:
+    sh: cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]' || true
+  C_STEP:
+    sh: printf '\033[1;33m'
+  C_OK:
+    sh: printf '\033[1;32m'
+  C_ERR:
+    sh: printf '\033[1;31m'
+  C_INFO:
+    sh: printf '\033[1;36m'
+  C_RESET:
+    sh: printf '\033[0m'
+
+tasks:
+  # ============================================================
+  # FULL WORKSHOP INSTALL
+  # Single entry point: task workshop:install
+  # Orchestrates platform install + workshop-specific setup
+  # ============================================================
+
+  install:
+    desc: "Full workshop install (platform + GitLab + Ray + IDC federation)"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+      INSTALL_START:
+        sh: date +%s
+    cmds:
+      - printf '{{.C_STEP}}▸ Workshop install starting...{{.C_RESET}}\n'
+      # Initialize GitLab FIRST — it starts at EC2 boot and is ready before platform install.
+      # This ensures fleet-config exists when hub:set-overlay-repo and spokes run inside
+      # {{.PROVIDER}}:install (which needs fleet-config during phase2).
+      - task: gitlab:init-ec2
+      - 'printf "{{.C_INFO}}  [%ds] gitlab:init-ec2 done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Platform install (EKS cluster, addons, spokes)
+      - task: ":{{.PROVIDER}}:install"
+      - 'printf "{{.C_INFO}}  [%ds] {{.PROVIDER}}:install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      - printf '{{.C_OK}}✓ Platform install complete.{{.C_RESET}}\n'
+      # Ray ML infrastructure (image builds in background)
+      - task: ":{{.PROVIDER}}:ray:setup"
+      - 'printf "{{.C_INFO}}  [%ds] ray:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # IDC/Keycloak federation (ArgoCD SSO)
+      - task: post-install
+      - 'printf "{{.C_INFO}}  [%ds] post-install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Wait for Ray image to be ready
+      - task: ":{{.PROVIDER}}:ray:wait-image"
+      # Download ML models to S3
+      - task: ":{{.PROVIDER}}:ray:prestage-models"
+      # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
+      - task: setup-env
+      - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+
+  # ============================================================
+  # PRE-REQUISITES
+  # Run before task install to prepare workshop-specific resources
+  # ============================================================
+
+  pre-install:
+    desc: Verify workshop pre-requisites (normally provisioned by CDK in guided events)
+    cmds:
+      - task: create-ray-models-bucket
+      - |
+        printf '{{.C_INFO}}Workshop pre-requisites check:{{.C_RESET}}\n'
+        printf '  In Workshop Studio (guided) events:\n'
+        printf '    1. CDK bootstrap.sh provisions the IDE/GitLab CloudFront + GitLab CE,\n'
+        printf '       writes private/gitlab-cloudfront-domain\n'
+        printf '    2. SSM SetupIDE runs create-config.sh which generates config.local.yaml\n'
+        printf '       (auto-detects region, account, IDC; sets domain: "" for cloudfront mode\n'
+        printf '        and cloudfront.gitlabDomain from private/gitlab-cloudfront-domain).\n'
+        printf '       NOTE: the PLATFORM CloudFront domain is NOT a prerequisite and is NOT\n'
+        printf '       stored in config.local.yaml — it is created by cloudfront:hub-distribution\n'
+        printf '       during task install and recorded in private/cloudfront-domain.\n'
+        printf '    3. task install + task workshop:post-install run automatically\n'
+        printf '  For self-paced: just run create-config.sh; task install creates the platform CloudFront.\n'
+        if [ -z "{{.CLOUDFRONT_DOMAIN}}" ]; then
+          printf '{{.C_INFO}}  ℹ platform CloudFront domain not created yet — it will be created during task install.{{.C_RESET}}\n'
+        else
+          printf '{{.C_OK}}✓ platform CloudFront domain: {{.CLOUDFRONT_DOMAIN}}{{.C_RESET}}\n'
+        fi
+
+  # ============================================================
+  # POST-INSTALL
+  # Run after task install to complete workshop-specific setup
+  # ============================================================
+
+  create-ray-models-bucket:
+    desc: Create the Ray model staging S3 bucket for AI/ML modules (idempotent)
+    status:
+      - aws s3api head-bucket --bucket {{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}} --region {{.AWS_REGION}} 2>/dev/null
+    cmds:
+      - printf '{{.C_STEP}}▸ Creating Ray model staging bucket...{{.C_RESET}}\n'
+      - |
+        BUCKET="{{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}}"
+        aws s3api create-bucket --bucket "$BUCKET" --region {{.AWS_REGION}} \
+          {{if ne .AWS_REGION "us-east-1"}}--create-bucket-configuration LocationConstraint={{.AWS_REGION}}{{end}} \
+          --no-cli-pager >/dev/null
+        aws s3api put-public-access-block --bucket "$BUCKET" --region {{.AWS_REGION}} \
+          --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" >/dev/null
+      - printf '{{.C_OK}}✓ s3://{{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}} ready.{{.C_RESET}}\n'
+
+  post-install:
+    desc: Workshop post-install steps (IDC/Keycloak federation for ArgoCD SSO)
+    cmds:
+      - task: idc:configure
+
+
+  setup-env:
+    desc: Write platform URLs and credentials to ~/.bashrc.d/platform.sh (workshop IDE env vars)
+    ignore_error: true
+    vars:
+      ARGOCD_URL:
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
+      CF_DOMAIN:
+        sh: |
+          D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+          [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+            --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+            --output text 2>/dev/null | tr -d '[:space:]')
+          [ "$D" = "None" ] && D=""
+          echo "$D"
+      GITLAB_CF_DOMAIN_VAR:
+        sh: yq '.cloudfront.gitlabDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain 2>/dev/null || true
+      USER_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // ""'
+      KC_ADMIN_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.keycloak_admin_password // ""'
+    cmds:
+      - |
+        set +e
+        PLATFORM_FILE="$HOME/.bashrc.d/platform.sh"
+        set_var() { local n="$1" v="$2"
+          grep -q "^export ${n}=" "$PLATFORM_FILE" 2>/dev/null             && sed -i "s|^export ${n}=.*|export ${n}=\"${v}\"|" "$PLATFORM_FILE"             || echo "export ${n}=\"${v}\"" >> "$PLATFORM_FILE"
+        }
+        CF="{{.CF_DOMAIN}}"
+        GITLAB_CF="{{.GITLAB_CF_DOMAIN_VAR}}"
+        # Fall back to platform domain if gitlabDomain not set
+        [ -z "$GITLAB_CF" ] && GITLAB_CF="$CF"
+        ARGOCD="{{.ARGOCD_URL}}"
+        ARGOCD_SERVER=$(echo "$ARGOCD" | sed 's|https://||;s|/.*||')
+        UP="{{.USER_PASSWORD}}"
+        KC="{{.KC_ADMIN_PASSWORD}}"
+        set_var BACKSTAGE_URL "https://${CF}/backstage"
+        set_var KEYCLOAK_ADMIN_URL "https://${CF}/keycloak/admin"
+        set_var WORKFLOWS_URL "https://${CF}/argo-workflows"
+        set_var KARGO_URL "https://${CF}"
+        set_var GRAFANA_URL "https://${CF}/grafana"
+        set_var GITLAB_URL "https://${GITLAB_CF}"
+        set_var GITLAB_DOMAIN "${GITLAB_CF}"
+        set_var CLOUDFRONT_DOMAIN "${CF}"
+        set_var ARGOCD_URL "${ARGOCD}"
+        set_var ARGOCD_SERVER "${ARGOCD_SERVER}"
+        set_var ARGOCD_OPTS "--grpc-web"
+        set_var USER_PASSWORD "${UP}"
+        set_var USER1_PASSWORD "${UP}"
+        set_var GIT_TOKEN "${UP}"
+        set_var GIT_USERNAME "user1"
+        set_var KEYCLOAK_ADMIN_PASSWORD "${KC}"
+        printf '{{.C_OK}}✓ Platform env vars written to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
+        source "$PLATFORM_FILE" 2>/dev/null || true
+
+  # ============================================================
+  # IDC / KEYCLOAK FEDERATION
+  # Configures IAM Identity Center with Keycloak as external IdP
+  # ============================================================
+
+  idc:configure:
+    desc: Configure IDC with Keycloak as external IdP and sync users via SCIM
+    status:
+      - |
+        IDENTITY_STORE_ID=$(aws sso-admin list-instances --region {{.AWS_REGION}} \
+          --query "Instances[?InstanceArn=='{{.IDC_INSTANCE_ARN}}'].IdentityStoreId" --output text 2>/dev/null)
+        aws identitystore list-users --identity-store-id "$IDENTITY_STORE_ID" --region {{.AWS_REGION}} \
+          --filters "AttributePath=UserName,AttributeValue={{.GIT_USERNAME}}" \
+          --query "Users[0].UserId" --output text 2>/dev/null | grep -qv "^None\|^$"
+    vars:
+      IDC_INSTANCE_ID:
+        sh: echo "{{.IDC_INSTANCE_ARN}}" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//'
+      KC_ADMIN_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
+      KEYCLOAK_DNS:
+        sh: |
+          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
+            # Resolve the platform CloudFront domain at TASK-RUN time from the runtime
+            # artifact (created mid-install by cloudfront:hub-distribution), with an AWS
+            # lookup fallback. Do NOT use the taskfile-level CLOUDFRONT_DOMAIN var:
+            # global vars are evaluated once at load — before the distribution exists — so
+            # it is always empty here (this was the cause of the empty --keycloak-dns).
+            # Do NOT read config.local.yaml (the domain is not stored there).
+            D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+            if [ -z "$D" ]; then
+              D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+                --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+                --output text 2>/dev/null | tr -d '[:space:]')
+            fi
+            [ "$D" = "None" ] && D=""
+            echo "$D"
+          else
+            yq '.domain' {{.CONFIG_FILE}}
+          fi
+    cmds:
+      - printf '{{.C_STEP}}▸ Refreshing IDC integration credentials via Lambda...{{.C_RESET}}\n'
+      - |
+        LAMBDA_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
+          --query "Stacks[?contains(StackName,'peeks-ide')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null)
+        if [ -n "$LAMBDA_ARN" ] && [ "$LAMBDA_ARN" != "None" ]; then
+          ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
+            --query "Stacks[?contains(StackName,'peeks-ide')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" --output text 2>/dev/null)
+          [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ] && \
+            ROLE_ARN=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" --output text)
+          PAYLOAD=$(jq -n --arg role "$ROLE_ARN" --arg prefix "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
+            '{RequestType:"Update",ResourceProperties:{RoleArn:$role,ParameterPrefix:$prefix,SessionDuration:"3600"}}')
+          aws lambda invoke --function-name "$LAMBDA_ARN" --payload "$PAYLOAD" --region {{.AWS_REGION}} /tmp/lambda-response.json > /dev/null
+          echo "Credentials refreshed via Lambda"
+        else
+          echo "WARN: Lambda not found. Falling back to instance profile."
+          TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+          ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+          CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+          aws ssm put-parameter \
+            --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
+            --value "$(echo "$CREDS" | jq '{AccessKeyId:.AccessKeyId,SecretAccessKey:.SecretAccessKey,SessionToken:.Token,Expiration:.Expiration}')" \
+            --type "SecureString" --overwrite --region {{.AWS_REGION}} > /dev/null
+        fi
+      - printf '{{.C_STEP}}▸ Installing Playwright...{{.C_RESET}}\n'
+      - pip install playwright boto3 requests --quiet 2>/dev/null
+      - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
+      - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
+      - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
+      - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
+      - |
+        IDC_SUCCESS=false
+        for attempt in 1 2 3; do
+          printf '{{.C_INFO}}  Attempt %s/3...{{.C_RESET}}\n' "$attempt"
+          if python3 {{.ROOT_DIR}}/platform/infra/terraform/scripts/configure_identity_center.py \
+              --region {{.AWS_REGION}} \
+              --instance-id {{.IDC_INSTANCE_ID}} \
+              --keycloak-dns {{.KEYCLOAK_DNS}} \
+              --keycloak-admin-password="{{.KC_ADMIN_PASSWORD}}"; then
+            IDC_SUCCESS=true; break
+          fi
+          [ $attempt -lt 3 ] && sleep 60
+        done
+        if [ "$IDC_SUCCESS" = true ]; then
+          printf '{{.C_OK}}✓ IDC configured with Keycloak federation and SCIM sync.{{.C_RESET}}\n'
+        else
+          printf '{{.C_ERR}}⚠ IDC configuration failed. Run manually: task workshop:idc:configure{{.C_RESET}}\n'
+        fi
+      - printf '{{.C_STEP}}▸ Syncing admin group members into IDC admin group...{{.C_RESET}}\n'
+      - |
+        IDENTITY_STORE_ID=$(aws sso-admin list-instances --region {{.IDC_REGION}} --query 'Instances[0].IdentityStoreId' --output text | head -1)
+        SCIM_ADMIN_GROUP=$(aws identitystore list-groups --identity-store-id "$IDENTITY_STORE_ID" --region {{.IDC_REGION}} \
+          --query "Groups[?DisplayName=='admin'].GroupId | [0]" --output text 2>/dev/null)
+        if [ -n "$SCIM_ADMIN_GROUP" ] && [ "$SCIM_ADMIN_GROUP" != "None" ]; then
+          EXISTING_MEMBERS=$(aws identitystore list-group-memberships --identity-store-id "$IDENTITY_STORE_ID" \
+            --group-id "{{.IDC_ADMIN_GROUP_ID}}" --region {{.IDC_REGION}} --query 'GroupMemberships[].MemberId.UserId' --output text 2>/dev/null)
+          for USER_ID in $(aws identitystore list-group-memberships --identity-store-id "$IDENTITY_STORE_ID" \
+            --group-id "$SCIM_ADMIN_GROUP" --region {{.IDC_REGION}} --query 'GroupMemberships[].MemberId.UserId' --output text 2>/dev/null); do
+            echo "$EXISTING_MEMBERS" | grep -q "$USER_ID" && continue
+            aws identitystore create-group-membership --identity-store-id "$IDENTITY_STORE_ID" \
+              --group-id "{{.IDC_ADMIN_GROUP_ID}}" --member-id UserId="$USER_ID" --region {{.IDC_REGION}} 2>/dev/null || true
+            echo "Added user $USER_ID to IDC admin group"
+          done
+          printf '{{.C_OK}}✓ Admin group members synced for ArgoCD access.{{.C_RESET}}\n'
+        else
+          printf '{{.C_ERR}}⚠ SCIM admin group not found.{{.C_RESET}}\n'
+        fi
+
+  # ---- Workshop: GitLab CE on EC2 (workshop-specific) ----
+  gitlab:init-ec2:
+    desc: Wait for GitLab CE (docker-compose on IDE EC2) to be ready, then initialise root token + user1 + repos
+    status:
+      # Skip if fleet-config git repo exists on disk AND git_token is a real GitLab PAT (starts with glpat-)
+      - |
+        docker exec gitlab-gitlab-1 test -d /var/opt/gitlab/git-data/repositories/@hashed 2>/dev/null && \
+        docker exec gitlab-gitlab-1 find /var/opt/gitlab/git-data/repositories/@hashed -name "*.git" -maxdepth 3 | grep -q . && \
+        aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -q '^glpat-'
+    vars:
+      GITLAB_CF_DOMAIN:
+        sh: |
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty'
+      GIT_USERNAME:
+        sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
+      REPOS:
+        sh: echo "fleet-config java rust golang dotnet next-js"
+    cmds:
+      - printf '{{.C_STEP}}▸ Waiting for GitLab CE on EC2 to be ready...{{.C_RESET}}\n'
+      - |
+        set -e
+        # GitLab CE starts in docker-compose at EC2 boot (bootstrap.sh). Wait up to 20min.
+        GITLAB_URL="https://{{.GITLAB_CF_DOMAIN}}"
+        for i in $(seq 1 120); do
+          if curl -sf --max-time 10 "$GITLAB_URL/users/sign_in" >/dev/null 2>&1; then
+            printf '  GitLab ready.\n'; break
+          fi
+          [ "$i" -eq 120 ] && { printf '  ⚠ GitLab not ready after 20min — continuing anyway.\n'; }
+          sleep 10
+        done
+        # GitLab was started fresh by CDK bootstrap.sh — secrets are consistent on new events.
+        # No need to wipe and restart.
+        ROOT_TOKEN="root-{{.GIT_PASSWORD}}"
+        # Bootstrap via gitlab-rails runner: create root PAT, user1, repos, unprotect branches.
+        # Shell variables (ROOT_TOKEN, GIT_USERNAME, GIT_PASSWORD) are expanded by bash
+        # before the string is passed to gitlab-rails runner as a Ruby script.
+        printf '  Running GitLab Rails bootstrap (~60s)...\n'
+        docker exec gitlab-gitlab-1 gitlab-rails runner "
+          # Disable default branch protection + enable password auth for git
+          s = ApplicationSetting.first
+          s.password_authentication_enabled_for_git = true
+          s.default_branch_protection = 0
+          s.default_branch_protection_defaults = {allowed_to_push: [{access_level: 30}], allow_force_push: true, allowed_to_merge: [{access_level: 30}], developer_can_initial_push: true}
+          s.save(validate: false)
+          # Flush Rails cache so all workers (Sidekiq, web) pick up the new settings immediately
+          Rails.cache.clear
+          ApplicationSetting.expire
+          pat = User.find(1).personal_access_tokens.find_or_initialize_by(name: 'initial-root-token')
+          pat.scopes = ['api','write_repository','sudo']
+          pat.expires_at = 365.days.from_now
+          pat.save!
+          u = User.find_by(username: '{{.GIT_USERNAME}}')
+          if u.nil?
+            Namespace.where(path: '{{.GIT_USERNAME}}', type: 'User').destroy_all
+            svc = Users::CreateService.new(User.find(1), {
+              name: 'Workshop User', username: '{{.GIT_USERNAME}}',
+              email: '{{.GIT_USERNAME}}@workshop.local',
+              password: '{{.GIT_PASSWORD}}', password_confirmation: '{{.GIT_PASSWORD}}',
+              skip_confirmation: true,
+              organization_id: (Organizations::Organization.find_by(id: 1)&.id || 1)
+            }).execute
+            u = svc.respond_to?(:payload) ? (svc.payload[:user] || User.find_by(username: '{{.GIT_USERNAME}}')) : User.find_by(username: '{{.GIT_USERNAME}}')
+          end
+          # Always ensure password is correctly hashed (CreateService may not hash correctly)
+          if u && u.persisted?
+            u.encrypted_password = Devise::Encryptor.digest(User, '{{.GIT_PASSWORD}}')
+            u.update_columns(encrypted_password: u.encrypted_password, password_automatically_set: false)
+          elsif u && !u.persisted?
+            STDERR.puts 'ERROR: user1 not persisted: ' + u.errors.full_messages.inspect
+            exit 1
+          end
+          if u.namespace_id.nil?
+            org_id = Organizations::Organization.find_by(id: 1)&.id || 1
+            ns = Namespace.new(owner: u, path: u.username, name: u.username, type: 'User', organization_id: org_id)
+            ns.save(validate: false)
+            u.update_columns(namespace_id: ns.id) if ns.persisted?
+            u.reload
+          end
+          # Always recreate workshop-token PAT so we can capture the plaintext token value
+          # (GitLab only exposes plaintext token at creation time — find_or_initialize reuses
+          # an existing hashed token where .token returns nil)
+          u.personal_access_tokens.where(name: 'workshop-token').delete_all
+          u1pat = u.personal_access_tokens.create!(
+            name: 'workshop-token',
+            scopes: ['api','write_repository','read_repository'],
+            expires_at: 365.days.from_now
+          )
+          puts 'user1_pat=' + u1pat.token.to_s
+          %w[fleet-config java rust golang dotnet next-js].each do |repo|
+            p = Project.find_by(path: repo, namespace_id: u.namespace_id)
+            if p.nil?
+              p = Projects::CreateService.new(u, name: repo, path: repo, visibility_level: 0, initialize_with_readme: false).execute
+              sleep 1
+            end
+            ProtectedBranch.where(project: p).destroy_all if p.persisted?
+            puts 'repo: ' + repo + ' ok=' + p.persisted?.to_s
+          end
+          puts 'init done'
+        " 2>&1 | tail -20 || true
+        # Capture user1's PAT token and update peeks-hub/secrets so Backstage/ESO use the real PAT
+        USER1_PAT=$(docker exec gitlab-gitlab-1 gitlab-rails runner \
+          "puts User.find_by(username:'{{.GIT_USERNAME}}').personal_access_tokens.where(name:'workshop-token').delete_all; pat=User.find_by(username:'{{.GIT_USERNAME}}').personal_access_tokens.create!(name:'workshop-token',scopes:['api','write_repository','read_repository'],expires_at:365.days.from_now); puts pat.token" \
+          2>/dev/null | tail -1)
+        if [ -n "$USER1_PAT" ] && [ ${#USER1_PAT} -gt 10 ]; then
+          CURRENT=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets \
+            --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null)
+          if [ -n "$CURRENT" ]; then
+            NEW=$(echo "$CURRENT" | jq -c --arg pat "$USER1_PAT" '.git_token = $pat')
+            aws secretsmanager put-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets \
+              --region {{.AWS_REGION}} --secret-string "$NEW" >/dev/null 2>&1 && \
+              printf '  Updated peeks-hub/secrets.git_token with real GitLab PAT\n'
+          fi
+        fi
+        WORKSHOP_DIR="$HOME/environment/{{.WORKING_REPO}}"
+        ROOT_TOKEN=$(docker exec gitlab-gitlab-1 gitlab-rails runner "puts User.find(1).personal_access_tokens.find_or_initialize_by(name: 'root-api').tap{|p| p.scopes=['api','sudo']; p.expires_at=365.days.from_now; p.save!}.token" 2>/dev/null | tail -1)
+        for REPO in {{.REPOS}}; do
+          REMOTE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/$REPO.git"
+          # Unprotect via API (synchronous, handles Sidekiq async protection)
+          if [ -n "$ROOT_TOKEN" ]; then
+            curl -sf -X DELETE -H "PRIVATE-TOKEN: $ROOT_TOKEN" \
+              "https://{{.GITLAB_CF_DOMAIN}}/api/v4/projects/{{.GIT_USERNAME}}%2F$REPO/protected_branches/main" 2>/dev/null || true
+          fi
+          if [ "$REPO" = "fleet-config" ]; then
+            SRC="$WORKSHOP_DIR/gitops/fleet"
+          else
+            SRC="$WORKSHOP_DIR/applications/$REPO"
+          fi
+          [ -d "$SRC" ] || continue
+          TMP=$(mktemp -d)
+          cp -r "$SRC/." "$TMP/"
+          # For fleet-config also seed platform/backstage/templates (Backstage scaffolder catalog)
+          if [ "$REPO" = "fleet-config" ] && [ -d "$WORKSHOP_DIR/platform/backstage/templates" ]; then
+            mkdir -p "$TMP/platform/backstage/templates"
+            cp -r "$WORKSHOP_DIR/platform/backstage/templates/." "$TMP/platform/backstage/templates/"
+          fi
+          cd "$TMP"
+          git init -q && git add -A && git commit -qm "init" 2>/dev/null || true
+          git remote add origin "$REMOTE_URL"
+          REMOTE_EMPTY=$(git ls-remote "$REMOTE_URL" HEAD 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$REMOTE_EMPTY" = "0" ]; then
+            git push -f origin HEAD:main
+          else
+            echo "  skipped (already populated): $REPO"
+          fi
+          cd - >/dev/null; rm -rf "$TMP"
+          echo "  seeded: $REPO"
+        done
+        printf '{{.C_OK}}✓ GitLab init done.{{.C_RESET}}\n'
+        # Unprotect branches again after seeding (seed push creates main which triggers auto-protection)
+        docker exec gitlab-gitlab-1 gitlab-rails runner "
+          u = User.find_by(username: ENV['GIT_USERNAME'] || 'user1')
+          Project.where(namespace_id: u.namespace_id).each{|p| ProtectedBranch.where(project: p).destroy_all}
+        " 2>/dev/null || true
+      # After init, clone repos locally
+      - task: gitlab:clone-repos
+
+
+  gitlab:clone-repos:
+    desc: Clone all GitLab repos locally into ~/environment
+    vars:
+      GITLAB_CF_DOMAIN:
+        sh: |
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_USERNAME:
+        sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty'
+      REPOS:
+        sh: echo "fleet-config java rust golang dotnet next-js"
+    cmds:
+      - printf '{{.C_STEP}}▸ Cloning GitLab repos to ~/environment...{{.C_RESET}}\n'
+      - |
+        BASE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}"
+        FAILED=""
+        # Wait for GitLab (running via docker-compose on the IDE EC2) to be ready
+        # and for the init script to have created all repos.
+        # bootstrap.sh starts GitLab at boot; task install calls gitlab:init-ec2 first,
+        # so by the time clone-repos runs the repos should exist. Poll as a safety net.
+        printf '  Waiting for GitLab to be ready (up to 20min)...\n'
+        GITLAB_BASE="https://{{.GITLAB_CF_DOMAIN}}"
+        for i in $(seq 1 120); do
+          if curl -sf --max-time 5 "$GITLAB_BASE/users/sign_in" >/dev/null 2>&1; then break; fi
+          sleep 10
+        done
+        for REPO in {{.REPOS}}; do
+          if [ "$REPO" = "fleet-config" ]; then
+            DEST="$HOME/environment/$REPO"
+          else
+            DEST="$HOME/environment/applications/$REPO"
+          fi
+          REPO_URL="$BASE_URL/$REPO.git"
+          if [ -d "$DEST/.git" ]; then
+            # Already cloned. The gitlab-init Job creates each repo with only a
+            # README first, then pushes the real source/overlay content later in
+            # the same Job. An earlier clone-repos run (or this one racing ahead)
+            # may therefore have captured the README-only state. Pull to pick up
+            # any content pushed after the initial clone — fast-forward only so we
+            # never clobber participant commits.
+            echo "  $REPO already cloned — pulling latest"
+            git -C "$DEST" pull --ff-only -q 2>/dev/null || echo "    ($REPO: pull skipped — local changes or no upstream)"
+            continue
+          fi
+          # GitLab repos are created asynchronously by the gitlab-init Job (Helm
+          # post-install hook, which waits for GitLab readiness). Without waiting,
+          # this task ran before the repos existed and every clone failed, leaving
+          # ~/environment/applications empty and no local fleet-config checkout.
+          # Wait (up to ~5min) for each repo to be reachable AND seeded before
+          # cloning. Reachable alone is not enough: the repo exists with only a
+          # README the instant it is created, but the application source is pushed
+          # a few seconds later. Cloning on first-reachable captured the stub
+          # (README/.git only), leaving e.g. ~/environment/applications/next-js
+          # without deployable code. Wait until the remote has a non-README file
+          # (fleet-config is exempt — it is content-seeded differently).
+          REACHABLE=false
+          for i in $(seq 1 18); do
+            if git ls-remote "$REPO_URL" >/dev/null 2>&1; then
+              REACHABLE=true; break
+            fi
+            sleep 10
+          done
+          if [ "$REACHABLE" != true ]; then
+            echo "  ⚠ $REPO not reachable/seeded after 5min — skipping (create later)."
+            FAILED="$FAILED $REPO"
+            continue
+          fi
+          mkdir -p "$(dirname "$DEST")"
+          if git clone "$REPO_URL" "$DEST" 2>/dev/null; then
+            echo "  ✓ $REPO cloned"
+          else
+            echo "  ⚠ $REPO clone failed"
+            FAILED="$FAILED$REPO "
+          fi
+        done
+        if [ -n "$FAILED" ]; then
+          printf '{{.C_ERR}}⚠ Some GitLab repos were not cloned:%s{{.C_RESET}}\n' "$FAILED"
+          printf '{{.C_INFO}}  Re-run later: task workshop:gitlab:clone-repos{{.C_RESET}}\n'
+        else
+          printf '{{.C_OK}}✓ GitLab repos cloned.{{.C_RESET}}\n'
+        fi
+
+
