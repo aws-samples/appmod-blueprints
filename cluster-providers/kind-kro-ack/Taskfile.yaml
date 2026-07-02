@@ -713,7 +713,7 @@ tasks:
           --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"{{if .CLOUDFRONT_DOMAIN}}{{.CLOUDFRONT_DOMAIN}}{{else}}{{.DOMAIN}}{{end}}","ingress_name":"{{.HUB_CLUSTER_NAME}}-platform","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}","exposure_mode":"{{if .CLOUDFRONT_DOMAIN}}cloudfront{{else}}domain{{end}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"$GITLAB_CF_DOMAIN","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":""}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
-          --arg addons '' \
+          --arg addons '{"provider":"kro-ack"}' \
           --arg vpc '{{.VPC_ID}}' \
           '{metadata: $metadata, config: $config, server: $server, addons: $addons, vpc: $vpc}')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true

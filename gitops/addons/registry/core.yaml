@@ -36,6 +36,15 @@ pod_identities:
     matchExpressions:
       - key: environment
         operator: Exists
+      # crossplane-pod-identity is the CROSSPLANE provider's mechanism. On the
+      # kro-ack provider, pod identities are created by the KRO EksCluster RGD (ACK),
+      # and Crossplane's own providers are not bootstrapped there — so these CRs would
+      # be permanently Degraded (SYNCED=False) and are a latent 409 conflict with the
+      # ACK-created associations. Exclude kro-ack clusters. NotIn also matches clusters
+      # with NO provider label (crossplane/legacy), so only provider=kro-ack is excluded.
+      - key: provider
+        operator: NotIn
+        values: ["kro-ack"]
   valuesObject:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
