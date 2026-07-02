@@ -217,25 +217,27 @@ tasks:
             \"PriceClass\": \"PriceClass_100\"
           }" \
           --query "Distribution.DomainName" --output text)
+        # Single source of truth for the platform CloudFront domain is the runtime
+        # artifact private/cloudfront-domain — NOT config.local.yaml. Consumers
+        # (idc:configure, hub:seed, urls, setup-env) resolve it lazily at task-run
+        # time from this file (with an AWS lookup fallback), so it must never be a
+        # config input/parameter.
         mkdir -p {{.ROOT_DIR}}/private
         echo -n "$CF_DOMAIN" > {{.ROOT_DIR}}/private/cloudfront-domain
-        yq -i ".cloudfront.cloudfrontDomain = \"$CF_DOMAIN\"" {{.CONFIG_FILE}}
         printf '{{.C_OK}}✓ CloudFront created: %s{{.C_RESET}}\n' "$CF_DOMAIN"
       - printf '{{.C_OK}}✓ Platform CloudFront ready (VPC Origin).{{.C_RESET}}\n'
 
   sync-domain:
-    desc: Ensure cloudfrontDomain is written to config + private/cloudfront-domain (idempotent safety net)
+    desc: Ensure private/cloudfront-domain holds the platform CloudFront domain (idempotent safety net)
     cmds:
       - |
-        CURRENT=$(yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || \
-                  cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true)
+        CURRENT=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
         if [ -z "$CURRENT" ]; then
           CURRENT=$(aws cloudfront list-distributions \
             --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName" \
             --output text 2>/dev/null | tr -d '[:space:]')
         fi
         if [ -n "$CURRENT" ] && [ "$CURRENT" != "None" ]; then
-          yq -i ".cloudfront.cloudfrontDomain = \"$CURRENT\"" {{.CONFIG_FILE}}
           mkdir -p {{.ROOT_DIR}}/private
           echo -n "$CURRENT" > {{.ROOT_DIR}}/private/cloudfront-domain
           printf '{{.C_OK}}✓ cloudfrontDomain: %s{{.C_RESET}}\n' "$CURRENT"

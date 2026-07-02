@@ -74,8 +74,10 @@ vars:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
   EXPOSURE_MODE:
     sh: 'if [ -z "$(yq ''.domain // ""'' {{.CONFIG_FILE}})" ]; then echo "cloudfront"; else echo "domain"; fi'
+  # Frozen at load time (informational only). Tasks needing the live value resolve it
+  # in their own task-level vars from private/cloudfront-domain (+ AWS fallback).
   CLOUDFRONT_DOMAIN:
-    sh: yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true
+    sh: cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]' || true
   CLOUDFRONT_VPC_ID:
     sh: yq '.cloudfront.vpcId // ""' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
@@ -745,12 +747,17 @@ tasks:
     internal: true
     vars:
       CF_DOMAIN:
-        sh: yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}}
+        sh: |
+          D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+          [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+            --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+            --output text 2>/dev/null | tr -d '[:space:]')
+          [ "$D" = "None" ] && D=""
+          echo "$D"
     cmds:
       - |
         CF="{{.CF_DOMAIN}}"
-        [ -z "$CF" ] && CF=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true)
-        [ -z "$CF" ] && printf '{{.C_INFO}}  Skipping ingress_domain_name update — cloudfrontDomain not set yet{{.C_RESET}}\n' && exit 0
+        [ -z "$CF" ] && printf '{{.C_INFO}}  Skipping ingress_domain_name update — cloudfront domain not created yet{{.C_RESET}}\n' && exit 0
         for SECRET_ID in {{.HUB_CLUSTER_NAME}}/config; do
           CUR=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region {{.AWS_REGION}} --query SecretString --output text 2>/dev/null)
           [ -z "$CUR" ] && printf '  Skipping %s — not found\n' "$SECRET_ID" && continue
@@ -868,7 +875,12 @@ tasks:
               -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
             [ -z "$ALB" ] && ALB=$(kubectl --kubeconfig "$HUB_KC" get ingress -A \
               -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-            echo "${ALB:-{{.CLOUDFRONT_DOMAIN}}}"
+            CF=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+            [ -z "$CF" ] && CF=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+              --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+              --output text 2>/dev/null | tr -d '[:space:]')
+            [ "$CF" = "None" ] && CF=""
+            echo "${ALB:-$CF}"
           else
             echo "{{.DOMAIN}}"
           fi
@@ -1790,10 +1802,15 @@ tasks:
       INGRESS_DOMAIN:
         sh: |
           if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
-            # In cloudfront mode, ingress_domain = platform CloudFront domain
-            # written by cloudfront:setup-exposure before hub:seed runs
-            yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || \
-            cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true
+            # platform CloudFront domain — resolved at task-run time from the runtime
+            # artifact (written by cloudfront:setup-exposure/sync-domain before hub:seed),
+            # with an AWS fallback. Not read from config.local.yaml.
+            D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+            [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+              --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+              --output text 2>/dev/null | tr -d '[:space:]')
+            [ "$D" = "None" ] && D=""
+            echo "$D"
           else
             echo "{{.DOMAIN}}"
           fi

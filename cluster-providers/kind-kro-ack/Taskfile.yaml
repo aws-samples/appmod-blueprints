@@ -56,8 +56,10 @@ vars:
     sh: yq '.repo.basepath' {{.CONFIG_FILE}}
   DOMAIN:
     sh: yq '.domain' {{.CONFIG_FILE}}
+  # Frozen at load time (informational only). Tasks needing the live value resolve it
+  # in their own task-level vars from private/cloudfront-domain (+ AWS fallback).
   CLOUDFRONT_DOMAIN:
-    sh: yq '.cloudfront.cloudfrontDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null || true
+    sh: cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]' || true
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
   INGRESS_NAME:
@@ -691,6 +693,18 @@ tasks:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null
       VPC_ID:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
+      # Resolve the platform CloudFront domain at TASK-RUN time (task-level var, evaluated
+      # when this task runs — after cloudfront:setup-exposure created it). The taskfile-level
+      # CLOUDFRONT_DOMAIN global is frozen empty at load, which would make ingress_domain_name
+      # empty and exposure_mode="domain". Source: private/cloudfront-domain + AWS fallback.
+      CLOUDFRONT_DOMAIN:
+        sh: |
+          D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+          [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+            --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+            --output text 2>/dev/null | tr -d '[:space:]')
+          [ "$D" = "None" ] && D=""
+          echo "$D"
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
@@ -959,7 +973,12 @@ tasks:
               -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
             [ -z "$ALB" ] && ALB=$(kubectl --kubeconfig "$HUB_KC" get ingress -A \
               -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-            echo "${ALB:-{{.CLOUDFRONT_DOMAIN}}}"
+            CF=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+            [ -z "$CF" ] && CF=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+              --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+              --output text 2>/dev/null | tr -d '[:space:]')
+            [ "$CF" = "None" ] && CF=""
+            echo "${ALB:-$CF}"
           else
             echo "{{.DOMAIN}}"
           fi
