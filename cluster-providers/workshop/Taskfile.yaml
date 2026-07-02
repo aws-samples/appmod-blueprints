@@ -92,19 +92,21 @@ tasks:
       - |
         printf '{{.C_INFO}}Workshop pre-requisites check:{{.C_RESET}}\n'
         printf '  In Workshop Studio (guided) events:\n'
-        printf '    1. CDK bootstrap.sh provisions CloudFront + GitLab CE, writes private/gitlab-cloudfront-domain\n'
+        printf '    1. CDK bootstrap.sh provisions the IDE/GitLab CloudFront + GitLab CE,\n'
+        printf '       writes private/gitlab-cloudfront-domain\n'
         printf '    2. SSM SetupIDE runs create-config.sh which generates config.local.yaml\n'
-        printf '       (auto-detects region, account, IDC, and reads cloudfront.cloudfrontDomain\n'
-        printf '        from private/gitlab-cloudfront-domain)\n'
+        printf '       (auto-detects region, account, IDC; sets domain: "" for cloudfront mode\n'
+        printf '        and cloudfront.gitlabDomain from private/gitlab-cloudfront-domain).\n'
+        printf '       NOTE: cloudfront.cloudfrontDomain (the PLATFORM CloudFront) is NOT a\n'
+        printf '       prerequisite — it is created by cloudfront:hub-distribution during\n'
+        printf '       task install and written back to config.local.yaml.\n'
         printf '    3. task install + task workshop:post-install run automatically\n'
-        printf '  For self-paced: run create-config.sh after manually creating CloudFront + ALB\n'
+        printf '  For self-paced: just run create-config.sh; task install creates the platform CloudFront.\n'
         if [ -z "{{.CLOUDFRONT_DOMAIN}}" ]; then
-          printf '{{.C_ERR}}ERROR: cloudfront.cloudfrontDomain not set in config.local.yaml{{.C_RESET}}\n'
-          printf '  Set: cloudfront:\n'
-          printf '         cloudfrontDomain: <your-distribution>.cloudfront.net\n'
-          exit 1
+          printf '{{.C_INFO}}  ℹ cloudfront.cloudfrontDomain not set yet — it will be created during task install.{{.C_RESET}}\n'
+        else
+          printf '{{.C_OK}}✓ cloudfront.cloudfrontDomain: {{.CLOUDFRONT_DOMAIN}}{{.C_RESET}}\n'
         fi
-        printf '{{.C_OK}}✓ cloudfront.cloudfrontDomain: {{.CLOUDFRONT_DOMAIN}}{{.C_RESET}}\n'
 
   # ============================================================
   # POST-INSTALL

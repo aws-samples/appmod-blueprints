@@ -140,8 +140,14 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] credentials:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: crossplane:setup
       - 'printf "{{.C_INFO}}  [%ds] crossplane:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Create ALB + CloudFront BEFORE hub:seed so ingress_domain_name is correct from the start
+      # Create ALB + CloudFront BEFORE hub:seed so ingress_domain_name is correct from the start.
+      # sync-domain runs immediately after setup-exposure (mirroring kind-kro-ack) so that on an
+      # install retry — where setup-exposure's status guard skips because the <hub>-platform
+      # distribution already exists from a prior attempt — the cloudfrontDomain is still
+      # re-derived from AWS and written to config.local.yaml + private/cloudfront-domain BEFORE
+      # hub:seed reads it. Without this, a retried hub:seed would seed an empty ingress_domain_name.
       - task: cloudfront:setup-exposure
+      - task: cloudfront:sync-domain
       - task: hub:seed
       - 'printf "{{.C_INFO}}  [%ds] hub:seed done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Force ESO to immediately refresh the cluster secret from Secrets Manager
