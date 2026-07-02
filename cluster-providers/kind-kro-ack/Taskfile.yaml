@@ -181,9 +181,18 @@ tasks:
 
   install:phase2-parallel:
     internal: true
-    deps:
-      - install:phase2-spoke-dev
-      - install:phase2-spoke-prod
+    # NOTE: spokes are enabled SEQUENTIALLY, not in parallel. Both spoke-dev and
+    # spoke-prod run spokes:enable-kro, which commits+pushes to the SAME fleet-config
+    # main branch and writes the SAME shared files (kro-clusters/values.yaml,
+    # configs/multi-acct/values.yaml). Running them concurrently races on the branch
+    # ref: the second push is rejected, its retry does `git pull --rebase`, and the
+    # two commits that both *add* the same files produce an unresolvable add/add
+    # conflict that leaves a detached HEAD and fails the whole install. Serialising
+    # is cheap here (these tasks only do git clone/commit/push; the actual EKS
+    # provisioning happens asynchronously via ArgoCD/KRO afterward).
+    cmds:
+      - task: install:phase2-spoke-dev
+      - task: install:phase2-spoke-prod
 
   install:phase2-spoke-dev:
     internal: true
@@ -1951,7 +1960,15 @@ tasks:
         else
           OCTET=$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}')
           ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
-          cat > "$KRO_VALUES" <<EOF
+          # Deep-MERGE this cluster's block into the shared values.yaml instead of
+          # overwriting the whole file. A previous `cat > "$KRO_VALUES"` wrote only
+          # the current cluster, so a second spoke (or a rebase replay) dropped the
+          # sibling spoke's block (last-writer-wins data loss). Build the block in a
+          # temp file, then merge with `yq . *= load(...)`, which preserves every
+          # other cluster already present under .clusters.
+          [ -f "$KRO_VALUES" ] || printf 'clusters: {}\n' > "$KRO_VALUES"
+          KRO_BLOCK=$(mktemp)
+          cat > "$KRO_BLOCK" <<EOF
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
@@ -1969,6 +1986,8 @@ tasks:
               privateSubnet1Cidr: "10.${OCTET}.11.0/24"
               privateSubnet2Cidr: "10.${OCTET}.12.0/24"
         EOF
+          KRO_BLOCK="$KRO_BLOCK" yq -i '. *= load(strenv(KRO_BLOCK))' "$KRO_VALUES"
+          rm -f "$KRO_BLOCK"
         fi
         # admin roles: grant cluster-admin to BOTH the console/participant role
         # (config.local.yaml .adminRoleName) and the IDE/instance role (the
