@@ -62,7 +62,13 @@ spec:
               xrd:
                 enabled: false
               global:
-                argoCDRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-argocd-capability-role'
+                # Crossplane hub's ArgoCD capability role is PascalCase (<cluster>-ArgoCDCapabilityRole,
+                # per claims/argocd-capability-role.yaml external-name). Using the kebab name here made
+                # the composition create the spoke's argocd access entry for a NON-EXISTENT principal,
+                # so the hub ArgoCD (which connects as the PascalCase capability role) got
+                # "failed to verify the access entry" and could not manage the spoke. clusters-crossplane
+                # only runs on the crossplane hub, so PascalCase is always correct here.
+                argoCDRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-ArgoCDCapabilityRole'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/default/crossplane-clusters/values.yaml'
