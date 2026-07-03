@@ -429,7 +429,7 @@ spec:
                   "Principal": {
                     "AWS": [
                       "${schema.spec.argoCdHubRoleArn}",
-                      "arn:${schema.spec.aws_partition}:iam::${schema.spec.accountId}:role/${schema.spec.name}-argocd-capability-role"
+                      "${schema.spec.argocdCapability.enabled == 'true' ? 'arn:' + schema.spec.aws_partition + ':iam::' + schema.spec.accountId + ':role/' + schema.spec.name + '-argocd-capability-role' : schema.spec.argoCdHubRoleArn}"
                     ]
                   },
                   "Action": [
