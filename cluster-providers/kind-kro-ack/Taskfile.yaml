@@ -146,6 +146,14 @@ tasks:
       - task: hub:force-eso-refresh
       - task: hub:wait-for-sync
         vars: { MAX_OUTOFSYNC: "20" }
+      # Bootstrap the hub Crossplane providers' credentials (create provider-aws-iam/eks pod
+      # identities + restart) so crossplane-base's provider roles/PIAs (amp/rds/grafana/devlake)
+      # can reconcile. Done imperatively here (like the crossplane/terraform flows) rather than in
+      # the RGD: the hub is provisioned once by the transient kind cluster, so an RGD-based hub
+      # bootstrap can't self-heal an already-running hub. crossplane-base only declares the
+      # downstream provider PIAs (createIdentity:false for iam/eks) — nothing else seeds the first
+      # credential, so without this the whole crossplane chain stays credential-less.
+      - task: hub:bootstrap-crossplane-identity
       - task: install:phase1-parallel
       - task: hub:wait-for-full-sync
       # Wait for ALL Crossplane providers (including ec2) to be Healthy before spoke provisioning
@@ -877,6 +885,56 @@ tasks:
           sleep 30
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
+  hub:bootstrap-crossplane-identity:
+    desc: Seed hub Crossplane provider creds (provider-aws-iam/eks pod identities) so crossplane-base can provision
+    internal: true
+    status:
+      # Skip once Crossplane has already provisioned a downstream provider role — i.e. the
+      # providers are credentialed and working, so the bootstrap is done.
+      - aws iam get-role --role-name {{.HUB_CLUSTER_NAME}}-CrossplaneAMPProviderRole >/dev/null 2>&1
+    cmds:
+      - printf '{{.C_STEP}}▸ Bootstrapping Crossplane provider pod identities (iam/eks)...{{.C_RESET}}\n'
+      - |
+        ROLE_NAME="{{.HUB_CLUSTER_NAME}}-crossplane-provider"
+        TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
+        aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1 || \
+          aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST" \
+            --description "Bootstrap creds for crossplane provider-aws-iam/eks" >/dev/null
+        aws iam attach-role-policy --role-name "$ROLE_NAME" \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null 2>&1 || true
+        ROLE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ROLE_NAME"
+        for SA in provider-aws-iam provider-aws-eks; do
+          EXISTS=$(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --query "associations[?serviceAccount=='$SA'] | [0].associationId" --output text 2>/dev/null)
+          if [ -z "$EXISTS" ] || [ "$EXISTS" = "None" ]; then
+            aws eks create-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+              --namespace crossplane-system --service-account "$SA" --role-arn "$ROLE_ARN" >/dev/null
+            echo "  created PIA crossplane-system/$SA"
+          else
+            echo "  PIA crossplane-system/$SA already exists"
+          fi
+        done
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Restarting Crossplane providers to pick up creds (pass 1)...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete pod -n crossplane-system -l pkg.crossplane.io/revision --force --grace-period=0 2>/dev/null || true
+      - |
+        # Once iam/eks are credentialed they reconcile the downstream provider roles/PIAs
+        # (amp/rds/grafana/dynamodb/ec2). Wait up to 5 min for those PIAs to be Ready, then
+        # restart again so those providers pick up THEIR freshly-created credentials.
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        for i in $(seq 1 20); do
+          TOTAL=$(KUBECONFIG=$KC kubectl get podidentityassociations.eks.aws.upbound.io -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          READY=$(KUBECONFIG=$KC kubectl get podidentityassociations.eks.aws.upbound.io -A \
+            -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null | grep -c True)
+          printf '{{.C_INFO}}  [%s] crossplane provider PIAs Ready: %s/%s{{.C_RESET}}\n' "$i" "$READY" "$TOTAL"
+          [ "$TOTAL" -gt 0 ] && [ "$READY" = "$TOTAL" ] && break
+          sleep 15
+        done
+      - printf '{{.C_STEP}}▸ Restarting Crossplane providers to pick up creds (pass 2)...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete pod -n crossplane-system -l pkg.crossplane.io/revision --force --grace-period=0 2>/dev/null || true
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_OK}}✓ Crossplane provider credentials bootstrapped.{{.C_RESET}}\n'
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to sync
@@ -1831,94 +1889,6 @@ tasks:
             || printf '{{.C_INFO}}  Local fleet-config not auto-updated — run: git -C %s pull{{.C_RESET}}\n' "$LOCAL_FLEET"
         fi
         printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via Crossplane in fleet-config overlay.{{.C_RESET}}\n'
-
-
-  spokes:create-capabilities:
-    desc: "Create KRO + ACK EKS Capabilities on a Crossplane-provisioned spoke (usage: task spokes:create-capabilities -- <cluster-name>)"
-    # KRO-path spokes get their kro/ACK capabilities declaratively from the EksclusterWithVpc
-    # RGD. Crossplane-path spokes do NOT, so create them here the same way the hub does
-    # (aws eks create-capability), with per-spoke capability IAM roles. Idempotent.
-    vars:
-      CLUSTER: '{{.CLI_ARGS}}'
-    cmds:
-      - |
-        set -e
-        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:create-capabilities -- <cluster-name>"; exit 1; fi
-        CLUSTER="{{.CLUSTER}}"
-        REGION="{{.AWS_REGION}}"
-        ACCOUNT="{{.AWS_ACCOUNT_ID}}"
-        PREFIX="{{.RESOURCE_PREFIX}}"
-        # CLUSTER already carries the resource prefix (e.g. peeks-spoke-staging), so the
-        # capability role name is just <cluster>-<type>-capability-role — prepending PREFIX
-        # again would double it (peeks-peeks-...). PREFIX is still used below for the
-        # cluster-mgmt-* assume-role resource ARNs.
-        ACK_ROLE_NAME="${CLUSTER}-ack-capability-role"
-        KRO_ROLE_NAME="${CLUSTER}-kro-capability-role"
-
-        # Wait for the Crossplane-provisioned spoke EKS cluster to be ACTIVE (up to ~90 min).
-        printf '{{.C_STEP}}▸ [%s] Waiting for spoke EKS cluster ACTIVE...{{.C_RESET}}\n' "$CLUSTER"
-        i=0
-        until aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null | grep -q ACTIVE; do
-          i=$((i+1)); [ "$i" -ge 360 ] && { printf '{{.C_ERR}}⚠ %s not ACTIVE after timeout — skipping capability creation.{{.C_RESET}}\n' "$CLUSTER"; exit 0; }
-          if [ $((i % 8)) -eq 0 ]; then STATUS=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND"); printf '{{.C_INFO}}  [%s] status: %s (%ds){{.C_RESET}}\n' "$CLUSTER" "$STATUS" "$((i*15))"; fi
-          sleep 15
-        done
-
-        ASSUME_DOC='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"capabilities.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
-
-        # --- ACK capability role (AssumeWorkloadRoles + ManageIRSARoles) ---
-        printf '{{.C_STEP}}▸ [%s] Ensuring ACK capability role %s...{{.C_RESET}}\n' "$CLUSTER" "$ACK_ROLE_NAME"
-        aws iam get-role --role-name "$ACK_ROLE_NAME" >/dev/null 2>&1 || \
-          aws iam create-role --role-name "$ACK_ROLE_NAME" --assume-role-policy-document "$ASSUME_DOC" >/dev/null
-        aws iam put-role-policy --role-name "$ACK_ROLE_NAME" --policy-name AssumeWorkloadRoles --policy-document \
-          "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\",\"sts:TagSession\"],\"Resource\":[\"arn:aws:iam::${ACCOUNT}:role/${PREFIX}-cluster-mgmt-*\"]}]}" >/dev/null
-        aws iam put-role-policy --role-name "$ACK_ROLE_NAME" --policy-name ManageIRSARoles --policy-document \
-          "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:CreateRole\",\"iam:DeleteRole\",\"iam:TagRole\",\"iam:UntagRole\",\"iam:UpdateRole\",\"iam:UpdateAssumeRolePolicy\",\"iam:AttachRolePolicy\",\"iam:DetachRolePolicy\",\"iam:ListAttachedRolePolicies\",\"iam:ListRolePolicies\",\"iam:ListRoleTags\",\"iam:ListInstanceProfilesForRole\",\"iam:PutRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:GetRolePolicy\"],\"Resource\":[\"arn:aws:iam::${ACCOUNT}:role/${CLUSTER}-*\"]}]}" >/dev/null
-        ACK_ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/${ACK_ROLE_NAME}"
-
-        # --- KRO capability role (AmazonEKSClusterPolicy) ---
-        printf '{{.C_STEP}}▸ [%s] Ensuring KRO capability role %s...{{.C_RESET}}\n' "$CLUSTER" "$KRO_ROLE_NAME"
-        aws iam get-role --role-name "$KRO_ROLE_NAME" >/dev/null 2>&1 || \
-          aws iam create-role --role-name "$KRO_ROLE_NAME" --assume-role-policy-document "$ASSUME_DOC" >/dev/null
-        aws iam attach-role-policy --role-name "$KRO_ROLE_NAME" --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy >/dev/null 2>&1 || true
-        KRO_ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/${KRO_ROLE_NAME}"
-
-        # --- Create the capabilities (idempotent) ---
-        for cap in "kro:KRO:$KRO_ROLE_ARN" "ack:ACK:$ACK_ROLE_ARN"; do
-          NAME="${cap%%:*}"; rest="${cap#*:}"; TYPE="${rest%%:*}"; ROLE_ARN="${rest#*:}"
-          STATUS=$(aws eks describe-capability --cluster-name "$CLUSTER" --capability-name "$NAME" --region "$REGION" --query 'capability.status' --output text 2>/dev/null || echo "NOT_FOUND")
-          if [ "$STATUS" = "NOT_FOUND" ]; then
-            printf '{{.C_STEP}}▸ [%s] Creating %s capability...{{.C_RESET}}\n' "$CLUSTER" "$TYPE"
-            # The capability role was just created/updated above; EKS may reject
-            # CreateCapability with "trust policy is invalid" until IAM has
-            # propagated the role's trust policy. Retry on that transient error.
-            j=0
-            until aws eks create-capability --region "$REGION" --cluster-name "$CLUSTER" --capability-name "$NAME" --type "$TYPE" --role-arn "$ROLE_ARN" --delete-propagation-policy RETAIN >/dev/null 2>/tmp/create-cap-err; do
-              j=$((j+1))
-              if [ "$j" -ge 12 ]; then
-                printf '{{.C_ERR}}⚠ [%s] %s capability creation failed after retries:{{.C_RESET}}\n' "$CLUSTER" "$TYPE"; cat /tmp/create-cap-err; exit 1
-              fi
-              if grep -q "trust policy" /tmp/create-cap-err; then
-                printf '{{.C_INFO}}  [%s] Waiting for IAM trust policy propagation (attempt %s)...{{.C_RESET}}\n' "$CLUSTER" "$j"
-                sleep 10
-              else
-                cat /tmp/create-cap-err; exit 1
-              fi
-            done
-          else
-            printf '{{.C_INFO}}  [%s] %s capability already exists (%s).{{.C_RESET}}\n' "$CLUSTER" "$TYPE" "$STATUS"
-          fi
-        done
-
-        # --- Wait for both ACTIVE ---
-        for NAME in kro ack; do
-          i=0
-          until aws eks describe-capability --cluster-name "$CLUSTER" --capability-name "$NAME" --region "$REGION" --query 'capability.status' --output text 2>/dev/null | grep -q ACTIVE; do
-            i=$((i+1)); [ "$i" -ge 40 ] && { printf '{{.C_ERR}}⚠ [%s] %s capability not ACTIVE after timeout.{{.C_RESET}}\n' "$CLUSTER" "$NAME"; break; }
-            sleep 15
-          done
-        done
-        printf '{{.C_OK}}✓ [%s] KRO + ACK capabilities created.{{.C_RESET}}\n' "$CLUSTER"
 
 
   spokes:enable-kro:
