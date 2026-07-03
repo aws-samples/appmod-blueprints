@@ -2345,11 +2345,9 @@ tasks:
           kubectl -n crossplane-system wait --for=delete policies.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
         ignore_error: true
-      # Phase 3: Delete ArgoCD capability via Job, then its IAM role (needs IAM provider alive)
-      # Use `task:` instead of `cmd: task ...` so the call doesn't go through gosh,
-      # which mis-parses some yq-driven dynamic vars in credentials:setup.
-      - task: argocd:delete-capability
-        ignore_error: true
+      # Phase 3: Delete the capability IAM role. The EKS Capabilities are managed as
+      # Crossplane Capability MRs (deletePropagationPolicy RETAIN); the AWS-API fallback
+      # below force-deletes them so the cluster delete in Phase 4 isn't blocked.
       - cmd: |
           sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=120s 2>/dev/null || true

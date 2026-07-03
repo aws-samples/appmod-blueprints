@@ -36,10 +36,10 @@ task install
      a. crossplane:helm           Install Crossplane (version from addons/registry/platform.yaml)
      b. crossplane:providers      Render crossplane-base chart (providers + functions only, no ProviderConfig)
      c. crossplane:provider-config Apply bootstrap ProviderConfig (aws-credentials secret)
-     d. crossplane:claims         Apply XRD/Composition, PlatformCluster claim, pod identities (see below)
+     d. crossplane:claims         Apply XRD/Composition (incl. KRO/ACK/ArgoCD Capability MRs), PlatformCluster claim, pod identities (see below)
   6. hub:seed
      a. Wait for EKS cluster, IAM roles, and pod identities to become Ready
-     b. argocd:capability         Create EKS ArgoCD Capability via Job
+     b. (wait capabilities)       Wait for the KRO/ACK/ArgoCD Capability MRs (created by the Composition) to be Ready
      c. secrets-manager:seed      Write hub config to AWS Secrets Manager
      d. secrets-manager:seed-keycloak Seed keycloak passwords into Secrets Manager
      e. hub:install-eso           Helm install External Secrets on the hub
@@ -102,7 +102,6 @@ Supporting manifests in `manifests/`:
 
 | Path | Purpose |
 |------|---------|
-| `argocd/create-capability.yaml` | Job that calls the EKS API to create the ArgoCD Capability |
 | `argocd/appproject.yaml` | ArgoCD AppProject definition |
 | `crossplane/provider-config-bootstrap.yaml` | ProviderConfig using the `aws-credentials` secret (Kind-only, not used on hub) |
 | `external-secrets/cluster-secret-store.yaml` | ClusterSecretStore for AWS Secrets Manager |

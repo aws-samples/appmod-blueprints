@@ -19,7 +19,9 @@ Architecture and deployment context for the appmod-blueprints platform on the `f
 - **ArgoCD** — managed GitOps, configured with IDC for SSO (ADMIN mapped to IDC group)
 - **KRO** — managed Kube Resource Orchestrator, provides ResourceGraphDefinitions
 - **ACK** — managed AWS Controllers for Kubernetes, provisions AWS resources from K8s
-- All three created in `manifests/argocd/create-capability.yaml` Job
+- Created declaratively: crossplane path via native `Capability` MRs in the platform-cluster
+  Composition (gated by `spec.capabilities.<type>.enabled`); kro-ack path via the
+  `EksclusterWithVpc` KRO RGD
 - They are NOT pods — they're EKS managed services
 
 ### Exposure Mode: CloudFront
