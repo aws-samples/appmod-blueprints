@@ -154,13 +154,21 @@ tasks:
       # downstream provider PIAs (createIdentity:false for iam/eks) — nothing else seeds the first
       # credential, so without this the whole crossplane chain stays credential-less.
       - task: hub:bootstrap-crossplane-identity
-      - task: install:phase1-parallel
-      - task: hub:wait-for-full-sync
-      # Wait for ALL Crossplane providers (including ec2) to be Healthy before spoke provisioning
-      - task: hub:wait-for-providers
-      - task: install:phase1b-parallel
+      # Enable spokes EARLY (kro-ack-specific optimization): KRO-provisioned spokes are
+      # created by the hub's ACK EKS capability, NOT the Crossplane providers, so spoke
+      # EKS creation (~25min, both in parallel) does not depend on the provider bring-up
+      # below. Wire the overlay + push spoke enablement now so the long-pole spoke build
+      # overlaps with the provider restart, observability seeding, ray image build and idc
+      # that follow — this removes the provider-wait from the spoke critical path.
       - task: hub:set-overlay-repo
       - task: install:phase2-parallel
+      # Crossplane provider bring-up for the hub's OWN observability (AMP/RDS/Grafana).
+      # Runs while the spokes provision asynchronously in the background.
+      - task: install:phase1-parallel
+      - task: hub:wait-for-full-sync
+      # Wait for ALL Crossplane providers (including ec2) to be Healthy.
+      - task: hub:wait-for-providers
+      - task: install:phase1b-parallel
       - |
         LOCAL_FLEET="$HOME/environment/fleet-config"
         if [ -d "$LOCAL_FLEET/.git" ]; then
