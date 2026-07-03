@@ -65,8 +65,14 @@ spec:
             ignoreMissingValueFiles: true
             valuesObject:
               global:
-                argoCdHubRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-argocd-capability-role'
-                argoCdCapabilityRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}-argocd-capability-role'
+                # The hub's ArgoCD capability role name differs by provisioner: the kro-ack
+                # RGD creates it kebab-case (<cluster>-argocd-capability-role); the crossplane
+                # composition creates it PascalCase (<cluster>-ArgoCDCapabilityRole). Key off the
+                # hub secret's `provider` label (kro-ack stamps it; crossplane has none) so the
+                # spoke argocd-role trust policy references a role that actually exists — otherwise
+                # ACK IAM rejects it (MalformedPolicyDocument: Invalid principal).
+                argoCdHubRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}{{ if and (hasKey .metadata.labels "provider") (eq (index .metadata.labels "provider") "kro-ack") }}-argocd-capability-role{{ else }}-ArgoCDCapabilityRole{{ end }}'
+                argoCdCapabilityRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}{{ if and (hasKey .metadata.labels "provider") (eq (index .metadata.labels "provider") "kro-ack") }}-argocd-capability-role{{ else }}-ArgoCDCapabilityRole{{ end }}'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
                 targetCluster: '{{ .clusterName }}'
                 # Propagate the deploy branch from the control-plane so kro spokes
