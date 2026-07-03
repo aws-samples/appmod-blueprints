@@ -223,6 +223,25 @@ eks-capabilities-rbac:
       accountId: '{{.metadata.annotations.aws_account_id}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
 
+# Hub variant: the hub reconciles kro spoke claims (EksclusterWithVpc), so its own
+# kro/ack capability role needs the same ACK RBAC. The hub uses enable_kro_manifests_hub
+# (not enable_kro_manifests) to avoid the path-excluded spoke kro-manifests app, so the
+# spoke-scoped eks-capabilities-rbac above never lands on the hub. Bind it here too.
+eks-capabilities-rbac-hub:
+  namespace: kro
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/eks-capabilities-rbac'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-3'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests_hub
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+
 multi-acct:
   namespace: kro
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/multi-acct'
