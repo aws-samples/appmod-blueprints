@@ -248,9 +248,11 @@ tasks:
   install:phase2-spoke-dev:
     internal: true
     cmds:
+      # Capabilities (KRO+ACK) are now created declaratively by the platform-cluster
+      # Composition (spec.capabilities.* set in the crossplane-clusters overlay by
+      # spokes:enable-crossplane). No imperative spokes:create-capabilities / foreground
+      # EKS-ACTIVE wait — the spoke (cluster + capabilities) provisions async via ArgoCD.
       - task: spokes:enable-crossplane
-        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
-      - task: spokes:create-capabilities
         vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
 
   install:phase2-spoke-prod:
@@ -386,12 +388,12 @@ tasks:
           --set functions.patchAndTransform.version=v0.10.0
           --set functions.environmentConfigs.version=v0.3.0
           --set functions.celFilter.version=v0.2.0
-          --set providers.family.version=v2.5.3
-          --set providers.iam.version=v2.5.3
+          --set providers.family.version=v2.6.1
+          --set providers.iam.version=v2.6.1
           --set providers.iam.createIdentity=false
-          --set providers.eks.version=v2.5.3
+          --set providers.eks.version=v2.6.1
           --set providers.eks.createIdentity=false
-          --set providers.ec2.version=v2.5.3
+          --set providers.ec2.version=v2.6.1
           --set providers.ec2.createIdentity=false
           --set providers.kubernetes.version={{.K8S_PROVIDER_VERSION}}
           --set providers.kubernetes.serviceAccount=provider-kubernetes
@@ -458,6 +460,13 @@ tasks:
           --set clusters.hub.kubernetesVersion={{.HUB_K8S_VERSION}}
           --set clusters.hub.vpcCidr={{.HUB_VPC_CIDR}}
           --set clusters.hub.resourcePrefix={{.RESOURCE_PREFIX}}
+          --set-string clusters.hub.accountId={{.AWS_ACCOUNT_ID}}
+          --set clusters.hub.capabilities.kro.enabled=true
+          --set clusters.hub.capabilities.ack.enabled=true
+          --set clusters.hub.capabilities.argocd.enabled=true
+          --set-string clusters.hub.capabilities.argocd.idcInstanceArn={{.IDC_INSTANCE_ARN}}
+          --set-string clusters.hub.capabilities.argocd.idcRegion={{.IDC_REGION}}
+          --set-string clusters.hub.capabilities.argocd.adminGroupId={{.IDC_ADMIN_GROUP_ID}}
           {{.MNG_SETS}}
           | kubectl apply -f -
       - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl apply -f -
@@ -477,8 +486,8 @@ tasks:
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set providers.iam.version=v2.5.3
-          --set providers.eks.version=v2.5.3
+          --set providers.iam.version=v2.6.1
+          --set providers.eks.version=v2.6.1
           | kubectl apply -f -
       - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
           --set aws.region={{.AWS_REGION}}
@@ -536,7 +545,13 @@ tasks:
       - printf '{{.C_STEP}}▸ Waiting for pod identity resources...{{.C_RESET}}\n'
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=300s roles.iam.aws.upbound.io --all
       - kubectl -n crossplane-system wait --for=condition=Ready --timeout=600s podidentityassociations.eks.aws.upbound.io --all
-      - task: argocd:capability
+      # EKS Capabilities (argocd/kro/ack) are now created declaratively by the
+      # platform-cluster Composition (spec.capabilities.* on the hub claim), reconciled
+      # by Crossplane once the hub EKS cluster is ACTIVE. Wait for them to be Ready here
+      # so the ArgoCD capability CRDs are served before hub:apply-root-appset — replaces
+      # the imperative argocd:capability Job (create-capability.yaml).
+      - printf '{{.C_STEP}}▸ Waiting for EKS Capabilities (argocd/kro/ack) to be Ready...{{.C_RESET}}\n'
+      - kubectl wait --for=condition=Ready --timeout=900s capabilities.eks.aws.upbound.io --all
       - task: hub:create-mgmt-roles
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
@@ -1163,6 +1178,12 @@ tasks:
             kubernetesVersion: "{{.K8S_VERSION}}"
             autoMode: true
             resourcePrefix: {{.RESOURCE_PREFIX}}
+            accountId: "{{.AWS_ACCOUNT_ID}}"
+            capabilities:
+              kro:
+                enabled: true
+              ack:
+                enabled: true
         $ADMIN_ARN_LINE
         $ADMIN_INSTANCE_ARN_LINE
         EOF
@@ -1210,92 +1231,6 @@ tasks:
             || printf '{{.C_INFO}}  Local fleet-config not auto-updated — run: git -C %s pull{{.C_RESET}}\n' "$LOCAL_FLEET"
         fi
         printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via Crossplane in fleet-config overlay.{{.C_RESET}}\n'
-
-  spokes:create-capabilities:
-    desc: "Create KRO + ACK EKS Capabilities on a Crossplane-provisioned spoke (usage: task spokes:create-capabilities -- <cluster-name>)"
-    # KRO-path spokes get their kro/ACK capabilities declaratively from the EksclusterWithVpc
-    # RGD. Crossplane-path spokes do NOT, so create them here the same way the hub does
-    # (aws eks create-capability), with per-spoke capability IAM roles. Idempotent.
-    vars:
-      CLUSTER: '{{.CLI_ARGS}}'
-    cmds:
-      - |
-        set -e
-        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:create-capabilities -- <cluster-name>"; exit 1; fi
-        CLUSTER="{{.CLUSTER}}"
-        REGION="{{.AWS_REGION}}"
-        ACCOUNT="{{.AWS_ACCOUNT_ID}}"
-        PREFIX="{{.RESOURCE_PREFIX}}"
-        # CLUSTER already carries the resource prefix (e.g. peeks-spoke-staging), so the
-        # capability role name is just <cluster>-<type>-capability-role — prepending PREFIX
-        # again would double it (peeks-peeks-...). PREFIX is still used below for the
-        # cluster-mgmt-* assume-role resource ARNs.
-        ACK_ROLE_NAME="${CLUSTER}-ack-capability-role"
-        KRO_ROLE_NAME="${CLUSTER}-kro-capability-role"
-
-        # Wait for the Crossplane-provisioned spoke EKS cluster to be ACTIVE (up to ~90 min).
-        printf '{{.C_STEP}}▸ [%s] Waiting for spoke EKS cluster ACTIVE...{{.C_RESET}}\n' "$CLUSTER"
-        i=0
-        until aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null | grep -q ACTIVE; do
-          i=$((i+1)); [ "$i" -ge 360 ] && { printf '{{.C_ERR}}⚠ %s not ACTIVE after timeout — skipping capability creation.{{.C_RESET}}\n' "$CLUSTER"; exit 0; }
-          sleep 15
-        done
-
-        ASSUME_DOC='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"capabilities.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
-
-        # --- ACK capability role (AssumeWorkloadRoles + ManageIRSARoles) ---
-        printf '{{.C_STEP}}▸ [%s] Ensuring ACK capability role %s...{{.C_RESET}}\n' "$CLUSTER" "$ACK_ROLE_NAME"
-        aws iam get-role --role-name "$ACK_ROLE_NAME" >/dev/null 2>&1 || \
-          aws iam create-role --role-name "$ACK_ROLE_NAME" --assume-role-policy-document "$ASSUME_DOC" >/dev/null
-        aws iam put-role-policy --role-name "$ACK_ROLE_NAME" --policy-name AssumeWorkloadRoles --policy-document \
-          "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\",\"sts:TagSession\"],\"Resource\":[\"arn:aws:iam::${ACCOUNT}:role/${PREFIX}-cluster-mgmt-*\"]}]}" >/dev/null
-        aws iam put-role-policy --role-name "$ACK_ROLE_NAME" --policy-name ManageIRSARoles --policy-document \
-          "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:CreateRole\",\"iam:DeleteRole\",\"iam:TagRole\",\"iam:UntagRole\",\"iam:UpdateRole\",\"iam:UpdateAssumeRolePolicy\",\"iam:AttachRolePolicy\",\"iam:DetachRolePolicy\",\"iam:ListAttachedRolePolicies\",\"iam:ListRolePolicies\",\"iam:ListRoleTags\",\"iam:ListInstanceProfilesForRole\",\"iam:PutRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:GetRolePolicy\"],\"Resource\":[\"arn:aws:iam::${ACCOUNT}:role/${CLUSTER}-*\"]}]}" >/dev/null
-        ACK_ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/${ACK_ROLE_NAME}"
-
-        # --- KRO capability role (AmazonEKSClusterPolicy) ---
-        printf '{{.C_STEP}}▸ [%s] Ensuring KRO capability role %s...{{.C_RESET}}\n' "$CLUSTER" "$KRO_ROLE_NAME"
-        aws iam get-role --role-name "$KRO_ROLE_NAME" >/dev/null 2>&1 || \
-          aws iam create-role --role-name "$KRO_ROLE_NAME" --assume-role-policy-document "$ASSUME_DOC" >/dev/null
-        aws iam attach-role-policy --role-name "$KRO_ROLE_NAME" --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy >/dev/null 2>&1 || true
-        KRO_ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/${KRO_ROLE_NAME}"
-
-        # --- Create the capabilities (idempotent) ---
-        for cap in "kro:KRO:$KRO_ROLE_ARN" "ack:ACK:$ACK_ROLE_ARN"; do
-          NAME="${cap%%:*}"; rest="${cap#*:}"; TYPE="${rest%%:*}"; ROLE_ARN="${rest#*:}"
-          STATUS=$(aws eks describe-capability --cluster-name "$CLUSTER" --capability-name "$NAME" --region "$REGION" --query 'capability.status' --output text 2>/dev/null || echo "NOT_FOUND")
-          if [ "$STATUS" = "NOT_FOUND" ]; then
-            printf '{{.C_STEP}}▸ [%s] Creating %s capability...{{.C_RESET}}\n' "$CLUSTER" "$TYPE"
-            # The capability role was just created/updated above; EKS may reject
-            # CreateCapability with "trust policy is invalid" until IAM has
-            # propagated the role's trust policy. Retry on that transient error.
-            j=0
-            until aws eks create-capability --region "$REGION" --cluster-name "$CLUSTER" --capability-name "$NAME" --type "$TYPE" --role-arn "$ROLE_ARN" --delete-propagation-policy RETAIN >/dev/null 2>/tmp/create-cap-err; do
-              j=$((j+1))
-              if [ "$j" -ge 12 ]; then
-                printf '{{.C_ERR}}⚠ [%s] %s capability creation failed after retries:{{.C_RESET}}\n' "$CLUSTER" "$TYPE"; cat /tmp/create-cap-err; exit 1
-              fi
-              if grep -q "trust policy" /tmp/create-cap-err; then
-                printf '{{.C_INFO}}  [%s] Waiting for IAM trust policy propagation (attempt %s)...{{.C_RESET}}\n' "$CLUSTER" "$j"
-                sleep 10
-              else
-                cat /tmp/create-cap-err; exit 1
-              fi
-            done
-          else
-            printf '{{.C_INFO}}  [%s] %s capability already exists (%s).{{.C_RESET}}\n' "$CLUSTER" "$TYPE" "$STATUS"
-          fi
-        done
-
-        # --- Wait for both ACTIVE ---
-        for NAME in kro ack; do
-          i=0
-          until aws eks describe-capability --cluster-name "$CLUSTER" --capability-name "$NAME" --region "$REGION" --query 'capability.status' --output text 2>/dev/null | grep -q ACTIVE; do
-            i=$((i+1)); [ "$i" -ge 40 ] && { printf '{{.C_ERR}}⚠ [%s] %s capability not ACTIVE after timeout.{{.C_RESET}}\n' "$CLUSTER" "$NAME"; break; }
-            sleep 15
-          done
-        done
-        printf '{{.C_OK}}✓ [%s] KRO + ACK capabilities created.{{.C_RESET}}\n' "$CLUSTER"
 
   spokes:enable-kro:
     desc: "Enable a spoke cluster via KRO (usage: task spokes:enable-kro -- <cluster-name>)"
@@ -2259,40 +2194,6 @@ tasks:
         kubectl rollout restart deploy/grafana-operator -n grafana-operator 2>/dev/null || true
         echo "Grafana ExternalSecrets resynced and grafana-operator restarted to pick up seeded credentials."
 
-  argocd:capability:
-    desc: Create EKS ArgoCD Capability (skips if done)
-    status:
-      - kubectl -n crossplane-system get job create-argocd-capability -o jsonpath='{.status.succeeded}' 2>/dev/null | grep -q 1
-    vars:
-      CAPABILITY_ROLE_ARN:
-        sh: kubectl -n crossplane-system get roles.iam.aws.upbound.io argocd-capability-role -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo ""
-    cmds:
-      - kubectl -n crossplane-system create configmap argocd-capability-config
-          --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
-          --from-literal=AWS_REGION={{.AWS_REGION}}
-          --from-literal=AWS_ACCOUNT_ID={{.AWS_ACCOUNT_ID}}
-          --from-literal=CAPABILITY_NAME={{.CAPABILITY_NAME}}
-          --from-literal=CAPABILITY_ROLE_ARN={{.CAPABILITY_ROLE_ARN}}
-          --from-literal=IDC_INSTANCE_ARN={{.IDC_INSTANCE_ARN}}
-          --from-literal=IDC_REGION={{.IDC_REGION}}
-          --from-literal=IDC_ADMIN_GROUP_ID={{.IDC_ADMIN_GROUP_ID}}
-          --dry-run=client -o yaml | kubectl apply -f -
-      - kubectl delete job create-argocd-capability -n crossplane-system 2>/dev/null || true
-      - kubectl apply -f manifests/argocd/create-capability.yaml
-      - kubectl -n crossplane-system wait --for=condition=Complete --timeout=2400s job/create-argocd-capability
-
-  argocd:delete-capability:
-    desc: Delete EKS ArgoCD Capability via Job
-    cmds:
-      - kubectl -n crossplane-system create configmap argocd-capability-config
-          --from-literal=CLUSTER_NAME={{.HUB_CLUSTER_NAME}}
-          --from-literal=AWS_REGION={{.AWS_REGION}}
-          --from-literal=CAPABILITY_NAME={{.CAPABILITY_NAME}}
-          --dry-run=client -o yaml | kubectl apply -f -
-      - kubectl delete job delete-argocd-capability -n crossplane-system 2>/dev/null || true
-      - kubectl apply -f manifests/argocd/delete-capability.yaml
-      - kubectl -n crossplane-system wait --for=condition=Complete --timeout=2400s job/delete-argocd-capability
-
   status:
     desc: Check bootstrap status
     cmds:
@@ -2503,10 +2404,10 @@ tasks:
             --set aws.region={{.AWS_REGION}} \
             --set aws.clusterName={{.HUB_CLUSTER_NAME}} \
             --set aws.accountId={{.AWS_ACCOUNT_ID}} \
-            --set providers.family.version=v2.5.3 \
-            --set providers.iam.version=v2.5.3 \
-            --set providers.eks.version=v2.5.3 \
-            --set providers.ec2.version=v2.5.3 \
+            --set providers.family.version=v2.6.1 \
+            --set providers.iam.version=v2.6.1 \
+            --set providers.eks.version=v2.6.1 \
+            --set providers.ec2.version=v2.6.1 \
             | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=120s 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
@@ -2697,6 +2598,13 @@ tasks:
           --set clusters.hub.kubernetesVersion={{.HUB_K8S_VERSION}}
           --set clusters.hub.vpcCidr={{.HUB_VPC_CIDR}}
           --set clusters.hub.resourcePrefix={{.RESOURCE_PREFIX}}
+          --set-string clusters.hub.accountId={{.AWS_ACCOUNT_ID}}
+          --set clusters.hub.capabilities.kro.enabled=true
+          --set clusters.hub.capabilities.ack.enabled=true
+          --set clusters.hub.capabilities.argocd.enabled=true
+          --set-string clusters.hub.capabilities.argocd.idcInstanceArn={{.IDC_INSTANCE_ARN}}
+          --set-string clusters.hub.capabilities.argocd.idcRegion={{.IDC_REGION}}
+          --set-string clusters.hub.capabilities.argocd.adminGroupId={{.IDC_ADMIN_GROUP_ID}}
           {{.MNG_SETS}}
           | kubectl apply -f -
       - kubectl apply -f claims/

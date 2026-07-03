@@ -33,6 +33,15 @@ spec:
   {{- else if $.Values.global.adminInstanceRoleArn }}
   adminInstanceRoleArn: {{ $.Values.global.adminInstanceRoleArn }}
   {{- end }}
+  {{- if $cluster.accountId }}
+  accountId: {{ $cluster.accountId | quote }}
+  {{- else if $.Values.global.accountId }}
+  accountId: {{ $.Values.global.accountId | quote }}
+  {{- end }}
+  {{- if $cluster.capabilities }}
+  capabilities:
+    {{- toYaml $cluster.capabilities | nindent 4 }}
+  {{- end }}
   {{- if and $cluster.managedNodeGroup $cluster.managedNodeGroup.enabled }}
   managedNodeGroup:
     enabled: true

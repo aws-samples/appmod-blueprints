@@ -4,6 +4,9 @@
 
 global:
   argoCDRoleArn: ""
+  # AWS account ID, used to build ACK capability-role inline-policy ARNs
+  # (<prefix>-cluster-mgmt-* and <cluster>-*). Per-cluster accountId takes precedence.
+  accountId: ""
   # Default AWS region for clusters that don't set their own.
   # Injected by the bootstrap ApplicationSet from the hub cluster's
   # aws_region annotation. Per-cluster `region` in

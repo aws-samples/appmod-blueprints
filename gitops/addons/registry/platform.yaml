@@ -48,27 +48,27 @@ crossplane-base:
         version: "v0.2.0"
     providers:
       family:
-        version: "v2.5.3"
+        version: "v2.6.1"
       iam:
-        version: "v2.5.3"
+        version: "v2.6.1"
         createIdentity: false
       ec2:
-        version: "v2.5.3"
+        version: "v2.6.1"
         createIdentity: true
       eks:
-        version: "v2.5.3"
+        version: "v2.6.1"
         createIdentity: false
       rds:
-        version: "v2.5.3"
+        version: "v2.6.1"
         createIdentity: true
       dynamodb:
-        version: "v2.5.3"
+        version: "v2.6.1"
         createIdentity: true
       amp:
-        version: "v2.5.3"
+        version: "v2.6.1"
         createIdentity: true
       grafana:
-        version: "v2.5.3"
+        version: "v2.6.1"
         createIdentity: true
       kubernetes:
         version: "v1.2.1"

@@ -23,19 +23,19 @@ locals {
   # (createIdentity: false in registry); others get identity from ArgoCD post-bootstrap.
   crossplane_bootstrap_providers = {
     iam = {
-      package         = "xpkg.upbound.io/upbound/provider-aws-iam:v2.5.3"
+      package         = "xpkg.upbound.io/upbound/provider-aws-iam:v2.6.1"
       service_account = "provider-aws-iam"
     }
     eks = {
-      package         = "xpkg.upbound.io/upbound/provider-aws-eks:v2.5.3"
+      package         = "xpkg.upbound.io/upbound/provider-aws-eks:v2.6.1"
       service_account = "provider-aws-eks"
     }
     ec2 = {
-      package         = "xpkg.upbound.io/upbound/provider-aws-ec2:v2.5.3"
+      package         = "xpkg.upbound.io/upbound/provider-aws-ec2:v2.6.1"
       service_account = "provider-aws-ec2"
     }
     secretsmanager = {
-      package         = "xpkg.upbound.io/upbound/provider-aws-secretsmanager:v2.5.3"
+      package         = "xpkg.upbound.io/upbound/provider-aws-secretsmanager:v2.6.1"
       service_account = "provider-aws-secretsmanager"
     }
   }
@@ -121,7 +121,7 @@ resource "kubectl_manifest" "crossplane_provider_family" {
       name = "provider-family-aws"
     }
     spec = {
-      package = "xpkg.upbound.io/upbound/provider-family-aws:v2.5.3"
+      package = "xpkg.upbound.io/upbound/provider-family-aws:v2.6.1"
     }
   })
 

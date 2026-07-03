@@ -847,16 +847,228 @@ spec:
                 fromFieldPath: spec.argoCDRoleArn
                 toFieldPath: spec.forProvider.principalArn
 
-          # NOTE: KRO + ACK EKS Capabilities for Crossplane-provisioned spokes are
-          # created out-of-band by the IDE Taskfile task `spokes:create-capabilities`
-          # (install phase2-spoke-*), which authenticates with the IDE instance role
-          # and provisions per-spoke capability IAM roles
-          # (<prefix>-<cluster>-kro/ack-capability-role). A previous in-composition
-          # `eks-capabilities-job` (an aws-cli Job on the `crossplane` SA) was removed:
-          # it assumed the crossplane SA had a Pod Identity association
-          # (CrossplaneCapabilitiesRole) that is never created on the hub, so it always
-          # failed with `NoCredentials` — a redundant, noisy second path while the
-          # Taskfile path already brings both capabilities to ACTIVE.
+          # ===== EKS CAPABILITIES (native provider-aws-eks Capability MRs) =====
+          # Replaces the imperative spokes:create-capabilities task (Crossplane spokes)
+          # and create-capability.yaml Job (hub). Each capability + its IAM role is
+          # gated by spec.capabilities.<type>.enabled via the function-cel-filter step.
+          # Roles mirror the kro-ack RGD (rg-eks.yaml) exactly: capabilities.eks.amazonaws.com
+          # trust; KRO=AmazonEKSClusterPolicy; ACK=inline AssumeWorkloadRoles+ManageIRSARoles.
+          # The provider (AdministratorAccess pod identity) creates these once the Cluster
+          # is ACTIVE — no foreground wait, fully declarative/async.
+
+          # --- KRO capability role (managed AmazonEKSClusterPolicy) ---
+          - name: kro-capability-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels:
+                  capability: kro
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"Service": "capabilities.eks.amazonaws.com"},
+                        "Action": ["sts:AssumeRole", "sts:TagSession"]
+                      }]
+                    }
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-kro-capability-role"
+              - type: PatchSet
+                patchSetName: tags
+
+          - name: kro-capability-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      capability: kro
+
+          - name: kro-capability
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Capability
+              spec:
+                forProvider:
+                  capabilityName: kro
+                  type: KRO
+                  deletePropagationPolicy: RETAIN
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  roleArnSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      capability: kro
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          # --- ACK capability role (inline AssumeWorkloadRoles + ManageIRSARoles) ---
+          - name: ack-capability-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels:
+                  capability: ack
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"Service": "capabilities.eks.amazonaws.com"},
+                        "Action": ["sts:AssumeRole", "sts:TagSession"]
+                      }]
+                    }
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-ack-capability-role"
+              - type: PatchSet
+                patchSetName: tags
+
+          # inline AssumeWorkloadRoles: sts:AssumeRole/TagSession on <prefix>-cluster-mgmt-*
+          - name: ack-capability-policy-assume
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicy
+              metadata:
+                labels:
+                  capability: ack
+              spec:
+                forProvider:
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      capability: ack
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-ack-AssumeWorkloadRoles"
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: spec.accountId
+                    - fromFieldPath: spec.resourcePrefix
+                  strategy: string
+                  string:
+                    fmt: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["sts:AssumeRole","sts:TagSession"],"Resource":["arn:aws:iam::%s:role/%s-cluster-mgmt-*"]}]}'
+                toFieldPath: spec.forProvider.policy
+
+          # inline ManageIRSARoles: IRSA verbs on <cluster>-*
+          - name: ack-capability-policy-irsa
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicy
+              metadata:
+                labels:
+                  capability: ack
+              spec:
+                forProvider:
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      capability: ack
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.clusterName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-ack-ManageIRSARoles"
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: spec.accountId
+                    - fromFieldPath: spec.clusterName
+                  strategy: string
+                  string:
+                    fmt: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iam:GetRole","iam:CreateRole","iam:DeleteRole","iam:TagRole","iam:UntagRole","iam:UpdateRole","iam:UpdateAssumeRolePolicy","iam:AttachRolePolicy","iam:DetachRolePolicy","iam:ListAttachedRolePolicies","iam:ListRolePolicies","iam:ListRoleTags","iam:ListInstanceProfilesForRole","iam:PutRolePolicy","iam:DeleteRolePolicy","iam:GetRolePolicy"],"Resource":["arn:aws:iam::%s:role/%s-*"]}]}'
+                toFieldPath: spec.forProvider.policy
+
+          - name: ack-capability
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Capability
+              spec:
+                forProvider:
+                  capabilityName: ack
+                  type: ACK
+                  deletePropagationPolicy: RETAIN
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  roleArnSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      capability: ack
+            patches:
+              - type: PatchSet
+                patchSetName: common
+
+          # --- ArgoCD capability (hub only) — reuses the existing argocd-capability-role
+          #     (spec.argoCDRoleArn); needs IDC config for SSO ADMIN RBAC mapping. ---
+          - name: argocd-capability
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: Capability
+              spec:
+                forProvider:
+                  capabilityName: argocd
+                  type: ARGOCD
+                  deletePropagationPolicy: RETAIN
+                  clusterNameSelector:
+                    matchControllerRef: true
+                  configuration:
+                    argoCd:
+                      awsIdc: {}
+                      rbacRoleMapping:
+                        - role: ADMIN
+                          identity:
+                            - type: SSO_GROUP
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.argoCDRoleArn
+                toFieldPath: spec.forProvider.roleArn
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.capabilities.argocd.idcInstanceArn
+                toFieldPath: spec.forProvider.configuration.argoCd.awsIdc.idcInstanceArn
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.capabilities.argocd.idcRegion
+                toFieldPath: spec.forProvider.configuration.argoCd.awsIdc.idcRegion
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.capabilities.argocd.adminGroupId
+                toFieldPath: spec.forProvider.configuration.argoCd.rbacRoleMapping[0].identity[0].id
 
           # EKS Cluster with Auto Mode enabled
           - name: eks-cluster
@@ -1159,4 +1371,22 @@ spec:
             expression: >-
               has(observed.composite.resource.spec.adminInstanceRoleArn) &&
               observed.composite.resource.spec.adminInstanceRoleArn != ""
+          # EKS Capabilities — only compose each capability (+ its IAM role/policies)
+          # when spec.capabilities.<type>.enabled is true. Hub gets kro+ack+argocd;
+          # Crossplane spokes get kro+ack; unset/false => not composed.
+          - name: "^kro-capability(-role|-policy)?$"
+            expression: >-
+              has(observed.composite.resource.spec.capabilities) &&
+              has(observed.composite.resource.spec.capabilities.kro) &&
+              observed.composite.resource.spec.capabilities.kro.enabled == true
+          - name: "^ack-capability(-role|-policy-assume|-policy-irsa)?$"
+            expression: >-
+              has(observed.composite.resource.spec.capabilities) &&
+              has(observed.composite.resource.spec.capabilities.ack) &&
+              observed.composite.resource.spec.capabilities.ack.enabled == true
+          - name: "^argocd-capability$"
+            expression: >-
+              has(observed.composite.resource.spec.capabilities) &&
+              has(observed.composite.resource.spec.capabilities.argocd) &&
+              observed.composite.resource.spec.capabilities.argocd.enabled == true
 {{- end }}

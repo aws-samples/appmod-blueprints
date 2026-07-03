@@ -80,9 +80,97 @@ tasks:
       - task: ":{{.PROVIDER}}:ray:wait-image"
       # Download ML models to S3
       - task: ":{{.PROVIDER}}:ray:prestage-models"
+      # Final tolerant gate: spokes are enabled asynchronously during {{.PROVIDER}}:install
+      # (git push only), so their EKS clusters + ArgoCD apps finish provisioning while the
+      # ray/IDC/model tail above runs. Confirm they landed before we declare success.
+      # Non-fatal: never fails the install (spoke apps may legitimately still be settling).
+      - task: wait-for-spokes
+      - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
       - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+
+  # ============================================================
+  # FINAL SPOKE GATE (tolerant, non-fatal)
+  # ============================================================
+  wait-for-spokes:
+    desc: "Wait for spoke EKS clusters ACTIVE + their ArgoCD cluster secrets + spoke apps synced (tolerant, non-fatal)"
+    vars:
+      SPOKES: "{{.RESOURCE_PREFIX}}-spoke-dev {{.RESOURCE_PREFIX}}-spoke-prod"
+      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
+    cmds:
+      - |
+        # Strictly non-fatal: disable errexit so no internal check can fail the install.
+        set +e
+        KC=$(mktemp)
+        if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}⚠ wait-for-spokes: cannot get hub kubeconfig — skipping (non-fatal).{{.C_RESET}}\n'
+          rm -f "$KC"; exit 0
+        fi
+        export KUBECONFIG="$KC"
+
+        # 1) Spoke EKS clusters ACTIVE (~20min budget each, tolerant)
+        for S in {{.SPOKES}}; do
+          printf '{{.C_STEP}}▸ [%s] waiting for EKS cluster ACTIVE...{{.C_RESET}}\n' "$S"
+          OK=false
+          for i in $(seq 1 80); do
+            ST=$(aws eks describe-cluster --name "$S" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "NONE")
+            if [ "$ST" = "ACTIVE" ]; then OK=true; break; fi
+            sleep 15
+          done
+          if [ "$OK" = "true" ]; then
+            printf '{{.C_OK}}  ✓ %s ACTIVE{{.C_RESET}}\n' "$S"
+          else
+            printf '{{.C_ERR}}  ⚠ %s not ACTIVE after ~20min — continuing (non-fatal).{{.C_RESET}}\n' "$S"
+          fi
+        done
+
+        # 2) Spoke ArgoCD cluster secrets registered on the hub (needed for CD ApplicationSets)
+        for S in {{.SPOKES}}; do
+          for i in $(seq 1 40); do
+            if kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=cluster \
+                 -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null | grep -qx "$S"; then
+              break
+            fi
+            if [ "$i" = "40" ]; then
+              printf '{{.C_ERR}}  ⚠ %s ArgoCD cluster secret not registered — continuing (non-fatal).{{.C_RESET}}\n' "$S"
+            fi
+            sleep 15
+          done
+        done
+
+        # 3) Spoke-targeted apps synced within tolerance, nudging stuck ones (resets ArgoCD backoff)
+        printf '{{.C_STEP}}▸ Waiting for spoke apps to sync (tolerance %s, non-fatal)...{{.C_RESET}}\n' "{{.MAX_OUTOFSYNC}}"
+        SPOKE_RE=$(echo "{{.SPOKES}}" | tr ' ' '|')
+        TIMEOUT=1200; INTERVAL=30; ELAPSED=0; LAST_NUDGE=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          ALL=$(kubectl get applications.argoproj.io -n argocd \
+            -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,DEST:.spec.destination.name --no-headers 2>/dev/null || echo "")
+          APPS=$(echo "$ALL" | awk -v re="$SPOKE_RE" '$3 ~ ("^("re")$")')
+          TOTAL=$(echo "$APPS" | awk 'NF>0' | wc -l | tr -d ' ')
+          OOS=$(echo "$APPS" | awk '$2!="Synced" && NF>0' | wc -l | tr -d ' ')
+          printf '{{.C_INFO}}  spoke apps: %s total, %s out-of-sync (%ss elapsed){{.C_RESET}}\n' "$TOTAL" "$OOS" "$ELAPSED"
+          if [ "$TOTAL" -gt 0 ] && [ "$OOS" -le {{.MAX_OUTOFSYNC}} ]; then
+            printf '{{.C_OK}}✓ spoke apps synced within tolerance.{{.C_RESET}}\n'
+            break
+          fi
+          # After a 3min grace period, nudge out-of-sync apps every 5min to reset stuck backoff
+          if [ $ELAPSED -ge 180 ] && [ $((ELAPSED - LAST_NUDGE)) -ge 300 ]; then
+            for a in $(echo "$APPS" | awk '$2!="Synced" && NF>0 {print $1}'); do
+              kubectl patch application "$a" -n argocd --type merge \
+                -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' >/dev/null 2>&1 || true
+            done
+            LAST_NUDGE=$ELAPSED
+            printf '{{.C_INFO}}  ↻ nudged out-of-sync spoke apps{{.C_RESET}}\n'
+          fi
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          printf '{{.C_ERR}}⚠ spoke apps still syncing after %ss — continuing (non-fatal).{{.C_RESET}}\n' "$TIMEOUT"
+        fi
+        rm -f "$KC"
+      - printf '{{.C_OK}}✓ Spoke wait-gate complete.{{.C_RESET}}\n'
 
   # ============================================================
   # PRE-REQUISITES

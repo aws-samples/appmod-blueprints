@@ -48,6 +48,44 @@ spec:
                 resourcePrefix:
                   type: string
                   description: Prefix for resource tagging and identification
+                accountId:
+                  type: string
+                  description: AWS account ID (used to build capability-role inline policy ARNs, e.g. <prefix>-cluster-mgmt-*)
+                capabilities:
+                  type: object
+                  description: |
+                    Native EKS Capabilities (KRO / ACK / ArgoCD) created for this cluster via
+                    provider-aws-eks Capability MRs. Replaces the imperative
+                    `spokes:create-capabilities` / create-capability.yaml Job path.
+                  properties:
+                    kro:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                    ack:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                    argocd:
+                      type: object
+                      description: ArgoCD capability (hub only). Needs IDC config for SSO RBAC.
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                        idcInstanceArn:
+                          type: string
+                          description: IAM Identity Center instance ARN
+                        idcRegion:
+                          type: string
+                          description: IAM Identity Center region
+                        adminGroupId:
+                          type: string
+                          description: IDC group id mapped to the ArgoCD ADMIN role
                 argoCDRoleArn:
                   type: string
                   description: ARN of the hub ArgoCD capability role for spoke access
