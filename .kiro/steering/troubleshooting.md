@@ -396,6 +396,46 @@ The `services.k8s.aws/force-reconcile` annotation does NOT always work (especial
 
 **Fix**: Delete the CRD manually (`kubectl delete crd <name>.kro.run`), then sync to let KRO recreate it. **Warning**: This deletes all instances of that CRD — may trigger resource deletion in AWS. Only do this when safe.
 
+### Hub kro/ack capability RBAC-denied on ACK resources (kro-provisioned spokes)
+**Symptoms**: A spoke provisioned via the **KRO path** never gets its EKS cluster. The
+`EksclusterWithVpc` instance on the hub shows a reconcile error like:
+```
+vpcs.ec2.services.k8s.aws "<spoke>-vpc" is forbidden: User
+"arn:aws:sts::<acct>:assumed-role/<hub>-kro-capability-role/KRO" cannot get resource
+"vpcs" in API group "ec2.services.k8s.aws" in the namespace "<spoke>"
+```
+
+**Root cause**: A kro-provisioned spoke's `EksclusterWithVpc` claim is reconciled by the
+**hub's** kro capability (`<hub>-kro-capability-role/KRO`), which renders the ACK
+VPC/subnet/EKS CRs. The hub's kro/ack capability roles are NOT cluster-admin (they get
+`AmazonEKSClusterPolicy` / inline ACK policies, mirroring the kro-ack RGD). The
+`eks-capabilities-rbac` ClusterRole that grants the ACK API groups only targeted
+`enable_kro_manifests` (spokes); the hub uses `enable_kro_manifests_hub`, so the hub never
+got the RBAC. The chart comment "redundant on the hub because the capability role has
+ClusterAdminPolicy" is wrong — the hub kro/ack cap is not cluster-admin in either the
+crossplane or kro-ack flow. This is a **shared latent gap**; it surfaces on whichever flow
+first exercises a KRO-provisioned spoke (crossplane: `spoke-prod`).
+
+**Fix (GitOps)**: `eks-capabilities-rbac-hub` registry entry (`gitops/addons/registry/platform.yaml`),
+gated on `enable_kro_manifests_hub`, deploys the same `eks-capabilities-kro` ClusterRole+Binding
+on the hub, bound to `<hub>-kro-capability-role/KRO` and `<hub>-ack-capability-role/ACK`.
+
+**Applying to an already-running hub**: the hub's `addonsRepoRevision` tracks the branch, so a
+hard-refresh of the `cluster-addons` ApplicationSet regenerates it and syncs
+`eks-capabilities-rbac-hub-<hub>` automatically:
+```bash
+kubectl -n argocd annotate applicationset cluster-addons argocd.argoproj.io/refresh=hard --overwrite
+```
+(Or apply the rendered ClusterRole/Binding directly for an immediate unblock.)
+
+**Manual recovery — KRO does NOT self-heal the stuck ACK object**: after the RBAC is fixed,
+KRO will not reconcile *over* the ACK resource that was left half-created during the denied
+window. Delete the stuck ACK object so KRO recreates it cleanly:
+```bash
+kubectl --context <hub> delete vpcs.ec2.services.k8s.aws <spoke>-vpc -n <spoke>
+# KRO recreates it (now permitted) and the spoke provisioning resumes.
+```
+
 ## Crossplane Issues
 
 ### NAT Gateway reference resolution race condition
