@@ -915,26 +915,13 @@ tasks:
             echo "  PIA crossplane-system/$SA already exists"
           fi
         done
-      - task: hub:kubeconfig
-      - printf '{{.C_STEP}}▸ Restarting Crossplane providers to pick up creds (pass 1)...{{.C_RESET}}\n'
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete pod -n crossplane-system -l pkg.crossplane.io/revision --force --grace-period=0 2>/dev/null || true
-      - |
-        # Once iam/eks are credentialed they reconcile the downstream provider roles/PIAs
-        # (amp/rds/grafana/dynamodb/ec2). Wait up to 5 min for those PIAs to be Ready, then
-        # restart again so those providers pick up THEIR freshly-created credentials.
-        KC={{.ROOT_DIR}}/private/hub-kubeconfig
-        for i in $(seq 1 20); do
-          TOTAL=$(KUBECONFIG=$KC kubectl get podidentityassociations.eks.aws.upbound.io -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-          READY=$(KUBECONFIG=$KC kubectl get podidentityassociations.eks.aws.upbound.io -A \
-            -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null | grep -c True)
-          printf '{{.C_INFO}}  [%s] crossplane provider PIAs Ready: %s/%s{{.C_RESET}}\n' "$i" "$READY" "$TOTAL"
-          [ "$TOTAL" -gt 0 ] && [ "$READY" = "$TOTAL" ] && break
-          sleep 15
-        done
-      - printf '{{.C_STEP}}▸ Restarting Crossplane providers to pick up creds (pass 2)...{{.C_RESET}}\n'
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl delete pod -n crossplane-system -l pkg.crossplane.io/revision --force --grace-period=0 2>/dev/null || true
-      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
-      - printf '{{.C_OK}}✓ Crossplane provider credentials bootstrapped.{{.C_RESET}}\n'
+      # NOTE: We deliberately do NOT restart the Crossplane providers here.
+      # This task runs before crossplane-base is deployed, so the provider pods
+      # don't exist yet — they will start AFTER these PIAs exist and therefore
+      # pick up credentials at startup. The downstream providers (amp/rds/etc.)
+      # and any that started early are restarted (non-fatally) by the phase1
+      # task hub:restart-identity-pods, which waits for all PIAs Ready first.
+      - printf '{{.C_OK}}✓ Crossplane provider pod identities created (providers credentialed on startup/phase1 restart).{{.C_RESET}}\n'
 
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to sync
