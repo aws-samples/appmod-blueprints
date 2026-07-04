@@ -603,7 +603,7 @@ spec:
               name: ${schema.metadata.name}
               uid: ${schema.metadata.uid}
         spec:
-          ingressClassName: alb
+          ingressClassName: platform
           rules:
             - host: ${schema.spec.ingressHostname}
               http:

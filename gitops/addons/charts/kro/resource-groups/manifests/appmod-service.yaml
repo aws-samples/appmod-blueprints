@@ -536,7 +536,7 @@ spec:
               controller: false
           annotations: '${{"argocd.argoproj.io/tracking-id": schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue(""), "alb.ingress.kubernetes.io/scheme": "internet-facing", "alb.ingress.kubernetes.io/target-type": "ip", "alb.ingress.kubernetes.io/healthcheck-path": schema.spec.ingress.healthcheckPath, "alb.ingress.kubernetes.io/listen-ports": "[{\"HTTP\": 80}]", "alb.ingress.kubernetes.io/transforms." + schema.metadata.name: "[{\"type\":\"url-rewrite\",\"urlRewriteConfig\":{\"rewrites\":[{\"regex\":\"^" + schema.spec.ingress.path + "/?(.*)$\",\"replace\":\"/$1\"}]}}]"}}'
         spec:
-          ingressClassName: alb
+          ingressClassName: platform
           rules:
             - host: ${schema.spec.ingress.host}
               http:
@@ -572,7 +572,7 @@ spec:
             alb.ingress.kubernetes.io/healthcheck-path: ${schema.spec.ingress.healthcheckPath}
             alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
         spec:
-          ingressClassName: alb
+          ingressClassName: platform
           rules:
             - host: ${schema.spec.ingress.host}
               http:
