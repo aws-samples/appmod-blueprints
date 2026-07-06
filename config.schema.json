@@ -145,7 +145,17 @@
     "domain": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9.-]+[a-z0-9]$",
-      "description": "Base domain for ingress hostnames. Must be unique per stack \u2014 two stacks sharing a domain will have DNS and TLS conflicts."
+      "description": "Ingress hostname for the platform, provisioned by the CONSUMER (Route53, CloudFront, etc.). The platform never creates it. Used for ingress host rules and printed URLs. Must be unique per stack."
+    },
+    "insecure": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, platform ingress serves plain HTTP (no cert) — the consumer terminates TLS upstream (e.g. CloudFront). When false (default), the ALB serves HTTPS and uses an ACM cert (auto-discovered by host, or certificateArn if set)."
+    },
+    "certificateArn": {
+      "type": "string",
+      "default": "",
+      "description": "Optional ACM certificate ARN for the ALB HTTPS listener when insecure=false. If empty, the AWS Load Balancer Controller auto-discovers an ACM cert matching the domain."
     },
     "resourcePrefix": {
       "type": "string",
