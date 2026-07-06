@@ -1,16 +1,16 @@
 # Kargo Stages for the Java app.
 #
-# NOTE (#7): the promotion steps are inlined here rather than referenced via
-# `steps: [{ task: { name: update-image } }]`. Some Kargo versions reject a
-# Stage whose promotionTemplate only carries a PromotionTask reference at
-# admission ("Stage defines no promotion steps"); inline steps are resolved
-# reliably across versions. promotiontask.yaml is kept for reference but is no
-# longer referenced by these stages.
+# Promotion steps are inlined (not referenced via PromotionTask) because
+# Kargo v1.7.5 admission webhook rejects Stages that only carry a task
+# reference ("Stage defines no promotion steps"). Inline steps work reliably
+# with both auto-promotion (controller-initiated) and manual promotion.
 #
-# NOTE (#8): the KubeVela publishVersion annotation key contains dots
-# (app.oam.dev/publishVersion); yaml-update needs bracket notation to address it
-# (dot-escaping reported "key path not found"). Kept continueOnError so a manifest
-# variant without the annotation (kro path) does not fail the promotion.
+# The publishVersion annotation update is intentionally omitted — Kargo v1.7.5
+# yaml-update does not support keys containing dots (neither bracket notation
+# nor dot-escaping works). The image field update alone is sufficient to trigger
+# reconciliation for both kro (spec.image) and kubevela (spec.components.0.properties.image)
+# paths. Both steps use continueOnError so the promotion succeeds regardless of
+# which manifest format is present.
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
@@ -18,7 +18,6 @@ metadata:
   namespace: java-app-kargo
   annotations:
     kargo.akuity.io/color: green
-    kargo.akuity.io/auto-promotion: "false"
 spec:
   requestedFreight:
   - origin:
@@ -41,7 +40,7 @@ spec:
           - branch: main
             path: ./src
       - uses: yaml-update
-        as: yaml-update-kro
+        as: update-image-kro
         continueOnError: true
         config:
           path: ./src/deployment/${{ ctx.stage }}/application.yaml
@@ -49,19 +48,17 @@ spec:
           - key: spec.image
             value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
       - uses: yaml-update
-        as: yaml-update-kubevela
+        as: update-image-kubevela
         continueOnError: true
         config:
           path: ./src/deployment/${{ ctx.stage }}/application.yaml
           updates:
           - key: spec.components.0.properties.image
             value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
-          - key: metadata.annotations["app.oam.dev/publishVersion"]
-            value: ${{ imageFrom(vars.image).Tag }}
       - uses: git-commit
         config:
           path: ./src
-          message: "Update ${{ ctx.stage }} image to ${{ imageFrom(vars.image).Tag }}"
+          message: "Promote ${{ ctx.stage }} to ${{ imageFrom(vars.image).Tag }}"
           author:
             name: Kargo
             email: kargo@akuity.io
@@ -105,7 +102,7 @@ spec:
           - branch: main
             path: ./src
       - uses: yaml-update
-        as: yaml-update-kro
+        as: update-image-kro
         continueOnError: true
         config:
           path: ./src/deployment/${{ ctx.stage }}/application.yaml
@@ -113,19 +110,17 @@ spec:
           - key: spec.image
             value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
       - uses: yaml-update
-        as: yaml-update-kubevela
+        as: update-image-kubevela
         continueOnError: true
         config:
           path: ./src/deployment/${{ ctx.stage }}/application.yaml
           updates:
           - key: spec.components.0.properties.image
             value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
-          - key: metadata.annotations["app.oam.dev/publishVersion"]
-            value: ${{ imageFrom(vars.image).Tag }}
       - uses: git-commit
         config:
           path: ./src
-          message: "Update ${{ ctx.stage }} image to ${{ imageFrom(vars.image).Tag }}"
+          message: "Promote ${{ ctx.stage }} to ${{ imageFrom(vars.image).Tag }}"
           author:
             name: Kargo
             email: kargo@akuity.io
