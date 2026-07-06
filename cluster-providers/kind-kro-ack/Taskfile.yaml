@@ -1542,11 +1542,10 @@ tasks:
           --arg grafana_api_key "$AMG_API_KEY" \
           --arg grafana_url "$AMG_ENDPOINT" \
           --arg user_password "$USER_PASS" \
-          --arg git_token "$USER_PASS" \
           --arg backstage_postgres_password "$BS_PG_PASS" \
           --arg user_password_hash "$KARGO_HASH" \
           --arg user_password_key "$KARGO_KEY" \
-          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url, user_password: $user_password, git_token: $git_token, backstage_postgres_password: $backstage_postgres_password, user_password_hash: $user_password_hash, user_password_key: $user_password_key}')
+          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url, user_password: $user_password, backstage_postgres_password: $backstage_postgres_password, user_password_hash: $user_password_hash, user_password_key: $user_password_key}')
         # Generate the grafana_mysql_password the grafana-dashboards
         # ExternalSecret expects, but only if it isn't already there
         # (so re-runs don't rotate it out from under live consumers).

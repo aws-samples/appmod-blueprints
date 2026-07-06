@@ -31,7 +31,11 @@ rules:
 # RBAC resources
 - apiGroups: ["rbac.authorization.k8s.io"]
   resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # escalate + bind let kro/ack create Roles/RoleBindings that grant permissions for
+  # the resources an AppmodService/CICDPipeline renders (argoproj.io, etc.). Without
+  # them Kubernetes' privilege-escalation prevention blocks the capability from
+  # creating those Roles and the CICDPipeline goes ERROR.
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "escalate", "bind"]
 # Networking resources
 - apiGroups: ["networking.k8s.io"]
   resources: ["ingresses"]
