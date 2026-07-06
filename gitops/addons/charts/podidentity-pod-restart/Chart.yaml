@@ -1,0 +1,15 @@
+apiVersion: v2
+name: podidentity-pod-restart
+description: >-
+  Self-healing CronJob that restarts workload pods which race ahead of their EKS
+  Pod Identity association. EKS injects pod-identity credentials via a mutating
+  webhook at pod CREATION time; a pod created before its PodIdentityAssociation
+  is active never gets AWS_CONTAINER_CREDENTIALS_FULL_URI and fails with
+  CredentialsNotLoaded (#8, common with KubeVela apps whose service-account and
+  workload components render in parallel). This job finds pods whose SA has a
+  Ready PodIdentityAssociation but that are missing the injected creds env, and
+  deletes them so they are re-admitted (and mutated) once the PIA exists.
+  Decoupled from the KubeVela ComponentDefinition CUE on purpose (lower blast
+  radius, plain-YAML, self-healing).
+type: application
+version: 0.1.0

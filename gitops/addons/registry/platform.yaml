@@ -257,6 +257,22 @@ multi-acct:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
 
+# Self-healing restart of workload pods that raced ahead of their EKS Pod Identity
+# association (#8). Deployed wherever KubeVela apps run; the CronJob only deletes
+# pods that are missing injected creds AND whose SA has a PodIdentityAssociation.
+podidentity-pod-restart:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/podidentity-pod-restart'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_kubevela
+        operator: In
+        values: ['true']
+  valuesObject:
+    namespace: kube-system
+
 kubevela:
   namespace: vela-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kubevela'
