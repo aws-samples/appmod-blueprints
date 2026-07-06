@@ -26,8 +26,8 @@ includes:
       CONFIG_FILE: "{{.CONFIG_FILE}}"
     optional: true
   workshop:
-    taskfile: ./cluster-providers/workshop/Taskfile.yaml
-    dir: ./cluster-providers/workshop
+    taskfile: ./workshop/Taskfile.yaml
+    dir: ./workshop
     vars:
       CONFIG_FILE: "{{.CONFIG_FILE}}"
       ROOT_DIR: "{{.ROOT_DIR}}"
