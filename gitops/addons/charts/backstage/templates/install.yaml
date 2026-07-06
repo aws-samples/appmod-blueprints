@@ -785,13 +785,16 @@ spec:
     matchLabels:
       app: backstage
 ---
+{{- /* insecure: HTTP-only ALB ingress, no cert. Explicit .Values.insecure wins;
+       falls back to the legacy exposure_mode == "cloudfront" during transition. */ -}}
+{{- $insecure := or .Values.insecure (eq (default "domain" .Values.exposure_mode) "cloudfront") -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: backstage
   namespace: backstage
   annotations:
-{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+{{- if $insecure }}
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /backstage/health/v1/readiness
@@ -807,7 +810,7 @@ metadata:
     nginx.ingress.kubernetes.io/session-cookie-path: "/backstage"
 {{- end }}
 spec:
-{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+{{- if $insecure }}
   ingressClassName: "platform"
   rules:
     - http:
