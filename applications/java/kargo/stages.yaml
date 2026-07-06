@@ -1,3 +1,16 @@
+# Kargo Stages for the Java app.
+#
+# NOTE (#7): the promotion steps are inlined here rather than referenced via
+# `steps: [{ task: { name: update-image } }]`. Some Kargo versions reject a
+# Stage whose promotionTemplate only carries a PromotionTask reference at
+# admission ("Stage defines no promotion steps"); inline steps are resolved
+# reliably across versions. promotiontask.yaml is kept for reference but is no
+# longer referenced by these stages.
+#
+# NOTE (#8): the KubeVela publishVersion annotation key contains dots
+# (app.oam.dev/publishVersion); yaml-update needs bracket notation to address it
+# (dot-escaping reported "key path not found"). Kept continueOnError so a manifest
+# variant without the annotation (kro path) does not fail the promotion.
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
@@ -15,9 +28,52 @@ spec:
       direct: true
   promotionTemplate:
     spec:
+      vars:
+      - name: gitURL
+        value: ${GITLAB_URL}/${GIT_USERNAME}/java.git
+      - name: image
+        value: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/peeks/java
       steps:
-      - task:
-          name: update-image
+      - uses: git-clone
+        config:
+          repoURL: ${{ vars.gitURL }}
+          checkout:
+          - branch: main
+            path: ./src
+      - uses: yaml-update
+        as: yaml-update-kro
+        continueOnError: true
+        config:
+          path: ./src/deployment/${{ ctx.stage }}/application.yaml
+          updates:
+          - key: spec.image
+            value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
+      - uses: yaml-update
+        as: yaml-update-kubevela
+        continueOnError: true
+        config:
+          path: ./src/deployment/${{ ctx.stage }}/application.yaml
+          updates:
+          - key: spec.components.0.properties.image
+            value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
+          - key: metadata.annotations["app.oam.dev/publishVersion"]
+            value: ${{ imageFrom(vars.image).Tag }}
+      - uses: git-commit
+        config:
+          path: ./src
+          message: "Update ${{ ctx.stage }} image to ${{ imageFrom(vars.image).Tag }}"
+          author:
+            name: Kargo
+            email: kargo@akuity.io
+      - uses: git-push
+        config:
+          path: ./src
+      - uses: argocd-update
+        config:
+          apps:
+          - name: java-${{ ctx.stage }}-cd
+            sources:
+            - repoURL: ${{ vars.gitURL }}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
@@ -36,6 +92,49 @@ spec:
       - dev
   promotionTemplate:
     spec:
+      vars:
+      - name: gitURL
+        value: ${GITLAB_URL}/${GIT_USERNAME}/java.git
+      - name: image
+        value: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/peeks/java
       steps:
-      - task:
-          name: update-image
+      - uses: git-clone
+        config:
+          repoURL: ${{ vars.gitURL }}
+          checkout:
+          - branch: main
+            path: ./src
+      - uses: yaml-update
+        as: yaml-update-kro
+        continueOnError: true
+        config:
+          path: ./src/deployment/${{ ctx.stage }}/application.yaml
+          updates:
+          - key: spec.image
+            value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
+      - uses: yaml-update
+        as: yaml-update-kubevela
+        continueOnError: true
+        config:
+          path: ./src/deployment/${{ ctx.stage }}/application.yaml
+          updates:
+          - key: spec.components.0.properties.image
+            value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
+          - key: metadata.annotations["app.oam.dev/publishVersion"]
+            value: ${{ imageFrom(vars.image).Tag }}
+      - uses: git-commit
+        config:
+          path: ./src
+          message: "Update ${{ ctx.stage }} image to ${{ imageFrom(vars.image).Tag }}"
+          author:
+            name: Kargo
+            email: kargo@akuity.io
+      - uses: git-push
+        config:
+          path: ./src
+      - uses: argocd-update
+        config:
+          apps:
+          - name: java-${{ ctx.stage }}-cd
+            sources:
+            - repoURL: ${{ vars.gitURL }}

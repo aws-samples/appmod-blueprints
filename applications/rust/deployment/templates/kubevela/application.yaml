@@ -43,6 +43,10 @@ spec:
           properties:
             domain: ""
             rewritePath: true
+            # The Rust app only serves 2xx under /collection/*, so the ALB target
+            # health check must target a served path (default "/" returns 404 →
+            # unhealthy targets on the OSS LBC). Uses the healthcheckPath trait param.
+            healthcheckPath: /collection/FRONT_PAGE
             http:
               /rust-app: 8080
 
