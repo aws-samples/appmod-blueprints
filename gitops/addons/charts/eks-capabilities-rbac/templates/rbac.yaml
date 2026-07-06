@@ -22,7 +22,11 @@ metadata:
 rules:
 # Core Kubernetes resources
 - apiGroups: [""]
-  resources: ["services", "configmaps", "secrets", "serviceaccounts"]
+  resources: ["services", "configmaps", "secrets", "serviceaccounts", "events", "pods"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Apps resources (Deployments/ReplicaSets rendered by AppmodService/CICDPipeline)
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Batch resources
 - apiGroups: ["batch"]
