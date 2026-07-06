@@ -459,6 +459,12 @@ spec:
             #using : useSelector: true for centralized mode
 
             enable_ingress_class_alb: "${schema.spec.addons.enable_ingress_class_alb}"
+            # OSS AWS Load Balancer Controller is REQUIRED on every spoke: the platform
+            # IngressClass must be the OSS controller (ingress.k8s.aws/alb) so LBC-only
+            # features (transforms/URL-rewrite) work. Hardcoded true (not schema-driven)
+            # so it is always on regardless of the spoke CR. The lbcRole/lbcPolicy/PIA
+            # below provision its Pod Identity creds.
+            enable_aws_load_balancer_controller: "true"
             enable_argo_rollouts: "${schema.spec.addons.enable_argo_rollouts}"
             enable_metrics_server: "${schema.spec.addons.enable_metrics_server}"
             enable_external_secrets: "${schema.spec.addons.enable_external_secrets}"
@@ -545,6 +551,11 @@ spec:
             fleet_secret_manager_secret_name: "${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}"
             ingress_name: "${schema.spec.name}-ingress"
             ingress_domain_name: "${schema.spec.domainName}"
+            # Force the platform IngressClass to the OSS LBC controller
+            # (ingress.k8s.aws/alb). Without this the ingress-class-alb chart defaults
+            # to "auto" -> eks.amazonaws.com/alb (Auto Mode), which does NOT support the
+            # transforms/URL-rewrite annotation the workshop relies on.
+            alb_controller_mode: "oss"
             ingress_security_groups: "${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}"
             resource_prefix: "${schema.spec.resourcePrefix}"
             git_username: "${schema.spec.git_username}"

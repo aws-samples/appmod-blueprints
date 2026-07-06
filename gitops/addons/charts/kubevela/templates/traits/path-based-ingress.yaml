@@ -21,6 +21,11 @@ spec:
         	class:         *"platform" | string
         	rewritePath:   *true | bool
         	createService: *false | bool
+        	// ALB target-group health check path. Default "/" is fine for apps that
+        	// serve a 2xx at root, but apps that only serve sub-paths (e.g. the Rust
+        	// app on /collection/*) MUST override this to a served path, otherwise the
+        	// OSS LBC marks all targets unhealthy (Target.ResponseCodeMismatch: 404).
+        	healthcheckPath: *"/" | string
         }
 
         // trait template can have multiple outputs in one trait
@@ -51,7 +56,7 @@ spec:
         		annotations: {
               "alb.ingress.kubernetes.io/scheme": "internet-facing"
               "alb.ingress.kubernetes.io/target-type": "ip"
-              "alb.ingress.kubernetes.io/healthcheck-path": "/"
+              "alb.ingress.kubernetes.io/healthcheck-path": parameter.healthcheckPath
               // URL rewrite: strip the ingress path prefix before forwarding to
               // the pod. The transforms annotation key MUST include the backend
               // service name as suffix (ALB controller requirement). CUE's native

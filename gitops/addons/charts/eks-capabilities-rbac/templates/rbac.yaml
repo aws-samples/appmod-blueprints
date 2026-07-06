@@ -50,7 +50,7 @@ rules:
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Argo Workflows + Rollouts
 - apiGroups: ["argoproj.io"]
-  resources: ["workflows", "workflowtemplates", "eventsources", "sensors", "rollouts", "analysistemplates", "analysisruns", "clusteranalysistemplates", "experiments"]
+  resources: ["workflows", "workflowtemplates", "workflowtaskresults", "eventsources", "sensors", "rollouts", "analysistemplates", "analysisruns", "clusteranalysistemplates", "experiments"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # External Secrets
 - apiGroups: ["external-secrets.io"]

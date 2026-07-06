@@ -87,3 +87,8 @@ namespace: crossplane-system
 # providers.<name>.maxReconcileRate.
 providerDefaults:
   maxReconcileRate: 6
+
+# PostSync hook that restarts credential-less Crossplane provider pods so they
+# pick up their EKS Pod Identity token once the PIA is active (spoke-side
+# equivalent of `task hub:restart-identity-pods`). Set false to disable.
+providerCredentialRestart: true

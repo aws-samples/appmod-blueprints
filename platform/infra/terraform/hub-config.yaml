@@ -108,7 +108,8 @@ clusters:
       enable_prometheus_scraper: true
       enable_cw_prometheus: false
       enable_mutli_acct: false
-      enable_ingress_class_alb: false
+      enable_ingress_class_alb: true
+      enable_aws_load_balancer_controller: true # OSS LBC: platform IngressClass must be ingress.k8s.aws/alb (not Auto Mode)
       enable_ingress_nginx: true
       enable_gitlab: false
       enable_keycloak: false
@@ -157,7 +158,8 @@ clusters:
       enable_prometheus_scraper: true
       enable_cw_prometheus: false
       enable_mutli_acct: false
-      enable_ingress_class_alb: false
+      enable_ingress_class_alb: true
+      enable_aws_load_balancer_controller: true # OSS LBC: platform IngressClass must be ingress.k8s.aws/alb (not Auto Mode)
       enable_ingress_nginx: true
       enable_gitlab: false
       enable_keycloak: false
