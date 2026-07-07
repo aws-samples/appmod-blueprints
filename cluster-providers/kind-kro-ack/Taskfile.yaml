@@ -585,6 +585,11 @@ tasks:
             external_secrets_service_account: external-secrets-sa
             amp_endpoint_url: ""
         EOF
+      # Pre-create the argocd namespace on the kind cluster so KRO can immediately
+      # reconcile the argocdSecret resource (which targets this namespace).
+      # Without this, KRO fails with "namespace argocd not found" until ArgoCD
+      # is installed by hub:argocd:install later in the sequence.
+      - kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 
   hub:wait-for-eks:
     desc: Wait for the hub cluster instance to reach ACTIVE state and the EKS cluster to exist in AWS
