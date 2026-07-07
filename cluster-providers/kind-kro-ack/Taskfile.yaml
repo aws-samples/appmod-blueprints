@@ -588,7 +588,7 @@ tasks:
   hub:wait-for-eks:
     desc: Wait for the hub cluster instance to reach ACTIVE state and the EKS cluster to exist in AWS
     vars:
-      WAIT_TIMEOUT_SEC: '{{.WAIT_TIMEOUT_SEC | default "1800"}}'
+      WAIT_TIMEOUT_SEC: '{{.WAIT_TIMEOUT_SEC | default "2400"}}'
       WAIT_INTERVAL_SEC: '{{.WAIT_INTERVAL_SEC | default "30"}}'
       HUB_KIND: '{{if .HUB_VPC_ID}}ekscluster{{else}}eksclusterwithvpc{{end}}'
     cmds:
@@ -608,11 +608,11 @@ tasks:
           sleep {{.WAIT_INTERVAL_SEC}}
         done
         if [ "$STATE" != "ACTIVE" ]; then
-          printf '{{.C_ERR}}✗ EksclusterWithVpc not ACTIVE after {{.WAIT_TIMEOUT_SEC}}s (last state: %s){{.C_RESET}}\n' "$STATE"
-          kubectl get eksclusterwithvpc {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.conditions}' 2>/dev/null || true
+          printf '{{.C_ERR}}✗ {{.HUB_KIND}} not ACTIVE after {{.WAIT_TIMEOUT_SEC}}s (last state: %s){{.C_RESET}}\n' "$STATE"
+          kubectl get {{.HUB_KIND}} {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.conditions}' 2>/dev/null || true
           exit 1
         fi
-        printf '{{.C_OK}}✓ EksclusterWithVpc ACTIVE{{.C_RESET}}\n'
+        printf '{{.C_OK}}✓ {{.HUB_KIND}} ACTIVE{{.C_RESET}}\n'
       - |
         printf '{{.C_STEP}}▸ Verifying EKS cluster {{.HUB_CLUSTER_NAME}} exists in AWS...{{.C_RESET}}\n'
         END=$(( $(date +%s) + 300 ))
