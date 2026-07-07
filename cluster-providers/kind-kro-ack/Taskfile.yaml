@@ -535,6 +535,7 @@ tasks:
             idcRegion: {{.IDC_REGION}}
             adminGroupId: {{.IDC_ADMIN_GROUP_ID}}
         $NETWORK_BLOCK
+          workloads: "false"
           gitops:
             addonsRepoUrl: {{.REPO_URL}}
             addonsRepoRevision: {{.REPO_REVISION}}
