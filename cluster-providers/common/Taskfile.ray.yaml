@@ -88,18 +88,21 @@ tasks:
       - echo "✓ Ray ML infrastructure ready (bucket={{.RAY_BUCKET}}, image={{.RAY_ECR_REPO}}:latest)"
 
   prestage-models:
-    desc: "Download ML models to S3 bucket for Ray serving"
+    desc: "Download an ML model to the Ray S3 bucket (MODEL_REPO_ID + MODEL_NAME override the default)"
     vars:
       RAY_BUCKET: "{{.RESOURCE_PREFIX}}-ray-models-{{.AWS_ACCOUNT_ID}}"
+      # Generic default; consumers override (e.g. workshop passes TinyLlama).
+      MODEL_REPO_ID: '{{.MODEL_REPO_ID | default "TinyLlama/TinyLlama-1.1B-Chat-v1.0"}}'
+      MODEL_NAME: '{{.MODEL_NAME | default "tinyllama"}}'
     cmds:
       - cmd: |
           pip3 install -q huggingface_hub 2>/dev/null
-          echo "Downloading TinyLlama..."
-          python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='TinyLlama/TinyLlama-1.1B-Chat-v1.0', local_dir='/tmp/tinyllama', local_dir_use_symlinks=False)"
-          echo "Uploading to s3://{{.RAY_BUCKET}}/models/tinyllama/..."
-          aws s3 sync /tmp/tinyllama/ s3://{{.RAY_BUCKET}}/models/tinyllama/ --region {{.AWS_REGION}} --no-progress
-          rm -rf /tmp/tinyllama
-          echo "✓ TinyLlama model uploaded"
+          echo "Downloading {{.MODEL_REPO_ID}}..."
+          python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='{{.MODEL_REPO_ID}}', local_dir='/tmp/{{.MODEL_NAME}}', local_dir_use_symlinks=False)"
+          echo "Uploading to s3://{{.RAY_BUCKET}}/models/{{.MODEL_NAME}}/..."
+          aws s3 sync /tmp/{{.MODEL_NAME}}/ s3://{{.RAY_BUCKET}}/models/{{.MODEL_NAME}}/ --region {{.AWS_REGION}} --no-progress
+          rm -rf /tmp/{{.MODEL_NAME}}
+          echo "✓ {{.MODEL_REPO_ID}} uploaded to models/{{.MODEL_NAME}}/"
 
 
   wait-image:
