@@ -138,27 +138,20 @@ tasks:
       - task: hub:bootstrap-crossplane-identity
       # Enable spokes EARLY (kro-ack-specific optimization): KRO-provisioned spokes are
       # created by the hub's ACK EKS capability, NOT the Crossplane providers, so spoke
-      # EKS creation (~25min, both in parallel) does not depend on the provider bring-up
-      # below. Wire the overlay + push spoke enablement now so the long-pole spoke build
-      # overlaps with the provider restart, observability seeding, ray image build and idc
-      # that follow — this removes the provider-wait from the spoke critical path.
-      - task: hub:set-overlay-repo
-      - task: install:phase2-parallel
+      # NOTE: spoke enablement and fleet-overlay wiring are CONSUMER concerns (the
+      # consumer owns the gitops/fleet repo). This generic provider provisions the
+      # hub only and exposes the PlatformCluster abstraction; consumers (e.g. the
+      # workshop, or OAP) declare spokes against their own repo / via PlatformCluster
+      # claims. See workshop/ for the reference consumer.
       # Crossplane provider bring-up for the hub's OWN observability (AMP/RDS/Grafana).
-      # Runs while the spokes provision asynchronously in the background.
-      - task: install:phase1-parallel
+      - task: install:post-sync
       - task: hub:wait-for-full-sync
       # Wait for ALL Crossplane providers (including ec2) to be Healthy.
       - task: hub:wait-for-providers
-      - task: install:phase1b-parallel
-      - |
-        LOCAL_FLEET="$HOME/environment/fleet-config"
-        if [ -d "$LOCAL_FLEET/.git" ]; then
-          git -C "$LOCAL_FLEET" pull --ff-only -q 2>/dev/null || true
-        fi
-      - printf '{{.C_OK}}✓ Bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
+      - task: install:finalize
+      - printf '{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
 
-  install:phase1-parallel:
+  install:post-sync:
     internal: true
     deps:
       - hub:restart-identity-pods
@@ -173,7 +166,7 @@ tasks:
         ( cd "$REPO_ROOT" && task kind-kro-ack:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &
         printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'
 
-  install:phase1b-parallel:
+  install:finalize:
     internal: true
     deps:
       - hub:restart-langfuse
