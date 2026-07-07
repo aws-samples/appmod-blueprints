@@ -12,8 +12,10 @@
 #   - identityCenter.instanceArn/group     from IAM Identity Center
 #   - adminRoleName                        from the current assumed-role ARN
 #
-# CloudFront exposure mode is selected by an EMPTY domain (domain: ""). The
-# exposure.mode key is intentionally NOT written (removed syntax).
+# CloudFront exposure mode: the workshop terminates TLS at CloudFront and the
+# platform ALB serves plain HTTP, so we set `insecure: true` (the platform now
+# derives exposure_mode from `insecure`, not from an empty domain). `domain` is
+# left empty because the workshop has no stable platform hostname at config time.
 #
 # Usage:
 #   ./create-config.sh                 # idempotent: skip if valid config exists
@@ -157,6 +159,7 @@ printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
 printf 'domain: ""\n'                                  >> "$OUTPUT_FILE"
+printf 'insecure: true\n'                              >> "$OUTPUT_FILE"
 printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
 printf 'ingressName: ""\n'                             >> "$OUTPUT_FILE"
 printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
