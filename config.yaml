@@ -35,17 +35,20 @@ aws:
   profile: "default"                         # AWS CLI profile (local dev only)
 
 # Domain and networking
-# Leave domain empty to use CloudFront mode — provide cloudfront.vpcId + cloudfront.cloudfrontDomain below.
-domain: "<your-domain>"                      # e.g. idp.example.com — leave empty for CloudFront mode
+# `domain` is the ingress hostname, provisioned by YOU (Route53, CloudFront, etc.).
+# The platform never creates it — it only uses it for ingress host rules and URLs.
+domain: "<your-domain>"                      # e.g. idp.example.com
+
+# TLS / exposure:
+#   insecure: false (default) — ALB serves HTTPS; uses an ACM cert (auto-discovered
+#             by host, or set certificateArn). You bring the domain + cert.
+#   insecure: true            — ALB serves plain HTTP; YOU terminate TLS upstream
+#             (e.g. CloudFront in front of the ALB). No cert managed by the platform.
+insecure: false
+certificateArn: ""                           # optional ACM ARN for the HTTPS listener (insecure=false)
 resourcePrefix: "<prefix>"                   # Used for KRO tenant-facing resources only
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
-
-# CloudFront mode pre-requisites (required when domain is empty)
-# These are created before running task install (see docs/platform/cloudfront-setup.md).
-# cloudfront:
-#   vpcId: "vpc-xxxxxxxxxxxxxxxxx"           # VPC with min 2 public + 2 private subnets
-#   cloudfrontDomain: "xxxx.cloudfront.net"  # CloudFront distribution domain for the platform ALB
 
 # AWS Identity Center (required for EKS ArgoCD Capability)
 identityCenter:

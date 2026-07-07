@@ -1,4 +1,7 @@
 {{- if .Values.kubeflow.ingress.enabled }}
+{{- /* insecure: HTTP-only ingress, no cert. Explicit .Values.global.insecure wins;
+       falls back to the legacy exposure_mode == "cloudfront" during transition. */ -}}
+{{- $insecure := or .Values.global.insecure (eq (default "domain" .Values.global.exposure_mode) "cloudfront") -}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -7,7 +10,7 @@ metadata:
   namespace: kubeflow
   annotations:
     argocd.argoproj.io/sync-wave: "6"
-{{- if eq (default "domain" .Values.global.exposure_mode) "cloudfront" }}
+{{- if $insecure }}
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
 {{- else }}
@@ -18,7 +21,7 @@ metadata:
 spec:
   ingressClassName: platform
   rules:
-{{- if eq (default "domain" .Values.global.exposure_mode) "cloudfront" }}
+{{- if $insecure }}
   - http:
 {{- else }}
   - host: {{ .Values.kubeflow.ingress.host }}

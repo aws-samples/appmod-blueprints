@@ -1,3 +1,6 @@
+{{- /* insecure: HTTP-only ingress, no cert. Explicit .Values.insecure wins;
+       falls back to the legacy exposure_mode == "cloudfront" during transition. */ -}}
+{{- $insecure := or .Values.insecure (eq (default "domain" .Values.exposure_mode) "cloudfront") -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -5,7 +8,7 @@ metadata:
   namespace: argo
   annotations:
     alb.ingress.kubernetes.io/target-type: ip
-{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+{{- if $insecure }}
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
 {{- else }}
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
@@ -16,7 +19,7 @@ metadata:
 spec:
   ingressClassName: platform
   rules:
-{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+{{- if $insecure }}
     - http:
 {{- else }}
     - host: {{ .Values.ingress_domain_name }}

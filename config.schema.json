@@ -145,7 +145,17 @@
     "domain": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9.-]+[a-z0-9]$",
-      "description": "Base domain for ingress hostnames. Must be unique per stack \u2014 two stacks sharing a domain will have DNS and TLS conflicts."
+      "description": "Ingress hostname for the platform, provisioned by the CONSUMER (Route53, CloudFront, etc.). The platform never creates it. Used for ingress host rules and printed URLs. Must be unique per stack."
+    },
+    "insecure": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, platform ingress serves plain HTTP (no cert) — the consumer terminates TLS upstream (e.g. CloudFront). When false (default), the ALB serves HTTPS and uses an ACM cert (auto-discovered by host, or certificateArn if set)."
+    },
+    "certificateArn": {
+      "type": "string",
+      "default": "",
+      "description": "Optional ACM certificate ARN for the ALB HTTPS listener when insecure=false. If empty, the AWS Load Balancer Controller auto-discovers an ACM cert matching the domain."
     },
     "resourcePrefix": {
       "type": "string",
@@ -162,28 +172,9 @@
       "default": "",
       "description": "Comma-separated security group IDs for the ALB"
     },
-    "cloudfront": {
-      "type": "object",
-      "description": "CloudFront mode pre-requisites. Required when domain is empty.",
-      "properties": {
-        "vpcId": {
-          "type": "string",
-          "pattern": "^vpc-[0-9a-f]+$",
-          "description": "Pre-created VPC ID with min 2 public + 2 private subnets"
-        },
-        "cloudfrontDomain": {
-          "type": "string",
-          "description": "CloudFront distribution domain (e.g. xxxx.cloudfront.net)"
-        },
-        "gitlabDomain": {
-          "type": "string",
-          "description": "GitLab/IDE CloudFront domain (CDK-managed, EC2 origin)"
-        }
-      }
-    },
     "adminRoleName": {
       "type": "string",
-      "description": "IAM role name added as cluster admin and used by Backstage templates (e.g. WSParticipantRole)"
+      "description": "IAM role name added as a cluster-admin access entry and used by Backstage templates for cluster access."
     },
     "identityCenter": {
       "type": "object",

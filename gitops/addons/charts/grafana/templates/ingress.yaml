@@ -1,10 +1,13 @@
+{{- /* insecure: HTTP-only ingress, no cert. Explicit .Values.insecure wins;
+       falls back to the legacy exposure_mode == "cloudfront" during transition. */ -}}
+{{- $insecure := or .Values.insecure (eq (default "domain" .Values.exposure_mode) "cloudfront") -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: grafana
   namespace: grafana
   annotations:
-{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+{{- if $insecure }}
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/healthcheck-path: /grafana/api/health
     alb.ingress.kubernetes.io/success-codes: "200-302"
@@ -19,7 +22,7 @@ metadata:
 spec:
   ingressClassName: platform
   rules:
-{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+{{- if $insecure }}
     - http:
 {{- else }}
     - host: {{ .Values.ingress_domain_name }}

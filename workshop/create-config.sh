@@ -12,8 +12,10 @@
 #   - identityCenter.instanceArn/group     from IAM Identity Center
 #   - adminRoleName                        from the current assumed-role ARN
 #
-# CloudFront exposure mode is selected by an EMPTY domain (domain: ""). The
-# exposure.mode key is intentionally NOT written (removed syntax).
+# CloudFront exposure mode: the workshop terminates TLS at CloudFront and the
+# platform ALB serves plain HTTP, so we set `insecure: true` (the platform now
+# derives exposure_mode from `insecure`, not from an empty domain). `domain` is
+# left empty because the workshop has no stable platform hostname at config time.
 #
 # Usage:
 #   ./create-config.sh                 # idempotent: skip if valid config exists
@@ -35,13 +37,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# This script lives in <repo>/workshop; the config.local.yaml it generates is read
+# by the workshop AND the in-place platform at the repo root (SCRIPT_DIR/..).
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # --- Defaults / overrides --------------------------------------------------
 # NOTE: deliberately NOT named CONFIG_FILE — the IDE environment exports a
 # CONFIG_FILE pointing at the terraform hub-config.yaml, which we do not use
 # here. We always target the repo-root config.local.yaml unless OUTPUT_FILE
 # is explicitly overridden.
-OUTPUT_FILE="${OUTPUT_FILE:-${SCRIPT_DIR}/config.local.yaml}"
+OUTPUT_FILE="${OUTPUT_FILE:-${REPO_ROOT}/config.local.yaml}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 REPO_URL="${REPO_URL:-https://github.com/aws-samples/appmod-blueprints}"
 REPO_REVISION="${REPO_REVISION:-${WORKSHOP_GIT_BRANCH:-feature/cloudfront-on-agent-platform}}"
@@ -154,6 +159,7 @@ printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
 printf 'domain: ""\n'                                  >> "$OUTPUT_FILE"
+printf 'insecure: true\n'                              >> "$OUTPUT_FILE"
 printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
 printf 'ingressName: ""\n'                             >> "$OUTPUT_FILE"
 printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
@@ -163,8 +169,8 @@ printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
 # The GitLab/IDE CloudFront domain is available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,
 # or from the private/gitlab-cloudfront-domain file written by bootstrap.sh.
 GITLAB_CF_DOMAIN="${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}"
-[ -z "$GITLAB_CF_DOMAIN" ] && [ -f "${SCRIPT_DIR}/private/gitlab-cloudfront-domain" ] && \
-  GITLAB_CF_DOMAIN="$(cat "${SCRIPT_DIR}/private/gitlab-cloudfront-domain" | tr -d '[:space:]')"
+[ -z "$GITLAB_CF_DOMAIN" ] && [ -f "${REPO_ROOT}/private/gitlab-cloudfront-domain" ] && \
+  GITLAB_CF_DOMAIN="$(cat "${REPO_ROOT}/private/gitlab-cloudfront-domain" | tr -d '[:space:]')"
 if [ -n "$GITLAB_CF_DOMAIN" ]; then
   printf 'cloudfront:\n'                               >> "$OUTPUT_FILE"
   printf '  gitlabDomain: "%s"\n' "$GITLAB_CF_DOMAIN" >> "$OUTPUT_FILE"
