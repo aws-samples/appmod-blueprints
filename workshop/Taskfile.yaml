@@ -16,6 +16,10 @@ vars:
     sh: yq '.aws.accountId' {{.CONFIG_FILE}}
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
+  K8S_VERSION:
+    sh: yq '.hub.kubernetesVersion // "1.35"' {{.CONFIG_FILE}}
+  DOMAIN:
+    sh: yq '.domain // ""' {{.CONFIG_FILE}}
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // "peeks"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
@@ -66,10 +70,19 @@ tasks:
       # {{.PROVIDER}}:install (which needs fleet-config during phase2).
       - task: gitlab:init-ec2
       - 'printf "{{.C_INFO}}  [%ds] gitlab:init-ec2 done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Platform install (EKS cluster, addons, spokes)
+      # Platform install (hub EKS cluster + addons only — spoke enablement is
+      # consumer-owned, done below).
       - task: ":{{.PROVIDER}}:install"
       - 'printf "{{.C_INFO}}  [%ds] {{.PROVIDER}}:install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      - printf '{{.C_OK}}✓ Platform install complete.{{.C_RESET}}\n'
+      - printf '{{.C_OK}}✓ Platform hub install complete.{{.C_RESET}}\n'
+      # Wire the GitLab fleet-config overlay to the hub, then declare spokes into it.
+      # The platform's guarded ApplicationSets reconcile these into live clusters.
+      - task: set-overlay-repo
+      - task: spokes:enable-crossplane
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
+      - task: spokes:enable-kro
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-prod" }
+      - 'printf "{{.C_INFO}}  [%ds] spokes declared (spoke-dev=crossplane, spoke-prod=kro){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Ray ML infrastructure (image builds in background)
       - task: ":{{.PROVIDER}}:ray:setup"
       - 'printf "{{.C_INFO}}  [%ds] ray:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
@@ -637,4 +650,693 @@ tasks:
           printf '{{.C_OK}}✓ GitLab repos cloned.{{.C_RESET}}\n'
         fi
 
+
+
+  # ============================================================
+  # SPOKES + FLEET OVERLAY (consumer-owned; writes to the GitLab
+  # fleet-config repo). Moved out of the generic providers (b):
+  # the platform provides the PlatformCluster abstraction; the
+  # workshop declares/materializes spokes into its own gitops repo.
+  # ============================================================
+  set-overlay-repo:
+    desc: >-
+      Wire overlay_repo_url -> GitLab fleet-config on the hub cluster config so
+      every overlay-aware Argo app (incl. multi-acct) reads $overlay from
+      fleet-config instead of falling back to the GitHub addons repo. Runs LATE
+      (after GitLab + fleet-config exist) because $overlay is a real Argo source:
+      pointing it at a non-existent/unauthenticated repo breaks ALL overlay-aware
+      apps. Self-protecting: verifies reachability, registers an ArgoCD repo
+      credential, flips <hub>/config (ESO reconciles the cluster secret), then
+      verifies the flip resolved and auto-reverts if it did not. Idempotent.
+    vars:
+      GITLAB_CF_DOMAIN:
+        sh: |
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_USERNAME:
+        sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
+      # Root of the fleet-config overlay structure (configs/, overlays/) per the
+      # GitLab init-job seed. Keep "" unless the overlay repo nests under a prefix.
+      OVERLAY_REPO_BASEPATH: ""
+    cmds:
+      - |
+        OVERLAY_URL="https://{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        KC="{{.ROOT_DIR}}/private/hub-kubeconfig"
+
+        # 1. Reachability guard. $overlay is a REAL Argo source — never point it at
+        #    an unreachable repo. This is one shell block, so exit 0 here correctly
+        #    skips ALL wiring below (the earlier multi-block version did not).
+        #    fleet-config is created asynchronously by the gitlab-init Job, so it
+        #    can be a minute or two behind this step. Previously we skipped on the
+        #    first miss — but then the overlay was never wired to fleet-config and
+        #    the spoke entries that enable-crossplane/enable-kro push later were
+        #    IGNORED by the appset (hub kept reading the GitHub addons fallback),
+        #    so NO spoke EKS clusters were ever provisioned. Wait (up to ~5min)
+        #    for it to become reachable before deciding.
+        FLEET_LS="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        printf '{{.C_STEP}}▸ Verifying fleet-config overlay repo is reachable...{{.C_RESET}}\n'
+        FLEET_OK=false
+        for i in $(seq 1 30); do
+          if git ls-remote "$FLEET_LS" >/dev/null 2>&1; then FLEET_OK=true; break; fi
+          sleep 10
+        done
+        if [ "$FLEET_OK" != true ]; then
+          printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — skipping overlay wiring (no change made).{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Re-run later: task kind-crossplane:hub:set-overlay-repo{{.C_RESET}}\n'
+          exit 0
+        fi
+        printf '{{.C_OK}}✓ fleet-config reachable.{{.C_RESET}}\n'
+
+        # 2. Hub kubeconfig (inline so the guard governs everything)
+        rm -f "$KC"
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null
+
+        # 3. ArgoCD repo credential for the private GitLab fleet-config repo
+        printf '{{.C_STEP}}▸ Registering ArgoCD repository credential for fleet-config...{{.C_RESET}}\n'
+        cat <<EOF | KUBECONFIG="$KC" kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: fleet-config-repo
+          namespace: argocd
+          labels:
+            argocd.argoproj.io/secret-type: repository
+        stringData:
+          type: git
+          url: https://{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git
+          username: "{{.GIT_USERNAME}}"
+          password: "{{.GIT_PASSWORD}}"
+        EOF
+
+        # 3a. ArgoCD repo-creds credential TEMPLATE for all repos under the user's GitLab
+        #     namespace. Backstage scaffolder creates per-app GitLab repos
+        #     (https://<gitlab>/{{.GIT_USERNAME}}/<app>.git) that ArgoCD must pull; without a
+        #     matching credential template those CD Applications fail with ComparisonError.
+        #     A repo-creds secret applies to every repository whose URL starts with `url`.
+        printf '{{.C_STEP}}▸ Registering ArgoCD repo-creds for {{.GIT_USERNAME}} GitLab namespace...{{.C_RESET}}\n'
+        cat <<EOF | KUBECONFIG="$KC" kubectl apply -f -
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: gitlab-user-repo-creds
+          namespace: argocd
+          labels:
+            argocd.argoproj.io/secret-type: repo-creds
+        stringData:
+          type: git
+          url: https://{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}
+          username: "{{.GIT_USERNAME}}"
+          password: "{{.GIT_PASSWORD}}"
+        EOF
+
+        # 3b. Snapshot the CURRENT overlay wiring BEFORE touching anything. This lets us
+        #     (a) skip entirely when it is already correct, and (b) on failure restore the
+        #     PREVIOUS good value instead of dropping to the GitHub base (clusters:{}),
+        #     which is what cascade-deleted live spoke clusters on re-install.
+        EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
+        PREV_URL=$(echo "$EXISTING" | jq -r '(.metadata | fromjson).overlay_repo_url // ""')
+        PREV_REV=$(echo "$EXISTING" | jq -r '(.metadata | fromjson).overlay_repo_revision // ""')
+        PREV_BP=$(echo "$EXISTING"  | jq -r '(.metadata | fromjson).overlay_repo_basepath // ""')
+
+        # Idempotent fast-path: overlay already wired to the target repo -> leave it
+        # untouched. Never re-flip/verify/revert an already-working overlay, since a
+        # transient verify hiccup must never unset a good overlay.
+        if [ "$PREV_URL" = "$OVERLAY_URL" ]; then
+          printf '{{.C_OK}}✓ Overlay already wired to fleet-config (%s) — leaving untouched (idempotent).{{.C_RESET}}\n' "$OVERLAY_URL"
+          rm -f "$KC"
+          exit 0
+        fi
+
+        # 4. Flip overlay_* in <hub>/config (ESO reconciles the cluster secret annotations)
+        printf '{{.C_STEP}}▸ Wiring overlay_repo_url into %s...{{.C_RESET}}\n' "$SECRET_KEY"
+        EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
+        UPDATED=$(echo "$EXISTING" | jq --arg url "$OVERLAY_URL" --arg rev "main" --arg bp "{{.OVERLAY_REPO_BASEPATH}}" \
+          '.metadata = (.metadata | fromjson | . + {overlay_repo_url: $url, overlay_repo_revision: $rev, overlay_repo_basepath: $bp} | tojson)')
+        aws secretsmanager put-secret-value --secret-id "$SECRET_KEY" --secret-string "$UPDATED" --region {{.AWS_REGION}} >/dev/null
+        echo "Set overlay_repo_url=$OVERLAY_URL (basepath='{{.OVERLAY_REPO_BASEPATH}}')"
+
+        # 5. Force ESO re-sync; wait until the new overlay actually PROPAGATES to the
+        #    cluster-addons app source (avoids the false-positive the old verify had).
+        ES=$(KUBECONFIG="$KC" kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | head -1 || true)
+        [ -n "$ES" ] && KUBECONFIG="$KC" kubectl -n argocd annotate "$ES" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+        printf '{{.C_STEP}}▸ Waiting for cluster-addons to pick up the new overlay source...{{.C_RESET}}\n'
+        PROPAGATED=false
+        for i in $(seq 1 30); do
+          SRC=$(KUBECONFIG="$KC" kubectl -n argocd get application cluster-addons -o jsonpath='{.spec.sources[?(@.ref=="overlay")].repoURL}' 2>/dev/null || echo "")
+          [ "$SRC" = "$OVERLAY_URL" ] && { PROPAGATED=true; break; }
+          sleep 10
+        done
+
+        # 6. Verify it resolves cleanly; auto-revert on any ComparisonError/InvalidSpec.
+        OK=false
+        if [ "$PROPAGATED" = true ]; then
+          printf '{{.C_STEP}}▸ Overlay propagated; verifying clean resolution...{{.C_RESET}}\n'
+          for i in $(seq 1 24); do
+            SYNC=$(KUBECONFIG="$KC" kubectl -n argocd get application cluster-addons -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+            ERR=$(KUBECONFIG="$KC" kubectl -n argocd get application cluster-addons -o jsonpath='{range .status.conditions[*]}{.type}{"\n"}{end}' 2>/dev/null | grep -iE "error|invalid" || true)
+            if [ -z "$ERR" ] && { [ "$SYNC" = "Synced" ] || [ "$SYNC" = "OutOfSync" ]; }; then OK=true; break; fi
+            printf '{{.C_INFO}}  waiting for clean resolution (sync=%s) (%d/24)...{{.C_RESET}}\n' "$SYNC" "$i"
+            sleep 10
+          done
+        else
+          printf '{{.C_ERR}}⚠ Overlay did not propagate to cluster-addons in time.{{.C_RESET}}\n'
+        fi
+
+        if [ "$OK" != true ]; then
+          EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text)
+          if [ -n "$PREV_URL" ]; then
+            # A previous overlay was already wired — RESTORE it rather than dropping to
+            # the GitHub base. Falling back to base renders clusters:{} and would
+            # cascade-delete live spoke clusters; restoring keeps them intact.
+            printf '{{.C_ERR}}⚠ New overlay not resolving cleanly — restoring previous overlay (%s).{{.C_RESET}}\n' "$PREV_URL"
+            REVERTED=$(echo "$EXISTING" | jq --arg url "$PREV_URL" --arg rev "$PREV_REV" --arg bp "$PREV_BP" \
+              '.metadata = (.metadata | fromjson | . + {overlay_repo_url: $url, overlay_repo_revision: $rev, overlay_repo_basepath: $bp} | tojson)')
+          else
+            # No overlay was set before this run — clean rollback to the GitHub base.
+            printf '{{.C_ERR}}⚠ Overlay not resolving cleanly and none was set before — rolling back to GitHub base.{{.C_RESET}}\n'
+            REVERTED=$(echo "$EXISTING" | jq '.metadata = (.metadata | fromjson | del(.overlay_repo_url, .overlay_repo_revision, .overlay_repo_basepath) | tojson)')
+          fi
+          aws secretsmanager put-secret-value --secret-id "$SECRET_KEY" --secret-string "$REVERTED" --region {{.AWS_REGION}} >/dev/null
+          [ -n "$ES" ] && KUBECONFIG="$KC" kubectl -n argocd annotate "$ES" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+          # Only strip the cluster-secret annotations on a true rollback-to-base (no prev);
+          # for a restore, let ESO reconcile the previous values back from SecretsManager.
+          if [ -z "$PREV_URL" ]; then
+            KUBECONFIG="$KC" kubectl -n argocd annotate secret {{.HUB_CLUSTER_NAME}} overlay_repo_url- overlay_repo_revision- overlay_repo_basepath- >/dev/null 2>&1 || true
+          fi
+          printf '{{.C_ERR}}  Fix GitLab reachability/credential, then re-run.{{.C_RESET}}\n'
+          rm -f "$KC"
+          exit 0
+        fi
+        printf '{{.C_OK}}✓ Overlay wired to fleet-config and resolving fleet-wide (hub + spokes).{{.C_RESET}}\n'
+        rm -f "$KC"
+
+  spokes:enable-crossplane:
+    desc: "Enable a spoke cluster via Crossplane (usage: task spokes:enable-crossplane -- <cluster-name>)"
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+      GITLAB_CF_DOMAIN:
+        sh: |
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
+    cmds:
+      - |
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:enable-crossplane -- <cluster-name>"; exit 1; fi
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        # fleet-config is created asynchronously by the gitlab-init Job (Helm
+        # post-install hook, which waits for GitLab readiness), so this task can
+        # race ahead of it. Cloning an absent repo left $REPO_DIR without a .git
+        # dir and the later `git add -A` failed with exit 128, taking down
+        # `task install` (install:phase2-spoke-dev). Wait (up to ~5min) for the
+        # repo to be reachable, then verify the clone produced a git repo.
+        printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
+        for i in $(seq 1 30); do
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
+          if [ "$i" -eq 30 ]; then
+            printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot enable spoke {{.CLUSTER}} via Crossplane.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  GitLab/gitlab-init may still be initializing. Re-run later: task kind-crossplane:spokes:enable-crossplane -- {{.CLUSTER}}{{.C_RESET}}\n'
+            exit 1
+          fi
+          sleep 10
+        done
+        printf '{{.C_OK}}✓ fleet-config reachable.{{.C_RESET}}\n'
+        REPO_DIR=$(mktemp -d)
+        git clone "$FLEET_URL" "$REPO_DIR"
+        if [ ! -d "$REPO_DIR/.git" ]; then
+          printf '{{.C_ERR}}⚠ fleet-config clone failed — aborting enable-crossplane for {{.CLUSTER}}.{{.C_RESET}}\n'
+          rm -rf "$REPO_DIR"
+          exit 1
+        fi
+        mkdir -p "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters"
+        XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
+        # Idempotency: keep the existing vpcCidr if this spoke is already enabled so
+        # re-running install does not generate a new random CIDR and churn the VPC.
+        if [ -f "$XP_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}".vpcCidr' "$XP_VALUES" >/dev/null 2>&1; then
+          echo "  Spoke {{.CLUSTER}} already has a vpcCidr — keeping existing values (idempotent)."
+        else
+          # adminRoleArn grants the console/participant admin role cluster-admin on
+          # the spoke. adminInstanceRoleArn grants the IDE/instance *SharedRole* a
+          # SECOND cluster-admin access entry — required so `kubectl` run from the
+          # IDE (which assumes the instance role, NOT adminRoleName) works against
+          # the spoke. create-config.sh deliberately excludes the SharedRole from
+          # adminRoleName, so we detect it here. Both are idempotent / optional.
+          ADMIN_ROLE=$(yq '.adminRoleName // ""' {{.CONFIG_FILE}})
+          ADMIN_ARN_LINE=""
+          if [ -n "$ADMIN_ROLE" ]; then
+            ADMIN_ARN_LINE="    adminRoleArn: arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ADMIN_ROLE"
+          fi
+          INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName | [0]" --output text 2>/dev/null || echo "")
+          ADMIN_INSTANCE_ARN_LINE=""
+          if [ -n "$INSTANCE_ROLE" ] && [ "$INSTANCE_ROLE" != "None" ] && [ "$INSTANCE_ROLE" != "null" ]; then
+            ADMIN_INSTANCE_ARN_LINE="    adminInstanceRoleArn: arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$INSTANCE_ROLE"
+          fi
+          cat > "$XP_VALUES" <<EOF
+        clusters:
+          {{.CLUSTER}}:
+            clusterName: {{.CLUSTER}}
+            vpcCidr: "10.$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}').0.0/16"
+            kubernetesVersion: "{{.K8S_VERSION}}"
+            autoMode: true
+            resourcePrefix: {{.RESOURCE_PREFIX}}
+            accountId: "{{.AWS_ACCOUNT_ID}}"
+            capabilities:
+              kro:
+                enabled: true
+              ack:
+                enabled: true
+        $ADMIN_ARN_LINE
+        $ADMIN_INSTANCE_ARN_LINE
+        EOF
+        fi
+        # Fleet member file: only Crossplane/Terraform spokes need a fleet-secret
+        # ArgoCD registration. KRO spokes do NOT (their cluster Secret is created by
+        # the EksclusterWithVpc RGD). The fleet-secrets appset discovers members from
+        # the overlay (fleet-config), so write it here. environment is derived from
+        # the cluster name (dev/prod/staging/test), defaulting to dev.
+        ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
+        mkdir -p "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}"
+        cat > "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}/values.yaml" <<EOF
+        clusterName: {{.CLUSTER}}
+        labels:
+          environment: ${ENV}
+          tenant: workshop
+        EOF
+        cd "$REPO_DIR"
+        git add -A
+        if git diff --cached --quiet; then
+          printf '{{.C_INFO}}  No fleet-config changes for {{.CLUSTER}} — already enabled (idempotent).{{.C_RESET}}\n'
+        else
+          git commit -m "feat: enable spoke {{.CLUSTER}} via Crossplane (+ fleet member)"
+          PUSHED=false
+          for i in 1 2 3; do
+            # NOTE: the fleet/gitops repo must allow pushes to its default branch.
+            # Branch-protection is the consumer's concern (e.g. the workshop configures
+            # GitLab when it provisions it). The generic platform never manipulates the git host.
+            if git push 2>&1; then PUSHED=true; break; fi
+            echo "  Push attempt $i failed, rebasing..."
+            git pull --rebase 2>&1 && sleep 2
+          done
+          if [ "$PUSHED" != "true" ]; then
+            printf '{{.C_ERR}}\u26a0 fleet-config push failed after 3 attempts.{{.C_RESET}}\n'
+            exit 1
+          fi
+        fi
+        rm -rf "$REPO_DIR"
+        # Refresh the local fleet-config checkout so the committed overlay change is
+        # visible in ~/environment/fleet-config (the task pushes from a temp clone).
+        # Best-effort and non-fatal: skipped if absent, warns if not fast-forwardable.
+        LOCAL_FLEET="$HOME/environment/fleet-config"
+        if [ -d "$LOCAL_FLEET/.git" ]; then
+          (git -C "$LOCAL_FLEET" fetch origin -q && git -C "$LOCAL_FLEET" pull --ff-only -q) \
+            && printf '{{.C_INFO}}  Refreshed local fleet-config checkout.{{.C_RESET}}\n' \
+            || printf '{{.C_INFO}}  Local fleet-config not auto-updated — run: git -C %s pull{{.C_RESET}}\n' "$LOCAL_FLEET"
+        fi
+        printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via Crossplane in fleet-config overlay.{{.C_RESET}}\n'
+
+  spokes:enable-kro:
+    desc: "Enable a spoke cluster via KRO (usage: task spokes:enable-kro -- <cluster-name>)"
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+      GITLAB_CF_DOMAIN:
+        sh: |
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
+    cmds:
+      - |
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:enable-kro -- <cluster-name>"; exit 1; fi
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        # fleet-config is created asynchronously by the gitlab-init Job (Helm
+        # post-install hook), which itself waits for GitLab to become ready. When
+        # enable-kro runs in phase2 it can race ahead of that job. Cloning an
+        # absent/empty repo previously left $REPO_DIR without a .git dir, so the
+        # later `git add -A` failed with exit 128 and took down the whole
+        # `task install`. Wait (up to ~5min) for the repo to be reachable, then
+        # verify the clone actually produced a git repo before proceeding.
+        printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
+        for i in $(seq 1 30); do
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
+          if [ "$i" -eq 30 ]; then
+            printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot enable spoke {{.CLUSTER}} via KRO.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  GitLab/gitlab-init may still be initializing. Re-run later: task kind-crossplane:spokes:enable-kro -- {{.CLUSTER}}{{.C_RESET}}\n'
+            exit 1
+          fi
+          sleep 10
+        done
+        printf '{{.C_OK}}✓ fleet-config reachable.{{.C_RESET}}\n'
+        REPO_DIR=$(mktemp -d)
+        git clone "$FLEET_URL" "$REPO_DIR"
+        if [ ! -d "$REPO_DIR/.git" ]; then
+          printf '{{.C_ERR}}⚠ fleet-config clone failed — aborting enable-kro for {{.CLUSTER}}.{{.C_RESET}}\n'
+          rm -rf "$REPO_DIR"
+          exit 1
+        fi
+        mkdir -p "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters"
+        cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters/{{.CLUSTER}}.json" <<EOF
+        {"clusterName": "{{.CLUSTER}}"}
+        EOF
+        # Deterministic second octet derived from cluster name (stable across re-runs).
+        # Uses cksum to hash the name into a value 2-254.
+        KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
+        if [ -f "$KRO_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}".cidr.vpcCidr' "$KRO_VALUES" >/dev/null 2>&1; then
+          echo "  Spoke {{.CLUSTER}} already has a CIDR — keeping existing values (idempotent)."
+        else
+          OCTET=$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}')
+          cat > "$KRO_VALUES" <<EOF
+        clusters:
+          {{.CLUSTER}}:
+            clusterName: {{.CLUSTER}}
+            tenant: workshop
+            environment: prod
+            region: {{.AWS_REGION}}
+            k8sVersion: "{{.K8S_VERSION}}"
+            accountId: "{{.AWS_ACCOUNT_ID}}"
+            managementAccountId: "{{.AWS_ACCOUNT_ID}}"
+            resourcePrefix: {{.RESOURCE_PREFIX}}
+            cidr:
+              vpcCidr: "10.${OCTET}.0.0/16"
+              publicSubnet1Cidr: "10.${OCTET}.1.0/24"
+              publicSubnet2Cidr: "10.${OCTET}.2.0/24"
+              privateSubnet1Cidr: "10.${OCTET}.11.0/24"
+              privateSubnet2Cidr: "10.${OCTET}.12.0/24"
+        EOF
+        fi
+        # admin roles: grant cluster-admin to BOTH the console/participant role
+        # (config.local.yaml .adminRoleName) and the IDE/instance role (the
+        # peeks-ide *SharedRole*, which create-config.sh deliberately excludes
+        # from adminRoleName). The EksCluster RGD turns each into its own
+        # cluster-admin AccessEntry. Set on every run (idempotent) so existing
+        # spokes also pick up the instance role.
+        CONSOLE_ROLE=$(yq '.adminRoleName // ""' {{.CONFIG_FILE}})
+        INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName | [0]" --output text 2>/dev/null || echo "")
+        yq -i 'del(.clusters."{{.CLUSTER}}".adminRoles)' "$KRO_VALUES" 2>/dev/null || true
+        if [ -n "$CONSOLE_ROLE" ] && [ "$CONSOLE_ROLE" != "null" ]; then
+          CONSOLE_ROLE="$CONSOLE_ROLE" yq -i '.clusters."{{.CLUSTER}}".adminRoleName = env(CONSOLE_ROLE)' "$KRO_VALUES"
+        fi
+        if [ -n "$INSTANCE_ROLE" ] && [ "$INSTANCE_ROLE" != "None" ] && [ "$INSTANCE_ROLE" != "null" ]; then
+          INSTANCE_ROLE="$INSTANCE_ROLE" yq -i '.clusters."{{.CLUSTER}}".adminInstanceRoleName = env(INSTANCE_ROLE)' "$KRO_VALUES"
+        fi
+        # multi-acct (ACK CARM): map this spoke's namespace -> AWS account so the
+        # hub's ACK controllers render an IAMRoleSelector per service and assume
+        # the {{.RESOURCE_PREFIX}}-cluster-mgmt-<svc> roles when provisioning the
+        # spoke. The KRO EksclusterWithVpc lands in namespace == clusterName, which
+        # is the key the multi-acct chart selects on. Only KRO spokes need this —
+        # ACK does the provisioning; Crossplane spokes do not use CARM.
+        # Path = the appset-chart external per-addon overlay tier:
+        #   $overlay/<overlay_repo_basepath>configs/multi-acct/values.yaml
+        # The fleet-config repo (seeded by the GitLab init-job) keeps configs/ and
+        # overlays/ at the REPO ROOT (overlay_repo_basepath=""), so this lives at
+        # configs/multi-acct/values.yaml — NOT under gitops/. (Spoke cluster values
+        # use gitops/fleet/... because that appset falls back to fleetRepoBasepath.)
+        # yq merge keeps it idempotent and accumulates entries across spokes.
+        mkdir -p "$REPO_DIR/configs/multi-acct"
+        MA_FILE="$REPO_DIR/configs/multi-acct/values.yaml"
+        [ -f "$MA_FILE" ] || printf 'clusters: {}\n' > "$MA_FILE"
+        yq -i '.clusters."{{.CLUSTER}}" = "{{.AWS_ACCOUNT_ID}}"' "$MA_FILE"
+        # platform-manifests: disable HuggingFaceModel CRs on KRO spokes. The
+        # HuggingFaceModel CRD (kro.run) is not installed on spokes, so the chart's
+        # CRs fail to apply ("no matches for kind HuggingFaceModel"); these models
+        # target GPU/Trainium clusters, not spokes. An empty list makes the chart's
+        # huggingfaceModels guard render nothing. Written to the per-cluster overlay
+        # tier the platform-manifests appset reads last:
+        #   $overlay/overlays/clusters/<cluster>/platform-manifests/values.yaml
+        mkdir -p "$REPO_DIR/overlays/clusters/{{.CLUSTER}}/platform-manifests"
+        printf 'huggingfaceModels: []\n' > "$REPO_DIR/overlays/clusters/{{.CLUSTER}}/platform-manifests/values.yaml"
+        cd "$REPO_DIR"
+        git add -A
+        if git diff --cached --quiet; then
+          printf '{{.C_INFO}}  No fleet-config changes for {{.CLUSTER}} — already enabled (idempotent).{{.C_RESET}}\n'
+        else
+          git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ multi-acct CARM mapping)"
+          PUSHED=false
+          for i in 1 2 3; do
+            # NOTE: the fleet/gitops repo must allow pushes to its default branch.
+            # Branch-protection is the consumer's concern (e.g. the workshop configures
+            # GitLab when it provisions it). The generic platform never manipulates the git host.
+            if git push 2>&1; then PUSHED=true; break; fi
+            echo "  Push attempt $i failed, rebasing..."
+            git pull --rebase 2>&1 && sleep 2
+          done
+          if [ "$PUSHED" != "true" ]; then
+            printf '{{.C_ERR}}\u26a0 fleet-config push failed after 3 attempts.{{.C_RESET}}\n'
+            exit 1
+          fi
+        fi
+        rm -rf "$REPO_DIR"
+        # Refresh the local fleet-config checkout so the committed overlay change is
+        # visible in ~/environment/fleet-config (the task pushes from a temp clone).
+        # Best-effort and non-fatal: skipped if absent, warns if not fast-forwardable.
+        LOCAL_FLEET="$HOME/environment/fleet-config"
+        if [ -d "$LOCAL_FLEET/.git" ]; then
+          (git -C "$LOCAL_FLEET" fetch origin -q && git -C "$LOCAL_FLEET" pull --ff-only -q) \
+            && printf '{{.C_INFO}}  Refreshed local fleet-config checkout.{{.C_RESET}}\n' \
+            || printf '{{.C_INFO}}  Local fleet-config not auto-updated — run: git -C %s pull{{.C_RESET}}\n' "$LOCAL_FLEET"
+        fi
+        printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via KRO + multi-acct CARM mapping in fleet-config overlay.{{.C_RESET}}\n'
+
+  spokes:disable-crossplane:
+    desc: "DELETE a Crossplane spoke on purpose: remove from overlay, then prune (usage: task spokes:disable-crossplane -- <cluster-name>)"
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+      GITLAB_CF_DOMAIN:
+        sh: |
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
+    cmds:
+      - |
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:disable-crossplane -- <cluster-name>"; exit 1; fi
+        # Crossplane clusters are grouped under one per-tenant app (clusters-<tenant>).
+        APP="clusters-workshop"
+
+        # 1. Declarative removal: drop the cluster entry from the overlay (Git).
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        # Guard: a silently-failed clone would leave an empty $REPO_DIR, making us
+        # wrongly conclude the cluster is absent from the overlay and skip the Git
+        # removal (stale overlay left behind). Wait for fleet-config then verify.
+        printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
+        for i in $(seq 1 30); do
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
+          if [ "$i" -eq 30 ]; then
+            printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot disable spoke {{.CLUSTER}} via Crossplane.{{.C_RESET}}\n'
+            exit 1
+          fi
+          sleep 10
+        done
+        REPO_DIR=$(mktemp -d)
+        git clone "$FLEET_URL" "$REPO_DIR"
+        if [ ! -d "$REPO_DIR/.git" ]; then
+          printf '{{.C_ERR}}⚠ fleet-config clone failed — aborting disable-crossplane for {{.CLUSTER}}.{{.C_RESET}}\n'
+          rm -rf "$REPO_DIR"
+          exit 1
+        fi
+        XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
+        if [ -f "$XP_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}"' "$XP_VALUES" >/dev/null 2>&1; then
+          yq -i 'del(.clusters."{{.CLUSTER}}")' "$XP_VALUES"
+          ( cd "$REPO_DIR" && git add -A && git commit -m "feat: disable spoke {{.CLUSTER}} (remove from Crossplane overlay)" && git push 2>/dev/null )
+          printf '{{.C_OK}}✓ Removed {{.CLUSTER}} from the Crossplane overlay (Git).{{.C_RESET}}\n'
+        else
+          printf '{{.C_INFO}}  {{.CLUSTER}} not present in Crossplane overlay — proceeding to prune any leftover resources.{{.C_RESET}}\n'
+        fi
+        rm -rf "$REPO_DIR"
+
+        # 2. Deliberate prune. With prune:false on the appset this manual --prune is
+        #    the explicit destructive step. Refresh + show the diff first so the
+        #    operator sees exactly what will be deleted.
+        printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
+        if command -v argocd >/dev/null 2>&1; then
+          argocd app get "$APP" --refresh >/dev/null 2>&1 || true
+          argocd app diff "$APP" || true
+          if ! argocd app sync "$APP" --prune --timeout 600; then
+            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Run: argocd-refresh-token && source ~/.bashrc.d/platform.sh, then:{{.C_RESET}}\n'
+            printf '    argocd app sync %s --prune\n' "$APP"
+          fi
+        else
+          printf '{{.C_INFO}}  argocd CLI not found. Finish the deletion manually:{{.C_RESET}}\n'
+          printf '    argocd app sync %s --prune\n' "$APP"
+        fi
+
+  spokes:disable-kro:
+    desc: "DELETE a KRO spoke on purpose: remove from overlay, then prune (usage: task spokes:disable-kro -- <cluster-name>)"
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+      GITLAB_CF_DOMAIN:
+        sh: |
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
+    cmds:
+      - |
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:disable-kro -- <cluster-name>"; exit 1; fi
+        # KRO generates one app per cluster: clusters-kro-<name>.
+        APP="clusters-kro-{{.CLUSTER}}"
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        # Guard: a silently-failed clone would leave an empty $REPO_DIR, making the
+        # overlay cleanup below a no-op (stale kro overlay + marker left behind).
+        # Wait for fleet-config then verify the clone produced a git repo.
+        printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
+        for i in $(seq 1 30); do
+          ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
+          if [ "$i" -eq 30 ]; then
+            printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot disable spoke {{.CLUSTER}} via KRO.{{.C_RESET}}\n'
+            exit 1
+          fi
+          sleep 10
+        done
+        REPO_DIR=$(mktemp -d)
+        git clone "$FLEET_URL" "$REPO_DIR"
+        if [ ! -d "$REPO_DIR/.git" ]; then
+          printf '{{.C_ERR}}⚠ fleet-config clone failed — aborting disable-kro for {{.CLUSTER}}.{{.C_RESET}}\n'
+          rm -rf "$REPO_DIR"
+          exit 1
+        fi
+        BASE="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters"
+        KRO_VALUES="$BASE/values.yaml"
+        MARKER="$BASE/clusters/{{.CLUSTER}}.json"
+        MA_FILE="$REPO_DIR/configs/multi-acct/values.yaml"
+
+        # PHASE 1: remove ONLY the cluster spec from values.yaml. Keep the clusters/*.json
+        # marker for now so the appset still generates clusters-kro-<name> and we can prune
+        # through it. (Deleting the marker first would make the appset remove the app with
+        # preserveResourcesOnDeletion=true -> the EksclusterWithVpc would be ORPHANED, not
+        # deleted.)
+        if [ -f "$KRO_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}"' "$KRO_VALUES" >/dev/null 2>&1; then
+          yq -i 'del(.clusters."{{.CLUSTER}}")' "$KRO_VALUES"
+          ( cd "$REPO_DIR" && git add -A && git commit -m "feat: disable spoke {{.CLUSTER}} (remove KRO cluster spec)" && git push 2>/dev/null )
+          printf '{{.C_OK}}✓ Removed {{.CLUSTER}} spec from the KRO overlay (Git).{{.C_RESET}}\n'
+        else
+          printf '{{.C_INFO}}  {{.CLUSTER}} spec not present in KRO overlay — proceeding to prune any leftovers.{{.C_RESET}}\n'
+        fi
+
+        # PHASE 2: deliberate prune through the still-existing app.
+        printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
+        PRUNED=false
+        if command -v argocd >/dev/null 2>&1; then
+          argocd app get "$APP" --refresh >/dev/null 2>&1 || true
+          argocd app diff "$APP" || true
+          if argocd app sync "$APP" --prune --timeout 600; then PRUNED=true; else
+            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Run: argocd-refresh-token && source ~/.bashrc.d/platform.sh, then: argocd app sync %s --prune{{.C_RESET}}\n' "$APP"
+          fi
+        else
+          printf '{{.C_INFO}}  argocd CLI not found. Run manually then re-run this task to clean up: argocd app sync %s --prune{{.C_RESET}}\n' "$APP"
+        fi
+
+        # PHASE 3: cleanup the now-empty app + CARM mapping (only after a successful prune,
+        # so we never orphan a live resource). The appset removes clusters-kro-<name> once
+        # the marker is gone; its resources are already pruned.
+        if [ "$PRUNED" = true ]; then
+          CHANGED=0
+          [ -f "$MARKER" ] && { rm -f "$MARKER"; CHANGED=1; }
+          [ -f "$MA_FILE" ] && yq -e '.clusters."{{.CLUSTER}}"' "$MA_FILE" >/dev/null 2>&1 && { yq -i 'del(.clusters."{{.CLUSTER}}")' "$MA_FILE"; CHANGED=1; }
+          if [ "$CHANGED" = "1" ]; then
+            ( cd "$REPO_DIR" && git add -A && git commit -m "chore: remove {{.CLUSTER}} KRO marker + multi-acct mapping (post-prune cleanup)" && git push 2>/dev/null )
+            printf '{{.C_OK}}✓ Cleaned up {{.CLUSTER}} marker + multi-acct mapping; app will be removed by the appset.{{.C_RESET}}\n'
+          fi
+        else
+          printf '{{.C_INFO}}  Skipped marker/CARM cleanup (prune not confirmed). Re-run this task after a successful prune.{{.C_RESET}}\n'
+        fi
+        rm -rf "$REPO_DIR"
+
+  spokes:disable-all:
+    desc: >-
+      DELETE every spoke cluster (KRO + Crossplane) declared in the fleet-config
+      overlay, then wait for them to disappear from AWS. Used as Phase 0 of
+      `destroy` so spokes are removed while the hub controllers (KRO/ACK/Crossplane)
+      are still alive to reconcile their deletion. Idempotent.
+    vars:
+      GITLAB_CF_DOMAIN:
+        sh: |
+          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
+            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          else
+            echo "{{.DOMAIN}}"
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
+    cmds:
+      - |
+        set -u
+        # 1. Discover spokes from the fleet-config overlay (the single source of truth
+        #    for cluster specs). If the overlay is unreachable we must NOT silently
+        #    proceed to hub teardown — surviving spokes would be orphaned.
+        REPO_DIR=$(mktemp -d)
+        if ! git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git" "$REPO_DIR" 2>/dev/null; then
+          printf '{{.C_ERR}}⚠ fleet-config overlay unreachable — cannot discover spokes automatically.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  If any spoke clusters exist, delete them first with:{{.C_RESET}}\n'
+          printf '    task spokes:disable-kro -- <name>   /   task spokes:disable-crossplane -- <name>\n'
+          rm -rf "$REPO_DIR"; exit 0
+        fi
+        KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
+        XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
+        KRO_SPOKES=""; XP_SPOKES=""
+        [ -f "$KRO_VALUES" ] && KRO_SPOKES=$(yq '.clusters // {} | keys | .[]' "$KRO_VALUES" 2>/dev/null)
+        [ -f "$XP_VALUES" ]  && XP_SPOKES=$(yq '.clusters // {} | keys | .[]' "$XP_VALUES" 2>/dev/null)
+        rm -rf "$REPO_DIR"
+
+        if [ -z "$(echo $KRO_SPOKES $XP_SPOKES | tr -d ' ')" ]; then
+          printf '{{.C_OK}}✓ No spoke clusters declared in the overlay — nothing to tear down.{{.C_RESET}}\n'
+          exit 0
+        fi
+        printf '{{.C_STEP}}▸ Spokes to delete — KRO: [%s]  Crossplane: [%s]{{.C_RESET}}\n' "$(echo $KRO_SPOKES | tr '\n' ' ')" "$(echo $XP_SPOKES | tr '\n' ' ')"
+
+        # 2. Deliberate deletion via the existing per-cluster disable tasks (they remove
+        #    the cluster from the overlay in Git, then run a scoped `argocd app sync --prune`).
+        for c in $KRO_SPOKES; do
+          printf '{{.C_STEP}}▸ Disabling KRO spoke %s...{{.C_RESET}}\n' "$c"
+          task spokes:disable-kro -- "$c" || printf '{{.C_ERR}}⚠ disable-kro failed for %s (continuing).{{.C_RESET}}\n' "$c"
+        done
+        for c in $XP_SPOKES; do
+          printf '{{.C_STEP}}▸ Disabling Crossplane spoke %s...{{.C_RESET}}\n' "$c"
+          task spokes:disable-crossplane -- "$c" || printf '{{.C_ERR}}⚠ disable-crossplane failed for %s (continuing).{{.C_RESET}}\n' "$c"
+        done
+
+        # 3. Wait for the spoke EKS clusters to actually disappear from AWS BEFORE the
+        #    hub teardown removes the controllers that reconcile their deletion. Without
+        #    this, killing the hub mid-deletion leaves orphaned EKS clusters + VPCs.
+        ALL_SPOKES="$KRO_SPOKES $XP_SPOKES"
+        printf '{{.C_STEP}}▸ Waiting for spoke EKS clusters to delete in AWS (up to 30m)...{{.C_RESET}}\n'
+        for i in $(seq 1 90); do
+          LIVE=""
+          for c in $ALL_SPOKES; do
+            aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1 && LIVE="$LIVE $c"
+          done
+          if [ -z "$(echo $LIVE | tr -d ' ')" ]; then
+            printf '{{.C_OK}}✓ All spoke clusters deleted from AWS.{{.C_RESET}}\n'; break
+          fi
+          printf '{{.C_INFO}}  Still deleting:%s ... (%s/90){{.C_RESET}}\n' "$LIVE" "$i"
+          sleep 20
+        done
+        # Final check — warn loudly (but do not hard-fail) if a spoke survived, so the
+        # operator can intervene before/after the hub goes away.
+        STILL_LIVE=""
+        for c in $ALL_SPOKES; do
+          aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1 && STILL_LIVE="$STILL_LIVE $c"
+        done
+        if [ -n "$(echo $STILL_LIVE | tr -d ' ')" ]; then
+          printf '{{.C_ERR}}⚠ Spoke clusters still present after wait:%s{{.C_RESET}}\n' "$STILL_LIVE"
+          printf '{{.C_ERR}}  Proceeding with hub teardown will ORPHAN them. See troubleshooting.md →{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  "Spoke Cluster Stuck Deletion / Recovery". Recommend aborting and fixing first.{{.C_RESET}}\n'
+        fi
 
