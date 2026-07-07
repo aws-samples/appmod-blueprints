@@ -1,17 +1,15 @@
 # Job: Creates EKS ArgoCD capability after cluster is ACTIVE.
-# Env vars injected from argocd-capability-config ConfigMap
-# (created by Taskfile from config.yaml + Crossplane outputs).
+# Env vars injected from argocd-capability-config ConfigMap.
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: create-argocd-capability
-  namespace: crossplane-system
+  namespace: ack-system
 spec:
   backoffLimit: 3
   ttlSecondsAfterFinished: 600
   template:
     spec:
-      serviceAccountName: crossplane
       restartPolicy: OnFailure
       volumes:
         - name: aws-creds
@@ -98,10 +96,3 @@ spec:
                 --access-scope type=cluster 2>/dev/null || true
 
               echo "=== Done ==="
-              echo "ARN: arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${CLUSTER_NAME}"
-              aws eks describe-capability \
-                --cluster-name "$CLUSTER_NAME" \
-                --capability-name "$CAPABILITY_NAME" \
-                --region "$AWS_REGION" \
-                --query 'capability.configuration.argoCd.serverUrl' \
-                --output text

@@ -2,13 +2,12 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: delete-argocd-capability
-  namespace: crossplane-system
+  namespace: ack-system
 spec:
   backoffLimit: 3
   ttlSecondsAfterFinished: 600
   template:
     spec:
-      serviceAccountName: crossplane
       restartPolicy: OnFailure
       volumes:
         - name: aws-creds
