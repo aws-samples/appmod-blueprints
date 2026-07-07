@@ -129,6 +129,68 @@ tasks:
       - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
 
   # ============================================================
+  # DESTROY — full ordered teardown
+  # ============================================================
+  destroy:
+    desc: "Full teardown: drain workloads from spokes → delete spokes → destroy hub platform"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+      HUB_KUBECONFIG: "{{.REPO}}/private/hub-kubeconfig"
+    cmds:
+      - printf '{{.C_STEP}}▸ Workshop destroy starting (workloads → spokes → hub){{.C_RESET}}\n'
+
+      # Phase 0: hub kubeconfig
+      - |
+        aws eks update-kubeconfig \
+          --name $(yq '.hub.clusterName // "peeks-hub"' {{.CONFIG_FILE}}) \
+          --region $(yq '.aws.region' {{.CONFIG_FILE}}) \
+          --kubeconfig {{.HUB_KUBECONFIG}} 2>/dev/null || true
+
+      # Phase 1: drain workloads (Ingress → ALBs, LB Services → NLBs, PVCs → EBS)
+      # from every spoke BEFORE deleting the spoke clusters, so no ENI-locked VPCs
+      # block the spoke VPC deletion.
+      - |
+        printf '{{.C_STEP}}▸ Phase 1 — draining workloads from spoke clusters...{{.C_RESET}}\n'
+        PREFIX=$(yq '.resourcePrefix // "peeks"' {{.CONFIG_FILE}})
+        REGION=$(yq '.aws.region' {{.CONFIG_FILE}})
+        SPOKES=$(aws eks list-clusters --region "$REGION" \
+          --query "clusters[?starts_with(@,'${PREFIX}-spoke')]" \
+          --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)
+        if [ -z "$SPOKES" ]; then
+          printf '{{.C_INFO}}  No spoke clusters found — skipping workload drain.{{.C_RESET}}\n'
+        else
+          for SPOKE in $SPOKES; do
+            printf '{{.C_STEP}}  Draining %s...{{.C_RESET}}\n' "$SPOKE"
+            KC=$(mktemp)
+            aws eks update-kubeconfig --name "$SPOKE" --region "$REGION" \
+              --kubeconfig "$KC" 2>/dev/null || { rm -f "$KC"; continue; }
+            kubectl --kubeconfig "$KC" delete ingress --all-namespaces --all \
+              --timeout=120s 2>/dev/null || true
+            kubectl --kubeconfig "$KC" get svc --all-namespaces -o json 2>/dev/null \
+              | jq -r '.items[]|select(.spec.type=="LoadBalancer")|"\(.metadata.namespace) \(.metadata.name)"' \
+              | while read NS SVC; do
+                  kubectl --kubeconfig "$KC" delete svc "$SVC" -n "$NS" \
+                    --timeout=60s 2>/dev/null || true
+                done
+            kubectl --kubeconfig "$KC" delete pvc --all-namespaces --all \
+              --timeout=120s 2>/dev/null || true
+            rm -f "$KC"
+            printf '{{.C_OK}}  ✓ %s drained.{{.C_RESET}}\n' "$SPOKE"
+          done
+        fi
+
+      # Phase 2: delete spoke clusters via fleet overlay + wait for AWS deletion
+      - printf '{{.C_STEP}}▸ Phase 2 — deleting spoke clusters...{{.C_RESET}}\n'
+      - task: spokes:disable-all
+
+      # Phase 3: destroy the hub (addons → EKS → Kind → IAM → Secrets)
+      - printf '{{.C_STEP}}▸ Phase 3 — destroying hub platform ({{.PROVIDER}})...{{.C_RESET}}\n'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy'
+
+      - printf '{{.C_OK}}✓ Workshop destroy complete.{{.C_RESET}}\n'
+
+  # ============================================================
   # PLATFORM ARTIFACT (OAP-style consumption)
   # ============================================================
   platform:prepare:
