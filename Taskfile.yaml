@@ -25,13 +25,6 @@ includes:
     vars:
       CONFIG_FILE: "{{.CONFIG_FILE}}"
     optional: true
-  workshop:
-    taskfile: ./workshop/Taskfile.yaml
-    dir: ./workshop
-    vars:
-      CONFIG_FILE: "{{.CONFIG_FILE}}"
-      ROOT_DIR: "{{.ROOT_DIR}}"
-    optional: true
   kind-kro-ack:
     taskfile: ./cluster-providers/kind-kro-ack/Taskfile.yaml
     dir: ./cluster-providers/kind-kro-ack
