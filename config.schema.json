@@ -3,17 +3,29 @@
   "title": "Platform Bootstrap Configuration",
   "description": "Configuration for the GitOps addon management platform. Copy to config.local.yaml and customize.",
   "type": "object",
-  "required": ["hub", "aws", "repo", "domain"],
+  "required": [
+    "hub",
+    "aws",
+    "repo",
+    "domain"
+  ],
   "properties": {
     "clusterProvider": {
       "type": "string",
-      "enum": ["kind-crossplane", "byoc"],
+      "enum": [
+        "kind-crossplane",
+        "byoc"
+      ],
       "default": "kind-crossplane",
       "description": "Which cluster provider to use for hub provisioning"
     },
     "repo": {
       "type": "object",
-      "required": ["url", "revision", "basepath"],
+      "required": [
+        "url",
+        "revision",
+        "basepath"
+      ],
       "properties": {
         "url": {
           "type": "string",
@@ -34,7 +46,9 @@
     },
     "hub": {
       "type": "object",
-      "required": ["clusterName"],
+      "required": [
+        "clusterName"
+      ],
       "properties": {
         "clusterName": {
           "type": "string",
@@ -63,8 +77,12 @@
             },
             "instanceTypes": {
               "type": "array",
-              "items": { "type": "string" },
-              "default": ["m5.large"],
+              "items": {
+                "type": "string"
+              },
+              "default": [
+                "m5.large"
+              ],
               "description": "EC2 instance types for the node group"
             },
             "desiredSize": {
@@ -90,7 +108,10 @@
             },
             "capacityType": {
               "type": "string",
-              "enum": ["ON_DEMAND", "SPOT"],
+              "enum": [
+                "ON_DEMAND",
+                "SPOT"
+              ],
               "default": "ON_DEMAND"
             }
           }
@@ -99,7 +120,10 @@
     },
     "aws": {
       "type": "object",
-      "required": ["region", "accountId"],
+      "required": [
+        "region",
+        "accountId"
+      ],
       "properties": {
         "region": {
           "type": "string",
@@ -121,7 +145,17 @@
     "domain": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9.-]+[a-z0-9]$",
-      "description": "Base domain for ingress hostnames. Must be unique per stack — two stacks sharing a domain will have DNS and TLS conflicts."
+      "description": "Ingress hostname for the platform, provisioned by the CONSUMER (Route53, CloudFront, etc.). The platform never creates it. Used for ingress host rules and printed URLs. Must be unique per stack."
+    },
+    "insecure": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, platform ingress serves plain HTTP (no cert) — the consumer terminates TLS upstream (e.g. CloudFront). When false (default), the ALB serves HTTPS and uses an ACM cert (auto-discovered by host, or certificateArn if set)."
+    },
+    "certificateArn": {
+      "type": "string",
+      "default": "",
+      "description": "Optional ACM certificate ARN for the ALB HTTPS listener when insecure=false. If empty, the AWS Load Balancer Controller auto-discovers an ACM cert matching the domain."
     },
     "resourcePrefix": {
       "type": "string",
@@ -138,9 +172,17 @@
       "default": "",
       "description": "Comma-separated security group IDs for the ALB"
     },
+    "adminRoleName": {
+      "type": "string",
+      "description": "IAM role name added as a cluster-admin access entry and used by Backstage templates for cluster access."
+    },
     "identityCenter": {
       "type": "object",
-      "required": ["instanceArn", "region", "adminGroupId"],
+      "required": [
+        "instanceArn",
+        "region",
+        "adminGroupId"
+      ],
       "description": "AWS Identity Center config for EKS ArgoCD Capability",
       "properties": {
         "instanceArn": {

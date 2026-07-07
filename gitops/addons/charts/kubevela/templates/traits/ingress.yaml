@@ -18,10 +18,13 @@ spec:
         parameter: {
         	domain: string
         	http: [string]: int
-        	class:         *"alb" | string
+        	class:         *"platform" | string
         	targetType:    *"ip" | string
         	type:          *"internet-facing" | "internal"
         	createService: *false | bool
+        	// ALB target-group health check path (default "/"). Override for apps that
+        	// don't serve 2xx at root, else OSS LBC marks targets unhealthy (404).
+        	healthcheckPath: *"/" | string
         }
 
         // trait template can have multiple outputs in one trait
@@ -53,6 +56,7 @@ spec:
         			"alb.ingress.kubernetes.io/target-type": parameter.targetType
         			"alb.ingress.kubernetes.io/scheme":      parameter.type
         			"alb.ingress.kubernetes.io/group.name":  parameter.type
+        			"alb.ingress.kubernetes.io/healthcheck-path": parameter.healthcheckPath
         		}
         	}
         	spec: {
