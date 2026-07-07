@@ -94,11 +94,15 @@ tasks:
       # Wire the GitLab fleet-config overlay to the hub, then declare spokes into it.
       # The platform's guarded ApplicationSets reconcile these into live clusters.
       - task: set-overlay-repo
+      # Declare both spokes via Crossplane. Each lands in its environment (dev/prod)
+      # and inherits that env's enabled-addons overlay — which enables crossplane +
+      # kubevela (app deployment) on the spoke. The platform's guarded ApplicationSets
+      # reconcile the cluster + addons.
       - task: spokes:enable-crossplane
         vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
-      - task: spokes:enable-kro
+      - task: spokes:enable-crossplane
         vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-prod" }
-      - 'printf "{{.C_INFO}}  [%ds] spokes declared (spoke-dev=crossplane, spoke-prod=kro){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      - 'printf "{{.C_INFO}}  [%ds] spokes declared (spoke-dev + spoke-prod via Crossplane; crossplane+kubevela addons){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Ray ML infrastructure (image builds in background)
       - task: ":{{.PROVIDER}}:ray:setup"
       - 'printf "{{.C_INFO}}  [%ds] ray:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
