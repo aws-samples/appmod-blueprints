@@ -810,7 +810,6 @@ tasks:
         printf '  Argo WF:    https://{{.INGRESS_DOMAIN}}/argo-workflows\n'
         printf '  Kargo:      https://{{.INGRESS_DOMAIN}}/\n'
         printf '  Grafana:    https://{{.INGRESS_DOMAIN}}/grafana\n'
-        printf '  GitLab:     https://{{.GITLAB_DOMAIN}}\n'
         printf '  ArgoCD:     {{.ARGOCD_URL}}\n'
         printf '\n'
         printf '{{.C_INFO}}Credentials{{.C_RESET}}\n'
