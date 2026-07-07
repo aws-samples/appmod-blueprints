@@ -125,63 +125,25 @@ When using `oss` mode, the provider must also:
 4. Create the `aws-load-balancer-controller-sa` service account in `kube-system` on the hub
 5. Add `alb.ingress.kubernetes.io/target-type: ip` to ingresses using ClusterIP services
 
-## Exposure Modes & Load Balancer Pre-Creation
+## Exposure (domain + TLS)
 
-The platform supports two exposure modes, selected by the `domain` field in
-`config.local.yaml` (resolved into `EXPOSURE_MODE` in the Taskfile):
+The platform never provisions a domain or a TLS edge — the **consumer** owns both.
+`config.local.yaml` provides:
 
-| Mode | When | How traffic reaches the platform |
-|------|------|----------------------------------|
-| `domain` | a real domain is configured | Ingress/Service LBs are reached directly (Route53/own DNS) |
-| `cloudfront` (default) | no domain configured | CloudFront distributions front the platform ALB and the GitLab NLB |
+| Field | Meaning |
+|-------|---------|
+| `domain` | Ingress hostname (Route53 / CloudFront / anything the consumer provisions). Used for ingress host rules + printed URLs. The platform never creates it. |
+| `insecure` | `false` (default) → the platform ALB serves **HTTPS** with an ACM cert (auto-discovered by host, or `certificateArn`). `true` → the ALB serves plain **HTTP** and the consumer terminates TLS upstream (e.g. CloudFront in front of the ALB). |
+| `certificateArn` | Optional ACM ARN for the HTTPS listener when `insecure: false`. |
 
-### Why load balancers are pre-created (cloudfront mode)
+The ingress templates render `HTTP:80` (insecure) or `HTTPS:443 + ssl-redirect + host`
+(secure) from `.Values.global.insecure`. The AWS Load Balancer Controller creates and owns
+the shared platform ALB normally (addon Ingresses join the `platform` group via
+`alb.ingress.kubernetes.io/group.name: platform`); the platform does **not** pre-create load
+balancers or CloudFront.
 
-A CloudFront distribution needs a stable **origin DNS name** at creation time, but the
-addon Ingresses/Services that would normally create those load balancers don't sync until
-much later in `task install`. To break this chicken-and-egg, `cloudfront:setup-exposure`
-(in `Taskfile.cloudfront.yaml`, run early in the install flow) **pre-creates** the load
-balancers and the CloudFront distributions that point at them:
-
-- `cloudfront:create-alb` → ALB `<hub>-platform` (+ placeholder HTTP:80 404 listener)
-- `cloudfront:hub-distribution` → CloudFront for the ALB; DNS saved to `private/cloudfront-domain`
-- `cloudfront:gitlab-nlb` → NLB `<hub>-gitlab`
-- `cloudfront:gitlab-distribution` → CloudFront for the NLB; DNS saved to `private/gitlab-cloudfront-domain`
-
-`cloudfront:sync-origins` is an idempotent safety net that re-points each distribution if the
-LB DNS ever changes.
-
-### How the addons adopt the pre-created LBs (tag-based, NOT an annotation)
-
-The pre-created LBs are **adopted** by the AWS Load Balancer Controller when the addon
-Ingresses/Services later reconcile — there is **no** `elbv2.k8s.aws/resource-id` annotation.
-Adoption works because each LB is created with the exact resource **tags** the LBC uses to
-identify resources it owns:
-
-**Platform ALB** (shared by Keycloak, Backstage, Grafana, Argo Workflows, JupyterHub, …):
-```
-elbv2.k8s.aws/cluster    = <hub-cluster-name>
-ingress.k8s.aws/stack    = platform          # the ALB "group" key
-ingress.k8s.aws/resource = LoadBalancer
-```
-All those addon Ingresses join the same ALB group via
-`alb.ingress.kubernetes.io/group.name: platform`. The LBC keys an ALB to a group by the
-`ingress.k8s.aws/stack` tag, finds the pre-created ALB, and adopts it instead of creating a
-new one. The placeholder 80 listener keeps the ALB valid until the first Ingress appears.
-
-**GitLab NLB** (adopted by the GitLab `LoadBalancer` Service):
-```
-elbv2.k8s.aws/cluster    = <hub-cluster-name>
-service.k8s.aws/stack    = gitlab/gitlab     # <namespace>/<service>
-service.k8s.aws/resource = LoadBalancer
-```
-The GitLab Service is annotated `service.beta.kubernetes.io/aws-load-balancer-name: <hub>-gitlab`;
-the LBC matches by name + these `service.k8s.aws/*` tags and adopts the existing NLB.
-
-> **Important (NLB security groups):** the GitLab NLB is pre-created **with the cluster
-> security group**, not with zero SGs. An NLB created with zero SGs can never have SGs added
-> later, which would block the LBC from attaching its managed frontend SG when it adopts the
-> NLB. The LBC replaces the SG set via `SetSecurityGroups` during reconcile.
+Consumers that front the ALB with CloudFront (e.g. the workshop) set `insecure: true` and
+provision the CloudFront distribution + VPC origin themselves — see `workshop/`.
 
 ## Spoke Cluster Provisioning
 
