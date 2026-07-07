@@ -132,6 +132,7 @@ tasks:
       - task: kro:apply-rgds
       - task: hub:claim
       - task: hub:wait-for-eks
+      - task: hub:authorize-ide-access
       - task: hub:seed
       - task: hub:force-eso-refresh
       - task: hub:wait-for-sync
@@ -633,6 +634,30 @@ tasks:
         done
         printf '{{.C_ERR}}✗ EKS cluster not ACTIVE in AWS after RGD reported ACTIVE{{.C_RESET}}\n'
         exit 1
+
+  hub:authorize-ide-access:
+    desc: Allow the IDE EC2 (kind cluster) to reach the hub EKS API server via private endpoint
+    status:
+      # Skip if HUB_VPC_ID is unset (separate VPC mode — no private endpoint routing issue)
+      - '[ -z "{{.HUB_VPC_ID}}" ]'
+    cmds:
+      - |
+        # When the hub EKS cluster shares the IDE VPC (Option D), DNS resolves the
+        # API server to the private ENI. The cluster security group only allows worker
+        # nodes by default — we must add an inbound rule for the IDE EC2 (which runs
+        # the kind cluster that needs kubectl access to hub EKS).
+        CLUSTER_SG=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+          --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
+        printf '{{.C_STEP}}▸ Authorizing IDE access to hub EKS API (SG %s, VPC CIDR)...{{.C_RESET}}\n' "$CLUSTER_SG"
+        # Allow TCP 443 from the entire VPC CIDR (covers IDE EC2 + kind bridge network).
+        # Idempotent: --cidr rule is a no-op if already present.
+        VPC_CIDR=$(aws ec2 describe-vpcs --vpc-ids {{.HUB_VPC_ID}} --region {{.AWS_REGION}} \
+          --query 'Vpcs[0].CidrBlock' --output text)
+        aws ec2 authorize-security-group-ingress \
+          --group-id "$CLUSTER_SG" --protocol tcp --port 443 \
+          --cidr "$VPC_CIDR" --region {{.AWS_REGION}} 2>/dev/null \
+          && printf '{{.C_OK}}✓ Authorized VPC CIDR %s → cluster SG %s :443{{.C_RESET}}\n' "$VPC_CIDR" "$CLUSTER_SG" \
+          || printf '{{.C_INFO}}  Rule already exists (idempotent).{{.C_RESET}}\n'
 
   hub:seed:
     desc: Seed hub cluster after EKS is ACTIVE
