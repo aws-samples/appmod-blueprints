@@ -3,24 +3,6 @@ set: [errexit, nounset, pipefail]
 silent: true
 
 includes:
-  cloudfront:
-    taskfile: ../common/Taskfile.cloudfront.yaml
-    vars:
-      AWS_REGION: '{{.AWS_REGION}}'
-      HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
-      RESOURCE_PREFIX: '{{.RESOURCE_PREFIX}}'
-      AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
-      ROOT_DIR: '{{.ROOT_DIR}}'
-      CONFIG_FILE: '{{.CONFIG_FILE}}'
-      EXPOSURE_MODE:
-        sh: 'if [ -z "$(yq ''.domain // ""'' {{.ROOT_DIR}}/config.local.yaml)" ]; then echo "cloudfront"; else echo "domain"; fi'
-      C_STEP: '{{.C_STEP}}'
-      C_OK: '{{.C_OK}}'
-      C_ERR: '{{.C_ERR}}'
-      C_RESET: '{{.C_RESET}}'
-      C_INFO: '{{.C_INFO}}'
-      C_WARN: '{{.C_WARN}}'
-      CLOUDFRONT_VPC_ID: '{{.CLOUDFRONT_VPC_ID}}'
   ray:
     taskfile: ../common/Taskfile.ray.yaml
     vars:
@@ -72,14 +54,17 @@ vars:
     sh: yq '.ingressName // ""' {{.CONFIG_FILE}} | grep -v '^$' || echo "{{.HUB_CLUSTER_NAME}}-platform"
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
+  # Exposure: the platform does NOT provision a domain or CloudFront. The consumer
+  # provides `domain` and terminates TLS however they like. `insecure: true` -> the
+  # ALB serves plain HTTP (consumer fronts it with CloudFront/etc.); false (default)
+  # -> ALB serves HTTPS with an ACM cert. exposure_mode is derived from insecure for
+  # the cluster-secret annotation chain the addon charts already consume.
+  INSECURE:
+    sh: yq '.insecure // false' {{.CONFIG_FILE}}
   EXPOSURE_MODE:
-    sh: 'if [ -z "$(yq ''.domain // ""'' {{.CONFIG_FILE}})" ]; then echo "cloudfront"; else echo "domain"; fi'
-  # Frozen at load time (informational only). Tasks needing the live value resolve it
-  # in their own task-level vars from private/cloudfront-domain (+ AWS fallback).
-  CLOUDFRONT_DOMAIN:
-    sh: cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]' || true
-  CLOUDFRONT_VPC_ID:
-    sh: yq '.cloudfront.vpcId // ""' {{.CONFIG_FILE}}
+    sh: 'if [ "$(yq ''.insecure // false'' {{.CONFIG_FILE}})" = "true" ]; then echo "cloudfront"; else echo "domain"; fi'
+  CERTIFICATE_ARN:
+    sh: yq '.certificateArn // ""' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
     sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
@@ -142,14 +127,8 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] credentials:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: crossplane:setup
       - 'printf "{{.C_INFO}}  [%ds] crossplane:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Create ALB + CloudFront BEFORE hub:seed so ingress_domain_name is correct from the start.
-      # sync-domain runs immediately after setup-exposure (mirroring kind-kro-ack) so that on an
-      # install retry — where setup-exposure's status guard skips because the <hub>-platform
-      # distribution already exists from a prior attempt — the cloudfrontDomain is still
-      # re-derived from AWS and written to config.local.yaml + private/cloudfront-domain BEFORE
-      # hub:seed reads it. Without this, a retried hub:seed would seed an empty ingress_domain_name.
-      - task: cloudfront:setup-exposure
-      - task: cloudfront:sync-domain
+      # The platform does not provision a domain/CloudFront. hub:seed reads the
+      # consumer-provided `domain` from config into ingress_domain_name.
       - task: hub:seed
       - 'printf "{{.C_INFO}}  [%ds] hub:seed done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Force ESO to immediately refresh the cluster secret from Secrets Manager
@@ -189,7 +168,7 @@ tasks:
   install:phase1-parallel:
     internal: true
     deps:
-      - install:phase1-cloudfront
+      - install:phase1-identity
       - install:phase1-playwright-prefetch
       - install:phase1-observability-bg
 
@@ -231,12 +210,11 @@ tasks:
           printf '{{.C_OK}}✓ Playwright chromium pre-fetched.{{.C_RESET}}\n'
         fi
 
-  install:phase1-cloudfront:
+  install:phase1-identity:
     internal: true
     cmds:
-      # Ensure cloudfrontDomain is in config + private/cloudfront-domain (safety net for retries)
-      - task: cloudfront:sync-domain
-      - task: hub:update-ingress-domain
+      # Domain is consumer-provided (seeded from config at hub:seed). Nothing to
+      # sync here anymore — just restart identity-dependent pods.
       - task: hub:restart-identity-pods
 
   install:phase2-parallel:
@@ -757,46 +735,6 @@ tasks:
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
-  hub:update-ingress-domain:
-    desc: Update ingress_domain_name in Secrets Manager metadata so ESO propagates the CloudFront domain to cluster secrets
-    internal: true
-    vars:
-      CF_DOMAIN:
-        sh: |
-          D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
-          [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
-            --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
-            --output text 2>/dev/null | tr -d '[:space:]')
-          [ "$D" = "None" ] && D=""
-          echo "$D"
-    cmds:
-      - |
-        CF="{{.CF_DOMAIN}}"
-        [ -z "$CF" ] && printf '{{.C_INFO}}  Skipping ingress_domain_name update — cloudfront domain not created yet{{.C_RESET}}\n' && exit 0
-        for SECRET_ID in {{.HUB_CLUSTER_NAME}}/config; do
-          CUR=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region {{.AWS_REGION}} --query SecretString --output text 2>/dev/null)
-          [ -z "$CUR" ] && printf '  Skipping %s — not found\n' "$SECRET_ID" && continue
-          CURRENT_VAL=$(echo "$CUR" | jq -r '.metadata | fromjson | .ingress_domain_name // empty' 2>/dev/null)
-          if [ "$CURRENT_VAL" = "$CF" ]; then
-            printf '  ingress_domain_name already correct in %s\n' "$SECRET_ID"
-            continue
-          fi
-          NEW=$(echo "$CUR" | jq -c --arg cf "$CF" --arg em "cloudfront" --arg arn "{{.ADMIN_ROLE_NAME}}" --arg rp "{{.RESOURCE_PREFIX}}" --arg gd "{{.GITLAB_DOMAIN}}" --arg alb "oss" '.metadata = ((.metadata | fromjson |
-              .ingress_domain_name = $cf |
-              .exposure_mode = $em |
-              .admin_role_name = (if $arn != "" then $arn else .admin_role_name end) |
-              .resource_prefix = (if $rp != "" then $rp else (.resource_prefix // "") end) |
-              .gitlab_domain_name = (if $gd != "" then $gd else (.gitlab_domain_name // "") end) |
-              .alb_controller_mode = $alb
-            ) | tojson)')
-          printf '%s' "$NEW" > /tmp/secret_ingress_update.json
-          aws secretsmanager put-secret-value --secret-id "$SECRET_ID" --region {{.AWS_REGION}} \
-            --secret-string file:///tmp/secret_ingress_update.json --query 'Name' --output text
-          rm -f /tmp/secret_ingress_update.json
-          printf '  Updated ingress_domain_name=%s in %s\n' "$CF" "$SECRET_ID"
-        done
-        printf '{{.C_OK}}✓ ingress_domain_name updated in Secrets Manager (ESO will propagate within 1min){{.C_RESET}}\n'
-
   hub:wait-for-providers:
     desc: Wait for all Crossplane providers to be Healthy (ensures ec2/rds/etc. CRDs available before spoke provisioning)
     ignore_error: true
@@ -878,27 +816,7 @@ tasks:
     desc: Print platform URLs (alias for print-urls)
     aliases: [print-urls]
     vars:
-      INGRESS_DOMAIN:
-        sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
-            # In CloudFront mode the platform services (Backstage, Grafana, etc.) are on the
-            # hub EKS ALB, not the CloudFront/IDE domain. Discover the ALB hostname from the hub.
-            HUB_KC="{{.ROOT_DIR}}/private/hub-kubeconfig"
-            [ ! -f "$HUB_KC" ] && HUB_KC="{{.ROOT_DIR}}/private/kubeconfig"
-            ALB=$(kubectl --kubeconfig "$HUB_KC" get ingress -A \
-              -l "app.kubernetes.io/name=backstage" \
-              -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-            [ -z "$ALB" ] && ALB=$(kubectl --kubeconfig "$HUB_KC" get ingress -A \
-              -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-            CF=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
-            [ -z "$CF" ] && CF=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
-              --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
-              --output text 2>/dev/null | tr -d '[:space:]')
-            [ "$CF" = "None" ] && CF=""
-            echo "${ALB:-$CF}"
-          else
-            echo "{{.DOMAIN}}"
-          fi
+      INGRESS_DOMAIN: '{{.DOMAIN}}'
       GITLAB_DOMAIN:
         sh: |
           if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
@@ -1734,21 +1652,7 @@ tasks:
           aws ec2 describe-subnets --subnet-ids $SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' ','
       CLUSTER_SG:
         sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text
-      INGRESS_DOMAIN:
-        sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
-            # platform CloudFront domain — resolved at task-run time from the runtime
-            # artifact (written by cloudfront:setup-exposure/sync-domain before hub:seed),
-            # with an AWS fallback. Not read from config.local.yaml.
-            D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
-            [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
-              --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
-              --output text 2>/dev/null | tr -d '[:space:]')
-            [ "$D" = "None" ] && D=""
-            echo "$D"
-          else
-            echo "{{.DOMAIN}}"
-          fi
+      INGRESS_DOMAIN: '{{.DOMAIN}}'
       ADMIN_ROLE_NAME:
         sh: yq '.adminRoleName // ""' {{.CONFIG_FILE}}
       GITLAB_DOMAIN:
@@ -1780,7 +1684,7 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id: $id, subnet_ids: $subnet_ids, cluster_security_group_id: $cluster_security_group_id}' | jq -c .)
         # Base metadata (string), then re-merge preserved overlay_* keys (only when set).
-        METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","exposure_mode":"{{.EXPOSURE_MODE}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"{{.ARGOCD_URL}}"}'
+        METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","exposure_mode":"{{.EXPOSURE_MODE}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"{{.ARGOCD_URL}}"}'
         if [ -n "$OVL_URL" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg u "$OVL_URL" --arg r "$OVL_REV" --arg b "$OVL_BP" '. + {overlay_repo_url:$u, overlay_repo_revision:$r, overlay_repo_basepath:$b}')
           echo "Preserving existing overlay wiring: overlay_repo_url=$OVL_URL"
