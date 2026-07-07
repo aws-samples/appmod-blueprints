@@ -35,13 +35,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# This script lives in <repo>/workshop; the config.local.yaml it generates is read
+# by the workshop AND the in-place platform at the repo root (SCRIPT_DIR/..).
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # --- Defaults / overrides --------------------------------------------------
 # NOTE: deliberately NOT named CONFIG_FILE — the IDE environment exports a
 # CONFIG_FILE pointing at the terraform hub-config.yaml, which we do not use
 # here. We always target the repo-root config.local.yaml unless OUTPUT_FILE
 # is explicitly overridden.
-OUTPUT_FILE="${OUTPUT_FILE:-${SCRIPT_DIR}/config.local.yaml}"
+OUTPUT_FILE="${OUTPUT_FILE:-${REPO_ROOT}/config.local.yaml}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 REPO_URL="${REPO_URL:-https://github.com/aws-samples/appmod-blueprints}"
 REPO_REVISION="${REPO_REVISION:-${WORKSHOP_GIT_BRANCH:-feature/cloudfront-on-agent-platform}}"
@@ -163,8 +166,8 @@ printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
 # The GitLab/IDE CloudFront domain is available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,
 # or from the private/gitlab-cloudfront-domain file written by bootstrap.sh.
 GITLAB_CF_DOMAIN="${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}"
-[ -z "$GITLAB_CF_DOMAIN" ] && [ -f "${SCRIPT_DIR}/private/gitlab-cloudfront-domain" ] && \
-  GITLAB_CF_DOMAIN="$(cat "${SCRIPT_DIR}/private/gitlab-cloudfront-domain" | tr -d '[:space:]')"
+[ -z "$GITLAB_CF_DOMAIN" ] && [ -f "${REPO_ROOT}/private/gitlab-cloudfront-domain" ] && \
+  GITLAB_CF_DOMAIN="$(cat "${REPO_ROOT}/private/gitlab-cloudfront-domain" | tr -d '[:space:]')"
 if [ -n "$GITLAB_CF_DOMAIN" ]; then
   printf 'cloudfront:\n'                               >> "$OUTPUT_FILE"
   printf '  gitlabDomain: "%s"\n' "$GITLAB_CF_DOMAIN" >> "$OUTPUT_FILE"

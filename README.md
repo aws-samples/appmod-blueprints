@@ -132,13 +132,13 @@ helper:
 
 ```bash
 # Idempotent: skips if a valid config.local.yaml already exists
-./create-config.sh
+workshop/create-config.sh
 
 # Force overwrite
-FORCE=true ./create-config.sh
+FORCE=true workshop/create-config.sh
 
 # Override the branch (e.g. when WORKSHOP_GIT_BRANCH points to a release tag)
-REPO_REVISION=feature/cloudfront-on-agent-platform ./create-config.sh
+REPO_REVISION=... workshop/create-config.sh
 ```
 
 This is a standalone script (not a Taskfile task) because every task reads
