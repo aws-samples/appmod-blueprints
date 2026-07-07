@@ -27,6 +27,14 @@ vars:
     sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}}
   HUB_VPC_PREFIX:
     sh: yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}} | cut -d. -f1-2
+  # Option D: when hub.network.vpcId is set (CDK pre-created VPC), the hub uses
+  # EksCluster (without VPC creation). When unset, falls back to EksclusterWithVpc.
+  HUB_VPC_ID:
+    sh: yq '.hub.network.vpcId // ""' {{.CONFIG_FILE}}
+  HUB_SUBNET_1:
+    sh: yq '.hub.network.subnetIds[0] // ""' {{.CONFIG_FILE}}
+  HUB_SUBNET_2:
+    sh: yq '.hub.network.subnetIds[1] // ""' {{.CONFIG_FILE}}
   AWS_ACCOUNT_ID:
     sh: yq '.aws.accountId' {{.CONFIG_FILE}}
   AWS_REGION:
@@ -470,73 +478,79 @@ tasks:
         yq -i ".identityCenter.identityStoreId = \"$STORE_ID\"" {{.CONFIG_FILE}}
 
   hub:claim:
-    desc: Apply hub cluster claim (EksclusterWithVpc instance)
+    desc: Apply hub cluster claim (EksCluster or EksclusterWithVpc depending on hub.network)
     cmds:
       - kubectl create namespace {{.HUB_CLUSTER_NAME}} --dry-run=client -o yaml | kubectl apply -f -
       - |
-        cat <<'EOF' | sed \
-          -e "s|HUB_CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" \
-          -e "s|AWS_REGION|{{.AWS_REGION}}|g" \
-          -e "s|AWS_ACCOUNT_ID|{{.AWS_ACCOUNT_ID}}|g" \
-          -e "s|HUB_K8S_VERSION|{{.HUB_K8S_VERSION}}|g" \
-          -e "s|HUB_VPC_CIDR|{{.HUB_VPC_CIDR}}|g" \
-          -e "s|HUB_VPC_PREFIX|{{.HUB_VPC_PREFIX}}|g" \
-          -e "s|RESOURCE_PREFIX|{{.RESOURCE_PREFIX}}|g" \
-          -e "s|CALLER_ROLE_ARN|{{.CALLER_ROLE_ARN}}|g" \
-          -e "s|IDC_INSTANCE_ARN|{{.IDC_INSTANCE_ARN}}|g" \
-          -e "s|IDC_REGION|{{.IDC_REGION}}|g" \
-          -e "s|IDC_ADMIN_GROUP_ID|{{.IDC_ADMIN_GROUP_ID}}|g" \
-          -e "s|ADMIN_ROLE_NAME|{{.ADMIN_ROLE_NAME}}|g" \
-          -e "s|REPO_URL|{{.REPO_URL}}|g" \
-          -e "s|REPO_REVISION|{{.REPO_REVISION}}|g" \
-          -e "s|REPO_BASEPATH|{{.REPO_BASEPATH}}|g" \
-          -e "s|DOMAIN|{{.DOMAIN}}|g" \
-          | kubectl apply -f -
+        # When hub.network.vpcId is set (CDK pre-created VPC), use EksCluster (no VPC creation).
+        # Otherwise fall back to EksclusterWithVpc (creates its own VPC via ACK).
+        if [ -n "{{.HUB_VPC_ID}}" ]; then
+          KIND="EksCluster"
+          NETWORK_BLOCK=$(cat <<NETEOF
+          network:
+            vpcID: "{{.HUB_VPC_ID}}"
+            subnets:
+              controlplane:
+                subnet1ID: "{{.HUB_SUBNET_1}}"
+                subnet2ID: "{{.HUB_SUBNET_2}}"
+              workers:
+                subnet1ID: "{{.HUB_SUBNET_1}}"
+                subnet2ID: "{{.HUB_SUBNET_2}}"
+        NETEOF
+          )
+        else
+          KIND="EksclusterWithVpc"
+          NETWORK_BLOCK=$(cat <<NETEOF
+          cidr:
+            vpcCidr: {{.HUB_VPC_CIDR}}
+            publicSubnet1Cidr: "{{.HUB_VPC_PREFIX}}.1.0/24"
+            publicSubnet2Cidr: "{{.HUB_VPC_PREFIX}}.2.0/24"
+            privateSubnet1Cidr: "{{.HUB_VPC_PREFIX}}.11.0/24"
+            privateSubnet2Cidr: "{{.HUB_VPC_PREFIX}}.12.0/24"
+        NETEOF
+          )
+        fi
+        cat <<EOF | kubectl apply -f -
         apiVersion: kro.run/v1alpha1
-        kind: EksclusterWithVpc
+        kind: $KIND
         metadata:
-          name: HUB_CLUSTER_NAME
-          namespace: HUB_CLUSTER_NAME
+          name: {{.HUB_CLUSTER_NAME}}
+          namespace: {{.HUB_CLUSTER_NAME}}
         spec:
-          name: HUB_CLUSTER_NAME
+          name: {{.HUB_CLUSTER_NAME}}
           tenant: platform
           environment: control-plane
-          region: AWS_REGION
-          k8sVersion: "HUB_K8S_VERSION"
-          accountId: "AWS_ACCOUNT_ID"
-          managementAccountId: "AWS_ACCOUNT_ID"
-          argoCdHubRoleArn: "CALLER_ROLE_ARN"
-          adminRoleName: ADMIN_ROLE_NAME
+          region: {{.AWS_REGION}}
+          k8sVersion: "{{.HUB_K8S_VERSION}}"
+          accountId: "{{.AWS_ACCOUNT_ID}}"
+          managementAccountId: "{{.AWS_ACCOUNT_ID}}"
+          argoCdHubRoleArn: "{{.CALLER_ROLE_ARN}}"
+          adminRoleName: {{.ADMIN_ROLE_NAME}}
           fleetSecretManagerSecretNameSuffix: argocd-secret
-          domainName: DOMAIN
-          resourcePrefix: RESOURCE_PREFIX
+          domainName: {{.DOMAIN}}
+          resourcePrefix: {{.RESOURCE_PREFIX}}
           argocdCapability:
             enabled: "true"
-            idcInstanceArn: IDC_INSTANCE_ARN
-            idcRegion: IDC_REGION
-            adminGroupId: IDC_ADMIN_GROUP_ID
-          cidr:
-            vpcCidr: HUB_VPC_CIDR
-            publicSubnet1Cidr: "HUB_VPC_PREFIX.1.0/24"
-            publicSubnet2Cidr: "HUB_VPC_PREFIX.2.0/24"
-            privateSubnet1Cidr: "HUB_VPC_PREFIX.11.0/24"
-            privateSubnet2Cidr: "HUB_VPC_PREFIX.12.0/24"
+            idcInstanceArn: {{.IDC_INSTANCE_ARN}}
+            idcRegion: {{.IDC_REGION}}
+            adminGroupId: {{.IDC_ADMIN_GROUP_ID}}
+        $NETWORK_BLOCK
           gitops:
-            addonsRepoUrl: REPO_URL
-            addonsRepoRevision: REPO_REVISION
-            addonsRepoBasePath: "REPO_BASEPATH/addons/"
+            addonsRepoUrl: {{.REPO_URL}}
+            addonsRepoRevision: {{.REPO_REVISION}}
+            addonsRepoBasePath: "{{.REPO_BASEPATH}}/addons/"
             addonsRepoPath: bootstrap
-            fleetRepoUrl: REPO_URL
-            fleetRepoRevision: REPO_REVISION
-            fleetRepoBasePath: "REPO_BASEPATH/fleet/"
+            fleetRepoUrl: {{.REPO_URL}}
+            fleetRepoRevision: {{.REPO_REVISION}}
+            fleetRepoBasePath: "{{.REPO_BASEPATH}}/fleet/"
             fleetRepoPath: bootstrap
-            platformRepoUrl: REPO_URL
-            platformRepoRevision: REPO_REVISION
-            platformRepoBasePath: "REPO_BASEPATH/platform/"
+            platformRepoUrl: {{.REPO_URL}}
+            platformRepoRevision: {{.REPO_REVISION}}
+            platformRepoBasePath: "{{.REPO_BASEPATH}}/platform/"
             platformRepoPath: bootstrap
-            workloadRepoUrl: REPO_URL
-            workloadRepoRevision: REPO_REVISION
-            workloadRepoBasePath: "REPO_BASEPATH/apps/"
+            workloadRepoUrl: {{.REPO_URL}}
+            workloadRepoRevision: {{.REPO_REVISION}}
+            workloadRepoBasePath: "{{.REPO_BASEPATH}}/apps/"
             workloadRepoPath: ""
           addons:
             enable_ingress_class_alb: "true"
@@ -572,17 +586,18 @@ tasks:
         EOF
 
   hub:wait-for-eks:
-    desc: Wait for the EksclusterWithVpc instance to reach ACTIVE state and the EKS cluster to exist in AWS
+    desc: Wait for the hub cluster instance to reach ACTIVE state and the EKS cluster to exist in AWS
     vars:
       WAIT_TIMEOUT_SEC: '{{.WAIT_TIMEOUT_SEC | default "1800"}}'
       WAIT_INTERVAL_SEC: '{{.WAIT_INTERVAL_SEC | default "30"}}'
+      HUB_KIND: '{{if .HUB_VPC_ID}}ekscluster{{else}}eksclusterwithvpc{{end}}'
     cmds:
       - |
-        printf '{{.C_STEP}}▸ Waiting for EksclusterWithVpc/{{.HUB_CLUSTER_NAME}} to reach ACTIVE (max {{.WAIT_TIMEOUT_SEC}}s)...{{.C_RESET}}\n'
+        printf '{{.C_STEP}}▸ Waiting for {{.HUB_KIND}}/{{.HUB_CLUSTER_NAME}} to reach ACTIVE (max {{.WAIT_TIMEOUT_SEC}}s)...{{.C_RESET}}\n'
         END=$(( $(date +%s) + {{.WAIT_TIMEOUT_SEC}} ))
         LAST_STATE=""
         while [ "$(date +%s)" -lt "$END" ]; do
-          STATE=$(kubectl get eksclusterwithvpc {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+          STATE=$(kubectl get {{.HUB_KIND}} {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.state}' 2>/dev/null || echo "")
           if [ "$STATE" != "$LAST_STATE" ]; then
             printf '{{.C_INFO}}  state: %s{{.C_RESET}}\n' "${STATE:-<empty>}"
             LAST_STATE="$STATE"

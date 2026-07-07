@@ -185,6 +185,34 @@ printf '  adminGroupId: "%s"\n' "$IDC_GROUP"           >> "$OUTPUT_FILE"
 printf 'argocdCapability:\n'                           >> "$OUTPUT_FILE"
 printf '  name: "argocd"\n'                            >> "$OUTPUT_FILE"
 printf 'adminRoleName: "%s"\n'  "$ADMIN_ROLE_NAME"     >> "$OUTPUT_FILE"
+# Hub network: when CDK provides VPC/subnet IDs, the hub uses an existing VPC
+# (EksCluster RGD) instead of creating its own (EksClusterWithVpc).
+if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${HUB_SUBNET_IDS:-}" ]; then
+  # HUB_SUBNET_IDS comes as "['subnet-xxx','subnet-yyy','subnet-zzz']" from CDK
+  # Parse into individual subnet IDs
+  SUBNETS=$(echo "$HUB_SUBNET_IDS" | tr -d "[]'" | tr ',' '\n')
+  SUBNET1=$(echo "$SUBNETS" | sed -n '1p')
+  SUBNET2=$(echo "$SUBNETS" | sed -n '2p')
+  SUBNET3=$(echo "$SUBNETS" | sed -n '3p')
+  printf 'hub:\n'                                      >> "$OUTPUT_FILE"
+  printf '  clusterName: "%s-hub"\n' "$RESOURCE_PREFIX" >> "$OUTPUT_FILE"
+  printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"  >> "$OUTPUT_FILE"
+  printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"
+  printf '  network:\n'                                >> "$OUTPUT_FILE"
+  printf '    vpcId: "%s"\n' "$HUB_VPC_ID"             >> "$OUTPUT_FILE"
+  printf '    subnetIds:\n'                            >> "$OUTPUT_FILE"
+  printf '      - "%s"\n' "$SUBNET1"                   >> "$OUTPUT_FILE"
+  printf '      - "%s"\n' "$SUBNET2"                   >> "$OUTPUT_FILE"
+  if [ -n "$SUBNET3" ]; then
+    printf '      - "%s"\n' "$SUBNET3"                 >> "$OUTPUT_FILE"
+  fi
+else
+  printf 'hub:\n'                                      >> "$OUTPUT_FILE"
+  printf '  clusterName: "%s-hub"\n' "$RESOURCE_PREFIX" >> "$OUTPUT_FILE"
+  printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"  >> "$OUTPUT_FILE"
+  printf '  vpcCidr: "%s"\n'      "$VPC_CIDR"          >> "$OUTPUT_FILE"
+  printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"
+fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 
