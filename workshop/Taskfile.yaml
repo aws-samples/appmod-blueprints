@@ -20,6 +20,20 @@ vars:
     sh: yq '.hub.kubernetesVersion // "1.35"' {{.CONFIG_FILE}}
   DOMAIN:
     sh: yq '.domain // ""' {{.CONFIG_FILE}}
+  # Platform consumption (OAP-style). If platform.ref is unset, the platform IS
+  # this repo (workshop/ is a subfolder) — used in place, no clone. If set, the
+  # platform is cloned at that ref into .platform/ and used as a pinned artifact.
+  PLATFORM_REF:
+    sh: yq '.platform.ref // ""' {{.CONFIG_FILE}}
+  PLATFORM_REPO:
+    sh: yq '.platform.repo // "https://github.com/aws-samples/appmod-blueprints.git"' {{.CONFIG_FILE}}
+  PLATFORM_DIR:
+    sh: |
+      if [ -z "$(yq '.platform.ref // ""' {{.ROOT_DIR}}/config.local.yaml)" ]; then
+        echo "{{.ROOT_DIR}}"
+      else
+        echo "{{.ROOT_DIR}}/.platform"
+      fi
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // "peeks"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
@@ -70,10 +84,12 @@ tasks:
       # {{.PROVIDER}}:install (which needs fleet-config during phase2).
       - task: gitlab:init-ec2
       - 'printf "{{.C_INFO}}  [%ds] gitlab:init-ec2 done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Platform install (hub EKS cluster + addons only — spoke enablement is
-      # consumer-owned, done below).
-      - task: ":{{.PROVIDER}}:install"
-      - 'printf "{{.C_INFO}}  [%ds] {{.PROVIDER}}:install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Platform install as a black box (OAP model): prepare the platform artifact
+      # (in-place parent repo, or a pinned clone into .platform), then run its own
+      # `task install`. The platform provisions the hub + addons only.
+      - task: platform:prepare
+      - 'cd {{.PLATFORM_DIR}} && task install'
+      - 'printf "{{.C_INFO}}  [%ds] platform install done ({{.PLATFORM_DIR}}){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - printf '{{.C_OK}}✓ Platform hub install complete.{{.C_RESET}}\n'
       # Wire the GitLab fleet-config overlay to the hub, then declare spokes into it.
       # The platform's guarded ApplicationSets reconcile these into live clusters.
@@ -102,6 +118,30 @@ tasks:
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
       - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+
+  # ============================================================
+  # PLATFORM ARTIFACT (OAP-style consumption)
+  # ============================================================
+  platform:prepare:
+    desc: "Prepare the platform artifact: in-place (platform.ref unset) or clone a pinned ref into .platform"
+    cmds:
+      - |
+        if [ -z "{{.PLATFORM_REF}}" ]; then
+          printf '{{.C_INFO}}  platform.ref unset — using in-place platform at {{.ROOT_DIR}}{{.C_RESET}}\n'
+          exit 0
+        fi
+        DIR="{{.ROOT_DIR}}/.platform"
+        if [ -d "$DIR/.git" ]; then
+          printf '{{.C_STEP}}▸ Updating pinned platform ({{.PLATFORM_REF}}) in .platform...{{.C_RESET}}\n'
+          git -C "$DIR" fetch origin --quiet && git -C "$DIR" checkout "{{.PLATFORM_REF}}" --quiet && git -C "$DIR" pull origin "{{.PLATFORM_REF}}" --quiet 2>/dev/null || true
+        else
+          printf '{{.C_STEP}}▸ Cloning platform {{.PLATFORM_REPO}}@{{.PLATFORM_REF}} into .platform...{{.C_RESET}}\n'
+          git clone --branch "{{.PLATFORM_REF}}" --single-branch "{{.PLATFORM_REPO}}" "$DIR"
+        fi
+        # The workshop config.local.yaml is a superset of the platform contract; the
+        # platform reads the fields it needs and ignores the workshop-only ones.
+        cp "{{.ROOT_DIR}}/config.local.yaml" "$DIR/config.local.yaml"
+        printf '{{.C_OK}}✓ Platform artifact ready at %s{{.C_RESET}}\n' "$DIR"
 
   # ============================================================
   # FINAL SPOKE GATE (tolerant, non-fatal)
