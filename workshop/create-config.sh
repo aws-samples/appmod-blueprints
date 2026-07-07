@@ -14,8 +14,9 @@
 #
 # CloudFront exposure mode: the workshop terminates TLS at CloudFront and the
 # platform ALB serves plain HTTP, so we set `insecure: true` (the platform now
-# derives exposure_mode from `insecure`, not from an empty domain). `domain` is
-# left empty because the workshop has no stable platform hostname at config time.
+# derives exposure_mode from `insecure`, not from an empty domain).
+# When PLATFORM_DOMAIN is set (CDK pre-creates CloudFront+ALB), it is used as
+# the ingress domain. Otherwise domain is left empty for mid-install creation.
 #
 # Usage:
 #   ./create-config.sh                 # idempotent: skip if valid config exists
@@ -158,15 +159,17 @@ printf 'aws:\n'                                        >> "$OUTPUT_FILE"
 printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
-printf 'domain: ""\n'                                  >> "$OUTPUT_FILE"
+# If CDK provided a pre-created Platform CloudFront domain, use it as the
+# platform domain. Otherwise leave empty (mid-install CF creation or direct ALB).
+DOMAIN_VALUE="${PLATFORM_DOMAIN:-}"
+printf 'domain: "%s"\n' "$DOMAIN_VALUE"                >> "$OUTPUT_FILE"
 printf 'insecure: true\n'                              >> "$OUTPUT_FILE"
 printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
 printf 'ingressName: ""\n'                             >> "$OUTPUT_FILE"
 printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
 
-# CloudFront domain is NOT written here — it is set by the hub-distribution task
-# after the platform ALB CloudFront is created (pointing to the EKS ALB, not EC2/GitLab).
-# The GitLab/IDE CloudFront domain is available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,
+# GitLab/IDE CloudFront domain (separate from the platform CF).
+# Available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,
 # or from the private/gitlab-cloudfront-domain file written by bootstrap.sh.
 GITLAB_CF_DOMAIN="${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}"
 [ -z "$GITLAB_CF_DOMAIN" ] && [ -f "${REPO_ROOT}/private/gitlab-cloudfront-domain" ] && \
