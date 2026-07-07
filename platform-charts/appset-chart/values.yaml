@@ -3,7 +3,10 @@ valueFiles:
 
 syncPolicy:
   automated:
-    selfHeal: false
+    # selfHeal:true so addons auto-converge to Git without a manual sync (e.g. when
+    # a spoke first becomes reachable). Safe with prune:false: adds/updates to match
+    # Git but never deletes. Per-addon charts may override via chartConfig.syncPolicy.
+    selfHeal: true
     allowEmpty: true
     prune: false
   retry:
@@ -28,3 +31,8 @@ repoURLGit: "{{.metadata.annotations.addonsRepoURL}}"
 repoURLGitRevision: "{{.metadata.annotations.addonsRepoRevision}}"
 repoURLGitBasePath: "{{.metadata.annotations.addonsRepoBasepath}}"
 overlayBasePath: ""
+
+# Overlay multi-repo (optional, injected by bootstrap/addons.yaml valuesObject)
+overlayRepoURLGit: ""
+overlayRepoURLGitRevision: "main"
+overlayRepoURLGitBasePath: ""

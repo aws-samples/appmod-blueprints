@@ -47,6 +47,13 @@ SCIM_DATA_FILE = "/tmp/scim-data.json"
 ASSUME_ROLE_CREDENTIALS_FILE = '/tmp/keycloak-idc-integration-credentials.json'
 
 
+def _write_credentials_file(content: str):
+    """Write credentials to file with restrictive permissions (owner-only read/write)."""
+    fd = os.open(ASSUME_ROLE_CREDENTIALS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
+
+
 def _install_system_deps():
     print("Installing Chromium system dependencies via yum...", file=sys.stderr)
     subprocess.run(["sudo", "yum", "install", "-y"] + _CHROMIUM_YUM_DEPS, capture_output=True)
@@ -79,7 +86,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def _refresh_credentials_via_lambda():
-    """Invoke the KeycloakIDCIntegration Lambda to refresh SSM credentials."""
+    """Invoke the KeycloakIDCIntegration Lambda to refresh SSM credentials.
+
+    IMDS fallback is intentionally NOT used here — using EC2 instance profile
+    credentials for console federation triggers Epoxy's
+    programmatic-credentials-for-console-access detector on personal accounts.
+    """
     print("Refreshing IDC credentials via Lambda...", file=sys.stderr)
     client = boto3.client("lambda")
     ssm = boto3.client("ssm")
@@ -88,8 +100,13 @@ def _refresh_credentials_via_lambda():
     prefix = os.environ.get("RESOURCE_PREFIX", "peeks")
     funcs = client.list_functions()["Functions"]
     func_name = next((f["FunctionName"] for f in funcs if "KeycloakIDCIntegration" in f["FunctionName"]), None)
+
     if not func_name:
-        raise RuntimeError("KeycloakIDCIntegration Lambda function not found")
+        raise RuntimeError(
+            "KeycloakIDCIntegration Lambda function not found. "
+            "Ensure the CDK stack is deployed with the credential-refresh Lambda. "
+            "IMDS fallback is disabled to avoid Epoxy detection."
+        )
 
     # Discover the RoleArn from the SSM parameter description
     param_name = f"/{prefix}/keycloak-idc-integration-credentials"
@@ -123,8 +140,7 @@ def _refresh_credentials_via_lambda():
 
     # Re-read the refreshed credentials from SSM
     fresh = ssm.get_parameter(Name=param_name, WithDecryption=True)["Parameter"]["Value"]
-    with open(ASSUME_ROLE_CREDENTIALS_FILE, "w") as f:
-        f.write(fresh)
+    _write_credentials_file(fresh)
     print("Credentials refreshed via Lambda", file=sys.stderr)
 
 
@@ -234,6 +250,11 @@ async def dismiss_overlays(page):
             'button:has-text("Dismiss")',
             'button:has-text("Try now")',  # "Account color" promo
             'button:has-text("Not now")',
+            '[class*="hotspot"] button:has-text("Next")',  # Service menu tooltip
+            '[class*="tutorial"] button:has-text("Next")',  # Tutorial tooltip
+            '[class*="popover"] button:has-text("Next")',  # Popover tooltip
+            '[role="dialog"] button:has-text("Next")',  # Dialog tooltip
+            '[class*="awsui-popover"] button:has-text("Next")',  # CloudScape popover
         ]:
             try:
                 btn = await page.wait_for_selector(sel, state="visible", timeout=1500)
@@ -669,12 +690,34 @@ async def configure_identity_center(
 
             # --- Step 9: Enable automatic provisioning ---
             print("Enabling automatic provisioning...", file=sys.stderr)
-            await page.goto(settings_url, wait_until="domcontentloaded")
-            await wait_for_stable(page)
+            # Dismiss any overlays/tooltips aggressively
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(500)
+            await page.evaluate("document.querySelectorAll('[class*=\"popover\"], [class*=\"hotspot\"], [class*=\"tutorial-overlay\"]').forEach(e => e.remove())")
             await dismiss_overlays(page)
-            # Click the Provisioning tab if it exists
-            for tab_sel in ['[data-testid="provisioning"]', 'button:has-text("Provisioning")',
-                            'a:has-text("Provisioning")', '[role="tab"]:has-text("Provisioning")']:
+            # Click Settings in left nav (use CSS selector for the nav link)
+            settings_clicked = False
+            for sel in ['nav a:text-is("Settings")', 'aside a:text-is("Settings")',
+                        '[class*="navigation"] a:text-is("Settings")', 'a:text-is("Settings")']:
+                try:
+                    link = await page.wait_for_selector(sel, state="visible", timeout=3000)
+                    if link:
+                        await link.click()
+                        await wait_for_stable(page)
+                        settings_clicked = True
+                        break
+                except Exception:
+                    continue
+            if not settings_clicked:
+                # Try direct URL navigation
+                await page.goto(f"{sso_url}#/instances/{instance_id}/settings", wait_until="domcontentloaded")
+                await wait_for_stable(page)
+            await dismiss_overlays(page)
+            await page.wait_for_timeout(2000)
+            # Click Provisioning tab/link
+            for tab_sel in ['a:text-is("Provisioning")', 'button:text-is("Provisioning")',
+                            '[role="tab"]:has-text("Provisioning")', 'a:has-text("Provisioning")',
+                            'span:text-is("Provisioning")']:
                 try:
                     tab = await page.wait_for_selector(tab_sel, state="visible", timeout=3000)
                     if tab:
@@ -683,8 +726,11 @@ async def configure_identity_center(
                         break
                 except Exception:
                     continue
+            await page.wait_for_timeout(2000)
+            await dismiss_overlays(page)
 
             # Click Enable button
+            await screenshot(page, "/tmp/step9_before_enable.png", debug)
             await click_first_visible(page, [
                 'button:has-text("Enable")',
                 'button:has-text("Enable automatic provisioning")',

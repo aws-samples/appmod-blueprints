@@ -13,3 +13,8 @@ enabledAddons:
   kube_state_metrics: true
   prometheus_node_exporter: true
   aws_for_fluentbit: true
+  kubevela: true
+  argo_rollouts: true
+  # Platform
+  crossplane: true
+  kro_manifests: true

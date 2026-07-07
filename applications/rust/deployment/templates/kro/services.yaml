@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: rust-microservice
+  name: rust-microservice-<environment>
 spec:
   selector:
-    app: rust-microservice
+    app: rust-microservice-<environment>
   ports:
     - port: 8080
       targetPort: 8080
@@ -12,10 +12,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: rust-microservice-preview
+  name: rust-microservice-<environment>-preview
 spec:
   selector:
-    app: rust-microservice
+    app: rust-microservice-<environment>
   ports:
     - port: 8080
       targetPort: 8080

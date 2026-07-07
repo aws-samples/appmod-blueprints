@@ -10,17 +10,11 @@ spec:
   port: 8080
   targetPort: 8080
   serviceAccount: nextjs-service-account
-  clusterName: peeks-spoke-dev
-  accountId: "785349965618"
+  clusterName: "${CLUSTER_NAME}"
+  accountId: "${AWS_ACCOUNT_ID}"
   env:
     - name: API_BASE_URL
       value: "http://rust-microservice.team-rust.svc.cluster.local:8080"
-  resources:
-    requests:
-      cpu: "500m"
-      memory: "256Mi"
-    limits:
-      memory: "512Mi"
   components:
     dynamodb:
       enabled: false

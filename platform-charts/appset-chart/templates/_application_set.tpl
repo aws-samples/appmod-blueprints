@@ -54,6 +54,7 @@ Layering order:
   2. Per-addon custom valueFiles (from chartConfig.valueFiles)
   3. Environment overlay values (from overlayBasePath/environments/<env>/<addon>/values.yaml)
   4. Cluster overlay values (from overlayBasePath/clusters/<cluster>/<addon>/values.yaml)
+  5. External overlay repo values (from overlayRepoURLGitBasePath, if configured)
 All paths use ignoreMissingValueFiles: true so missing files are silently skipped.
 */}}
 {{- define "application-sets.valueFiles" -}}
@@ -65,22 +66,28 @@ All paths use ignoreMissingValueFiles: true so missing files are silently skippe
 {{/* 1. Default addon config values */}}
 {{- with .valueFiles }}
 {{- range . }}
-- $values/{{ $values.repoURLGitBasePath }}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/{{ if $chartConfig.valuesFileName }}{{ $chartConfig.valuesFileName }}{{ else }}{{ . }}{{ end }}
+- $defaults/{{ $values.repoURLGitBasePath }}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/{{ if $chartConfig.valuesFileName }}{{ $chartConfig.valuesFileName }}{{ else }}{{ . }}{{ end }}
 {{- if $values.useValuesFilePrefix }}
-- $values/{{ $values.repoURLGitBasePath }}/{{ $values.valuesFilePrefix }}{{ . }}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/{{ if $chartConfig.valuesFileName }}{{ $chartConfig.valuesFileName }}{{ else }}values.yaml{{ end }}
+- $defaults/{{ $values.repoURLGitBasePath }}/{{ $values.valuesFilePrefix }}{{ . }}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/{{ if $chartConfig.valuesFileName }}{{ $chartConfig.valuesFileName }}{{ else }}values.yaml{{ end }}
 {{- end }}
 {{- end }}
 {{- end }}
 {{/* 2. Per-addon custom valueFiles */}}
 {{- with $chartConfig.valueFiles }}
 {{- range . }}
-- $values/{{ $values.repoURLGitBasePath }}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/{{ if $chartConfig.valuesFileName }}{{ $chartConfig.valuesFileName }}{{ else }}{{ . }}{{ end }}
+- $defaults/{{ $values.repoURLGitBasePath }}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/{{ if $chartConfig.valuesFileName }}{{ $chartConfig.valuesFileName }}{{ else }}{{ . }}{{ end }}
 {{- end }}
 {{- end }}
-{{/* 3. Environment overlay values */}}
+{{/* 3. Environment overlay values (same repo) */}}
 {{- if $values.overlayBasePath }}
-- $values/{{ $values.overlayBasePath }}/environments/{{`{{.metadata.labels.environment}}`}}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/values.yaml
-{{/* 4. Cluster overlay values */}}
-- $values/{{ $values.overlayBasePath }}/clusters/{{`{{.nameNormalized}}`}}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/values.yaml
+- $defaults/{{ $values.overlayBasePath }}/environments/{{`{{.metadata.labels.environment}}`}}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/values.yaml
+{{/* 4. Cluster overlay values (same repo) */}}
+- $defaults/{{ $values.overlayBasePath }}/clusters/{{`{{.nameNormalized}}`}}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/values.yaml
+{{- end }}
+{{/* 5. External overlay repo values */}}
+{{- if $values.overlayRepoURLGit }}
+- $overlay/{{ $values.overlayRepoURLGitBasePath }}configs/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/values.yaml
+- $overlay/{{ $values.overlayRepoURLGitBasePath }}overlays/environments/{{`{{.metadata.labels.environment}}`}}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/values.yaml
+- $overlay/{{ $values.overlayRepoURLGitBasePath }}overlays/clusters/{{`{{.nameNormalized}}`}}/{{ $nameNormalize }}{{ if $chartType }}/{{ $chartType }}{{ end }}/values.yaml
 {{- end }}
 {{- end }}

@@ -1,6 +1,34 @@
 # Security and policy addons
 # Wave ordering: 3 (kyverno) → 4 (policies/reporter) → 6 (keycloak, needs Ingress/LBC)
 
+# Keep ArgoCD's GitLab repository / repo-creds secrets in sync with the canonical
+# peeks-hub/secrets.git_token PAT (fixes stale-PAT #7). Hub-only (ArgoCD runs on
+# the control-plane) and sourced from the GitHub defaults path so it does not need
+# the very GitLab credentials it provisions.
+argocd-gitlab-repo-creds:
+  namespace: argocd
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/argocd-gitlab-repo-creds'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: environment
+        operator: In
+        values: ['control-plane']
+  valuesObject:
+    namespace: argocd
+    aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
+    gitlab_domain_name: '{{ or (index .metadata.annotations "gitlab_domain_name") .metadata.annotations.ingress_domain_name }}'
+    git_username: '{{ default "user1" (index .metadata.annotations "git_username") }}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+        - /metadata/resourceVersion
+
 keycloak:
   namespace: keycloak
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/keycloak'
@@ -14,6 +42,8 @@ keycloak:
   valuesObject:
     global:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      gitlab_domain_name: '{{ or (index .metadata.annotations "gitlab_domain_name") .metadata.annotations.ingress_domain_name }}'
+      exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
@@ -52,9 +82,15 @@ kyverno:
   chartName: kyverno
   releaseName: kyverno
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '3'
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
   syncPolicy:
     automated:
       selfHeal: false
@@ -82,7 +118,7 @@ kyverno-policies:
   chartName: kyverno-policies
   releaseName: kyverno-policies
   chartRepository: https://kyverno.github.io/kyverno
-  defaultVersion: '3.3.6'
+  defaultVersion: '3.8.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '4'
   selector:
@@ -101,7 +137,7 @@ kyverno-policy-reporter:
   chartName: policy-reporter
   releaseName: kyverno-policy-reporter
   chartRepository: https://kyverno.github.io/policy-reporter
-  defaultVersion: '3.1.0'
+  defaultVersion: '3.7.4'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '4'
   selector:

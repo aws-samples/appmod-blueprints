@@ -1,0 +1,116 @@
+{{- /*
+  EKS Capabilities in-cluster RBAC for kro and ACK.
+
+  The AmazonEKSKROPolicy/AmazonEKSACKPolicy access-entry policies only grant the
+  capability permission to manage RGDs/instances and ACK CRs — NOT the underlying
+  Kubernetes resources an AppmodService renders (ServiceAccounts, Services,
+  Ingresses, Argo Rollouts, ExternalSecrets, etc.).
+
+  On the hub cluster the capability role has ClusterAdminPolicy so this is
+  redundant. On spoke clusters the capability uses a least-privilege role and
+  authenticates as the assumed-role session:
+    arn:aws:sts::<ACCT>:assumed-role/<cluster>-kro-capability-role/KRO
+
+  This chart binds BOTH the static service principal (capabilities.eks.amazonaws.com)
+  AND the per-cluster assumed-role identity so that kro/ACK can manage resources
+  in any namespace on the spoke.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eks-capabilities-kro
+rules:
+# Core Kubernetes resources
+- apiGroups: [""]
+  resources: ["services", "configmaps", "secrets", "serviceaccounts", "events", "pods", "persistentvolumes", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Apps resources (Deployments/ReplicaSets rendered by AppmodService/CICDPipeline)
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Batch resources
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# RBAC resources
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+  # escalate + bind let kro/ack create Roles/RoleBindings that grant permissions for
+  # the resources an AppmodService/CICDPipeline renders (argoproj.io, etc.). Without
+  # them Kubernetes' privilege-escalation prevention blocks the capability from
+  # creating those Roles and the CICDPipeline goes ERROR.
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "escalate", "bind"]
+# Networking resources
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Policy resources
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Argo Workflows + Rollouts
+- apiGroups: ["argoproj.io"]
+  resources: ["workflows", "workflowtemplates", "workflowtaskresults", "eventsources", "sensors", "rollouts", "analysistemplates", "analysisruns", "clusteranalysistemplates", "experiments"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# External Secrets
+- apiGroups: ["external-secrets.io"]
+  resources: ["externalsecrets", "clustersecretstores"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK EC2
+- apiGroups: ["ec2.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK EKS
+- apiGroups: ["eks.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK IAM
+- apiGroups: ["iam.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK ECR
+- apiGroups: ["ecr.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Kro custom resources
+- apiGroups: ["kro.run"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK Secrets Manager
+- apiGroups: ["secretsmanager.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK DynamoDB
+- apiGroups: ["dynamodb.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK S3
+- apiGroups: ["s3.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK Services (IAMRoleSelector and other cross-service CRDs)
+- apiGroups: ["services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eks-capabilities-kro
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: eks-capabilities-kro
+subjects:
+# Static service principal (works on hub where capability has ClusterAdmin)
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: capabilities.eks.amazonaws.com
+# Spoke kro capability assumed-role session identity
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: "arn:aws:sts::{{ .Values.global.accountId }}:assumed-role/{{ .Values.global.clusterName }}-kro-capability-role/KRO"
+# Spoke ack capability assumed-role session identity
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: "arn:aws:sts::{{ .Values.global.accountId }}:assumed-role/{{ .Values.global.clusterName }}-ack-capability-role/ACK"

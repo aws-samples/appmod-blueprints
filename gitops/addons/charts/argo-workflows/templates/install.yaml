@@ -3050,15 +3050,15 @@ metadata:
 data:
   config: |-
     sso:
-      # insecureSkipVerify: true
-      issuer: https://{{ .Values.ingress_domain_name }}/keycloak/realms/platform
+      insecureSkipVerify: true
+      issuer: https://{{ .Values.ingress_domain_name | default .Values.gitlab_domain_name }}/keycloak/realms/platform
       clientId:
         name: keycloak-oidc
         key: client-id
       clientSecret:
         name: keycloak-oidc
         key: secret-key
-      redirectUrl: https://{{ .Values.ingress_domain_name }}/argo-workflows/oauth2/callback
+      redirectUrl: https://{{ .Values.ingress_domain_name | default .Values.gitlab_domain_name }}/argo-workflows/oauth2/callback
       rbac:
         enabled: true
       scopes:
@@ -3109,7 +3109,9 @@ spec:
         - server
         - --configmap=workflow-controller-configmap
         - --auth-mode=client
+        {{- if ne (default "domain" .Values.exposure_mode) "cloudfront" }}
         - --auth-mode=sso
+        {{- end }}
         - "--base-href=/argo-workflows/"
         - "--secure=false"
         - "--loglevel"

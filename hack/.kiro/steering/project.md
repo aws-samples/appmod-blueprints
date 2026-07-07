@@ -1,45 +1,94 @@
-# Workshop IDE Environment
+# Platform Engineering on EKS — feature/cloudfront-exposure
 
 ## Context
 
-This is the Kiro agent running on the workshop IDE instance (Code Editor on EC2). The user is a workshop participant or the workshop developer debugging/testing the platform.
+This is the `appmod-blueprints` repository on branch `feature/cloudfront-exposure`. It implements a GitOps-based platform engineering stack on EKS using Kind+Crossplane bootstrap, ArgoCD ApplicationSets, and EKS Capabilities.
 
 ## Environment
 
 - User: `ec2-user`
-- Workshop repo: `/home/ec2-user/environment/platform-on-eks-workshop`
-- Clusters: `peeks-hub`, `peeks-spoke-dev`, `peeks-spoke-prod` (context aliases: `hub`, `dev`, `prod`)
-- EKS Auto Mode — no Karpenter pods in clusters
-- EKS Capabilities — ArgoCD, Kro, ACK run as managed services, not in-cluster
+- Repo: `/home/ec2-user/environment/appmod-blueprints`
+- Branch: `feature/cloudfront-exposure`
+- Config: `config.local.yaml` (clusterProvider: kind-crossplane, exposure: cloudfront)
+- Hub cluster: `peeks-hub`
+- Spoke clusters: `spoke-dev`, `spoke-prod` (provisioned by Crossplane on hub)
+- CloudFront domain: stored in `private/cloudfront-domain`
+
+## Key Architecture Decisions
+
+- **EKS Auto Mode** — no Karpenter, no OSS LBC; built-in ALB via IngressClassParams
+- **EKS Capabilities** — ArgoCD, KRO, ACK run as managed services (not pods)
+- **Exposure mode: cloudfront** — single ALB behind CloudFront, no custom domain needed
+- **ALB URL rewrite** — uses `alb.ingress.kubernetes.io/transforms.<svc>` annotation (LBC v2.14.0+)
+- **IDC ↔ Keycloak SCIM** — Keycloak is external IdP for IDC; users synced via SCIM
+
+## Bootstrap Flow (task install)
+
+```
+Kind cluster → Crossplane provisions VPC+EKS → ArgoCD Capability created (+ KRO + ACK)
+→ ESO installed on hub → ClusterSecretStore → Seed secret → Root AppSet applied
+→ Hub self-manages → Addons deploy → Observability seeded → IDC configured
+```
+
+## Cluster Provisioning (two paths)
+
+| Path | Mechanism | Use Case |
+|------|-----------|----------|
+| `abstractions/crossplane/platform-cluster/` | Crossplane XRD + Composition | Platform team creates spokes (values in `fleet/spoke-values/tenants/`) |
+| `abstractions/kro/kro-clusters/` | KRO cluster provisioning chart | Platform team creates spokes via KRO (values in `fleet/spoke-values/tenants/*/kro-clusters/`) |
+| `addons/charts/kro/resource-groups/manifests/eks/` | KRO ResourceGraphDefinition + ACK | Self-service via Backstage templates |
+
+Both coexist. Crossplane path creates `PlatformCluster` claims. KRO path creates `EksCluster` custom resources reconciled by ACK.
 
 ## Repository Layout
 
 | Path | Purpose |
 |------|---------|
-| `platform/infra/terraform/cluster/` | EKS cluster Terraform (hub + spokes) |
-| `platform/infra/terraform/common/` | Platform addons Terraform |
-| `platform/infra/terraform/hub-config.yaml` | Cluster addon enablement (single source of truth) |
-| `platform/infra/terraform/scripts/` | Init, ArgoCD utils, IDC config |
-| `gitops/addons/` | ArgoCD addon definitions, charts, environments |
-| `gitops/apps/` | Application deployment manifests |
-| `applications/` | Sample apps (Rust, Java, Go, .NET, Next.js) |
-| `backstage/` | Backstage IDP |
+| `config.local.yaml` | Local deployment config (provider, IDC, exposure mode) |
+| `Taskfile.yaml` | Root orchestrator — delegates to cluster provider |
+| `cluster-providers/kind-crossplane/` | Bootstrap via Kind + Crossplane |
+| `cluster-providers/terraform/` | Bootstrap via Terraform (alternative) |
+| `gitops/bootstrap/` | Root AppSet, cluster-addons, fleet-secrets |
+| `gitops/addons/registry/` | Addon definitions by domain (core, platform, security...) |
+| `gitops/addons/configs/` | Per-addon Helm values |
+| `gitops/addons/charts/` | Custom wrapper charts (backstage, keycloak, argo-workflows...) |
+| `gitops/overlays/environments/` | Per-environment addon enablement + overrides |
+| `gitops/overlays/clusters/` | Per-cluster overrides |
+| `gitops/fleet/members/` | Fleet member registration |
+| `gitops/fleet/spoke-values/` | Cluster provisioning values (Crossplane path) |
+| `gitops/abstractions/crossplane/` | Crossplane compositions (platform-cluster, aws-resources) |
+| `platform/backstage/templates/` | Backstage software templates |
+| `platform/infra/terraform/scripts/` | IDC configuration, ArgoCD token automation |
+| `scripts/` | Utility scripts (keycloak-idc-credentials.sh) |
 
 ## Key Rules
 
-- **Use deploy.sh/destroy.sh** — never raw `terraform apply` or `terraform destroy`
-- **GitOps first** — modify Git files and let ArgoCD sync, don't `kubectl apply` manually
-- **Dynamic values only in addons.yaml** — never put template expressions in values.yaml
-- **Check env vars with echo** — `echo $AWS_REGION` etc., don't dump full environment
-- **ArgoCD token refresh** — if `argocd` CLI auth fails, run `argocd-refresh-token` then `source ~/.bashrc.d/platform.sh`
+- **Use `task install`** — never raw terraform or manual kubectl for bootstrap
+- **GitOps first** — modify Git, let ArgoCD sync; don't kubectl apply manually
+- **CloudFront exposure** — all apps share one ALB+CloudFront; path-based routing with URL rewrite
+- **No domain required** — `domain: ""` in config; CloudFront provides HTTPS
+- **Check env vars with echo** — don't dump full environment
+- **ArgoCD CLI auth** — run `argocd-refresh-token` then `source ~/.bashrc.d/platform.sh`
+
+## App URLs (cloudfront mode)
+
+| App | Path | Notes |
+|-----|------|-------|
+| Backstage | `/backstage` | Uses transforms annotation for rewrite |
+| Keycloak | `/keycloak` | Serves natively at this path |
+| Argo Workflows | `/argo-workflows` | Uses transforms annotation for rewrite |
+
+## Authentication
+
+- **ArgoCD Capability** — users authenticate via IDC SSO (Keycloak is external IdP for IDC)
+- **Platform apps** (Backstage, Argo Workflows) — authenticate via Keycloak OIDC
+- **Keycloak users** — synced to IDC via SCIM (configure_identity_center.py)
+- **Passwords** — stored in Secrets Manager (`peeks-hub/keycloak` → `user_password`)
 
 ## Credentials
 
-Workshop passwords are in `~/.bashrc.d/platform.sh` (temporary, workshop-scoped — not sensitive beyond the session).
-
-| Service | Username | Password |
-|---------|----------|----------|
-| Backstage | `user1` | `$USER1_PASSWORD` |
-| GitLab | `user1` | `$USER1_PASSWORD` |
-| ArgoCD | `admin` | `$IDE_PASSWORD` |
-| Grafana | `user1` | `$USER1_PASSWORD` |
+| Service | Username | Password Source |
+|---------|----------|----------------|
+| Keycloak admin | `admin` | `peeks-hub/keycloak` → `keycloak_admin_password` |
+| Platform user | `user1` | `peeks-hub/keycloak` → `user_password` |
+| ArgoCD | via IDC SSO | user1 logs in through IDC (federated to Keycloak) |

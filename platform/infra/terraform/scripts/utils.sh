@@ -410,8 +410,7 @@ gitlab_repository_setup(){
       if ! git push gitlab HEAD:main --force-with-lease; then
         # If force-with-lease still fails, try regular push
         if ! git push gitlab HEAD:main; then
-          log_error "Failed to push repository to GitLab"
-          exit 1
+          log_warning "Failed to push repository to GitLab (may be handled by 0-init.sh in Workshop Studio)"
         fi
       fi
     fi
@@ -567,6 +566,110 @@ EOF
   done < <(yq '.clusters[] | select(.environment != "control-plane") | .name' "$CONFIG_FILE")
 
   git add .
+
+  cd -
+}
+
+generate_backstage_spoke_values() {
+  print_header "Generating Backstage spoke cluster values"
+
+  cd "$GIT_ROOT_PATH"
+
+  local hub_cluster="${RESOURCE_PREFIX}-hub"
+  local values_dir="gitops/addons/clusters/${hub_cluster}/addons/backstage"
+  mkdir -p "$values_dir"
+
+  local values_file="${values_dir}/values.yaml"
+  echo "spoke_clusters:" > "$values_file"
+
+  while IFS= read -r cluster_name; do
+    print_step "Getting token for spoke cluster: $cluster_name"
+
+    # Switch to spoke cluster
+    kubectl config use-context "$cluster_name" >/dev/null 2>&1 || {
+      configure_kubectl_with_fallback "$cluster_name"
+    }
+
+    # Ensure backstage namespace and service account exist
+    kubectl create namespace backstage --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+    kubectl create serviceaccount backstage -n backstage --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+
+    # Create a long-lived token secret for the backstage SA
+    kubectl apply -f - >/dev/null 2>&1 <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backstage-token
+  namespace: backstage
+  annotations:
+    kubernetes.io/service-account.name: backstage
+type: kubernetes.io/service-account-token
+EOF
+
+    # Grant read access to the backstage SA for Kubernetes plugin
+    kubectl apply -f - >/dev/null 2>&1 <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-read-all
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: backstage
+    namespace: backstage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-kro-reader
+rules:
+  - apiGroups: ["kro.run"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-kro-reader-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: backstage-kro-reader
+subjects:
+  - kind: ServiceAccount
+    name: backstage
+    namespace: backstage
+EOF
+
+    # Wait for token to be populated
+    sleep 5
+    local token
+    token=$(kubectl get secret backstage-token -n backstage -o jsonpath='{.data.token}' 2>/dev/null | base64 -d)
+
+    # Get cluster API server URL
+    local server_url
+    server_url=$(aws eks describe-cluster --name "$cluster_name" --region "$AWS_REGION" --query 'cluster.endpoint' --output text)
+
+    if [ -n "$token" ] && [ -n "$server_url" ]; then
+      cat >> "$values_file" <<EOF
+  - name: ${cluster_name}
+    url: "${server_url}"
+    token: "${token}"
+EOF
+      print_success "Added $cluster_name to backstage spoke values"
+    else
+      log_warning "Could not get token or URL for $cluster_name"
+    fi
+  done < <(yq '.clusters[] | select(.environment != "control-plane") | .name' "$CONFIG_FILE")
+
+  # Switch back to hub
+  kubectl config use-context "${hub_cluster}" >/dev/null 2>&1
+
+  git add "$values_file"
+  print_success "Generated backstage spoke cluster values at $values_file"
 
   cd -
 }

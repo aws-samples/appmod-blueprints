@@ -29,7 +29,7 @@ clusters:
       enable_backstage: true
       enable_kargo: true
       enable_keycloak: true
-      enable_gitlab: true
+      enable_gitlab: false  # GitLab runs on EC2 (docker-compose), not EKS
       enable_cert_manager: true
       enable_external_secrets: true
       enable_ack_iam: false # EKS Managed capability
@@ -108,7 +108,8 @@ clusters:
       enable_prometheus_scraper: true
       enable_cw_prometheus: false
       enable_mutli_acct: false
-      enable_ingress_class_alb: false
+      enable_ingress_class_alb: true
+      enable_aws_load_balancer_controller: true # OSS LBC: platform IngressClass must be ingress.k8s.aws/alb (not Auto Mode)
       enable_ingress_nginx: true
       enable_gitlab: false
       enable_keycloak: false
@@ -157,7 +158,8 @@ clusters:
       enable_prometheus_scraper: true
       enable_cw_prometheus: false
       enable_mutli_acct: false
-      enable_ingress_class_alb: false
+      enable_ingress_class_alb: true
+      enable_aws_load_balancer_controller: true # OSS LBC: platform IngressClass must be ingress.k8s.aws/alb (not Auto Mode)
       enable_ingress_nginx: true
       enable_gitlab: false
       enable_keycloak: false

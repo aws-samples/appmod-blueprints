@@ -41,8 +41,12 @@ spec:
       traits:
         - type: path-based-ingress
           properties:
-            domain: "*.elb.us-west-2.amazonaws.com"
+            domain: ""
             rewritePath: true
+            # The Rust app only serves 2xx under /collection/*, so the ALB target
+            # health check must target a served path (default "/" returns 404 →
+            # unhealthy targets on the OSS LBC). Uses the healthcheckPath trait param.
+            healthcheckPath: /collection/FRONT_PAGE
             http:
               /rust-app: 8080
 
@@ -51,7 +55,7 @@ spec:
       properties:
         componentNamesForAccess:
           - rust-dynamodb-<environment>
-        clusterName: peeks-spoke-dev
+        clusterName: <cluster_name>
         clusterRegion: us-west-2
 
     - name: rust-dynamodb-<environment>
