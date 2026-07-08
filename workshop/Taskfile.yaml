@@ -93,13 +93,9 @@ tasks:
       # (in-place parent repo, or a pinned clone into .platform), then run its own
       # `task install`. The platform provisions the hub + addons only.
       - task: platform:prepare
-      # Run platform install and platform CloudFront creation in parallel:
-      # - platform install provisions the hub EKS cluster (~20min) and addons
-      # - hub:create-platform-cf creates ALB + CloudFront VPC Origin (~5min, done well before hub:seed)
-      # Both write their outputs before hub:seed runs (platform install calls hub:seed internally).
-      - deps:
-          - task: platform:run-install
-          - task: hub:create-platform-cf
+      # Run platform install and platform CloudFront creation in parallel via
+      # a dedicated task with deps: (deps at task level is the correct Task v3 syntax).
+      - task: install:platform-and-cf
       - 'printf "{{.C_INFO}}  [%ds] platform install + CloudFront done ({{.PLATFORM_DIR}}){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - printf '{{.C_OK}}✓ Platform hub install complete.{{.C_RESET}}\n'
       # Wire the GitLab fleet-config overlay to the hub, then declare spokes into it.
@@ -203,6 +199,12 @@ tasks:
     desc: "Internal: run platform task install (called in parallel with hub:create-platform-cf)"
     cmds:
       - 'cd {{.PLATFORM_DIR}} && task install'
+
+  install:platform-and-cf:
+    desc: "Internal: run platform install + CloudFront creation in parallel (Task v3 deps: syntax)"
+    deps:
+      - task: platform:run-install
+      - task: hub:create-platform-cf
 
   hub:create-platform-cf:
     desc: "Create platform ALB (internal) + CloudFront VPC Origin distribution. Idempotent. Writes private/cloudfront-domain."
