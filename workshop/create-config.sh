@@ -52,7 +52,14 @@ OUTPUT_FILE="${OUTPUT_FILE:-${REPO_ROOT}/config.local.yaml}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 REPO_URL="${REPO_URL:-https://github.com/aws-samples/appmod-blueprints}"
 REPO_REVISION="${REPO_REVISION:-${WORKSHOP_GIT_BRANCH:-feature/cloudfront-on-agent-platform}}"
-CLUSTER_PROVIDER="${CLUSTER_PROVIDER:-kind-crossplane}"
+CLUSTER_PROVIDER="${CLUSTER_PROVIDER:-}"
+if [ -z "$CLUSTER_PROVIDER" ]; then
+  # Try to read from the CFN stack parameter (set at deploy time by Workshop Studio)
+  CLUSTER_PROVIDER=$(aws cloudformation describe-stacks \
+    --query "Stacks[?contains(StackName,'peeks-workshop')].Parameters[?ParameterKey=='ClusterProvider'].ParameterValue|[0][0]" \
+    --output text 2>/dev/null | grep -v "^None$" || true)
+fi
+CLUSTER_PROVIDER="${CLUSTER_PROVIDER:-kind-kro-ack}"
 K8S_VERSION="${K8S_VERSION:-1.35}"
 VPC_CIDR="${VPC_CIDR:-10.1.0.0/16}"
 FORCE="${FORCE:-false}"
