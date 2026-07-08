@@ -1,40 +1,95 @@
 #!/usr/bin/env bash
 #
-# create-config.sh — Generate config.local.yaml for a CloudFront-mode deployment.
+# create-config.sh — Workshop pre-requisite: generate config + create platform ALB + CloudFront
 #
-# This is a standalone helper (NOT a Taskfile task) because every task in this
-# repo reads config.local.yaml at parse time via global vars — so a task cannot
-# be used to *create* the file when it does not yet exist.
+# ══════════════════════════════════════════════════════════════════════════════
+# OVERVIEW — How to use this workshop
+# ══════════════════════════════════════════════════════════════════════════════
 #
-# All values are auto-detected from the current AWS environment:
-#   - aws.region / aws.accountId           from the active AWS identity
-#   - resourcePrefix / hub.clusterName     from RESOURCE_PREFIX (default "peeks")
-#   - identityCenter.instanceArn/group     from IAM Identity Center
-#   - adminRoleName                        from the current assumed-role ARN
+# This script is the FIRST step. Run it from the workshop/ directory:
 #
-# CloudFront exposure mode: the workshop terminates TLS at CloudFront and the
-# platform ALB serves plain HTTP, so we set `insecure: true`. The platform
-# CloudFront domain is created by hub:create-platform-cf (running in parallel
-# with the platform install) and written to private/cloudfront-domain.
-# create-config.sh runs BEFORE the install, so domain is left empty at
-# config-generation time — hub:seed reads it lazily from private/cloudfront-domain.
+#   cd workshop
+#   ./create-config.sh        # idempotent: skip if valid config exists
+#   FORCE=true ./create-config.sh   # overwrite existing config
 #
-# Usage:
-#   ./create-config.sh                 # idempotent: skip if valid config exists
-#   FORCE=true ./create-config.sh      # overwrite existing config
+# Then start the workshop installation:
 #
-# Optional environment overrides:
-#   RESOURCE_PREFIX  (default: peeks)
-#   REPO_URL         (default: https://github.com/aws-samples/appmod-blueprints)
-#   REPO_REVISION    (default: $WORKSHOP_GIT_BRANCH or feature/cloudfront-on-agent-platform)
-#   K8S_VERSION      (default: 1.35)
-#   VPC_CIDR         (default: 10.1.0.0/16)
-#   OUTPUT_FILE      (default: <repo root>/config.local.yaml)
-#   ADMIN_ROLE_NAME  (default: derived from WS_PARTICIPANT_ROLE_ARN, else WSParticipantRole)
-#                    NOTE: on the IDE, get-caller-identity returns the EC2
-#                    instance role (*SharedRole*), which is intentionally
-#                    ignored — set ADMIN_ROLE_NAME or WS_PARTICIPANT_ROLE_ARN
-#                    to control this explicitly.
+#   task install              # from the same workshop/ directory
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT create-config.sh DOES (in order)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+#  1. Auto-detect AWS environment:
+#       - aws.region / aws.accountId       from AWS CLI identity
+#       - identityCenter.instanceArn       from IAM Identity Center (waits up to 5min)
+#       - identityCenter.adminGroupId      from the "Developers" IDC group
+#       - adminRoleName                    from WS_PARTICIPANT_ROLE_ARN or caller identity
+#       - clusterProvider                  from CFN stack parameter or CLUSTER_PROVIDER env
+#
+#  2. Create Platform ALB + CloudFront (when HUB_VPC_ID is set = shared IDE VPC mode):
+#       - Creates internal ALB "peeks-hub-platform" in the IDE VPC private subnets
+#         via AWS CLI (no aws:cloudformation:* tags → the AWS LBC can adopt it cleanly)
+#       - Creates CloudFront VPC Origin pointing to the ALB
+#       - Creates CloudFront Distribution → gets domain d*.cloudfront.net
+#       - Writes domain to config.local.yaml and private/cloudfront-domain
+#       All steps are IDEMPOTENT — safe to re-run.
+#
+#  3. Write <repo-root>/config.local.yaml with:
+#       - clusterProvider, repo.url/revision, hub.clusterName/version/network
+#       - aws.region/accountId
+#       - domain: "<CF domain>"  (set by step 2, or empty for non-shared-VPC mode)
+#       - insecure: true          (ALB serves HTTP, CloudFront terminates TLS)
+#       - identityCenter.*
+#       - adminRoleName
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT task install DOES (in order)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+#  1. gitlab:init-ec2         — Wait for GitLab CE, create root token, create PAT,
+#                               create user repos, push initial content, seed
+#                               peeks-hub/secrets.git_token with the real PAT
+#
+#  2. cd platform && task install  — Platform black-box install:
+#       a. kind:create           — Create bootstrap Kind cluster (local k8s)
+#       b. hub:claim             — Apply EksCluster KRO resource (domainName from config ✅)
+#       c. hub:wait-for-eks      — Wait for hub EKS cluster ACTIVE (~20min)
+#       d. hub:authorize-ide-access — Add VPC CIDR→cluster-SG :443 (kubectl access)
+#       e. hub:seed              — Deploy ArgoCD, ESO, seed cluster secret
+#       f. hub:apply-root-appset — Bootstrap ArgoCD ApplicationSets (hub self-managing)
+#       g. hub:wait-for-sync     — Wait for hub addons to sync (LBC adopts ALB ✅)
+#       h. hub:bootstrap-crossplane-identity — Credential Crossplane providers
+#
+#  3. set-overlay-repo        — Wire fleet-config GitLab repo into hub ArgoCD cluster secret
+#
+#  4. spokes:enable-kro × 2  — Declare spoke-dev + spoke-prod in fleet-config overlay
+#                               (KRO creates EksclusterWithVpc for each spoke, ~20min)
+#
+#  5. ray:setup               — Create Ray model S3 bucket, ECR repo, IAM roles, build image
+#
+#  6. post-install:
+#       a. idc:configure      — Configure IDC ↔ Keycloak SAML + SCIM federation
+#                               (pre-check: skip if Keycloak unreachable = fast fail)
+#       b. setup-env          — Write platform URLs + credentials to ~/.bashrc.d/platform.sh
+#
+#  7. ray:wait-image + ray:prestage-models — Wait for vLLM image build, stage ML models
+#
+#  8. wait-for-spokes         — Confirm spoke EKS clusters + ArgoCD apps are ready
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# ENVIRONMENT OVERRIDES
+# ══════════════════════════════════════════════════════════════════════════════
+#   RESOURCE_PREFIX   (default: from CFN stack or "peeks")
+#   CLUSTER_PROVIDER  (default: from CFN parameter or "kind-kro-ack")
+#   REPO_URL          (default: https://github.com/aws-samples/appmod-blueprints)
+#   REPO_REVISION     (default: $WORKSHOP_GIT_BRANCH)
+#   K8S_VERSION       (default: 1.35)
+#   FORCE             (default: false) — set to true to overwrite existing config
+#   ADMIN_ROLE_NAME   (default: derived from WS_PARTICIPANT_ROLE_ARN or caller identity)
+#   HUB_VPC_ID        (default: from CDK bootstrap env) — triggers ALB+CF creation
+#   HUB_SUBNET_IDS    (default: from CDK bootstrap env) — private subnet IDs for ALB
+#
 
 set -euo pipefail
 
