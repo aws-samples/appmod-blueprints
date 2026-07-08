@@ -1154,24 +1154,28 @@ tasks:
           echo "  Spoke {{.CLUSTER}} already has a CIDR — keeping existing values (idempotent)."
         else
           OCTET=$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}')
-          cat > "$KRO_VALUES" <<EOF
-        clusters:
-          {{.CLUSTER}}:
-            clusterName: {{.CLUSTER}}
-            tenant: workshop
-            environment: prod
-            region: {{.AWS_REGION}}
-            k8sVersion: "{{.K8S_VERSION}}"
-            accountId: "{{.AWS_ACCOUNT_ID}}"
-            managementAccountId: "{{.AWS_ACCOUNT_ID}}"
-            resourcePrefix: {{.RESOURCE_PREFIX}}
-            cidr:
-              vpcCidr: "10.${OCTET}.0.0/16"
-              publicSubnet1Cidr: "10.${OCTET}.1.0/24"
-              publicSubnet2Cidr: "10.${OCTET}.2.0/24"
-              privateSubnet1Cidr: "10.${OCTET}.11.0/24"
-              privateSubnet2Cidr: "10.${OCTET}.12.0/24"
-        EOF
+          # Ensure the file exists with a clusters: map (may already have other spokes)
+          [ -f "$KRO_VALUES" ] || printf 'clusters: {}\n' > "$KRO_VALUES"
+          # Merge this cluster into the existing map (preserves other spokes already written)
+          OCTET=$OCTET CLUSTER={{.CLUSTER}} AWS_REGION={{.AWS_REGION}} K8S_VERSION={{.K8S_VERSION}} \
+          AWS_ACCOUNT_ID={{.AWS_ACCOUNT_ID}} RESOURCE_PREFIX={{.RESOURCE_PREFIX}} \
+          yq -i '.clusters.[env(CLUSTER)] = {
+            "clusterName": env(CLUSTER),
+            "tenant": "workshop",
+            "environment": "prod",
+            "region": env(AWS_REGION),
+            "k8sVersion": env(K8S_VERSION),
+            "accountId": env(AWS_ACCOUNT_ID),
+            "managementAccountId": env(AWS_ACCOUNT_ID),
+            "resourcePrefix": env(RESOURCE_PREFIX),
+            "cidr": {
+              "vpcCidr": ("10." + env(OCTET) + ".0.0/16"),
+              "publicSubnet1Cidr": ("10." + env(OCTET) + ".1.0/24"),
+              "publicSubnet2Cidr": ("10." + env(OCTET) + ".2.0/24"),
+              "privateSubnet1Cidr": ("10." + env(OCTET) + ".11.0/24"),
+              "privateSubnet2Cidr": ("10." + env(OCTET) + ".12.0/24")
+            }
+          }' "$KRO_VALUES"
         fi
         # admin roles: grant cluster-admin to BOTH the console/participant role
         # (config.local.yaml .adminRoleName) and the IDE/instance role (the
