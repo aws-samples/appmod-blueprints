@@ -99,6 +99,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # automatically loaded in non-interactive shells (e.g. SSM RunShellScript, manual runs).
 # shellcheck disable=SC1091
 [ -f /etc/profile.d/workshop.sh ] && source /etc/profile.d/workshop.sh 2>/dev/null || true
+
+# Fallback: if HUB_VPC_ID still unset, detect the IDE VPC by its CDK name tag.
+# CDK creates it with Name="<stackName>/IDE-VPC" — detect by the /IDE-VPC suffix.
+if [ -z "${HUB_VPC_ID:-}" ]; then
+  _REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
+  HUB_VPC_ID=$(aws ec2 describe-vpcs --region "$_REGION" \
+    --filters "Name=tag:Name,Values=*IDE-VPC*" \
+    --query 'Vpcs[0].VpcId' --output text 2>/dev/null | grep -v "^None$" || true)
+fi
+# Fallback: detect private subnets from the IDE VPC (tagged kubernetes.io/role/internal-elb)
+if [ -n "${HUB_VPC_ID:-}" ] && [ -z "${HUB_SUBNET_IDS:-}" ]; then
+  _REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
+  _SUBS=$(aws ec2 describe-subnets --region "$_REGION" \
+    --filters "Name=vpc-id,Values=$HUB_VPC_ID" \
+              "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
+    --query 'Subnets[].SubnetId' --output text 2>/dev/null | tr '\t' ',' || true)
+  [ -n "$_SUBS" ] && HUB_SUBNET_IDS="[$_SUBS]"
+fi
 # This script lives in <repo>/workshop; the config.local.yaml it generates is read
 # by the workshop AND the in-place platform at the repo root (SCRIPT_DIR/..).
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
