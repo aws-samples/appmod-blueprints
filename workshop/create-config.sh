@@ -13,10 +13,11 @@
 #   - adminRoleName                        from the current assumed-role ARN
 #
 # CloudFront exposure mode: the workshop terminates TLS at CloudFront and the
-# platform ALB serves plain HTTP, so we set `insecure: true` (the platform now
-# derives exposure_mode from `insecure`, not from an empty domain).
-# When PLATFORM_DOMAIN is set (CDK pre-creates CloudFront+ALB), it is used as
-# the ingress domain. Otherwise domain is left empty for mid-install creation.
+# platform ALB serves plain HTTP, so we set `insecure: true`. The platform
+# CloudFront domain is created by hub:create-platform-cf (running in parallel
+# with the platform install) and written to private/cloudfront-domain.
+# create-config.sh runs BEFORE the install, so domain is left empty at
+# config-generation time — hub:seed reads it lazily from private/cloudfront-domain.
 #
 # Usage:
 #   ./create-config.sh                 # idempotent: skip if valid config exists
@@ -159,9 +160,10 @@ printf 'aws:\n'                                        >> "$OUTPUT_FILE"
 printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
-# If CDK provided a pre-created Platform CloudFront domain, use it as the
-# platform domain. Otherwise leave empty (mid-install CF creation or direct ALB).
-DOMAIN_VALUE="${PLATFORM_DOMAIN:-}"
+# domain is always empty at config-generation time.
+# hub:create-platform-cf writes the real CF domain to private/cloudfront-domain
+# and hub:seed reads it from there (lazy resolution, not from config).
+DOMAIN_VALUE=""
 printf 'domain: "%s"\n' "$DOMAIN_VALUE"                >> "$OUTPUT_FILE"
 printf 'insecure: true\n'                              >> "$OUTPUT_FILE"
 printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
