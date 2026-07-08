@@ -658,7 +658,17 @@ tasks:
           fi
           [ -d "$SRC" ] || continue
           TMP=$(mktemp -d)
-          cp -r "$SRC/." "$TMP/"
+          if [ "$REPO" = "fleet-config" ]; then
+            # fleet-config overlay structure must match overlay_repo_basepath + fleetRepoBasepath.
+            # set-overlay-repo sets overlay_repo_basepath="" and the hub cluster secret has
+            # fleetRepoBasepath="gitops/" → ArgoCD reads gitops/fleet/spoke-values/... from fleet-config.
+            # spokes:enable-kro/crossplane also write to gitops/fleet/... inside the cloned repo.
+            # Seed content at gitops/fleet/ so both paths align.
+            mkdir -p "$TMP/gitops/fleet"
+            cp -r "$SRC/." "$TMP/gitops/fleet/"
+          else
+            cp -r "$SRC/." "$TMP/"
+          fi
           # For fleet-config also seed platform/backstage/templates (Backstage scaffolder catalog)
           if [ "$REPO" = "fleet-config" ] && [ -d "$WORKSHOP_DIR/platform/backstage/templates" ]; then
             mkdir -p "$TMP/platform/backstage/templates"
