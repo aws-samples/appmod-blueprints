@@ -218,6 +218,155 @@ fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 
+# --- Platform CloudFront (CloudFront mode only) ------------------------------
+# When HUB_VPC_ID is set (shared IDE VPC), create the internal ALB + CloudFront
+# distribution NOW so the domain is known before `task install` runs hub:claim.
+# hub:claim passes domainName from config, so it must be set here.
+CF_DOMAIN=""
+if [ -n "${HUB_VPC_ID:-}" ]; then
+  echo "▸ Creating platform ALB + CloudFront (pre-requisite for hub:claim domainName)..."
+  HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
+  ALB_NAME="${HUB_CLUSTER_NAME}-platform"
+  CF_COMMENT="${HUB_CLUSTER_NAME}-platform"
+
+  # Idempotency: check if CF distribution already exists
+  CF_DOMAIN=$(aws cloudfront list-distributions \
+    --query "DistributionList.Items[?Comment=='${CF_COMMENT}'].DomainName | [0]" \
+    --output text 2>/dev/null | tr -d '[:space:]')
+  [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
+
+  if [ -n "$CF_DOMAIN" ]; then
+    echo "  ↻ Reusing CloudFront: $CF_DOMAIN"
+  else
+    VPC_CIDR=$(aws ec2 describe-vpcs --vpc-ids "$HUB_VPC_ID" --region "$REGION" \
+      --query 'Vpcs[0].CidrBlock' --output text 2>/dev/null)
+
+    # Create ALB SG (idempotent)
+    SG_NAME="${HUB_CLUSTER_NAME}-platform-alb-sg"
+    SG_ID=$(aws ec2 describe-security-groups \
+      --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$HUB_VPC_ID" \
+      --region "$REGION" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+    [ "$SG_ID" = "None" ] && SG_ID=""
+    if [ -z "$SG_ID" ]; then
+      SG_ID=$(aws ec2 create-security-group \
+        --group-name "$SG_NAME" \
+        --description "Platform ALB (internal, CloudFront VPC Origin)" \
+        --vpc-id "$HUB_VPC_ID" --region "$REGION" \
+        --query 'GroupId' --output text 2>/dev/null) || \
+      SG_ID=$(aws ec2 describe-security-groups \
+        --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$HUB_VPC_ID" \
+        --region "$REGION" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+      aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+        --protocol tcp --port 80 --cidr "$VPC_CIDR" --region "$REGION" >/dev/null 2>&1 || true
+      echo "  ✓ ALB SG: $SG_ID"
+    fi
+
+    # Select private subnets tagged kubernetes.io/role/internal-elb
+    PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
+      --filters "Name=vpc-id,Values=$HUB_VPC_ID" \
+                "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
+      --region "$REGION" \
+      --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text 2>/dev/null | \
+      sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
+    if [ -z "$PRIVATE_SUBNETS" ]; then
+      # Fallback: use the subnet IDs passed from CDK
+      PRIVATE_SUBNETS=$(echo "${HUB_SUBNET_IDS:-}" | tr -d "[]'" | tr ',' ' ')
+    fi
+    # Tag subnets for LBC discovery
+    for _sn in $PRIVATE_SUBNETS; do
+      aws ec2 create-tags --resources "$_sn" --region "$REGION" \
+        --tags Key=kubernetes.io/role/internal-elb,Value=1 >/dev/null 2>&1 || true
+    done
+
+    # Create ALB via CLI (no aws:cloudformation:* tags → LBC can adopt cleanly)
+    ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" \
+      --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null)
+    [ "$ALB_ARN" = "None" ] && ALB_ARN=""
+    if [ -z "$ALB_ARN" ]; then
+      ALB_ARN=$(aws elbv2 create-load-balancer \
+        --name "$ALB_NAME" \
+        --subnets $PRIVATE_SUBNETS \
+        --security-groups "$SG_ID" \
+        --scheme internal --type application \
+        --tags Key=elbv2.k8s.aws/cluster,Value="$HUB_CLUSTER_NAME" \
+               Key=ingress.k8s.aws/stack,Value=platform \
+               Key=ingress.k8s.aws/resource,Value=LoadBalancer \
+        --region "$REGION" \
+        --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+      aws elbv2 create-listener \
+        --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
+        --default-actions "Type=fixed-response,FixedResponseConfig={MessageBody=Not Found,StatusCode=404,ContentType=text/plain}" \
+        --region "$REGION" >/dev/null 2>&1 || true
+      echo "  ✓ ALB: $ALB_NAME"
+    fi
+
+    # Create CloudFront VPC Origin
+    VPC_ORIGIN_NAME="${HUB_CLUSTER_NAME}-platform-vpc-origin"
+    VPC_ORIGIN_ID=$(aws cloudfront list-vpc-origins \
+      --query "VpcOriginList.Items[?Name=='$VPC_ORIGIN_NAME'].Id" \
+      --output text 2>/dev/null | tr -d '[:space:]')
+    [ "$VPC_ORIGIN_ID" = "None" ] && VPC_ORIGIN_ID=""
+    if [ -z "$VPC_ORIGIN_ID" ]; then
+      VPC_ORIGIN_ID=$(aws cloudfront create-vpc-origin \
+        --vpc-origin-endpoint-config "{
+          \"Name\": \"$VPC_ORIGIN_NAME\",
+          \"Arn\": \"$ALB_ARN\",
+          \"HTTPPort\": 80,
+          \"HTTPSPort\": 443,
+          \"OriginProtocolPolicy\": \"http-only\",
+          \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
+        }" --query 'VpcOrigin.Id' --output text)
+      echo "  ✓ VPC Origin: $VPC_ORIGIN_ID (waiting for Deployed...)"
+    fi
+    # Wait for VPC Origin Deployed
+    for i in $(seq 1 60); do
+      STATE=$(aws cloudfront get-vpc-origin --id "$VPC_ORIGIN_ID" \
+        --query 'VpcOrigin.Status' --output text 2>/dev/null || echo "Pending")
+      [ "$STATE" = "Deployed" ] && break
+      [ $((i % 4)) -eq 0 ] && echo "  [${i}x15s] VPC Origin status: $STATE"
+      sleep 15
+    done
+    [ "$STATE" != "Deployed" ] && echo "ERROR: VPC Origin not Deployed" && exit 1
+
+    # Create CloudFront Distribution
+    ALB_DNS=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" \
+      --region "$REGION" --query 'LoadBalancers[0].DNSName' --output text)
+    CF_DOMAIN=$(aws cloudfront create-distribution \
+      --distribution-config "{
+        \"CallerReference\": \"${HUB_CLUSTER_NAME}-platform-$(date +%s)\",
+        \"Comment\": \"${CF_COMMENT}\",
+        \"Enabled\": true,
+        \"Origins\": {\"Quantity\": 1, \"Items\": [{
+          \"Id\": \"vpc-origin\",
+          \"DomainName\": \"$ALB_DNS\",
+          \"VpcOriginConfig\": {\"VpcOriginId\": \"$VPC_ORIGIN_ID\",
+            \"OriginReadTimeout\": 60, \"OriginKeepaliveTimeout\": 5}
+        }]},
+        \"DefaultCacheBehavior\": {
+          \"TargetOriginId\": \"vpc-origin\",
+          \"ViewerProtocolPolicy\": \"redirect-to-https\",
+          \"AllowedMethods\": {\"Quantity\": 7,
+            \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"],
+            \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
+          \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
+          \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
+          \"Compress\": true},
+        \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
+        \"PriceClass\": \"PriceClass_100\"
+      }" --query "Distribution.DomainName" --output text)
+    echo "  ✓ CloudFront: $CF_DOMAIN"
+  fi
+
+  # Write domain into config (now known before task install)
+  if [ -n "$CF_DOMAIN" ]; then
+    yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE"
+    # Also persist for legacy consumers (hub:seed, setup-env, idc:configure)
+    mkdir -p "$(dirname "$OUTPUT_FILE")/../private"
+    echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
+    echo "  ✓ domain written to config: $CF_DOMAIN"
+  fi
+fi
+
 # --- Validate --------------------------------------------------------------
 echo "▸ Validating generated YAML..."
 yq '.' "$OUTPUT_FILE" >/dev/null

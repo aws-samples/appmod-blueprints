@@ -46,7 +46,10 @@ vars:
   REPO_BASEPATH:
     sh: yq '.repo.basepath' {{.CONFIG_FILE}}
   DOMAIN:
-    sh: yq '.domain' {{.CONFIG_FILE}}
+    sh: |
+      D=$(yq '.domain // ""' {{.CONFIG_FILE}} | grep -v '^$' || true)
+      [ -z "$D" ] && D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]' || true)
+      echo "${D:-}"
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
   INGRESS_NAME:
@@ -528,7 +531,9 @@ tasks:
           argoCdHubRoleArn: "{{.CALLER_ROLE_ARN}}"
           adminRoleName: {{.ADMIN_ROLE_NAME}}
           fleetSecretManagerSecretNameSuffix: argocd-secret
-          domainName: {{.DOMAIN}}
+          # domainName is required by EksCluster RGD (no default unlike EksclusterWithVpc).
+          # Use placeholder when empty (CloudFront mode) — hub:seed overwrites via cluster secret.
+          domainName: '{{if .DOMAIN}}{{.DOMAIN}}{{else}}cluster.local{{end}}'
           resourcePrefix: {{.RESOURCE_PREFIX}}
           argocdCapability:
             enabled: "true"
