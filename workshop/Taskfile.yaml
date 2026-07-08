@@ -1000,6 +1000,12 @@ tasks:
           rm -rf "$REPO_DIR"
           exit 1
         fi
+        # Remove any stale kro-clusters entry for this cluster (symmetric cleanup).
+        KRO_STALE="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
+        if [ -f "$KRO_STALE" ] && yq -e '.clusters.\"{{.CLUSTER}}\"' "$KRO_STALE" >/dev/null 2>&1; then
+          yq -i 'del(.clusters.\"{{.CLUSTER}}\")' "$KRO_STALE"
+          printf '{{.C_INFO}}  Removed stale kro entry for {{.CLUSTER}} (switching to Crossplane).{{.C_RESET}}\n'
+        fi
         mkdir -p "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters"
         XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
         # Idempotency: keep the existing vpcCidr if this spoke is already enabled so
@@ -1127,6 +1133,15 @@ tasks:
           printf '{{.C_ERR}}⚠ fleet-config clone failed — aborting enable-kro for {{.CLUSTER}}.{{.C_RESET}}\n'
           rm -rf "$REPO_DIR"
           exit 1
+        fi
+        # Remove any stale crossplane-clusters entry for this cluster.
+        # When switching from crossplane → kro-ack provider, a previous run may have
+        # left a crossplane entry that would cause ArgoCD to create a duplicate
+        # Crossplane XR alongside the KRO EksclusterWithVpc.
+        XP_STALE="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
+        if [ -f "$XP_STALE" ] && yq -e '.clusters.\"{{.CLUSTER}}\"' "$XP_STALE" >/dev/null 2>&1; then
+          yq -i 'del(.clusters.\"{{.CLUSTER}}\")' "$XP_STALE"
+          printf '{{.C_INFO}}  Removed stale crossplane entry for {{.CLUSTER}} (switching to KRO).{{.C_RESET}}\n'
         fi
         mkdir -p "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters"
         cat > "$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/clusters/{{.CLUSTER}}.json" <<EOF
