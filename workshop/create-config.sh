@@ -94,6 +94,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Source CDK-injected environment variables (HUB_VPC_ID, HUB_SUBNET_IDS, IDE_DOMAIN, etc.)
+# These are set by the CDK bootstrap script in /etc/profile.d/workshop.sh but are not
+# automatically loaded in non-interactive shells (e.g. SSM RunShellScript, manual runs).
+# shellcheck disable=SC1091
+[ -f /etc/profile.d/workshop.sh ] && source /etc/profile.d/workshop.sh 2>/dev/null || true
 # This script lives in <repo>/workshop; the config.local.yaml it generates is read
 # by the workshop AND the in-place platform at the repo root (SCRIPT_DIR/..).
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
