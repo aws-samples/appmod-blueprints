@@ -483,13 +483,18 @@ tasks:
             --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" --output text 2>/dev/null)
           [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ] && \
             ROLE_ARN=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" --output text)
-          PAYLOAD=$(jq -n --arg role "$ROLE_ARN" --arg prefix "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
-            '{RequestType:"Update",ResourceProperties:{RoleArn:$role,ParameterPrefix:$prefix,SessionDuration:"3600"}}')
-          aws lambda invoke --function-name "$LAMBDA_ARN" --payload "$PAYLOAD" --region {{.AWS_REGION}} /tmp/lambda-response.json > /dev/null 2>&1 || true
-          # Check if Lambda returned credentials (it may fail if designed as CFN Custom Resource)
-          if jq -e '.Credentials' /tmp/lambda-response.json > /dev/null 2>&1; then
-            echo "Credentials refreshed via Lambda"
+          # Build payload with python3 (avoids jq dependency and base64 issues)
+          PAYLOAD=$(python3 -c "import json; print(json.dumps({'RequestType':'Update','RoleArn':'$ROLE_ARN','ParameterPrefix':'/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials','SessionDuration':'3600'}))")
+          # Use --cli-binary-format raw-in-base64-out for AWS CLI v2 compatibility
+          aws lambda invoke --function-name "$LAMBDA_ARN" --payload "$PAYLOAD" \
+            --cli-binary-format raw-in-base64-out \
+            --region {{.AWS_REGION}} /tmp/lambda-response.json > /dev/null 2>&1 || true
+          # Check response — Lambda now returns ParameterName on success
+          if python3 -c "import json,sys; d=json.load(open('/tmp/lambda-response.json')); sys.exit(0 if 'ParameterName' in d else 1)" 2>/dev/null; then
+            echo "Credentials refreshed via Lambda and stored in SSM"
           else
+            echo "WARN: Lambda invocation did not return credentials — falling back to instance profile."
+          fi
             echo "WARN: Lambda invocation did not return credentials — falling back to instance profile."
           fi
         else
