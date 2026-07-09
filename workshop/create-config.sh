@@ -509,8 +509,8 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     # Write domain to config immediately — same as new creation path
     yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
       sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
-    mkdir -p "$(dirname "$OUTPUT_FILE")/../private"
-    echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
+    mkdir -p "${REPO_ROOT}/private"
+    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/cloudfront-domain"
     echo "  ✓ domain written to config: $CF_DOMAIN"
   else
     echo "  ▸ Starting ALB+VPC Origin creation in background..."
@@ -600,8 +600,8 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
   if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
     yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
       sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
-    mkdir -p "$(dirname "$OUTPUT_FILE")/../private"
-    echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
+    mkdir -p "${REPO_ROOT}/private"
+    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/cloudfront-domain"
     echo "[$(date +%H:%M:%S)]   ✓ CloudFront: $CF_DOMAIN"
     echo "[$(date +%H:%M:%S)]   ✓ domain written to config.local.yaml and private/cloudfront-domain"
   fi
