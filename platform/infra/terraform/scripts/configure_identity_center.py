@@ -831,6 +831,11 @@ if __name__ == "__main__":
     parser.add_argument("--keycloak-client-only", action="store_true")
     args = parser.parse_args()
 
+    if not args.keycloak_dns or args.keycloak_dns in ("null", "None", ""):
+        print("ERROR: --keycloak-dns is empty. CloudFront domain not set — cannot configure Keycloak.", file=sys.stderr)
+        print("Fix: ensure workshop/private/cloudfront-domain exists, then run: task idc:configure", file=sys.stderr)
+        sys.exit(1)
+
     result = asyncio.run(configure_identity_center(
         region=args.region,
         keycloak_dns=args.keycloak_dns,
