@@ -467,6 +467,20 @@ tasks:
             yq '.domain' {{.CONFIG_FILE}}
           fi
     cmds:
+      - |
+        case "{{.KEYCLOAK_DNS}}" in
+          ""|null|None)
+            printf '{{.C_ERR}}⚠ KEYCLOAK_DNS is empty — CloudFront domain not set. Fix: write domain to workshop/private/cloudfront-domain then run: task idc:configure{{.C_RESET}}\n'
+            exit 1
+          ;;
+        esac
+        KC_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" "https://{{.KEYCLOAK_DNS}}/keycloak/realms/master" --max-time 30 2>/dev/null || echo "000")
+        case "$KC_STATUS" in
+          000|000000|404)
+            printf '{{.C_ERR}}⚠ Keycloak not reachable (HTTP %s). Run: task idc:configure after Keycloak is up.{{.C_RESET}}\n' "$KC_STATUS"
+            exit 1
+          ;;
+        esac
       - printf '{{.C_STEP}}▸ Refreshing IDC integration credentials via Lambda...{{.C_RESET}}\n'
       - |
         [ "${DEBUG:-false}" = "true" ] && set -x
