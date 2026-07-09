@@ -25,6 +25,10 @@ spec:
       # passed through to the nested EksCluster. See rg-eks.yaml for rationale.
       adminInstanceRoleName: string | default=""
       fleetSecretManagerSecretNameSuffix: string | default="argocd-secret"
+      # "false" (default) => use the fleet-secrets ApplicationSet + Secrets Manager
+      # (fleet-secret contract) to create the ArgoCD cluster registration Secret.
+      # "true" => the RGD creates the Secret directly (legacy fallback).
+      createArgocdClusterSecret: string | default="false"
       domainName: string | default="cluster.example.com"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
@@ -179,6 +183,7 @@ spec:
           adminRoleName: ${schema.spec.adminRoleName}
           adminInstanceRoleName: ${schema.spec.adminInstanceRoleName}
           fleetSecretManagerSecretNameSuffix: ${schema.spec.fleetSecretManagerSecretNameSuffix}
+          createArgocdClusterSecret: ${schema.spec.createArgocdClusterSecret}
           domainName: ${schema.spec.domainName}
           resourcePrefix: ${schema.spec.resourcePrefix}
           git_username: ${schema.spec.git_username}

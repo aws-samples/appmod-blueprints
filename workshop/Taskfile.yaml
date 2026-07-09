@@ -1243,12 +1243,34 @@ tasks:
         #   $overlay/overlays/clusters/<cluster>/platform-manifests/values.yaml
         mkdir -p "$REPO_DIR/overlays/clusters/{{.CLUSTER}}/platform-manifests"
         printf 'huggingfaceModels: []\n' > "$REPO_DIR/overlays/clusters/{{.CLUSTER}}/platform-manifests/values.yaml"
+        # Fleet member file for the KRO spoke. Unlike Crossplane spokes (which use
+        # the fleet-secret chart's "direct" mode and let the Crossplane Composition
+        # patch dynamic per-cluster annotations), KRO spokes use "externalSecret"
+        # mode: the EksclusterWithVpc RGD writes <cluster>/config to Secrets Manager
+        # (rich fleet-secret contract, incl. live aws_vpc_id / eks_oidc_issuer), and
+        # this member file makes the fleet-secrets ApplicationSet render the
+        # fleet-secret chart's ExternalSecret to build the ArgoCD cluster
+        # registration Secret from it. Requires the EksclusterWithVpc RGD to be on
+        # its default createArgocdClusterSecret=false path. `labels` drives the
+        # enabled-addons overlay selection (tenant/environment). ENV is derived from
+        # the cluster name to match the Crossplane convention.
+        ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
+        mkdir -p "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}"
+        cat > "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}/values.yaml" <<EOF
+        clusterName: {{.CLUSTER}}
+        mode: externalSecret
+        externalSecret:
+          enabled: true
+        labels:
+          environment: ${ENV}
+          tenant: workshop
+        EOF
         cd "$REPO_DIR"
         git add -A
         if git diff --cached --quiet; then
           printf '{{.C_INFO}}  No fleet-config changes for {{.CLUSTER}} — already enabled (idempotent).{{.C_RESET}}\n'
         else
-          git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ multi-acct CARM mapping)"
+          git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ fleet member, multi-acct CARM mapping)"
           PUSHED=false
           for i in 1 2 3; do
             # NOTE: the fleet/gitops repo must allow pushes to its default branch.

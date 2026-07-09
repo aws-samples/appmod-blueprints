@@ -600,6 +600,10 @@ tasks:
           argoCdHubRoleArn: "{{.CALLER_ROLE_ARN}}"
           adminRoleName: {{.ADMIN_ROLE_NAME}}
           fleetSecretManagerSecretNameSuffix: argocd-secret
+          # Hub keeps the direct ArgoCD cluster-secret path (the hub registers
+          # itself; its <hub>/config is seeded separately by secrets-manager:seed).
+          # Spokes default to "false" (fleet-secrets ApplicationSet mechanism).
+          createArgocdClusterSecret: "true"
           # domainName is required by EksCluster RGD (no default unlike EksclusterWithVpc).
           # Use placeholder when empty (CloudFront mode) — hub:seed overwrites via cluster secret.
           domainName: '{{if .DOMAIN}}{{.DOMAIN}}{{else}}cluster.local{{end}}'

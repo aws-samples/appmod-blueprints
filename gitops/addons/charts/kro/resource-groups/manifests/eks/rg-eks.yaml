@@ -41,6 +41,14 @@ spec:
       # (accessEntryAdminInstance) alongside the console one.
       adminInstanceRoleName: string | default=""
       fleetSecretManagerSecretNameSuffix: string
+      # When "true" (fallback), the RGD creates the ArgoCD cluster registration
+      # Secret directly (legacy behavior). When "false" (default), the RGD only
+      # writes the <cluster>/config Secrets Manager secret in the fleet-secret
+      # contract format, and the fleet-secrets ApplicationSet is responsible for
+      # creating the cluster registration Secret from it (via ExternalSecret) —
+      # the same mechanism used by Crossplane/Terraform spokes. This unlocks
+      # git-files-driven ApplicationSets (e.g. client-provisioner) for KRO spokes.
+      createArgocdClusterSecret: string | default="false"
       domainName: string
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
@@ -441,6 +449,12 @@ spec:
             }
 
     - id: argocdSecret
+      # Fallback path only: create the ArgoCD cluster registration Secret directly.
+      # Default is "false" — the fleet-secrets ApplicationSet creates this Secret
+      # from the <cluster>/config Secrets Manager secret (see clusterConfigK8sSecret
+      # below) via an ExternalSecret, matching the Crossplane/Terraform spoke flow.
+      includeWhen:
+        - ${schema.spec.createArgocdClusterSecret == "true"}
       template:
         apiVersion: v1
         kind: Secret
@@ -581,6 +595,11 @@ spec:
 
 
     - id: clusterConfigK8sSecret
+      # Fallback/hub path (createArgocdClusterSecret=="true"): minimal config used
+      # by legacy consumers. The fleet-secret path uses clusterConfigK8sSecretFleet
+      # below, which writes the richer fleet-secret contract.
+      includeWhen:
+        - ${schema.spec.createArgocdClusterSecret == "true"}
       template:
         apiVersion: v1
         kind: Secret
@@ -599,6 +618,63 @@ spec:
             {"vpc":{"id":"${schema.spec.network.vpcID}","cluster_security_group_id":"","subnet_ids":["${schema.spec.network.subnets.workers.subnet1ID}","${schema.spec.network.subnets.workers.subnet2ID}"]},"server":"${ekscluster.status.ackResourceMetadata.arn}","metadata":{"cluster_name":"${schema.spec.name}","region":"${schema.spec.region}","account_id":"${schema.spec.accountId}"}}
 
     - id: clusterConfigSecret
+      includeWhen:
+        - ${schema.spec.createArgocdClusterSecret == "true"}
+      template:
+        apiVersion: secretsmanager.services.k8s.aws/v1alpha1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.name}-config
+          namespace: ${schema.spec.name}
+          annotations:
+            services.k8s.aws/region: ${schema.spec.managementRegion}
+            services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+        spec:
+          name: ${schema.spec.name}/config
+          secretString:
+            name: ${schema.spec.name}-config-data
+            namespace: ${schema.spec.name}
+            key: config
+
+    # Fleet-secret path (createArgocdClusterSecret=="false", the default):
+    # Write <cluster>/config to Secrets Manager in the fleet-secret contract so the
+    # fleet-secrets ApplicationSet (via platform-charts/fleet-secret ExternalSecret)
+    # creates the ArgoCD cluster registration Secret — the same mechanism used by
+    # Crossplane/Terraform spokes. Top-level keys are JSON *strings* (metadata,
+    # config, addons, vpc) matching kind-*/Taskfile secrets-manager:seed and the
+    # terraform secrets-manager.tf. `metadata` mirrors the argocdSecret annotations
+    # and `addons` mirrors its identity labels so the two paths are at parity.
+    # enable_* addon labels are NOT set here — they are added by the fleet-secret
+    # chart from enabledAddons (fleet-member enabled-addons.yaml overlays).
+    - id: clusterConfigK8sSecretFleet
+      includeWhen:
+        - ${schema.spec.createArgocdClusterSecret == "false"}
+      template:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.name}-config-data
+          namespace: ${schema.spec.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+        type: Opaque
+        stringData:
+          config: |
+            {"metadata":"{\"accountId\":\"${schema.spec.accountId}\",\"aws_account_id\":\"${schema.spec.accountId}\",\"region\":\"${schema.spec.region}\",\"aws_region\":\"${schema.spec.region}\",\"aws_central_region\":\"${schema.spec.region}\",\"oidcProvider\":\"${ekscluster.status.identity.oidc.issuer}\",\"eks_oidc_issuer\":\"${ekscluster.status.identity.oidc.issuer}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"hub_cluster_name\":\"${schema.spec.resourcePrefix}-hub\",\"aws_vpc_id\":\"${schema.spec.network.vpcID}\",\"addonsRepoBasepath\":\"${schema.spec.gitops.addonsRepoBasePath}\",\"addonsRepoPath\":\"${schema.spec.gitops.addonsRepoPath}\",\"addonsRepoRevision\":\"${schema.spec.gitops.addonsRepoRevision}\",\"addonsRepoURL\":\"${schema.spec.gitops.addonsRepoUrl}\",\"fleetRepoBasepath\":\"${schema.spec.gitops.fleetRepoBasePath}\",\"fleetRepoPath\":\"${schema.spec.gitops.fleetRepoPath}\",\"fleetRepoRevision\":\"${schema.spec.gitops.fleetRepoRevision}\",\"fleetRepoURL\":\"${schema.spec.gitops.fleetRepoUrl}\",\"platformRepoBasepath\":\"${schema.spec.gitops.platformRepoBasePath}\",\"platformRepoPath\":\"${schema.spec.gitops.platformRepoPath}\",\"platformRepoRevision\":\"${schema.spec.gitops.platformRepoRevision}\",\"platformRepoURL\":\"${schema.spec.gitops.platformRepoUrl}\",\"workloadRepoBasepath\":\"${schema.spec.gitops.workloadRepoBasePath}\",\"workloadRepoPath\":\"${schema.spec.gitops.workloadRepoPath}\",\"workloadRepoRevision\":\"${schema.spec.gitops.workloadRepoRevision}\",\"workloadRepoURL\":\"${schema.spec.gitops.workloadRepoUrl}\",\"external_dns_domain_filters\":\"${schema.spec.domainName}\",\"external_dns_namespace\":\"${schema.spec.addons.external_dns_namespace}\",\"external_dns_policy\":\"${schema.spec.addons.external_dns_policy}\",\"external_dns_service_account\":\"${schema.spec.addons.external_dns_service_account}\",\"external_secrets_namespace\":\"${schema.spec.addons.external_secrets_namespace}\",\"external_secrets_service_account\":\"${schema.spec.addons.external_secrets_service_account}\",\"adot_collector_namespace\":\"${schema.spec.addons.adot_collector_namespace}\",\"adot_collector_service_account\":\"${schema.spec.addons.adot_collector_service_account}\",\"amp_endpoint_url\":\"${schema.spec.addons.amp_endpoint_url}\",\"fleet_secret_manager_secret_name\":\"${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}\",\"ingress_name\":\"${schema.spec.name}-ingress\",\"ingress_domain_name\":\"${schema.spec.domainName}\",\"alb_controller_mode\":\"oss\",\"ingress_security_groups\":\"${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}\",\"resource_prefix\":\"${schema.spec.resourcePrefix}\",\"git_username\":\"${schema.spec.git_username}\"}","config":"{\"awsAuthConfig\":{\"clusterName\":\"${schema.spec.name}\"},\"tlsClientConfig\":{\"caData\":\"${ekscluster.status.certificateAuthority.data}\",\"insecure\":false}}","server":"${ekscluster.status.ackResourceMetadata.arn}","addons":"{\"fleet_member\":\"spoke\",\"tenant\":\"${schema.spec.tenant}\",\"environment\":\"${schema.spec.environment}\",\"provider\":\"${schema.spec.provider}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"workloads\":\"${schema.spec.workloads}\"}","vpc":"{\"id\":\"${schema.spec.network.vpcID}\",\"cluster_security_group_id\":\"\",\"subnet_ids\":[\"${schema.spec.network.subnets.workers.subnet1ID}\",\"${schema.spec.network.subnets.workers.subnet2ID}\"]}"}
+
+    - id: clusterConfigSecretFleet
+      includeWhen:
+        - ${schema.spec.createArgocdClusterSecret == "false"}
       template:
         apiVersion: secretsmanager.services.k8s.aws/v1alpha1
         kind: Secret
