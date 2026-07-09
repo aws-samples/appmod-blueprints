@@ -80,14 +80,34 @@ vars:
   KIND_CLUSTER_NAME: "{{.HUB_CLUSTER_NAME}}-bootstrap"
   CALLER_ROLE_ARN:
     sh: |
+      # Try STS first — works when AWS credentials are already configured.
       ARN=$(aws sts get-caller-identity --query "Arn" --output text 2>/dev/null || true)
-      if [ -z "$ARN" ]; then
-        echo ""
-      elif echo "$ARN" | grep -q ":assumed-role/"; then
-        echo "$ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||'
-      else
-        echo "$ARN"
+      if [ -n "$ARN" ] && [ "$ARN" != "None" ]; then
+        if echo "$ARN" | grep -q ":assumed-role/"; then
+          echo "$ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||'
+        else
+          echo "$ARN"
+        fi
+        exit 0
       fi
+      # Fallback 1: WS_PARTICIPANT_ROLE_ARN env var (set by CDK bootstrap in workshop.sh)
+      if [ -n "${WS_PARTICIPANT_ROLE_ARN:-}" ]; then
+        WS="$WS_PARTICIPANT_ROLE_ARN"
+        if echo "$WS" | grep -q ":assumed-role/"; then
+          echo "$WS" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||'
+        else
+          echo "$WS"
+        fi
+        exit 0
+      fi
+      # Fallback 2: adminRoleName from config + account ID (best-effort ARN construction)
+      ROLE=$(yq '.adminRoleName // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+      ACCT=$(yq '.aws.accountId // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+      if [ -n "$ROLE" ] && [ -n "$ACCT" ] && [ "$ROLE" != "null" ] && [ "$ACCT" != "null" ]; then
+        echo "arn:aws:iam::${ACCT}:role/${ROLE}"
+        exit 0
+      fi
+      echo ""
   ACK_NAMESPACE: "ack-system"
   KRO_NAMESPACE: "kro-system"
   ACK_IAM_VERSION: "1.6.4"
@@ -525,6 +545,14 @@ tasks:
   hub:claim:
     desc: Apply hub cluster claim (EksCluster or EksclusterWithVpc depending on hub.network)
     cmds:
+      - |
+        # Guard: argoCdHubRoleArn cannot be empty — IAM would reject the trust policy.
+        if [ -z "{{.CALLER_ROLE_ARN}}" ]; then
+          printf '{{.C_ERR}}✗ CALLER_ROLE_ARN is empty — cannot create hub:claim (IAM trust policy would be invalid).{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Ensure AWS credentials are configured (IMDS, WS_PARTICIPANT_ROLE_ARN, or aws.profile in config).{{.C_RESET}}\n'
+          exit 1
+        fi
+        printf '{{.C_INFO}}  argoCdHubRoleArn = {{.CALLER_ROLE_ARN}}{{.C_RESET}}\n'
       - kubectl create namespace {{.HUB_CLUSTER_NAME}} --dry-run=client -o yaml | kubectl apply -f -
       - |
         # When hub.network.vpcId is set (CDK pre-created VPC), use EksCluster (no VPC creation).
