@@ -473,52 +473,59 @@ tasks:
         LAMBDA_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
           --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null) || LAMBDA_ARN=""
         # Fallback: find Lambda by name pattern if not in CFN outputs
-        if [ -z "$LAMBDA_ARN" ] || [ "$LAMBDA_ARN" = "None" ]; then
-          LAMBDA_ARN=$(aws lambda list-functions --region {{.AWS_REGION}} \
-            --query "Functions[?contains(FunctionName,'KeycloakIDCIntegration')].FunctionArn | [0]" \
-            --output text 2>/dev/null) || LAMBDA_ARN=""
-          [ "$LAMBDA_ARN" = "None" ] && LAMBDA_ARN=""
-        fi
-        if [ -n "$LAMBDA_ARN" ] && [ "$LAMBDA_ARN" != "None" ] && [ "$LAMBDA_ARN" != "" ]; then
-          ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-            --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" \
-            --output text 2>/dev/null) || ROLE_ARN=""
-          ROLE_ARN=$(echo "$ROLE_ARN" | tr -d '[:space:]')
-          if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ]; then
-            ROLE_ARN=$(aws iam list-roles --region {{.AWS_REGION}} \
-              --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" \
+        case "$LAMBDA_ARN" in
+          ""|None)
+            LAMBDA_ARN=$(aws lambda list-functions --region {{.AWS_REGION}} \
+              --query "Functions[?contains(FunctionName,'KeycloakIDCIntegration')].FunctionArn | [0]" \
+              --output text 2>/dev/null) || LAMBDA_ARN=""
+            case "$LAMBDA_ARN" in None) LAMBDA_ARN="" ;; esac
+          ;;
+        esac
+        case "$LAMBDA_ARN" in
+          ""|None)
+            echo "WARN: Lambda not found. Falling back to instance profile."
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+            CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+            aws ssm put-parameter \
+              --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
+              --value "$(echo "$CREDS" | python3 -c "import json,sys; c=json.load(sys.stdin); print(json.dumps({'AccessKeyId':c['AccessKeyId'],'SecretAccessKey':c['SecretAccessKey'],'SessionToken':c['Token'],'Expiration':c['Expiration']}))")" \
+              --type "SecureString" --overwrite --region {{.AWS_REGION}} > /dev/null
+          ;;
+          *)
+            ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
+              --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" \
               --output text 2>/dev/null) || ROLE_ARN=""
             ROLE_ARN=$(echo "$ROLE_ARN" | tr -d '[:space:]')
-          fi
-          [ "$ROLE_ARN" = "None" ] && ROLE_ARN=""
-          echo "  DEBUG: LAMBDA_ARN=$LAMBDA_ARN ROLE_ARN=$ROLE_ARN"
-          if [ -z "$ROLE_ARN" ]; then
-            echo "WARN: SharedRole ARN not found — falling back to instance profile."
-          else
-            # Build payload with python3 (avoids jq dependency and base64 issues)
-            PAYLOAD=$(python3 -c "import json; print(json.dumps({'RequestType':'Update','RoleArn':'$ROLE_ARN','ParameterPrefix':'/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials','SessionDuration':'3600'}))")
-            # Use --cli-binary-format raw-in-base64-out for AWS CLI v2 compatibility
-            aws lambda invoke --function-name "$LAMBDA_ARN" --payload "$PAYLOAD" \
-              --cli-binary-format raw-in-base64-out \
-              --region {{.AWS_REGION}} /tmp/lambda-response.json > /dev/null 2>&1 || true
-            # Check response — Lambda now returns ParameterName on success
-            if python3 -c "import json,sys; d=json.load(open('/tmp/lambda-response.json')); sys.exit(0 if 'ParameterName' in d else 1)" 2>/dev/null; then
-              echo "Credentials refreshed via Lambda and stored in SSM"
-            else
-              echo "WARN: Lambda invocation did not return credentials — falling back to instance profile."
-              cat /tmp/lambda-response.json 2>/dev/null || true
-            fi
-          fi
-        else
-          echo "WARN: Lambda not found. Falling back to instance profile."
-          TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-          ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
-          CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
-          aws ssm put-parameter \
-            --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
-            --value "$(echo "$CREDS" | jq '{AccessKeyId:.AccessKeyId,SecretAccessKey:.SecretAccessKey,SessionToken:.Token,Expiration:.Expiration}')" \
-            --type "SecureString" --overwrite --region {{.AWS_REGION}} > /dev/null
-        fi
+            case "$ROLE_ARN" in
+              ""|None)
+                ROLE_ARN=$(aws iam list-roles --region {{.AWS_REGION}} \
+                  --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" \
+                  --output text 2>/dev/null) || ROLE_ARN=""
+                ROLE_ARN=$(echo "$ROLE_ARN" | tr -d '[:space:]')
+                case "$ROLE_ARN" in None) ROLE_ARN="" ;; esac
+              ;;
+            esac
+            echo "  DEBUG: LAMBDA_ARN=$LAMBDA_ARN ROLE_ARN=$ROLE_ARN"
+            case "$ROLE_ARN" in
+              "")
+                echo "WARN: SharedRole ARN not found — falling back to instance profile."
+              ;;
+              *)
+                PAYLOAD=$(python3 -c "import json; print(json.dumps({'RequestType':'Update','RoleArn':'$ROLE_ARN','ParameterPrefix':'/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials','SessionDuration':'3600'}))")
+                aws lambda invoke --function-name "$LAMBDA_ARN" --payload "$PAYLOAD" \
+                  --cli-binary-format raw-in-base64-out \
+                  --region {{.AWS_REGION}} /tmp/lambda-response.json > /dev/null 2>&1 || true
+                if python3 -c "import json,sys; d=json.load(open('/tmp/lambda-response.json')); sys.exit(0 if 'ParameterName' in d else 1)" 2>/dev/null; then
+                  echo "Credentials refreshed via Lambda and stored in SSM"
+                else
+                  echo "WARN: Lambda invocation did not return credentials."
+                  cat /tmp/lambda-response.json 2>/dev/null || true
+                fi
+              ;;
+            esac
+          ;;
+        esac
       - printf '{{.C_STEP}}▸ Installing Playwright...{{.C_RESET}}\n'
       - pip install playwright boto3 requests --quiet 2>/dev/null
       - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
