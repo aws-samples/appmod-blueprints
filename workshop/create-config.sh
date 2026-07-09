@@ -610,7 +610,6 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
     echo "  ✓ CloudFront: $CF_DOMAIN"
     echo "  ✓ domain written to config: $CF_DOMAIN"
   fi
-  fi
   rm -rf "$_PLATFORM_INFRA_DIR" 2>/dev/null || true
 fi
 
