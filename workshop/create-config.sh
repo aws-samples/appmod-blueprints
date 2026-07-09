@@ -452,6 +452,58 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
         }" --query 'VpcOrigin.Id' --output text 2>/dev/null)
     fi
     echo "[$(date +%H:%M:%S)] VPC Origin: $VPC_ORIGIN_ID (waiting for Deployed...)"
+    echo -n "$VPC_ORIGIN_ID" > "$_VPC_ORIGIN_FILE"
+
+    # Start CF distribution creation immediately — don't wait for VPC Origin Deployed.
+    # AWS accepts a CF distribution with a VPC Origin still Deploying.
+    # CF and VPC Origin deployment overlap (~8min each) saving ~8min total.
+    _CF_COMMENT="${RESOURCE_PREFIX}-hub-platform"
+    _CF_DOMAIN_EXISTING=$(aws cloudfront list-distributions \
+      --query "DistributionList.Items[?Comment=='${_CF_COMMENT}'].DomainName | [0]" \
+      --output text 2>/dev/null | tr -d '[:space:]')
+    [ "$_CF_DOMAIN_EXISTING" = "None" ] && _CF_DOMAIN_EXISTING=""
+    if [ -n "$_CF_DOMAIN_EXISTING" ]; then
+      echo "[$(date +%H:%M:%S)] ↻ Reusing CloudFront: $_CF_DOMAIN_EXISTING"
+      echo -n "$_CF_DOMAIN_EXISTING" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
+    else
+      HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
+      ALB_DNS_BG=$(aws elbv2 describe-load-balancers \
+        --load-balancer-arns "$ALB_ARN" --region "$REGION" \
+        --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+      echo "[$(date +%H:%M:%S)] Creating CloudFront distribution (parallel to VPC Origin wait)..."
+      _CF_DOMAIN=$(aws cloudfront create-distribution \
+        --distribution-config "{
+          \"CallerReference\": \"${HUB_CLUSTER_NAME}-platform-$(date +%s)\",
+          \"Comment\": \"${HUB_CLUSTER_NAME}-platform\",
+          \"Enabled\": true,
+          \"Origins\": {\"Quantity\": 1, \"Items\": [{
+            \"Id\": \"vpc-origin\",
+            \"DomainName\": \"$ALB_DNS_BG\",
+            \"VpcOriginConfig\": {
+              \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
+              \"OriginReadTimeout\": 60,
+              \"OriginKeepaliveTimeout\": 5
+            }
+          }]},
+          \"DefaultCacheBehavior\": {
+            \"TargetOriginId\": \"vpc-origin\",
+            \"ViewerProtocolPolicy\": \"redirect-to-https\",
+            \"AllowedMethods\": {\"Quantity\": 7,
+              \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"],
+              \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
+            \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
+            \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
+            \"Compress\": true},
+          \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
+          \"PriceClass\": \"PriceClass_100\"
+        }" --query "Distribution.DomainName" --output text 2>/dev/null) || _CF_DOMAIN=""
+      if [ -n "$_CF_DOMAIN" ] && [ "$_CF_DOMAIN" != "None" ]; then
+        echo "[$(date +%H:%M:%S)] CloudFront created: $_CF_DOMAIN (deploying in parallel)"
+        echo -n "$_CF_DOMAIN" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
+      else
+        echo "[$(date +%H:%M:%S)] WARN: CloudFront creation failed — will retry after VPC Origin Deployed"
+      fi
+    fi
 
     # Wait for Deployed
     for _i in $(seq 1 60); do
@@ -510,12 +562,17 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
 
   VPC_ORIGIN_ID=$(cat "$_VPC_ORIGIN_FILE" 2>/dev/null || echo "")
   ALB_ARN=$(cat "$_ALB_ARN_FILE" 2>/dev/null || echo "")
-  ALB_DNS=$(aws elbv2 describe-load-balancers \
-    --load-balancer-arns "$ALB_ARN" --region "$REGION" \
-    --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
 
-  if [ -n "$VPC_ORIGIN_ID" ] && [ -n "$ALB_DNS" ]; then
-    # Create CF distribution — domain known immediately (before Deployed)
+  # CF domain written by background job (created in parallel with VPC Origin wait)
+  CF_DOMAIN=$(cat "${_PLATFORM_INFRA_DIR}/cf-domain.txt" 2>/dev/null | tr -d '[:space:]') || CF_DOMAIN=""
+  [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
+
+  if [ -z "$CF_DOMAIN" ] && [ -n "$VPC_ORIGIN_ID" ]; then
+    # Fallback: CF not created in background — create now (VPC Origin is Deployed)
+    echo "  ▸ CloudFront not created in background — retrying now..."
+    ALB_DNS=$(aws elbv2 describe-load-balancers \
+      --load-balancer-arns "$ALB_ARN" --region "$REGION" \
+      --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
     HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
     CF_DOMAIN=$(aws cloudfront create-distribution \
       --distribution-config "{
@@ -542,16 +599,17 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
           \"Compress\": true},
         \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
         \"PriceClass\": \"PriceClass_100\"
-      }" --query "Distribution.DomainName" --output text 2>/dev/null)
+      }" --query "Distribution.DomainName" --output text 2>/dev/null) || CF_DOMAIN=""
+  fi
 
-    if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
-      yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
-        sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
-      mkdir -p "$(dirname "$OUTPUT_FILE")/../private"
-      echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
-      echo "  ✓ CloudFront: $CF_DOMAIN"
-      echo "  ✓ domain written to config: $CF_DOMAIN"
-    fi
+  if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
+    yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
+      sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
+    mkdir -p "$(dirname "$OUTPUT_FILE")/../private"
+    echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
+    echo "  ✓ CloudFront: $CF_DOMAIN"
+    echo "  ✓ domain written to config: $CF_DOMAIN"
+  fi
   fi
   rm -rf "$_PLATFORM_INFRA_DIR" 2>/dev/null || true
 fi
