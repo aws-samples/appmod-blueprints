@@ -1652,9 +1652,26 @@ tasks:
     status:
       - |
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
-        # Skip if all providers are Healthy and have been running > 5min (pod identity already active)
-        UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' -n crossplane-system 2>/dev/null | wc -w)
-        [ "$UNHEALTHY" = "0" ] && OLDEST=$(KUBECONFIG=$KC kubectl get pods -n crossplane-system -l pkg.crossplane.io/revision --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null) && [ -n "$OLDEST" ] && AGE=$(( $(date +%s) - $(date -d "$OLDEST" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$OLDEST" +%s 2>/dev/null) )) && [ "$AGE" -gt 300 ]
+        # Skip if all Crossplane providers are Healthy AND the oldest provider pod
+        # has been running >5min (pod identity credentials already injected and working).
+        UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io \
+          -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' \
+          2>/dev/null | wc -w | tr -d ' ')
+        [ "$UNHEALTHY" != "0" ] && exit 1
+        # Use kubectl to get age in seconds (avoids GNU date -d vs BSD date -j portability)
+        OLDEST_TS=$(KUBECONFIG=$KC kubectl get pods -n crossplane-system \
+          -l pkg.crossplane.io/revision \
+          --sort-by=.metadata.creationTimestamp \
+          -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null)
+        [ -z "$OLDEST_TS" ] && exit 1
+        NOW=$(date +%s)
+        # python3 is always available on the IDE — use it for portable ISO-8601 parsing
+        OLDEST_S=$(python3 -c "import datetime,sys; \
+          ts=sys.argv[1]; \
+          dt=datetime.datetime.strptime(ts,'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc); \
+          print(int(dt.timestamp()))" "$OLDEST_TS" 2>/dev/null || echo "0")
+        AGE=$(( NOW - OLDEST_S ))
+        [ "$AGE" -gt 300 ]
     cmds:
       - task: hub:kubeconfig
       - printf '{{.C_STEP}}▸ Terminating any stuck ArgoCD sync operations on pod-identities apps...{{.C_RESET}}\n'
