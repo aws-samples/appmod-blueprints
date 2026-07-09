@@ -474,10 +474,12 @@ tasks:
             exit 1
           ;;
         esac
+        printf '{{.C_INFO}}▸ Testing Keycloak reachability: https://{{.KEYCLOAK_DNS}}/keycloak/realms/master{{.C_RESET}}\n'
         KC_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" "https://{{.KEYCLOAK_DNS}}/keycloak/realms/master" --max-time 30 2>/dev/null || echo "000")
         case "$KC_STATUS" in
           000|000000|404)
-            printf '{{.C_ERR}}⚠ Keycloak not reachable (HTTP %s). Run: task idc:configure after Keycloak is up.{{.C_RESET}}\n' "$KC_STATUS"
+            printf '{{.C_ERR}}⚠ Keycloak not reachable (HTTP %s) at https://{{.KEYCLOAK_DNS}}/keycloak/realms/master{{.C_RESET}}\n' "$KC_STATUS"
+            printf '{{.C_INFO}}  Run: task idc:configure after Keycloak is up.{{.C_RESET}}\n'
             exit 1
           ;;
         esac
