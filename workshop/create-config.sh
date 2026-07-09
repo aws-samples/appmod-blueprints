@@ -521,10 +521,10 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
     _TAIL_PID=$!
     if wait "$_INFRA_PID" 2>/dev/null; then
       kill "$_TAIL_PID" 2>/dev/null; wait "$_TAIL_PID" 2>/dev/null
-      echo "  ✓ Background infra completed"
+      echo "[$(date +%H:%M:%S)]   ✓ Background infra completed"
     else
       kill "$_TAIL_PID" 2>/dev/null; wait "$_TAIL_PID" 2>/dev/null
-      echo "  ✗ Background infra failed — check $_INFRA_LOG"
+      echo "[$(date +%H:%M:%S)]   ✗ Background infra failed — check $_INFRA_LOG"
       exit 1
     fi
   fi
@@ -538,7 +538,7 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
 
   if [ -z "$CF_DOMAIN" ] && [ -n "$VPC_ORIGIN_ID" ]; then
     # Fallback: CF not created in background — create now (VPC Origin is Deployed)
-    echo "  ▸ CloudFront not created in background — retrying now..."
+    echo "[$(date +%H:%M:%S)]   ▸ Creating CloudFront distribution..."
     ALB_DNS=$(aws elbv2 describe-load-balancers \
       --load-balancer-arns "$ALB_ARN" --region "$REGION" \
       --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
@@ -576,17 +576,17 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
       sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
     mkdir -p "$(dirname "$OUTPUT_FILE")/../private"
     echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
-    echo "  ✓ CloudFront: $CF_DOMAIN"
-    echo "  ✓ domain written to config: $CF_DOMAIN"
+    echo "[$(date +%H:%M:%S)]   ✓ CloudFront: $CF_DOMAIN"
+    echo "[$(date +%H:%M:%S)]   ✓ domain written to config.local.yaml and private/cloudfront-domain"
   fi
   rm -rf "$_PLATFORM_INFRA_DIR" 2>/dev/null || true
 fi
 
 # --- Validate --------------------------------------------------------------
-echo "▸ Validating generated YAML..."
+echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
 yq '.' "$OUTPUT_FILE" >/dev/null
 
-echo "✓ config.local.yaml created:"
+echo "[$(date +%H:%M:%S)] ✓ create-config.sh complete"
 echo "    clusterProvider=$CLUSTER_PROVIDER region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
 echo "    clusterName=${RESOURCE_PREFIX}-hub adminRole=$ADMIN_ROLE_NAME"
 echo "    idcInstance=$IDC_ARN adminGroupId=${IDC_GROUP:-<empty>}"
