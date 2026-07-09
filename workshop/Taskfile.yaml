@@ -919,7 +919,7 @@ tasks:
         done
         if [ "$FLEET_OK" != true ]; then
           printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — skipping overlay wiring (no change made).{{.C_RESET}}\n'
-          printf '{{.C_INFO}}  Re-run later: task kind-crossplane:hub:set-overlay-repo{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Re-run later: task {{.CLUSTER_PROVIDER}}:hub:set-overlay-repo{{.C_RESET}}\n'
           exit 0
         fi
         printf '{{.C_OK}}✓ fleet-config reachable.{{.C_RESET}}\n'
@@ -1209,7 +1209,7 @@ tasks:
           ERR=$(git ls-remote "$FLEET_URL" 2>&1) && break
           if [ "$i" -eq 30 ]; then
             printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot enable spoke {{.CLUSTER}} via KRO.{{.C_RESET}}\n'
-            printf '{{.C_INFO}}  GitLab/gitlab-init may still be initializing. Re-run later: task kind-crossplane:spokes:enable-kro -- {{.CLUSTER}}{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  GitLab/gitlab-init may still be initializing. Re-run later: task {{.CLUSTER_PROVIDER}}:spokes:enable-kro -- {{.CLUSTER}}{{.C_RESET}}\n'
             exit 1
           fi
           sleep 10
