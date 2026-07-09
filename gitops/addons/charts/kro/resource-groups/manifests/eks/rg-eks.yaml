@@ -2082,6 +2082,35 @@ spec:
           type: ACK
           roleARN: ${ackCapabilityRole.status.ackResourceMetadata.arn}
           deletePropagationPolicy: RETAIN
+
+    - id: ackCapabilityAccessEntry
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-ack-capability-access"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+        spec:
+          clusterName: "${schema.spec.name}"
+          principalARN: "${ackCapabilityRole.status.ackResourceMetadata.arn}"
+          type: STANDARD
+          accessPolicies:
+            - accessScope:
+                type: "cluster"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSACKPolicy"
+            - accessScope:
+                type: "cluster"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSSecretReaderPolicy"
     - id: kroCapability
       readyWhen:
       - ${kroCapability.metadata.name != ""}
