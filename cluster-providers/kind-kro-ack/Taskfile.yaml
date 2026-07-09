@@ -677,6 +677,7 @@ tasks:
         printf '{{.C_STEP}}▸ Waiting for {{.HUB_KIND}}/{{.HUB_CLUSTER_NAME}} to reach ACTIVE (max {{.WAIT_TIMEOUT_SEC}}s)...{{.C_RESET}}\n'
         END=$(( $(date +%s) + {{.WAIT_TIMEOUT_SEC}} ))
         LAST_STATE=""
+        ITER=0
         while [ "$(date +%s)" -lt "$END" ]; do
           STATE=$(kubectl get {{.HUB_KIND}} {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.state}' 2>/dev/null || echo "")
           if [ "$STATE" != "$LAST_STATE" ]; then
@@ -686,6 +687,21 @@ tasks:
           if [ "$STATE" = "ACTIVE" ]; then
             break
           fi
+          # Every 5 iterations (~2.5min): scan for ACK.Terminal resources and delete for auto-recovery.
+          # Common cause: argoCdHubRoleArn="" -> IAM rejects trust policy -> role stuck ACK.Terminal.
+          ITER=$((ITER + 1))
+          if [ $((ITER % 5)) -eq 0 ]; then
+            TERMINAL=$(kubectl get roles.iam.aws.upbound.io \
+              -n {{.HUB_CLUSTER_NAME}} \
+              -o jsonpath='{range .items[*]}{.metadata.name} {range .status.conditions[*]}{.type}={.status} {end}{"\n"}{end}' \
+              2>/dev/null | grep "ACK.Terminal=True" | awk '{print $1}' || true)
+            if [ -n "$TERMINAL" ]; then
+              printf '{{.C_INFO}}  ♻ ACK.Terminal IAM roles detected — deleting for auto-recovery: %s{{.C_RESET}}\n' "$TERMINAL"
+              for R in $TERMINAL; do
+                kubectl delete roles.iam.aws.upbound.io "$R" -n {{.HUB_CLUSTER_NAME}} --ignore-not-found 2>/dev/null || true
+              done
+            fi
+          fi
           sleep {{.WAIT_INTERVAL_SEC}}
         done
         if [ "$STATE" != "ACTIVE" ]; then
@@ -693,8 +709,7 @@ tasks:
           kubectl get {{.HUB_KIND}} {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.conditions}' 2>/dev/null || true
           exit 1
         fi
-        printf '{{.C_OK}}✓ {{.HUB_KIND}} ACTIVE{{.C_RESET}}\n'
-      - |
+        printf '{{.C_OK}}✓ {{.HUB_KIND}} ACTIVE{{.C_RESET}}\n'      - |
         printf '{{.C_STEP}}▸ Verifying EKS cluster {{.HUB_CLUSTER_NAME}} exists in AWS...{{.C_RESET}}\n'
         END=$(( $(date +%s) + 300 ))
         while [ "$(date +%s)" -lt "$END" ]; do
