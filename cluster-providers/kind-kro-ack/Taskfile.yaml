@@ -261,6 +261,12 @@ tasks:
           --from-literal=session-token="$(echo "$CREDS" | grep aws_session_token | awk '{print $3}')" \
           --dry-run=client -o yaml | kubectl apply -f -
       - rm -f {{.ROOT_DIR}}/private/aws-creds.ini
+      - |
+        # Restart ACK controllers so they immediately pick up the fresh credentials
+        # (without restart they poll every ~30s which can leave PIAs in Unknown state)
+        printf '{{.C_STEP}}▸ Restarting ACK controllers to pick up fresh credentials...{{.C_RESET}}\n'
+        kubectl rollout restart deployment -n {{.ACK_NAMESPACE}} 2>/dev/null || true
+        printf '{{.C_OK}}✓ ACK controllers restarting — PIAs will re-sync in ~30s{{.C_RESET}}\n'
 
   argocd:install:
     desc: Install ArgoCD (skips if deployed)
