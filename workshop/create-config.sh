@@ -373,7 +373,7 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
       --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null)
     [ "$ALB_ARN" = "None" ] && ALB_ARN=""
     if [ -z "$ALB_ARN" ]; then
-      ALB_CREATE_OUT=$(aws elbv2 create-load-balancer \
+      ALB_ARN=$(aws elbv2 create-load-balancer \
         --name "$ALB_NAME" \
         --subnets $PRIVATE_SUBNETS \
         --security-groups "$SG_ID" \
@@ -381,8 +381,18 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
         --tags Key=elbv2.k8s.aws/cluster,Value="$HUB_CLUSTER_NAME" \
                Key=ingress.k8s.aws/stack,Value=platform \
                Key=ingress.k8s.aws/resource,Value=LoadBalancer \
-        --region "$REGION" 2>&1) || { echo "ERROR: create-load-balancer failed: $ALB_CREATE_OUT"; exit 1; }
-      ALB_ARN=$(echo "$ALB_CREATE_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['LoadBalancers'][0]['LoadBalancerArn'])" 2>/dev/null || echo "")
+        --region "$REGION" \
+        --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null) || true
+      # If create failed (e.g. duplicate), try describe again
+      if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then
+        ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" \
+          --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null)
+        [ "$ALB_ARN" = "None" ] && ALB_ARN=""
+      fi
+      if [ -z "$ALB_ARN" ]; then
+        echo "ERROR: failed to create or find ALB $ALB_NAME"
+        exit 1
+      fi
       aws elbv2 create-listener \
         --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
         --default-actions "Type=fixed-response,FixedResponseConfig={MessageBody=Not Found,StatusCode=404,ContentType=text/plain}" \
