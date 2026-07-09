@@ -131,6 +131,13 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
+      - |
+        # Restore hub context as the active kubectl context.
+        # install steps (wait-for-spokes, idc:configure) may switch to spoke contexts.
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+          --alias {{.HUB_CLUSTER_NAME}} 2>/dev/null || true
+        kubectl config use-context {{.HUB_CLUSTER_NAME}} 2>/dev/null || true
+        printf '{{.C_INFO}}  kubectl context → {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
       - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
 
   # ============================================================
