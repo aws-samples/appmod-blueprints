@@ -457,6 +457,7 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     # Start CF distribution creation immediately — don't wait for VPC Origin Deployed.
     # AWS accepts a CF distribution with a VPC Origin still Deploying.
     # CF and VPC Origin deployment overlap (~8min each) saving ~8min total.
+    # Check if CF already exists (idempotency)
     _CF_COMMENT="${RESOURCE_PREFIX}-hub-platform"
     _CF_DOMAIN_EXISTING=$(aws cloudfront list-distributions \
       --query "DistributionList.Items[?Comment=='${_CF_COMMENT}'].DomainName | [0]" \
@@ -465,47 +466,9 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     if [ -n "$_CF_DOMAIN_EXISTING" ]; then
       echo "[$(date +%H:%M:%S)] ↻ Reusing CloudFront: $_CF_DOMAIN_EXISTING"
       echo -n "$_CF_DOMAIN_EXISTING" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
-    else
-      HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
-      ALB_DNS_BG=$(aws elbv2 describe-load-balancers \
-        --load-balancer-arns "$ALB_ARN" --region "$REGION" \
-        --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
-      echo "[$(date +%H:%M:%S)] Creating CloudFront distribution (parallel to VPC Origin wait)..."
-      _CF_DOMAIN=$(aws cloudfront create-distribution \
-        --distribution-config "{
-          \"CallerReference\": \"${HUB_CLUSTER_NAME}-platform-$(date +%s)\",
-          \"Comment\": \"${HUB_CLUSTER_NAME}-platform\",
-          \"Enabled\": true,
-          \"Origins\": {\"Quantity\": 1, \"Items\": [{
-            \"Id\": \"vpc-origin\",
-            \"DomainName\": \"$ALB_DNS_BG\",
-            \"VpcOriginConfig\": {
-              \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
-              \"OriginReadTimeout\": 60,
-              \"OriginKeepaliveTimeout\": 5
-            }
-          }]},
-          \"DefaultCacheBehavior\": {
-            \"TargetOriginId\": \"vpc-origin\",
-            \"ViewerProtocolPolicy\": \"redirect-to-https\",
-            \"AllowedMethods\": {\"Quantity\": 7,
-              \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"],
-              \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
-            \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
-            \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
-            \"Compress\": true},
-          \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
-          \"PriceClass\": \"PriceClass_100\"
-        }" --query "Distribution.DomainName" --output text 2>/dev/null) || _CF_DOMAIN=""
-      if [ -n "$_CF_DOMAIN" ] && [ "$_CF_DOMAIN" != "None" ]; then
-        echo "[$(date +%H:%M:%S)] CloudFront created: $_CF_DOMAIN (deploying in parallel)"
-        echo -n "$_CF_DOMAIN" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
-      else
-        echo "[$(date +%H:%M:%S)] WARN: CloudFront creation failed — will retry after VPC Origin Deployed"
-      fi
     fi
 
-    # Wait for Deployed
+    # Wait for VPC Origin Deployed (CF requires Deployed state)
     for _i in $(seq 1 60); do
       STATE=$(aws cloudfront get-vpc-origin --id "$VPC_ORIGIN_ID" \
         --query 'VpcOrigin.Status' --output text 2>/dev/null || echo "Pending")
