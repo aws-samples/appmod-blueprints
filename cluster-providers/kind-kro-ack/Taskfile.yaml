@@ -1652,13 +1652,27 @@ tasks:
     status:
       - |
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
-        # Skip if all Crossplane providers are Healthy AND the oldest provider pod
-        # has been running >5min (pod identity credentials already injected and working).
+        # Ensure kubeconfig exists for the status check (generate on the fly if absent)
+        if [ ! -f "$KC" ]; then
+          aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1 || exit 1
+        fi
+        # Fast path: if all Crossplane providers are Healthy AND at least one
+        # Crossplane-managed resource is Ready, the providers already have valid
+        # AWS credentials — no restart needed (saves ~5min on re-runs).
         UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io \
           -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' \
           2>/dev/null | wc -w | tr -d ' ')
         [ "$UNHEALTHY" != "0" ] && exit 1
-        # Use kubectl to get age in seconds (avoids GNU date -d vs BSD date -j portability)
+        # Check that providers can actually reconcile AWS resources (proves creds work).
+        # Look for any Ready IAM role — crossplane-base creates several early on.
+        HAS_READY=$(KUBECONFIG=$KC kubectl get roles.iam.aws.upbound.io -A \
+          -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Ready")].status=="True")].metadata.name}' \
+          2>/dev/null | head -c 1)
+        if [ -n "$HAS_READY" ]; then
+          exit 0
+        fi
+        # Fallback: skip if oldest provider pod has been running >5min (credentials
+        # were injected at startup and providers haven't created managed resources yet)
         OLDEST_TS=$(KUBECONFIG=$KC kubectl get pods -n crossplane-system \
           -l pkg.crossplane.io/revision \
           --sort-by=.metadata.creationTimestamp \
