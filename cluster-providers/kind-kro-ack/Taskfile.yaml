@@ -776,6 +776,21 @@ tasks:
           fi
           aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --type STANDARD --region {{.AWS_REGION}} 2>/dev/null || true
           aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} 2>/dev/null || true
+      - cmd: |
+          # Grant the ACK capability role (secretsmanager controller) permission to
+          # read k8s Secrets — required to push <cluster>/config to Secrets Manager.
+          # Without this the ACK secretsmanager controller reports
+          # "kubernetes secret not found" even when the Secret exists, because the
+          # AmazonEKSACKPolicy alone does not include Secret read access.
+          # Ref: https://docs.aws.amazon.com/eks/latest/userguide/capabilities-security.html
+          ACK_ROLE="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.HUB_CLUSTER_NAME}}-ack-capability-role"
+          aws eks associate-access-policy \
+            --cluster-name {{.HUB_CLUSTER_NAME}} \
+            --principal-arn "$ACK_ROLE" \
+            --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSSecretReaderPolicy \
+            --access-scope type=cluster \
+            --region {{.AWS_REGION}} 2>/dev/null || true
+          echo "  ✓ AmazonEKSSecretReaderPolicy associated to $ACK_ROLE"
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
       - task: secrets-manager:seed-secrets
