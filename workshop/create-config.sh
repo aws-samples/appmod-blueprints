@@ -311,69 +311,54 @@ printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 # When HUB_VPC_ID is set (shared IDE VPC), create the internal ALB + CloudFront
 # distribution NOW so the domain is known before `task install` runs hub:claim.
 # hub:claim passes domainName from config, so it must be set here.
+# ── Platform ALB + CloudFront (parallel with IDC detection above) ─────────────
+# We launch ALB+VPC Origin creation in the BACKGROUND (before IDC detection) so
+# the ~8min VPC Origin deploy overlaps with the ~2min IDC polling. Then after
+# config is written, we wait for the VPC Origin, create the CF distribution
+# (domain known immediately), and update the config with the domain.
+#
+# Timeline:
+#   t=0   start_platform_infra() in background  ─┐
+#   t=0   IDC detection / admin role (~2min)      │ parallel
+#   t=2   write config.local.yaml                 │
+#   t~8   VPC Origin Deployed ←────────────────── ┘
+#   t~8   create CF distribution → CF_DOMAIN known
+#   t~8   update config domain, write cloudfront-domain
+#   t~8   task install begins (hub:claim gets correct domainName)
+
+_PLATFORM_INFRA_DIR=$(mktemp -d)
+_VPC_ORIGIN_FILE="$_PLATFORM_INFRA_DIR/vpc-origin-id.txt"
+_ALB_ARN_FILE="$_PLATFORM_INFRA_DIR/alb-arn.txt"
+_INFRA_LOG="$_PLATFORM_INFRA_DIR/infra.log"
+_INFRA_PID_FILE="$_PLATFORM_INFRA_DIR/pid.txt"
+
 CF_DOMAIN=""
+
 if [ -n "${HUB_VPC_ID:-}" ]; then
-  echo "▸ Creating platform ALB + CloudFront (pre-requisite for hub:claim domainName)..."
 
-  # ── Wait for pre-requisites ───────────────────────────────────────────────
-  # The SSM command runs while the EC2 UserData (bootstrap.sh) may still be
-  # initialising. Wait until:
-  #   1. /etc/profile.d/workshop.sh is written (by bootstrap.sh)
-  #   2. The IDE VPC and its private subnets exist in AWS
-  # We already have HUB_VPC_ID from the CDK heredoc, but tags and subnet routing
-  # may not be fully applied yet. Poll up to 5 minutes.
-  echo "  ▸ Waiting for IDE VPC subnets to be ready..."
-  _prereq_ok=false
-  for _i in $(seq 1 30); do
-    # Check 1: workshop.sh written (IDE bootstrap complete enough)
-    [ -f /etc/profile.d/workshop.sh ] || { sleep 10; continue; }
-    # Check 2: VPC exists
-    _vpc=$(aws ec2 describe-vpcs --vpc-ids "$HUB_VPC_ID" --region "$REGION" \
-      --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
-    [ -z "$_vpc" ] || [ "$_vpc" = "None" ] && { sleep 10; continue; }
-    # Check 3: at least one private subnet exists (tagged or from HUB_SUBNET_IDS)
-    _subs=""
-    if [ -n "${HUB_SUBNET_IDS:-}" ]; then
-      _subs=$(echo "$HUB_SUBNET_IDS" | tr -d "[]'" | tr ',' ' ' | tr -s ' ')
-    fi
-    if [ -z "$_subs" ]; then
-      _subs=$(aws ec2 describe-subnets \
-        --filters "Name=vpc-id,Values=$HUB_VPC_ID" \
-                  "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
-        --region "$REGION" --query 'Subnets[].SubnetId' --output text 2>/dev/null | tr '\t' ' ')
-    fi
-    [ -z "$_subs" ] && { sleep 10; continue; }
-    _prereq_ok=true
-    break
-  done
-  if [ "$_prereq_ok" != "true" ]; then
-    echo "  ✗ Pre-requisites not ready after 5min — VPC=$HUB_VPC_ID subnets not found"
-    exit 1
-  fi
-  echo "  ✓ Pre-requisites ready (VPC + subnets available)"
+  # ── Background function: create ALB SG + ALB + VPC Origin ─────────────────
+  _start_platform_infra() {
+    set -euo pipefail
+    exec >> "$_INFRA_LOG" 2>&1
+    REGION="$1"; HUB_VPC_ID="$2"; HUB_SUBNET_IDS="$3"
+    HUB_CLUSTER_NAME="${RESOURCE_PREFIX:-peeks}-hub"
+    ALB_NAME="${HUB_CLUSTER_NAME}-platform"
 
-  # Debug: trace every command in this block to /tmp/create-config-debug.log
-  exec 19>>/tmp/create-config-debug.log
-  BASH_XTRACEFD=19
-  PS4='+ [$(date +%H:%M:%S)] '
-  set -x
-  HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
-  ALB_NAME="${HUB_CLUSTER_NAME}-platform"
-  CF_COMMENT="${HUB_CLUSTER_NAME}-platform"
+    # Wait for pre-requisites (VPC + subnets)
+    echo "[$(date +%H:%M:%S)] Waiting for pre-requisites..."
+    for _i in $(seq 1 30); do
+      [ -f /etc/profile.d/workshop.sh ] || { sleep 10; continue; }
+      _vpc=$(aws ec2 describe-vpcs --vpc-ids "$HUB_VPC_ID" --region "$REGION" \
+        --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
+      [ -z "$_vpc" ] || [ "$_vpc" = "None" ] && { sleep 10; continue; }
+      break
+    done
+    echo "[$(date +%H:%M:%S)] Pre-requisites ready"
 
-  # Idempotency: check if CF distribution already exists
-  CF_DOMAIN=$(aws cloudfront list-distributions \
-    --query "DistributionList.Items[?Comment=='${CF_COMMENT}'].DomainName | [0]" \
-    --output text 2>/dev/null | tr -d '[:space:]')
-  [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
-
-  if [ -n "$CF_DOMAIN" ]; then
-    echo "  ↻ Reusing CloudFront: $CF_DOMAIN"
-  else
     VPC_CIDR=$(aws ec2 describe-vpcs --vpc-ids "$HUB_VPC_ID" --region "$REGION" \
       --query 'Vpcs[0].CidrBlock' --output text 2>/dev/null)
 
-    # Create ALB SG (idempotent)
+    # ALB SG
     SG_NAME="${HUB_CLUSTER_NAME}-platform-alb-sg"
     SG_ID=$(aws ec2 describe-security-groups \
       --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$HUB_VPC_ID" \
@@ -390,14 +375,10 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
         --region "$REGION" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
       aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
         --protocol tcp --port 80 --cidr "$VPC_CIDR" --region "$REGION" >/dev/null 2>&1 || true
-      echo "  ✓ ALB SG: $SG_ID"
     fi
+    echo "[$(date +%H:%M:%S)] ALB SG: $SG_ID"
 
-    # Select private subnets for the ALB.
-    # Priority: 1) HUB_SUBNET_IDS from CDK (always correct, no timing issue)
-    #           2) tag-based lookup kubernetes.io/role/internal-elb (may not exist yet)
-    # CDK tags are applied by CloudFormation which may not have finished when this
-    # script runs — always prefer the explicitly-passed subnet IDs first.
+    # Subnets
     PRIVATE_SUBNETS=""
     if [ -n "${HUB_SUBNET_IDS:-}" ]; then
       PRIVATE_SUBNETS=$(echo "$HUB_SUBNET_IDS" | tr -d "[]'" | tr ',' ' ')
@@ -410,49 +391,41 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
         --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text 2>/dev/null | \
         sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
     fi
-    if [ -z "$PRIVATE_SUBNETS" ]; then
-      echo "ERROR: no private subnets found for ALB (HUB_SUBNET_IDS empty and no internal-elb tagged subnets)"
-      exit 1
-    fi
-    # Tag subnets for LBC discovery (idempotent)
+    [ -z "$PRIVATE_SUBNETS" ] && { echo "ERROR: no subnets"; exit 1; }
+
+    # Tag subnets
     for _sn in $PRIVATE_SUBNETS; do
       aws ec2 create-tags --resources "$_sn" --region "$REGION" \
         --tags Key=kubernetes.io/role/internal-elb,Value=1 >/dev/null 2>&1 || true
     done
 
-    # Create ALB via CLI (no aws:cloudformation:* tags → LBC can adopt cleanly)
+    # ALB
     ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" \
       --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null)
     [ "$ALB_ARN" = "None" ] && ALB_ARN=""
     if [ -z "$ALB_ARN" ]; then
       ALB_ARN=$(aws elbv2 create-load-balancer \
-        --name "$ALB_NAME" \
-        --subnets $PRIVATE_SUBNETS \
-        --security-groups "$SG_ID" \
-        --scheme internal --type application \
+        --name "$ALB_NAME" --subnets $PRIVATE_SUBNETS \
+        --security-groups "$SG_ID" --scheme internal --type application \
         --tags Key=elbv2.k8s.aws/cluster,Value="$HUB_CLUSTER_NAME" \
                Key=ingress.k8s.aws/stack,Value=platform \
                Key=ingress.k8s.aws/resource,Value=LoadBalancer \
         --region "$REGION" \
         --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null) || true
-      # If create failed (e.g. duplicate), try describe again
       if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then
         ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" \
           --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null)
         [ "$ALB_ARN" = "None" ] && ALB_ARN=""
       fi
-      if [ -z "$ALB_ARN" ]; then
-        echo "ERROR: failed to create or find ALB $ALB_NAME"
-        exit 1
-      fi
-      aws elbv2 create-listener \
-        --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
+      [ -z "$ALB_ARN" ] && { echo "ERROR: ALB creation failed"; exit 1; }
+      aws elbv2 create-listener --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
         --default-actions "Type=fixed-response,FixedResponseConfig={MessageBody=Not Found,StatusCode=404,ContentType=text/plain}" \
         --region "$REGION" >/dev/null 2>&1 || true
-      echo "  ✓ ALB: $ALB_NAME"
     fi
+    echo "[$(date +%H:%M:%S)] ALB: $ALB_ARN"
+    echo -n "$ALB_ARN" > "$_ALB_ARN_FILE"
 
-    # Create CloudFront VPC Origin
+    # VPC Origin
     VPC_ORIGIN_NAME="${HUB_CLUSTER_NAME}-platform-vpc-origin"
     VPC_ORIGIN_ID=$(aws cloudfront list-vpc-origins \
       --query "VpcOriginList.Items[?Name=='$VPC_ORIGIN_NAME'].Id" \
@@ -467,32 +440,83 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
           \"HTTPSPort\": 443,
           \"OriginProtocolPolicy\": \"http-only\",
           \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
-        }" --query 'VpcOrigin.Id' --output text)
-      echo "  ✓ VPC Origin: $VPC_ORIGIN_ID (waiting for Deployed...)"
+        }" --query 'VpcOrigin.Id' --output text 2>/dev/null)
     fi
-    # Wait for VPC Origin Deployed
-    for i in $(seq 1 60); do
+    echo "[$(date +%H:%M:%S)] VPC Origin: $VPC_ORIGIN_ID (waiting for Deployed...)"
+
+    # Wait for Deployed
+    for _i in $(seq 1 60); do
       STATE=$(aws cloudfront get-vpc-origin --id "$VPC_ORIGIN_ID" \
         --query 'VpcOrigin.Status' --output text 2>/dev/null || echo "Pending")
       [ "$STATE" = "Deployed" ] && break
-      [ $((i % 4)) -eq 0 ] && echo "  [${i}x15s] VPC Origin status: $STATE"
+      [ $((${_i:-0} % 4)) -eq 0 ] && echo "[$(date +%H:%M:%S)] VPC Origin ${_i}x15s: $STATE"
       sleep 15
     done
-    [ "$STATE" != "Deployed" ] && echo "ERROR: VPC Origin not Deployed" && exit 1
+    [ "$STATE" != "Deployed" ] && { echo "ERROR: VPC Origin not Deployed"; exit 1; }
+    echo "[$(date +%H:%M:%S)] VPC Origin Deployed: $VPC_ORIGIN_ID"
+    echo -n "$VPC_ORIGIN_ID" > "$_VPC_ORIGIN_FILE"
+  }
+  export -f _start_platform_infra
+  export _PLATFORM_INFRA_DIR _VPC_ORIGIN_FILE _ALB_ARN_FILE _INFRA_LOG RESOURCE_PREFIX
 
-    # Create CloudFront Distribution
-    ALB_DNS=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" \
-      --region "$REGION" --query 'LoadBalancers[0].DNSName' --output text)
+  # Check idempotency first — if CF already exists, no need for background job
+  _CF_COMMENT="${RESOURCE_PREFIX}-hub-platform"
+  CF_DOMAIN=$(aws cloudfront list-distributions \
+    --query "DistributionList.Items[?Comment=='${_CF_COMMENT}'].DomainName | [0]" \
+    --output text 2>/dev/null | tr -d '[:space:]')
+  [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
+
+  if [ -n "$CF_DOMAIN" ]; then
+    echo "  ↻ Reusing CloudFront: $CF_DOMAIN (skipping background infra)"
+  else
+    echo "  ▸ Starting ALB+VPC Origin creation in background..."
+    bash -c '_start_platform_infra "$@"' _ "$REGION" "$HUB_VPC_ID" "${HUB_SUBNET_IDS:-}" &
+    _INFRA_PID=$!
+    echo "$_INFRA_PID" > "$_INFRA_PID_FILE"
+    echo "  ▸ Background PID=$_INFRA_PID (VPC Origin deploys while IDC is detected)"
+  fi
+
+fi  # end HUB_VPC_ID block — will rejoin after config is written
+
+
+# ── Rejoin background platform infra (if started) ─────────────────────────
+if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${CF_DOMAIN:-}" ]; then
+  : # CF already existed, nothing to do
+elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
+  _INFRA_PID=$(cat "$_INFRA_PID_FILE" 2>/dev/null)
+  if [ -n "$_INFRA_PID" ]; then
+    echo "  ▸ Waiting for background VPC Origin to finish..."
+    if wait "$_INFRA_PID" 2>/dev/null; then
+      echo "  ✓ Background infra completed"
+    else
+      echo "  ✗ Background infra failed — check $_INFRA_LOG"
+      cat "$_INFRA_LOG" 2>/dev/null | tail -20
+      exit 1
+    fi
+  fi
+
+  VPC_ORIGIN_ID=$(cat "$_VPC_ORIGIN_FILE" 2>/dev/null || echo "")
+  ALB_ARN=$(cat "$_ALB_ARN_FILE" 2>/dev/null || echo "")
+  ALB_DNS=$(aws elbv2 describe-load-balancers \
+    --load-balancer-arns "$ALB_ARN" --region "$REGION" \
+    --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+
+  if [ -n "$VPC_ORIGIN_ID" ] && [ -n "$ALB_DNS" ]; then
+    # Create CF distribution — domain known immediately (before Deployed)
+    HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
     CF_DOMAIN=$(aws cloudfront create-distribution \
       --distribution-config "{
         \"CallerReference\": \"${HUB_CLUSTER_NAME}-platform-$(date +%s)\",
-        \"Comment\": \"${CF_COMMENT}\",
+        \"Comment\": \"${HUB_CLUSTER_NAME}-platform\",
         \"Enabled\": true,
         \"Origins\": {\"Quantity\": 1, \"Items\": [{
           \"Id\": \"vpc-origin\",
           \"DomainName\": \"$ALB_DNS\",
-          \"VpcOriginConfig\": {\"VpcOriginId\": \"$VPC_ORIGIN_ID\",
-            \"OriginReadTimeout\": 60, \"OriginKeepaliveTimeout\": 5}
+          \"VpcOriginConfig\": {
+            \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
+            \"OriginReadTimeout\": 60,
+            \"OriginKeepaliveTimeout\": 5
+          }
         }]},
         \"DefaultCacheBehavior\": {
           \"TargetOriginId\": \"vpc-origin\",
@@ -505,20 +529,18 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
           \"Compress\": true},
         \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
         \"PriceClass\": \"PriceClass_100\"
-      }" --query "Distribution.DomainName" --output text)
-    echo "  ✓ CloudFront: $CF_DOMAIN"
-  fi
+      }" --query "Distribution.DomainName" --output text 2>/dev/null)
 
-  # Write domain into config (now known before task install)
-  if [ -n "$CF_DOMAIN" ]; then
-    yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE"
-    # Also persist for legacy consumers (hub:seed, setup-env, idc:configure)
-    mkdir -p "$(dirname "$OUTPUT_FILE")/../private"
-    echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
-    echo "  ✓ domain written to config: $CF_DOMAIN"
+    if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
+      yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
+        sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
+      mkdir -p "$(dirname "$OUTPUT_FILE")/../private"
+      echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
+      echo "  ✓ CloudFront: $CF_DOMAIN"
+      echo "  ✓ domain written to config: $CF_DOMAIN"
+    fi
   fi
-  set +x
-  exec 19>&-
+  rm -rf "$_PLATFORM_INFRA_DIR" 2>/dev/null || true
 fi
 
 # --- Validate --------------------------------------------------------------
