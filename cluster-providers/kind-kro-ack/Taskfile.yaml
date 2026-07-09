@@ -212,36 +212,33 @@ tasks:
     desc: "Refresh AWS credentials if expired or missing (safe to call on every install)"
     cmds:
       - |
-        # Test if current ACK credentials are still valid by making a lightweight STS call.
-        # Read the credentials from the kind cluster secret (not from the local AWS profile)
-        # so we test exactly what ACK is using.
-        EXPIRED=false
-        if kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials >/dev/null 2>&1; then
+        # Test if current ACK credentials are still valid.
+        # Safe when kind cluster/secret doesn't exist yet — will refresh in that case too.
+        NEEDS_REFRESH=false
+        if ! kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials >/dev/null 2>&1; then
+          printf '{{.C_INFO}}  ACK credentials secret missing — will create.{{.C_RESET}}\n'
+          NEEDS_REFRESH=true
+        else
           AKI=$(kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials \
             -o jsonpath='{.data.credentials}' 2>/dev/null | base64 -d | \
-            grep aws_access_key_id | awk '{print $3}')
+            grep aws_access_key_id | awk '{print $3}' || true)
           SAK=$(kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials \
             -o jsonpath='{.data.credentials}' 2>/dev/null | base64 -d | \
-            grep aws_secret_access_key | awk '{print $3}')
+            grep aws_secret_access_key | awk '{print $3}' || true)
           ST=$(kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials \
             -o jsonpath='{.data.credentials}' 2>/dev/null | base64 -d | \
-            grep aws_session_token | awk '{print $3}')
+            grep aws_session_token | awk '{print $3}' || true)
           RESULT=$(AWS_ACCESS_KEY_ID="$AKI" AWS_SECRET_ACCESS_KEY="$SAK" \
             AWS_SESSION_TOKEN="$ST" aws sts get-caller-identity \
-            --region {{.AWS_REGION}} --output text 2>&1 || true)
-          if echo "$RESULT" | grep -qiE "ExpiredToken|InvalidClientTokenId|AuthFailure"; then
+            --region {{.AWS_REGION}} --output text 2>&1 || echo "FAILED")
+          if echo "$RESULT" | grep -qiE "ExpiredToken|InvalidClientTokenId|AuthFailure|FAILED"; then
             printf '{{.C_INFO}}  ACK credentials expired — refreshing...{{.C_RESET}}\n'
-            EXPIRED=true
+            NEEDS_REFRESH=true
           else
             printf '{{.C_OK}}✓ ACK credentials valid.{{.C_RESET}}\n'
           fi
-        else
-          printf '{{.C_INFO}}  ACK credentials secret missing — creating...{{.C_RESET}}\n'
-          EXPIRED=true
         fi
-        if [ "$EXPIRED" = "true" ]; then
-          task credentials:refresh
-        fi
+        [ "$NEEDS_REFRESH" = "true" ] && task credentials:refresh || true
 
   credentials:refresh:
     desc: Force-refresh AWS credentials secret
