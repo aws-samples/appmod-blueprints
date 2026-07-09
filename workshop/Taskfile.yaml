@@ -481,7 +481,7 @@ tasks:
         fi
         if [ -n "$LAMBDA_ARN" ] && [ "$LAMBDA_ARN" != "None" ] && [ "$LAMBDA_ARN" != "" ]; then
           ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-            --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" --output text 2>/dev/null | tr -d '[:space:]')
+            --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" --output text 2>/dev/null | tr -d '[:space:]') || true
           if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ]; then
             ROLE_ARN=$(aws iam list-roles --region {{.AWS_REGION}} \
               --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" \
