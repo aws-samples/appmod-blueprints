@@ -383,18 +383,22 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
 
     # Subnets
     PRIVATE_SUBNETS=""
+    echo "[$(date +%H:%M:%S)] DEBUG: HUB_SUBNET_IDS='${HUB_SUBNET_IDS:-}' HUB_VPC_ID='$HUB_VPC_ID'"
     if [ -n "${HUB_SUBNET_IDS:-}" ]; then
       PRIVATE_SUBNETS=$(echo "$HUB_SUBNET_IDS" | tr -d "[]'" | tr ',' ' ')
+      echo "[$(date +%H:%M:%S)] DEBUG: Subnets from HUB_SUBNET_IDS: $PRIVATE_SUBNETS"
     fi
     if [ -z "$PRIVATE_SUBNETS" ]; then
+      echo "[$(date +%H:%M:%S)] DEBUG: Falling back to tag lookup for subnets..."
       PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
         --filters "Name=vpc-id,Values=$HUB_VPC_ID" \
                   "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
         --region "$REGION" \
         --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text 2>/dev/null | \
         sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
+      echo "[$(date +%H:%M:%S)] DEBUG: Subnets from tag lookup: '${PRIVATE_SUBNETS}'"
     fi
-    [ -z "$PRIVATE_SUBNETS" ] && { echo "ERROR: no subnets"; exit 1; }
+    [ -z "$PRIVATE_SUBNETS" ] && { echo "ERROR: no subnets found (HUB_SUBNET_IDS empty and tag lookup returned nothing)"; exit 1; }
 
     # Tag subnets
     for _sn in $PRIVATE_SUBNETS; do
