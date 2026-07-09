@@ -521,7 +521,9 @@ fi  # end HUB_VPC_ID block — will rejoin after config is written
 
 
 # ── Rejoin background platform infra (if started) ─────────────────────────
+echo "[$(date +%H:%M:%S)] DEBUG rejoin: HUB_VPC_ID=${HUB_VPC_ID:-EMPTY} CF_DOMAIN=${CF_DOMAIN:-EMPTY} INFRA_PID_FILE=${_INFRA_PID_FILE:-EMPTY} PID_EXISTS=$([ -f "${_INFRA_PID_FILE:-/dev/null}" ] && echo yes || echo no)"
 if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${CF_DOMAIN:-}" ]; then
+  echo "[$(date +%H:%M:%S)] DEBUG: CF already set — skipping rejoin"
   : # CF already existed, nothing to do
 elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
   _INFRA_PID=$(cat "$_INFRA_PID_FILE" 2>/dev/null)
