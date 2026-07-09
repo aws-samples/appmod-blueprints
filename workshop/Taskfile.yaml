@@ -471,21 +471,24 @@ tasks:
       - |
         [ "${DEBUG:-false}" = "true" ] && set -x
         LAMBDA_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-          --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null)
+          --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null) || LAMBDA_ARN=""
         # Fallback: find Lambda by name pattern if not in CFN outputs
         if [ -z "$LAMBDA_ARN" ] || [ "$LAMBDA_ARN" = "None" ]; then
           LAMBDA_ARN=$(aws lambda list-functions --region {{.AWS_REGION}} \
             --query "Functions[?contains(FunctionName,'KeycloakIDCIntegration')].FunctionArn | [0]" \
-            --output text 2>/dev/null)
+            --output text 2>/dev/null) || LAMBDA_ARN=""
           [ "$LAMBDA_ARN" = "None" ] && LAMBDA_ARN=""
         fi
         if [ -n "$LAMBDA_ARN" ] && [ "$LAMBDA_ARN" != "None" ] && [ "$LAMBDA_ARN" != "" ]; then
           ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-            --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" --output text 2>/dev/null | tr -d '[:space:]') || true
+            --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" \
+            --output text 2>/dev/null) || ROLE_ARN=""
+          ROLE_ARN=$(echo "$ROLE_ARN" | tr -d '[:space:]')
           if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ]; then
             ROLE_ARN=$(aws iam list-roles --region {{.AWS_REGION}} \
               --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" \
-              --output text 2>/dev/null | tr -d '[:space:]') || true
+              --output text 2>/dev/null) || ROLE_ARN=""
+            ROLE_ARN=$(echo "$ROLE_ARN" | tr -d '[:space:]')
           fi
           [ "$ROLE_ARN" = "None" ] && ROLE_ARN=""
           echo "  DEBUG: LAMBDA_ARN=$LAMBDA_ARN ROLE_ARN=$ROLE_ARN"
