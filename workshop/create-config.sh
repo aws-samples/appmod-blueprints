@@ -456,13 +456,24 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
 
     # Start CF distribution creation immediately — don't wait for VPC Origin Deployed.
     # AWS accepts a CF distribution with a VPC Origin still Deploying.
-    # CF and VPC Origin deployment overlap (~8min each) saving ~8min total.
     # Check if CF already exists (idempotency)
+    # 1. Look up by comment (normal case)
     _CF_COMMENT="${RESOURCE_PREFIX}-hub-platform"
     _CF_DOMAIN_EXISTING=$(aws cloudfront list-distributions \
       --query "DistributionList.Items[?Comment=='${_CF_COMMENT}'].DomainName | [0]" \
       --output text 2>/dev/null | tr -d '[:space:]')
     [ "$_CF_DOMAIN_EXISTING" = "None" ] && _CF_DOMAIN_EXISTING=""
+    # 2. Fallback: if no CF found by comment, check if any CF uses our VPC Origin
+    #    (happens when CF was created without the comment due to a partial run)
+    if [ -z "$_CF_DOMAIN_EXISTING" ] && [ -n "$VPC_ORIGIN_ID" ]; then
+      _CF_DOMAIN_EXISTING=$(aws cloudfront list-distributions \
+        --query "DistributionList.Items[?Origins.Items[?VpcOriginConfig.VpcOriginId=='${VPC_ORIGIN_ID}']].DomainName | [0]" \
+        --output text 2>/dev/null | tr -d '[:space:]')
+      [ "$_CF_DOMAIN_EXISTING" = "None" ] && _CF_DOMAIN_EXISTING=""
+      if [ -n "$_CF_DOMAIN_EXISTING" ]; then
+        echo "[$(date +%H:%M:%S)] ↻ Found existing CloudFront by VPC Origin: $_CF_DOMAIN_EXISTING"
+      fi
+    fi
     if [ -n "$_CF_DOMAIN_EXISTING" ]; then
       echo "[$(date +%H:%M:%S)] ↻ Reusing CloudFront: $_CF_DOMAIN_EXISTING"
       echo -n "$_CF_DOMAIN_EXISTING" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
