@@ -470,10 +470,17 @@ tasks:
       - printf '{{.C_STEP}}▸ Refreshing IDC integration credentials via Lambda...{{.C_RESET}}\n'
       - |
         LAMBDA_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-          --query "Stacks[?contains(StackName,'peeks-ide')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null)
+          --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null)
+        # Fallback: find Lambda by name pattern if not in CFN outputs
+        if [ -z "$LAMBDA_ARN" ] || [ "$LAMBDA_ARN" = "None" ]; then
+          LAMBDA_ARN=$(aws lambda list-functions --region {{.AWS_REGION}} \
+            --query "Functions[?contains(FunctionName,'KeycloakIDCIntegration')].FunctionArn | [0]" \
+            --output text 2>/dev/null)
+          [ "$LAMBDA_ARN" = "None" ] && LAMBDA_ARN=""
+        fi
         if [ -n "$LAMBDA_ARN" ] && [ "$LAMBDA_ARN" != "None" ]; then
           ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-            --query "Stacks[?contains(StackName,'peeks-ide')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" --output text 2>/dev/null)
+            --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" --output text 2>/dev/null)
           [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ] && \
             ROLE_ARN=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" --output text)
           PAYLOAD=$(jq -n --arg role "$ROLE_ARN" --arg prefix "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
