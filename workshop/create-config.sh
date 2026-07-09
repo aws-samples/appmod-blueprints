@@ -326,10 +326,13 @@ printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 #   t~8   update config domain, write cloudfront-domain
 #   t~8   task install begins (hub:claim gets correct domainName)
 
-_PLATFORM_INFRA_DIR=$(mktemp -d)
+# Use fixed /tmp paths so background subshell can write and main shell can read.
+# A mktemp dir would require export and subshell inheritance which is fragile.
+_PLATFORM_INFRA_DIR="/tmp/create-config-infra-$$"
+mkdir -p "$_PLATFORM_INFRA_DIR"
 _VPC_ORIGIN_FILE="$_PLATFORM_INFRA_DIR/vpc-origin-id.txt"
 _ALB_ARN_FILE="$_PLATFORM_INFRA_DIR/alb-arn.txt"
-_INFRA_LOG="$_PLATFORM_INFRA_DIR/infra.log"
+_INFRA_LOG="/tmp/create-config-infra.log"
 _INFRA_PID_FILE="$_PLATFORM_INFRA_DIR/pid.txt"
 
 CF_DOMAIN=""
