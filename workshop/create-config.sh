@@ -407,9 +407,11 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     done
 
     # ALB
+    echo "[$(date +%H:%M:%S)] DEBUG: Subnets final: $PRIVATE_SUBNETS"
     ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" \
-      --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null)
+      --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null) || ALB_ARN=""
     [ "$ALB_ARN" = "None" ] && ALB_ARN=""
+    echo "[$(date +%H:%M:%S)] DEBUG: Existing ALB_ARN='$ALB_ARN'"
     if [ -z "$ALB_ARN" ]; then
       ALB_ARN=$(aws elbv2 create-load-balancer \
         --name "$ALB_NAME" --subnets $PRIVATE_SUBNETS \
