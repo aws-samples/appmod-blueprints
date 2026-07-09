@@ -341,18 +341,28 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
       echo "  ✓ ALB SG: $SG_ID"
     fi
 
-    # Select private subnets tagged kubernetes.io/role/internal-elb
-    PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
-      --filters "Name=vpc-id,Values=$HUB_VPC_ID" \
-                "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
-      --region "$REGION" \
-      --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text 2>/dev/null | \
-      sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
-    if [ -z "$PRIVATE_SUBNETS" ]; then
-      # Fallback: use the subnet IDs passed from CDK
-      PRIVATE_SUBNETS=$(echo "${HUB_SUBNET_IDS:-}" | tr -d "[]'" | tr ',' ' ')
+    # Select private subnets for the ALB.
+    # Priority: 1) HUB_SUBNET_IDS from CDK (always correct, no timing issue)
+    #           2) tag-based lookup kubernetes.io/role/internal-elb (may not exist yet)
+    # CDK tags are applied by CloudFormation which may not have finished when this
+    # script runs — always prefer the explicitly-passed subnet IDs first.
+    PRIVATE_SUBNETS=""
+    if [ -n "${HUB_SUBNET_IDS:-}" ]; then
+      PRIVATE_SUBNETS=$(echo "$HUB_SUBNET_IDS" | tr -d "[]'" | tr ',' ' ')
     fi
-    # Tag subnets for LBC discovery
+    if [ -z "$PRIVATE_SUBNETS" ]; then
+      PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=$HUB_VPC_ID" \
+                  "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
+        --region "$REGION" \
+        --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text 2>/dev/null | \
+        sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
+    fi
+    if [ -z "$PRIVATE_SUBNETS" ]; then
+      echo "ERROR: no private subnets found for ALB (HUB_SUBNET_IDS empty and no internal-elb tagged subnets)"
+      exit 1
+    fi
+    # Tag subnets for LBC discovery (idempotent)
     for _sn in $PRIVATE_SUBNETS; do
       aws ec2 create-tags --resources "$_sn" --region "$REGION" \
         --tags Key=kubernetes.io/role/internal-elb,Value=1 >/dev/null 2>&1 || true
