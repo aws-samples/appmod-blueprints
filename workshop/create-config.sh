@@ -93,6 +93,15 @@
 
 set -euo pipefail
 
+# Debug trap: log script exit code and last failing command to /tmp/create-config-exit.log
+_cc_exit_trap() {
+  local code=$?
+  local cmd="${BASH_COMMAND:-unknown}"
+  echo "[$(date +%H:%M:%S)] create-config.sh exited with code=$code last_cmd='$cmd'" \
+    >> /tmp/create-config-exit.log
+}
+trap '_cc_exit_trap' EXIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source CDK-injected environment variables (HUB_VPC_ID, HUB_SUBNET_IDS, IDE_DOMAIN, etc.)
 # These are set by the CDK bootstrap script in /etc/profile.d/workshop.sh but are not
@@ -305,6 +314,11 @@ printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 CF_DOMAIN=""
 if [ -n "${HUB_VPC_ID:-}" ]; then
   echo "▸ Creating platform ALB + CloudFront (pre-requisite for hub:claim domainName)..."
+  # Debug: trace every command in this block to /tmp/create-config-debug.log
+  exec 19>>/tmp/create-config-debug.log
+  BASH_XTRACEFD=19
+  PS4='+ [$(date +%H:%M:%S)] '
+  set -x
   HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
   ALB_NAME="${HUB_CLUSTER_NAME}-platform"
   CF_COMMENT="${HUB_CLUSTER_NAME}-platform"
@@ -465,6 +479,8 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
     echo "  ✓ domain written to config: $CF_DOMAIN"
   fi
+  set +x
+  exec 19>&-
 fi
 
 # --- Validate --------------------------------------------------------------
