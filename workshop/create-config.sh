@@ -532,17 +532,24 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
   _INFRA_PID=$(cat "$_INFRA_PID_FILE" 2>/dev/null)
   if [ -n "$_INFRA_PID" ]; then
     echo "  ▸ Waiting for background VPC Origin to finish..."
-    # Stream infra log to stdout in real time
-    tail -f "$_INFRA_LOG" 2>/dev/null &
-    _TAIL_PID=$!
-    if wait "$_INFRA_PID" 2>/dev/null; then
-      kill "$_TAIL_PID" 2>/dev/null; wait "$_TAIL_PID" 2>/dev/null
-      echo "[$(date +%H:%M:%S)]   ✓ Background infra completed"
-    else
-      kill "$_TAIL_PID" 2>/dev/null; wait "$_TAIL_PID" 2>/dev/null
-      echo "[$(date +%H:%M:%S)]   ✗ Background infra failed — check $_INFRA_LOG"
-      exit 1
+    # Poll the background PID with kill -0 (robust: works even if the process
+    # already exited and was reaped). Stream new log lines incrementally.
+    _LOG_LINES=0
+    while kill -0 "$_INFRA_PID" 2>/dev/null; do
+      if [ -f "$_INFRA_LOG" ]; then
+        _TOTAL=$(wc -l < "$_INFRA_LOG" 2>/dev/null || echo 0)
+        if [ "$_TOTAL" -gt "$_LOG_LINES" ]; then
+          tail -n +$((_LOG_LINES + 1)) "$_INFRA_LOG" 2>/dev/null
+          _LOG_LINES=$_TOTAL
+        fi
+      fi
+      sleep 3
+    done
+    # Print any remaining log lines after the process exited
+    if [ -f "$_INFRA_LOG" ]; then
+      tail -n +$((_LOG_LINES + 1)) "$_INFRA_LOG" 2>/dev/null || true
     fi
+    echo "[$(date +%H:%M:%S)]   ✓ Background infra finished"
   fi
 
   VPC_ORIGIN_ID=$(cat "$_VPC_ORIGIN_FILE" 2>/dev/null || echo "")
