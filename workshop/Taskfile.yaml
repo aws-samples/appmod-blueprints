@@ -136,6 +136,14 @@ tasks:
   # ============================================================
   # DESTROY — full ordered teardown
   # ============================================================
+  credentials:refresh:
+    desc: "Refresh AWS credentials in the bootstrap kind cluster (call when ACK shows ExpiredTokenException)"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+    cmds:
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:credentials:refresh'
+
   destroy:
     desc: "Full teardown: drain workloads from spokes → delete spokes → destroy hub platform"
     vars:
