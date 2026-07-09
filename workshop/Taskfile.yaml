@@ -485,8 +485,13 @@ tasks:
             ROLE_ARN=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" --output text)
           PAYLOAD=$(jq -n --arg role "$ROLE_ARN" --arg prefix "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
             '{RequestType:"Update",ResourceProperties:{RoleArn:$role,ParameterPrefix:$prefix,SessionDuration:"3600"}}')
-          aws lambda invoke --function-name "$LAMBDA_ARN" --payload "$PAYLOAD" --region {{.AWS_REGION}} /tmp/lambda-response.json > /dev/null
-          echo "Credentials refreshed via Lambda"
+          aws lambda invoke --function-name "$LAMBDA_ARN" --payload "$PAYLOAD" --region {{.AWS_REGION}} /tmp/lambda-response.json > /dev/null 2>&1 || true
+          # Check if Lambda returned credentials (it may fail if designed as CFN Custom Resource)
+          if jq -e '.Credentials' /tmp/lambda-response.json > /dev/null 2>&1; then
+            echo "Credentials refreshed via Lambda"
+          else
+            echo "WARN: Lambda invocation did not return credentials — falling back to instance profile."
+          fi
         else
           echo "WARN: Lambda not found. Falling back to instance profile."
           TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
