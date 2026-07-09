@@ -751,7 +751,7 @@ tasks:
   hub:seed:
     desc: Seed hub cluster after EKS is ACTIVE
     cmds:
-      - task: credentials:refresh
+      - task: credentials:check-and-refresh
       - printf '{{.C_STEP}}▸ Waiting for hub EksCluster to be ready...{{.C_RESET}}\n'
       - |
         STATUS="Pending"
