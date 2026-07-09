@@ -495,11 +495,15 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
   _INFRA_PID=$(cat "$_INFRA_PID_FILE" 2>/dev/null)
   if [ -n "$_INFRA_PID" ]; then
     echo "  ▸ Waiting for background VPC Origin to finish..."
+    # Stream infra log to stdout in real time
+    tail -f "$_INFRA_LOG" 2>/dev/null &
+    _TAIL_PID=$!
     if wait "$_INFRA_PID" 2>/dev/null; then
+      kill "$_TAIL_PID" 2>/dev/null; wait "$_TAIL_PID" 2>/dev/null
       echo "  ✓ Background infra completed"
     else
+      kill "$_TAIL_PID" 2>/dev/null; wait "$_TAIL_PID" 2>/dev/null
       echo "  ✗ Background infra failed — check $_INFRA_LOG"
-      cat "$_INFRA_LOG" 2>/dev/null | tail -20
       exit 1
     fi
   fi
