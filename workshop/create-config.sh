@@ -529,6 +529,12 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
 
   if [ -n "$CF_DOMAIN" ]; then
     echo "  ↻ Reusing CloudFront: $CF_DOMAIN (skipping background infra)"
+    # Write domain to config immediately — same as new creation path
+    yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
+      sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
+    mkdir -p "$(dirname "$OUTPUT_FILE")/../private"
+    echo -n "$CF_DOMAIN" > "$(dirname "$OUTPUT_FILE")/../private/cloudfront-domain"
+    echo "  ✓ domain written to config: $CF_DOMAIN"
   else
     echo "  ▸ Starting ALB+VPC Origin creation in background..."
     bash -c '_start_platform_infra "$@"' _ "$REGION" "$HUB_VPC_ID" "${HUB_SUBNET_IDS:-}" &
