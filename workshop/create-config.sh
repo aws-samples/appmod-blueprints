@@ -314,6 +314,44 @@ printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 CF_DOMAIN=""
 if [ -n "${HUB_VPC_ID:-}" ]; then
   echo "▸ Creating platform ALB + CloudFront (pre-requisite for hub:claim domainName)..."
+
+  # ── Wait for pre-requisites ───────────────────────────────────────────────
+  # The SSM command runs while the EC2 UserData (bootstrap.sh) may still be
+  # initialising. Wait until:
+  #   1. /etc/profile.d/workshop.sh is written (by bootstrap.sh)
+  #   2. The IDE VPC and its private subnets exist in AWS
+  # We already have HUB_VPC_ID from the CDK heredoc, but tags and subnet routing
+  # may not be fully applied yet. Poll up to 5 minutes.
+  echo "  ▸ Waiting for IDE VPC subnets to be ready..."
+  _prereq_ok=false
+  for _i in $(seq 1 30); do
+    # Check 1: workshop.sh written (IDE bootstrap complete enough)
+    [ -f /etc/profile.d/workshop.sh ] || { sleep 10; continue; }
+    # Check 2: VPC exists
+    _vpc=$(aws ec2 describe-vpcs --vpc-ids "$HUB_VPC_ID" --region "$REGION" \
+      --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
+    [ -z "$_vpc" ] || [ "$_vpc" = "None" ] && { sleep 10; continue; }
+    # Check 3: at least one private subnet exists (tagged or from HUB_SUBNET_IDS)
+    _subs=""
+    if [ -n "${HUB_SUBNET_IDS:-}" ]; then
+      _subs=$(echo "$HUB_SUBNET_IDS" | tr -d "[]'" | tr ',' ' ' | tr -s ' ')
+    fi
+    if [ -z "$_subs" ]; then
+      _subs=$(aws ec2 describe-subnets \
+        --filters "Name=vpc-id,Values=$HUB_VPC_ID" \
+                  "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
+        --region "$REGION" --query 'Subnets[].SubnetId' --output text 2>/dev/null | tr '\t' ' ')
+    fi
+    [ -z "$_subs" ] && { sleep 10; continue; }
+    _prereq_ok=true
+    break
+  done
+  if [ "$_prereq_ok" != "true" ]; then
+    echo "  ✗ Pre-requisites not ready after 5min — VPC=$HUB_VPC_ID subnets not found"
+    exit 1
+  fi
+  echo "  ✓ Pre-requisites ready (VPC + subnets available)"
+
   # Debug: trace every command in this block to /tmp/create-config-debug.log
   exec 19>>/tmp/create-config-debug.log
   BASH_XTRACEFD=19
