@@ -541,7 +541,8 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
     echo "[$(date +%H:%M:%S)]   ▸ Creating CloudFront distribution..."
     ALB_DNS=$(aws elbv2 describe-load-balancers \
       --load-balancer-arns "$ALB_ARN" --region "$REGION" \
-      --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+      --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null) || ALB_DNS=""
+    echo "[$(date +%H:%M:%S)]   ALB_DNS=$ALB_DNS VPC_ORIGIN_ID=$VPC_ORIGIN_ID"
     HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
     CF_DOMAIN=$(aws cloudfront create-distribution \
       --distribution-config "{
@@ -568,7 +569,9 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
           \"Compress\": true},
         \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
         \"PriceClass\": \"PriceClass_100\"
-      }" --query "Distribution.DomainName" --output text 2>/dev/null) || CF_DOMAIN=""
+      }" --query "Distribution.DomainName" --output text 2>&1) || CF_DOMAIN=""
+    echo "[$(date +%H:%M:%S)]   CF_DOMAIN result: $CF_DOMAIN"
+    [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
   fi
 
   if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
