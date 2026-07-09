@@ -328,7 +328,10 @@ printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 
 # Use fixed /tmp paths so background subshell can write and main shell can read.
 # A mktemp dir would require export and subshell inheritance which is fragile.
-_PLATFORM_INFRA_DIR="/tmp/create-config-infra-$$"
+# Use BASHPID (current shell PID) not $$ (which can be parent PID in subshells)
+_PLATFORM_INFRA_DIR="/tmp/create-config-infra-${BASHPID:-$$}"
+# Clean up any leftover dirs from previous runs
+rm -rf /tmp/create-config-infra-* 2>/dev/null || true
 mkdir -p "$_PLATFORM_INFRA_DIR"
 _VPC_ORIGIN_FILE="$_PLATFORM_INFRA_DIR/vpc-origin-id.txt"
 _ALB_ARN_FILE="$_PLATFORM_INFRA_DIR/alb-arn.txt"
