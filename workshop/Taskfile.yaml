@@ -495,14 +495,12 @@ tasks:
           *)
             ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
               --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" \
-              --output text 2>/dev/null) || ROLE_ARN=""
-            ROLE_ARN=$(echo "$ROLE_ARN" | tr -d '[:space:]')
+              --output text 2>/dev/null | grep -o 'arn:aws:iam::[^[:space:]]*' | head -1) || ROLE_ARN=""
             case "$ROLE_ARN" in
               ""|None)
                 ROLE_ARN=$(aws iam list-roles --region {{.AWS_REGION}} \
                   --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" \
-                  --output text 2>/dev/null) || ROLE_ARN=""
-                ROLE_ARN=$(echo "$ROLE_ARN" | tr -d '[:space:]')
+                  --output text 2>/dev/null | grep -o 'arn:aws:iam::[^[:space:]]*' | head -1) || ROLE_ARN=""
                 case "$ROLE_ARN" in None) ROLE_ARN="" ;; esac
               ;;
             esac
