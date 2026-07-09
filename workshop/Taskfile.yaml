@@ -495,8 +495,6 @@ tasks:
           else
             echo "WARN: Lambda invocation did not return credentials — falling back to instance profile."
           fi
-            echo "WARN: Lambda invocation did not return credentials — falling back to instance profile."
-          fi
         else
           echo "WARN: Lambda not found. Falling back to instance profile."
           TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
