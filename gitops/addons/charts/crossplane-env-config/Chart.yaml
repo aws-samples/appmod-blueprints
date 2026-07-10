@@ -1,0 +1,13 @@
+apiVersion: v2
+name: crossplane-env-config
+description: >-
+  Publishes a per-cluster Crossplane EnvironmentConfig named 'env-config'
+  carrying this cluster's ambient metadata (clusterName, region, vpcId,
+  privateSubnetIds, publicSubnetIds, clusterSecurityGroupId). The data is
+  self-discovered from the AWS API (EKS DescribeCluster + EC2 DescribeSubnets)
+  using EKS Pod Identity, so it is identical and automatic on the hub and on
+  every spoke regardless of how the cluster was provisioned (kind provider,
+  platform-cluster Composition, etc.) — no config secret or caller-supplied
+  VPC values required.
+type: application
+version: 0.1.0

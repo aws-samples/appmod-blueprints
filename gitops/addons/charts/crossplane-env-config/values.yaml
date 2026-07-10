@@ -1,0 +1,20 @@
+# Per-cluster values are injected by the addon ApplicationSet from cluster-secret
+# annotations (aws_cluster_name, aws_region). Defaults are empty so a misconfigured
+# deployment fails fast rather than producing a bogus EnvironmentConfig.
+global:
+  clusterName: ""
+
+aws:
+  region: ""
+
+# Namespace the discovery Job + RBAC live in. crossplane-system is where the
+# env-config-creator Pod Identity association is bound (see crossplane-pod-identity).
+namespace: crossplane-system
+
+# ServiceAccount that the Job runs as. MUST match the serviceAccount of the
+# 'envconfig' identity in the crossplane-pod-identity chart so the Job inherits
+# the read-only eks:DescribeCluster / ec2:DescribeSubnets permissions.
+serviceAccount: env-config-creator
+
+# Image providing aws-cli + kubectl + jq.
+image: alpine/k8s:1.32.8

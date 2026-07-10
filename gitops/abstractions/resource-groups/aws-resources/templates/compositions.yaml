@@ -29,7 +29,7 @@ spec:
                 type: string
                 description: AWS region for the bucket. Required — callers must
                   pass an explicit region (typically the cluster's region from
-                  the vpc-config EnvironmentConfig).
+                  the env-config EnvironmentConfig).
               versioning:
                 type: boolean
                 description: Enable versioning on the bucket

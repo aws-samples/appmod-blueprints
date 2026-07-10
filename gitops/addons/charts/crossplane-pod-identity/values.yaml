@@ -346,3 +346,31 @@ identities:
             }
           ]
         }
+
+  # Read-only identity for the env-config publisher Job (crossplane-env-config
+  # chart). Self-discovers the cluster's VPC/subnets to build the 'env-config'
+  # EnvironmentConfig. Least privilege: describe-only, no mutation.
+  envconfig:
+    enabled: false
+    roleName: EnvConfigPodIdentityRole
+    namespace: crossplane-system
+    serviceAccount: env-config-creator
+    tags:
+      managed-by: crossplane
+      purpose: env-config-pod-identity
+    policy:
+      name: EnvConfigDiscoveryPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "eks:DescribeCluster",
+                "ec2:DescribeSubnets"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }

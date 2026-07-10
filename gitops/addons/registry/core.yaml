@@ -14,6 +14,26 @@ default-storage-class:
         operator: In
         values: ['true']
 
+env_config:
+  namespace: crossplane-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-env-config'
+  goTemplateOptions:
+    - "missingkey=zero"
+  annotationsAppSet:
+    # After crossplane + the envconfig Pod Identity association (wave -1). The Job
+    # self-retries (backoffLimit) until creds are active, so ordering is best-effort.
+    argocd.argoproj.io/sync-wave: '6'
+  selector:
+    matchExpressions:
+      - key: enable_crossplane
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+
 pod_identities:
   namespace: crossplane-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
@@ -40,6 +60,10 @@ pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      # Read-only identity for the env-config publisher Job. Enabled wherever
+      # Crossplane runs (hub + every spoke), matching the env_config addon.
+      envconfig:
+        enabled: '{{default "false" (index .metadata.labels "enable_crossplane")}}'
   ignoreDifferences:
     - group: iam.aws.upbound.io
       kind: Role
