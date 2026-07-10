@@ -18,25 +18,25 @@ spec:
       "schemaVersion": 39,
       "panels": [
         {
-          "title": "Agent Pods (kagent)",
+          "title": "OAM Agent Pods",
           "type": "stat",
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
           "datasource": {"uid": "prometheus"},
-          "targets": [{"expr": "count(kube_pod_info{namespace=\"kagent\"})", "legendFormat": "Pods"}]
+          "targets": [{"expr": "count(kube_pod_info{pod=~\".*agent.*\",namespace!~\"kube-system|argocd|crossplane-system|vela-system\"})", "legendFormat": "Agents"}]
         },
         {
-          "title": "LiteLLM Ready",
+          "title": "MCP Server Pods",
           "type": "stat",
           "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
           "datasource": {"uid": "prometheus"},
-          "targets": [{"expr": "count(kube_pod_status_ready{namespace=\"kagent\",pod=~\"litellm.*\",condition=\"true\"})", "legendFormat": "Ready"}]
+          "targets": [{"expr": "count(kube_pod_info{namespace=~\"mcp-.*\"})", "legendFormat": "MCP Servers"}]
         },
         {
-          "title": "OTEL Collector Ready",
+          "title": "LiteLLM / Bifrost Ready",
           "type": "stat",
           "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
           "datasource": {"uid": "prometheus"},
-          "targets": [{"expr": "count(kube_pod_status_ready{namespace=\"otel\",condition=\"true\"})", "legendFormat": "Ready"}]
+          "targets": [{"expr": "count(kube_pod_status_ready{namespace=~\"litellm|bifrost\",condition=\"true\"})", "legendFormat": "Ready"}]
         },
         {
           "title": "Agent Gateway Ready",
@@ -51,7 +51,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"kagent|otel|agentgateway-system|langfuse|jaeger\"}[5m])) by (namespace)", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}"}
+            {"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"litellm|bifrost|otel|agentgateway-system|langfuse|jaeger|mcp-.*|default\"}[5m])) by (namespace)", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}"}
           ]
         },
         {
@@ -60,7 +60,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(container_memory_working_set_bytes{namespace=~\"kagent|otel|agentgateway-system|langfuse|jaeger\"}) by (namespace) / 1024 / 1024", "legendFormat": "{{ "{{" }}namespace{{ "}}" }} (MiB)"}
+            {"expr": "sum(container_memory_working_set_bytes{namespace=~\"litellm|bifrost|otel|agentgateway-system|langfuse|jaeger|mcp-.*|default\"}) by (namespace) / 1024 / 1024", "legendFormat": "{{ "{{" }}namespace{{ "}}" }} (MiB)"}
           ]
         },
         {
@@ -69,7 +69,16 @@ spec:
           "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "increase(kube_pod_container_status_restarts_total{namespace=~\"kagent|otel|agentgateway-system|langfuse\"}[1h]) > 0", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}/{{ "{{" }}pod{{ "}}" }}"}
+            {"expr": "increase(kube_pod_container_status_restarts_total{namespace=~\"litellm|bifrost|otel|agentgateway-system|langfuse|mcp-.*|default\"}[1h]) > 0", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}/{{ "{{" }}pod{{ "}}" }}"}
+          ]
+        },
+        {
+          "title": "Argo Rollout Replicas",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "kube_replicaset_status_ready_replicas{namespace=~\"default|mcp-.*|bifrost\"}", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}/{{ "{{" }}replicaset{{ "}}" }}"}
           ]
         }
       ]
@@ -78,7 +87,7 @@ spec:
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
-  name: agent-platform-xray-traces
+  name: agent-platform-bifrost-llm
   namespace: grafana-operator
 spec:
   folder: "Agent Platform"
@@ -87,25 +96,76 @@ spec:
       dashboards: "external-grafana"
   json: |
     {
-      "title": "Agent Platform - X-Ray Traces",
-      "uid": "agent-platform-xray",
-      "tags": ["agent-platform", "tracing"],
+      "title": "Agent Platform - Bifrost LLM Metrics",
+      "uid": "agent-platform-bifrost-llm",
+      "tags": ["agent-platform", "bifrost", "llm"],
       "timezone": "browser",
       "schemaVersion": 39,
       "panels": [
         {
-          "title": "Service Map",
-          "type": "nodeGraph",
-          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
-          "datasource": {"uid": "xray"},
-          "targets": [{"queryType": "getServiceMap", "refId": "A", "region": "us-east-1"}]
+          "title": "LLM Request Rate (per model)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(bifrost_success_requests_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
+          ]
         },
         {
-          "title": "Recent Traces",
-          "type": "table",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 12},
-          "datasource": {"uid": "xray"},
-          "targets": [{"queryType": "getTraceSummaries", "refId": "A", "query": "", "region": "us-east-1"}]
+          "title": "Upstream Latency P95 (per model)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_upstream_latency_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ "{{" }}model{{ "}}" }} P95"}
+          ]
+        },
+        {
+          "title": "Input Tokens (per model)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(bifrost_input_tokens_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }} input"},
+            {"expr": "sum(rate(bifrost_output_tokens_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }} output"}
+          ]
+        },
+        {
+          "title": "Cost ($) per Model",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(increase(bifrost_cost_total[1h])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
+          ]
+        },
+        {
+          "title": "First Token Latency P95",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_stream_first_token_latency_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
+          ]
+        },
+        {
+          "title": "Success vs Error Requests",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(bifrost_success_requests_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }} success"},
+            {"expr": "sum(rate(bifrost_error_requests_total[5m])) by (model)", "legendFormat": "{{ "{{" }}model{{ "}}" }} error"}
+          ]
+        },
+        {
+          "title": "Inter-Token Latency P95 (streaming)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "histogram_quantile(0.95, sum(rate(bifrost_stream_inter_token_latency_seconds_bucket[5m])) by (le, model))", "legendFormat": "{{ "{{" }}model{{ "}}" }}"}
+          ]
         }
       ]
     }
@@ -134,7 +194,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"kagent\",pod=~\"litellm.*\"}[5m])) by (pod)", "legendFormat": "{{ "{{" }}pod{{ "}}" }}"}
+            {"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"litellm\",pod=~\"litellm.*\"}[5m])) by (pod)", "legendFormat": "{{ "{{" }}pod{{ "}}" }}"}
           ]
         },
         {
@@ -143,17 +203,35 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(container_memory_working_set_bytes{namespace=\"kagent\",pod=~\"litellm.*\"}) by (pod) / 1024 / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} (MiB)"}
+            {"expr": "sum(container_memory_working_set_bytes{namespace=\"litellm\",pod=~\"litellm.*\"}) by (pod) / 1024 / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} (MiB)"}
           ]
         },
         {
-          "title": "LiteLLM Network I/O",
+          "title": "Bifrost CPU",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(container_network_receive_bytes_total{namespace=\"kagent\",pod=~\"litellm.*\"}[5m])) by (pod) / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} RX (KiB/s)"},
-            {"expr": "sum(rate(container_network_transmit_bytes_total{namespace=\"kagent\",pod=~\"litellm.*\"}[5m])) by (pod) / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} TX (KiB/s)"}
+            {"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"bifrost\",pod=~\"bifrost.*\"}[5m])) by (pod)", "legendFormat": "{{ "{{" }}pod{{ "}}" }}"}
+          ]
+        },
+        {
+          "title": "Bifrost Memory",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(container_memory_working_set_bytes{namespace=\"bifrost\",pod=~\"bifrost.*\"}) by (pod) / 1024 / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} (MiB)"}
+          ]
+        },
+        {
+          "title": "LLM Gateway Network I/O",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+          "datasource": {"uid": "prometheus"},
+          "targets": [
+            {"expr": "sum(rate(container_network_receive_bytes_total{namespace=~\"litellm|bifrost\"}[5m])) by (namespace, pod) / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} RX (KiB/s)"},
+            {"expr": "sum(rate(container_network_transmit_bytes_total{namespace=~\"litellm|bifrost\"}[5m])) by (namespace, pod) / 1024", "legendFormat": "{{ "{{" }}pod{{ "}}" }} TX (KiB/s)"}
           ]
         }
       ]

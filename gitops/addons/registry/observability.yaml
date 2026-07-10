@@ -13,19 +13,19 @@ observability-aws:
         values: ["true"]
   valuesObject:
     aws:
-      region: "{{.metadata.annotations.aws_region}}"
-      accountId: "{{.metadata.annotations.aws_account_id}}"
-      vpcId: "{{.metadata.annotations.aws_vpc_id}}"
-      clusterName: "{{.metadata.annotations.aws_cluster_name}}"
+      region: '{{default "" (index .metadata.annotations "aws_region")}}'
+      accountId: '{{default "" (index .metadata.annotations "aws_account_id")}}'
+      vpcId: '{{default "" (index .metadata.annotations "aws_vpc_id")}}'
+      clusterName: '{{default "" (index .metadata.annotations "aws_cluster_name")}}'
     ingress:
-      domainName: "{{.metadata.annotations.ingress_domain_name}}"
-    resourcePrefix: "{{.metadata.annotations.resource_prefix}}"
+      domainName: '{{default "" (index .metadata.annotations "ingress_domain_name")}}'
+    resourcePrefix: '{{default "" (index .metadata.annotations "resource_prefix")}}'
     amg:
       subnetIds: ""
     scraper:
-      clusterArn: '{{index .metadata.annotations "aws_cluster_arn"}}'
-      clusterSubnetIds: '{{index .metadata.annotations "aws_private_subnet_ids"}}'
-      clusterSecurityGroupIds: '{{index .metadata.annotations "aws_cluster_security_group_id"}}'
+      clusterArn: '{{default "" (index .metadata.annotations "aws_cluster_arn")}}'
+      clusterSubnetIds: '{{default "" (index .metadata.annotations "aws_private_subnet_ids")}}'
+      clusterSecurityGroupIds: '{{default "" (index .metadata.annotations "aws_cluster_security_group_id")}}'
     spokeScrapers:
       spoke-dev:
         clusterArn: '{{default "" (index .metadata.annotations "spoke_dev_cluster_arn")}}'
@@ -265,7 +265,7 @@ aws-for-fluentbit:
       # Track the latest aws-for-fluent-bit 3.x image (AL2023, fluent-bit v5.x).
       # Bump as new patch/minor releases ship with CVE fixes:
       # https://github.com/aws/aws-for-fluent-bit/releases
-      tag: 3.4.5
+      tag: 3.4.6
 
 cni-metrics-helper:
   namespace: kube-system

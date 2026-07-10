@@ -910,8 +910,13 @@ tasks:
       - task: credentials:refresh
       - kubectl -n crossplane-system rollout restart deploy -l pkg.crossplane.io/revision 2>/dev/null || true
       - kubectl -n crossplane-system rollout status deploy -l pkg.crossplane.io/revision --timeout=120s 2>/dev/null || true
-      # Phase 1: Clean hub addons (continue on failure so remaining phases still run)
-      - cmd: task hub:destroy-addons
+      # Phase 1: Clean hub addons (continue on failure so remaining phases still run).
+      # Use `task:` (not `cmd: task ...`) so the call runs in-process and inherits
+      # CONFIG_FILE. Spawning a nested `task` binary via gosh re-resolves CONFIG_FILE
+      # relative to this provider dir (cluster-providers/kind-crossplane/config.local.yaml),
+      # which does not exist — so hub:destroy-addons errored out and addons were never
+      # torn down, leaving orphaned ALBs/scrapers/SGs that block VPC deletion.
+      - task: hub:destroy-addons
         ignore_error: true
       # Phase 2: Delete pod identities and IAM resources (chart-managed)
       - cmd: |
@@ -1001,15 +1006,29 @@ tasks:
             echo "Deleting orphaned pod identity association $ASSOC_ID..."
             aws eks delete-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --association-id $ASSOC_ID --region {{.AWS_REGION}} --output text 2>/dev/null || true
           done
-          for ROLE in {{.HUB_CLUSTER_NAME}}-CrossplaneIAMProviderRole {{.HUB_CLUSTER_NAME}}-CrossplaneEKSProviderRole {{.HUB_CLUSTER_NAME}}-CrossplaneEC2ProviderRole {{.HUB_CLUSTER_NAME}}-ESOPodIdentityRole {{.HUB_CLUSTER_NAME}}-LBCPodIdentityRole {{.HUB_CLUSTER_NAME}}-ExternalDNSPodIdentityRole {{.HUB_CLUSTER_NAME}}-ArgoCDCapabilityRole; do
-            for POLICY_ARN in $(aws iam list-attached-role-policies --role-name $ROLE --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
-              aws iam detach-role-policy --role-name $ROLE --policy-arn $POLICY_ARN 2>/dev/null || true
+          # Roles/policies are Crossplane-managed and should reconcile away, but when
+          # addon teardown removes the managed-resource CRs before AWS-side deletion
+          # completes they orphan. Sweep every role/policy created for the hub and its
+          # spokes by name prefix rather than an explicit list (the old hardcoded list
+          # covered only 7 hub roles + 3 hub policies, missing agentcore/bifrost/AMP/
+          # Grafana/Keycloak/langfuse/Otel roles and ALL spoke roles + policies).
+          SPOKE_PREFIXES=$(yq -r '.spokes // {} | keys | .[]' {{.CONFIG_FILE}} 2>/dev/null)
+          for PREFIX in {{.HUB_CLUSTER_NAME}} $SPOKE_PREFIXES; do
+            for ROLE in $(aws iam list-roles --query "Roles[?starts_with(RoleName,'${PREFIX}-')].RoleName" --output text 2>/dev/null); do
+              for POLICY_ARN in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
+                aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$POLICY_ARN" 2>/dev/null || true
+              done
+              for INLINE in $(aws iam list-role-policies --role-name "$ROLE" --query 'PolicyNames[]' --output text 2>/dev/null); do
+                aws iam delete-role-policy --role-name "$ROLE" --policy-name "$INLINE" 2>/dev/null || true
+              done
+              aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
             done
-            aws iam delete-role --role-name $ROLE 2>/dev/null || true
-          done
-          for POLICY in {{.HUB_CLUSTER_NAME}}-ESOSecretsManagerPolicy {{.HUB_CLUSTER_NAME}}-LBCControllerPolicy {{.HUB_CLUSTER_NAME}}-ExternalDNSRoute53Policy; do
-            POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName==\`$POLICY\`].Arn" --output text 2>/dev/null)
-            [ -n "$POLICY_ARN" ] && aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null || true
+            for POLICY_ARN in $(aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName,'${PREFIX}-')].Arn" --output text 2>/dev/null); do
+              for V in $(aws iam list-policy-versions --policy-arn "$POLICY_ARN" --query 'Versions[?!IsDefaultVersion].VersionId' --output text 2>/dev/null); do
+                aws iam delete-policy-version --policy-arn "$POLICY_ARN" --version-id "$V" 2>/dev/null || true
+              done
+              aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null || true
+            done
           done
         ignore_error: true
       # Phase 7: Clean up observability resources (AMP scrapers, AMP workspace, AMG workspace).
@@ -1066,6 +1085,13 @@ tasks:
                 --query "LoadBalancers[?VpcId=='$VPC'].LoadBalancerArn" --output text 2>/dev/null); do
               echo "Deleting ELB $LB_ARN"
               aws elbv2 delete-load-balancer --load-balancer-arn "$LB_ARN" --region {{.AWS_REGION}} 2>/dev/null || true
+            done
+            # Target groups (created by aws-load-balancer-controller) are pinned to the
+            # VPC and are NOT removed when their load balancer is deleted, so they orphan.
+            for TG_ARN in $(aws elbv2 describe-target-groups --region {{.AWS_REGION}} \
+                --query "TargetGroups[?VpcId=='$VPC'].TargetGroupArn" --output text 2>/dev/null); do
+              echo "Deleting target group $TG_ARN"
+              aws elbv2 delete-target-group --target-group-arn "$TG_ARN" --region {{.AWS_REGION}} 2>/dev/null || true
             done
             # NAT gateways and their EIPs
             for NAT in $(aws ec2 describe-nat-gateways --region {{.AWS_REGION}} \
@@ -1134,10 +1160,18 @@ tasks:
             echo "Deleting VPC $VPC"
             aws ec2 delete-vpc --vpc-id "$VPC" --region {{.AWS_REGION}} 2>/dev/null || true
           done
-          # Secrets Manager — Crossplane cluster claims also push hub/spoke config
-          # secrets that survive the AWS resource teardown
-          for SECRET in {{.HUB_CLUSTER_NAME}}/config {{.HUB_CLUSTER_NAME}}/keycloak {{.HUB_CLUSTER_NAME}}/keycloak-clients {{.HUB_CLUSTER_NAME}}/secrets spoke-dev/config spoke-prod/config spoke-dev/secrets spoke-prod/secrets; do
-            aws secretsmanager delete-secret --secret-id "$SECRET" --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
+          # Secrets Manager — Crossplane cluster claims and addons (Langfuse, Keycloak)
+          # push secrets under hub/* and <spoke>/* that survive the AWS resource
+          # teardown. Sweep by name prefix so addon-created entries (e.g.
+          # hub/langfuse-otel, hub/langfuse-otel-keys) are caught too, rather than a
+          # fixed config/keycloak/secrets list that leaves them orphaned.
+          SPOKE_PREFIXES=$(yq -r '.spokes // {} | keys | .[]' {{.CONFIG_FILE}} 2>/dev/null)
+          for PREFIX in {{.HUB_CLUSTER_NAME}} $SPOKE_PREFIXES; do
+            for SECRET in $(aws secretsmanager list-secrets --region {{.AWS_REGION}} \
+                --query "SecretList[?starts_with(Name,'${PREFIX}/')].Name" --output text 2>/dev/null); do
+              echo "Deleting secret $SECRET"
+              aws secretsmanager delete-secret --secret-id "$SECRET" --force-delete-without-recovery --region {{.AWS_REGION}} --output text 2>/dev/null || true
+            done
           done
         ignore_error: true
       # Phase 9: Clean up Kind (pass CLEANUP_KIND=true to remove)

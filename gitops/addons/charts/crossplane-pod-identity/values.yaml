@@ -311,14 +311,14 @@ identities:
 
   otel-collector:
     enabled: false
-    roleName: OtelCollectorXRayRole
+    roleName: OtelCollectorRole
     namespace: otel
     serviceAccount: otel-collector
     tags:
       managed-by: crossplane
-      purpose: otel-collector-xray-export
+      purpose: otel-collector-observability
     policy:
-      name: OtelCollectorXRayPolicy
+      name: OtelCollectorPolicy
       document: |
         {
           "Version": "2012-10-17",
@@ -331,6 +331,16 @@ identities:
                 "xray:GetSamplingRules",
                 "xray:GetSamplingTargets",
                 "xray:GetSamplingStatisticSummaries"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "aps:RemoteWrite",
+                "aps:GetSeries",
+                "aps:GetLabels",
+                "aps:GetMetricMetadata"
               ],
               "Resource": "*"
             }
