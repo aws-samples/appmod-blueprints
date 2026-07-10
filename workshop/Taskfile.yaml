@@ -335,7 +335,7 @@ tasks:
         printf '       writes private/gitlab-cloudfront-domain\n'
         printf '    2. SSM SetupIDE runs create-config.sh which generates config.local.yaml\n'
         printf '       (auto-detects region, account, IDC; sets domain: "" for cloudfront mode\n'
-        printf '        and cloudfront.gitlabDomain from private/gitlab-cloudfront-domain).\n'
+        printf '        and gitDomain from private/gitlab-cloudfront-domain).\n'
         printf '       NOTE: the PLATFORM CloudFront domain is NOT a prerequisite and is NOT\n'
         printf '       stored in config.local.yaml — it is created by cloudfront:hub-distribution\n'
         printf '       during task install and recorded in private/cloudfront-domain.\n'
@@ -388,7 +388,7 @@ tasks:
           [ "$D" = "None" ] && D=""
           echo "$D"
       GITLAB_CF_DOMAIN_VAR:
-        sh: yq '.cloudfront.gitlabDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.REPO}}/private/gitlab-cloudfront-domain 2>/dev/null || true
+        sh: yq '.gitDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.REPO}}/private/gitlab-cloudfront-domain 2>/dev/null || true
       USER_PASSWORD:
         sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // ""'
       KC_ADMIN_PASSWORD:
@@ -402,7 +402,7 @@ tasks:
         }
         CF="{{.CF_DOMAIN}}"
         GITLAB_CF="{{.GITLAB_CF_DOMAIN_VAR}}"
-        # Fall back to platform domain if gitlabDomain not set
+        # Fall back to platform domain if gitDomain not set
         [ -z "$GITLAB_CF" ] && GITLAB_CF="$CF"
         ARGOCD="{{.ARGOCD_URL}}"
         ARGOCD_SERVER=$(echo "$ARGOCD" | sed 's|https://||;s|/.*||')

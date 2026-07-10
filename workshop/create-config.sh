@@ -266,8 +266,7 @@ GITLAB_CF_DOMAIN="${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}"
 [ -z "$GITLAB_CF_DOMAIN" ] && [ -f "${REPO_ROOT}/private/gitlab-cloudfront-domain" ] && \
   GITLAB_CF_DOMAIN="$(cat "${REPO_ROOT}/private/gitlab-cloudfront-domain" | tr -d '[:space:]')"
 if [ -n "$GITLAB_CF_DOMAIN" ]; then
-  printf 'cloudfront:\n'                               >> "$OUTPUT_FILE"
-  printf '  gitlabDomain: "%s"\n' "$GITLAB_CF_DOMAIN" >> "$OUTPUT_FILE"
+  printf 'gitDomain: "%s"\n' "$GITLAB_CF_DOMAIN" >> "$OUTPUT_FILE"
 fi
 printf 'identityCenter:\n'                             >> "$OUTPUT_FILE"
 printf '  instanceArn: "%s"\n'  "$IDC_ARN"             >> "$OUTPUT_FILE"
