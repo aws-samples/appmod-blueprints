@@ -1,0 +1,5 @@
+apiVersion: v2
+name: pod-identity
+description: Crossplane XRD and Composition granting a workload an AWS IAM identity via EKS Pod Identity. Cluster facts (clusterName, region) are resolved ambiently from the env-config EnvironmentConfig, so callers pass only serviceAccount + namespace.
+type: application
+version: 0.1.0
