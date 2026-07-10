@@ -681,62 +681,126 @@ async def configure_identity_center(
             await page.wait_for_timeout(3000)
             await screenshot(page, "/tmp/step8.png", debug)
 
-            # Verify success — look for success banner or check we're back on settings
+            # Verify success — check for the explicit failure banner FIRST. AWS's failure
+            # page still contains the phrase "external identity provider" (e.g. "Enabling
+            # external identity provider" as a failed sub-step), so matching on that phrase
+            # alone is a false positive. Check failure indicators before claiming success.
             page_text = await page.evaluate("() => document.body.innerText")
-            if "successfully changed" in page_text.lower() or "external identity provider" in page_text.lower():
+            failure_match = re.search(r"(\d+)\s+of\s+(\d+)\s+failed to complete", page_text, re.IGNORECASE)
+            if failure_match or "failed to complete" in page_text.lower():
+                print(f"IDENTITY_SOURCE_CHANGE_FAILURE_PAGE: {page_text[:1000]}", file=sys.stderr)
+                raise RuntimeError(
+                    f"Identity source change to External IdP failed: {page_text[:400]!r}. "
+                    "This usually means AWS rejected the Keycloak SAML metadata (e.g. malformed "
+                    "URLs in the IdP metadata XML). Check /tmp/keycloak-saml.xml for valid "
+                    "absolute URLs (scheme + host) in entityID and Location attributes."
+                )
+            elif "successfully changed" in page_text.lower():
                 print("Identity source change confirmed!", file=sys.stderr)
             else:
                 print(f"WARNING: Could not confirm success. Page text snippet: {page_text[:200]}", file=sys.stderr)
 
             # --- Step 9: Enable automatic provisioning ---
+            # NOTE: The current IAM Identity Center console has NO separate "Provisioning" tab.
+            # The "Automatic provisioning" info box lives directly on the Settings page. Choosing
+            # "Enable" there immediately turns on provisioning and opens the "Inbound automatic
+            # provisioning" dialog showing the SCIM endpoint + a "Show token" button. If
+            # provisioning was already enabled in a prior (partial) run, AWS will show a
+            # "Disable" button instead and will NOT let us re-view the original token — the
+            # token is only ever shown once, at Enable time. See:
+            # https://docs.aws.amazon.com/singlesignon/latest/userguide/how-to-with-scim.html
             print("Enabling automatic provisioning...", file=sys.stderr)
-            # Dismiss any overlays/tooltips aggressively
+            # Navigate directly to the Settings page (same URL used in Step 2) and select the
+            # "Identity source" tab explicitly — the Settings page defaults to the "Details"
+            # sub-tab, which does NOT contain the "Automatic provisioning" box.
+            await page.goto(settings_url, wait_until="domcontentloaded")
+            await wait_for_stable(page)
+            await dismiss_overlays(page)
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(500)
             await page.evaluate("document.querySelectorAll('[class*=\"popover\"], [class*=\"hotspot\"], [class*=\"tutorial-overlay\"]').forEach(e => e.remove())")
             await dismiss_overlays(page)
-            # Click Settings in left nav (use CSS selector for the nav link)
-            settings_clicked = False
-            for sel in ['nav a:text-is("Settings")', 'aside a:text-is("Settings")',
-                        '[class*="navigation"] a:text-is("Settings")', 'a:text-is("Settings")']:
-                try:
-                    link = await page.wait_for_selector(sel, state="visible", timeout=3000)
-                    if link:
-                        await link.click()
-                        await wait_for_stable(page)
-                        settings_clicked = True
-                        break
-                except Exception:
-                    continue
-            if not settings_clicked:
-                # Try direct URL navigation
-                await page.goto(f"{sso_url}#/instances/{instance_id}/settings", wait_until="domcontentloaded")
-                await wait_for_stable(page)
+            await click_first_visible(page, [
+                '[data-testid="identity-source"]',
+                'button:has-text("Identity source")',
+                'a:has-text("Identity source")',
+                '[role="tab"]:has-text("Identity source")',
+            ], description="Identity source tab")
+            await wait_for_stable(page)
             await dismiss_overlays(page)
             await page.wait_for_timeout(2000)
-            # Click Provisioning tab/link
-            for tab_sel in ['a:text-is("Provisioning")', 'button:text-is("Provisioning")',
-                            '[role="tab"]:has-text("Provisioning")', 'a:has-text("Provisioning")',
-                            'span:text-is("Provisioning")']:
-                try:
-                    tab = await page.wait_for_selector(tab_sel, state="visible", timeout=3000)
-                    if tab:
-                        await tab.click()
-                        await wait_for_stable(page)
-                        break
-                except Exception:
-                    continue
-            await page.wait_for_timeout(2000)
+
+            # Scroll the "Automatic provisioning" info box into view so its buttons are
+            # actually visible/clickable (it can be below the fold on the Settings page).
+            try:
+                box = await find_first_visible(page, [
+                    ':has-text("Automatic provisioning") >> button:has-text("Enable")',
+                    ':has-text("Automatic provisioning")',
+                ], timeout=5000)
+                if box:
+                    await box.scroll_into_view_if_needed()
+                    await page.wait_for_timeout(500)
+            except Exception:
+                pass
             await dismiss_overlays(page)
 
-            # Click Enable button
+            # If we already have SCIM data cached from a prior successful run, skip
+            # re-enabling entirely — AWS only shows the token once, so this is our source
+            # of truth once provisioning has been turned on.
+            cached_scim_data = None
+            if os.path.exists(SCIM_DATA_FILE):
+                try:
+                    cached_scim_data = json.load(open(SCIM_DATA_FILE))
+                except Exception:
+                    cached_scim_data = None
+
             await screenshot(page, "/tmp/step9_before_enable.png", debug)
-            await click_first_visible(page, [
-                'button:has-text("Enable")',
+
+            enable_btn = await find_first_visible(page, [
                 'button:has-text("Enable automatic provisioning")',
-            ], timeout=10000, description="Enable provisioning button")
-            await wait_for_stable(page)
-            await page.wait_for_timeout(2000)
+                'button:has-text("Enable")',
+            ], timeout=10000)
+
+            if enable_btn is not None:
+                # Fresh state: provisioning not yet enabled. Click Enable — this opens the
+                # "Inbound automatic provisioning" dialog with the SCIM endpoint/token.
+                await enable_btn.click()
+                await wait_for_stable(page)
+                await page.wait_for_timeout(2000)
+            else:
+                # No Enable button visible — either already enabled, or the page hasn't
+                # rendered the info box yet. Check page state directly instead of guessing
+                # at a "Provisioning" tab or sub-route that doesn't exist in this console.
+                page_text = await page.evaluate("() => document.body.innerText")
+                disable_btn = await find_first_visible(page, ['button:has-text("Disable")'], timeout=3000)
+
+                if disable_btn is not None or "scim.amazonaws.com" in page_text or re.search(r"scim\.[a-z0-9-]+\.(amazonaws\.com|api\.aws)", page_text):
+                    print("Automatic provisioning is already enabled.", file=sys.stderr)
+                    if cached_scim_data and cached_scim_data.get("endpoint") and cached_scim_data.get("token"):
+                        print("Reusing cached SCIM endpoint/token from a previous run.", file=sys.stderr)
+                        scim_data = cached_scim_data
+                        # Skip Step 10 (token extraction) and jump straight to Keycloak
+                        # SAML client creation + SCIM export using the cached values.
+                        print("Creating Keycloak SAML client...", file=sys.stderr)
+                        create_keycloak_saml_client(keycloak_dns, keycloak_admin_password, open(AWS_METADATA_FILE).read())
+                        print("Exporting users and groups to AWS IAM Identity Center...", file=sys.stderr)
+                        export_to_aws_scim(keycloak_dns, keycloak_admin_password, scim_data["endpoint"], scim_data["token"])
+                        return scim_data
+                    else:
+                        raise RuntimeError(
+                            "Automatic provisioning is already enabled in IAM Identity Center, but no "
+                            f"cached SCIM token was found at {SCIM_DATA_FILE}. AWS only displays the SCIM "
+                            "access token once, at the moment provisioning is enabled, and it cannot be "
+                            "retrieved again. To recover: in the IAM Identity Center console, go to "
+                            "Settings, choose 'Disable' on Automatic provisioning, then re-run this script "
+                            "so it can click 'Enable' again and capture a fresh token."
+                        )
+                else:
+                    print(f"PAGE_TEXT_DUMP_provisioning: {page_text[:800]}", file=sys.stderr)
+                    raise RuntimeError(
+                        "Could not determine provisioning state: no 'Enable' or 'Disable' button found "
+                        "on the Settings page, and no SCIM endpoint text detected."
+                    )
             await screenshot(page, "/tmp/step9.png", debug)
 
             # --- Step 10: Extract SCIM endpoint and token ---

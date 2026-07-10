@@ -152,8 +152,18 @@ data:
 
     # hostname settings — must use ingress_domain_name (platform CloudFront domain)
     # Do NOT fall back to gitlab_domain_name — that domain routes to GitLab, not Keycloak
-    hostname=https://{{ .Values.global.ingress_domain_name }}/keycloak
-    hostname-admin=https://{{ .Values.global.ingress_domain_name }}/keycloak
+    #
+    # IMPORTANT: `hostname` must be the bare base URL (scheme + host only), WITHOUT the
+    # /keycloak context path. `http-relative-path` below already supplies that path, and
+    # Keycloak appends it to `hostname` internally. Including "/keycloak" in BOTH settings
+    # causes a double-path bug in Keycloak's SAML metadata builder (observed on 26.3.3):
+    # the generated SAML EntityDescriptor/SSO/SLO Location URLs come out malformed as
+    # "https:/keycloak/realms/<realm>/..." (missing host, single slash after scheme),
+    # which AWS IAM Identity Center then rejects with "Unable to build attributes from
+    # provided metadata object as url validation failed" when importing the IdP metadata.
+    # OIDC is unaffected by this, which is why only the SAML/IDC federation flow broke.
+    hostname=https://{{ .Values.global.ingress_domain_name }}
+    hostname-admin=https://{{ .Values.global.ingress_domain_name }}
     hostname-strict=false
     http-relative-path=keycloak
     http-enabled=true
