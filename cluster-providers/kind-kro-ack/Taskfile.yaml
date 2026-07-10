@@ -153,12 +153,14 @@ tasks:
       - task: kro:install-eso-bootstrap
       - task: kro:install-cluster-secret-store-bootstrap
       - task: kro:apply-rgds
+      - task: hub:wait-for-cloudfront-domain
       - task: hub:claim
       - task: hub:wait-for-eks
       - task: hub:authorize-ide-access
       # Re-check credentials before hub:seed — if this is a resumed install
       # the kind cluster credentials may have expired (STS tokens last ~1h).
       - task: credentials:check-and-refresh
+      - task: hub:wait-for-gitlab-init
       - task: hub:seed
       - task: hub:force-eso-refresh
       - task: hub:wait-for-sync
@@ -541,6 +543,76 @@ tasks:
         # Update config.local.yaml with discovered values
         yq -i ".identityCenter.adminGroupId = \"$ADMIN_ID\"" {{.CONFIG_FILE}}
         yq -i ".identityCenter.identityStoreId = \"$STORE_ID\"" {{.CONFIG_FILE}}
+
+  hub:wait-for-gitlab-init:
+    desc: Wait for gitlab:init-ec2 background job to complete before seeding Secrets Manager
+    cmds:
+      - |
+        PID_FILE="/tmp/gitlab-init.pid"
+        LOG_FILE="/tmp/gitlab-init.log"
+        if [ ! -f "$PID_FILE" ]; then
+          echo "[$(date +%H:%M:%S)] ✓ No gitlab:init background job found — assuming already done"
+          exit 0
+        fi
+        GITLAB_PID=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -z "$GITLAB_PID" ]; then
+          echo "[$(date +%H:%M:%S)] ✓ gitlab:init PID empty — assuming already done"
+          exit 0
+        fi
+        echo "[$(date +%H:%M:%S)] ▸ Waiting for gitlab:init-ec2 background job (PID=$GITLAB_PID)..."
+        _LOG_LINES=0
+        while kill -0 "$GITLAB_PID" 2>/dev/null; do
+          if [ -f "$LOG_FILE" ]; then
+            _TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
+            if [ "$_TOTAL" -gt "$_LOG_LINES" ]; then
+              tail -n +$((_LOG_LINES + 1)) "$LOG_FILE" 2>/dev/null
+              _LOG_LINES=$_TOTAL
+            fi
+          fi
+          sleep 3
+        done
+        if [ -f "$LOG_FILE" ]; then
+          tail -n +$((_LOG_LINES + 1)) "$LOG_FILE" 2>/dev/null || true
+        fi
+        echo "[$(date +%H:%M:%S)] ✓ gitlab:init-ec2 background job complete"
+        rm -f "$PID_FILE"
+
+  hub:wait-for-cloudfront-domain:
+    desc: Wait for CloudFront domain to be written by background create-config.sh infra job
+    cmds:
+      - |
+        CF_FILE="{{.ROOT_DIR}}/private/cloudfront-domain"
+        CONFIG_FILE="{{.CONFIG_FILE}}"
+        # If domain already in config or file exists, nothing to do
+        EXISTING=$(yq '.domain // ""' "$CONFIG_FILE" 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$EXISTING" ] && [ "$EXISTING" != '""' ] && [ "$EXISTING" != "null" ]; then
+          echo "[$(date +%H:%M:%S)] ✓ CloudFront domain already set: $EXISTING"
+          exit 0
+        fi
+        if [ -f "$CF_FILE" ] && [ -s "$CF_FILE" ]; then
+          D=$(cat "$CF_FILE" | tr -d '[:space:]')
+          if [ -n "$D" ]; then
+            yq -i ".domain = \"$D\"" "$CONFIG_FILE" 2>/dev/null || \
+              sed -i "s|domain: .*|domain: \"$D\"|" "$CONFIG_FILE"
+            echo "[$(date +%H:%M:%S)] ✓ CloudFront domain loaded from file: $D"
+            exit 0
+          fi
+        fi
+        echo "[$(date +%H:%M:%S)] ▸ Waiting for CloudFront domain (background create-config.sh infra)..."
+        for _i in $(seq 1 80); do
+          if [ -f "$CF_FILE" ] && [ -s "$CF_FILE" ]; then
+            D=$(cat "$CF_FILE" | tr -d '[:space:]')
+            if [ -n "$D" ] && [ "$D" != "null" ]; then
+              yq -i ".domain = \"$D\"" "$CONFIG_FILE" 2>/dev/null || \
+                sed -i "s|domain: .*|domain: \"$D\"|" "$CONFIG_FILE"
+              echo "[$(date +%H:%M:%S)] ✓ CloudFront domain ready: $D"
+              exit 0
+            fi
+          fi
+          [ $((_i % 4)) -eq 0 ] && echo "[$(date +%H:%M:%S)]   still waiting for CloudFront domain (${_i}x15s)..."
+          sleep 15
+        done
+        echo "[$(date +%H:%M:%S)] ⚠ CloudFront domain not available after 20min — continuing with empty domain"
 
   hub:claim:
     desc: Apply hub cluster claim (EksCluster or EksclusterWithVpc depending on hub.network)
@@ -1633,18 +1705,25 @@ tasks:
             secretsmanager) echo "arn:aws:iam::aws:policy/SecretsManagerReadWrite";;
           esac
         }
+        # Create all 7 roles in parallel — each is independent
+        _PIDS=""
         for service in ec2 eks iam ecr s3 dynamodb secretsmanager; do
-          ROLE_NAME="{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}"
-          if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
-            aws iam update-assume-role-policy --role-name "$ROLE_NAME" --policy-document "$TRUST_POLICY"
-          else
-            aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST_POLICY" --no-cli-pager >/dev/null
-          fi
-          for arn in $(get_policies $service); do
-            aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$arn" 2>/dev/null || true
-          done
-          echo "  ✓ $ROLE_NAME"
+          (
+            ROLE_NAME="{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}"
+            if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+              aws iam update-assume-role-policy --role-name "$ROLE_NAME" --policy-document "$TRUST_POLICY"
+            else
+              aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST_POLICY" --no-cli-pager >/dev/null
+            fi
+            for arn in $(get_policies $service); do
+              aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$arn" 2>/dev/null || true
+            done
+            echo "  ✓ $ROLE_NAME"
+          ) &
+          _PIDS="$_PIDS $!"
         done
+        # Wait for all role creations to complete
+        for _pid in $_PIDS; do wait "$_pid" || true; done
         # Inline policies for EKS role: AccessEntry, PodIdentity, PassRole
         EKS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-eks"
         aws iam put-role-policy --role-name "$EKS_ROLE" --policy-name eks-access-management --policy-document '{

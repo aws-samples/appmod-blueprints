@@ -523,6 +523,19 @@ fi  # end HUB_VPC_ID block — will rejoin after config is written
 
 
 # ── Rejoin background platform infra (if started) ─────────────────────────
+# When WAIT_FOR_CF=false (used by task install parallelization), exit here
+# after writing config.local.yaml. The background infra job keeps running and
+# will write private/cloudfront-domain when ready. task install polls for it
+# before hub:claim so DOMAIN is always set when the EKS cluster is created.
+if [ "${WAIT_FOR_CF:-true}" = "false" ] && [ -n "${HUB_VPC_ID:-}" ]; then
+  echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
+  yq '.' "$OUTPUT_FILE" >/dev/null
+  echo "[$(date +%H:%M:%S)] ✓ create-config.sh complete (WAIT_FOR_CF=false — CF domain will be written by background job)"
+  echo "    clusterProvider=$CLUSTER_PROVIDER region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
+  exit 0
+fi
+
+# ── Wait for background infra (default WAIT_FOR_CF=true) ────────────────────
 echo "[$(date +%H:%M:%S)] DEBUG rejoin: HUB_VPC_ID=${HUB_VPC_ID:-EMPTY} CF_DOMAIN=${CF_DOMAIN:-EMPTY} INFRA_PID_FILE=${_INFRA_PID_FILE:-EMPTY} PID_EXISTS=$([ -f "${_INFRA_PID_FILE:-/dev/null}" ] && echo yes || echo no)"
 if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${CF_DOMAIN:-}" ]; then
   echo "[$(date +%H:%M:%S)] DEBUG: CF already set — skipping rejoin"
