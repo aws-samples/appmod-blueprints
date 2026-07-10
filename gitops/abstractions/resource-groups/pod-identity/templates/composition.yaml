@@ -61,7 +61,7 @@ spec:
                       }]
                     }
                 providerConfigRef:
-                  name: provider-aws-config
+                  name: default
             patches:
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.serviceAccount
@@ -87,7 +87,7 @@ spec:
                     matchLabels:
                       role: pod-identity
                 providerConfigRef:
-                  name: provider-aws-config
+                  name: default
             patches:
               - type: FromEnvironmentFieldPath
                 fromFieldPath: clusterName
