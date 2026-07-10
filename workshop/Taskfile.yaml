@@ -452,11 +452,9 @@ tasks:
         sh: |
           if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
             # Resolve the platform CloudFront domain at TASK-RUN time from the runtime
-            # artifact (created mid-install by cloudfront:hub-distribution), with an AWS
-            # lookup fallback. Do NOT use the taskfile-level CLOUDFRONT_DOMAIN var:
-            # global vars are evaluated once at load — before the distribution exists — so
-            # it is always empty here (this was the cause of the empty --keycloak-dns).
-            # Do NOT read config.local.yaml (the domain is not stored there).
+            # artifact (created by create-config.sh), with fallbacks. Do NOT use the
+            # taskfile-level CLOUDFRONT_DOMAIN var: global vars are evaluated once at
+            # load — before the distribution exists — so it is always empty here.
             D=$(cat {{.REPO}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
             if [ -z "$D" ]; then
               D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
@@ -464,6 +462,14 @@ tasks:
                 --output text 2>/dev/null | tr -d '[:space:]')
             fi
             [ "$D" = "None" ] && D=""
+            # Last-resort fallback: config.local.yaml. create-config.sh writes the
+            # domain there once the distribution is created — covers the case where
+            # private/cloudfront-domain and the AWS Comment lookup above both race
+            # or miss (e.g. this task runs before the distribution reaches Deployed).
+            if [ -z "$D" ]; then
+              D=$(yq '.domain' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
+              [ "$D" = "null" ] && D=""
+            fi
             echo "$D"
           else
             yq '.domain' {{.CONFIG_FILE}}

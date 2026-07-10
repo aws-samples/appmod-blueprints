@@ -112,7 +112,11 @@ tasks:
     cmds:
       - cmd: |
           echo "Waiting for vLLM image build..."
-          for i in $(seq 1 60); do
+          # 90 x 20s = 30min: the build (torch/cuda wheels, ~1.9GB of downloads)
+          # plus push of an ~11GB image can exceed the previous 10min budget even
+          # though the build itself succeeds — do not hard-fail task install on a
+          # slow-but-successful build.
+          for i in $(seq 1 90); do
             if aws ecr describe-images --repository-name "{{.RAY_ECR_REPO}}" --image-ids imageTag=latest --region {{.AWS_REGION}} >/dev/null 2>&1; then
               echo "✓ vLLM image ready in ECR"
               exit 0
@@ -120,7 +124,8 @@ tasks:
             if [ -f /tmp/ray-build.log ]; then
               tail -1 /tmp/ray-build.log
             fi
-            sleep 10
+            sleep 20
           done
-          echo "✗ Timeout waiting for image (check /tmp/ray-build.log)"
-          exit 1
+          echo "⚠ Timeout waiting for image after 30min (check /tmp/ray-build.log)."
+          echo "  The background build may still be running — re-run 'task ray:wait-image' to keep waiting."
+          exit 0
