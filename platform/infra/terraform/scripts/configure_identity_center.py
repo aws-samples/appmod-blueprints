@@ -250,6 +250,7 @@ async def dismiss_overlays(page):
             'button:has-text("Dismiss")',
             'button:has-text("Try now")',  # "Account color" promo
             'button:has-text("Not now")',
+            'button:has-text("Accept")',   # Cookie consent popup
             '[class*="hotspot"] button:has-text("Next")',  # Service menu tooltip
             '[class*="tutorial"] button:has-text("Next")',  # Tutorial tooltip
             '[class*="popover"] button:has-text("Next")',  # Popover tooltip
