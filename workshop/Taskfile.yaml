@@ -257,6 +257,8 @@ tasks:
           rm -f "$KC"; exit 0
         fi
         export KUBECONFIG="$KC"
+        # Helper: always use hub kubeconfig explicitly to avoid context switches
+        KC_HUB="kubectl --kubeconfig $KC"
 
         # 1) Spoke EKS clusters ACTIVE (~20min budget each, tolerant)
         for S in {{.SPOKES}}; do
@@ -277,7 +279,7 @@ tasks:
         # 2) Spoke ArgoCD cluster secrets registered on the hub (needed for CD ApplicationSets)
         for S in {{.SPOKES}}; do
           for i in $(seq 1 40); do
-            if kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=cluster \
+            if $KC_HUB get secret -n argocd -l argocd.argoproj.io/secret-type=cluster \
                  -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null | grep -qx "$S"; then
               break
             fi
@@ -293,7 +295,7 @@ tasks:
         SPOKE_RE=$(echo "{{.SPOKES}}" | tr ' ' '|')
         TIMEOUT=1200; INTERVAL=30; ELAPSED=0; LAST_NUDGE=0
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          ALL=$(kubectl get applications.argoproj.io -n argocd \
+          ALL=$($KC_HUB get applications.argoproj.io -n argocd \
             -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,DEST:.spec.destination.name --no-headers 2>/dev/null || echo "")
           APPS=$(echo "$ALL" | awk -v re="$SPOKE_RE" '$3 ~ ("^("re")$")')
           TOTAL=$(echo "$APPS" | awk 'NF>0' | wc -l | tr -d ' ')
@@ -306,7 +308,7 @@ tasks:
           # After a 3min grace period, nudge out-of-sync apps every 5min to reset stuck backoff
           if [ $ELAPSED -ge 180 ] && [ $((ELAPSED - LAST_NUDGE)) -ge 300 ]; then
             for a in $(echo "$APPS" | awk '$2!="Synced" && NF>0 {print $1}'); do
-              kubectl patch application "$a" -n argocd --type merge \
+              $KC_HUB patch application "$a" -n argocd --type merge \
                 -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' >/dev/null 2>&1 || true
             done
             LAST_NUDGE=$ELAPSED
