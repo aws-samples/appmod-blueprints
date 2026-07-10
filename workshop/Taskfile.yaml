@@ -1255,8 +1255,8 @@ tasks:
             "environment": "prod",
             "region": env(AWS_REGION),
             "k8sVersion": env(K8S_VERSION),
-            "accountId": env(AWS_ACCOUNT_ID),
-            "managementAccountId": env(AWS_ACCOUNT_ID),
+            "accountId": (env(AWS_ACCOUNT_ID) | . tag = "!!str"),
+            "managementAccountId": (env(AWS_ACCOUNT_ID) | . tag = "!!str"),
             "resourcePrefix": env(RESOURCE_PREFIX),
             "cidr": {
               "vpcCidr": ("10." + env(OCTET) + ".0.0/16"),
