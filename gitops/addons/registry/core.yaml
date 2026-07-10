@@ -20,8 +20,9 @@ env_config:
   goTemplateOptions:
     - "missingkey=zero"
   annotationsAppSet:
-    # After crossplane + the envconfig Pod Identity association (wave -1). The Job
-    # self-retries (backoffLimit) until creds are active, so ordering is best-effort.
+    # Plain EnvironmentConfig manifest. clusterName/region resolve immediately;
+    # vpcId/subnet/SG annotations are published by the platform-cluster Composition
+    # and the EnvironmentConfig converges as the cluster secret gains them.
     argocd.argoproj.io/sync-wave: '6'
   selector:
     matchExpressions:
@@ -33,6 +34,10 @@ env_config:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
+      vpcId: '{{.metadata.annotations.aws_vpc_id}}'
+      clusterSecurityGroupId: '{{.metadata.annotations.aws_cluster_security_group_id}}'
+      privateSubnetIds: '{{.metadata.annotations.aws_private_subnet_ids}}'
+      publicSubnetIds: '{{.metadata.annotations.aws_public_subnet_ids}}'
 
 pod_identities:
   namespace: crossplane-system
@@ -60,10 +65,6 @@ pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
-      # Read-only identity for the env-config publisher Job. Enabled wherever
-      # Crossplane runs (hub + every spoke), matching the env_config addon.
-      envconfig:
-        enabled: '{{default "false" (index .metadata.labels "enable_crossplane")}}'
   ignoreDifferences:
     - group: iam.aws.upbound.io
       kind: Role

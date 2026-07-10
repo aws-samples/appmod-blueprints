@@ -347,6 +347,7 @@ identities:
           ]
         }
 
+
   # Read-only identity for the env-config publisher Job (crossplane-env-config
   # chart). Self-discovers the cluster's VPC/subnets to build the 'env-config'
   # EnvironmentConfig. Least privilege: describe-only, no mutation.

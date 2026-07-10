@@ -93,4 +93,14 @@ spec:
                   type: string
                 nodeRoleArn:
                   type: string
+                clusterSecurityGroupId:
+                  type: string
+                privateSubnetIdA:
+                  type: string
+                privateSubnetIdB:
+                  type: string
+                publicSubnetIdA:
+                  type: string
+                publicSubnetIdB:
+                  type: string
 {{- end }}

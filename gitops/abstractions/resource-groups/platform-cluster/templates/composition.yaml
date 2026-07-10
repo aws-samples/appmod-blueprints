@@ -134,6 +134,11 @@ spec:
                     string:
                       type: Format
                       fmt: "%sa"
+              # Publish this subnet's id to the XR status so the cluster-secret
+              # Object below can annotate the ArgoCD secret (consumed by env-config).
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.publicSubnetIdA
 
           # Public Subnet AZ-b
           - name: public-subnet-b
@@ -179,6 +184,9 @@ spec:
                     string:
                       type: Format
                       fmt: "%sb"
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.publicSubnetIdB
 
           # Private Subnet AZ-a
           - name: private-subnet-a
@@ -223,6 +231,9 @@ spec:
                     string:
                       type: Format
                       fmt: "%sa"
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.privateSubnetIdA
 
           # Private Subnet AZ-b
           - name: private-subnet-b
@@ -267,6 +278,9 @@ spec:
                     string:
                       type: Format
                       fmt: "%sb"
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.privateSubnetIdB
 
           # NAT Gateway
           - name: natgw
@@ -810,6 +824,9 @@ spec:
               - type: ToCompositeFieldPath
                 fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
                 toFieldPath: status.oidcIssuer
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.vpcConfig[0].clusterSecurityGroupId
+                toFieldPath: status.clusterSecurityGroupId
 
           # Publish status.vpcId onto the ArgoCD cluster Secret (argocd/<clusterName>).
           # Composition is the source of truth for VPC id; this annotation is consumed
@@ -834,6 +851,9 @@ spec:
                       namespace: argocd
                       annotations:
                         aws_vpc_id: ""
+                        aws_private_subnet_ids: ""
+                        aws_public_subnet_ids: ""
+                        aws_cluster_security_group_id: ""
             patches:
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.clusterName
@@ -844,6 +864,35 @@ spec:
               - type: FromCompositeFieldPath
                 fromFieldPath: status.vpcId
                 toFieldPath: spec.forProvider.manifest.metadata.annotations[aws_vpc_id]
+                policy:
+                  fromFieldPath: Required
+              # Subnet ids + cluster SG published as annotations, consumed by the
+              # env-config addon to render the EnvironmentConfig on the cluster.
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: status.privateSubnetIdA
+                    - fromFieldPath: status.privateSubnetIdB
+                  strategy: string
+                  string:
+                    fmt: "%s,%s"
+                toFieldPath: spec.forProvider.manifest.metadata.annotations[aws_private_subnet_ids]
+                policy:
+                  fromFieldPath: Required
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: status.publicSubnetIdA
+                    - fromFieldPath: status.publicSubnetIdB
+                  strategy: string
+                  string:
+                    fmt: "%s,%s"
+                toFieldPath: spec.forProvider.manifest.metadata.annotations[aws_public_subnet_ids]
+                policy:
+                  fromFieldPath: Required
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.clusterSecurityGroupId
+                toFieldPath: spec.forProvider.manifest.metadata.annotations[aws_cluster_security_group_id]
                 policy:
                   fromFieldPath: Required
 
