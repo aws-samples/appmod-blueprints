@@ -12,12 +12,18 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
     argocd.argoproj.io/sync-wave: "1"
 spec:
+  # Never (not OnFailure): EKS Pod Identity injects credentials at POD ADMISSION.
+  # A pod admitted before the PodIdentityAssociation is active never gets creds,
+  # and OnFailure only restarts the container in that same pod. With Never, each
+  # backoff retry creates a FRESH pod that receives the credential injection, so
+  # the Job self-heals once the association becomes active — no ordering guarantee
+  # needed between this addon and the pod-identity addon.
   backoffLimit: 30
   ttlSecondsAfterFinished: 600
   template:
     spec:
       serviceAccountName: {{ .Values.serviceAccount }}
-      restartPolicy: OnFailure
+      restartPolicy: Never
       containers:
         - name: env-config-publisher
           image: {{ .Values.image }}
