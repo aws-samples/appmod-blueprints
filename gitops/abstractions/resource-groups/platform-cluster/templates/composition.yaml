@@ -825,7 +825,7 @@ spec:
                 fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
                 toFieldPath: status.oidcIssuer
               - type: ToCompositeFieldPath
-                fromFieldPath: status.atProvider.vpcConfig[0].clusterSecurityGroupId
+                fromFieldPath: status.atProvider.vpcConfig.clusterSecurityGroupId
                 toFieldPath: status.clusterSecurityGroupId
 
           # Publish status.vpcId onto the ArgoCD cluster Secret (argocd/<clusterName>).
