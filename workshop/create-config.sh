@@ -492,6 +492,54 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     [ "$STATE" != "Deployed" ] && { echo "ERROR: VPC Origin not Deployed"; exit 1; }
     echo "[$(date +%H:%M:%S)] VPC Origin Deployed: $VPC_ORIGIN_ID"
     echo -n "$VPC_ORIGIN_ID" > "$_VPC_ORIGIN_FILE"
+
+    # Create CloudFront distribution now that VPC Origin is Deployed
+    # This runs inside the background job so it works even with WAIT_FOR_CF=false
+    if [ -z "${_CF_DOMAIN_EXISTING:-}" ]; then
+      HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
+      ALB_DNS_BG=$(aws elbv2 describe-load-balancers \
+        --load-balancer-arns "$ALB_ARN" --region "$REGION" \
+        --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null) || ALB_DNS_BG=""
+      echo "[$(date +%H:%M:%S)] Creating CloudFront distribution..."
+      _CF_DOMAIN=$(aws cloudfront create-distribution \
+        --distribution-config "{
+          \"CallerReference\": \"${HUB_CLUSTER_NAME}-platform-$(date +%s)\",
+          \"Comment\": \"${HUB_CLUSTER_NAME}-platform\",
+          \"Enabled\": true,
+          \"Origins\": {\"Quantity\": 1, \"Items\": [{
+            \"Id\": \"vpc-origin\",
+            \"DomainName\": \"$ALB_DNS_BG\",
+            \"VpcOriginConfig\": {
+              \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
+              \"OriginReadTimeout\": 60,
+              \"OriginKeepaliveTimeout\": 5
+            }
+          }]},
+          \"DefaultCacheBehavior\": {
+            \"TargetOriginId\": \"vpc-origin\",
+            \"ViewerProtocolPolicy\": \"redirect-to-https\",
+            \"AllowedMethods\": {\"Quantity\": 7,
+              \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"],
+              \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
+            \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
+            \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
+            \"Compress\": true},
+          \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
+          \"PriceClass\": \"PriceClass_100\"
+        }" --query "Distribution.DomainName" --output text 2>&1) || _CF_DOMAIN=""
+      [ "$_CF_DOMAIN" = "None" ] && _CF_DOMAIN=""
+      echo "[$(date +%H:%M:%S)] CF_DOMAIN result: $_CF_DOMAIN"
+      if [ -n "$_CF_DOMAIN" ]; then
+        echo -n "$_CF_DOMAIN" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
+        # Also write directly to REPO_ROOT/private/cloudfront-domain for WAIT_FOR_CF=false mode
+        REPO_ROOT_BG=$(cd "$(dirname "$0")/.." && pwd)
+        mkdir -p "${REPO_ROOT_BG}/private"
+        echo -n "$_CF_DOMAIN" > "${REPO_ROOT_BG}/private/cloudfront-domain"
+        echo "[$(date +%H:%M:%S)] ✓ CloudFront domain written: $_CF_DOMAIN"
+      else
+        echo "[$(date +%H:%M:%S)] WARN: CF creation failed in background job"
+      fi
+    fi
   }
   export -f _start_platform_infra
   export _PLATFORM_INFRA_DIR _VPC_ORIGIN_FILE _ALB_ARN_FILE _INFRA_LOG RESOURCE_PREFIX
