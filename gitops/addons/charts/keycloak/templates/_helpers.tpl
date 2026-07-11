@@ -26,8 +26,11 @@ db-url=jdbc:postgresql://postgresql.keycloak.svc.cluster.local:5432/postgres
 # which AWS IAM Identity Center then rejects with "Unable to build attributes from
 # provided metadata object as url validation failed" when importing the IdP metadata.
 # OIDC is unaffected by this, which is why only the SAML/IDC federation flow broke.
-hostname=https://{{ .Values.global.ingress_domain_name }}
-hostname-admin=https://{{ .Values.global.ingress_domain_name }}
+# KC26 HostnameV2: hostname is used AS-IS for all generated URLs (issuer, SAML metadata).
+# Include /keycloak in hostname so SAML URLs are correct.
+# http-relative-path=keycloak is kept for Keycloak's own routing.
+hostname=https://{{ .Values.global.ingress_domain_name }}/keycloak
+hostname-admin=https://{{ .Values.global.ingress_domain_name }}/keycloak
 hostname-strict=false
 http-relative-path=keycloak
 http-enabled=true
