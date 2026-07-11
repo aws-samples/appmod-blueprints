@@ -604,7 +604,7 @@ tasks:
               printf '{{.C_ERR}}⚠ Keycloak platform SAML descriptor not available after 5min — skipping IDC config. Run: task idc:configure{{.C_RESET}}\n'
             else
             printf '{{.C_INFO}}  Keycloak reachable (HTTP %s) — running IDC configuration...{{.C_RESET}}\n' "$KC_STATUS"
-            if python3 {{.REPO}}/platform/infra/terraform/scripts/configure_identity_center.py \
+            if python3 {{.REPO}}/scripts/configure_identity_center.py \
                 --region {{.AWS_REGION}} \
                 --instance-id {{.IDC_INSTANCE_ID}} \
                 --keycloak-dns {{.KEYCLOAK_DNS}} \

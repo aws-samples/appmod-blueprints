@@ -5,7 +5,7 @@ This document explains how Backstage is built and deployed in the platform, incl
 ## Overview
 
 Backstage deployment follows a GitOps approach where:
-1. **Docker Image Building**: Handled by `build_backstage.sh` script
+1. **Docker Image Building**: Handled by the Backstage CI/CD pipeline via Argo Workflows
 2. **Kubernetes Deployment**: Managed through ArgoCD and the addons system
 3. **RBAC Configuration**: Integrated into the Backstage Helm chart
 
@@ -13,15 +13,10 @@ Backstage deployment follows a GitOps approach where:
 
 ### Docker Image Building
 
-The `appmod-blueprints/scripts/build_backstage.sh` script handles:
+Backstage Docker image building is handled by the Argo Workflows CI/CD pipeline triggered on git push.
 - Building the Backstage Docker image
 - Pushing to ECR repository
 - **Does NOT handle Kubernetes resources** (this is managed by GitOps)
-
-```bash
-# Build and push Backstage image
-./appmod-blueprints/scripts/build_backstage.sh [optional-app-path]
-```
 
 ### Environment Variables
 
@@ -65,10 +60,8 @@ The Kro integration is built into the Backstage Helm chart and includes:
 
 ### 1. Image Build and Push
 ```bash
-# Build new Backstage image with Kro plugin
-./appmod-blueprints/scripts/build_backstage.sh
-
 # Image is pushed to: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${RESOURCE_PREFIX}-backstage:latest
+# Trigger a new build by pushing to the Backstage GitLab repository.
 ```
 
 ### 2. GitOps Deployment

@@ -113,11 +113,7 @@ You can check all the addons deployed using the command:
 argocd-sync
 ```
 
-The following script will help you connect to the different tools using the SSO mechanism with keycloack:
-
-```bash
-./platform-on-eks-workshop/platform/infra/terraform/scripts/1-tools-urls.sh  
-```
+The platform URLs and credentials are exported as environment variables in `~/.bashrc.d/platform.sh` on the IDE instance. Run `source ~/.bashrc.d/platform.sh` to reload them.
 
 ## GitOps Platform
 

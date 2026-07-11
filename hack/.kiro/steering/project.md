@@ -58,7 +58,7 @@ Both coexist. Crossplane path creates `PlatformCluster` claims. KRO path creates
 | `gitops/fleet/spoke-values/` | Cluster provisioning values (Crossplane path) |
 | `gitops/abstractions/crossplane/` | Crossplane compositions (platform-cluster, aws-resources) |
 | `platform/backstage/templates/` | Backstage software templates |
-| `platform/infra/terraform/scripts/` | IDC configuration, ArgoCD token automation |
+| `scripts/` | Workshop scripts: IDC config (`configure_identity_center.py`), ArgoCD token automation |
 | `scripts/` | Utility scripts (keycloak-idc-credentials.sh) |
 
 ## Key Rules

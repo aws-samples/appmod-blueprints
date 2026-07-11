@@ -1466,7 +1466,7 @@ tasks:
         IDC_SUCCESS=false
         for attempt in 1 2 3; do
           printf '{{.C_INFO}}  Attempt %s/3...{{.C_RESET}}\n' "$attempt"
-          if python3 {{.ROOT_DIR}}/platform/infra/terraform/scripts/configure_identity_center.py \
+          if python3 {{.ROOT_DIR}}/scripts/configure_identity_center.py \
               --region {{.AWS_REGION}} \
               --instance-id {{.IDC_INSTANCE_ID}} \
               --keycloak-dns {{.KEYCLOAK_DNS}} \
