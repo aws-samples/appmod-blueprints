@@ -278,12 +278,12 @@ tasks:
 
         # 2) Spoke ArgoCD cluster secrets registered on the hub (needed for CD ApplicationSets)
         for S in {{.SPOKES}}; do
-          for i in $(seq 1 40); do
+          for i in $(seq 1 60); do
             if $KC_HUB get secret -n argocd -l argocd.argoproj.io/secret-type=cluster \
                  -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null | grep -qx "$S"; then
               break
             fi
-            if [ "$i" = "40" ]; then
+            if [ "$i" = "60" ]; then
               printf '{{.C_ERR}}  ⚠ %s ArgoCD cluster secret not registered — continuing (non-fatal).{{.C_RESET}}\n' "$S"
             fi
             sleep 15
