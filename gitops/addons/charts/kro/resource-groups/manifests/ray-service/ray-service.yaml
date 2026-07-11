@@ -195,7 +195,7 @@ spec:
             applications:
               - name: gpu_text_generation
                 import_path: app:deployment
-                route_prefix: /generate
+                route_prefix: /ray-serve/${schema.spec.name}/generate
                 runtime_env:
                   working_dir: "${schema.spec.rayServeFile}"
                   pip:
@@ -337,7 +337,7 @@ spec:
             applications:
               - name: gpu_text_generation
                 import_path: app:deployment
-                route_prefix: /generate
+                route_prefix: /ray-serve/${schema.spec.name}/generate
                 runtime_env:
                   working_dir: "${schema.spec.rayServeFile}"
                   pip:
@@ -521,7 +521,7 @@ spec:
             applications:
               - name: gpu_text_generation
                 import_path: app:deployment
-                route_prefix: /generate
+                route_prefix: /ray-serve/${schema.spec.name}/generate
                 runtime_env:
                   working_dir: "${schema.spec.rayServeFile}"
                   pip:
