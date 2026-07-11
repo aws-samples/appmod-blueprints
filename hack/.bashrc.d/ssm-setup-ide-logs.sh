@@ -10,7 +10,7 @@ ssm-setup-ide-logs() {
 }
 
 argocd-sync() {
-    local script_dir="/home/ec2-user/environment/platform-on-eks-workshop/platform/infra/terraform/scripts"
+    local script_dir="/home/ec2-user/environment/platform-on-eks-workshop/scripts"
     
     # Source colors
     source "$script_dir/colors.sh"
@@ -37,11 +37,11 @@ argocd-sync() {
 }
 
 check-ray-build() {
-    ~/environment/platform-on-eks-workshop/platform/infra/terraform/scripts/check-ray-build.sh
+    ~/environment/platform-on-eks-workshop/scripts/check-ray-build.sh
 }
 
 check-workshop-setup() {
-    ~/environment/platform-on-eks-workshop/platform/infra/terraform/scripts/check-workshop-setup.sh
+    ~/environment/platform-on-eks-workshop/scripts/check-workshop-setup.sh
 }
 
 trigger-devlake() {
@@ -55,7 +55,7 @@ trigger-devlake() {
 }
 
 argocd-refresh-token() {
-    local script_dir="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}/platform/infra/terraform/scripts"
+    local script_dir="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}/scripts"
     local server_url
     server_url=$(aws eks describe-capability --cluster-name "${RESOURCE_PREFIX:-peeks}-hub" --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null)
 
@@ -66,10 +66,13 @@ argocd-refresh-token() {
 
     echo "Retrieving ArgoCD token via SSO (this may take ~30s)..." >&2
     local token
+    # Use USER1_PASSWORD (Keycloak user password) not IDE_PASSWORD (code-server password).
+    # They are seeded from different sources and may differ.
+    local kc_password="${USER1_PASSWORD:-${USER_PASSWORD:-$IDE_PASSWORD}}"
     token=$(python3 "$script_dir/argocd_token_automation.py" \
         --url "$server_url" \
         --username "user1" \
-        --password "${IDE_PASSWORD}" \
+        --password "${kc_password}" \
         --output token 2>/tmp/argocd-token-debug.log)
 
     if [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
