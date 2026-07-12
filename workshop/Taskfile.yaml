@@ -134,12 +134,19 @@ tasks:
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
       - |
-        # Restore hub context as the active kubectl context.
-        # install steps (wait-for-spokes, idc:configure) may switch to spoke contexts.
-        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
-          --alias {{.HUB_CLUSTER_NAME}} 2>/dev/null || true
-        kubectl config use-context {{.HUB_CLUSTER_NAME}} 2>/dev/null || true
-        printf '{{.C_INFO}}  kubectl context → {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
+        # Restore hub context as the active kubectl context in ~/.kube/config.
+        # install steps (wait-for-spokes, idc:configure, spoke enablement) may have
+        # left the default kubeconfig pointed at a spoke cluster — always finish on
+        # the hub. --alias pins the context name to {{.HUB_CLUSTER_NAME}} regardless
+        # of AWS CLI's default (ARN-based) naming, so use-context below is guaranteed
+        # to find it.
+        if aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+             --alias {{.HUB_CLUSTER_NAME}}; then
+          kubectl config use-context {{.HUB_CLUSTER_NAME}}
+          printf '{{.C_OK}}  ✓ kubectl context → {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
+        else
+          printf '{{.C_ERR}}  ⚠ Could not restore hub kubeconfig context — run: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
+        fi
       - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
 
   # ============================================================
