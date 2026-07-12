@@ -230,6 +230,11 @@ tasks:
         for CLUSTER in $(aws eks list-clusters --region {{.AWS_REGION}} --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text); do
           aws eks update-kubeconfig --name "$CLUSTER" --region {{.AWS_REGION}} --alias "$CLUSTER"
         done
+      # `update-kubeconfig` switches current-context on every call, and cluster
+      # order from `list-clusters` is not guaranteed — without this, we can end
+      # up on a spoke context instead of the hub. Always finish on the hub.
+      - kubectl config use-context {{.RESOURCE_PREFIX}}-hub 2>/dev/null || true
       - echo ""
       - echo "Kubeconfig contexts written for all {{.RESOURCE_PREFIX}}-* clusters"
+      - echo "Current context set to {{.RESOURCE_PREFIX}}-hub"
       - echo ""
