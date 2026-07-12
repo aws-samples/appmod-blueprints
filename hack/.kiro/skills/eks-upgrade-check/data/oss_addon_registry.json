@@ -1,0 +1,175 @@
+{
+  "_comment": "Registry of common OSS add-ons found in EKS clusters. This file intentionally does NOT contain compatibility data — that lives upstream and goes stale the moment it's copied. Instead, it provides: (1) identifiers to detect the add-on in a cluster, and (2) authoritative URLs where the skill should fetch live compatibility information. Unknown add-ons should be handled via web search + UNKNOWN reporting, not guessed.",
+  "_schema_version": "2.0",
+  "_usage": "For each discovered add-on, look it up here by matching app_names/helm_charts/container_images. Then fetch compatibility_url (primary) and releases_url (fallback) using webFetch. Do NOT infer compatibility from this file.",
+  "addons": [
+    {
+      "name": "istio",
+      "identifiers": {
+        "app_names": ["istio", "istiod", "istio-ingressgateway", "istio-egressgateway"],
+        "helm_charts": ["istiod", "istio-base", "istio-ingress", "istio-egress"],
+        "container_images": ["docker.io/istio/pilot", "docker.io/istio/proxyv2", "gcr.io/istio-release/pilot"]
+      },
+      "compatibility_url": "https://istio.io/latest/docs/releases/supported-releases/",
+      "releases_url": "https://github.com/istio/istio/releases",
+      "notes": "Istio supports N-2 Kubernetes versions for each minor release. Check 'Supported Releases' table."
+    },
+    {
+      "name": "cert-manager",
+      "identifiers": {
+        "app_names": ["cert-manager", "cert-manager-cainjector", "cert-manager-webhook"],
+        "helm_charts": ["cert-manager"],
+        "container_images": ["quay.io/jetstack/cert-manager-controller", "quay.io/jetstack/cert-manager-cainjector", "quay.io/jetstack/cert-manager-webhook"]
+      },
+      "compatibility_url": "https://cert-manager.io/docs/releases/",
+      "releases_url": "https://github.com/cert-manager/cert-manager/releases",
+      "notes": "See 'Supported Releases' section for Kubernetes version compatibility per cert-manager release."
+    },
+    {
+      "name": "ingress-nginx",
+      "identifiers": {
+        "app_names": ["ingress-nginx", "nginx-ingress-controller"],
+        "helm_charts": ["ingress-nginx"],
+        "container_images": ["registry.k8s.io/ingress-nginx/controller", "k8s.gcr.io/ingress-nginx/controller"]
+      },
+      "compatibility_url": "https://github.com/kubernetes/ingress-nginx/blob/main/README.md#supported-versions-table",
+      "releases_url": "https://github.com/kubernetes/ingress-nginx/releases",
+      "notes": "Project retired March 2026. Recommend migration to InGate or aws-load-balancer-controller. Flag any cluster using ingress-nginx as HIGH severity regardless of current version compatibility."
+    },
+    {
+      "name": "kube-prometheus-stack",
+      "identifiers": {
+        "app_names": ["kube-prometheus-stack", "prometheus", "prometheus-operator", "alertmanager", "grafana"],
+        "helm_charts": ["kube-prometheus-stack", "prometheus-community"],
+        "container_images": ["quay.io/prometheus/prometheus", "quay.io/prometheus-operator/prometheus-operator", "quay.io/prometheus/alertmanager"]
+      },
+      "compatibility_url": "https://github.com/prometheus-operator/kube-prometheus#kubernetes-compatibility-matrix",
+      "releases_url": "https://github.com/prometheus-community/helm-charts/releases",
+      "notes": "Chart uses CalVer-ish numbering (e.g., 61.x). Compatibility is driven by bundled prometheus-operator version; check kube-prometheus compatibility matrix."
+    },
+    {
+      "name": "argocd",
+      "identifiers": {
+        "app_names": ["argocd", "argocd-server", "argocd-repo-server", "argocd-application-controller"],
+        "helm_charts": ["argo-cd", "argocd"],
+        "container_images": ["quay.io/argoproj/argocd", "ghcr.io/argoproj/argocd"]
+      },
+      "compatibility_url": "https://argo-cd.readthedocs.io/en/stable/operator-manual/tested-kubernetes-versions/",
+      "releases_url": "https://github.com/argoproj/argo-cd/releases",
+      "notes": "Argo CD publishes a 'Tested versions' page listing the exact K8s minors each Argo CD minor is tested against."
+    },
+    {
+      "name": "argo-rollouts",
+      "identifiers": {
+        "app_names": ["argo-rollouts"],
+        "helm_charts": ["argo-rollouts"],
+        "container_images": ["quay.io/argoproj/argo-rollouts"]
+      },
+      "compatibility_url": "https://argoproj.github.io/argo-rollouts/",
+      "releases_url": "https://github.com/argoproj/argo-rollouts/releases"
+    },
+    {
+      "name": "flux",
+      "identifiers": {
+        "app_names": ["flux", "source-controller", "kustomize-controller", "helm-controller", "notification-controller"],
+        "helm_charts": ["flux2", "flux"],
+        "container_images": ["ghcr.io/fluxcd/source-controller", "ghcr.io/fluxcd/kustomize-controller", "ghcr.io/fluxcd/helm-controller"]
+      },
+      "compatibility_url": "https://fluxcd.io/flux/installation/#prerequisites",
+      "releases_url": "https://github.com/fluxcd/flux2/releases"
+    },
+    {
+      "name": "external-dns",
+      "identifiers": {
+        "app_names": ["external-dns"],
+        "helm_charts": ["external-dns"],
+        "container_images": ["registry.k8s.io/external-dns/external-dns", "k8s.gcr.io/external-dns/external-dns", "bitnami/external-dns"]
+      },
+      "compatibility_url": "https://github.com/kubernetes-sigs/external-dns/blob/master/README.md",
+      "releases_url": "https://github.com/kubernetes-sigs/external-dns/releases",
+      "notes": "external-dns does not publish a formal K8s compatibility matrix. Check release notes for breaking changes and minimum K8s version."
+    },
+    {
+      "name": "metrics-server",
+      "identifiers": {
+        "app_names": ["metrics-server"],
+        "helm_charts": ["metrics-server"],
+        "container_images": ["registry.k8s.io/metrics-server/metrics-server", "k8s.gcr.io/metrics-server/metrics-server"]
+      },
+      "compatibility_url": "https://github.com/kubernetes-sigs/metrics-server#compatibility-matrix",
+      "releases_url": "https://github.com/kubernetes-sigs/metrics-server/releases"
+    },
+    {
+      "name": "cluster-autoscaler",
+      "identifiers": {
+        "app_names": ["cluster-autoscaler"],
+        "helm_charts": ["cluster-autoscaler"],
+        "container_images": ["registry.k8s.io/autoscaling/cluster-autoscaler", "k8s.gcr.io/autoscaling/cluster-autoscaler"]
+      },
+      "compatibility_url": "https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/README.md#releases",
+      "releases_url": "https://github.com/kubernetes/autoscaler/releases",
+      "notes": "CA versions are pinned to K8s minors (e.g., cluster-autoscaler 1.30.x for K8s 1.30). Mismatch is a FAIL."
+    },
+    {
+      "name": "aws-load-balancer-controller",
+      "identifiers": {
+        "app_names": ["aws-load-balancer-controller"],
+        "helm_charts": ["aws-load-balancer-controller"],
+        "container_images": ["public.ecr.aws/eks/aws-load-balancer-controller"]
+      },
+      "compatibility_url": "https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/deploy/installation/",
+      "releases_url": "https://github.com/kubernetes-sigs/aws-load-balancer-controller/releases",
+      "notes": "AWS publishes this as an EKS add-on — prefer the managed add-on path when possible."
+    },
+    {
+      "name": "external-secrets",
+      "identifiers": {
+        "app_names": ["external-secrets", "external-secrets-operator"],
+        "helm_charts": ["external-secrets"],
+        "container_images": ["ghcr.io/external-secrets/external-secrets", "oci.external-secrets.io/external-secrets/external-secrets"]
+      },
+      "compatibility_url": "https://external-secrets.io/latest/introduction/stability-support/",
+      "releases_url": "https://github.com/external-secrets/external-secrets/releases"
+    },
+    {
+      "name": "velero",
+      "identifiers": {
+        "app_names": ["velero"],
+        "helm_charts": ["velero"],
+        "container_images": ["velero/velero"]
+      },
+      "compatibility_url": "https://github.com/vmware-tanzu/velero#velero-compatibility-matrix",
+      "releases_url": "https://github.com/vmware-tanzu/velero/releases"
+    },
+    {
+      "name": "keda",
+      "identifiers": {
+        "app_names": ["keda", "keda-operator"],
+        "helm_charts": ["keda"],
+        "container_images": ["ghcr.io/kedacore/keda"]
+      },
+      "compatibility_url": "https://keda.sh/docs/latest/operate/cluster/",
+      "releases_url": "https://github.com/kedacore/keda/releases"
+    },
+    {
+      "name": "kyverno",
+      "identifiers": {
+        "app_names": ["kyverno"],
+        "helm_charts": ["kyverno"],
+        "container_images": ["ghcr.io/kyverno/kyverno"]
+      },
+      "compatibility_url": "https://kyverno.io/docs/installation/#compatibility-matrix",
+      "releases_url": "https://github.com/kyverno/kyverno/releases"
+    },
+    {
+      "name": "opa-gatekeeper",
+      "identifiers": {
+        "app_names": ["gatekeeper", "gatekeeper-controller-manager", "gatekeeper-audit"],
+        "helm_charts": ["gatekeeper"],
+        "container_images": ["openpolicyagent/gatekeeper"]
+      },
+      "compatibility_url": "https://open-policy-agent.github.io/gatekeeper/website/docs/install/",
+      "releases_url": "https://github.com/open-policy-agent/gatekeeper/releases"
+    }
+  ]
+}
