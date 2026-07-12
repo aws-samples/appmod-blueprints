@@ -968,6 +968,20 @@ tasks:
         rm -f "$KC"
         aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null
 
+        # 2a. Wait for the API server to be actually reachable (TLS + auth) before
+        #     attempting kubectl apply. EKS cluster ACTIVE ≠ API server reachable:
+        #     the SG rule propagation + internal EKS control plane startup adds up
+        #     to ~30-60s after ACTIVE. Without this guard the kubectl apply below
+        #     fails with "TLS handshake timeout" on fresh accounts.
+        printf '{{.C_STEP}}▸ Waiting for hub EKS API server to accept connections...{{.C_RESET}}\n'
+        for i in $(seq 1 30); do
+          if KUBECONFIG="$KC" kubectl get ns kube-system --request-timeout=5s >/dev/null 2>&1; then
+            printf '{{.C_OK}}✓ API server ready (attempt %d).{{.C_RESET}}\n' "$i"
+            break
+          fi
+          [ "$i" = "30" ] && printf '{{.C_ERR}}⚠ API server not ready after 150s — proceeding anyway.{{.C_RESET}}\n' || sleep 5
+        done
+
         # 3. ArgoCD repo credential for the private GitLab fleet-config repo
         printf '{{.C_STEP}}▸ Registering ArgoCD repository credential for fleet-config...{{.C_RESET}}\n'
         cat <<EOF | KUBECONFIG="$KC" kubectl apply -f -
