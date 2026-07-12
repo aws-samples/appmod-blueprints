@@ -68,7 +68,7 @@ spec:
         checksum/config: {{ include "keycloak.conf" . | sha256sum }}
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system
+        karpenter.sh/nodepool: system-peeks
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
@@ -201,7 +201,7 @@ spec:
         app: postgresql
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system
+        karpenter.sh/nodepool: system-peeks
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"

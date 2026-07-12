@@ -16,5 +16,6 @@ enabledAddons:
   kubevela: true
   argo_rollouts: true
   # Platform
+  platform_manifests_bootstrap: true
   crossplane: true
   kro_manifests: true

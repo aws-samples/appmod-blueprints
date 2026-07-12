@@ -40,6 +40,7 @@ enabledAddons:
   kro_manifests: false
   kro_manifests_hub: true
   multi_acct: true
+  platform_manifests_bootstrap: true
   platform_manifests: true
   backstage: true
   kubevela: true
