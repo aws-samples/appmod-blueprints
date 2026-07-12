@@ -417,7 +417,10 @@ tasks:
         set_var WORKFLOWS_URL "https://${CF}/argo-workflows"
         set_var KARGO_URL "https://${CF}"
         set_var AWS_REGION "{{.AWS_REGION}}"
-        set_var AWS_ACCOUNT_ID "{{.ACCOUNT_ID}}"        AMG_WS_ID=$(aws grafana list-workspaces --region "{{.AWS_REGION}}" \
+        set_var AWS_ACCOUNT_ID "{{.ACCOUNT_ID}}"
+        PREFIX="{{.RESOURCE_PREFIX}}"
+        AMG_ENDPOINT=""
+        AMG_WS_ID=$(aws grafana list-workspaces --region "{{.AWS_REGION}}" \
           --query "workspaces[?name=='${PREFIX}-observability'].id | [0]" --output text 2>/dev/null || echo "")
         if [ -n "$AMG_WS_ID" ] && [ "$AMG_WS_ID" != "None" ]; then
           AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WS_ID" \
