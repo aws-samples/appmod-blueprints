@@ -115,5 +115,6 @@ argocd-refresh-token() {
         --auth-token "$token" \
         --grpc-web \
         --skip-test-tls \
+        </dev/null \
         2>/dev/null || true
 }
