@@ -13,7 +13,7 @@ tasks:
       RAY_ECR_REPO: "{{.RESOURCE_PREFIX}}-ray-vllm-custom"
       RAY_ROLE_PRESTAGE: "{{.RESOURCE_PREFIX}}-model-prestage-role"
       RAY_ROLE_WORKER: "{{.RESOURCE_PREFIX}}-ray-worker-role"
-      DOCKERFILE_PATH: "{{.ROOT_DIR}}/platform/infra/terraform/common/Dockerfile.ray-vllm"
+      DOCKERFILE_PATH: "{{.ROOT_DIR}}/cluster-providers/common/Dockerfile.ray-vllm"
     cmds:
       - echo "▸ Setting up Ray ML infrastructure..."
       # 1. S3 bucket
