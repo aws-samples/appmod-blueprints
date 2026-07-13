@@ -19,3 +19,4 @@ enabledAddons:
   # Platform
   platform_manifests_bootstrap: true
   crossplane: true
+  kro_manifests: true
