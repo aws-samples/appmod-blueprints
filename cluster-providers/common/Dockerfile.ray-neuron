@@ -1,0 +1,16 @@
+# Use AWS pre-built vLLM-Neuron image (Python 3.11, proven working)
+FROM public.ecr.aws/neuron/pytorch-inference-vllm-neuronx:0.9.1-neuronx-py311-sdk2.26.0-ubuntu22.04
+
+# Install Ray and required dependencies
+RUN pip install --no-cache-dir \
+    ray[default]==2.9.3 \
+    aiorwlock
+
+# Set environment variables (from EKS Workshop)
+ENV NEURON_RT_NUM_CORES=2
+ENV NEURON_RT_VISIBLE_CORES=0,1
+ENV VLLM_NEURON_FRAMEWORK=neuronx-distributed-inference
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import ray; import vllm" || exit 1
