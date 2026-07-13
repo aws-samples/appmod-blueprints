@@ -828,8 +828,8 @@ spec:
     - host: {{ .Values.ingress_domain_name }}
       http:
         paths:
-          - path: /backstage(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /backstage
+            pathType: Prefix
             backend:
               service:
                 name: backstage
