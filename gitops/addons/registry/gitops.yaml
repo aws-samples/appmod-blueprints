@@ -67,6 +67,20 @@ argo-workflows:
         - /metadata/resourceVersion
         - /metadata/managedFields
 
+argo-events:
+  namespace: argo-events
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/argo-events'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '8'
+  selector:
+    matchExpressions:
+      - key: enable_argo_events
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
+    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+
 kargo:
   namespace: kargo
   chartName: kargo

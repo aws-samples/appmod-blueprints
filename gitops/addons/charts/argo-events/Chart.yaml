@@ -1,0 +1,5 @@
+apiVersion: v2
+name: argo-events
+description: A Helm chart for Argo Events (event-driven workflow automation)
+type: application
+version: 0.1.0

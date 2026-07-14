@@ -1,0 +1,17 @@
+{{- /*
+Default EventBus — the NATS JetStream backbone every EventSource/Sensor uses.
+The base install.yaml ships only the controller + CRDs; an EventBus instance
+must exist for eventing to work, so the addon provides a sensible default one.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: argo-events
+spec:
+  jetstream:
+    replicas: {{ .Values.eventbus.replicas | default 3 }}
+    {{- with .Values.eventbus.persistence }}
+    persistence:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
