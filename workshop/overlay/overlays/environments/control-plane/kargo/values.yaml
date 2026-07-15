@@ -1,0 +1,35 @@
+# Workshop variant of the Kargo values overlay.
+# Loaded by the kargo ApplicationSet via:
+#   $overlay/overlays/environments/control-plane/kargo/values.yaml
+# (resolved from the fleet-config repo seeded by workshop/Taskfile.yaml).
+#
+# Kargo has no path prefix, so it serves at the host root (/). On the shared
+# platform ALB the other services' more-specific paths (/keycloak, /backstage,
+# /grafana, /argo-workflows, ...) win and everything else falls through to Kargo.
+#
+# CRITICAL: Kargo's path is '/' with pathType Prefix — a catch-all. On a shared
+# ALB group the AWS Load Balancer Controller orders listener rules by
+# group.order (ascending; rules without it are interleaved by creation order).
+# Without a high group.order, Kargo's '/*' rule can be assigned a LOWER priority
+# number than '/keycloak' and shadow it — every /keycloak/* request then hits
+# Kargo's target group, breaking ALL OIDC/SAML SSO (Backstage, ArgoCD, Grafana,
+# Argo Workflows). group.order: "100" forces Kargo to evaluate LAST so the
+# specific paths always win.
+api:
+  ingress:
+    enabled: true
+    ingressClassName: platform
+    # ALB needs Prefix; the chart default ImplementationSpecific is not treated
+    # as a '/' wildcard by the AWS Load Balancer Controller.
+    pathType: Prefix
+    annotations:
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/backend-protocol: HTTPS
+      alb.ingress.kubernetes.io/healthcheck-protocol: HTTPS
+      alb.ingress.kubernetes.io/healthcheck-path: /healthz
+      alb.ingress.kubernetes.io/success-codes: '200-399'
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+      # Evaluate Kargo's catch-all '/' LAST so specific paths (/keycloak, etc.) win.
+      alb.ingress.kubernetes.io/group.order: '100'
+    tls:
+      enabled: false

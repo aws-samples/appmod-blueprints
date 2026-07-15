@@ -687,7 +687,11 @@ spec:
         username: string
       hfToken: string | default=""
       ingressHostname: string
-      insecure: boolean | default=false
+      # Defaults to true (HTTP:80, no cert) to match the pre-existing behavior — Ray
+      # Serve apps use the shared ALB's wildcard *.<region>.elb.amazonaws.com host,
+      # which never has a matching ACM cert. Set to false only with a real domain +
+      # certificate-arn configured.
+      insecure: boolean | default=true
       name: string
       modelName: string | default="tinyllama"
       maxLength: string | default="100"

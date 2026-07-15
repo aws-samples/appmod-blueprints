@@ -29,7 +29,10 @@ spec:
        username: string
       hub:
        hostname: string
-       insecure: boolean | default=false
+       # Defaults to true (HTTP:80, no cert) to match the pre-existing behavior — the
+       # GitLab webhook ingress uses the shared ALB's wildcard host, which never has a
+       # matching ACM cert. Set to false only with a real domain + certificate-arn.
+       insecure: boolean | default=true
     status:
       # ECR Repository information
       ecrMainRepositoryURI: ${ecrmainrepo.status.?repositoryURI}

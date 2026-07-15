@@ -423,8 +423,10 @@ tasks:
         set_var KEYCLOAK_ADMIN_URL "https://${CF}/keycloak/admin"
         set_var WORKFLOWS_URL "https://${CF}/argo-workflows"
         set_var KARGO_URL "https://${CF}"
+        set_var JUPYTERHUB_URL "https://${CF}/jupyterhub"
+        set_var INGRESS_DOMAIN "${CF}"
         set_var AWS_REGION "{{.AWS_REGION}}"
-        set_var AWS_ACCOUNT_ID "{{.ACCOUNT_ID}}"
+        set_var AWS_ACCOUNT_ID "{{.AWS_ACCOUNT_ID}}"
         PREFIX="{{.RESOURCE_PREFIX}}"
         AMG_ENDPOINT=""
         AMG_WS_ID=$(aws grafana list-workspaces --region "{{.AWS_REGION}}" \

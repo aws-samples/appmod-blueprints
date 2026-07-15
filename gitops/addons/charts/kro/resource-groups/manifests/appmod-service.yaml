@@ -38,7 +38,11 @@ spec:
         # path the app actually returns 200 for, otherwise all targets stay
         # unhealthy and the ALB returns 404/503 for every request.
         healthcheckPath: string | default="/"
-        insecure: boolean | default=false
+        # Defaults to true (HTTP:80, no cert) to match the pre-existing behavior for
+        # workshop/sample apps on the shared ALB, which never provide a real domain +
+        # ACM cert for their wildcard *.<region>.elb.amazonaws.com host. Set to false
+        # only when a real domain + certificate-arn is configured for this app.
+        insecure: boolean | default=true
       functionalGate:
         enabled: boolean | default=false
         image: string | default="httpd:alpine"

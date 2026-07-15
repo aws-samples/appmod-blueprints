@@ -264,8 +264,8 @@ annotations:
   alb.ingress.kubernetes.io/group.order: '100'
 ```
 For Kargo on the workshop hub specifically, this lives in the workshop's fleet-config overlay
-(`workshop/overlay/overlays/environments/control-plane/overrides.yaml` in this repo — seeded
-into the GitLab fleet-config repo by `workshop/Taskfile.yaml`) under `kargo.valuesObject.api.ingress.annotations`.
+(`workshop/overlay/overlays/environments/control-plane/kargo/values.yaml` in this repo — seeded
+into the GitLab fleet-config repo by `workshop/Taskfile.yaml`) under `api.ingress.annotations`.
 Other consumers of the solution set the equivalent override in their own fleet-config repo.
 
 ### CloudFront platform URLs hang (curl 000): VPC origin points to a stale/recreated ALB

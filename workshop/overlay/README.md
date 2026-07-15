@@ -26,8 +26,10 @@ overlay/
 └── overlays/
     └── environments/
         └── control-plane/
-            └── overrides.yaml   # e.g. enables Kargo's ALB ingress, HTTP/HTTPS
-                                  # picked based on the insecure annotation
+            ├── overrides.yaml           # generic addon overrides (cluster-addons AppSet)
+            └── kargo/
+                └── values.yaml         # Kargo-specific override (kargo AppSet — enables
+                                          # ALB ingress on the hub at path '/')
 ```
 
 This mirrors the path structure expected by the `$overlay` ApplicationSet source —

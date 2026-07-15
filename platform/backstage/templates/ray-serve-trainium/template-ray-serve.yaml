@@ -148,7 +148,7 @@ spec:
           workerGpu: ${{ parameters.modelName === 'mistral-7b-neuron' and '2' or '0' }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
-          insecure: ${{ steps['fetchSystem'].output.entity.spec.insecure | default(false) }}
+          insecure: ${{ steps['fetchSystem'].output.entity.spec.insecure | default(true) }}
           argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
           git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
           aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
