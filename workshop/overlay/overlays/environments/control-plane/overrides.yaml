@@ -1,0 +1,47 @@
+# Environment-level value overrides for the control-plane environment — WORKSHOP VARIANT.
+#
+# This file is seeded into the fleet-config repo (GitLab, in the workshop) by
+# workshop/Taskfile.yaml, at path overlays/environments/control-plane/overrides.yaml —
+# the exact path the cluster-addons ApplicationSet resolves via the $overlay source
+# (see gitops/bootstrap/addons.yaml). It is layered AFTER the base solution's own
+# overrides.yaml (gitops/overlays/environments/control-plane/overrides.yaml, currently
+# empty) and lets the workshop customize addon values without touching the generic
+# solution. Any consumer of the solution can provide their own fleet-config repo with
+# an equivalent file to customize their own control-plane environment.
+#
+# Kargo: layered after gitops/addons/configs/kargo/values.yaml and the base registry
+# entry (gitops/addons/registry/gitops.yaml). The base registry keeps Kargo generic
+# (no ingress); this workshop overlay turns on ALB exposure for the workshop hub.
+#
+# Kargo has no path prefix, so it serves at the host root (/). On the shared
+# platform ALB the other services' more-specific paths (/keycloak, /backstage,
+# /grafana, /argo-workflows, ...) win and everything else falls through to Kargo.
+#
+# CRITICAL: Kargo's path is '/' with pathType Prefix — a catch-all. On a shared
+# ALB group the AWS Load Balancer Controller orders listener rules by
+# group.order (ascending; rules without it are interleaved by creation order).
+# Without a high group.order, Kargo's '/*' rule can be assigned a LOWER priority
+# number than '/keycloak' and shadow it — every /keycloak/* request then hits
+# Kargo's target group, breaking ALL OIDC/SAML SSO (Backstage, ArgoCD, Grafana,
+# Argo Workflows). group.order: "100" forces Kargo to evaluate LAST so the
+# specific paths always win.
+kargo:
+  valuesObject:
+    api:
+      ingress:
+        enabled: true
+        ingressClassName: platform
+        # ALB needs Prefix; the chart default ImplementationSpecific is not treated
+        # as a '/' wildcard by the AWS Load Balancer Controller.
+        pathType: Prefix
+        annotations:
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/backend-protocol: HTTPS
+          alb.ingress.kubernetes.io/healthcheck-protocol: HTTPS
+          alb.ingress.kubernetes.io/healthcheck-path: /healthz
+          alb.ingress.kubernetes.io/success-codes: '200-399'
+          alb.ingress.kubernetes.io/listen-ports: '{{if eq (default "false" .metadata.annotations.insecure) "true"}}[{"HTTP":80}]{{else}}[{"HTTPS":443}]{{end}}'
+          # Evaluate Kargo's catch-all '/' LAST so specific paths (/keycloak, etc.) win.
+          alb.ingress.kubernetes.io/group.order: '100'
+        tls:
+          enabled: false

@@ -584,10 +584,10 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             backstage.io/created-by: ${schema.spec.createdBy}
             backstage.io/template-version: 1.0.0
-            alb.ingress.kubernetes.io/scheme: internet-facing
+            alb.ingress.kubernetes.io/scheme: '${schema.spec.insecure ? "internal" : "internet-facing"}'
             alb.ingress.kubernetes.io/target-type: ip
             alb.ingress.kubernetes.io/healthcheck-path: /
-            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+            alb.ingress.kubernetes.io/listen-ports: '${schema.spec.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]"}'
           labels:
             app.kubernetes.io/component: ray-service
             app.kubernetes.io/managed-by: kro
@@ -687,6 +687,7 @@ spec:
         username: string
       hfToken: string | default=""
       ingressHostname: string
+      insecure: boolean | default=false
       name: string
       modelName: string | default="tinyllama"
       maxLength: string | default="100"

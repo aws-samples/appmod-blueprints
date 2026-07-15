@@ -57,12 +57,10 @@ vars:
   # Exposure: the platform does NOT provision a domain or CloudFront. The consumer
   # provides `domain` and terminates TLS however they like. `insecure: true` -> the
   # ALB serves plain HTTP (consumer fronts it with CloudFront/etc.); false (default)
-  # -> ALB serves HTTPS with an ACM cert. exposure_mode is derived from insecure for
-  # the cluster-secret annotation chain the addon charts already consume.
+  # -> ALB serves HTTPS with an ACM cert. Written verbatim to the cluster-secret
+  # annotation chain the addon charts already consume.
   INSECURE:
     sh: yq '.insecure // false' {{.CONFIG_FILE}}
-  EXPOSURE_MODE:
-    sh: 'if [ "$(yq ''.insecure // false'' {{.CONFIG_FILE}})" = "true" ]; then echo "cloudfront"; else echo "domain"; fi'
   CERTIFICATE_ARN:
     sh: yq '.certificateArn // ""' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
@@ -132,12 +130,12 @@ tasks:
       - task: hub:seed
       - 'printf "{{.C_INFO}}  [%ds] hub:seed done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Force ESO to immediately refresh the cluster secret from Secrets Manager
-      # so all annotations (exposure_mode, ingress_domain_name, etc.) are populated
+      # so all annotations (insecure, ingress_domain_name, etc.) are populated
       # before ArgoCD generates ApplicationSet child apps at wave 5+
       - task: hub:force-eso-refresh
       - task: hub:wait-for-sync
       - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-sync done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Phase 1 (parallel): CloudFront+identity restart || observability seeding
+      # Phase 1 (parallel): identity restart || observability seeding || Playwright prefetch
       - task: install:post-sync
       - 'printf "{{.C_INFO}}  [%ds] post-sync done (identity restart || observability seed){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: hub:wait-for-full-sync
@@ -697,8 +695,8 @@ tasks:
           # Wait up to 60s for annotations to be populated
           for i in $(seq 1 12); do
             VAL=$(KUBECONFIG=$KC kubectl get secret {{.HUB_CLUSTER_NAME}} -n argocd \
-              -o jsonpath='{.metadata.annotations.exposure_mode}' 2>/dev/null)
-            [ -n "$VAL" ] && printf '{{.C_OK}}✓ Cluster secret annotations populated (exposure_mode=%s){{.C_RESET}}\n' "$VAL" && break
+              -o jsonpath='{.metadata.annotations.insecure}' 2>/dev/null)
+            [ -n "$VAL" ] && printf '{{.C_OK}}✓ Cluster secret annotations populated (insecure=%s){{.C_RESET}}\n' "$VAL" && break
             sleep 5
           done
         else
@@ -789,13 +787,6 @@ tasks:
     aliases: [print-urls]
     vars:
       INGRESS_DOMAIN: '{{.DOMAIN}}'
-      GITLAB_DOMAIN:
-        sh: |
-          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
-          else
-            echo "{{.DOMAIN}}"
-          fi
       KC_ADMIN_PASSWORD:
         sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.keycloak_admin_password // empty'
       USER_PASSWORD:
@@ -948,8 +939,8 @@ tasks:
         sh: yq '.adminRoleName // ""' {{.CONFIG_FILE}}
       GITLAB_DOMAIN:
         sh: |
-          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          if [ -f {{.ROOT_DIR}}/private/git-domain ]; then
+            cat {{.ROOT_DIR}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -975,7 +966,7 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id: $id, subnet_ids: $subnet_ids, cluster_security_group_id: $cluster_security_group_id}' | jq -c .)
         # Base metadata (string), then re-merge preserved overlay_* keys (only when set).
-        METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","exposure_mode":"{{.EXPOSURE_MODE}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"{{.ARGOCD_URL}}"}'
+        METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"{{.ARGOCD_URL}}"}'
         if [ -n "$OVL_URL" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg u "$OVL_URL" --arg r "$OVL_REV" --arg b "$OVL_BP" '. + {overlay_repo_url:$u, overlay_repo_revision:$r, overlay_repo_basepath:$b}')
           echo "Preserving existing overlay wiring: overlay_repo_url=$OVL_URL"
@@ -1099,8 +1090,8 @@ tasks:
     vars:
       KC_DOMAIN:
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
-            cat {{.ROOT_DIR}}/private/cloudfront-domain
+          if [ -f {{.ROOT_DIR}}/private/async-domain ]; then
+            cat {{.ROOT_DIR}}/private/async-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -1403,106 +1394,6 @@ tasks:
       - "! kind get clusters 2>/dev/null | grep -q '^{{.KIND_CLUSTER_NAME}}$'"
     cmds:
       - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
-
-
-
-  idc:configure:
-    desc: Configure IDC with Keycloak as external IdP and sync users via SCIM
-    status:
-      - |
-        IDENTITY_STORE_ID=$(aws sso-admin list-instances --region {{.AWS_REGION}} \
-          --query "Instances[?InstanceArn=='{{.IDC_INSTANCE_ARN}}'].IdentityStoreId" --output text 2>/dev/null)
-        aws identitystore list-users --identity-store-id "$IDENTITY_STORE_ID" --region {{.AWS_REGION}} \
-          --filters "AttributePath=UserName,AttributeValue={{.GIT_USERNAME}}" \
-          --query "Users[0].UserId" --output text 2>/dev/null | grep -qv "^None\|^$"
-    vars:
-      IDC_INSTANCE_ID:
-        sh: echo "{{.IDC_INSTANCE_ARN}}" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//'
-      KC_ADMIN_PASSWORD:
-        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
-      KEYCLOAK_DNS:
-        sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ] && [ -f {{.ROOT_DIR}}/private/cloudfront-domain ]; then
-            cat {{.ROOT_DIR}}/private/cloudfront-domain
-          else
-            echo "{{.DOMAIN}}"
-          fi
-    cmds:
-      - printf '{{.C_STEP}}▸ Refreshing IDC integration credentials via Lambda...{{.C_RESET}}\n'
-      - |
-        LAMBDA_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-          --query "Stacks[?contains(StackName,'peeks-ide')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null)
-        if [ -n "$LAMBDA_ARN" ] && [ "$LAMBDA_ARN" != "None" ]; then
-          ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-            --query "Stacks[?contains(StackName,'peeks-ide')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" --output text 2>/dev/null)
-          if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ]; then
-            ROLE_ARN=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].Arn | [0]" --output text)
-          fi
-          PAYLOAD=$(jq -n --arg role "$ROLE_ARN" --arg prefix "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
-            '{RequestType:"Update",ResourceProperties:{RoleArn:$role,ParameterPrefix:$prefix,SessionDuration:"3600"}}')
-          aws lambda invoke --function-name "$LAMBDA_ARN" --payload "$PAYLOAD" --region {{.AWS_REGION}} /tmp/lambda-response.json > /dev/null
-          echo "Credentials refreshed via Lambda"
-        else
-          echo "WARN: Lambda not found. Falling back to instance profile (may trigger Epoxy on personal accounts)."
-          TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-          ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
-          CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
-          CREDENTIALS_JSON=$(echo "$CREDS" | jq '{AccessKeyId: .AccessKeyId, SecretAccessKey: .SecretAccessKey, SessionToken: .Token, Expiration: .Expiration}')
-          aws ssm put-parameter \
-            --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" \
-            --value "$CREDENTIALS_JSON" \
-            --type "SecureString" \
-            --overwrite \
-            --region {{.AWS_REGION}} > /dev/null
-          echo "Credentials stored in SSM (fallback)"
-        fi
-      - printf '{{.C_STEP}}▸ Installing Playwright dependencies...{{.C_RESET}}\n'
-      - pip install playwright boto3 requests --quiet 2>/dev/null
-      - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
-      - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
-      - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
-      - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
-      - |
-        IDC_SUCCESS=false
-        for attempt in 1 2 3; do
-          printf '{{.C_INFO}}  Attempt %s/3...{{.C_RESET}}\n' "$attempt"
-          if python3 {{.ROOT_DIR}}/scripts/configure_identity_center.py \
-              --region {{.AWS_REGION}} \
-              --instance-id {{.IDC_INSTANCE_ID}} \
-              --keycloak-dns {{.KEYCLOAK_DNS}} \
-              --keycloak-admin-password="{{.KC_ADMIN_PASSWORD}}"; then
-            IDC_SUCCESS=true
-            break
-          fi
-          [ $attempt -lt 3 ] && sleep 60
-        done
-        if [ "$IDC_SUCCESS" = true ]; then
-          printf '{{.C_OK}}✓ IDC configured with Keycloak federation and SCIM sync.{{.C_RESET}}\n'
-        else
-          printf '{{.C_ERR}}⚠ IDC configuration failed after 3 attempts. Run manually later:{{.C_RESET}}\n'
-          printf '  task kind-crossplane:idc:configure\n'
-        fi
-      - printf '{{.C_STEP}}▸ Syncing admin group members into IDC admin group for ArgoCD access...{{.C_RESET}}\n'
-      - |
-        ADMIN_GROUP_ID="{{.IDC_ADMIN_GROUP_ID}}"
-        IDENTITY_STORE_ID=$(aws sso-admin list-instances --region {{.IDC_REGION}} --query 'Instances[0].IdentityStoreId' --output text | head -1)
-        SCIM_ADMIN_GROUP=$(aws identitystore list-groups --identity-store-id "$IDENTITY_STORE_ID" --region {{.IDC_REGION}} \
-          --query "Groups[?DisplayName=='admin'].GroupId | [0]" --output text 2>/dev/null)
-        if [ -n "$SCIM_ADMIN_GROUP" ] && [ "$SCIM_ADMIN_GROUP" != "None" ]; then
-          EXISTING_MEMBERS=$(aws identitystore list-group-memberships --identity-store-id "$IDENTITY_STORE_ID" \
-            --group-id "$ADMIN_GROUP_ID" --region {{.IDC_REGION}} --query 'GroupMemberships[].MemberId.UserId' --output text 2>/dev/null)
-          for USER_ID in $(aws identitystore list-group-memberships --identity-store-id "$IDENTITY_STORE_ID" \
-            --group-id "$SCIM_ADMIN_GROUP" --region {{.IDC_REGION}} --query 'GroupMemberships[].MemberId.UserId' --output text 2>/dev/null); do
-            if ! echo "$EXISTING_MEMBERS" | grep -q "$USER_ID"; then
-              aws identitystore create-group-membership --identity-store-id "$IDENTITY_STORE_ID" \
-                --group-id "$ADMIN_GROUP_ID" --member-id UserId="$USER_ID" --region {{.IDC_REGION}} 2>/dev/null || true
-              echo "Added user $USER_ID to IDC admin group"
-            fi
-          done
-          printf '{{.C_OK}}✓ Admin group members synced for ArgoCD access.{{.C_RESET}}\n'
-        else
-          printf '{{.C_ERR}}⚠ SCIM admin group not found — users may need manual assignment.{{.C_RESET}}\n'
-        fi
 
   destroy:
     desc: >-

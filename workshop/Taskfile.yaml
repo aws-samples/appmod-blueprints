@@ -54,9 +54,9 @@ vars:
   # NOTE: this taskfile-level var is evaluated ONCE at load time (before the platform
   # CloudFront is created mid-install), so it is only used for informational messaging
   # in pre-install. Tasks that need the LIVE value (idc:configure, setup-env) resolve it
-  # in their own task-level vars from private/cloudfront-domain (+ AWS fallback).
+  # in their own task-level vars from private/async-domain (+ AWS fallback).
   CLOUDFRONT_DOMAIN:
-    sh: cat {{.REPO}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]' || true
+    sh: cat {{.REPO}}/private/async-domain 2>/dev/null | tr -d '[:space:]' || true
   C_STEP:
     sh: printf '\033[1;33m'
   C_OK:
@@ -343,13 +343,13 @@ tasks:
         printf '{{.C_INFO}}Workshop pre-requisites check:{{.C_RESET}}\n'
         printf '  In Workshop Studio (guided) events:\n'
         printf '    1. CDK bootstrap.sh provisions the IDE/GitLab CloudFront + GitLab CE,\n'
-        printf '       writes private/gitlab-cloudfront-domain\n'
+        printf '       writes private/git-domain\n'
         printf '    2. SSM SetupIDE runs create-config.sh which generates config.local.yaml\n'
         printf '       (auto-detects region, account, IDC; sets domain: "" for cloudfront mode\n'
-        printf '        and gitDomain from private/gitlab-cloudfront-domain).\n'
+        printf '        and gitDomain from private/git-domain).\n'
         printf '       NOTE: the PLATFORM CloudFront domain is NOT a prerequisite and is NOT\n'
         printf '       stored in config.local.yaml — it is created by cloudfront:hub-distribution\n'
-        printf '       during task install and recorded in private/cloudfront-domain.\n'
+        printf '       during task install and recorded in private/async-domain.\n'
         printf '    3. task install + task workshop:post-install run automatically\n'
         printf '  For self-paced: just run create-config.sh; task install creates the platform CloudFront.\n'
         if [ -z "{{.CLOUDFRONT_DOMAIN}}" ]; then
@@ -392,14 +392,14 @@ tasks:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
       CF_DOMAIN:
         sh: |
-          D=$(cat {{.REPO}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+          D=$(cat {{.REPO}}/private/async-domain 2>/dev/null | tr -d '[:space:]')
           [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
             --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
             --output text 2>/dev/null | tr -d '[:space:]')
           [ "$D" = "None" ] && D=""
           echo "$D"
-      GITLAB_CF_DOMAIN_VAR:
-        sh: yq '.gitDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.REPO}}/private/gitlab-cloudfront-domain 2>/dev/null || true
+      GIT_DOMAIN_VAR:
+        sh: yq '.gitDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.REPO}}/private/git-domain 2>/dev/null || true
       USER_PASSWORD:
         sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // ""'
       KC_ADMIN_PASSWORD:
@@ -412,7 +412,7 @@ tasks:
           grep -q "^export ${n}=" "$PLATFORM_FILE" 2>/dev/null             && sed -i "s|^export ${n}=.*|export ${n}=\"${v}\"|" "$PLATFORM_FILE"             || echo "export ${n}=\"${v}\"" >> "$PLATFORM_FILE"
         }
         CF="{{.CF_DOMAIN}}"
-        GITLAB_CF="{{.GITLAB_CF_DOMAIN_VAR}}"
+        GITLAB_CF="{{.GIT_DOMAIN_VAR}}"
         # Fall back to platform domain if gitDomain not set
         [ -z "$GITLAB_CF" ] && GITLAB_CF="$CF"
         ARGOCD="{{.ARGOCD_URL}}"
@@ -478,7 +478,7 @@ tasks:
             # artifact (created by create-config.sh), with fallbacks. Do NOT use the
             # taskfile-level CLOUDFRONT_DOMAIN var: global vars are evaluated once at
             # load — before the distribution exists — so it is always empty here.
-            D=$(cat {{.REPO}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+            D=$(cat {{.REPO}}/private/async-domain 2>/dev/null | tr -d '[:space:]')
             if [ -z "$D" ]; then
               D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
                 --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
@@ -487,7 +487,7 @@ tasks:
             [ "$D" = "None" ] && D=""
             # Last-resort fallback: config.local.yaml. create-config.sh writes the
             # domain there once the distribution is created — covers the case where
-            # private/cloudfront-domain and the AWS Comment lookup above both race
+            # private/async-domain and the AWS Comment lookup above both race
             # or miss (e.g. this task runs before the distribution reaches Deployed).
             if [ -z "$D" ]; then
               D=$(yq '.domain' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
@@ -501,7 +501,7 @@ tasks:
       - |
         case "{{.KEYCLOAK_DNS}}" in
           ""|null|None)
-            printf '{{.C_ERR}}⚠ KEYCLOAK_DNS is empty — CloudFront domain not set. Fix: write domain to workshop/private/cloudfront-domain then run: task idc:configure{{.C_RESET}}\n'
+            printf '{{.C_ERR}}⚠ KEYCLOAK_DNS is empty — CloudFront domain not set. Fix: write domain to workshop/private/async-domain then run: task idc:configure{{.C_RESET}}\n'
             exit 1
           ;;
         esac
@@ -579,12 +579,12 @@ tasks:
       - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
       - |
         IDC_SUCCESS=false
-        # Fail-fast: if KEYCLOAK_DNS is empty (domain not written to config/cloudfront-domain),
+        # Fail-fast: if KEYCLOAK_DNS is empty (domain not written to private/async-domain),
         # don't waste time curling — skip immediately with a clear message.
         case "{{.KEYCLOAK_DNS}}" in
           ""|null|None)
             printf '{{.C_ERR}}⚠ KEYCLOAK_DNS is empty — platform CloudFront domain not set.{{.C_RESET}}\n'
-            printf '{{.C_INFO}}  Fix: ensure private/cloudfront-domain exists, then run: task idc:configure{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Fix: ensure private/async-domain exists, then run: task idc:configure{{.C_RESET}}\n'
           ;;
           *)
         # Pre-check: if Keycloak returns 404/000 the ALB/LBC is not reconciled yet.
@@ -661,10 +661,10 @@ tasks:
         docker exec gitlab-gitlab-1 find /var/opt/gitlab/git-data/repositories/@hashed -name "*.git" -maxdepth 3 | grep -q . && \
         aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -q '^glpat-'
     vars:
-      GITLAB_CF_DOMAIN:
+      GIT_DOMAIN:
         sh: |
-          if [ -f {{.REPO}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.REPO}}/private/gitlab-cloudfront-domain
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -679,7 +679,7 @@ tasks:
       - |
         set -e
         # GitLab CE starts in docker-compose at EC2 boot (bootstrap.sh). Wait up to 20min.
-        GITLAB_URL="https://{{.GITLAB_CF_DOMAIN}}"
+        GITLAB_URL="https://{{.GIT_DOMAIN}}"
         for i in $(seq 1 120); do
           if curl -sf --max-time 10 "$GITLAB_URL/users/sign_in" >/dev/null 2>&1; then
             printf '  GitLab ready.\n'; break
@@ -773,11 +773,11 @@ tasks:
         WORKSHOP_DIR="$HOME/environment/{{.WORKING_REPO}}"
         ROOT_TOKEN=$(docker exec gitlab-gitlab-1 gitlab-rails runner "puts User.find(1).personal_access_tokens.find_or_initialize_by(name: 'root-api').tap{|p| p.scopes=['api','sudo']; p.expires_at=365.days.from_now; p.save!}.token" 2>/dev/null | tail -1)
         for REPO in {{.REPOS}}; do
-          REMOTE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/$REPO.git"
+          REMOTE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/$REPO.git"
           # Unprotect via API (synchronous, handles Sidekiq async protection)
           if [ -n "$ROOT_TOKEN" ]; then
             curl -sf -X DELETE -H "PRIVATE-TOKEN: $ROOT_TOKEN" \
-              "https://{{.GITLAB_CF_DOMAIN}}/api/v4/projects/{{.GIT_USERNAME}}%2F$REPO/protected_branches/main" 2>/dev/null || true
+              "https://{{.GIT_DOMAIN}}/api/v4/projects/{{.GIT_USERNAME}}%2F$REPO/protected_branches/main" 2>/dev/null || true
           fi
           if [ "$REPO" = "fleet-config" ]; then
             SRC="$WORKSHOP_DIR/gitops/fleet"
@@ -794,6 +794,13 @@ tasks:
             # Seed content at gitops/fleet/ so both paths align.
             mkdir -p "$TMP/gitops/fleet"
             cp -r "$SRC/." "$TMP/gitops/fleet/"
+            # Seed workshop-specific overlay overrides (e.g. Kargo ALB ingress on the hub —
+            # kept out of the generic solution, see workshop/overlay/README.md). Copied to the
+            # fleet-config ROOT (overlay_repo_basepath="") so ArgoCD's $overlay source resolves
+            # overlays/environments/<env>/overrides.yaml exactly like the base solution does.
+            if [ -d "$WORKSHOP_DIR/workshop/overlay" ]; then
+              cp -r "$WORKSHOP_DIR/workshop/overlay/." "$TMP/"
+            fi
           else
             cp -r "$SRC/." "$TMP/"
           fi
@@ -827,10 +834,10 @@ tasks:
   gitlab:clone-repos:
     desc: Clone all GitLab repos locally into ~/environment
     vars:
-      GITLAB_CF_DOMAIN:
+      GIT_DOMAIN:
         sh: |
-          if [ -f {{.REPO}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.REPO}}/private/gitlab-cloudfront-domain
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -843,14 +850,14 @@ tasks:
     cmds:
       - printf '{{.C_STEP}}▸ Cloning GitLab repos to ~/environment...{{.C_RESET}}\n'
       - |
-        BASE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}"
+        BASE_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}"
         FAILED=""
         # Wait for GitLab (running via docker-compose on the IDE EC2) to be ready
         # and for the init script to have created all repos.
         # bootstrap.sh starts GitLab at boot; task install calls gitlab:init-ec2 first,
         # so by the time clone-repos runs the repos should exist. Poll as a safety net.
         printf '  Waiting for GitLab to be ready (up to 20min)...\n'
-        GITLAB_BASE="https://{{.GITLAB_CF_DOMAIN}}"
+        GITLAB_BASE="https://{{.GIT_DOMAIN}}"
         for i in $(seq 1 120); do
           if curl -sf --max-time 5 "$GITLAB_BASE/users/sign_in" >/dev/null 2>&1; then break; fi
           sleep 10
@@ -930,10 +937,10 @@ tasks:
       credential, flips <hub>/config (ESO reconciles the cluster secret), then
       verifies the flip resolved and auto-reverts if it did not. Idempotent.
     vars:
-      GITLAB_CF_DOMAIN:
+      GIT_DOMAIN:
         sh: |
-          if [ -f {{.REPO}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.REPO}}/private/gitlab-cloudfront-domain
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -946,7 +953,7 @@ tasks:
       OVERLAY_REPO_BASEPATH: ""
     cmds:
       - |
-        OVERLAY_URL="https://{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        OVERLAY_URL="https://{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         KC="{{.REPO}}/private/hub-kubeconfig"
 
@@ -960,7 +967,7 @@ tasks:
         #    IGNORED by the appset (hub kept reading the GitHub addons fallback),
         #    so NO spoke EKS clusters were ever provisioned. Wait (up to ~5min)
         #    for it to become reachable before deciding.
-        FLEET_LS="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        FLEET_LS="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         printf '{{.C_STEP}}▸ Verifying fleet-config overlay repo is reachable...{{.C_RESET}}\n'
         FLEET_OK=false
         for i in $(seq 1 30); do
@@ -1004,7 +1011,7 @@ tasks:
             argocd.argoproj.io/secret-type: repository
         stringData:
           type: git
-          url: https://{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git
+          url: https://{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git
           username: "{{.GIT_USERNAME}}"
           password: "{{.GIT_PASSWORD}}"
         EOF
@@ -1025,7 +1032,7 @@ tasks:
             argocd.argoproj.io/secret-type: repo-creds
         stringData:
           type: git
-          url: https://{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}
+          url: https://{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}
           username: "{{.GIT_USERNAME}}"
           password: "{{.GIT_PASSWORD}}"
         EOF
@@ -1115,10 +1122,10 @@ tasks:
     desc: "Enable a spoke cluster via Crossplane (usage: task spokes:enable-crossplane -- <cluster-name>)"
     vars:
       CLUSTER: '{{.CLI_ARGS}}'
-      GITLAB_CF_DOMAIN:
+      GIT_DOMAIN:
         sh: |
-          if [ -f {{.REPO}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.REPO}}/private/gitlab-cloudfront-domain
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -1127,7 +1134,7 @@ tasks:
     cmds:
       - |
         if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:enable-crossplane -- <cluster-name>"; exit 1; fi
-        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         # fleet-config is created asynchronously by the gitlab-init Job (Helm
         # post-install hook, which waits for GitLab readiness), so this task can
         # race ahead of it. Cloning an absent repo left $REPO_DIR without a .git
@@ -1248,10 +1255,10 @@ tasks:
     desc: "Enable a spoke cluster via KRO (usage: task spokes:enable-kro -- <cluster-name>)"
     vars:
       CLUSTER: '{{.CLI_ARGS}}'
-      GITLAB_CF_DOMAIN:
+      GIT_DOMAIN:
         sh: |
-          if [ -f {{.REPO}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.REPO}}/private/gitlab-cloudfront-domain
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -1260,7 +1267,7 @@ tasks:
     cmds:
       - |
         if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:enable-kro -- <cluster-name>"; exit 1; fi
-        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         # fleet-config is created asynchronously by the gitlab-init Job (Helm
         # post-install hook), which itself waits for GitLab to become ready. When
         # enable-kro runs in phase2 it can race ahead of that job. Cloning an
@@ -1428,10 +1435,10 @@ tasks:
     desc: "DELETE a Crossplane spoke on purpose: remove from overlay, then prune (usage: task spokes:disable-crossplane -- <cluster-name>)"
     vars:
       CLUSTER: '{{.CLI_ARGS}}'
-      GITLAB_CF_DOMAIN:
+      GIT_DOMAIN:
         sh: |
-          if [ -f {{.REPO}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.REPO}}/private/gitlab-cloudfront-domain
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -1444,7 +1451,7 @@ tasks:
         APP="clusters-workshop"
 
         # 1. Declarative removal: drop the cluster entry from the overlay (Git).
-        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         # Guard: a silently-failed clone would leave an empty $REPO_DIR, making us
         # wrongly conclude the cluster is absent from the overlay and skip the Git
         # removal (stale overlay left behind). Wait for fleet-config then verify.
@@ -1494,10 +1501,10 @@ tasks:
     desc: "DELETE a KRO spoke on purpose: remove from overlay, then prune (usage: task spokes:disable-kro -- <cluster-name>)"
     vars:
       CLUSTER: '{{.CLI_ARGS}}'
-      GITLAB_CF_DOMAIN:
+      GIT_DOMAIN:
         sh: |
-          if [ -f {{.REPO}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.REPO}}/private/gitlab-cloudfront-domain
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -1508,7 +1515,7 @@ tasks:
         if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:disable-kro -- <cluster-name>"; exit 1; fi
         # KRO generates one app per cluster: clusters-kro-<name>.
         APP="clusters-kro-{{.CLUSTER}}"
-        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
         # Guard: a silently-failed clone would leave an empty $REPO_DIR, making the
         # overlay cleanup below a no-op (stale kro overlay + marker left behind).
         # Wait for fleet-config then verify the clone produced a git repo.
@@ -1582,10 +1589,10 @@ tasks:
       `destroy` so spokes are removed while the hub controllers (KRO/ACK/Crossplane)
       are still alive to reconcile their deletion. Idempotent.
     vars:
-      GITLAB_CF_DOMAIN:
+      GIT_DOMAIN:
         sh: |
-          if [ -f {{.REPO}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.REPO}}/private/gitlab-cloudfront-domain
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi
@@ -1598,7 +1605,7 @@ tasks:
         #    for cluster specs). If the overlay is unreachable we must NOT silently
         #    proceed to hub teardown — surviving spokes would be orphaned.
         REPO_DIR=$(mktemp -d)
-        if ! git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GITLAB_CF_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git" "$REPO_DIR" 2>/dev/null; then
+        if ! git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git" "$REPO_DIR" 2>/dev/null; then
           printf '{{.C_ERR}}⚠ fleet-config overlay unreachable — cannot discover spokes automatically.{{.C_RESET}}\n'
           printf '{{.C_INFO}}  If any spoke clusters exist, delete them first with:{{.C_RESET}}\n'
           printf '    task spokes:disable-kro -- <name>   /   task spokes:disable-crossplane -- <name>\n'

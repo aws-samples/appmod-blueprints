@@ -29,6 +29,7 @@ spec:
        username: string
       hub:
        hostname: string
+       insecure: boolean | default=false
     status:
       # ECR Repository information
       ecrMainRepositoryURI: ${ecrmainrepo.status.?repositoryURI}
@@ -2680,10 +2681,10 @@ spec:
             app.kubernetes.io/managed-by: kro
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            alb.ingress.kubernetes.io/scheme: internet-facing
+            alb.ingress.kubernetes.io/scheme: '${schema.spec.hub.insecure ? "internal" : "internet-facing"}'
             alb.ingress.kubernetes.io/target-type: ip
             alb.ingress.kubernetes.io/healthcheck-path: /
-            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+            alb.ingress.kubernetes.io/listen-ports: '${schema.spec.hub.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]"}'
         spec:
           ingressClassName: platform
           rules:

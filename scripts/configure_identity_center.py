@@ -844,7 +844,7 @@ if __name__ == "__main__":
 
     if not args.keycloak_dns or args.keycloak_dns in ("null", "None", ""):
         print("ERROR: --keycloak-dns is empty. CloudFront domain not set — cannot configure Keycloak.", file=sys.stderr)
-        print("Fix: ensure workshop/private/cloudfront-domain exists, then run: task idc:configure", file=sys.stderr)
+        print("Fix: ensure workshop/private/async-domain exists, then run: task idc:configure", file=sys.stderr)
         sys.exit(1)
 
     result = asyncio.run(configure_identity_center(

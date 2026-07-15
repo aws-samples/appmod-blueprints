@@ -39,6 +39,12 @@ aws:
 # The platform never creates it — it only uses it for ingress host rules and URLs.
 domain: "<your-domain>"                      # e.g. idp.example.com
 
+# Optional: if your domain is resolved asynchronously (e.g. a CloudFront distribution
+# still deploying) rather than known upfront, leave `domain` empty and have your
+# provisioning job write the resolved hostname to private/async-domain (relative to
+# the repo root) — cluster bootstrap will poll it (see hub:wait-for-domain) instead of
+# blocking synchronously. Ignored entirely once `domain` above is set.
+
 # TLS / exposure:
 #   insecure: false (default) — ALB serves HTTPS; uses an ACM cert (auto-discovered
 #             by host, or set certificateArn). You bring the domain + cert.

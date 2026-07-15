@@ -36,3 +36,4 @@ spec:
     username: ${{values.git_username}}
   hub:
     hostname: ${{values.ingress_hostname}}
+    insecure: ${{values.insecure | default(false, true)}}

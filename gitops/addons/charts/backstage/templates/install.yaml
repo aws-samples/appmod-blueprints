@@ -216,13 +216,13 @@ data:
         - allow: [Component, System, API, Resource, Location, Template]
       locations:
 {{- if .Values.gitlab_domain_name }}
-        # Templates from GitLab (cloudfront mode — readTree works with user1 token)
+        # Templates from GitLab (self-hosted Git consumer, e.g. the workshop)
         - type: url
           target: https://${GIT_HOSTNAME}/${GIT_USERNAME}/${WORKING_REPO}/-/blob/main/platform/backstage/templates/catalog-info.yaml
           rules:
             - allow: [ Component, System, API, Resource, Location, Template, User, Group ]
 {{- else }}
-        # Static templates from GitHub (domain mode)
+        # Static templates from GitHub (default, no gitlab_domain_name set)
         - type: url
           target: https://github.com/aws-samples/appmod-blueprints/blob/${WORKSHOP_GIT_BRANCH}/platform/backstage/templates/catalog-info.yaml
           rules:
@@ -397,6 +397,7 @@ data:
     spec:
       owner: guest
       ingress_hostname: '{{ .Values.ingress_domain_name }}'
+      insecure: '{{ .Values.insecure | default false }}'
       gitlab_hostname: '{{ default .Values.ingress_domain_name .Values.gitlab_domain_name }}'
       argocd_hostname: '{{ .Values.argocd_hostname }}'
       gituser: '{{ .Values.git_username }}'
@@ -785,9 +786,8 @@ spec:
     matchLabels:
       app: backstage
 ---
-{{- /* insecure: HTTP-only ALB ingress, no cert. Explicit .Values.insecure wins;
-       falls back to the legacy exposure_mode == "cloudfront" during transition. */ -}}
-{{- $insecure := or .Values.insecure (eq (default "domain" .Values.exposure_mode) "cloudfront") -}}
+{{- /* insecure: HTTP-only ingress, no cert (consumer terminates TLS upstream, e.g. CloudFront). */ -}}
+{{- $insecure := .Values.insecure -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

@@ -52,7 +52,7 @@ argo-workflows:
   valuesObject:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     gitlab_domain_name: '{{.metadata.annotations.gitlab_domain_name}}'
-    exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+    insecure: '{{default "false" .metadata.annotations.insecure}}'
     aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io
@@ -85,9 +85,10 @@ kargo:
     api:
       host: '{{.metadata.annotations.ingress_domain_name}}'
       # NOTE: api.ingress (ALB exposure) is intentionally NOT set here so the base
-      # stays generic and reusable. The control-plane hub enables it via the
-      # per-addon overlay gitops/overlays/environments/control-plane/kargo/values.yaml
-      # (cloudfront mode). Other consumers/modes can override differently.
+      # stays generic and reusable. Consumers enable it via their own fleet-config
+      # overlay (overlays/environments/<env>/overrides.yaml) — the workshop's version
+      # lives in workshop/overlay/overlays/environments/control-plane/overrides.yaml
+      # and is seeded into the GitLab fleet-config repo by workshop/Taskfile.yaml.
       argocd:
         urls:
           - https://{{.metadata.annotations.ingress_domain_name}}/argocd
