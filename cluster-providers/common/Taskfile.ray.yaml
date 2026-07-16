@@ -130,7 +130,12 @@ tasks:
       MODEL_NAME: '{{.MODEL_NAME | default "tinyllama"}}'
     cmds:
       - cmd: |
-          pip3 install -q huggingface_hub 2>/dev/null
+          # Skip if model already in S3 (idempotent re-run)
+          if aws s3 ls "s3://{{.RAY_BUCKET}}/models/{{.MODEL_NAME}}/" --region {{.AWS_REGION}} 2>/dev/null | grep -q "."; then
+            echo "  ✓ Model {{.MODEL_NAME}} already in s3://{{.RAY_BUCKET}}/models/{{.MODEL_NAME}}/ — skipping download"
+            exit 0
+          fi
+          pip3 install -q huggingface_hub 2>/dev/null || pip3 install huggingface_hub
           echo "Downloading {{.MODEL_REPO_ID}}..."
           python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='{{.MODEL_REPO_ID}}', local_dir='/tmp/{{.MODEL_NAME}}', local_dir_use_symlinks=False)"
           echo "Uploading to s3://{{.RAY_BUCKET}}/models/{{.MODEL_NAME}}/..."
