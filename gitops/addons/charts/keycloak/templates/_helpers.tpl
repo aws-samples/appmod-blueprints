@@ -14,7 +14,8 @@ db=postgres
 # The username of the database user.
 db-url=jdbc:postgresql://postgresql.keycloak.svc.cluster.local:5432/postgres
 
-# hostname settings — must use ingress_domain_name (platform CloudFront domain)
+# hostname settings — must use ingress_domain_name (the platform's ingress domain,
+# provisioned by the consumer — e.g. via CloudFront in the workshop)
 # Do NOT fall back to gitlab_domain_name — that domain routes to GitLab, not Keycloak
 #
 # IMPORTANT: `hostname` must be the bare base URL (scheme + host only), WITHOUT the

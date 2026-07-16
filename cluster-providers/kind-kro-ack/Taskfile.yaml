@@ -48,7 +48,7 @@ vars:
   DOMAIN:
     sh: |
       D=$(yq '.domain // ""' {{.CONFIG_FILE}} | grep -v '^$' || true)
-      [ -z "$D" ] && D=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]' || true)
+      [ -z "$D" ] && D=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]' || true)
       echo "${D:-}"
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
@@ -57,12 +57,10 @@ vars:
   INGRESS_SECURITY_GROUPS:
     sh: yq '.ingressSecurityGroups // ""' {{.CONFIG_FILE}}
   # Exposure: platform does not provision a domain/CloudFront. insecure -> HTTP-only
-  # ALB (consumer terminates TLS upstream); false -> HTTPS with ACM. exposure_mode is
-  # derived for the cluster-secret annotation chain the addon charts consume.
+  # ALB (consumer terminates TLS upstream); false -> HTTPS with ACM. Written verbatim
+  # to the cluster-secret annotation chain the addon charts consume.
   INSECURE:
     sh: yq '.insecure // false' {{.CONFIG_FILE}}
-  EXPOSURE_MODE:
-    sh: 'if [ "$(yq ''.insecure // false'' {{.CONFIG_FILE}})" = "true" ]; then echo "cloudfront"; else echo "domain"; fi'
   INGRESS_CERT_ARN:
     sh: yq '.certificateArn // ""' {{.CONFIG_FILE}}
   ADMIN_ROLE_NAME:
@@ -153,7 +151,7 @@ tasks:
       - task: kro:install-eso-bootstrap
       - task: kro:install-cluster-secret-store-bootstrap
       - task: kro:apply-rgds
-      - task: hub:wait-for-cloudfront-domain
+      - task: hub:wait-for-domain
       - task: hub:claim
       - task: hub:wait-for-eks
       - task: hub:authorize-ide-access
@@ -577,42 +575,48 @@ tasks:
         echo "[$(date +%H:%M:%S)] ✓ gitlab:init-ec2 background job complete"
         rm -f "$PID_FILE"
 
-  hub:wait-for-cloudfront-domain:
-    desc: Wait for CloudFront domain to be written by background create-config.sh infra job
+  hub:wait-for-domain:
+    desc: Wait for `domain` to be available in config.local.yaml, written by an async consumer job to private/async-domain (e.g. the workshop's create-config.sh provisioning CloudFront in the background). No-op if domain is already set.
     cmds:
       - |
-        CF_FILE="{{.ROOT_DIR}}/private/cloudfront-domain"
+        # Optional file a consumer can write asynchronously with the resolved domain
+        # (fixed path private/async-domain, relative to the repo root — e.g. the
+        # workshop's create-config.sh, once its CloudFront distribution is ready) —
+        # lets hub:claim start without blocking on a synchronous domain provisioning
+        # step. Consumers with a static domain never hit this: `domain` is already
+        # set in config.local.yaml and this task exits immediately below.
+        DOMAIN_FILE="{{.ROOT_DIR}}/private/async-domain"
         CONFIG_FILE="{{.CONFIG_FILE}}"
         # If domain already in config or file exists, nothing to do
         EXISTING=$(yq '.domain // ""' "$CONFIG_FILE" 2>/dev/null | tr -d '[:space:]')
         if [ -n "$EXISTING" ] && [ "$EXISTING" != '""' ] && [ "$EXISTING" != "null" ]; then
-          echo "[$(date +%H:%M:%S)] ✓ CloudFront domain already set: $EXISTING"
+          echo "[$(date +%H:%M:%S)] ✓ domain already set: $EXISTING"
           exit 0
         fi
-        if [ -f "$CF_FILE" ] && [ -s "$CF_FILE" ]; then
-          D=$(cat "$CF_FILE" | tr -d '[:space:]')
+        if [ -f "$DOMAIN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
+          D=$(cat "$DOMAIN_FILE" | tr -d '[:space:]')
           if [ -n "$D" ]; then
             yq -i ".domain = \"$D\"" "$CONFIG_FILE" 2>/dev/null || \
               sed -i "s|domain: .*|domain: \"$D\"|" "$CONFIG_FILE"
-            echo "[$(date +%H:%M:%S)] ✓ CloudFront domain loaded from file: $D"
+            echo "[$(date +%H:%M:%S)] ✓ domain loaded from file: $D"
             exit 0
           fi
         fi
-        echo "[$(date +%H:%M:%S)] ▸ Waiting for CloudFront domain (background create-config.sh infra)..."
+        echo "[$(date +%H:%M:%S)] ▸ Waiting for domain (async consumer job)..."
         for _i in $(seq 1 80); do
-          if [ -f "$CF_FILE" ] && [ -s "$CF_FILE" ]; then
-            D=$(cat "$CF_FILE" | tr -d '[:space:]')
+          if [ -f "$DOMAIN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
+            D=$(cat "$DOMAIN_FILE" | tr -d '[:space:]')
             if [ -n "$D" ] && [ "$D" != "null" ]; then
               yq -i ".domain = \"$D\"" "$CONFIG_FILE" 2>/dev/null || \
                 sed -i "s|domain: .*|domain: \"$D\"|" "$CONFIG_FILE"
-              echo "[$(date +%H:%M:%S)] ✓ CloudFront domain ready: $D"
+              echo "[$(date +%H:%M:%S)] ✓ domain ready: $D"
               exit 0
             fi
           fi
-          [ $((_i % 4)) -eq 0 ] && echo "[$(date +%H:%M:%S)]   still waiting for CloudFront domain (${_i}x15s)..."
+          [ $((_i % 4)) -eq 0 ] && echo "[$(date +%H:%M:%S)]   still waiting for domain (${_i}x15s)..."
           sleep 15
         done
-        echo "[$(date +%H:%M:%S)] ⚠ CloudFront domain not available after 20min — continuing with empty domain"
+        echo "[$(date +%H:%M:%S)] ⚠ domain not available after 20min — continuing with empty domain"
 
   hub:claim:
     desc: Apply hub cluster claim (EksCluster or EksclusterWithVpc depending on hub.network)
@@ -895,16 +899,18 @@ tasks:
     cmds:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
-        GITLAB_CF_DOMAIN=$(cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain 2>/dev/null || yq '.gitDomain // ""' {{.CONFIG_FILE}} || true)
+        GIT_DOMAIN=$(cat {{.ROOT_DIR}}/private/git-domain 2>/dev/null || yq '.gitDomain // ""' {{.CONFIG_FILE}} || true)
         # Read domain at runtime (not from global DOMAIN var which is evaluated at task load
-        # time, before private/cloudfront-domain exists). This ensures ingress_domain_name
-        # is correctly set even when hub:seed runs shortly after the CF domain is written.
-        RUNTIME_DOMAIN=$(cat {{.ROOT_DIR}}/private/cloudfront-domain 2>/dev/null | tr -d '[:space:]')
+        # time, before the private/async-domain artifact exists). This ensures
+        # ingress_domain_name is correctly set even when hub:seed runs shortly after the
+        # domain is written.
+        RUNTIME_DOMAIN=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]')
         [ -z "$RUNTIME_DOMAIN" ] && RUNTIME_DOMAIN=$(yq '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
-        [ -z "$RUNTIME_DOMAIN" ] && RUNTIME_DOMAIN=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
-          --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
-          --output text 2>/dev/null | tr -d '[:space:]')
-        [ "$RUNTIME_DOMAIN" = "None" ] && RUNTIME_DOMAIN=""
+        if [ -z "$RUNTIME_DOMAIN" ]; then
+          echo "ERROR: domain is empty — set 'domain' in config.local.yaml or write it to private/async-domain before running hub:seed."
+          echo "       Without a domain, ingress_domain_name in the cluster secret will be empty and all ArgoCD addon apps will misconfigure."
+          exit 1
+        fi
         echo "[hub:seed] ingress_domain_name=$RUNTIME_DOMAIN"
         # The aws-resources ExternalSecret reads <hub>/config property `vpc` into
         # peeks-hub-vpc-secret.vpc_data; the init-env-config Job then parses .id / .subnet_ids /
@@ -917,7 +923,7 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id:$id, subnet_ids:$subnet_ids, cluster_security_group_id:$cluster_security_group_id}' | jq -c .)
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"'"$RUNTIME_DOMAIN"'","ingress_name":"{{.HUB_CLUSTER_NAME}}-platform","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}","exposure_mode":"{{.EXPOSURE_MODE}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.INGRESS_CERT_ARN}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"'"$GITLAB_CF_DOMAIN"'","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":""}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_vpc_id":"{{.VPC_ID}}","alb_controller_mode":"oss","ingress_domain_name":"'"$RUNTIME_DOMAIN"'","ingress_name":"{{.HUB_CLUSTER_NAME}}-platform","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.INGRESS_CERT_ARN}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"'"$GIT_DOMAIN"'","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":""}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '{"provider":"kro-ack"}' \
@@ -1075,8 +1081,8 @@ tasks:
             force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
           for i in $(seq 1 12); do
             VAL=$(KUBECONFIG=$KC kubectl get secret {{.HUB_CLUSTER_NAME}} -n argocd \
-              -o jsonpath='{.metadata.annotations.exposure_mode}' 2>/dev/null)
-            [ -n "$VAL" ] && printf '{{.C_OK}}✓ Cluster secret annotations populated (exposure_mode=%s){{.C_RESET}}\n' "$VAL" && break
+              -o jsonpath='{.metadata.annotations.insecure}' 2>/dev/null)
+            [ -n "$VAL" ] && printf '{{.C_OK}}✓ Cluster secret annotations populated (insecure=%s){{.C_RESET}}\n' "$VAL" && break
             sleep 5
           done
         else
@@ -1208,8 +1214,8 @@ tasks:
       INGRESS_DOMAIN: '{{.DOMAIN}}'
       GITLAB_DOMAIN:
         sh: |
-          if [ -f {{.ROOT_DIR}}/private/gitlab-cloudfront-domain ]; then
-            cat {{.ROOT_DIR}}/private/gitlab-cloudfront-domain
+          if [ -f {{.ROOT_DIR}}/private/git-domain ]; then
+            cat {{.ROOT_DIR}}/private/git-domain
           else
             echo "{{.DOMAIN}}"
           fi

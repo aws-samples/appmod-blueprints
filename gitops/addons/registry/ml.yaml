@@ -14,7 +14,7 @@ jupyterhub:
   valuesObject:
     global:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
-      exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+      insecure: '{{default "false" .metadata.annotations.insecure}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io
@@ -55,7 +55,7 @@ kubeflow:
   valuesObject:
     global:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
-      exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+      insecure: '{{default "false" .metadata.annotations.insecure}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
   ignoreDifferences:
     - group: external-secrets.io

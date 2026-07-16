@@ -38,6 +38,11 @@ spec:
         # path the app actually returns 200 for, otherwise all targets stay
         # unhealthy and the ALB returns 404/503 for every request.
         healthcheckPath: string | default="/"
+        # Defaults to true (HTTP:80, no cert) to match the pre-existing behavior for
+        # workshop/sample apps on the shared ALB, which never provide a real domain +
+        # ACM cert for their wildcard *.<region>.elb.amazonaws.com host. Set to false
+        # only when a real domain + certificate-arn is configured for this app.
+        insecure: boolean | default=true
       functionalGate:
         enabled: boolean | default=false
         image: string | default="httpd:alpine"
@@ -534,7 +539,7 @@ spec:
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
-          annotations: '${{"argocd.argoproj.io/tracking-id": schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue(""), "alb.ingress.kubernetes.io/scheme": "internet-facing", "alb.ingress.kubernetes.io/target-type": "ip", "alb.ingress.kubernetes.io/healthcheck-path": schema.spec.ingress.healthcheckPath, "alb.ingress.kubernetes.io/listen-ports": "[{\"HTTP\": 80}]", "alb.ingress.kubernetes.io/transforms." + schema.metadata.name: "[{\"type\":\"url-rewrite\",\"urlRewriteConfig\":{\"rewrites\":[{\"regex\":\"^" + schema.spec.ingress.path + "/?(.*)$\",\"replace\":\"/$1\"}]}}]"}}'
+          annotations: '${{"argocd.argoproj.io/tracking-id": schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue(""), "alb.ingress.kubernetes.io/scheme": schema.spec.ingress.insecure ? "internal" : "internet-facing", "alb.ingress.kubernetes.io/target-type": "ip", "alb.ingress.kubernetes.io/healthcheck-path": schema.spec.ingress.healthcheckPath, "alb.ingress.kubernetes.io/listen-ports": schema.spec.ingress.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]", "alb.ingress.kubernetes.io/transforms." + schema.metadata.name: "[{\"type\":\"url-rewrite\",\"urlRewriteConfig\":{\"rewrites\":[{\"regex\":\"^" + schema.spec.ingress.path + "/?(.*)$\",\"replace\":\"/$1\"}]}}]"}}'
         spec:
           ingressClassName: platform
           rules:
@@ -567,10 +572,10 @@ spec:
               controller: false
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            alb.ingress.kubernetes.io/scheme: internet-facing
+            alb.ingress.kubernetes.io/scheme: '${schema.spec.ingress.insecure ? "internal" : "internet-facing"}'
             alb.ingress.kubernetes.io/target-type: ip
             alb.ingress.kubernetes.io/healthcheck-path: ${schema.spec.ingress.healthcheckPath}
-            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+            alb.ingress.kubernetes.io/listen-ports: '${schema.spec.ingress.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]"}'
         spec:
           ingressClassName: platform
           rules:

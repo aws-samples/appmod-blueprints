@@ -23,7 +23,7 @@ Auto-detects your AWS environment and generates `config.local.yaml` at the repo 
    - Internal ALB `peeks-hub-platform` in the IDE VPC private subnets
    - CloudFront VPC Origin + Distribution → gets `d*.cloudfront.net` domain
    - Writes domain into `config.local.yaml` so `hub:claim` has it at install time
-4. Writes `config.local.yaml` and `private/cloudfront-domain`
+4. Writes `config.local.yaml` and `private/async-domain`
 
 **Environment overrides:**
 

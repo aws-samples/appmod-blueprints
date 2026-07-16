@@ -32,7 +32,7 @@
 #         via AWS CLI (no aws:cloudformation:* tags → the AWS LBC can adopt it cleanly)
 #       - Creates CloudFront VPC Origin pointing to the ALB
 #       - Creates CloudFront Distribution → gets domain d*.cloudfront.net
-#       - Writes domain to config.local.yaml and private/cloudfront-domain
+#       - Writes domain to config.local.yaml and private/async-domain
 #       All steps are IDEMPOTENT — safe to re-run.
 #
 #  3. Write <repo-root>/config.local.yaml with:
@@ -250,7 +250,7 @@ printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
 # domain is always empty at config-generation time.
-# hub:create-platform-cf writes the real CF domain to private/cloudfront-domain
+# hub:create-platform-cf writes the real CF domain to private/async-domain
 # and hub:seed reads it from there (lazy resolution, not from config).
 DOMAIN_VALUE=""
 printf 'domain: "%s"\n' "$DOMAIN_VALUE"                >> "$OUTPUT_FILE"
@@ -261,12 +261,12 @@ printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
 
 # GitLab/IDE CloudFront domain (separate from the platform CF).
 # Available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,
-# or from the private/gitlab-cloudfront-domain file written by bootstrap.sh.
-GITLAB_CF_DOMAIN="${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}"
-[ -z "$GITLAB_CF_DOMAIN" ] && [ -f "${REPO_ROOT}/private/gitlab-cloudfront-domain" ] && \
-  GITLAB_CF_DOMAIN="$(cat "${REPO_ROOT}/private/gitlab-cloudfront-domain" | tr -d '[:space:]')"
-if [ -n "$GITLAB_CF_DOMAIN" ]; then
-  printf 'gitDomain: "%s"\n' "$GITLAB_CF_DOMAIN" >> "$OUTPUT_FILE"
+# or from the private/git-domain file written by bootstrap.sh.
+GIT_DOMAIN="${CLOUDFRONT_DOMAIN:-${IDE_DOMAIN:-}}"
+[ -z "$GIT_DOMAIN" ] && [ -f "${REPO_ROOT}/private/git-domain" ] && \
+  GIT_DOMAIN="$(cat "${REPO_ROOT}/private/git-domain" | tr -d '[:space:]')"
+if [ -n "$GIT_DOMAIN" ]; then
+  printf 'gitDomain: "%s"\n' "$GIT_DOMAIN" >> "$OUTPUT_FILE"
 fi
 printf 'identityCenter:\n'                             >> "$OUTPUT_FILE"
 printf '  instanceArn: "%s"\n'  "$IDC_ARN"             >> "$OUTPUT_FILE"
@@ -531,10 +531,10 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
       echo "[$(date +%H:%M:%S)] CF_DOMAIN result: $_CF_DOMAIN"
       if [ -n "$_CF_DOMAIN" ]; then
         echo -n "$_CF_DOMAIN" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
-        # Also write directly to REPO_ROOT/private/cloudfront-domain for WAIT_FOR_CF=false mode
+        # Also write directly to REPO_ROOT/private/async-domain for WAIT_FOR_CF=false mode
         REPO_ROOT_BG=$(cd "$(dirname "$0")/.." && pwd)
         mkdir -p "${REPO_ROOT_BG}/private"
-        echo -n "$_CF_DOMAIN" > "${REPO_ROOT_BG}/private/cloudfront-domain"
+        echo -n "$_CF_DOMAIN" > "${REPO_ROOT_BG}/private/async-domain"
         echo "[$(date +%H:%M:%S)] ✓ CloudFront domain written: $_CF_DOMAIN"
       else
         echo "[$(date +%H:%M:%S)] WARN: CF creation failed in background job"
@@ -557,7 +557,7 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
       sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
     mkdir -p "${REPO_ROOT}/private"
-    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/cloudfront-domain"
+    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/async-domain"
     echo "  ✓ domain written to config: $CF_DOMAIN"
   else
     echo "  ▸ Starting ALB+VPC Origin creation in background..."
@@ -573,7 +573,7 @@ fi  # end HUB_VPC_ID block — will rejoin after config is written
 # ── Rejoin background platform infra (if started) ─────────────────────────
 # When WAIT_FOR_CF=false (used by task install parallelization), exit here
 # after writing config.local.yaml. The background infra job keeps running and
-# will write private/cloudfront-domain when ready. task install polls for it
+# will write private/async-domain when ready. task install polls for it
 # before hub:claim so DOMAIN is always set when the EKS cluster is created.
 if [ "${WAIT_FOR_CF:-true}" = "false" ] && [ -n "${HUB_VPC_ID:-}" ]; then
   echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
@@ -661,9 +661,9 @@ elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
     yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
       sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
     mkdir -p "${REPO_ROOT}/private"
-    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/cloudfront-domain"
+    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/async-domain"
     echo "[$(date +%H:%M:%S)]   ✓ CloudFront: $CF_DOMAIN"
-    echo "[$(date +%H:%M:%S)]   ✓ domain written to config.local.yaml and private/cloudfront-domain"
+    echo "[$(date +%H:%M:%S)]   ✓ domain written to config.local.yaml and private/async-domain"
   fi
   rm -rf "$_PLATFORM_INFRA_DIR" 2>/dev/null || true
 fi

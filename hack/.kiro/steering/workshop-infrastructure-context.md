@@ -30,7 +30,7 @@ Architecture and deployment context for the appmod-blueprints platform on the `f
 - CloudFront distribution fronts the ALB (HTTPS termination, caching)
 - Apps differentiated by path prefix with ALB URL rewrite (`transforms` annotation)
 - No custom domain or Route53 needed
-- CloudFront domain stored in `private/cloudfront-domain`
+- CloudFront domain stored in `private/async-domain`
 
 ### ALB URL Rewrite Pattern
 

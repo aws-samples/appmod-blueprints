@@ -59,6 +59,24 @@ sleep 10
 echo "Creating Kargo warehouse..."
 envsubst < warehouse.yaml | kubectl apply -f -
 
+# Kargo Warehouse uses a Kubernetes Secret for ECR authentication when
+# discovering image tags — Pod-Identity credentials are not consumed
+# by the Warehouse controller. Create (or refresh) the ECR secret so
+# the Warehouse can list tags without 401 Unauthorized errors.
+# The ECR token expires after 12 h; the secret is re-created here each
+# time deploy-kargo.sh is run, which covers re-runs and long events.
+KARGO_NS="java-app-kargo"
+ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/peeks/java"
+echo "Creating Kargo ECR image credential secret..."
+ECR_PWD=$(aws ecr get-login-password --region "$AWS_REGION")
+kubectl -n "$KARGO_NS" delete secret ecr-creds --ignore-not-found >/dev/null 2>&1
+kubectl -n "$KARGO_NS" create secret generic ecr-creds \
+  --from-literal=repoURL="$ECR_REPO" \
+  --from-literal=username=AWS \
+  --from-literal=password="$ECR_PWD"
+kubectl -n "$KARGO_NS" label secret ecr-creds kargo.akuity.io/cred-type=image --overwrite
+echo "  ✓ ECR credential secret created"
+
 # Deploy the promotion task
 echo "Creating Kargo promotion task..."
 envsubst < promotiontask.yaml | kubectl apply -f -

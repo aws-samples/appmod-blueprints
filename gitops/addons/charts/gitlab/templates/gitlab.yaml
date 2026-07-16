@@ -52,7 +52,7 @@ spec:
         ports:
         - containerPort: 80
           name: http
-{{- if ne (default "domain" .Values.exposure_mode) "cloudfront" }}
+{{- if not .Values.insecure }}
         - containerPort: 22
           name: ssh
 {{- end }}
@@ -67,7 +67,7 @@ spec:
             external_url 'https://{{ .Values.domain_name }}'
             gitlab_rails['gitlab_shell_ssh_port'] = 22
             gitlab_rails['gitlab_shell_git_timeout'] = 800
-{{- if eq (default "domain" .Values.exposure_mode) "cloudfront" }}
+{{- if .Values.insecure }}
             gitlab_rails['enabled_git_access_protocol'] = 'http'
 {{- else }}
             gitlab_rails['enabled_git_access_protocol'] = 'ssh'
@@ -223,17 +223,17 @@ metadata:
     service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
 spec:
   # Force the OSS AWS Load Balancer Controller to own this Service and reuse the
-  # pre-created "<cluster>-gitlab" NLB (the CloudFront origin). Without this, EKS
-  # Auto Mode's built-in LB controller (default loadBalancerClass
+  # pre-created "<cluster>-gitlab" NLB (the consumer's edge origin, e.g. CloudFront).
+  # Without this, EKS Auto Mode's built-in LB controller (default loadBalancerClass
   # eks.amazonaws.com/nlb) claims the Service and provisions a SEPARATE NLB,
-  # leaving the CloudFront-linked NLB with no targets (GitLab unreachable).
+  # leaving the consumer-linked NLB with no targets (GitLab unreachable).
   loadBalancerClass: service.k8s.aws/nlb
   type: LoadBalancer
   ports:
   - name: http
     port: 80
     targetPort: 80
-{{- if ne (default "domain" .Values.exposure_mode) "cloudfront" }}
+{{- if not .Values.insecure }}
   - name: ssh
     port: 22
     targetPort: 22

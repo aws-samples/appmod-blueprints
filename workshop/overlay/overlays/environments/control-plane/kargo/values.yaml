@@ -1,13 +1,11 @@
-# Per-addon overlay for Kargo on the control-plane hub (cloudfront exposure mode).
-#
-# Layered after gitops/addons/configs/kargo/values.yaml and the base registry entry
-# (see the kargo-<cluster> Application valueFiles). The base registry keeps Kargo
-# generic (no ingress); this overlay turns on ALB exposure for the workshop hub.
+# Workshop variant of the Kargo values overlay.
+# Loaded by the kargo ApplicationSet via:
+#   $overlay/overlays/environments/control-plane/kargo/values.yaml
+# (resolved from the fleet-config repo seeded by workshop/Taskfile.yaml).
 #
 # Kargo has no path prefix, so it serves at the host root (/). On the shared
 # platform ALB the other services' more-specific paths (/keycloak, /backstage,
 # /grafana, /argo-workflows, ...) win and everything else falls through to Kargo.
-# kargo-api serves TLS on 443, so the ALB talks HTTPS to the backend.
 #
 # CRITICAL: Kargo's path is '/' with pathType Prefix — a catch-all. On a shared
 # ALB group the AWS Load Balancer Controller orders listener rules by
@@ -17,11 +15,6 @@
 # Kargo's target group, breaking ALL OIDC/SAML SSO (Backstage, ArgoCD, Grafana,
 # Argo Workflows). group.order: "100" forces Kargo to evaluate LAST so the
 # specific paths always win.
-#
-# This file is the cloudfront variant (HTTP:80 listener behind the CloudFront
-# origin, no ingress TLS — CloudFront/ALB terminate TLS). For domain mode the
-# equivalent override is written into the fleet-config overlay at runtime by the
-# Taskfile, which knows EXPOSURE_MODE.
 api:
   ingress:
     enabled: true

@@ -116,7 +116,7 @@ backstage:
         values: ['true']
   valuesObject:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
-    exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+    insecure: '{{default "false" .metadata.annotations.insecure}}'
     workshop_git_branch: '{{.metadata.annotations.addonsRepoRevision}}'
     gitlab_domain_name: '{{default "" .metadata.annotations.gitlab_domain_name}}'
     git_username: 'user1'
@@ -132,7 +132,7 @@ backstage:
       region: '{{.metadata.annotations.aws_region}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
       resource_prefix: '{{.metadata.annotations.resource_prefix}}'
-      exposure_mode: '{{default "domain" .metadata.annotations.exposure_mode}}'
+      insecure: '{{default "false" .metadata.annotations.insecure}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

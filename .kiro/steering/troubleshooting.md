@@ -263,30 +263,38 @@ aws elbv2 describe-rules --listener-arn "$L" --query 'Rules[].{p:Priority,path:C
 annotations:
   alb.ingress.kubernetes.io/group.order: '100'
 ```
-For Kargo specifically this lives in
-`gitops/overlays/environments/control-plane/kargo/values.yaml` under `api.ingress.annotations`.
+For Kargo on the workshop hub specifically, this lives in the workshop's fleet-config overlay
+(`workshop/overlay/overlays/environments/control-plane/kargo/values.yaml` in this repo — seeded
+into the GitLab fleet-config repo by `workshop/Taskfile.yaml`) under `api.ingress.annotations`.
+Other consumers of the solution set the equivalent override in their own fleet-config repo.
 
 ### CloudFront platform URLs hang (curl 000): VPC origin points to a stale/recreated ALB
 
-**Symptom**: In cloudfront exposure mode, every platform URL (`https://$CF/keycloak/...`,
-`/backstage`, `/grafana`, `/argo-workflows`, ...) times out with curl **`000`** — not `404`,
-not `5xx`. `idc:configure` loops forever on "Keycloak not ready" (the SAML descriptor never
-returns 200). A **direct in-cluster** curl to the internal ALB DNS returns `200/302`, proving
-the ALB, targets and LBC listener rules are healthy — only the **CloudFront → ALB** hop fails.
+> This section is specific to the **workshop's** CloudFront setup (`workshop/create-config.sh`)
+> — the generic solution does not provision a domain or CloudFront (see `insecure` in
+> `config.schema.json`). It only applies if you are running the workshop provider or a
+> consumer that reuses the same CloudFront + VPC-origin pattern.
+
+**Symptom**: With the workshop's CloudFront distribution in front of the platform (`insecure:
+true` on the hub config), every platform URL (`https://$CF/keycloak/...`, `/backstage`,
+`/grafana`, `/argo-workflows`, ...) times out with curl **`000`** — not `404`, not `5xx`.
+`idc:configure` loops forever on "Keycloak not ready" (the SAML descriptor never returns 200).
+A **direct in-cluster** curl to the internal ALB DNS returns `200/302`, proving the ALB, targets
+and LBC listener rules are healthy — only the **CloudFront → ALB** hop fails.
 
 **Root cause**: The platform ALB (`<hub>-platform`) was **deleted and recreated** (new
 ARN/DNS), but the CloudFront **VPC Origin is still bound to the OLD (deleted) ALB ARN**.
-`hub-distribution` only acts when no `<hub>-platform` distribution exists yet, so on a re-run it
-**skips** and never re-points the VPC origin → CloudFront keeps sending traffic to a dead ALB →
-the connection hangs → `000`.
+`create-config.sh` only creates the VPC origin/distribution when none exists yet, so on a
+re-run it **skips** and never re-points the VPC origin → CloudFront keeps sending traffic to a
+dead ALB → the connection hangs → `000`.
 
 Who recreates the ALB: the **AWS Load Balancer Controller**. When the pre-created ALB's
 *immutable* attributes don't match the `platform` IngressClassParams, the LBC can't modify them
 in place, so it **deletes and recreates** the ALB. The classic trigger is a **scheme mismatch**:
-`create-alb` builds the ALB `internal` (required for a CloudFront VPC-Origin backend), but if
-`IngressClassParams.spec.scheme` is `internet-facing`, scheme is immutable → LBC delete+recreate
-loop. Every recreation orphans the VPC origin. (CloudTrail shows `DeleteLoadBalancer` by
-`<hub>-LBCPodIdentityRole` with userAgent `elbv2.k8s.aws/...`.)
+`create-config.sh` builds the ALB `internal` (required for a CloudFront VPC-Origin backend),
+but if `IngressClassParams.spec.scheme` is `internet-facing`, scheme is immutable → LBC
+delete+recreate loop. Every recreation orphans the VPC origin. (CloudTrail shows
+`DeleteLoadBalancer` by `<hub>-LBCPodIdentityRole` with userAgent `elbv2.k8s.aws/...`.)
 
 **Diagnosis**:
 ```bash
@@ -312,7 +320,7 @@ aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,Attribut
 
 **Fix**:
 - **Stop the churn at the source**: ensure the `platform` IngressClassParams `scheme` is
-  `internal` in cloudfront mode so the LBC **adopts** the pre-created internal ALB instead of
+  `internal` when `insecure: true` so the LBC **adopts** the pre-created internal ALB instead of
   delete-recreating it (`gitops/addons/registry/core.yaml` `ingress-class-alb.valuesObject.scheme`
   + `gitops/addons/charts/ingress-class-alb/templates/ingressclass.yaml`). After this, CloudTrail
   should show **no recurring** `DeleteLoadBalancer` events and the ALB ARN stays stable.
@@ -323,28 +331,27 @@ aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,Attribut
   so you must create-new / swap / delete-old rather than edit its ARN.
 
 **Prevention (root cause) — implemented**:
-- `IngressClassParams.spec.scheme = internal` in cloudfront mode so the LBC adopts the internal
-  ALB in place instead of delete-recreating it (scheme is immutable).
-- `create-alb` selects PRIVATE subnets (by `kubernetes.io/role/internal-elb` tag, then by
-  `MapPublicIpOnLaunch==false`) and **tags them `kubernetes.io/role/internal-elb=1`**, so the LBC
-  discovers the same subnet set and does not `SetSubnets`/churn the ALB. See
-  `cluster-providers/common/Taskfile.cloudfront.yaml` (`create-alb`).
+- `IngressClassParams.spec.scheme = internal` when `insecure: true` so the LBC adopts the
+  internal ALB in place instead of delete-recreating it (scheme is immutable).
+- The ALB creation step in `workshop/create-config.sh` selects PRIVATE subnets (by
+  `kubernetes.io/role/internal-elb` tag, then by `MapPublicIpOnLaunch==false`) and **tags them
+  `kubernetes.io/role/internal-elb=1`**, so the LBC discovers the same subnet set and does not
+  `SetSubnets`/churn the ALB.
 
-**Future hardening (NOT yet implemented) — `cloudfront:sync-vpc-origin` reconcile**:
+**Future hardening (NOT yet implemented) — a VPC-origin sync reconcile**:
 If an ALB is ever recreated despite the above (re-runs, other immutable-attr drift), a reconcile
-task would self-heal the stale origin. Proposed design (idempotent; no-op when the ARN already
+step would self-heal the stale origin. Proposed design (idempotent; no-op when the ARN already
 matches, so cheap on healthy installs):
-1. Guard on `EXPOSURE_MODE == cloudfront`; resolve current `<hub>-platform` ALB ARN + DNS; resolve
+1. Guard on `insecure: true`; resolve current `<hub>-platform` ALB ARN + DNS; resolve
    the distribution (`Comment == <hub>-platform`) and its origin `VpcOriginId` → that VPC origin's ARN.
 2. If `VPC-origin ARN == current ALB ARN` → **no-op** (done).
 3. Else drift → create-new / swap / delete-old (a VPC origin can't be edited in place while
    attached): `create-vpc-origin` for the current ALB → poll `Deployed` → `update-distribution`
    origin to the new `VpcOriginId` + current ALB DNS → poll `Deployed` → `delete-vpc-origin` (old)
    → re-authorize `CloudFront-VPCOrigins-Service-SG → <current ALB SG>:80`.
-Wire into `install:phase1-cloudfront` (both providers) after `sync-domain`. Cost is one or two
-CloudFront deploys (~5–15 min each) ONLY on drift; a no-op otherwise. Deliberately left
-unimplemented for now — the prevention above should keep the ALB stable; add this only if churn
-recurs.
+Cost is one or two CloudFront deploys (~5–15 min each) ONLY on drift; a no-op otherwise.
+Deliberately left unimplemented for now — the prevention above should keep the ALB stable; add
+this only if churn recurs.
 
 ## ACK (AWS Controllers for Kubernetes) Issues
 

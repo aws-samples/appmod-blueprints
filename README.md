@@ -100,7 +100,7 @@ Which will provide an output similar to the following, which you can use to acce
 
 Example:
 ```
-https://d1bti1yw27krdm.cloudfront.net/?folder=/home/ec2-user/environment
+https://<your-ide-domain>/ide/?folder=/home/ec2-user/environment
 ```
 
 The IDE should already be configured with lots of tools and extensions, and you can start working on the exercises right away.
@@ -140,7 +140,7 @@ REPO_REVISION=... workshop/create-config.sh
 This is a standalone script (not a Taskfile task) because every task reads
 `config.local.yaml` at parse time, so a task cannot create the file when it does
 not yet exist. It auto-detects the AWS account, region, IAM Identity Center
-instance/group, and admin role name, and writes a CloudFront-mode config
+instance/group, and admin role name, and writes an insecure-mode config
 (`domain: ""`).
 
 ## APEX Skills

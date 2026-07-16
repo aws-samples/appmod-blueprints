@@ -12,7 +12,7 @@ This is the `appmod-blueprints` repository on branch `feature/cloudfront-exposur
 - Config: `config.local.yaml` (clusterProvider: kind-crossplane, exposure: cloudfront)
 - Hub cluster: `peeks-hub`
 - Spoke clusters: `spoke-dev`, `spoke-prod` (provisioned by Crossplane on hub)
-- CloudFront domain: stored in `private/cloudfront-domain`
+- CloudFront domain: stored in `private/async-domain`
 
 ## Key Architecture Decisions
 

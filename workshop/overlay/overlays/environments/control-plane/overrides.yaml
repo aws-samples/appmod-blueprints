@@ -1,0 +1,21 @@
+# Environment-level value overrides for the control-plane environment — WORKSHOP VARIANT.
+#
+# This file is seeded into the fleet-config repo (GitLab, in the workshop) by
+# workshop/Taskfile.yaml, at path overlays/environments/control-plane/overrides.yaml —
+# the exact path the cluster-addons ApplicationSet resolves via the $overlay source
+# (see gitops/bootstrap/addons.yaml). It is layered AFTER the base solution's own
+# overrides.yaml (gitops/overlays/environments/control-plane/overrides.yaml, currently
+# empty) and lets the workshop customize addon values without touching the generic
+# solution. Any consumer of the solution can provide their own fleet-config repo with
+# an equivalent file to customize their own control-plane environment.
+#
+# Kargo ingress is handled separately via
+# overlays/environments/control-plane/kargo/values.yaml (loaded by the kargo
+# ApplicationSet directly) — not here.
+#
+# Add any other control-plane addon overrides below as needed:
+#
+# Example:
+#   metrics_server:
+#     valuesObject:
+#       replicas: 2
