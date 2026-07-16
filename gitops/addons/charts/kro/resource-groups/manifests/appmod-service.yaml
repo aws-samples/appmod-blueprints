@@ -29,7 +29,7 @@ spec:
           sortKey: string | default="sort_key"
           sortKeyType: string | default="S"
       ingress:
-        host: string | default="*.us-west-2.elb.amazonaws.com"
+        host: string | default="*.elb.us-west-2.amazonaws.com"
         enabled: boolean | default=false
         path: string | default="/"
         rewrite: boolean | default=true
