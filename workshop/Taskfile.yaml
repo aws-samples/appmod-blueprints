@@ -507,15 +507,34 @@ tasks:
             exit 1
           ;;
         esac
-        printf '{{.C_INFO}}▸ Testing Keycloak reachability: https://{{.KEYCLOAK_DNS}}/keycloak/realms/master{{.C_RESET}}\n'
-        KC_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" "https://{{.KEYCLOAK_DNS}}/keycloak/realms/master" --max-time 10 2>/dev/null || echo "000")
-        case "$KC_STATUS" in
-          000|000000|404)
-            printf '{{.C_ERR}}⚠ Keycloak not reachable (HTTP %s) at https://{{.KEYCLOAK_DNS}}/keycloak/realms/master{{.C_RESET}}\n' "$KC_STATUS"
-            printf '{{.C_INFO}}  Run: task idc:configure after Keycloak is up.{{.C_RESET}}\n'
-            exit 1
-          ;;
-        esac
+        # Wait for Keycloak to respond before proceeding. Right after bootstrap the
+        # ALB targets and the CloudFront /keycloak path may still be propagating, so a
+        # single curl frequently returns 000/404/5xx (this is what failed idc:configure
+        # during install). Poll the master realm until it answers instead of failing on
+        # the first try. Timeout is configurable via KC_WAIT_ATTEMPTS / KC_WAIT_INTERVAL.
+        KC_URL="https://{{.KEYCLOAK_DNS}}/keycloak/realms/master"
+        KC_WAIT_ATTEMPTS="${KC_WAIT_ATTEMPTS:-40}"    # 40 x 15s = 10 min default
+        KC_WAIT_INTERVAL="${KC_WAIT_INTERVAL:-15}"
+        printf '{{.C_INFO}}▸ Waiting for Keycloak to respond: %s (max %sx%ss)...{{.C_RESET}}\n' "$KC_URL" "$KC_WAIT_ATTEMPTS" "$KC_WAIT_INTERVAL"
+        KC_READY=false
+        KC_STATUS="000"
+        for _i in $(seq 1 "$KC_WAIT_ATTEMPTS"); do
+          KC_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" "$KC_URL" --max-time 10 2>/dev/null || echo "000")
+          case "$KC_STATUS" in
+            200|301|302)
+              KC_READY=true
+              printf '{{.C_OK}}✓ Keycloak reachable (HTTP %s) after %s attempt(s).{{.C_RESET}}\n' "$KC_STATUS" "$_i"
+              break
+            ;;
+          esac
+          [ $((_i % 4)) -eq 0 ] && printf '{{.C_INFO}}  still waiting for Keycloak (%sx%ss, HTTP %s)...{{.C_RESET}}\n' "$_i" "$KC_WAIT_INTERVAL" "$KC_STATUS"
+          sleep "$KC_WAIT_INTERVAL"
+        done
+        if [ "$KC_READY" != "true" ]; then
+          printf '{{.C_ERR}}⚠ Keycloak still not reachable after %sx%ss (last HTTP %s) at %s{{.C_RESET}}\n' "$KC_WAIT_ATTEMPTS" "$KC_WAIT_INTERVAL" "$KC_STATUS" "$KC_URL"
+          printf '{{.C_INFO}}  Run: task idc:configure once Keycloak is up.{{.C_RESET}}\n'
+          exit 1
+        fi
       - printf '{{.C_STEP}}▸ Refreshing IDC integration credentials via Lambda...{{.C_RESET}}\n'
       - |
         [ "${DEBUG:-false}" = "true" ] && set -x

@@ -860,6 +860,12 @@ if __name__ == "__main__":
     ))
 
     if result:
-        print(json.dumps(result))
+        # Do not leak the SCIM bearer token into stdout (it ends up in the SSM
+        # bootstrap logs). The full value is still persisted to SCIM_DATA_FILE for
+        # --scim-only reruns, so redact only the stdout copy.
+        safe_result = dict(result)
+        if safe_result.get("token"):
+            safe_result["token"] = f"***REDACTED*** (saved to {SCIM_DATA_FILE})"
+        print(json.dumps(safe_result))
     else:
         sys.exit(1)
