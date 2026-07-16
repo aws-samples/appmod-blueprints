@@ -906,12 +906,6 @@ tasks:
         # domain is written.
         RUNTIME_DOMAIN=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]')
         [ -z "$RUNTIME_DOMAIN" ] && RUNTIME_DOMAIN=$(yq '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
-        # Last-resort fallback specific to CloudFront consumers: if neither private/async-domain
-        # nor config.domain resolved anything, check for a matching CloudFront distribution.
-        [ -z "$RUNTIME_DOMAIN" ] && RUNTIME_DOMAIN=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
-          --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
-          --output text 2>/dev/null | tr -d '[:space:]')
-        [ "$RUNTIME_DOMAIN" = "None" ] && RUNTIME_DOMAIN=""
         echo "[hub:seed] ingress_domain_name=$RUNTIME_DOMAIN"
         # The aws-resources ExternalSecret reads <hub>/config property `vpc` into
         # peeks-hub-vpc-secret.vpc_data; the init-env-config Job then parses .id / .subnet_ids /
