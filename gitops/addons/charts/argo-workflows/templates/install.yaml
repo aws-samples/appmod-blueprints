@@ -3108,8 +3108,9 @@ spec:
       - args:
         - server
         - --configmap=workflow-controller-configmap
+        {{- if .Values.insecure }}
         - --auth-mode=client
-        {{- if not .Values.insecure }}
+        {{- else }}
         - --auth-mode=sso
         {{- end }}
         - "--base-href=/argo-workflows/"
