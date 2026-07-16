@@ -205,6 +205,7 @@ tasks:
     internal: true
     deps:
       - hub:restart-langfuse
+      - hub:restart-backstage
       - urls
 
   kind:create:
@@ -1252,6 +1253,16 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n langfuse langfuse --timeout=120s 2>/dev/null || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Langfuse restarted with Keycloak SSO credentials.{{.C_RESET}}\n'
+
+  hub:restart-backstage:
+    desc: Restart Backstage to flush stale openid-client keep-alive sockets after Keycloak is fully configured
+    cmds:
+      - task: hub:kubeconfig
+      - printf '{{.C_STEP}}▸ Restarting Backstage to flush stale Keycloak OIDC sockets...{{.C_RESET}}\n'
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n backstage backstage 2>/dev/null || true
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n backstage backstage --timeout=180s 2>/dev/null || true
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_OK}}✓ Backstage restarted — OIDC sockets refreshed.{{.C_RESET}}\n'
 
 
   # ---- from kind-crossplane ----

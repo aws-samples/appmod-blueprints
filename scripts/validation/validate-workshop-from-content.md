@@ -54,8 +54,7 @@ Download the content archive from S3 and extract it:
 ```bash
 CONTENT_FILE="content-$(echo $WORKSHOP_GIT_BRANCH | tr '/' '-').tgz"
 aws s3 cp "s3://$ASSETS_BUCKET_NAME/${ASSETS_BUCKET_PREFIX}${CONTENT_FILE}" /tmp/
-mkdir -p ~/environment/content
-tar xzf "/tmp/${CONTENT_FILE}" -C ~/environment/content/
+tar xzf "/tmp/${CONTENT_FILE}" -C ~/environment/
 ```
 
 Content will be in `~/environment/content/`. All content file paths below are relative to that directory.
