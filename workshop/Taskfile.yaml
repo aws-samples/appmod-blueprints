@@ -448,8 +448,17 @@ tasks:
         set_var ARGOCD_OPTS "--grpc-web"
         set_var USER_PASSWORD "${UP}"
         set_var USER1_PASSWORD "${UP}"
-        set_var GIT_TOKEN "${UP}"
         set_var GIT_USERNAME "user1"
+        # Prefer the real GitLab PAT (starts with glpat-) if already seeded by gitlab:init-ec2;
+        # fall back to user password on first-run when GitLab isn't initialised yet.
+        REAL_PAT=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets \
+          --region "{{.AWS_REGION}}" --query 'SecretString' --output text 2>/dev/null \
+          | jq -r '.git_token // empty' 2>/dev/null | grep '^glpat-' || true)
+        if [ -n "$REAL_PAT" ]; then
+          set_var GIT_TOKEN "${REAL_PAT}"
+        else
+          set_var GIT_TOKEN "${UP}"
+        fi
         set_var KEYCLOAK_ADMIN_PASSWORD "${KC}"
         printf '{{.C_OK}}✓ Platform env vars written to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
         source "$PLATFORM_FILE" 2>/dev/null || true

@@ -580,16 +580,7 @@ spec:
         kind: Ingress
         metadata:
           annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            backstage.io/created-by: ${schema.spec.createdBy}
-            backstage.io/template-version: 1.0.0
-            alb.ingress.kubernetes.io/scheme: '${schema.spec.scheme}'
-            alb.ingress.kubernetes.io/target-type: ip
-            alb.ingress.kubernetes.io/healthcheck-path: /
-            alb.ingress.kubernetes.io/listen-ports: '${schema.spec.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]"}'
-            # Ray Serve serves natively at /ray-serve/<name>/* — no rewrite needed for that path.
-            # Ray Dashboard (aiohttp) expects requests at / — strip the /ray-dashboard/<name> prefix.
-            alb.ingress.kubernetes.io/transforms.${schema.spec.name}-ray-dashboard: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^/ray-dashboard/${schema.spec.name}/?(.*)$","replace":"/$1"}]}}]'
+          annotations: '${{"argocd.argoproj.io/tracking-id": schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue(""), "backstage.io/created-by": schema.spec.createdBy, "backstage.io/template-version": "1.0.0", "alb.ingress.kubernetes.io/scheme": schema.spec.scheme, "alb.ingress.kubernetes.io/target-type": "ip", "alb.ingress.kubernetes.io/healthcheck-path": "/", "alb.ingress.kubernetes.io/listen-ports": schema.spec.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]", "alb.ingress.kubernetes.io/transforms." + schema.spec.name + "-ray-dashboard": "[{\"type\":\"url-rewrite\",\"urlRewriteConfig\":{\"rewrites\":[{\"regex\":\"^/ray-dashboard/" + schema.spec.name + "/?(.*)$\",\"replace\":\"/$1\"}]}}]"}}'
           labels:
             app.kubernetes.io/component: ray-service
             app.kubernetes.io/managed-by: kro
