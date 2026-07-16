@@ -353,7 +353,6 @@ spec:
     - id: rayserviceNeuron
       includeWhen:
         - ${schema.spec.?acceleratorType.orValue('gpu') == 'neuron'}
-        - ${schema.spec.resources.worker.gpu != "0"}
       readyWhen:
         - ${rayserviceNeuron.metadata.name != ""}
       template:
@@ -588,6 +587,9 @@ spec:
             alb.ingress.kubernetes.io/target-type: ip
             alb.ingress.kubernetes.io/healthcheck-path: /
             alb.ingress.kubernetes.io/listen-ports: '${schema.spec.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]"}'
+            # Ray Serve serves natively at /ray-serve/<name>/* — no rewrite needed for that path.
+            # Ray Dashboard (aiohttp) expects requests at / — strip the /ray-dashboard/<name> prefix.
+            alb.ingress.kubernetes.io/transforms.${schema.spec.name}-ray-dashboard: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^/ray-dashboard/${schema.spec.name}/?(.*)$","replace":"/$1"}]}}]'
           labels:
             app.kubernetes.io/component: ray-service
             app.kubernetes.io/managed-by: kro
