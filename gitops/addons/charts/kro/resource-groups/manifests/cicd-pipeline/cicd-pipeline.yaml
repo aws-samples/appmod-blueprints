@@ -33,6 +33,9 @@ spec:
        # GitLab webhook ingress uses the shared ALB's wildcard host, which never has a
        # matching ACM cert. Set to false only with a real domain + certificate-arn.
        insecure: boolean | default=true
+       # ALB scheme for the GitLab webhook ingress. Default internet-facing.
+       # Set to internal when placing CloudFront or another edge in front.
+       scheme: string | default="internet-facing"
     status:
       # ECR Repository information
       ecrMainRepositoryURI: ${ecrmainrepo.status.?repositoryURI}
@@ -2684,7 +2687,7 @@ spec:
             app.kubernetes.io/managed-by: kro
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            alb.ingress.kubernetes.io/scheme: '${schema.spec.hub.insecure ? "internal" : "internet-facing"}'
+            alb.ingress.kubernetes.io/scheme: '${schema.spec.hub.scheme}'
             alb.ingress.kubernetes.io/target-type: ip
             alb.ingress.kubernetes.io/healthcheck-path: /
             alb.ingress.kubernetes.io/listen-ports: '${schema.spec.hub.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]"}'
