@@ -18,17 +18,19 @@ spec:
               selector:
                 matchLabels:
                   fleet_member: control-plane
-          # Inner: one values file per spoke fleet member
+          # Inner: OPT-IN file. Only fleet members that WANT OIDC client
+          # provisioning create a fleet/members/<cluster>/client-provisioner.yaml.
+          # This generator-path filter replaces the old top-level spec.selector
+          # (matchExpressions on client_provisioner), which is not supported by the
+          # EKS ArgoCD capability's ApplicationSet CRD (added in ArgoCD 2.9) and was
+          # pruned on apply, causing a permanent OutOfSync. Reads from the overlay
+          # (fleet-config) repo where spokes push their member files — falling back
+          # to the base fleet repo — mirroring fleet-secrets.
           - git:
-              repoURL: '{{ .metadata.annotations.fleetRepoURL }}'
-              revision: '{{ .metadata.annotations.fleetRepoRevision }}'
+              repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.fleetRepoURL }}'
+              revision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.fleetRepoRevision }}'
               files:
-                - path: '{{ .metadata.annotations.fleetRepoBasepath }}fleet/members/*/values.yaml'
-  # Only generate an Application when the fleet member has a client_provisioner declared
-  selector:
-    matchExpressions:
-      - key: client_provisioner
-        operator: Exists
+                - path: '{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/members/*/client-provisioner.yaml'
   template:
     metadata:
       name: 'client-provisioner-{{ .clusterName }}'
@@ -39,18 +41,20 @@ spec:
       sources:
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
-          # Path selects the provisioner chart by type, e.g. platform-charts/keycloak-client-provisioner
-          path: 'platform-charts/{{ index .labels "client_provisioner" }}-client-provisioner'
+          # Path selects the provisioner chart by type. Defaults to "keycloak"
+          # (platform-charts/keycloak-client-provisioner). A member overrides it by
+          # setting `provisioner: <type>` in its client-provisioner.yaml.
+          path: 'platform-charts/{{ index . "provisioner" | default "keycloak" }}-client-provisioner'
           helm:
             releaseName: 'client-provisioner-{{ .clusterName }}'
             valuesObject:
-              environment: '{{ index .labels "environment" }}'
+              environment: '{{ dig "labels" "environment" "" . }}'
               region: '{{ .metadata.annotations.aws_region }}'
               clusterName: '{{ .metadata.annotations.aws_cluster_name }}'
               keycloakUrl: 'http://keycloak.keycloak.svc.cluster.local:8080/keycloak'
               secretPathPrefix: '{{ or (index .metadata.annotations "resource_prefix") "oidc" }}'
               # Realm defaults to the shared "platform" realm; a fleet member can
-              # override per hub/spoke by declaring oidc.realm in its values file.
+              # override per hub/spoke by declaring oidc.realm in its member file.
               realmName: '{{ dig "oidc" "realm" "platform" . }}'
               # Generic passthrough of whatever clients the fleet member declares.
               # Not provisioner-specific — the fleet repo owns the client list.

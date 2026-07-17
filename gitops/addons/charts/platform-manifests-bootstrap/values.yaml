@@ -1,0 +1,7 @@
+# Gates for the bootstrap NodePools. The platform ApplicationSet overrides these
+# via the registry valuesObject; defaults here keep the chart self-contained so
+# `helm template` renders standalone.
+customNodepools:
+  enabled: true
+gpu:
+  enabled: true

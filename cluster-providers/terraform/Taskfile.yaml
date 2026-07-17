@@ -336,22 +336,71 @@ tasks:
         TIMEOUT=2400
         INTERVAL=30
         ELAPSED=0
+        # Grace period before the CRD-ordering fail-fast check kicks in. Kept
+        # conservative so legitimately-slow CRD installs are not flagged, while
+        # still failing ~25 min earlier than the old silent-timeout behaviour.
+        GRACE=900
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        # Apps whose sync error is a hard "no matches for kind" CRD error — the
+        # bootstrap failure mode where resources are applied before their CRDs
+        # (e.g. Crossplane providers) are registered.
+        crd_stuck_apps() {
+          for APP in $(KUBECONFIG=$KC kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" {print $1}'); do
+            MSG=$(KUBECONFIG=$KC kubectl get app "$APP" -n argocd -o jsonpath='{.status.operationState.message}' 2>/dev/null)
+            if printf '%s' "$MSG" | grep -q 'no matches for kind'; then
+              echo "$APP"
+            fi
+          done
+        }
+        print_crd_remediation() {
+          printf '{{.C_ERR}}✖ App(s) stuck: a required CRD is not registered ("no matches for kind").{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  This is a Crossplane provider / CRD ordering issue. Remediation:{{.C_RESET}}\n'
+          printf '    1. Check providers are Healthy:  kubectl get providers.pkg.crossplane.io\n'
+          printf '    2. Check the CRDs exist:         kubectl get crd | grep upbound\n'
+          printf '    3. Hard-refresh each stuck app so Argo re-discovers the API and retries:\n'
+          printf '       kubectl -n argocd annotate app <APP> argocd.argoproj.io/refresh=hard --overwrite\n'
+        }
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
-          SYNCED=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Synced"' | wc -l)
-          UNKNOWN=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Unknown"' | wc -l)
+          TOTAL=$(KUBECONFIG=$KC kubectl get app -n argocd --no-headers 2>/dev/null | wc -l)
+          SYNCED=$(KUBECONFIG=$KC kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Synced"' | wc -l)
+          UNKNOWN=$(KUBECONFIG=$KC kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 == "Unknown"' | wc -l)
           OUTOFSYNC=$((TOTAL - SYNCED - UNKNOWN))
           printf '{{.C_INFO}}  Apps: %s/%s synced, %s unknown, %s out-of-sync (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "$ELAPSED"
           if [ "$TOTAL" -gt 0 ] && [ "$UNKNOWN" -eq 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
             printf '{{.C_OK}}✓ All %s apps synced (within %s tolerance).{{.C_RESET}}\n' "$SYNCED" "{{.MAX_OUTOFSYNC}}"
             break
           fi
+          # Fail fast on the CRD-ordering class of failure instead of burning the
+          # full timeout and continuing silently.
+          if [ "$ELAPSED" -ge "$GRACE" ]; then
+            STUCK=$(crd_stuck_apps)
+            if [ -n "$STUCK" ]; then
+              printf '{{.C_ERR}}⚠ Detected CRD-ordering failure after %ss. Stuck app(s):{{.C_RESET}}\n' "$ELAPSED"
+              for APP in $STUCK; do printf '  - %s\n' "$APP"; done
+              print_crd_remediation
+              rm -f $KC
+              exit 1
+            fi
+          fi
           sleep $INTERVAL
           ELAPSED=$((ELAPSED + INTERVAL))
         done
         if [ $ELAPSED -ge $TIMEOUT ]; then
           printf '{{.C_ERR}}⚠ Timed out after %ss. %s app(s) still not synced:{{.C_RESET}}\n' "$TIMEOUT" "$OUTOFSYNC"
-          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" {printf "  - %s (%s/%s)\n", $1, $3, $2}'
+          # Print the real per-app error (operationState.message), not just names,
+          # so the root cause is visible instead of hidden behind app names.
+          for APP in $(KUBECONFIG=$KC kubectl get app -n argocd --no-headers 2>/dev/null | awk '$2 != "Synced" {print $1}'); do
+            SYNC=$(KUBECONFIG=$KC kubectl get app "$APP" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
+            HEALTH=$(KUBECONFIG=$KC kubectl get app "$APP" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+            MSG=$(KUBECONFIG=$KC kubectl get app "$APP" -n argocd -o jsonpath='{.status.operationState.message}' 2>/dev/null)
+            printf '  - %s (%s/%s)\n' "$APP" "$HEALTH" "$SYNC"
+            [ -n "$MSG" ] && printf '      ↳ %s\n' "$MSG"
+          done
+          if [ -n "$(crd_stuck_apps)" ]; then
+            print_crd_remediation
+            rm -f $KC
+            exit 1
+          fi
           printf '{{.C_STEP}}▸ Continuing — spoke clusters may still be provisioning.{{.C_RESET}}\n'
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig

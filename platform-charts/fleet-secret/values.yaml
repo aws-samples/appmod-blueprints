@@ -25,6 +25,10 @@ hub:
   fleetRepoBasepath: ""
   domain: ""
   resourcePrefix: ""
+  # platform IngressClass controller mode: "oss" (AWS LBC, ingress.k8s.aws/alb) or
+  # "auto" (EKS Auto Mode, eks.amazonaws.com/alb). Spokes default to "oss" so the
+  # platform class is always the OSS LBC (required for transforms/URL-rewrite).
+  albControllerMode: "oss"
 
 # Addon enablement map — populated from enabled-addons.yaml via valueFiles
 enabledAddons: {}

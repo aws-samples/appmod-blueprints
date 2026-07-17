@@ -29,10 +29,23 @@ spec:
           sortKey: string | default="sort_key"
           sortKeyType: string | default="S"
       ingress:
-        host: string | default="*.elb.us-west-2.amazonaws.com"
+        host: string | default="*.us-west-2.elb.amazonaws.com"
         enabled: boolean | default=false
         path: string | default="/"
         rewrite: boolean | default=true
+        # ALB target-group health check path. Apps that do not serve 200 at "/"
+        # (e.g. the Rust sample only serves /collection/*) must set this to a
+        # path the app actually returns 200 for, otherwise all targets stay
+        # unhealthy and the ALB returns 404/503 for every request.
+        healthcheckPath: string | default="/"
+        # Defaults to true (HTTP:80, no cert) to match the pre-existing behavior for
+        # workshop/sample apps on the shared ALB, which never provide a real domain +
+        # ACM cert for their wildcard *.<region>.elb.amazonaws.com host. Set to false
+        # only when a real domain + certificate-arn is configured for this app.
+        insecure: boolean | default=true
+        # ALB scheme. Default is internet-facing so deployed apps are reachable from outside
+        # the VPC. Set to internal when placing an edge (e.g. CloudFront VPC origin) in front.
+        scheme: string | default="internet-facing"
       functionalGate:
         enabled: boolean | default=false
         image: string | default="httpd:alpine"
@@ -529,18 +542,15 @@ spec:
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            nginx.ingress.kubernetes.io/rewrite-target: /$2
-            nginx.ingress.kubernetes.io/use-regex: "true"
+          annotations: '${{"argocd.argoproj.io/tracking-id": schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue(""), "alb.ingress.kubernetes.io/scheme": schema.spec.ingress.scheme, "alb.ingress.kubernetes.io/target-type": "ip", "alb.ingress.kubernetes.io/healthcheck-path": schema.spec.ingress.healthcheckPath, "alb.ingress.kubernetes.io/listen-ports": schema.spec.ingress.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]", "alb.ingress.kubernetes.io/transforms." + schema.metadata.name: "[{\"type\":\"url-rewrite\",\"urlRewriteConfig\":{\"rewrites\":[{\"regex\":\"^" + schema.spec.ingress.path + "/?(.*)$\",\"replace\":\"/$1\"}]}}]"}}'
         spec:
-          ingressClassName: nginx
+          ingressClassName: platform
           rules:
             - host: ${schema.spec.ingress.host}
               http:
                 paths:
-                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
-                    pathType: ImplementationSpecific
+                  - path: ${schema.spec.ingress.path}
+                    pathType: Prefix
                     backend:
                       service:
                         name: ${schema.metadata.name}
@@ -565,15 +575,18 @@ spec:
               controller: false
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            nginx.ingress.kubernetes.io/use-regex: "true"
+            alb.ingress.kubernetes.io/scheme: '${schema.spec.ingress.scheme}'
+            alb.ingress.kubernetes.io/target-type: ip
+            alb.ingress.kubernetes.io/healthcheck-path: ${schema.spec.ingress.healthcheckPath}
+            alb.ingress.kubernetes.io/listen-ports: '${schema.spec.ingress.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]"}'
         spec:
-          ingressClassName: nginx
+          ingressClassName: platform
           rules:
             - host: ${schema.spec.ingress.host}
               http:
                 paths:
-                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
-                    pathType: ImplementationSpecific
+                  - path: ${schema.spec.ingress.path}
+                    pathType: Prefix
                     backend:
                       service:
                         name: ${schema.metadata.name}
