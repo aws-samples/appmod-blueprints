@@ -13,7 +13,7 @@
 # here — that path is reserved for the bootstrap providers only.
 identities:
   eso:
-    enabled: false
+    enabled: true
   # Bootstrap the spoke's Crossplane iam/eks providers from the hub (see chart
   # values.yaml). Without these, the spoke's createIdentity:false providers have
   # no credentials and all spoke Crossplane providers fail (IMDS fallback).
@@ -21,33 +21,3 @@ identities:
     enabled: true
   crossplane-eks-provider:
     enabled: true
-  crossplane-iam:
-    enabled: true
-    roleName: CrossplaneIAMProviderRole
-    namespace: crossplane-system
-    serviceAccount: provider-aws-iam
-    tags:
-      managed-by: crossplane
-      purpose: crossplane-iam-provider
-    policy:
-      name: CrossplaneIAMProviderPolicy
-      document: |
-        {
-          "Version": "2012-10-17",
-          "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
-        }
-  crossplane-eks:
-    enabled: true
-    roleName: CrossplaneEKSProviderRole
-    namespace: crossplane-system
-    serviceAccount: provider-aws-eks
-    tags:
-      managed-by: crossplane
-      purpose: crossplane-eks-provider
-    policy:
-      name: CrossplaneEKSProviderPolicy
-      document: |
-        {
-          "Version": "2012-10-17",
-          "Statement": [{"Effect": "Allow","Action": "*","Resource": "*"}]
-        }
