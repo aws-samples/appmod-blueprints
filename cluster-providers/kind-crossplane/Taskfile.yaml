@@ -616,6 +616,16 @@ tasks:
     vars:
       CLUSTER_ARN:
         sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.CONFIG_FILE}}):cluster/$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
+      # Ambient VPC facts for the hub's env-config EnvironmentConfig — published as
+      # cluster-secret annotations, mirroring what the composition writes for spokes.
+      VPC_ID:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
+      CLUSTER_SG:
+        sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text
+      PRIVATE_SUBNET_IDS:
+        sh: aws ec2 describe-subnets --region {{.AWS_REGION}} --filters "Name=vpc-id,Values={{.VPC_ID}}" "Name=tag:kubernetes.io/role/internal-elb,Values=1" --query 'Subnets[].SubnetId' --output json | jq -r 'join(",")'
+      PUBLIC_SUBNET_IDS:
+        sh: aws ec2 describe-subnets --region {{.AWS_REGION}} --filters "Name=vpc-id,Values={{.VPC_ID}}" "Name=tag:kubernetes.io/role/elb,Values=1" --query 'Subnets[].SubnetId' --output json | jq -r 'join(",")'
     cmds:
       - printf '{{.C_STEP}}▸ Getting hub kubeconfig...{{.C_RESET}}\n'
       - task: hub:kubeconfig
@@ -637,6 +647,10 @@ tasks:
             fleetRepoRevision: "FLEET_REPO_REVISION"
             fleetRepoBasepath: "FLEET_REPO_BASEPATH"
             aws_cluster_name: {{.HUB_CLUSTER_NAME}}
+            aws_vpc_id: "{{.VPC_ID}}"
+            aws_private_subnet_ids: "{{.PRIVATE_SUBNET_IDS}}"
+            aws_public_subnet_ids: "{{.PUBLIC_SUBNET_IDS}}"
+            aws_cluster_security_group_id: "{{.CLUSTER_SG}}"
           labels:
             argocd.argoproj.io/secret-type: cluster
             environment: control-plane

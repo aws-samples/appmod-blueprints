@@ -20,6 +20,31 @@ default-storage-class:
         operator: In
         values: ['true']
 
+env_config:
+  namespace: crossplane-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-env-config'
+  goTemplateOptions:
+    - "missingkey=zero"
+  annotationsAppSet:
+    # Plain EnvironmentConfig manifest. clusterName/region resolve immediately;
+    # vpcId/subnet/SG annotations are published by the platform-cluster Composition
+    # and the EnvironmentConfig converges as the cluster secret gains them.
+    argocd.argoproj.io/sync-wave: '6'
+  selector:
+    matchExpressions:
+      - key: enable_crossplane
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      vpcId: '{{.metadata.annotations.aws_vpc_id}}'
+      clusterSecurityGroupId: '{{.metadata.annotations.aws_cluster_security_group_id}}'
+      privateSubnetIds: '{{.metadata.annotations.aws_private_subnet_ids}}'
+      publicSubnetIds: '{{.metadata.annotations.aws_public_subnet_ids}}'
+
 pod_identities:
   namespace: crossplane-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
