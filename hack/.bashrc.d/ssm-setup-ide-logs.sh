@@ -10,7 +10,7 @@ ssm-setup-ide-logs() {
 }
 
 argocd-sync() {
-    local script_dir="/home/ec2-user/environment/platform-on-eks-workshop/platform/infra/terraform/scripts"
+    local script_dir="/home/ec2-user/environment/platform-on-eks-workshop/scripts"
     
     # Source colors
     source "$script_dir/colors.sh"
@@ -21,7 +21,11 @@ argocd-sync() {
     echo ""
     print_info "Final ArgoCD Applications Status:"
     echo "----------------------------------------"
-    kubectl get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.phase // "")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
+    # ArgoCD apps live on the hub cluster. Force the hub context — after init the
+    # current kubeconfig context is often peeks-spoke-prod, where there are no
+    # argocd Applications, which made this report "0 applications".
+    local hub_ctx="${RESOURCE_PREFIX:-peeks}-hub"
+    kubectl --context "$hub_ctx" get applications -n argocd -o json | jq -r '.items[] | "\(.metadata.name)|\(.status.sync.status // "Unknown")|\(.status.health.status // "Unknown")|\(.status.operationState.phase // "")|\(.status.operationState.message // .status.conditions[]?.message // "" | gsub("\n"; " "))"' | \
     while IFS='|' read -r name sync health operation message; do
         if [ "$health" = "Healthy" ] && { [ "$sync" = "Synced" ] || [ "$operation" = "Succeeded" ]; }; then
             print_success "$name: OK"
@@ -33,11 +37,11 @@ argocd-sync() {
 }
 
 check-ray-build() {
-    ~/environment/platform-on-eks-workshop/platform/infra/terraform/scripts/check-ray-build.sh
+    ~/environment/platform-on-eks-workshop/scripts/check-ray-build.sh
 }
 
 check-workshop-setup() {
-    ~/environment/platform-on-eks-workshop/platform/infra/terraform/scripts/check-workshop-setup.sh
+    ~/environment/platform-on-eks-workshop/scripts/check-workshop-setup.sh
 }
 
 trigger-devlake() {
@@ -51,7 +55,7 @@ trigger-devlake() {
 }
 
 argocd-refresh-token() {
-    local script_dir="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}/platform/infra/terraform/scripts"
+    local script_dir="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}/scripts"
     local server_url
     server_url=$(aws eks describe-capability --cluster-name "${RESOURCE_PREFIX:-peeks}-hub" --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text 2>/dev/null)
 
@@ -62,10 +66,13 @@ argocd-refresh-token() {
 
     echo "Retrieving ArgoCD token via SSO (this may take ~30s)..." >&2
     local token
+    # Use USER1_PASSWORD (Keycloak user password) not IDE_PASSWORD (code-server password).
+    # They are seeded from different sources and may differ.
+    local kc_password="${USER1_PASSWORD:-${USER_PASSWORD:-$IDE_PASSWORD}}"
     token=$(python3 "$script_dir/argocd_token_automation.py" \
         --url "$server_url" \
         --username "user1" \
-        --password "${IDE_PASSWORD}" \
+        --password "${kc_password}" \
         --output token 2>/tmp/argocd-token-debug.log)
 
     if [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
@@ -99,4 +106,15 @@ argocd-refresh-token() {
     fi
 
     echo "ArgoCD token refreshed. Server: $ARGOCD_SERVER"
+
+    # Also update the argocd CLI config file so 'argocd app sync' etc. work
+    # without requiring env vars. The CLI prefers its config file over env vars
+    # when a server entry exists — leaving a stale token there causes
+    # "Unauthenticated: invalid session" even when ARGOCD_AUTH_TOKEN is correct.
+    argocd login "$ARGOCD_SERVER" \
+        --auth-token "$token" \
+        --grpc-web \
+        --skip-test-tls \
+        </dev/null \
+        >/dev/null 2>&1 || true
 }

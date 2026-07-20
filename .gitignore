@@ -175,3 +175,9 @@ private/
 
 # Local platform config (user-specific, not committed)
 config.local.yaml
+
+# Local scratch / chat session artifacts (never commit)
+.local/
+
+# Pinned platform artifact clone (OAP-style consumption)
+.platform/

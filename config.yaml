@@ -35,7 +35,23 @@ aws:
   profile: "default"                         # AWS CLI profile (local dev only)
 
 # Domain and networking
-domain: "<your-domain>"                      # e.g. idp.example.com — must be unique per stack
+# `domain` is the ingress hostname, provisioned by YOU (Route53, CloudFront, etc.).
+# The platform never creates it — it only uses it for ingress host rules and URLs.
+domain: "<your-domain>"                      # e.g. idp.example.com
+
+# Optional: if your domain is resolved asynchronously (e.g. a CloudFront distribution
+# still deploying) rather than known upfront, leave `domain` empty and have your
+# provisioning job write the resolved hostname to private/async-domain (relative to
+# the repo root) — cluster bootstrap will poll it (see hub:wait-for-domain) instead of
+# blocking synchronously. Ignored entirely once `domain` above is set.
+
+# TLS / exposure:
+#   insecure: false (default) — ALB serves HTTPS; uses an ACM cert (auto-discovered
+#             by host, or set certificateArn). You bring the domain + cert.
+#   insecure: true            — ALB serves plain HTTP; YOU terminate TLS upstream
+#             (e.g. CloudFront in front of the ALB). No cert managed by the platform.
+insecure: false
+certificateArn: ""                           # optional ACM ARN for the HTTPS listener (insecure=false)
 resourcePrefix: "<prefix>"                   # Used for KRO tenant-facing resources only
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
@@ -49,3 +65,10 @@ identityCenter:
 # EKS ArgoCD Capability
 argocdCapability:
   name: "argocd"
+
+# Console admin role name (used by Backstage templates and added as cluster admin if specified)
+adminRoleName: "<console-role-name>"       # e.g. WSParticipantRole
+
+# ML model S3 bucket (created by Taskfile if enabled)
+modelS3Bucket:
+  enabled: false

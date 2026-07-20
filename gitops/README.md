@@ -19,7 +19,7 @@ task status
 task destroy-kind
 
 # 5. Add spoke clusters (optional)
-# Edit fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml
+# Edit fleet/spoke-values/tenants/<tenant>/crossplane-clusters/values.yaml
 # Edit fleet/members/<cluster>/values.yaml
 # Edit overlays/environments/<env>/enabled-addons.yaml
 # Commit and push — Crossplane provisions, ArgoCD deploys addons
@@ -200,7 +200,7 @@ Adding a spoke cluster is a three-step process: provision the infrastructure, re
 
 **Step 1: Provision the cluster**
 
-Add an entry to the appropriate tenant values file. For example, `gitops/fleet/kro-values/tenants/workshop/kro-clusters/values.yaml`:
+Add an entry to the appropriate tenant values file. For example, `gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml`:
 
 ```yaml
 clusters:

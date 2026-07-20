@@ -91,8 +91,6 @@ When `type: manifest` is set, the Helm rendering block is skipped entirely -- Ar
 
 ## Sync-Wave Reference
 
-The wave a chart sits at is determined by the **highest wave it consumes**, not by the resources it emits. New ComponentDefinitions, Traits, or Application templates inside an existing chart do not change its wave.
-
 | Wave | Category | Addons |
 |------|----------|--------|
 | -5 | Multi-account | multi-acct |
@@ -102,17 +100,11 @@ The wave a chart sits at is determined by the **highest wave it consumes**, not 
 | 0 | Core | argocd, metrics-server |
 | 1 | Ingress | ingress-class-alb |
 | 2 | Certificates | cert-manager |
-| 3 | Operators delivering workload-kind CRDs | kyverno, argo-rollouts, argo-events, grafana-operator, kube-state-metrics, otel, cni-metrics-helper, aws-for-fluentbit |
-| 4 | Platform orchestrators that compose wave-3 workload kinds | kubevela, efs-csi, grafana, kyverno-policies, kyverno-policy-reporter, kargo, flux, crossplane-aws |
-| 5 | Declarative consumers (workloads, ApplicationSets of agents/templates) | lbc, external-dns, jupyterhub, kubeflow, mlflow, ray-operator, spark-operator, airflow, grafana-dashboards, cw-prometheus, oam-agent-components |
+| 3 | Security / Observability | kyverno, argo-rollouts, argo-events, grafana-operator, kube-state-metrics, otel, cni-metrics-helper, aws-for-fluentbit |
+| 4 | Platform / GitOps | efs-csi, grafana, kyverno-policies, kyverno-policy-reporter, kargo, flux, crossplane-aws |
+| 5 | ML/AI / Dashboards / Networking | lbc, external-dns, jupyterhub, kubeflow, mlflow, ray-operator, spark-operator, airflow, grafana-dashboards, cw-prometheus |
 | 6 | Security (late) | keycloak |
 | 7 | GitOps (late) | argo-workflows |
-
-### Wave 4 vs wave 3 — why kubevela is at wave 4
-
-KubeVela ships built-in ComponentDefinitions (`appmod-service`, etc.) whose CUE templates render to `argoproj.io/v1alpha1.Rollout`. The KubeVela admission webhook does pre-render validation when registering ComponentDefinitions and rejects them if the `Rollout` CRD is not present. Argo Rollouts (wave 3) must therefore be installed before the KubeVela chart syncs.
-
-Charts that ship their own ComponentDefinitions/Traits referencing additional resource kinds (e.g., `oam-agent-components` in `sample-open-agentic-platform`) sit at wave 5 — they consume both the wave-3 workload-kind CRDs and the wave-4 KubeVela machinery.
 
 ## How to Add a New Addon Entry
 

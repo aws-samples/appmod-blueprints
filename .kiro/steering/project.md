@@ -13,7 +13,7 @@ Companion repo: [platform-engineering-on-eks](../platform-engineering-on-eks/) h
 | `platform/infra/terraform/cluster/` | Terraform — EKS clusters (hub, spoke-dev, spoke-prod) |
 | `platform/infra/terraform/common/` | Terraform — platform addons (ArgoCD, secrets, pod identity, observability) |
 | `platform/infra/terraform/identity-center/` | Terraform — IDC/SCIM integration |
-| `platform/infra/terraform/scripts/` | Init scripts (`0-init.sh`, `argocd-utils.sh`, IDC config) |
+| `scripts/` | Workshop scripts: IDC config, ArgoCD token automation, setup validation |
 | `platform/infra/terraform/hub-config.yaml` | Single source of truth for cluster addon enablement |
 | `gitops/addons/` | ArgoCD addon definitions, charts, environments, tenants |
 | `gitops/apps/` | Application deployment manifests (backend, frontend, rollouts) |

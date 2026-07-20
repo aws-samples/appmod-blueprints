@@ -1,97 +1,80 @@
-# Fleet
+# Fleet Management
 
-Fleet member registration and cluster provisioning values.
+This folder defines the spoke cluster fleet — which clusters exist, how they're provisioned, and what addons they receive.
 
 ## Directory Structure
 
 ```
 fleet/
-├── members/              Cluster registration (one dir per cluster)
-│   └── <cluster>/
-│       └── values.yaml   ExternalSecret config + metadata labels
-└── kro-values/           KRO cluster provisioning config
+├── hub/                          # Hub cluster configuration
+│   └── values.yaml
+├── members/                      # Fleet membership (ArgoCD cluster secrets)
+│   └── <cluster-name>/
+│       └── values.yaml           # Registers cluster as ArgoCD target
+└── spoke-values/                 # Spoke cluster provisioning
     ├── default/
-    │   └── kro-clusters/
-    │       └── values.yaml   Default provisioning values for all clusters
-    └── tenants/
-        └── <tenant>/
-            └── kro-clusters/
-                └── values.yaml   Tenant-specific provisioning overrides
+    │   └── crossplane-clusters/
+    │       └── values.yaml       # Shared defaults for Crossplane clusters
+    └── tenants/<tenant>/
+        ├── crossplane-clusters/
+        │   └── values.yaml       # Clusters provisioned via Crossplane
+        └── kro-clusters/
+            └── values.yaml       # Clusters provisioned via KRO
 ```
 
-## How Fleet Members Are Discovered
+## How to Add a Spoke Cluster
 
-The `bootstrap/fleet-secrets.yaml` ApplicationSet uses a matrix generator combining:
+### Step 1: Choose your provisioning method
 
-1. A `clusters` generator selecting the hub (`fleet_member: control-plane`)
-2. A `git` file generator scanning `fleet/members/*/values.yaml`
+| Method | Path | Provisioner | Use when |
+|--------|------|-------------|----------|
+| Crossplane | `spoke-values/tenants/<tenant>/crossplane-clusters/values.yaml` | Crossplane XRD `PlatformCluster` | Full VPC + EKS + IAM via Crossplane composition |
+| KRO | `spoke-values/tenants/<tenant>/kro-clusters/values.yaml` | KRO `EksclusterWithVpc` ResourceGroup | Cluster provisioning via KRO + ACK |
 
-For each discovered member, it renders the `../platform-charts/fleet-secret` Helm chart (at repo root), which creates an ExternalSecret that produces an ArgoCD cluster secret with `enable_*` labels. The value files layered in are:
+### Step 2: Define the cluster
 
-| Priority | Source | Purpose |
-|----------|--------|---------|
-| 1 | `fleet/members/<cluster>/values.yaml` | Cluster identity and ExternalSecret config |
-| 2 | `overlays/environments/<env>/enabled-addons.yaml` | Addon enablement labels |
-| 3 | `overlays/clusters/<cluster>/addon-overrides.yaml` | Per-cluster addon exceptions |
+Add an entry under `clusters:` in the appropriate values file.
 
-Missing files are silently skipped (`ignoreMissingValueFiles: true`).
-
-## How to Register a New Fleet Member
-
-1. Create a directory under `fleet/members/` named after the cluster:
-   ```bash
-   mkdir fleet/members/<cluster-name>
-   ```
-
-2. Create `fleet/members/<cluster-name>/values.yaml` with the required fields:
-   ```yaml
-   externalSecret:
-     enabled: true
-     secretStoreRefKind: ClusterSecretStore
-     secretStoreRefName: aws-secrets-manager
-     clusterName: <cluster-name>
-     labels:
-       environment: <environment-name>
-       tenant: <tenant-name>
-   ```
-
-3. Ensure the cluster's environment has an `enabled-addons.yaml`:
-   ```
-   overlays/environments/<environment-name>/enabled-addons.yaml
-   ```
-
-4. Store the cluster's connection credentials in AWS Secrets Manager at key `<cluster-name>/config`.
-
-5. Commit and push. The fleet-secrets ApplicationSet will detect the new file and create the cluster secret automatically.
-
-### Required values.yaml Fields
-
-| Field | Description |
-|-------|-------------|
-| `externalSecret.enabled` | Must be `true` |
-| `externalSecret.secretStoreRefKind` | Secret store kind (typically `ClusterSecretStore`) |
-| `externalSecret.secretStoreRefName` | Secret store name (typically `aws-secrets-manager`) |
-| `externalSecret.clusterName` | Cluster name, must match the directory name and the Secrets Manager key |
-| `externalSecret.labels.environment` | Environment name, used to resolve `enabled-addons.yaml` |
-| `externalSecret.labels.tenant` | Tenant name, used to resolve KRO provisioning values |
-
-## How KRO Values Feed Into Cluster Provisioning
-
-The `bootstrap/clusters.yaml` ApplicationSet renders the `abstractions/resource-groups/platform-cluster` chart for each hub cluster, layering KRO values in this order:
-
-1. `fleet/kro-values/default/kro-clusters/values.yaml` -- shared defaults
-2. `fleet/kro-values/tenants/<tenant>/kro-clusters/values.yaml` -- tenant-specific overrides
-
-Each values file defines a `clusters` map where each key becomes a PlatformCluster Crossplane claim:
+**Crossplane example** (`spoke-values/tenants/workshop/crossplane-clusters/values.yaml`):
 
 ```yaml
 clusters:
-  spoke-us-west-2:
-    region: us-west-2
-    clusterName: spoke-us-west-2
-    vpcCidr: "10.1.0.0/16"
-    kubernetesVersion: "1.32"
+  my-spoke:
+    clusterName: my-spoke
+    vpcCidr: "10.3.0.0/16"
+    kubernetesVersion: "1.35"
     autoMode: true
+    resourcePrefix: peeks
+    # region: us-east-1        # Optional, defaults to hub region
 ```
 
-To provision a new fleet member cluster, add an entry to the appropriate tenant values file and commit.
+**KRO example** (`spoke-values/tenants/workshop/kro-clusters/values.yaml`):
+
+```yaml
+clusters:
+  my-spoke:
+    clusterName: my-spoke
+    vpcCidr: "10.3.0.0/16"
+    kubernetesVersion: "1.35"
+    autoMode: true
+    resourcePrefix: peeks
+```
+
+### Step 3: Register as a fleet member
+
+Create `members/<cluster-name>/values.yaml` so ArgoCD creates a cluster secret and deploys addons:
+
+```yaml
+clusterName: my-spoke
+labels:
+  environment: dev       # or prod, staging
+  tenant: workshop
+```
+
+## How It Works
+
+1. **Provisioning**: The `clusters-crossplane` or `clusters-kro` ApplicationSet detects new entries in `spoke-values/` and creates the cloud infrastructure.
+2. **Registration**: The `fleet-secrets` ApplicationSet detects entries in `members/` and creates ArgoCD cluster secrets.
+3. **Addons**: The `cluster-addons` ApplicationSet detects new cluster secrets and deploys the configured addon stack.
+
+> **Note**: Add the `members/` entry only after the cluster is provisioned (or simultaneously — ArgoCD will retry until the cluster is ready).

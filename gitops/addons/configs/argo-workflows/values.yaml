@@ -4,7 +4,7 @@ controller:
     enabled: true
     maxUnavailable: 1
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
     - key: "CriticalAddonsOnly"
       operator: "Exists"
@@ -23,7 +23,7 @@ server:
     enabled: true
     maxUnavailable: 1
   nodeSelector:
-    karpenter.sh/nodepool: system
+    karpenter.sh/nodepool: system-peeks
   tolerations:
     - key: "CriticalAddonsOnly"
       operator: "Exists"

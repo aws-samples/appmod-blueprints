@@ -3,5 +3,11 @@
 # initial_root_password should be sourced from ExternalSecret in production
 
 git_username: ""          # Git username for repo access
-working_repo: ""          # Working repository URL
+working_repo: ""          # Overlay repository name (default: fleet-config)
 initial_root_password: "" # Set via environment overlay or ExternalSecret
+application_repos:        # Application repos to create in GitLab
+  - java
+  - rust
+  - golang
+  - dotnet
+  - next-js
