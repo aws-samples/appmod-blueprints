@@ -148,6 +148,33 @@ Providers read shared configuration from `gitops/config.yaml`:
 Provider-specific config (e.g., Kind node count, VPC CIDR) can live in the
 provider's own directory but should not duplicate values from `config.yaml`.
 
+### AWS credential resolution (EC2 vs local) — kubectl implications
+
+The provider Taskfiles export `AWS_PROFILE` (from `aws.profile`, default `"default"`)
+to every `aws`/`kubectl`/`helm` call so local multi-account users get consistent
+credential targeting. On an EC2 instance authenticated by an **instance role**,
+there is usually no `[default]` profile in `~/.aws/config`, so a bare
+`AWS_PROFILE=default` fails (`config profile (default) could not be found`) and the
+credential chain never falls through to IMDS.
+
+To keep `AWS_PROFILE` flowing while still resolving on EC2, the Taskfiles set
+`AWS_CONFIG_FILE`: on an EC2 host they generate `private/aws-config` containing
+`[default]\ncredential_source = Ec2InstanceMetadata` and point `AWS_CONFIG_FILE`
+at it; off-instance they fall back to the user's existing `AWS_CONFIG_FILE` or
+`~/.aws/config` (unchanged behavior).
+
+> **⚠️ kubectl outside `task` on EC2.** `aws eks update-kubeconfig` bakes the
+> active `AWS_PROFILE` (`default`) into the kubeconfig's exec block. That profile
+> only resolves when `AWS_CONFIG_FILE` points at the generated config — which the
+> Taskfiles set, but your interactive shell does not. So `kubectl` run directly
+> (outside `task`) on an EC2 host will fail with
+> `config profile (default) could not be found` / `exec: executable aws failed`.
+> Fix with **either**:
+> - export the generated config for your shell:
+>   `export AWS_CONFIG_FILE=<repo>/.platform/private/aws-config`, **or**
+> - regenerate the kubeconfig without a profile so it uses the instance role:
+>   `env -u AWS_PROFILE aws eks update-kubeconfig --name <hub> --region <region>`
+
 ## Adding a New Provider
 
 1. Create a directory under `cluster-providers/` matching the provider name
