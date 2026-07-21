@@ -17,6 +17,11 @@ env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
   AWS_PAGER: ""
   AWS_PROFILE: "{{.AWS_PROFILE}}"
+  # Keep AWS_PROFILE flowing to every aws/kubectl/helm call (local multi-account
+  # users depend on it). On EC2 the profile name (e.g. "default") has no entry in
+  # ~/.aws/config, so point AWS_CONFIG_FILE at a generated config whose profile
+  # resolves to the instance role via the credential provider chain (IMDS).
+  AWS_CONFIG_FILE: "{{.AWS_CONFIG_FILE}}"
 
 vars:
   CONFIG_FILE: "{{.ROOT_DIR}}/config.local.yaml"
@@ -24,6 +29,18 @@ vars:
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   AWS_PROFILE:
     sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
+  # On EC2: generate a config that resolves the profile to the instance role and
+  # return its path. Off-instance: fall back to the user's existing AWS_CONFIG_FILE
+  # or ~/.aws/config, so local behavior is unchanged (zero regression).
+  AWS_CONFIG_FILE:
+    sh: |
+      if curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
+        mkdir -p "{{.ROOT_DIR}}/private"
+        printf '[default]\ncredential_source = Ec2InstanceMetadata\n' > "{{.ROOT_DIR}}/private/aws-config"
+        echo "{{.ROOT_DIR}}/private/aws-config"
+      else
+        echo "${AWS_CONFIG_FILE:-$HOME/.aws/config}"
+      fi
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
   HUB_K8S_VERSION:
