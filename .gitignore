@@ -181,3 +181,4 @@ config.local.yaml
 
 # Pinned platform artifact clone (OAP-style consumption)
 .platform/
+*.creds

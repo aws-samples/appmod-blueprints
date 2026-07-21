@@ -1,0 +1,5 @@
+# Workshop pins Keycloak to the tuned system-peeks pool (daytime do-not-disrupt)
+# so login sessions aren't interrupted by node consolidation during the workshop.
+# The generic default is the built-in `system` pool.
+global:
+  systemNodepool: system-peeks

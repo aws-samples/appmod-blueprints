@@ -457,7 +457,7 @@ spec:
         app: backstage
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system-peeks
+        karpenter.sh/nodepool: {{ (.Values.global | default dict).systemNodepool | default "system" }}
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
@@ -626,7 +626,7 @@ spec:
         app: postgresql
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system-peeks
+        karpenter.sh/nodepool: {{ (.Values.global | default dict).systemNodepool | default "system" }}
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"

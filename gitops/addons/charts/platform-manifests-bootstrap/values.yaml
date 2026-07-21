@@ -1,7 +1,10 @@
-# Gates for the bootstrap NodePools. The platform ApplicationSet overrides these
-# via the registry valuesObject; defaults here keep the chart self-contained so
-# `helm template` renders standalone.
+# Bootstrap NodePools. Defaults keep the chart self-contained for `helm template`.
+#
+# customNodepools.pools: caller-supplied custom Karpenter NodePools (default none).
+# The generic solution ships no custom pools and uses the EKS Auto Mode built-in
+# `system`/`general-purpose` NodePools. Consumers (e.g. the workshop) supply their
+# own pool definitions via their overlay.
 customNodepools:
-  enabled: true
+  pools: []
 gpu:
   enabled: true
