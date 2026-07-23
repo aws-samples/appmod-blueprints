@@ -1,0 +1,75 @@
+{{- if .Values.node.enabled }}
+{{- /*
+Karpenter NODE IAM: EC2-trusted Role (KarpenterNodeRole-<cluster>, referenced by
+the EC2NodeClass role field + the controller policy's PassRole), the managed
+policies a self-managed node needs (Auto Mode's node role does NOT cover
+self-managed nodes), and an EC2_LINUX EKS AccessEntry so launched nodes join.
+deletionPolicy: Orphan — a disable must never delete a role a live node assumes.
+*/ -}}
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: {{ .Values.aws.clusterName }}-karpenter-node-role
+  annotations:
+    crossplane.io/external-name: KarpenterNodeRole-{{ .Values.aws.clusterName }}
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-3"
+  labels:
+    platform.gitops.io/role: {{ .Values.aws.clusterName }}-karpenter-node
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": { "Service": "ec2.amazonaws.com" },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      }
+    {{- with .Values.tags }}
+    tags:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  providerConfigRef:
+    name: {{ .Values.providerConfigName | default "default" }}
+{{- range $i, $arn := .Values.node.managedPolicyArns }}
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: {{ $.Values.aws.clusterName }}-karpenter-node-attachment-{{ $i }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    policyArn: {{ $arn | quote }}
+    roleRef:
+      name: {{ $.Values.aws.clusterName }}-karpenter-node-role
+  providerConfigRef:
+    name: {{ $.Values.providerConfigName | default "default" }}
+{{- end }}
+---
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: AccessEntry
+metadata:
+  name: {{ .Values.aws.clusterName }}-karpenter-node-access
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clusterName: {{ .Values.aws.clusterName }}
+    # EC2_LINUX so Karpenter-launched Linux nodes authenticate to the cluster.
+    type: EC2_LINUX
+    principalArnRef:
+      name: {{ .Values.aws.clusterName }}-karpenter-node-role
+  providerConfigRef:
+    name: {{ .Values.providerConfigName | default "default" }}
+{{- end }}
