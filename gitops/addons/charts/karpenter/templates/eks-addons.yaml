@@ -1,0 +1,55 @@
+{{- if and .Values.node.enabled .Values.node.manageAddons }}
+{{- /*
+vpc-cni + kube-proxy EKS addons for the self-managed Karpenter node.
+
+Auto Mode's built-in networking applies ONLY to its own Bottlerocket nodes; a
+self-managed AL2023 node has neither the CNI nor kube-proxy, so pods on it can't
+reach the API server (node NotReady "cni plugin not initialized" / kata-deploy
+crashloop). external-name "<cluster>:<addon>" ADOPTS-or-creates in place, and
+OVERWRITE takes field ownership from a self-managed install.
+
+GATED behind node.manageAddons (default false): EKS addons are per-cluster
+singletons, so this must be OFF on any cluster where something else owns them
+(e.g. the platform-cluster Composition on managed-node-group clusters) or the two
+owners fight. Enable ONLY on a pure Auto Mode cluster with no existing owner.
+The vpc-cni toleration lets it schedule onto the tainted kata node.
+*/ -}}
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: Addon
+metadata:
+  name: {{ .Values.aws.clusterName }}-karpenter-vpc-cni
+  annotations:
+    crossplane.io/external-name: {{ printf "%s:vpc-cni" .Values.aws.clusterName | quote }}
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clusterName: {{ .Values.aws.clusterName }}
+    addonName: vpc-cni
+    resolveConflictsOnCreate: OVERWRITE
+    resolveConflictsOnUpdate: OVERWRITE
+    # Tolerate the kata taint so the CNI DaemonSet lands on the self-managed node.
+    configurationValues: |
+      {"tolerations":[{"operator":"Exists"}]}
+  providerConfigRef:
+    name: {{ .Values.providerConfigName | default "default" }}
+---
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: Addon
+metadata:
+  name: {{ .Values.aws.clusterName }}-karpenter-kube-proxy
+  annotations:
+    crossplane.io/external-name: {{ printf "%s:kube-proxy" .Values.aws.clusterName | quote }}
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clusterName: {{ .Values.aws.clusterName }}
+    addonName: kube-proxy
+    resolveConflictsOnCreate: OVERWRITE
+    resolveConflictsOnUpdate: OVERWRITE
+  providerConfigRef:
+    name: {{ .Values.providerConfigName | default "default" }}
+{{- end }}

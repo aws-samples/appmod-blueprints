@@ -392,3 +392,47 @@ external-dns:
               namespace: kube-system
               serviceAccount: external-dns-sa
               deploymentLabel: app.kubernetes.io/name=external-dns
+
+# ─── Karpenter (self-managed, alongside EKS Auto Mode) ──────────────────────
+# Self-managed Karpenter for dedicated workload pools (e.g. Kata nested-virt nodes)
+# that Auto Mode's Bottlerocket nodes can't host. Coexists with Auto Mode: each
+# controller owns only NodePools whose nodeClassRef.group matches its NodeClass API
+# (Auto Mode = eks.amazonaws.com; self-managed = karpenter.k8s.aws), so neither
+# manages the other's NodeClaims.
+#
+# Single wrapper chart (addons/charts/karpenter): upstream karpenter as a Helm
+# DEPENDENCY (values nested under `karpenter:`) + the Crossplane IAM it needs
+# (controller pod-identity, node role + access entry, optional manageAddons-gated
+# vpc-cni/kube-proxy). One enable_karpenter flip brings up controller + IAM together.
+# The EC2NodeClass + NodePool objects are supplied by the consuming layer (e.g. the
+# agentic kata-nodepool addon), NOT here.
+#
+# CRDs: the upstream subchart ships CRDs in crds/ (Helm install-if-absent) + the app
+# uses ServerSideApply, so the shared karpenter.sh nodepools/nodeclaims CRDs that Auto
+# Mode owns are left intact; only the non-shared karpenter.k8s.aws/ec2nodeclasses is added.
+# v1.14.0: first upstream release with cpuOptions.nestedVirtualization (needed for Kata).
+karpenter:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/karpenter'
+  defaultVersion: '0.1.0'
+  annotationsAppSet:
+    # After crossplane-base (wave 3) registers iam/eks CRDs. The in-chart IAM
+    # resources carry their own negative sync-waves so they apply first within this app.
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_karpenter
+        operator: In
+        values: ['true']
+  valuesObject:
+    # Top-level: consumed by the IAM templates (policy ARNs, external-names).
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+    # Upstream controller settings nest under the subchart name `karpenter:`.
+    # (affinity override + Pod-Identity SA are chart defaults; only clusterName
+    # needs per-cluster injection here.)
+    karpenter:
+      settings:
+        clusterName: '{{.metadata.annotations.aws_cluster_name}}'

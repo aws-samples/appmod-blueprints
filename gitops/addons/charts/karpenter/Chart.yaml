@@ -1,0 +1,18 @@
+apiVersion: v2
+name: karpenter
+description: >-
+  Self-managed Karpenter (alongside EKS Auto Mode) as a single addon: wraps the
+  upstream karpenter controller chart as a dependency (values nested under the
+  `karpenter:` key) and adds the Crossplane-managed IAM it needs — controller
+  pod-identity (Role + official v1.14 controller policy + PodIdentityAssociation)
+  and the node IAM role (+ managed policies + EC2_LINUX access entry) — plus the
+  optional (manageAddons-gated) vpc-cni/kube-proxy EKS addons a self-managed node
+  requires when the cluster has none. One enable_karpenter flip brings up the
+  controller + all its IAM together.
+type: application
+version: 0.1.0
+dependencies:
+  - name: karpenter
+    # First upstream release with cpuOptions.nestedVirtualization (Kata).
+    version: '1.14.0'
+    repository: oci://public.ecr.aws/karpenter
