@@ -72,7 +72,12 @@ spec:
     clusterName: {{ .Values.aws.clusterName }}
     # EC2_LINUX so Karpenter-launched Linux nodes authenticate to the cluster.
     type: EC2_LINUX
-    principalArnRef:
+    # NOTE: the AccessEntry CRD's cross-resource reference field is
+    # principalArnFromRoleRef (NOT principalArnRef — that name is pruned by the
+    # API server as it's absent from the structural schema, leaving principalArn
+    # empty → "InvalidParameterException: principalArn ... not valid []").
+    # This differs from PodIdentityAssociation, whose ref field IS roleArnRef.
+    principalArnFromRoleRef:
       name: {{ .Values.aws.clusterName }}-karpenter-node-role
   providerConfigRef:
     name: {{ .Values.providerConfigName | default "default" }}
