@@ -65,6 +65,10 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    # region is REQUIRED on every eks.aws.upbound.io MR (unlike the global
+    # iam.aws.upbound.io Role). Without it the MR fails admission with
+    # "spec.forProvider.region: Required value".
+    region: {{ .Values.aws.region }}
     clusterName: {{ .Values.aws.clusterName }}
     # EC2_LINUX so Karpenter-launched Linux nodes authenticate to the cluster.
     type: EC2_LINUX
