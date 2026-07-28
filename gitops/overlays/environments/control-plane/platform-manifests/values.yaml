@@ -1,2 +1,8 @@
+# Control-plane platform-manifests overlay (generic).
+#
+# The generic control-plane creates NO custom Karpenter NodePools — platform
+# workloads run on the EKS Auto Mode built-in `system`/`general-purpose` pools.
+# Consumers that need tuned pools supply them via their own overlay as
+# `customNodepools.pools` (see workshop/overlay/.../platform-manifests/values.yaml).
 customNodepools:
-  enabled: true
+  pools: []

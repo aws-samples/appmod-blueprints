@@ -566,9 +566,12 @@ ack-efs:
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
-# Bootstrap NodePools created EARLY (sync-wave -1) so the custom peeks nodepools
-# (system-peeks / general-purpose-peeks / gpu / trainium) exist before any addon
-# that targets them schedules. Gated by the enable_platform_manifests_bootstrap
+# Bootstrap NodePools created EARLY (sync-wave -1) so any pools exist before addons
+# that target them schedule. The generic solution creates only the GPU/Trainium pools
+# (a real capability with no built-in equivalent) and relies on the EKS Auto Mode
+# built-in system/general-purpose pools for everything else. Consumers that need tuned
+# pools supply them via their overlay as customNodepools.pools (e.g. the workshop's
+# system-peeks/general-purpose-peeks). Gated by the enable_platform_manifests_bootstrap
 # cluster annotation (default "true", wired in rg-eks-vpc.yaml). Does NOT include
 # the ClusterSecretStore — that lives in platform-manifests-post to avoid a
 # circular dependency.
@@ -584,8 +587,9 @@ platform-manifests-bootstrap:
         operator: In
         values: ['true']
   valuesObject:
-    customNodepools:
-      enabled: true
+    # Custom Karpenter NodePools are supplied by the consumer's overlay
+    # (customNodepools.pools). The generic solution creates none and relies on the
+    # EKS Auto Mode built-in system/general-purpose pools.
     gpu:
       enabled: true
 
