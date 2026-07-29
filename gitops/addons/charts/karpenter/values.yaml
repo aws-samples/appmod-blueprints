@@ -67,7 +67,26 @@ node:
   # OVERWRITE). Leave FALSE unless nothing else owns them — on a managed-node-group
   # cluster the platform-cluster Composition already owns these; enabling here would
   # create a dual-owner conflict. Set true ONLY on a pure Auto Mode cluster.
+  #
+  # A CONSUMER repo can flip this per-cluster without editing this repo, via the
+  # external overlay repo ("layer 5"): set fleet-secret's overlay.repoURL, then add
+  #   node: {manageAddons: true}
+  # to <overlay-repo>/overlays/clusters/<cluster>/karpenter/values.yaml.
   manageAddons: false
+  addons:
+    vpcCni:
+      # VPC-CNI NetworkPolicy enforcement, kept EXPLICIT rather than left to the
+      # addon default: manageAddons adopts with resolveConflictsOnUpdate=OVERWRITE,
+      # so adopting a cluster that already had enforcement on would otherwise
+      # silently strip it and render every NetworkPolicy inert.
+      # Serialized into the addon's configurationValues JSON as a STRING
+      # ("true"/"false") — the form EKS accepts in practice. The template builds
+      # that JSON with dict|toJson and reads this key with hasKey+get (not
+      # `| default`, which treats bool false as empty and would flip an explicit
+      # false back to true), so an overlay may write either `false` or "false".
+      # Omitting the key — including when an overlay replaces `node:` wholesale —
+      # yields "true", i.e. fail-secure.
+      enableNetworkPolicy: "true"
 
 # Common tags on managed IAM resources.
 tags:

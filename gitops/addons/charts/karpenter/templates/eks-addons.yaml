@@ -25,13 +25,40 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    # REQUIRED on every eks.aws.upbound.io MR (the CRD lists region in
+    # forProvider.required); without it the MR fails admission with
+    # "spec.forProvider.region: Required value".
+    region: {{ .Values.aws.region }}
     clusterName: {{ .Values.aws.clusterName }}
     addonName: vpc-cni
     resolveConflictsOnCreate: OVERWRITE
     resolveConflictsOnUpdate: OVERWRITE
-    # Tolerate the kata taint so the CNI DaemonSet lands on the self-managed node.
-    configurationValues: |
-      {"tolerations":[{"operator":"Exists"}]}
+    # configurationValues is a JSON *string*. Built with dict|toJson rather than
+    # hand-written JSON so quoting/escaping is always well-formed.
+    #
+    #  - tolerations: operator Exists, so the CNI DaemonSet lands on the tainted
+    #    self-managed node.
+    #  - enableNetworkPolicy: set EXPLICITLY because resolveConflictsOnUpdate is
+    #    OVERWRITE, which takes field ownership — adopting a cluster that already
+    #    had enforcement on would otherwise silently turn it off and render every
+    #    NetworkPolicy/ClusterNetworkPolicy inert. A sandbox node's egress
+    #    containment depends on it.
+    #
+    # Emitted as the STRING "true"/"false" (printf %v), matching the format EKS
+    # accepts in practice. hasKey + get rather than `| default`, because Helm's
+    # default treats bool false as empty and would flip an explicit false back to
+    # true; this way an overlay may write either `false` or "false". Omitting the
+    # key entirely — including when an overlay replaces `node:` wholesale — yields
+    # "true", i.e. fail-secure.
+    {{- $vpcCni := get (.Values.node.addons | default dict) "vpcCni" | default dict }}
+    {{- $enableNetworkPolicy := "true" }}
+    {{- if hasKey $vpcCni "enableNetworkPolicy" }}
+    {{- $enableNetworkPolicy = printf "%v" (get $vpcCni "enableNetworkPolicy") }}
+    {{- end }}
+    configurationValues: {{ dict
+      "enableNetworkPolicy" $enableNetworkPolicy
+      "tolerations" (list (dict "operator" "Exists"))
+      | toJson | quote }}
   providerConfigRef:
     name: {{ .Values.providerConfigName | default "default" }}
 ---
@@ -46,6 +73,8 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    # REQUIRED — see the vpc-cni Addon above.
+    region: {{ .Values.aws.region }}
     clusterName: {{ .Values.aws.clusterName }}
     addonName: kube-proxy
     resolveConflictsOnCreate: OVERWRITE
