@@ -27,6 +27,17 @@ hub:
   #   maxSize: 5
   #   diskSize: 50
   #   capacityType: "ON_DEMAND"
+  # Optional: Managed EKS Capabilities (KRO / ACK) for this cluster. AWS-managed
+  # platform controllers created via provider-aws-eks Capability MRs (already wired
+  # in the platform-cluster Composition; default disabled). Enable KRO to serve
+  # ResourceGraphDefinitions and ACK to manage GA AWS resources (iam/s3/…) as
+  # Kubernetes CRs. Consumed e.g. by Flow D (Lambda MicroVM Agent Sandbox)
+  # downstream — see docs/EKS-Capabilities-KRO-ACK-Setup.md.
+  # capabilities:
+  #   kro:
+  #     enabled: true
+  #   ack:
+  #     enabled: true
 
 # AWS configuration
 aws:
