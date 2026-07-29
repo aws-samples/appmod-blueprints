@@ -30,6 +30,26 @@ hub:
   # platform class is always the OSS LBC (required for transforms/URL-rewrite).
   albControllerMode: "oss"
 
+# External overlay repo ("layer 5") — OPTIONAL, default OFF.
+#
+# Set repoURL to a CONSUMER repo to let it override Helm values for addons whose
+# chart + registry entry live in THIS repo, without editing this repo. Rendered as
+# the overlay_repo_* cluster-secret annotations, which bootstrap/addons.yaml feeds
+# to the appset-chart as overlayRepoURLGit* — that appends a $overlay source and,
+# per addon, three extra valueFiles that layer AFTER the in-repo ones.
+# See README.md § External overlay repo for the full walkthrough.
+#
+# WARNING: when set, $overlay becomes a REAL ArgoCD source for every overlay-aware
+# app on that cluster — an unreachable or unauthenticated repo breaks all of them.
+# Leave empty unless ArgoCD can already read the repo.
+overlay:
+  repoURL: ""
+  # MUST be a revision that actually contains the overlay files.
+  revision: "main"
+  # Repo-relative root holding configs/ + overlays/ (e.g. "gitops/"). Falls back to
+  # addonsRepoBasepath when empty.
+  basepath: ""
+
 # Addon enablement map — populated from enabled-addons.yaml via valueFiles
 enabledAddons: {}
 
