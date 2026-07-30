@@ -104,7 +104,7 @@ kargo:
         pathType: Prefix
       argocd:
         urls:
-          - https://{{.metadata.annotations.ingress_domain_name}}/argocd
+          argocd: https://{{.metadata.annotations.ingress_domain_name}}/argocd
       oidc:
         # Kargo SSO via Keycloak (public client 'kargo' is seeded in the platform
         # realm by the keycloak-config job; PKCE flow, no client secret required).
