@@ -115,6 +115,32 @@
               "default": "ON_DEMAND"
             }
           }
+        },
+        "capabilities": {
+          "type": "object",
+          "description": "Managed EKS Capabilities (KRO / ACK) for the hub, created via provider-aws-eks Capability MRs in the platform-cluster Composition.",
+          "properties": {
+            "kro": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Enable the Managed KRO capability (serves ResourceGraphDefinitions)."
+                }
+              }
+            },
+            "ack": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Enable the Managed ACK capability (GA AWS service controllers: iam/s3/…)."
+                }
+              }
+            }
+          }
         }
       }
     },

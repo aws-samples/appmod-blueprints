@@ -24,7 +24,8 @@ cluster — AWS handles installing, patching, and scaling them. Three types exis
 
 ## Enable KRO + ACK
 
-Set the capability flags on the cluster in your platform config. For the hub:
+The capability flags are set on the cluster in your platform config. **This platform now
+enables KRO + ACK on the hub by default** (`config.yaml` hub block):
 
 ```yaml
 # config.yaml  (hub cluster block)
@@ -44,37 +45,21 @@ This flows into the `PlatformCluster` claim
 `spec.capabilities`), which un-gates the KRO/ACK `Capability` MRs in the Composition.
 `hub:seed` waits for the `Capability` MRs to become `Ready`.
 
-### What ACK provides (and what it does *not*)
+> To **disable** a capability on a cluster, set its `enabled: false` (or omit the block —
+> the XRD default is `false`). Spokes do not get KRO/ACK unless their per-cluster entry
+> opts in.
+
+### What Managed ACK provides
 
 Managed ACK bundles the ACK service controllers whose upstream service is **Generally
-Available** — this includes `iam`, `s3`, `rds`, `dynamodb`, `lambda`, `eks`, and
-[50+ others](https://aws-controllers-k8s.github.io/community/docs/community/services/).
+Available** — `iam`, `s3`, `rds`, `dynamodb`, `lambda`, `eks`, and many more — so those
+AWS resources can be managed as Kubernetes custom resources without operating the
+controllers yourself.
 
-> **Pre-GA controllers are NOT in Managed ACK.** A controller must be GA upstream to be
-> bundled. Newer, `v1alpha1` controllers (for example the **Lambda MicroVM** controller,
-> `lambdamicrovms.services.k8s.aws`) are **not** included and must be **self-managed**
-> (installed as their own Helm chart / GitOps addon) until they graduate. Managed ACK and
-> a self-managed controller **coexist** cleanly because they reconcile different CRD
-> groups — there is no conflict as long as two controllers never own the same service.
-
-## Consumer: Flow D — Lambda MicroVM Agent Sandbox (downstream repo)
-
-The first consumer of Managed KRO + Managed ACK on this platform is **Flow D** in the
-**`sample-open-agentic-platform`** repo (where the Dark Factory / Agent Sandbox lives).
-Flow D adds a second Agent-Sandbox substrate — an **AWS Lambda MicroVM** — using:
-
-- **Managed KRO** — a single `MicrovmSandbox` `ResourceGraphDefinition` that composes all
-  the primitives behind one CRD.
-- **Managed ACK** — the **GA** `iam` (Role) + `s3` (Bucket) controllers the MicroVM image
-  and instance depend on.
-- **Self-managed ACK** — the **pre-GA** `lambdamicrovms` controller (`MicrovmImage` +
-  `Microvm`), installed as its own addon in that repo because Managed ACK can't bundle it
-  yet. When it goes GA, the self-managed addon is removed and Managed ACK adopts it — the
-  RGD is unchanged.
-
-So this repo owns the **platform capabilities** (Managed KRO + Managed ACK); the downstream
-repo owns the **pre-GA controller + the RGD + the sandbox shim**. See that repo's
-`docs/dark-factory/README.md` §4.5 (Flow D).
+> **Scope note:** non-GA ACK controllers are not part of the managed set. A consumer that
+> needs one installs it as its own GitOps addon (self-managed); it coexists with Managed
+> ACK because they reconcile different CRD groups. That is a **consumer** concern,
+> documented by whichever workload needs it — not by this capability-enablement guide.
 
 ## Verification
 
@@ -106,11 +91,8 @@ kubectl get crd | grep -E "kro\.run|services\.k8s\.aws"
 ### ACK custom resource not reconciling
 - Confirm the ACK capability is `ACTIVE` and the specific service controller (e.g. `s3`)
   is part of the managed set (GA services only).
-- For a **pre-GA** service (e.g. `lambdamicrovms`), it will *never* appear under Managed
-  ACK — it must be self-managed downstream (see Flow D above).
 
 ## References
 
 - [EKS ACK Capability](https://docs.aws.amazon.com/eks/latest/userguide/ack.html)
-- [ACK community services (GA list)](https://aws-controllers-k8s.github.io/community/docs/community/services/)
 - [EKS Capabilities ArgoCD Setup](./EKS-Capabilities-ArgoCD-Setup.md)
