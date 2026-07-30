@@ -73,7 +73,7 @@ kargo:
   namespace: kargo
   chartName: kargo
   chartRepository: ghcr.io/akuity/kargo-charts
-  defaultVersion: '1.7.5'
+  defaultVersion: '1.11.0'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '4'
   selector:
@@ -84,11 +84,24 @@ kargo:
   valuesObject:
     api:
       host: '{{.metadata.annotations.ingress_domain_name}}'
-      # NOTE: api.ingress (ALB exposure) is intentionally NOT set here so the base
-      # stays generic and reusable. Consumers enable it via their own fleet-config
-      # overlay (overlays/environments/<env>/overrides.yaml) — the workshop's version
-      # lives in workshop/overlay/overlays/environments/control-plane/overrides.yaml
-      # and is seeded into the GitLab fleet-config repo by workshop/Taskfile.yaml.
+      basePath: /kargo
+      tls:
+        enabled: false
+        terminatedUpstream: true
+      ingress:
+        enabled: true
+        ingressClassName: platform
+        annotations:
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/backend-protocol: HTTP
+          alb.ingress.kubernetes.io/healthcheck-path: /healthz
+          alb.ingress.kubernetes.io/success-codes: '200-399'
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+          alb.ingress.kubernetes.io/ssl-redirect: '443'
+          # ALB URL rewrite: strip /kargo prefix before forwarding to the API server
+          # (Kargo API serves at root; basePath is cosmetic for URL generation only)
+          alb.ingress.kubernetes.io/transforms.kargo-rewrite: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^/kargo/?(.*)$","replace":"/$1"}]}}]'
+        pathType: Prefix
       argocd:
         urls:
           - https://{{.metadata.annotations.ingress_domain_name}}/argocd
