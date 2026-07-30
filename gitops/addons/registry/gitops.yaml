@@ -124,7 +124,7 @@ kargo:
         admins:
           claims:
             groups:
-              - /admin
+              - admin
       secret:
         name: kargo-admin-credentials
     extraObjects:

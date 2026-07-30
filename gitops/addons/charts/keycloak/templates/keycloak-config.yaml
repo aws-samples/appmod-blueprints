@@ -291,10 +291,10 @@ data:
         "oidc.ciba.grant.enabled": false
       },
       "alwaysDisplayInConsole": false,
-      "rootUrl": "https://${DOMAIN_NAME}",
+      "rootUrl": "https://${DOMAIN_NAME}/kargo",
       "baseUrl": "",
       "redirectUris": [
-        "https://${DOMAIN_NAME}/login",
+        "https://${DOMAIN_NAME}/kargo/login",
         "https://localhost/auth/callback"
       ],
       "webOrigins": [
