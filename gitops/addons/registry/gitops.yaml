@@ -100,8 +100,7 @@ kargo:
           alb.ingress.kubernetes.io/ssl-redirect: '443'
           # ALB URL rewrite: strip /kargo prefix before forwarding to the API server
           # (Kargo API serves at root; basePath is cosmetic for URL generation only)
-          alb.ingress.kubernetes.io/transforms.kargo-rewrite: |
-            [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/kargo\\/?(.*)$","replace":"/$1"}]}}]
+          alb.ingress.kubernetes.io/transforms.kargo-rewrite: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^/kargo/?(.*)$","replace":"/$1"}]}}]'
         pathType: Prefix
       argocd:
         urls:
