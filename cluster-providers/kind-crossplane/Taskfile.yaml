@@ -435,6 +435,13 @@ tasks:
           {{.MNG_SETS}}
           | kubectl apply -f -
       - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl apply -f -
+      # KRO + ACK capability roles (mirror the ArgoCD one). The platform-cluster
+      # Composition creates the KRO/ACK Capability MRs when spec.capabilities.<type>.enabled
+      # is true; these roles must exist first (the Capability MR references them by the
+      # <cluster>-KROCapabilityRole / <cluster>-ACKCapabilityRole external-name). The ACK
+      # role carries a least-privilege inline policy for Flow D's GA resources (iam + s3).
+      - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/kro-capability-role.yaml | kubectl apply -f -
+      - sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/ack-capability-role.yaml | kubectl apply -f -
       # Wait for ArgoCD capability role to be ready, then patch the composite so the access entry gets its principalArn
       - cmd: |
           kubectl -n crossplane-system wait --for=condition=Ready roles.iam.aws.upbound.io/argocd-capability-role --timeout=120s 2>/dev/null || true
@@ -1478,6 +1485,9 @@ tasks:
       - cmd: |
           sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/argocd-capability-role.yaml | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/argocd-capability-role --timeout=120s 2>/dev/null || true
+          sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/kro-capability-role.yaml | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
+          sed "s|CLUSTER_NAME|{{.HUB_CLUSTER_NAME}}|g" claims/ack-capability-role.yaml | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
+          kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io/kro-capability-role roles.iam.aws.upbound.io/ack-capability-role --timeout=120s 2>/dev/null || true
         ignore_error: true
       # Belt-and-suspenders: if the Job-based delete failed (e.g. parser error,
       # config drift), call the AWS API directly so the cluster delete in Phase 4
