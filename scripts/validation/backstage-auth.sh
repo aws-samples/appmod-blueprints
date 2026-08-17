@@ -12,7 +12,7 @@ set -euo pipefail
 backstage_get_token() {
   local COOKIE_JAR
   COOKIE_JAR=$(mktemp)
-  trap "rm -f ${COOKIE_JAR} /tmp/_bs_s2.txt /tmp/_bs_s3.txt /tmp/_bs_s4.txt /tmp/_bs_s5.txt" RETURN
+  trap "rm -f ${COOKIE_JAR} /tmp/_bs_s2.txt /tmp/_bs_s3.txt /tmp/_bs_s4.txt /tmp/_bs_frame.txt" RETURN
 
   # Step 1: Session cookie
   curl -sLk -c "${COOKIE_JAR}" "${BACKSTAGE_URL}" -o /dev/null
@@ -29,7 +29,7 @@ backstage_get_token() {
   SID=$(grep "connect.sid=" /tmp/_bs_s2.txt | sed 's/.*connect.sid=//' | sed 's/;.*//' | tr -d '\r')
 
   # Step 3: Get Keycloak login form
-  curl -sLk "${KC_URL}" -c "${COOKIE_JAR}" -o /tmp/_bs_s3.txt
+  curl -sLk "${KC_URL}" -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -o /tmp/_bs_s3.txt
   local FORM_ACTION
   FORM_ACTION=$(grep -oP 'action="[^"]*"' /tmp/_bs_s3.txt | head -1 | sed 's/action="//;s/"//' | sed 's/&amp;/\&/g')
 
@@ -43,10 +43,10 @@ backstage_get_token() {
   local CALLBACK
   CALLBACK=$(grep -i "^location:" /tmp/_bs_s4.txt | sed 's/^[Ll]ocation: //' | tr -d '\r\n')
 
-  # Step 5: Hit callback with nonce + session cookies
-  curl -sLk "${CALLBACK}" \
-    -H "Cookie: keycloak-oidc-nonce=${NONCE}; connect.sid=${SID}" \
-    -D /tmp/_bs_s5.txt -o /dev/null
+  # Step 5: Hit callback - add nonce to cookie jar, then fetch frame
+  local DOMAIN
+  DOMAIN=$(echo "${BACKSTAGE_URL}" | sed 's|https://||;s|/.*||')
+  echo -e "${DOMAIN}\tFALSE\t/\tTRUE\t0\tkeycloak-oidc-nonce\t${NONCE}" >> "${COOKIE_JAR}"
 
   local BS_SERVER SCOPE REFRESH
   BS_SERVER=$(grep "backstage-server=" /tmp/_bs_s5.txt | grep -v "Max-Age=0" | sed 's/.*backstage-server=//' | sed 's/;.*//' | tr -d '\r')
@@ -73,7 +73,6 @@ backstage_scaffolder() {
 
   echo "Task ID: ${TASK_ID}" >&2
 
-  # Poll until completed or failed (up to 5 min)
   for i in $(seq 1 30); do
     local STATUS
     STATUS=$(curl -sLk "${BACKSTAGE_URL}/api/scaffolder/v2/tasks/${TASK_ID}" \
@@ -89,7 +88,7 @@ backstage_scaffolder() {
 }
 
 # When sourced, export BS_TOKEN for direct use
-if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
+if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]] || [[ "${ZSH_EVAL_CONTEXT:-}" == "toplevel" ]]; then
   backstage_get_token
 else
   export BS_TOKEN

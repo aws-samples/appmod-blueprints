@@ -13,6 +13,7 @@
 - ✅ Phase 3 — Chart template ports (commits `e7af10d0`, `95e36f4c`, `77b48d4d`, `53ef6b5c`, `4cc2f2a1`, `1fb85f0a`)
 - ⛔ Phase 4 — Terraform / scripts: **mostly reverted** (commits `e2465cd3`, `f8320f8a`). The original goal was gitops-only; `platform/infra/terraform/` ports went beyond scope. This branch's primary deploy path is `task install` via the kind-crossplane provider, not terraform. Kept only `utils.sh` and `argocd_token_automation.py` because they remain actively used by the workshop IDE.
 - ⏳ Phase 5 — Validation (use `task validate` / `task install` / `task status`, not `deploy.sh`)
+  - [ ] **rust-dashboard.yaml (merge from origin/main, 2026-08-17):** CPU/memory panels ported to `main`'s corrected container/namespace (`rust-microservice`/`team-rust`, replacing stale `rust-app`), but relabeled to this platform's `k8s_container_name`/`k8s_namespace_name` convention instead of main's generic `container`/`namespace`. **Needs live validation**: deploy the Rust sample app, open the Grafana "Rust Metrics" dashboard, confirm the CPU and Memory panels actually render data (not "No data") for the `rust-microservice` pods in `team-rust`.
 - ⏳ Phase 6 — `external-secrets` schema reconciliation (deferred sub-task per user direction)
 
 15 commits applied. 31 files changed, 735 insertions, 265 deletions.

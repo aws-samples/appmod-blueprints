@@ -949,7 +949,6 @@ spec:
 
               ./kubectl apply -f /tmp/secret.yaml
               echo "✓ Kubernetes secret created"
-
               # Push to AWS Secrets Manager (synchronous — no PushSecret race condition)
               echo "Pushing OIDC secrets to AWS Secrets Manager..."
               curl -sS "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
@@ -980,4 +979,5 @@ spec:
                 aws secretsmanager create-secret --name "$SM_SECRET_NAME" --secret-string "$SM_SECRET_VALUE" --region {{ .Values.aws.region }}
               fi
               echo "✓ AWS Secrets Manager secret created: $SM_SECRET_NAME"
+              echo "✓ Keycloak configuration completed successfully!"
               echo "✓ Keycloak configuration completed successfully!"

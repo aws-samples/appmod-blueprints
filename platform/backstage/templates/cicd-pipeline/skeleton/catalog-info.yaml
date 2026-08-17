@@ -8,7 +8,7 @@ metadata:
     backstage.io/kubernetes-namespace: ${{values.namespace}}
     backstage.io/kubernetes-label-selector: 'app.kubernetes.io/name=${{values.appname}},app.kubernetes.io/component=cicd-pipeline'
     # ArgoCD integration
-    argocd/app-selector: 'app.kubernetes.io/name=${{values.appname}}'
+    argocd/app-name: ${{values.appname}}-cicd
     # Argo Workflows integration
     argo-workflows.cnoe.io/cluster-name: local
     argo-workflows.cnoe.io/namespace: ${{values.namespace}}

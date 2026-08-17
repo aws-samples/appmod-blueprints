@@ -56,7 +56,6 @@ This repo is used in two ways:
 
 The root `.kiro/` is for local dev. `hack/.kiro/` is for the workshop IDE — they serve different audiences.
 
-
 ## Working Agreement (how to operate in this repo)
 
 Binding behavioral expectations, learned from working sessions. Follow these.
@@ -115,3 +114,28 @@ These are facts about the deployed platform that have been confirmed multiple ti
 
 - The platform uses EKS Pod Identity (not IRSA) for pod-level AWS credentials on EKS Auto Mode.
 - When provisioning IAM access for a workload, use `aws eks create-pod-identity-association` (not OIDC trust policies).
+
+## Platform Manifests ApplicationSets (naming convention)
+
+| ApplicationSet Name | Label Selector | Deploys To | Contents |
+|---------------------|---------------|------------|----------|
+| `platform-manifests-bootstrap` | `enable_platform_manifests_bootstrap: "true"` | ALL clusters (hub + spokes) | NodePools (EKS Auto Mode), ClusterSecretStore |
+| `platform-manifests` | `enable_platform_manifests_hub: "true"` | Hub only | Ray IAMRoleSelectors, HuggingFace models |
+
+Note: The `-bootstrap` suffix is misleading — it's not hub-only bootstrap, it's the base infrastructure required on every cluster. Renaming is deferred to avoid disruption (deleting the ApplicationSet would temporarily remove NodePools, causing all pods to go Pending).
+
+## Workshop IDE Environment
+
+- User: `ec2-user`
+- Workshop repo: `/home/ec2-user/environment/platform-on-eks-workshop`
+- Clusters: `peeks-hub`, `peeks-spoke-dev`, `peeks-spoke-prod` (context aliases: `hub`, `dev`, `prod`)
+- EKS Auto Mode — no Karpenter pods in clusters
+- EKS Capabilities — ArgoCD, Kro, ACK run as managed services, not in-cluster
+
+## Key Rules
+
+- **Use deploy.sh/destroy.sh** — never raw `terraform apply` or `terraform destroy`
+- **GitOps first** — modify Git files and let ArgoCD sync, don't `kubectl apply` manually
+- **Dynamic values only in addons.yaml** — never put template expressions in values.yaml
+- **Check env vars with echo** — `echo $AWS_REGION` etc., don't dump full environment
+- **ArgoCD token refresh** — if `argocd` CLI auth fails, run `argocd-refresh-token` then `source ~/.bashrc.d/platform.sh`

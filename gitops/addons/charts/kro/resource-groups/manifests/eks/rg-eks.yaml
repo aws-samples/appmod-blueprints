@@ -641,6 +641,8 @@ spec:
             name: ${schema.spec.name}-config-data
             namespace: ${schema.spec.name}
             key: config
+      readyWhen:
+      - ${clusterConfigSecret.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
 
     # Fleet-secret path (createArgocdClusterSecret=="false", the default):
     # Write <cluster>/config to Secrets Manager in the fleet-secret contract so the
@@ -675,6 +677,8 @@ spec:
     - id: clusterConfigSecretFleet
       includeWhen:
         - ${schema.spec.createArgocdClusterSecret == "false"}
+      readyWhen:
+      - ${clusterConfigSecretFleet.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
       template:
         apiVersion: secretsmanager.services.k8s.aws/v1alpha1
         kind: Secret
@@ -698,6 +702,8 @@ spec:
             key: config
 
     - id: hubSecretsExternal
+      readyWhen:
+      - ${hubSecretsExternal.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
       template:
         apiVersion: external-secrets.io/v1
         kind: ExternalSecret
