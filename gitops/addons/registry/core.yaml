@@ -144,6 +144,21 @@ argocd:
           enablePKCEAuthentication: true
           requestedScopes: ["openid", "profile", "email", "groups"]
 
+argocd-health-checks:
+  enabled: false
+  type: manifest
+  namespace: argocd
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-3' # Before kro RGDs so health checks are ready
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/argocd-health-checks'
+  directory:
+    recurse: false
+  selector:
+    matchExpressions:
+      - key: enable_argocd_health_checks
+        operator: In
+        values: ['true']
+
 metrics-server:
   namespace: kube-system
   chartName: metrics-server

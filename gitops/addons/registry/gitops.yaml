@@ -62,6 +62,9 @@ argo-workflows:
         - /metadata/resourceVersion
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       name: keycloak-oidc

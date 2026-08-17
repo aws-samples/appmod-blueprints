@@ -56,6 +56,9 @@ keycloak:
         - /metadata/generation
         - /metadata/managedFields
         - /metadata/resourceVersion
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ''
       kind: Secret
       jsonPointers:
