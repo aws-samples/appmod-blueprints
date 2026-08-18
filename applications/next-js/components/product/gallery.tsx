@@ -37,6 +37,9 @@ export function Gallery({
         {images[imageIndex] && (
           <Image
             className="h-full w-full object-contain"
+            // Served by the rust microservice via the shared ingress domain,
+            // not this app's own server -- skip next/image's optimizer.
+            unoptimized
             fill
             sizes="(min-width: 1024px) 66vw, 100vw"
             alt={images[imageIndex]?.altText as string}
