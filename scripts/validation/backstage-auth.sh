@@ -17,46 +17,38 @@ backstage_get_token() {
   # Step 1: Session cookie
   curl -sLk -c "${COOKIE_JAR}" "${BACKSTAGE_URL}" -o /dev/null
 
-  # Step 2: Start OIDC (capture nonce + session cookies from headers)
-  curl -sLk -b "${COOKIE_JAR}" \
+  # Step 2: Start OIDC. MUST persist cookies (-c): /start rotates connect.sid and stores
+  # the OAuth authorization-request details server-side keyed by that session id. Without
+  # -c the rotated connect.sid is dropped, so the callback below runs against a session
+  # that has no OAuth state and Backstage fails with "did not find expected authorization
+  # request details in session" -> "Missing session cookie".
+  curl -sLk -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" \
     "${BACKSTAGE_URL}/api/auth/keycloak-oidc/start?scope=openid%20profile%20email&env=production" \
     -H "X-Requested-With: XMLHttpRequest" \
     --max-redirs 0 -D /tmp/_bs_s2.txt -o /dev/null 2>/dev/null || true
 
-  local KC_URL NONCE SID
+  local KC_URL FORM_ACTION CALLBACK
   KC_URL=$(grep -i "^location:" /tmp/_bs_s2.txt | sed 's/^[Ll]ocation: //' | tr -d '\r\n')
-  NONCE=$(grep "keycloak-oidc-nonce=" /tmp/_bs_s2.txt | grep -v "Max-Age=0" | sed 's/.*keycloak-oidc-nonce=//' | sed 's/;.*//' | tr -d '\r')
-  SID=$(grep "connect.sid=" /tmp/_bs_s2.txt | sed 's/.*connect.sid=//' | sed 's/;.*//' | tr -d '\r')
 
   # Step 3: Get Keycloak login form
   curl -sLk "${KC_URL}" -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -o /tmp/_bs_s3.txt
-  local FORM_ACTION
   FORM_ACTION=$(grep -oP 'action="[^"]*"' /tmp/_bs_s3.txt | head -1 | sed 's/action="//;s/"//' | sed 's/&amp;/\&/g')
 
-  # Step 4: Submit credentials
+  # Step 4: Submit credentials -> Keycloak issues a 302 back to the Backstage callback
   curl -sLk -X POST "${FORM_ACTION}" \
     -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" \
     --data-urlencode "username=user1" \
     --data-urlencode "password=${USER1_PASSWORD}" \
     --max-redirs 0 -D /tmp/_bs_s4.txt -o /dev/null 2>/dev/null || true
-
-  local CALLBACK
   CALLBACK=$(grep -i "^location:" /tmp/_bs_s4.txt | sed 's/^[Ll]ocation: //' | tr -d '\r\n')
 
-  # Step 5: Hit callback - add nonce to cookie jar, then fetch frame
-  local DOMAIN
-  DOMAIN=$(echo "${BACKSTAGE_URL}" | sed 's|https://||;s|/.*||')
-  echo -e "${DOMAIN}\tFALSE\t/\tTRUE\t0\tkeycloak-oidc-nonce\t${NONCE}" >> "${COOKIE_JAR}"
+  # Step 5: Hit the callback (handler/frame) with the preserved session cookie. Backstage
+  # exchanges the code and embeds the identity token in the returned HTML frame, which the
+  # browser flow would postMessage back to the opener.
+  curl -sLk "${CALLBACK}" -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -o /tmp/_bs_frame.txt 2>/dev/null || true
 
-  local BS_SERVER SCOPE REFRESH
-  BS_SERVER=$(grep "backstage-server=" /tmp/_bs_s5.txt | grep -v "Max-Age=0" | sed 's/.*backstage-server=//' | sed 's/;.*//' | tr -d '\r')
-  SCOPE=$(grep "keycloak-oidc-granted-scope=" /tmp/_bs_s5.txt | grep -v "Max-Age=0" | sed 's/.*keycloak-oidc-granted-scope=//' | sed 's/;.*//' | tr -d '\r')
-  REFRESH=$(grep "keycloak-oidc-refresh-token=" /tmp/_bs_s5.txt | grep -v "Max-Age=0" | sed 's/.*keycloak-oidc-refresh-token=//' | sed 's/;.*//' | tr -d '\r')
-
-  # Step 6: Refresh to get Backstage identity token
-  curl -sLk "${BACKSTAGE_URL}/api/auth/keycloak-oidc/refresh?env=production" \
-    -H "Cookie: backstage-server=${BS_SERVER}; connect.sid=${SID}; keycloak-oidc-granted-scope=${SCOPE}; keycloak-oidc-refresh-token=${REFRESH}" \
-    -H "X-Requested-With: XMLHttpRequest" | jq -r '.backstageIdentity.token'
+  # Step 6: Extract the Backstage identity token from the frame's authResponse payload.
+  python3 -c "import urllib.parse,re,json; html=open('/tmp/_bs_frame.txt').read(); m=re.search(r\"decodeURIComponent\('([^']+)'\)\", html); d=json.loads(urllib.parse.unquote(m.group(1))); print(d.get('response',{}).get('backstageIdentity',{}).get('token',''))"
 }
 
 backstage_scaffolder() {
