@@ -112,6 +112,9 @@ export default function CartModal({ cart }: { cart: Cart | undefined }) {
                               <div className="relative h-16 w-16 cursor-pointer overflow-hidden rounded-md border border-neutral-300 bg-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:hover:bg-neutral-800">
                                 <Image
                                   className="h-full w-full object-cover"
+                                  // Served by the rust microservice via the shared ingress domain,
+                                  // not this app's own server -- skip next/image's optimizer.
+                                  unoptimized
                                   width={64}
                                   height={64}
                                   alt={item.product.images[0]!.altText || item.product.name}
