@@ -37,7 +37,10 @@ spec:
   - '*'
   destinations:
   - namespace: '*'
-    name: '*-spoke-*'
+    # Match any spoke cluster by name. Cluster names are customer-supplied and
+    # arbitrary, so a '*-spoke-*' glob would refuse apps on spokes named e.g.
+    # 'prod-eu'; scoping is enforced via the resource whitelists below instead.
+    name: '*'
   clusterResourceWhitelist:
   - group: ''
     kind: Namespace

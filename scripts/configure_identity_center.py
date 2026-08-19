@@ -322,12 +322,23 @@ def get_console_signin_url(destination: str) -> str:
 # ---------------------------------------------------------------------------
 
 def keycloak_token(kc_base: str, password: str) -> str:
-    return requests.post(
+    resp = requests.post(
         f"{kc_base}/realms/master/protocol/openid-connect/token",
         data={"username": "admin", "password": password,
               "grant_type": "password", "client_id": "admin-cli"},
         verify=False,
-    ).json()["access_token"]
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Keycloak admin token request failed: HTTP {resp.status_code} — "
+            f"{resp.text[:300]}. A 500 usually means Keycloak cannot reach its "
+            f"PostgreSQL database (check that keycloak + postgresql pods are Running); "
+            f"a 401 means the admin password is wrong."
+        )
+    body = resp.json()
+    if "access_token" not in body:
+        raise RuntimeError(f"Keycloak token response missing 'access_token': {body}")
+    return body["access_token"]
 
 
 def keycloak_api(method, url, token, **kwargs):

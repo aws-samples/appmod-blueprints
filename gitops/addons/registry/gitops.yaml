@@ -74,9 +74,12 @@ argo-workflows:
 
 kargo:
   namespace: kargo
-  chartName: kargo
-  chartRepository: ghcr.io/akuity/kargo-charts
-  defaultVersion: '1.11.0'
+  # Local umbrella chart: wraps the upstream Kargo chart as a dependency (values
+  # nested under the `kargo:` key) and adds the platform API Ingress, rendered
+  # locally so it can switch ALB listeners on the `insecure` flag with a block
+  # conditional — like the other platform ingresses (argo-workflows/backstage/
+  # keycloak). One `enable_kargo` flip brings up Kargo + its ingress together.
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kargo'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '4'
   selector:
@@ -85,89 +88,87 @@ kargo:
         operator: In
         values: ['true']
   valuesObject:
-    api:
-      host: '{{.metadata.annotations.ingress_domain_name}}'
-      basePath: /kargo
-      tls:
-        enabled: false
-        terminatedUpstream: true
-      ingress:
-        enabled: true
-        ingressClassName: platform
-        annotations:
-          alb.ingress.kubernetes.io/target-type: ip
-          alb.ingress.kubernetes.io/backend-protocol: HTTP
-          alb.ingress.kubernetes.io/healthcheck-path: /healthz
-          alb.ingress.kubernetes.io/success-codes: '200-399'
-          alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
-          alb.ingress.kubernetes.io/ssl-redirect: '443'
-          # ALB URL rewrite: strip /kargo prefix before forwarding to the API server
-          # (Kargo API serves at root; basePath is cosmetic for URL generation only)
-          alb.ingress.kubernetes.io/transforms.kargo-rewrite: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^/kargo/?(.*)$","replace":"/$1"}]}}]'
-        pathType: Prefix
-      argocd:
-        urls:
-          argocd: https://{{.metadata.annotations.ingress_domain_name}}/argocd
-      oidc:
-        # Kargo SSO via Keycloak (public client 'kargo' is seeded in the platform
-        # realm by the keycloak-config job; PKCE flow, no client secret required).
-        # NOTE: all four of enabled/issuerURL/clientID are required — the chart only
-        # renders the OIDC_* config (and the UI "Log in with SSO" button) when they
-        # are set. With issuerURL alone the chart silently falls back to admin-only
-        # login (ADMIN_ACCOUNT_ENABLED) and no SSO is offered.
-        enabled: true
-        issuerURL: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
-        clientID: kargo
-        cliClientID: kargo
-        # Request the 'groups' scope so the groups claim is returned (admin mapping below).
-        additionalScopes:
-          - groups
-        # user1 is in the Keycloak '/admin' group; the realm's 'groups' client scope
-        # emits a 'groups' claim, so grant Kargo admin to members of '/admin'.
-        admins:
-          claims:
-            groups:
-              - admin
-      secret:
-        name: kargo-admin-credentials
-    extraObjects:
-      - apiVersion: external-secrets.io/v1
-        kind: ExternalSecret # For Kargo Admin Credentials
-        metadata:
+    # Consumed by this umbrella chart's own templates (the API Ingress).
+    global:
+      ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+      # insecure=true  → ALB serves HTTP:80 (CloudFront terminates TLS upstream).
+      # insecure=false → ALB serves HTTPS:443 + ssl-redirect. See templates/ingress.yaml.
+      insecure: '{{default "false" .metadata.annotations.insecure}}'
+    # Passed through to the upstream Kargo chart (dependency, key `kargo`).
+    kargo:
+      api:
+        host: '{{.metadata.annotations.ingress_domain_name}}'
+        basePath: /kargo
+        tls:
+          enabled: false
+          terminatedUpstream: true
+        ingress:
+          # Disabled: the Ingress is rendered by this chart's own templates/ingress.yaml
+          # (insecure-aware) instead of by the upstream chart.
+          enabled: false
+        argocd:
+          urls:
+            argocd: https://{{.metadata.annotations.ingress_domain_name}}/argocd
+        oidc:
+          # Kargo SSO via Keycloak (public client 'kargo' is seeded in the platform
+          # realm by the keycloak-config job; PKCE flow, no client secret required).
+          # NOTE: all four of enabled/issuerURL/clientID are required — the chart only
+          # renders the OIDC_* config (and the UI "Log in with SSO" button) when they
+          # are set. With issuerURL alone the chart silently falls back to admin-only
+          # login (ADMIN_ACCOUNT_ENABLED) and no SSO is offered.
+          enabled: true
+          issuerURL: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
+          clientID: kargo
+          cliClientID: kargo
+          # Request the 'groups' scope so the groups claim is returned (admin mapping below).
+          additionalScopes:
+            - groups
+          # user1 is in the Keycloak '/admin' group; the realm's 'groups' client scope
+          # emits a 'groups' claim, so grant Kargo admin to members of '/admin'.
+          admins:
+            claims:
+              groups:
+                - admin
+        secret:
           name: kargo-admin-credentials
-          namespace: kargo
-          annotations:
-            argocd.argoproj.io/sync-wave: '-1'
-        spec:
-          refreshInterval: '30s'
-          secretStoreRef:
-            name: aws-secrets-manager
-            kind: ClusterSecretStore
-          target:
+      extraObjects:
+        - apiVersion: external-secrets.io/v1
+          kind: ExternalSecret # For Kargo Admin Credentials
+          metadata:
             name: kargo-admin-credentials
-            creationPolicy: Owner
-            deletionPolicy: Retain
-            template:
-              engineVersion: v2
-              mergePolicy: Replace
-              data:
-                ADMIN_ACCOUNT_PASSWORD_HASH: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_HASH }}` }}" }}'
-                ADMIN_ACCOUNT_TOKEN_SIGNING_KEY: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_KEY }}` }}" }}'
-          data:
-            - secretKey: KARGO_ADMIN_PASSWORD_HASH
-              remoteRef:
-                key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
-                property: user_password_hash
-                conversionStrategy: Default
-                decodingStrategy: None
-                metadataPolicy: None
-            - secretKey: KARGO_ADMIN_PASSWORD_KEY
-              remoteRef:
-                key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
-                property: user_password_key
-                conversionStrategy: Default
-                decodingStrategy: None
-                metadataPolicy: None
+            namespace: kargo
+            annotations:
+              argocd.argoproj.io/sync-wave: '-1'
+          spec:
+            refreshInterval: '30s'
+            secretStoreRef:
+              name: aws-secrets-manager
+              kind: ClusterSecretStore
+            target:
+              name: kargo-admin-credentials
+              creationPolicy: Owner
+              deletionPolicy: Retain
+              template:
+                engineVersion: v2
+                mergePolicy: Replace
+                data:
+                  ADMIN_ACCOUNT_PASSWORD_HASH: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_HASH }}` }}" }}'
+                  ADMIN_ACCOUNT_TOKEN_SIGNING_KEY: '{{ printf "{{ `{{ .KARGO_ADMIN_PASSWORD_KEY }}` }}" }}'
+            data:
+              - secretKey: KARGO_ADMIN_PASSWORD_HASH
+                remoteRef:
+                  key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
+                  property: user_password_hash
+                  conversionStrategy: Default
+                  decodingStrategy: None
+                  metadataPolicy: None
+              - secretKey: KARGO_ADMIN_PASSWORD_KEY
+                remoteRef:
+                  key: '{{.metadata.annotations.aws_cluster_name}}/secrets'
+                  property: user_password_key
+                  conversionStrategy: Default
+                  decodingStrategy: None
+                  metadataPolicy: None
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

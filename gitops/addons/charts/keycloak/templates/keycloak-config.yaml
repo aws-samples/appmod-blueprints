@@ -980,4 +980,3 @@ spec:
               fi
               echo "✓ AWS Secrets Manager secret created: $SM_SECRET_NAME"
               echo "✓ Keycloak configuration completed successfully!"
-              echo "✓ Keycloak configuration completed successfully!"
