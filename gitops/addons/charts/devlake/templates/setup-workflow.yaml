@@ -69,8 +69,13 @@ spec:
     inputs:
       parameters:
       - name: connection-secret-namespace
+    # Wait for the Crossplane-managed Aurora RDS connection secret to be populated.
+    # Aurora provisioning can take 15-25+ min, so keep a generous budget: exhausting
+    # these retries makes the whole workflow Fail terminally, and because this Workflow
+    # is an ArgoCD sync-wave -1 resource, a terminal Failure blocks the entire DevLake
+    # app from syncing (lake/ui/grafana never deploy) until manual intervention.
     retryStrategy:
-      limit: 50 
+      limit: 120
       retryPolicy: "Always"
       backoff:
         duration: "30s"
@@ -150,8 +155,9 @@ spec:
           --dry-run=client -o yaml | kubectl apply -f -
 
   - name: wait-for-mysql
+    # Tolerate slow Aurora readiness + ExternalName/DNS propagation of devlake-mysql-service.
     retryStrategy:
-      limit: 40
+      limit: 80
       retryPolicy: "Always"
       backoff:
         duration: "10s"
