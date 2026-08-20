@@ -29,7 +29,10 @@ spec:
           sortKey: string | default="sort_key"
           sortKeyType: string | default="S"
       ingress:
-        host: string | default="*.elb.us-west-2.amazonaws.com"
+        # host is reserved for optional future host-based routing. Routing is
+        # path-based, so this value is intentionally NOT applied to the Ingress
+        # rule, which keeps the RGD region-agnostic (no hardcoded region).
+        host: string | default=""
         enabled: boolean | default=false
         path: string | default="/"
         rewrite: boolean | default=true
@@ -614,8 +617,10 @@ spec:
         spec:
           ingressClassName: nginx
           rules:
-            - host: ${schema.spec.ingress.host}
-              http:
+            # Region-agnostic: no host pinning. Routing is path-based on the shared
+            # ingress-nginx load balancer, so the app is reachable via any hostname
+            # (the NLB DNS in any region, CloudFront, or a custom domain).
+            - http:
                 paths:
                   - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
                     pathType: ImplementationSpecific
@@ -647,8 +652,10 @@ spec:
         spec:
           ingressClassName: nginx
           rules:
-            - host: ${schema.spec.ingress.host}
-              http:
+            # Region-agnostic: no host pinning. Routing is path-based on the shared
+            # ingress-nginx load balancer, so the app is reachable via any hostname
+            # (the NLB DNS in any region, CloudFront, or a custom domain).
+            - http:
                 paths:
                   - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
                     pathType: ImplementationSpecific
