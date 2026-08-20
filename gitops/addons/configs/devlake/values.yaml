@@ -8,6 +8,16 @@ devlake:
     connectionSecretName: "devlake-mysql-auth"
     autoCreateSecret: false
   lake:
+    envs:
+      # DevLake refuses to serve when it detects pending DB migration scripts,
+      # returning HTTP 428 ("New migration scripts detected...") until a manual
+      # confirmation is sent to /proceed-db-migration. On a fresh workshop deploy
+      # nothing performs that confirmation (the dora-provisioner GET is unreliable
+      # and can leave the schema half-migrated), so the entire DORA data path
+      # (trigger-devlake / project + blueprint creation) is blocked out of the box.
+      # FORCE_MIGRATION lets the lake apply pending migrations automatically at
+      # boot, so DevLake comes up ready to serve on a clean deploy.
+      FORCE_MIGRATION: "true"
     image:
       tag: v1.0.3-beta7
     resources:
