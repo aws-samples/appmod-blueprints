@@ -75,6 +75,10 @@ spec:
             - group: iam.services.k8s.aws
               kind: ""
               version: ""
+          # Scope to only ACK resources owned by this Kro instance (bug #813).
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
     - id: eksroleselector
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == true}
@@ -94,6 +98,9 @@ spec:
             - group: eks.services.k8s.aws
               kind: ""
               version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
     - id: dynamodbroleselector
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == true}
@@ -113,6 +120,9 @@ spec:
             - group: dynamodb.services.k8s.aws
               kind: ""
               version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
     - id: dynamodbtable
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == true}
