@@ -3108,11 +3108,14 @@ spec:
       - args:
         - server
         - --configmap=workflow-controller-configmap
-        {{- if .Values.insecure }}
-        - --auth-mode=client
-        {{- else }}
+        # Always use SSO (Keycloak OIDC). The sso block is configured in the
+        # workflow-controller-configmap and the argo-workflows Keycloak client
+        # exists (keycloak-oidc ExternalSecret). This was previously gated on
+        # .Values.insecure, which put the workshop (insecure=true — TLS terminated
+        # upstream at CloudFront) into --auth-mode=client, so the UI's SSO login hit
+        # /oauth2/redirect = HTTP 501. SSO works behind CloudFront (HTTPS issuer +
+        # redirect), consistent with ArgoCD/Grafana/Backstage which do not gate on insecure.
         - --auth-mode=sso
-        {{- end }}
         - "--base-href=/argo-workflows/"
         - "--secure=false"
         - "--loglevel"
