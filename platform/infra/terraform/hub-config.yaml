@@ -33,6 +33,7 @@ clusters:
       enable_cert_manager: true
       enable_external_secrets: true
       enable_ack_iam: false # EKS Managed capability
+      enable_ack_rds: false # EKS Managed capability
       enable_ack_eks: false # EKS Managed capability
       enable_ack_ec2: false # EKS Managed capability
       enable_ack_ecr: false # EKS Managed capability
@@ -81,6 +82,7 @@ clusters:
       enable_argo_workflows: false
       enable_ack_iam: false # EKS Managed capability
       enable_ack_eks: false # EKS Managed capability
+      enable_ack_rds: false # EKS Managed capability
       enable_ack_ec2: false # EKS Managed capability
       enable_ack_ecr: false # EKS Managed capability
       enable_ack_s3: false # EKS Managed capability
@@ -129,6 +131,7 @@ clusters:
       enable_argo_rollouts: true
       enable_argo_workflows: false
       enable_ack_iam: false # EKS Managed capability
+      enable_ack_rds: false # EKS Managed capability
       enable_ack_eks: false # EKS Managed capability
       enable_ack_ec2: false # EKS Managed capability
       enable_ack_ecr: false # EKS Managed capability
