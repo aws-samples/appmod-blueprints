@@ -44,7 +44,9 @@ spec:
        apiVersion: services.k8s.aws/v1alpha1
        kind: IAMRoleSelector
        metadata:
-          name: ${schema.metadata.namespace}-iam
+          # Include instance name to avoid name collision when multiple CICDPipeline
+          # instances exist in the same namespace (bug #813).
+          name: ${schema.metadata.namespace}-${schema.metadata.name}-iam
        spec:
           arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-iam
           namespaceSelector:
@@ -54,13 +56,17 @@ spec:
              - group: iam.services.k8s.aws
                kind: ""
                version: ""
+          # Scope to only the ACK resources owned by this Kro instance.
+          resourceLabelSelector:
+             matchLabels:
+                kro.run/instance-name: ${schema.metadata.name}
 
     - id: iamroleselectorEcr
       template:
        apiVersion: services.k8s.aws/v1alpha1
        kind: IAMRoleSelector
        metadata:
-          name: ${schema.metadata.namespace}-ecr
+          name: ${schema.metadata.namespace}-${schema.metadata.name}-ecr
        spec:
           arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-ecr
           namespaceSelector:
@@ -70,13 +76,16 @@ spec:
              - group: ecr.services.k8s.aws
                kind: ""
                version: ""
+          resourceLabelSelector:
+             matchLabels:
+                kro.run/instance-name: ${schema.metadata.name}
 
     - id: iamroleselectorEks
       template:
        apiVersion: services.k8s.aws/v1alpha1
        kind: IAMRoleSelector
        metadata:
-          name: ${schema.metadata.namespace}-eks
+          name: ${schema.metadata.namespace}-${schema.metadata.name}-eks
        spec:
           arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-eks
           namespaceSelector:
@@ -86,6 +95,9 @@ spec:
              - group: eks.services.k8s.aws
                kind: ""
                version: ""
+          resourceLabelSelector:
+             matchLabels:
+                kro.run/instance-name: ${schema.metadata.name}
 
     # ECR Repository for main application images
     - id: ecrmainrepo
