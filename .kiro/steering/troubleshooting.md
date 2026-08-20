@@ -263,10 +263,17 @@ aws elbv2 describe-rules --listener-arn "$L" --query 'Rules[].{p:Priority,path:C
 annotations:
   alb.ingress.kubernetes.io/group.order: '100'
 ```
-For Kargo on the workshop hub specifically, this lives in the workshop's fleet-config overlay
-(`workshop/overlay/overlays/environments/control-plane/kargo/values.yaml` in this repo — seeded
-into the GitLab fleet-config repo by `workshop/Taskfile.yaml`) under `api.ingress.annotations`.
-Other consumers of the solution set the equivalent override in their own fleet-config repo.
+**Note on Kargo**: Kargo no longer uses a root catch-all ingress, so it is no longer a source
+of this problem. The `kargo` umbrella chart (`gitops/addons/charts/kargo`) renders its own
+insecure-aware Ingress at `path: /kargo` (pathType `Prefix`) with a `url-rewrite` transform that
+strips the prefix before forwarding, and Kargo runs with `api.basePath: /kargo` (set in the
+registry, `gitops/addons/registry/gitops.yaml`). Its SPA therefore emits `<base href="/kargo/">`
+and loads assets/API under `/kargo/` — verified on a fresh deploy (`/kargo/` and
+`/kargo/assets/*.js|css` return 200, `/keycloak` still returns 302). Because `/kargo` is a
+specific prefix (not `/`), it cannot shadow `/keycloak` and needs no `group.order`. The old
+workshop overlay that enabled a root ingress (`api.ingress` at `/` with `group.order: '100'`) has
+been removed as dead config. The `group.order` guidance above still applies to any *other*
+service you deliberately expose at the host root (`/`).
 
 ### CloudFront platform URLs hang (curl 000): VPC origin points to a stale/recreated ALB
 
