@@ -61,6 +61,9 @@ spec:
              - group: iam.services.k8s.aws
                kind: ""
                version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
 
     - id: iamroleselectorEcr
       template:
@@ -77,6 +80,9 @@ spec:
              - group: ecr.services.k8s.aws
                kind: ""
                version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
 
     - id: iamroleselectorEks
       template:
@@ -93,6 +99,9 @@ spec:
              - group: eks.services.k8s.aws
                kind: ""
                version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
 
     # ECR Repository for main application images
     - id: ecrmainrepo
