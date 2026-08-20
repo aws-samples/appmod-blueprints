@@ -89,7 +89,7 @@ backstage_scaffolder() {
 }
 
 # When sourced, export BS_TOKEN for direct use
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]] || [[ "${ZSH_EVAL_CONTEXT:-}" == "toplevel" ]]; then
   backstage_get_token
 else
   export BS_TOKEN

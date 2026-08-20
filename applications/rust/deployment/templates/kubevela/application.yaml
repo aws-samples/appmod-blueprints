@@ -21,6 +21,8 @@ spec:
         env:
           - name: APP_ENV
             value: "DEV"
+          - name: APP_BASE_PATH
+            value: "/rust-app"
           - name: TABLE_NAME
             value: rust-app-table-<environment>
           - name: AWS_REGION

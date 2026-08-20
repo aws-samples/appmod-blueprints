@@ -3,7 +3,7 @@ module "eks" {
   #checkov:skip=CKV_TF_2:We are using version control for those modules
   for_each = var.clusters
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.15"
+  version = "~> 21.23.0"
 
   name                   = each.value.name
   kubernetes_version     = each.value.kubernetes_version
@@ -251,11 +251,11 @@ resource "aws_iam_role_policy" "eks_capability_ack_assume_workload_roles" {
   })
 }
 
-# ACK Capability Role - IAM permissions for managing IRSA roles on spoke clusters
+# ACK Capability Role - IAM permissions for managing IRSA roles on clusters
 # Addons (e.g. argo-rollouts) use ACK iam.services.k8s.aws/Role to create IRSA roles.
 # Scoped to roles prefixed with the cluster name to prevent cross-cluster access.
 resource "aws_iam_role_policy" "eks_capability_ack_manage_irsa_roles" {
-  for_each = { for k, v in var.clusters : k => v if v.environment != "control-plane" }
+  for_each = { for k, v in var.clusters : k => v}
 
   name = "ManageIRSARoles"
   role = aws_iam_role.eks_capability_ack[each.key].id

@@ -35,6 +35,24 @@ This architecture defines the current state of the application.
 - `GET /categories`: Retrieves a list of all the categories
 - `GET /collection/<collection_handle>`: Reserved for special collections for events/front_page
 
+### Product Images
+
+Product images live in `static/images/`, checked into git as WebP (smaller than the PNG originals
+for cheaper transmission), and are served directly by this service using Rocket's built-in
+`FileServer` -- no external bucket or CDN involved. Add real photos there, named to match the
+`file` column in `src/api/res/products.csv` (e.g. `sticker.webp`, `bag-black.webp`), and they'll be
+served as-is, both when running locally with `cargo run` and inside the container
+(`Dockerfile`/`Dockerfile.arm` copy `static/` into the image). Anything you haven't added yet gets
+a small generated placeholder instead at startup, so a missing file never breaks the catalog.
+
+The pod itself only ever knows about the unprefixed route, `/product-images/<file>`. The `url`
+value returned in API responses is prefixed with `APP_BASE_PATH` (empty by default, matching direct
+access), so that consumers going through this app's ingress get a correctly-routable URL. In this
+workshop's deployment, `APP_BASE_PATH` is set to `/rust-app` to match the ingress path in
+`deployment/templates/kubevela/application.yaml` and `deployment/templates/kro/application.yaml` --
+nginx's `rewrite-target` strips that prefix before the request reaches this service, exactly like
+every other route here (see `platform-meta/templates/traits/path-based-ingress.yaml`).
+
 ### To Do for Workshop
 Wishlist service: Write a wishlist service that maintains wishlists for each individual user with name, Products, and
 all other things normal to a wishlist.

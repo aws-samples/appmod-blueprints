@@ -21,6 +21,7 @@ RUN mkdir -p src/api && echo "fn main() {}" > src/api/main.rs && \
 
 # Copy actual source and build
 COPY src/api/ ./src/api/
+COPY static/ ./static/
 RUN cargo build --release --bin api --target x86_64-unknown-linux-musl && \
     cp target/x86_64-unknown-linux-musl/release/api ./api
 
@@ -30,6 +31,10 @@ FROM scratch
 COPY --from=build /usr/app/api .
 COPY --from=build /usr/app/src/api/res/products.csv .
 COPY --from=build /usr/app/src/api/res/variants.csv .
+# rocket::fs::relative!("static") in src/api/setup.rs bakes in the absolute
+# CARGO_MANIFEST_DIR path from the build stage (/usr/app), so product images
+# need to live at that same absolute path at runtime.
+COPY --from=build /usr/app/static /usr/app/static
 
 # import the CA certs from our builder in production
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

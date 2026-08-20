@@ -1,0 +1,44 @@
+# ArgoCD custom Lua health check for kro resources.
+# Deployed by the argocd-health-checks addon (enable_argocd_health_checks label).
+#
+# Uses the resource.customizations wildcard format so a single entry covers
+# all kro.run/* kinds (any RGD-generated CRD + ResourceGraphDefinition itself).
+#
+# Note: Crossplane (*.upbound.io) health checks are already built-in to OSS ArgoCD.
+# See: https://github.com/argoproj/argo-cd/blob/master/resource_customizations/_.upbound.io/_/health.lua
+#
+# Ref: https://argo-cd.readthedocs.io/en/latest/operator-manual/health/#way-1-define-a-custom-health-check-in-argocd-cm-configmap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  resource.customizations: |
+    kro.run/*:
+      health.lua: |
+        local hs = {}
+        if obj.status == nil or obj.status.conditions == nil then
+          hs.status = "Progressing"
+          hs.message = "Waiting for KRO to report status"
+          return hs
+        end
+        if obj.status.state == "ERROR" or obj.status.state == "FAILED" then
+          hs.status = "Degraded"
+          hs.message = obj.status.conditions[#obj.status.conditions].message or "Instance has errors"
+          return hs
+        end
+        for _, condition in ipairs(obj.status.conditions) do
+          if condition.type == "Ready" then
+            if condition.status == "True" then
+              hs.status = "Healthy"
+              hs.message = condition.message or "Ready"
+              return hs
+            end
+          end
+        end
+        hs.status = "Progressing"
+        hs.message = "Waiting for Ready condition"
+        return hs
