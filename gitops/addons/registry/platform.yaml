@@ -362,6 +362,15 @@ devlake:
     clusterRegion: '{{.metadata.annotations.aws_region}}'
     namespace: devlake
   ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: argoproj.io
       kind: Workflow
       jsonPointers:

@@ -138,6 +138,9 @@ grafana:
         - /status
         - /metadata/generation
         - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
     - group: ""
       kind: Secret
       jsonPointers:
@@ -196,6 +199,16 @@ grafana-dashboards:
     devlake:
       enabled: '{{index .metadata.labels "enable_devlake" | default "false"}}'
     devlake_version: 'v1.0.3-beta7'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
 
 kube-state-metrics:
   namespace: kube-prometheus-stack

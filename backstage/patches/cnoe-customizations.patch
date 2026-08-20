@@ -1,0 +1,189 @@
+diff --git a/app-config.production.yaml b/app-config.production.yaml
+index aaa0431..98b3451 100644
+--- a/app-config.production.yaml
++++ b/app-config.production.yaml
+@@ -1,8 +1,8 @@
+ app:
+-  baseUrl: http://localhost:7007
++  baseUrl: http://localhost:7007/backstage
+ 
+ backend:
+-  baseUrl: http://localhost:7007
++  baseUrl: http://localhost:7007/backstage
+   listen: ':7007'
+   database:
+     client: pg
+diff --git a/app-config.yaml b/app-config.yaml
+index d8b8e47..86ce1c8 100644
+--- a/app-config.yaml
++++ b/app-config.yaml
+@@ -1,6 +1,6 @@
+ app:
+   title: CNOE
+-  baseUrl: http://localhost:3000
++  baseUrl: http://localhost:3000/backstage
+   packages: all
+   listen:
+     port: 3000
+@@ -37,7 +37,7 @@ backend:
+   # auth:
+   #   keys:
+   #     - secret: ${BACKEND_SECRET}
+-  baseUrl: http://localhost:7007
++  baseUrl: http://localhost:7007/backstage
+   listen:
+     port: 7007
+     host: 0.0.0.0
+@@ -91,11 +91,10 @@ techdocs:
+ 
+ auth:
+   # see https://backstage.io/docs/auth/ to learn about auth providers
+-  environment: local # set this to development to enable SSO
++  environment: development
+   session:
+     secret: abcdfkjalskdfjkla
+   providers:
+-    guest: {}
+     keycloak-oidc:
+       development:
+         metadataUrl: https://cnoe.localtest.me:8443/keycloak/realms/cnoe/.well-known/openid-configuration
+diff --git a/packages/backend/package.json b/packages/backend/package.json
+index 35312f0..4f378c2 100644
+--- a/packages/backend/package.json
++++ b/packages/backend/package.json
+@@ -59,7 +59,8 @@
+     "fs-extra": "~11.2.0",
+     "js-yaml": "^4.1.0",
+     "node-gyp": "^10.0.0",
+-    "yaml": "^2.3.0"
++    "yaml": "^2.3.0",
++    "@backstage/plugin-scaffolder-backend-module-gitlab": "^0.8.0"
+   },
+   "devDependencies": {
+     "@backstage/backend-test-utils": "^1.11.1",
+diff --git a/packages/backend/src/index.ts b/packages/backend/src/index.ts
+index 9a118a9..1991860 100644
+--- a/packages/backend/src/index.ts
++++ b/packages/backend/src/index.ts
+@@ -28,6 +28,7 @@ backend.add(
+ if (process.env.GITHUB_TOKEN) {
+   backend.add(import('@backstage/plugin-scaffolder-backend-module-github'));
+ }
++backend.add(import('@backstage/plugin-scaffolder-backend-module-gitlab'));
+ 
+ // CNOE custom scaffolder actions (gitea publish, argocd, k8s-apply, sanitize, verify)
+ backend.add(cnoeScaffolderActions);
+diff --git a/packages/backend/src/modules/actions/k8s-apply.ts b/packages/backend/src/modules/actions/k8s-apply.ts
+index 3095e35..ddb3a98 100644
+--- a/packages/backend/src/modules/actions/k8s-apply.ts
++++ b/packages/backend/src/modules/actions/k8s-apply.ts
+@@ -34,15 +34,16 @@ interface ConfFile {
+   users: User[];
+ }
+ 
+-export const createKubernetesApply = (config: Config) => {
++export const createKubernetesApply = (config: Config, actionId = 'cnoe:kubernetes:apply') => {
+   return createTemplateAction<{
+     manifestString?: string;
+     manifestObject?: any;
+     manifestPath?: string;
++    manifest?: string;
+     namespaced: boolean;
+     clusterName?: string;
+   }>({
+-    id: 'cnoe:kubernetes:apply',
++    id: actionId,
+     schema: {
+       input: {
+         type: 'object',
+@@ -53,6 +54,11 @@ export const createKubernetesApply = (config: Config) => {
+             title: 'Manifest',
+             description: 'The manifest to apply in the cluster. Must be a string',
+           },
++          manifest: {
++            type: 'string',
++            title: 'Manifest',
++            description: 'Alias for manifestString',
++          },
+           manifestObject: {
+             type: 'object',
+             title: 'Manifest',
+@@ -86,8 +92,8 @@ export const createKubernetesApply = (config: Config) => {
+         ctx.workspacePath,
+         'to-be-applied.yaml',
+       );
+-      if (ctx.input.manifestString) {
+-        fs.writeFileSync(manifestPath, ctx.input.manifestString, {
++      if (ctx.input.manifestString || ctx.input.manifest) {
++        fs.writeFileSync(manifestPath, ctx.input.manifestString || ctx.input.manifest!, {
+           encoding: 'utf8',
+           mode: '600',
+         });
+@@ -194,7 +200,32 @@ export const createKubernetesApply = (config: Config) => {
+         }
+         return;
+       }
+-      throw new Error('please specify a valid cluster name');
++      // No clusterName specified — use in-cluster service account
++      let counter = 1;
++      for (const obj of objList) {
++        const manifestFilePath = resolveSafeChildPath(
++          ctx.workspacePath,
++          `to-be-applied-${counter}.yaml`,
++        );
++        fs.writeFileSync(manifestFilePath, yaml.dump(obj), {
++          encoding: 'utf8',
++          mode: '600',
++        });
++        if (obj.metadata.generateName !== undefined) {
++          await executeShellCommand({
++            command: 'kubectl',
++            args: ['create', '-f', manifestFilePath],
++            logStream: ctx.logStream,
++          });
++        } else {
++          await executeShellCommand({
++            command: 'kubectl',
++            args: ['apply', '-f', manifestFilePath],
++            logStream: ctx.logStream,
++          });
++        }
++        counter += 1;
++      }
+     },
+   });
+ };
+diff --git a/packages/backend/src/modules/scaffolder.ts b/packages/backend/src/modules/scaffolder.ts
+index cd83d25..a99b363 100644
+--- a/packages/backend/src/modules/scaffolder.ts
++++ b/packages/backend/src/modules/scaffolder.ts
+@@ -27,6 +27,7 @@ export const cnoeScaffolderActions = createBackendModule({
+           createPublishGiteaAction({ integrations, config }),
+           createArgoCDApp({ config, logger }),
+           createKubernetesApply(config),
++          createKubernetesApply(config, 'kube:apply'),
+           createSanitizeResource(),
+           createVerifyDependency(),
+         );
+diff --git a/packages/app/src/App.tsx b/packages/app/src/App.tsx
+index abb34f2..89021b8 100644
+--- a/packages/app/src/App.tsx
++++ b/packages/app/src/App.tsx
+@@ -22,7 +22,7 @@ import {
+ import { TechDocsAddons } from '@backstage/plugin-techdocs-react';
+ import { ReportIssue } from '@backstage/plugin-techdocs-module-addons-contrib';
+ import { UserSettingsPage } from '@backstage/plugin-user-settings';
+-import { apis } from './apis';
++import { apis, keycloakOIDCAuthApiRef } from './apis';
+ import { entityPage } from './components/catalog/EntityPage';
+ import { searchPage } from './components/search/SearchPage';
+ import { Root } from './components/Root';
+@@ -46,7 +46,7 @@ const app = createApp({
+   themes: [cnoeVibrantLightAppTheme, cnoeVibrantDarkAppTheme],
+   components: {
+     SignInPage: props => {
+-      return <SignInPage {...props} auto providers={['guest']} />;
++      return <SignInPage {...props} providers={[{ id: 'keycloak-oidc', title: 'Keycloak', message: 'Sign in with Keycloak SSO', apiRef: keycloakOIDCAuthApiRef }]} />;
+     },
+   },
+   bindRoutes({ bind }) {

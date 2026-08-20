@@ -949,7 +949,6 @@ spec:
 
               ./kubectl apply -f /tmp/secret.yaml
               echo "✓ Kubernetes secret created"
-
               # Push to AWS Secrets Manager (synchronous — no PushSecret race condition)
               echo "Pushing OIDC secrets to AWS Secrets Manager..."
               curl -sS "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip

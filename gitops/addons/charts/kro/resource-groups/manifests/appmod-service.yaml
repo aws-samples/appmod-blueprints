@@ -80,6 +80,9 @@ spec:
             - group: iam.services.k8s.aws
               kind: ""
               version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
     - id: eksroleselector
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == true}
@@ -99,6 +102,9 @@ spec:
             - group: eks.services.k8s.aws
               kind: ""
               version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
     - id: dynamodbroleselector
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == true}
@@ -118,6 +124,9 @@ spec:
             - group: dynamodb.services.k8s.aws
               kind: ""
               version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
     - id: dynamodbtable
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == true}
@@ -546,8 +555,10 @@ spec:
         spec:
           ingressClassName: platform
           rules:
-            - host: ${schema.spec.ingress.host}
-              http:
+            # Region-agnostic: no host pinning. Path-based routing on the shared
+            # platform ALB, so the app is reachable via any hostname (the NLB DNS in
+            # any region, CloudFront, or a custom domain). See PR #812.
+            - http:
                 paths:
                   - path: ${schema.spec.ingress.path}
                     pathType: Prefix
@@ -582,8 +593,10 @@ spec:
         spec:
           ingressClassName: platform
           rules:
-            - host: ${schema.spec.ingress.host}
-              http:
+            # Region-agnostic: no host pinning. Path-based routing on the shared
+            # platform ALB, so the app is reachable via any hostname (the NLB DNS in
+            # any region, CloudFront, or a custom domain). See PR #812.
+            - http:
                 paths:
                   - path: ${schema.spec.ingress.path}
                     pathType: Prefix

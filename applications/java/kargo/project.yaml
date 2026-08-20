@@ -5,13 +5,15 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 ---
-# Auto-promotion enabled for both stages. This is required because Kargo v1.7.5
-# has a webhook bug that blocks manually-created Promotion resources when stages
-# use inline `uses:` steps (the webhook incorrectly reports "Stage defines no
-# promotion steps"). The controller bypasses the webhook for auto-promotions,
-# so enabling auto-promotion is the reliable path.
+# Auto-promotion for dev only. Freight flows: Warehouse → dev (auto) → prod (MANUAL).
+# Prod is a manual promotion gate on purpose: it is the pedagogical point of module
+# 30.4 ("Production deploy with Kargo") — the participant promotes to prod deliberately.
 #
-# Freight flows: Warehouse → dev (auto) → prod (auto, after dev verifies).
+# Historical note: auto-promotion was previously enabled for prod too, to work around
+# a Kargo v1.7.5 admission-webhook bug that rejected manually-created Promotions on
+# stages using inline `uses:` steps ("Stage defines no promotion steps"). That bug is
+# NOT present in the Kargo version shipped here (v1.11.0) — verified: a server-side
+# dry-run of a manual Promotion on the prod stage is accepted — so prod is a manual gate.
 apiVersion: kargo.akuity.io/v1alpha1
 kind: ProjectConfig
 metadata:
@@ -24,4 +26,4 @@ spec:
     autoPromotionEnabled: true
   - stageSelector:
       name: prod
-    autoPromotionEnabled: true
+    autoPromotionEnabled: false

@@ -17,7 +17,7 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: crossplane-crd-wait-sa
+  name: {{ .Values.aws.clusterName }}-crossplane-crd-wait-sa
   namespace: {{ .Release.Namespace }}
   annotations:
     argocd.argoproj.io/hook: PreSync
@@ -51,13 +51,13 @@ roleRef:
   name: {{ .Values.aws.clusterName }}-crossplane-crd-wait
 subjects:
   - kind: ServiceAccount
-    name: crossplane-crd-wait-sa
+    name: {{ .Values.aws.clusterName }}-crossplane-crd-wait-sa
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: crossplane-crd-wait
+  name: {{ .Values.aws.clusterName }}-crossplane-crd-wait
   namespace: {{ .Release.Namespace }}
   annotations:
     argocd.argoproj.io/hook: PreSync
@@ -66,10 +66,14 @@ metadata:
 spec:
   backoffLimit: 1
   activeDeadlineSeconds: {{ add (default 600 (default dict .Values.crdWait).timeoutSeconds) 60 }}
-  ttlSecondsAfterFinished: 60
+  # NOTE: Do NOT set ttlSecondsAfterFinished here. The k8s TTL controller would
+  # race Argo CD's hook lifecycle (hook-delete-policy) and could delete this Job
+  # before Argo CD records its terminal status, leaving the sync stuck forever on
+  # "waiting for completion of hook Job". Argo CD (hook-delete-policy) is the sole
+  # owner of this Job's lifecycle.
   template:
     spec:
-      serviceAccountName: crossplane-crd-wait-sa
+      serviceAccountName: {{ .Values.aws.clusterName }}-crossplane-crd-wait-sa
       restartPolicy: Never
       containers:
         - name: wait
