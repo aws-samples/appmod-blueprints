@@ -546,8 +546,10 @@ spec:
         spec:
           ingressClassName: platform
           rules:
-            - host: ${schema.spec.ingress.host}
-              http:
+            # Region-agnostic: no host pinning. Path-based routing on the shared
+            # platform ALB, so the app is reachable via any hostname (the NLB DNS in
+            # any region, CloudFront, or a custom domain). See PR #812.
+            - http:
                 paths:
                   - path: ${schema.spec.ingress.path}
                     pathType: Prefix
@@ -582,8 +584,10 @@ spec:
         spec:
           ingressClassName: platform
           rules:
-            - host: ${schema.spec.ingress.host}
-              http:
+            # Region-agnostic: no host pinning. Path-based routing on the shared
+            # platform ALB, so the app is reachable via any hostname (the NLB DNS in
+            # any region, CloudFront, or a custom domain). See PR #812.
+            - http:
                 paths:
                   - path: ${schema.spec.ingress.path}
                     pathType: Prefix
