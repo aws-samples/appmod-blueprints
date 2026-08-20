@@ -1346,12 +1346,19 @@ tasks:
           # Ensure the file exists with a clusters: map (may already have other spokes)
           [ -f "$KRO_VALUES" ] || printf 'clusters: {}\n' > "$KRO_VALUES"
           # Merge this cluster into the existing map (preserves other spokes already written)
+          # Environment derived from the cluster name (dev/prod/staging/test),
+          # defaulting to dev — consistent with the fleet member file below and the
+          # Crossplane path. Previously hardcoded "prod", which mislabeled the dev
+          # spoke as environment=prod so every spoke loaded the wrong
+          # overlays/environments/<env> tier (e.g. pod-identities), and made the two
+          # spoke apps collide on shared hub resources.
+          ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
           OCTET=$OCTET CLUSTER={{.CLUSTER}} AWS_REGION={{.AWS_REGION}} K8S_VERSION={{.K8S_VERSION}} \
-          AWS_ACCOUNT_ID={{.AWS_ACCOUNT_ID}} RESOURCE_PREFIX={{.RESOURCE_PREFIX}} \
+          AWS_ACCOUNT_ID={{.AWS_ACCOUNT_ID}} RESOURCE_PREFIX={{.RESOURCE_PREFIX}} ENV="$ENV" \
           yq -i '.clusters.[env(CLUSTER)] = {
             "clusterName": env(CLUSTER),
             "tenant": "workshop",
-            "environment": "prod",
+            "environment": env(ENV),
             "region": env(AWS_REGION),
             "k8sVersion": env(K8S_VERSION),
             "accountId": (env(AWS_ACCOUNT_ID) | . tag = "!!str"),
