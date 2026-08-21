@@ -80,6 +80,7 @@ spec:
             - group: iam.services.k8s.aws
               kind: ""
               version: ""
+          # Scope to only ACK resources owned by this Kro instance (bug #813).
           resourceLabelSelector:
             matchLabels:
               kro.run/instance-name: ${schema.metadata.name}
