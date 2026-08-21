@@ -321,37 +321,114 @@ def get_console_signin_url(destination: str) -> str:
 # Keycloak helpers
 # ---------------------------------------------------------------------------
 
-def keycloak_token(kc_base: str, password: str) -> str:
-    resp = requests.post(
-        f"{kc_base}/realms/master/protocol/openid-connect/token",
-        data={"username": "admin", "password": password,
-              "grant_type": "password", "client_id": "admin-cli"},
-        verify=False,
+def keycloak_token(
+    kc_base: str,
+    password: str,
+    *,
+    max_attempts: int = 15,
+    base_delay: float = 4.0,
+    max_delay: float = 30.0,
+) -> str:
+    """Fetch a Keycloak admin token, retrying on transient errors.
+
+    Keycloak frequently returns HTTP 5xx (or drops the connection) while it is
+    mid rolling-restart or still re-forming its Infinispan/jgroups cluster — for
+    example when ArgoCD's first sync restarts the StatefulSet right after
+    bootstrap. In that window the admin REST endpoint can throw an internal
+    NullPointerException and answer 500 {"error":"unknown_error"}. These are
+    transient, so retry with exponential backoff (~6 min total by default).
+
+    Fail fast on 400/401/403: a bad admin password or misconfigured admin-cli
+    client will never succeed by retrying.
+    """
+    url = f"{kc_base}/realms/master/protocol/openid-connect/token"
+    data = {
+        "username": "admin", "password": password,
+        "grant_type": "password", "client_id": "admin-cli",
+    }
+    last_err = "no attempt made"
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.post(url, data=data, verify=False, timeout=30)
+        except requests.exceptions.RequestException as exc:
+            last_err = f"connection error: {exc}"
+            resp = None
+
+        if resp is not None:
+            if resp.status_code == 200:
+                body = resp.json()
+                if "access_token" not in body:
+                    raise RuntimeError(
+                        f"Keycloak token response missing 'access_token': {body}"
+                    )
+                if attempt > 1:
+                    print(
+                        f"Keycloak admin token acquired on attempt {attempt}/{max_attempts}.",
+                        file=sys.stderr,
+                    )
+                return body["access_token"]
+            if resp.status_code in (400, 401, 403):
+                # Non-transient: credentials / client config. Retrying won't help.
+                raise RuntimeError(
+                    f"Keycloak admin token request failed: HTTP {resp.status_code} — "
+                    f"{resp.text[:300]}. A 401/403 means the admin password is wrong "
+                    f"or the admin-cli client is misconfigured."
+                )
+            last_err = f"HTTP {resp.status_code} — {resp.text[:200]}"
+
+        if attempt < max_attempts:
+            delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            print(
+                f"Keycloak admin token attempt {attempt}/{max_attempts} failed "
+                f"({last_err}); Keycloak may be mid-restart — retrying in {delay:.0f}s...",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+
+    raise RuntimeError(
+        f"Keycloak admin token request failed after {max_attempts} attempts: {last_err}. "
+        f"A persistent 500 usually means Keycloak cannot reach its PostgreSQL database "
+        f"(check that keycloak + postgresql pods are Running); a 401 means the admin "
+        f"password is wrong."
     )
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"Keycloak admin token request failed: HTTP {resp.status_code} — "
-            f"{resp.text[:300]}. A 500 usually means Keycloak cannot reach its "
-            f"PostgreSQL database (check that keycloak + postgresql pods are Running); "
-            f"a 401 means the admin password is wrong."
-        )
-    body = resp.json()
-    if "access_token" not in body:
-        raise RuntimeError(f"Keycloak token response missing 'access_token': {body}")
-    return body["access_token"]
 
 
-def keycloak_api(method, url, token, **kwargs):
-    resp = requests.request(
-        method, url,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        verify=False, **kwargs,
-    )
-    if resp.status_code == 409:
-        print(f"Already exists: {url}", file=sys.stderr)
-        return None
-    resp.raise_for_status()
-    return resp
+def keycloak_api(method, url, token, *, max_attempts: int = 6, base_delay: float = 4.0, **kwargs):
+    """Call a Keycloak admin API, retrying transient 5xx / connection errors.
+
+    Same rationale as keycloak_token(): the admin API can briefly 5xx while
+    Keycloak restarts. 409 (already exists) is treated as success/no-op.
+    """
+    last_err = "no attempt made"
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.request(
+                method, url,
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                verify=False, timeout=30, **kwargs,
+            )
+        except requests.exceptions.RequestException as exc:
+            last_err = f"connection error: {exc}"
+            if attempt < max_attempts:
+                time.sleep(min(base_delay * attempt, 20.0))
+                continue
+            raise RuntimeError(f"Keycloak API {method} {url} failed: {last_err}")
+
+        if resp.status_code == 409:
+            print(f"Already exists: {url}", file=sys.stderr)
+            return None
+        if resp.status_code >= 500 and attempt < max_attempts:
+            last_err = f"HTTP {resp.status_code} — {resp.text[:200]}"
+            print(
+                f"Keycloak API {method} {url} attempt {attempt}/{max_attempts} "
+                f"({last_err}); retrying...",
+                file=sys.stderr,
+            )
+            time.sleep(min(base_delay * attempt, 20.0))
+            continue
+        resp.raise_for_status()
+        return resp
+    raise RuntimeError(f"Keycloak API {method} {url} failed after {max_attempts} attempts: {last_err}")
 
 
 def create_keycloak_saml_client(keycloak_dns, keycloak_password, aws_metadata_xml):

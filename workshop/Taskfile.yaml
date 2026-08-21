@@ -644,6 +644,13 @@ tasks:
               printf '{{.C_ERR}}⚠ Keycloak platform SAML descriptor not available after 5min — skipping IDC config. Run: task idc:configure{{.C_RESET}}\n'
             else
             printf '{{.C_INFO}}  Keycloak reachable (HTTP %s) — running IDC configuration...{{.C_RESET}}\n' "$KC_STATUS"
+            # Belt-and-suspenders with the script's admin-token retry: wait for the
+            # Keycloak/Postgres StatefulSet rollouts to settle so we do not start
+            # configuration in the middle of an ArgoCD-triggered restart (which
+            # returns transient 500s on the admin API). Non-fatal — the script
+            # retries transient 5xx anyway.
+            kubectl -n keycloak rollout status statefulset/keycloak --timeout=180s 2>/dev/null || true
+            kubectl -n keycloak rollout status statefulset/postgresql --timeout=120s 2>/dev/null || true
             if python3 {{.REPO}}/scripts/configure_identity_center.py \
                 --region {{.AWS_REGION}} \
                 --instance-id {{.IDC_INSTANCE_ID}} \
@@ -660,6 +667,15 @@ tasks:
           printf '{{.C_OK}}✓ IDC configured with Keycloak federation and SCIM sync.{{.C_RESET}}\n'
         else
           printf '{{.C_ERR}}⚠ IDC configuration failed. Run manually: task workshop:idc:configure{{.C_RESET}}\n'
+          # Record a non-fatal warning so the environment status can surface that
+          # SSO/IDC federation did not complete. Install intentionally continues
+          # (ray/model/spoke steps still run) and CFN stays CREATE_COMPLETE — but
+          # this param lets InitScriptStatus report the degraded SSO state instead
+          # of a misleading "READY". Consumer: team-stack InitStatusChecker
+          # (see follow-up in platform-engineering-on-eks).
+          aws ssm put-parameter --name "/{{.RESOURCE_PREFIX}}/init-warning" \
+            --value "IDC/Keycloak SSO federation failed during install. ArgoCD SSO will not work until you run: task workshop:idc:configure" \
+            --type String --overwrite --region {{.AWS_REGION}} 2>/dev/null || true
         fi
       - printf '{{.C_STEP}}▸ Syncing admin group members into IDC admin group...{{.C_RESET}}\n'
       - |
