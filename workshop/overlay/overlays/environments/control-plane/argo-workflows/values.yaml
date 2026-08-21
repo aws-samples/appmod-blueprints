@@ -1,0 +1,22 @@
+# Workshop: pin argo-workflows (controller + server) to the tuned system-peeks pool.
+# Generic default is the built-in `system` pool.
+#
+# system-peeks carries the CriticalAddonsOnly:NoSchedule taint, so the toleration
+# is required in addition to the nodeSelector (otherwise the pods stay Pending).
+# The local argo-workflows chart now templates nodeSelector/tolerations from these
+# values (previously it hard-coded nodeSelector: kubernetes.io/os=linux and ignored
+# them, so argo-server / workflow-controller landed on general-purpose-peeks).
+controller:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+      effect: NoSchedule
+server:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+      effect: NoSchedule

@@ -1,0 +1,13 @@
+# Workshop: pin Kargo (all components) to the tuned system-peeks pool.
+# This local chart wraps the upstream Kargo chart under the `kargo` key; the upstream
+# chart exposes global.nodeSelector / global.tolerations as the default for every Kargo
+# pod. system-peeks carries the CriticalAddonsOnly:NoSchedule taint, so the toleration
+# is required alongside the nodeSelector.
+kargo:
+  global:
+    nodeSelector:
+      karpenter.sh/nodepool: system-peeks
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+        effect: NoSchedule
