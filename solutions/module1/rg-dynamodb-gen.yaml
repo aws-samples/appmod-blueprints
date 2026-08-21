@@ -30,8 +30,14 @@ spec:
             - ${schema.metadata.namespace}
         resourceTypeSelector:
           - group: dynamodb.services.k8s.aws
-            kind: ""
-            version: ""
+            kind: Table
+            version: v1alpha1
+        # Scope this selector to only the Table owned by this Kro instance.
+        # Without this, every DynamoDBTable instance creates a namespace-wide selector,
+        # causing ACK to enter an infinite read loop on any second instance (bug #813).
+        resourceLabelSelector:
+          matchLabels:
+            kro.run/instance-name: ${schema.metadata.name}
   - id: dynamodbtable
     readyWhen:
       - ${dynamodbtable.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
