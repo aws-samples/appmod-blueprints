@@ -1,0 +1,5 @@
+# Workshop: pin the image-prepuller DaemonSet/Job to general-purpose-peeks
+# (it warms images on the general-purpose workshop pool). Generic default is
+# the built-in `general-purpose` pool.
+nodeSelector:
+  karpenter.sh/nodepool: general-purpose-peeks

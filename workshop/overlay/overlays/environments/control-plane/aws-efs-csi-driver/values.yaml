@@ -1,0 +1,6 @@
+# Workshop: pin the aws-efs-csi-driver controller to the tuned system-peeks pool.
+# Deep-merges onto controller.nodeSelector (keeps the compute-type/os keys).
+# Generic default is the built-in `system` pool.
+controller:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks

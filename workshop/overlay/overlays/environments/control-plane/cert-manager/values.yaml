@@ -1,0 +1,11 @@
+# Workshop: pin cert-manager (controller + cainjector + webhook) to the tuned
+# system-peeks pool (do-not-disrupt daytime), matching keycloak/backstage.
+# Generic default is the built-in `system` pool. Deep-merges onto configs/cert-manager/values.yaml.
+nodeSelector:
+  karpenter.sh/nodepool: system-peeks
+cainjector:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks
+webhook:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks

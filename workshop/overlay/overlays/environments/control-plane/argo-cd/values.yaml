@@ -1,0 +1,6 @@
+# Workshop: pin Argo CD to the tuned system-peeks pool. Deep-merges onto
+# global.nodeSelector in configs/argo-cd/values.yaml (keeps the compute-type/os keys).
+# Generic default is the built-in `system` pool.
+global:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks

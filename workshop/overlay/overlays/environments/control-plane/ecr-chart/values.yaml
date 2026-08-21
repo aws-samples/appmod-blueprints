@@ -1,0 +1,5 @@
+# Workshop: pin the ECR ACK controller to the tuned system-peeks pool.
+# Generic default is the built-in `system` pool.
+deployment:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks

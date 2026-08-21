@@ -1,0 +1,6 @@
+# Workshop: pin kro to the tuned system-peeks pool. Deep-merges onto
+# deployment.nodeSelector (keeps the compute-type/os keys).
+# Generic default is the built-in `system` pool.
+deployment:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks

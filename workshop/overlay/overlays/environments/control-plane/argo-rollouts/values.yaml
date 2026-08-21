@@ -1,0 +1,8 @@
+# Workshop: pin argo-rollouts (controller + dashboard) to the tuned system-peeks pool.
+# Generic default is the built-in `system` pool.
+controller:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks
+dashboard:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks

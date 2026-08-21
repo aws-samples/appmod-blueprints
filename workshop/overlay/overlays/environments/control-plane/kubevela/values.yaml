@@ -1,0 +1,11 @@
+# Workshop: pin kubevela (vela-core + cluster-gateway + workflow) to the tuned
+# system-peeks pool. Generic default is the built-in `system` pool.
+vela-core:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks
+cluster-gateway:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks
+workflow:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks
