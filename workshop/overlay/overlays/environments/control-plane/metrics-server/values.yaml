@@ -1,6 +1,0 @@
-# Workshop: pin metrics-server to the tuned system-peeks pool.
-# The CriticalAddonsOnly toleration is already provided by the base config
-# (gitops/addons/configs/metrics-server/values.yaml), so only the nodeSelector is
-# needed here. The metrics-server chart honors the top-level nodeSelector key.
-nodeSelector:
-  karpenter.sh/nodepool: system-peeks
