@@ -3149,7 +3149,15 @@ spec:
         - mountPath: /tmp
           name: tmp
       nodeSelector:
+{{- if .Values.server.nodeSelector }}
+{{ toYaml .Values.server.nodeSelector | indent 8 }}
+{{- else }}
         kubernetes.io/os: linux
+{{- end }}
+{{- with .Values.server.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
       securityContext:
         runAsNonRoot: true
       serviceAccountName: argo-server
@@ -3207,7 +3215,15 @@ spec:
           readOnlyRootFilesystem: true
           runAsNonRoot: true
       nodeSelector:
+{{- if .Values.controller.nodeSelector }}
+{{ toYaml .Values.controller.nodeSelector | indent 8 }}
+{{- else }}
         kubernetes.io/os: linux
+{{- end }}
+{{- with .Values.controller.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
       priorityClassName: workflow-controller
       securityContext:
         runAsNonRoot: true

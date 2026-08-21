@@ -1,0 +1,12 @@
+# Workshop: pin aws-load-balancer-controller to the tuned system-peeks pool.
+# Placed in the workshop `configs` layer (not environments/control-plane) so it applies
+# to ALL workshop clusters — hub AND spokes (peeks-spoke-dev/prod) — which all now have
+# a system-peeks pool (see workshop/overlay/configs/platform-manifests-bootstrap).
+# system-peeks carries the CriticalAddonsOnly:NoSchedule taint, so the toleration is
+# required alongside the nodeSelector. Upstream eks-charts chart honors both top-level keys.
+nodeSelector:
+  karpenter.sh/nodepool: system-peeks
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+    effect: NoSchedule

@@ -1,98 +1,11 @@
-# Workshop-specific tuned Karpenter NodePools.
+# Workshop tuned Karpenter NodePools (general-purpose-peeks / system-peeks) are now
+# defined ONCE in the shared workshop configs layer so they apply to ALL clusters
+# (hub AND spokes):
 #
-# These live in the WORKSHOP overlay (not the generic solution) because their
-# reconciliation policy is workshop-specific: a daytime "do-not-disrupt" budget
-# (nodes: "0") with a nightly consolidation window, plus a 48h termination grace,
-# so Karpenter does not consolidate/recycle platform nodes while a (possibly
-# pre-provisioned, multi-day) workshop is in use. Rendered by the generic
-# platform-manifests-bootstrap chart from this caller-supplied list.
+#   workshop/overlay/configs/platform-manifests-bootstrap/values.yaml
 #
-# The built-in system/general-purpose pools remain enabled (they provide the
-# `default` NodeClass these pools reference); the workshop pins its critical
-# addons to these via the global.systemNodepool knob in the per-addon overlays.
-customNodepools:
-  pools:
-    - name: general-purpose-peeks
-      spec:
-        # Prefer this tuned pool over the built-in general-purpose (weight 0) so
-        # unpinned workloads land here and inherit the do-not-disrupt budget instead
-        # of the built-in's default consolidation. Adjust to your own precedence.
-        weight: 100
-        disruption:
-          consolidationPolicy: WhenEmptyOrUnderutilized
-          consolidateAfter: 5m
-          budgets:
-            - nodes: "0"
-            - nodes: "30%"
-              schedule: "0 20 * * *"
-              duration: 2h
-        template:
-          metadata:
-            labels:
-              node-type: general-purpose
-              managed-by: peeks
-          spec:
-            nodeClassRef:
-              group: eks.amazonaws.com
-              kind: NodeClass
-              name: default
-            requirements:
-              - key: "karpenter.sh/capacity-type"
-                operator: In
-                values: ["on-demand"]
-              - key: "kubernetes.io/arch"
-                operator: In
-                values: ["amd64"]
-              - key: "eks.amazonaws.com/instance-category"
-                operator: In
-                values: ["c", "m", "r"]
-              - key: "eks.amazonaws.com/instance-generation"
-                operator: Gt
-                values: ["5"]
-              - key: "eks.amazonaws.com/instance-size"
-                operator: In
-                values: ["xlarge", "2xlarge", "4xlarge", "8xlarge"]
-            terminationGracePeriod: 48h
-    - name: system-peeks
-      spec:
-        # Prefer this tuned system pool over the built-in system (weight 0) for
-        # critical add-ons that tolerate the CriticalAddonsOnly taint. Adjust to taste.
-        weight: 100
-        disruption:
-          consolidationPolicy: WhenEmptyOrUnderutilized
-          consolidateAfter: 5m
-          budgets:
-            - nodes: "0"
-            - nodes: "30%"
-              schedule: "0 20 * * *"
-              duration: 2h
-        template:
-          metadata:
-            labels:
-              node-type: system
-              managed-by: peeks
-          spec:
-            nodeClassRef:
-              group: eks.amazonaws.com
-              kind: NodeClass
-              name: default
-            requirements:
-              - key: "karpenter.sh/capacity-type"
-                operator: In
-                values: ["on-demand"]
-              - key: "kubernetes.io/arch"
-                operator: In
-                values: ["amd64"]
-              - key: "eks.amazonaws.com/instance-category"
-                operator: In
-                values: ["c", "m", "r"]
-              - key: "eks.amazonaws.com/instance-generation"
-                operator: Gt
-                values: ["5"]
-              - key: "eks.amazonaws.com/instance-size"
-                operator: In
-                values: ["xlarge", "2xlarge"]
-            taints:
-              - key: CriticalAddonsOnly
-                effect: NoSchedule
-            terminationGracePeriod: 48h
+# They previously lived here, under overlays/environments/control-plane, which is
+# applied to the hub only — that is why the spokes never rendered the -peeks pools.
+# This file is intentionally kept (as an empty override) because the hub
+# platform-manifests-bootstrap Application still references this valueFile path;
+# add hub-only NodePool overrides here if ever needed.
