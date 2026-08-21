@@ -665,6 +665,12 @@ tasks:
         esac
         if [ "$IDC_SUCCESS" = true ]; then
           printf '{{.C_OK}}✓ IDC configured with Keycloak federation and SCIM sync.{{.C_RESET}}\n'
+          # Clear any stale warning from a previous failed attempt so the
+          # environment status reflects the now-healthy SSO state (idc:configure
+          # is idempotent and re-runnable, so a warning may linger from an
+          # earlier transient failure).
+          aws ssm put-parameter --name "/{{.RESOURCE_PREFIX}}/init-warning" \
+            --value "none" --type String --overwrite --region {{.AWS_REGION}} 2>/dev/null || true
         else
           printf '{{.C_ERR}}⚠ IDC configuration failed. Run manually: task workshop:idc:configure{{.C_RESET}}\n'
           # Record a non-fatal warning so the environment status can surface that
