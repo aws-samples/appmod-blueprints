@@ -1,0 +1,13 @@
+# Code owners for aws-samples/appmod-blueprints
+#
+# Every path is owned by the core contributors listed below. Combined with branch
+# protection on `main` set to require 1 approving review AND code owner review, a
+# single approval from any one of these people is enough to merge.
+#
+# Two constraints to keep in mind:
+#   - A code owner must retain write access to this repository, otherwise their
+#     approval does not count toward the requirement.
+#   - A code owner cannot approve their own pull request, so a PR opened by one of
+#     these five needs an approval from one of the other four.
+
+* @shapirov103 @allamand @hmuthusamy @punkwalker @elamaran11
