@@ -235,10 +235,12 @@ spec:
        kind: Policy
        metadata:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
-          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
-          # This prevents accidental deletion of IAM policies that may be referenced by other resources
-          # annotations:
-          #   services.k8s.aws/deletion-policy: retain
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/adoption-fields: |
+              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy"}
+          # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
+          # the AWS policy when deleting this Kro instance (may be referenced by other resources)
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}

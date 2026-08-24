@@ -1049,10 +1049,15 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-ack-iam"
-          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
-          # This prevents accidental deletion of IAM policies that may be referenced by other resources
-          # annotations:
-          #   services.k8s.aws/deletion-policy: retain
+          annotations:
+            # Adopt a pre-existing policy (e.g. from a prior install) instead of failing
+            # CreatePolicy with 409 EntityAlreadyExists. Policies are keyed by ARN, which
+            # ACK cannot derive from spec.name alone, so adoption-fields supplies it.
+            services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/adoption-fields: |
+              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-ack-iam"}
+            # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
+            # the AWS policy when deleting this Kro instance (may be referenced by other resources)
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -1190,6 +1195,9 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/adoption-fields: |
+              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-lbc"}
         spec:
           name: "${schema.spec.name}-lbc"
           policyDocument: |
@@ -1412,6 +1420,9 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/adoption-fields: |
+              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-keycloak-config"}
         spec:
           name: "${schema.spec.name}-keycloak-config"
           policyDocument: |
@@ -1757,10 +1768,12 @@ spec:
         metadata:
           namespace: "${schema.spec.name}"
           name: "${schema.spec.name}-cni-metrics-helper-policy"
-          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
-          # This prevents accidental deletion of IAM policies that may be referenced by other resources
-          # annotations:
-          #   services.k8s.aws/deletion-policy: retain
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/adoption-fields: |
+              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-cni-metrics-helper-policy"}
+            # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
+            # the AWS policy when deleting this Kro instance (may be referenced by other resources)
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
