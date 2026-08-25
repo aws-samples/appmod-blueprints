@@ -46,6 +46,11 @@ tasks:
     cmds:
       - task: "{{.PROVIDER}}:validate"
 
+  test-pod-identity-drift:
+    desc: Assert crossplane-pod-identity and ack-pod-identity have not diverged
+    cmds:
+      - python3 {{.ROOT_DIR}}/platform/validation/pod-identity/test_chart_drift.py
+
   install:
     desc: Bootstrap the platform using the configured cluster provider
     vars:

@@ -1,0 +1,59 @@
+{{- range $name, $identity := .Values.identities }}
+{{- if not (eq (toString $identity.enabled) "false") }}
+---
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: Role
+metadata:
+  name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity-role
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    services.k8s.aws/region: {{ $.Values.aws.region }}
+    # IAM roles are keyed by name, which ACK derives from spec.name, so
+    # adopt-or-create alone is sufficient -- no adoption-fields needed.
+    services.k8s.aws/adoption-policy: adopt-or-create
+    # Never delete the underlying IAM role on prune. The role may be shared with
+    # bootstrap/Terraform-created PodIdentityAssociations and pruning here must
+    # never break ESO/LBC/external-dns/keycloak.
+    services.k8s.aws/deletion-policy: retain
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  name: {{ $.Values.aws.clusterName }}-{{ $identity.roleName }}
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "Service": "pods.eks.amazonaws.com"
+          },
+          "Action": [
+            "sts:AssumeRole",
+            "sts:TagSession"
+          ]
+        }
+      ]
+    }
+  {{- if $identity.managedPolicyArns }}
+  policies:
+    {{- range $identity.managedPolicyArns }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  {{- if $identity.policy }}
+  # Reference the Policy CR rather than building its ARN: ACK resolves the ARN
+  # once the Policy is synced, which also gives us correct ordering for free.
+  policyRefs:
+    - from:
+        name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity-policy
+  {{- end }}
+  {{- if $identity.tags }}
+  tags:
+    {{- range $k, $v := $identity.tags }}
+    - key: {{ $k }}
+      value: {{ $v | quote }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}

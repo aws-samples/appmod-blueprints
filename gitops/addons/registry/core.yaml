@@ -117,6 +117,90 @@ pod_identities:
     syncOptions:
       - CreateNamespace=true
 
+# ACK mirror of pod_identities, for clusters provisioned by the kro-ack provider.
+#
+# Why a second chart instead of parameterizing the first: the repo already models the
+# crossplane/kro-ack duality as one chart per backend (abstractions/crossplane vs
+# abstractions/kro, clusters-crossplane.yaml vs clusters-kro.yaml). Only the rendered CRD
+# kinds differ -- iam.services.k8s.aws/eks.services.k8s.aws instead of *.aws.upbound.io.
+# The identities and their IAM policy documents are kept identical to
+# crossplane-pod-identity (a CI drift test enforces it). See
+# docs/platform/ack-pod-identity-design.md.
+#
+# Selection is the exact complement of pod_identities above: that entry excludes
+# provider=kro-ack, this one requires it, so a cluster gets exactly ONE of the two and
+# the 409 ResourceInUseException conflict on a shared SA cannot recur.
+#
+# namespace = cluster name (NOT crossplane-system): ACK resolves which IAM role to assume
+# per namespace via IAMRoleSelector/CARM, and the existing selectors (from multi-acct) are
+# keyed on namespaceSelector.names = <cluster name>. destinationHub keeps the CRs on the
+# hub, where the ACK capability reconciles them, matching the EksCluster RGD convention.
+ack_pod_identities:
+  namespace: '{{.metadata.annotations.aws_cluster_name}}'
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/ack-pod-identity'
+  destinationHub: true
+  goTemplateOptions:
+    - "missingkey=zero"
+  annotationsAppSet:
+    # Wave 4, same as pod_identities: before the controllers that consume these
+    # identities (lbc/external-dns/keycloak at wave 5). A PreSync CRD-wait hook in the
+    # chart additionally gates the apply on the ACK CRDs being Established.
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: environment
+        operator: Exists
+      - key: provider
+        operator: In
+        values: ["kro-ack"]
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+    iamRoleSelectors:
+      enabled: true
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+    identities:
+      # Deliberately mirrors pod_identities: eso is NOT gated here. The hub reuses an
+      # existing role for ESO and its association is bootstrap-owned; spokes enable eso
+      # via the env overlay. Taking ESO over here would churn the identity that feeds
+      # every secret on the platform. Consequence: the externalSecrets block must STAY in
+      # rg-eks.yaml until eso is explicitly enabled via overlay on kro-ack clusters.
+      lbc:
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
+      external-dns:
+        enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      keycloak:
+        enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
+  ignoreDifferences:
+    # ACK writes reconciliation state into /status; never diff on it.
+    - group: iam.services.k8s.aws
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.services.k8s.aws
+      kind: Policy
+      jsonPointers:
+        - /status
+    - group: eks.services.k8s.aws
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+
 argocd:
   namespace: argocd
   chartName: argo-cd
