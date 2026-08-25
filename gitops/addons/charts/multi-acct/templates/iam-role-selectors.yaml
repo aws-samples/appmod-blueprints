@@ -1,4 +1,24 @@
-{{- range $key, $value := .Values.clusters }}
+{{/*
+Effective cluster map = .Values.clusters PLUS the cluster this chart runs on.
+
+Why self-coverage: multi-acct is the sole owner of IAMRoleSelector (CARM), and ACK cannot
+reconcile ANY resource in a namespace that no selector covers -- it creates the CR and then
+silently never reconciles it (no error, no events). `.Values.clusters` is populated only for
+SPOKES (by the spokes:enable-* task, in the fleet-config overlay), so without this the hub
+itself would never be covered and every hub-side ACK resource -- notably the
+ack-pod-identity addon -- would fail silently on a from-scratch install.
+
+Derived from global.clusterName rather than a hardcoded name or the resource prefix: cluster
+names are customer-supplied and arbitrary. An explicit entry in .Values.clusters always wins
+(hasKey guard), so an operator can still pin a different account for this cluster.
+*/}}
+{{- $all := deepCopy (default dict .Values.clusters) }}
+{{- $self := default "" .Values.global.clusterName }}
+{{- $acct := default "" .Values.global.accountId }}
+{{- if and $self $acct (not (hasKey $all $self)) }}
+{{-   $_ := set $all $self $acct }}
+{{- end }}
+{{- range $key, $value := $all }}
 ---
 apiVersion: services.k8s.aws/v1alpha1
 kind: IAMRoleSelector
