@@ -156,9 +156,13 @@ ack_pod_identities:
     # "no EC2 IMDS role found" until the podidentity-pod-restart CronJob rescues it.
     # Wave -4 buys the whole -4..5 window instead.
     #
-    # Lower bound: must stay AFTER multi-acct (wave -5), which emits the IAMRoleSelectors
-    # the spokes rely on (this chart ships its own only where multi-acct does not cover the
-    # namespace -- see iamRoleSelectors.enabled and issue #813).
+    # Lower bound: must stay AFTER multi-acct (wave -5). multi-acct is the SOLE owner of
+    # IAMRoleSelectors (CARM), and ACK cannot reconcile this chart's CRs without a selector
+    # covering their namespace for iam+eks. INVARIANT: every cluster running this addon must
+    # appear in multi-acct's `clusters` map. This chart used to ship its own selectors as a
+    # stopgap for the hub; that duplicated ownership and risked the issue #813 failure mode
+    # (two selectors with an identical (namespace, group) scope put the ACK controller in an
+    # infinite reconcile loop -- empty status, zero API calls, silent).
     argocd.argoproj.io/sync-wave: '-4'
   selector:
     matchExpressions:
@@ -172,9 +176,6 @@ ack_pod_identities:
       region: '{{.metadata.annotations.aws_region}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
-    iamRoleSelectors:
-      enabled: true
-      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     identities:
       # SCOPE BOUNDARY: eso is deliberately NOT managed here -- the EksCluster RGD keeps
       # ownership of external-secrets/external-secrets-sa. This is not just caution, the

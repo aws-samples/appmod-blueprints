@@ -12,12 +12,6 @@ aws:
   region: ''
   clusterName: ''
   accountId: ''
-iamRoleSelectors:
-  enabled: true
-  resourcePrefix: peeks
-  groups:
-  - iam.services.k8s.aws
-  - eks.services.k8s.aws
 crdWait:
   enabled: true
   timeoutSeconds: 600

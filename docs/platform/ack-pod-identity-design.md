@@ -17,7 +17,7 @@ superset) — preparation, not sequencing, is what saved it.
 
 Related issues: **#775** (hub self-adoption / CAPI pivot — the adoption semantics
 established here answer its step 3), **#813** (duplicate IAMRoleSelector scope → infinite
-ACK reconcile loop; makes `iamRoleSelectors.enabled=false` mandatory on the spokes),
+ACK reconcile loop; why multi-acct is now the SOLE owner of IAMRoleSelectors),
 **#647** (GitOps diff preview on PRs — natural home for the drift test).
 
 Scope was REDUCED as a result: only **4** identities migrate (eso, lbc, external-dns,
@@ -40,8 +40,8 @@ Consequences, both implemented:
   keyed on.
 - The chart ships its own `IAMRoleSelector`s (wave -5) for the iam+eks groups, pointing at
   `<prefix>-cluster-mgmt-{iam,eks}` — the same roles `multi-acct` uses (both verified to
-  exist). Gated by `iamRoleSelectors.enabled` so it can be turned off if `multi-acct` is
-  extended to cover the namespace.
+  exist). SUPERSEDED: the chart no longer ships selectors at all -- see "Selector
+  ownership" below.
 
 ## Files added / changed
 
@@ -244,12 +244,8 @@ serviceAccount. Two ACK CRs targeting one association would fight over `roleARN`
 4. **Set `addons.provider = "kro-ack"`** in `peeks-spoke-dev/config` and
    `peeks-spoke-prod/config` (Secrets Manager) → the chart is selected and adopts the
    retained resources.
-5. **Set `iamRoleSelectors.enabled: false` for the spokes.** MANDATORY, not cosmetic:
-   `multi-acct` already emits iam+eks selectors for those namespaces
-   (`configs/multi-acct/values.yaml` in fleet-config lists both spokes), and two selectors
-   with an identical (namespace, group) scope put the ACK controller in an infinite
-   reconcile loop — empty `status{}`, zero AWS API calls, resource never created. Documented
-   in **issue #813**. Identical `arn:` values do not help; the duplicated scope is the bug.
+5. Nothing to do for selectors: `multi-acct` already covers both spoke namespaces and the
+   chart no longer creates any. See "Selector ownership" below.
 
 Step 3 must precede step 4 so the RGD and the chart never manage the same association
 simultaneously. Between the two nothing manages them, but the AWS resources persist
@@ -372,3 +368,31 @@ Fix **B** is still required and unchanged: `peeks-hub` already carries `provider
 but `peeks-spoke-dev` and `peeks-spoke-prod` carry `provider: ""` (empty), so they would
 NOT be selected by `provider In ["kro-ack"]`. Must be set in the kro-clusters values
 template (appmod-blueprints) AND the live fleet-config spoke declaration.
+
+## Selector ownership: multi-acct only (resolved)
+
+Initially this chart shipped its own `IAMRoleSelector`s because the hub was missing from
+`multi-acct`'s `clusters` map, and without a selector ACK creates the CRs and then never
+reconciles them (silently). That was a stopgap and it duplicated ownership: two selectors
+with an identical `(namespace, group)` scope put the ACK controller in an infinite reconcile
+loop — empty `status{}`, zero AWS API calls, no events (**issue #813**; identical role ARNs
+do not help, the duplicated scope is the bug).
+
+Resolved by making **`multi-acct` the sole owner**: the hub was added to its `clusters` map
+and this chart's selector template was deleted outright rather than gated behind a flag.
+
+**INVARIANT: any cluster running this addon must appear in `multi-acct`'s `clusters` map.**
+
+This also unblocks **#775**. An on-hub `EksCluster` instance needs selectors for every ACK
+group the RGD uses — measured on the 39 active resources: `eks` (18), `iam` (13), `ec2` (2,
+the ingress security groups), `secretsmanager` (2). The hub namespace only ever had `eks`
+and `iam` (from this chart's stopgap), so the security groups and secrets would never have
+reconciled. `multi-acct` provides all seven groups, including the two that were missing.
+
+Rollout order matters on a live hub, because the app runs with `prune: false`: removing the
+selectors from the chart does NOT delete the live ones, so they had to be deleted explicitly
+BEFORE multi-acct's arrived, otherwise the duplicate-scope window would have hit the working
+hub. Sequence used: push the chart change → delete the 2 orphaned selectors → add the hub to
+multi-acct. Between the last two steps the hub briefly has no selectors and its CRs are
+unmanaged; that is safe (deletion-policy: retain, and ACK cannot delete anything without
+credentials anyway).
