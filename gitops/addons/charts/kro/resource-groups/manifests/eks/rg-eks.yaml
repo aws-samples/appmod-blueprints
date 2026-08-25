@@ -1042,475 +1042,513 @@ spec:
     ###########################################################
     # External DNS AddOn Pod Identity
     ###########################################################
-    - id: externalDnsPolicy
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Policy
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ack-iam"
-          annotations:
-            # Adopt a pre-existing policy (e.g. from a prior install) instead of failing
-            # CreatePolicy with 409 EntityAlreadyExists. Policies are keyed by ARN, which
-            # ACK cannot derive from spec.name alone, so adoption-fields supplies it.
-            services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/adoption-fields: |
-              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-ack-iam"}
-            # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
-            # the AWS policy when deleting this Kro instance (may be referenced by other resources)
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/deletion-policy: retain
-        spec:
-          name: "${schema.spec.name}-ack-iam"
-          policyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Action": [
-                    "route53:ChangeResourceRecordSets"
-                  ],
-                  "Resource": [
-                    "arn:aws:route53:::hostedzone/*"
-                  ]
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": [
-                    "route53:ListHostedZones",
-                    "route53:ListResourceRecordSets"
-                  ],
-                  "Resource": [
-                    "*"
-                  ]
-                }
-              ]
-            }
-
-    - id: externalDnsRole
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Role
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-external-dns-role"
-          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
-          # This prevents accidental deletion of IAM roles that may be in use by running workloads
-          # annotations:
-          #   services.k8s.aws/deletion-policy: retain
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            policy: "${externalDnsPolicy.status.ackResourceMetadata.arn}"
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/deletion-policy: retain
-        spec:
-          name: "${schema.spec.name}-external-dns-role"
-          policyRefs:
-            - from:
-                name: "${schema.spec.name}-ack-iam"
-          assumeRolePolicyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {
-                    "Service": "pods.eks.amazonaws.com"
-                  },
-                  "Action": [
-                    "sts:AssumeRole",
-                    "sts:TagSession"
-                  ]
-                }
-              ]
-            }
-
-    - id: externalDnsPodIdentity
-      readyWhen:
-      - ${externalDnsPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")} #check on ACK condition
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-external-dns"
-          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
-          # This prevents accidental deletion of Pod Identity associations that may be in use
-          # annotations:
-          #   services.k8s.aws/deletion-policy: retain
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/deletion-policy: retain
-        spec:
-          clusterName: "${ekscluster.spec.name}"
-          namespace: external-dns
-          roleARN: "${externalDnsRole.status.ackResourceMetadata.arn}"
-          serviceAccount: external-dns
-
-
-    ###########################################################
-    # AWS Load Balancer Controller Pod Identity
-    # The LBC service account (kube-system/aws-load-balancer-controller-sa)
-    # needs ELB/EC2/ACM/WAF/Shield permissions. Without this association the
-    # controller runs credential-less (IMDS fallback fails), builds no ingress
-    # model, and every platform ingress (keycloak, backstage, grafana, ...) gets
-    # no listener rule -> the platform ALB serves its default 404 for everything.
-    ###########################################################
-    - id: lbcPolicy
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Policy
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-lbc"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/deletion-policy: retain
-            services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/adoption-fields: |
-              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-lbc"}
-        spec:
-          name: "${schema.spec.name}-lbc"
-          policyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Action": ["iam:CreateServiceLinkedRole"],
-                  "Resource": "*",
-                  "Condition": {"StringEquals": {"iam:AWSServiceName": "elasticloadbalancing.amazonaws.com"}}
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": [
-                    "ec2:DescribeAccountAttributes","ec2:DescribeAddresses","ec2:DescribeAvailabilityZones",
-                    "ec2:DescribeInternetGateways","ec2:DescribeVpcs","ec2:DescribeVpcPeeringConnections",
-                    "ec2:DescribeSubnets","ec2:DescribeSecurityGroups","ec2:DescribeInstances",
-                    "ec2:DescribeNetworkInterfaces","ec2:DescribeTags","ec2:DescribeCoipPools",
-                    "ec2:GetCoipPoolUsage","ec2:DescribeInstanceTypes","ec2:GetSecurityGroupsForVpc",
-                    "elasticloadbalancing:DescribeLoadBalancers","elasticloadbalancing:DescribeLoadBalancerAttributes",
-                    "elasticloadbalancing:DescribeListeners","elasticloadbalancing:DescribeListenerAttributes",
-                    "elasticloadbalancing:DescribeListenerCertificates","elasticloadbalancing:DescribeSSLPolicies",
-                    "elasticloadbalancing:DescribeRules","elasticloadbalancing:DescribeTargetGroups",
-                    "elasticloadbalancing:DescribeTargetGroupAttributes","elasticloadbalancing:DescribeTargetHealth",
-                    "elasticloadbalancing:DescribeTags","elasticloadbalancing:DescribeTrustStores"
-                  ],
-                  "Resource": "*"
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": [
-                    "cognito-idp:DescribeUserPoolClient","acm:ListCertificates","acm:DescribeCertificate",
-                    "iam:ListServerCertificates","iam:GetServerCertificate","waf-regional:GetWebACL",
-                    "waf-regional:GetWebACLForResource","waf-regional:AssociateWebACL","waf-regional:DisassociateWebACL",
-                    "wafv2:GetWebACL","wafv2:GetWebACLForResource","wafv2:AssociateWebACL","wafv2:DisassociateWebACL",
-                    "shield:GetSubscriptionState","shield:DescribeProtection","shield:CreateProtection","shield:DeleteProtection"
-                  ],
-                  "Resource": "*"
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": ["ec2:AuthorizeSecurityGroupIngress","ec2:RevokeSecurityGroupIngress"],
-                  "Resource": "*"
-                },
-                {"Effect": "Allow", "Action": ["ec2:CreateSecurityGroup"], "Resource": "*"},
-                {
-                  "Effect": "Allow",
-                  "Action": ["ec2:CreateTags"],
-                  "Resource": "arn:aws:ec2:*:*:security-group/*",
-                  "Condition": {
-                    "StringEquals": {"ec2:CreateAction": "CreateSecurityGroup"},
-                    "Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "false"}
-                  }
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": ["ec2:CreateTags","ec2:DeleteTags"],
-                  "Resource": "arn:aws:ec2:*:*:security-group/*",
-                  "Condition": {"Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "true","aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": ["ec2:AuthorizeSecurityGroupIngress","ec2:RevokeSecurityGroupIngress","ec2:DeleteSecurityGroup"],
-                  "Resource": "*",
-                  "Condition": {"Null": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": ["elasticloadbalancing:CreateLoadBalancer","elasticloadbalancing:CreateTargetGroup"],
-                  "Resource": "*",
-                  "Condition": {"Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "false"}}
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": ["elasticloadbalancing:CreateListener","elasticloadbalancing:DeleteListener","elasticloadbalancing:CreateRule","elasticloadbalancing:DeleteRule"],
-                  "Resource": "*"
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": ["elasticloadbalancing:AddTags","elasticloadbalancing:RemoveTags"],
-                  "Resource": [
-                    "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
-                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
-                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
-                  ],
-                  "Condition": {"Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "true","aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": ["elasticloadbalancing:AddTags","elasticloadbalancing:RemoveTags"],
-                  "Resource": [
-                    "arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*",
-                    "arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*",
-                    "arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*",
-                    "arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*"
-                  ]
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": [
-                    "elasticloadbalancing:ModifyLoadBalancerAttributes","elasticloadbalancing:SetIpAddressType",
-                    "elasticloadbalancing:SetSecurityGroups","elasticloadbalancing:SetSubnets","elasticloadbalancing:DeleteLoadBalancer",
-                    "elasticloadbalancing:ModifyTargetGroup","elasticloadbalancing:ModifyTargetGroupAttributes","elasticloadbalancing:DeleteTargetGroup"
-                  ],
-                  "Resource": "*",
-                  "Condition": {"Null": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": ["elasticloadbalancing:AddTags"],
-                  "Resource": [
-                    "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
-                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
-                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
-                  ],
-                  "Condition": {
-                    "StringEquals": {"elasticloadbalancing:CreateAction": ["CreateTargetGroup","CreateLoadBalancer"]},
-                    "Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "false"}
-                  }
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": ["elasticloadbalancing:RegisterTargets","elasticloadbalancing:DeregisterTargets"],
-                  "Resource": "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*"
-                },
-                {
-                  "Effect": "Allow",
-                  "Action": [
-                    "elasticloadbalancing:SetWebAcl","elasticloadbalancing:ModifyListener","elasticloadbalancing:AddListenerCertificates",
-                    "elasticloadbalancing:RemoveListenerCertificates","elasticloadbalancing:ModifyRule","elasticloadbalancing:SetRulePriorities"
-                  ],
-                  "Resource": "*"
-                }
-              ]
-            }
-
-    - id: lbcRole
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Role
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-lbc-role"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            policy: "${lbcPolicy.status.ackResourceMetadata.arn}"
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/deletion-policy: retain
-        spec:
-          name: "${schema.spec.name}-lbc-role"
-          policyRefs:
-            - from:
-                name: "${schema.spec.name}-lbc"
-          assumeRolePolicyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {"Service": "pods.eks.amazonaws.com"},
-                  "Action": ["sts:AssumeRole","sts:TagSession"]
-                }
-              ]
-            }
-
-    - id: lbcPodIdentityAssociation
-      readyWhen:
-      - ${lbcPodIdentityAssociation.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-lbc"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/deletion-policy: retain
-        spec:
-          clusterName: "${ekscluster.spec.name}"
-          namespace: kube-system
-          roleARN: "${lbcRole.status.ackResourceMetadata.arn}"
-          serviceAccount: aws-load-balancer-controller-sa
-
-
-    ###########################################################
-    # Keycloak Config Pod Identity
-    # The keycloak-config job (keycloak/keycloak-config SA) publishes the
-    # keycloak-clients secret to Secrets Manager (aws secretsmanager
-    # create/put-secret-value). Without credentials it cannot write the secret,
-    # so ESO never syncs keycloak-clients and Backstage / Argo-Workflows SSO break.
-    ###########################################################
-    - id: keycloakConfigPolicy
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Policy
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-keycloak-config"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/deletion-policy: retain
-            services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/adoption-fields: |
-              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-keycloak-config"}
-        spec:
-          name: "${schema.spec.name}-keycloak-config"
-          policyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Action": [
-                    "secretsmanager:CreateSecret",
-                    "secretsmanager:PutSecretValue",
-                    "secretsmanager:GetSecretValue",
-                    "secretsmanager:DescribeSecret",
-                    "secretsmanager:TagResource"
-                  ],
-                  "Resource": "*"
-                }
-              ]
-            }
-
-    - id: keycloakConfigRole
-      template:
-        apiVersion: iam.services.k8s.aws/v1alpha1
-        kind: Role
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-keycloak-config-role"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            policy: "${keycloakConfigPolicy.status.ackResourceMetadata.arn}"
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/deletion-policy: retain
-        spec:
-          name: "${schema.spec.name}-keycloak-config-role"
-          policyRefs:
-            - from:
-                name: "${schema.spec.name}-keycloak-config"
-          assumeRolePolicyDocument: |
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {"Service": "pods.eks.amazonaws.com"},
-                  "Action": ["sts:AssumeRole","sts:TagSession"]
-                }
-              ]
-            }
-
-    - id: keycloakConfigPodIdentityAssociation
-      readyWhen:
-      - ${keycloakConfigPodIdentityAssociation.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: PodIdentityAssociation
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-keycloak-config"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/deletion-policy: retain
-        spec:
-          clusterName: "${ekscluster.spec.name}"
-          namespace: keycloak
-          roleARN: "${keycloakConfigRole.status.ackResourceMetadata.arn}"
-          serviceAccount: keycloak-config
+    # =========================================================================
+    # DELEGATED TO THE ack-pod-identity ADDON  (registry entry: ack_pod_identities)
+    #
+    # external-dns / lbc / keycloak-config pod identities are no longer created here.
+    # They are owned by gitops/addons/charts/ack-pod-identity, which gates each identity
+    # on its enable_* cluster label -- something this RGD cannot do (it has no visibility
+    # on those labels, so it created them unconditionally).
+    #
+    # SCOPE SPLIT (the rule): an AWS pod identity association is keyed by
+    # (cluster, namespace, serviceAccount) and is UNIQUE. Two managers on the same key
+    # fight over roleARN. So the RGD and the chart must own DISJOINT sets of
+    # (namespace, serviceAccount):
+    #   RGD  keeps -> cluster lifecycle (cluster/node roles, access entries, capability
+    #                 roles, SGs) + genuinely chicken-and-egg bootstrap identities:
+    #                 crossplane-system/provider-aws-{iam,eks} (a provider cannot create
+    #                 the credentials it needs to run) and external-secrets/
+    #                 external-secrets-sa (external-secrets syncs at sync-wave -1, far
+    #                 earlier than any pod-identity app can run, so ESO's identity must
+    #                 exist from cluster-creation time).
+    #   chart owns -> everything gated by enable_*.
+    #
+    # Commented out rather than deleted: keeps the previous ownership visible and makes
+    # the handover reversible.
+    #
+    # WHY THIS IS SAFE: services.k8s.aws/deletion-policy: retain was added to these 9
+    # resources FIRST (previous commit) and observed on the live CRs of both spokes.
+    # Removing them therefore deletes the Kubernetes CRs but PRESERVES the IAM roles,
+    # policies and pod identity associations in AWS. The chart then adopts them in place
+    # (adopt-or-create; for PodIdentityAssociation ACK keys on
+    # clusterName+namespace+serviceAccount, verified empirically -- no adoption-fields).
+    # Do NOT reorder: un-retained removal would delete live credentials.
+    #
+    # BUG FIXED BY THE HANDOVER: the externalDnsPodIdentity block below targeted
+    # external-dns/external-dns, but the controller actually runs as
+    # kube-system/external-dns-sa. The association created here was useless, and on the
+    # hub external-dns had NO working identity at all (Route53 failing with "no EC2 IMDS
+    # role found"). The chart targets the correct service account.
+    # =========================================================================
+#    - id: externalDnsPolicy
+#      template:
+#        apiVersion: iam.services.k8s.aws/v1alpha1
+#        kind: Policy
+#        metadata:
+#          namespace: "${schema.spec.name}"
+#          name: "${schema.spec.name}-ack-iam"
+#          annotations:
+#            # Adopt a pre-existing policy (e.g. from a prior install) instead of failing
+#            # CreatePolicy with 409 EntityAlreadyExists. Policies are keyed by ARN, which
+#            # ACK cannot derive from spec.name alone, so adoption-fields supplies it.
+#            services.k8s.aws/adoption-policy: adopt-or-create
+#            services.k8s.aws/adoption-fields: |
+#              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-ack-iam"}
+#            # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
+#            # the AWS policy when deleting this Kro instance (may be referenced by other resources)
+#          ownerReferences:
+#            - apiVersion: kro.run/v1alpha1
+#              kind: ${schema.kind}
+#              name: ${schema.metadata.name}
+#              uid: ${schema.metadata.uid}
+#              blockOwnerDeletion: true
+#              controller: false
+#          annotations:
+#            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+#            services.k8s.aws/region: ${schema.spec.region}
+#            services.k8s.aws/deletion-policy: retain
+#        spec:
+#          name: "${schema.spec.name}-ack-iam"
+#          policyDocument: |
+#            {
+#              "Version": "2012-10-17",
+#              "Statement": [
+#                {
+#                  "Effect": "Allow",
+#                  "Action": [
+#                    "route53:ChangeResourceRecordSets"
+#                  ],
+#                  "Resource": [
+#                    "arn:aws:route53:::hostedzone/*"
+#                  ]
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": [
+#                    "route53:ListHostedZones",
+#                    "route53:ListResourceRecordSets"
+#                  ],
+#                  "Resource": [
+#                    "*"
+#                  ]
+#                }
+#              ]
+#            }
+#
+#    - id: externalDnsRole
+#      template:
+#        apiVersion: iam.services.k8s.aws/v1alpha1
+#        kind: Role
+#        metadata:
+#          namespace: "${schema.spec.name}"
+#          name: "${schema.spec.name}-external-dns-role"
+#          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+#          # This prevents accidental deletion of IAM roles that may be in use by running workloads
+#          # annotations:
+#          #   services.k8s.aws/deletion-policy: retain
+#          ownerReferences:
+#            - apiVersion: kro.run/v1alpha1
+#              kind: ${schema.kind}
+#              name: ${schema.metadata.name}
+#              uid: ${schema.metadata.uid}
+#              blockOwnerDeletion: true
+#              controller: false
+#          annotations:
+#            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+#            policy: "${externalDnsPolicy.status.ackResourceMetadata.arn}"
+#            services.k8s.aws/region: ${schema.spec.region}
+#            services.k8s.aws/deletion-policy: retain
+#        spec:
+#          name: "${schema.spec.name}-external-dns-role"
+#          policyRefs:
+#            - from:
+#                name: "${schema.spec.name}-ack-iam"
+#          assumeRolePolicyDocument: |
+#            {
+#              "Version": "2012-10-17",
+#              "Statement": [
+#                {
+#                  "Effect": "Allow",
+#                  "Principal": {
+#                    "Service": "pods.eks.amazonaws.com"
+#                  },
+#                  "Action": [
+#                    "sts:AssumeRole",
+#                    "sts:TagSession"
+#                  ]
+#                }
+#              ]
+#            }
+#
+#    - id: externalDnsPodIdentity
+#      readyWhen:
+#      - ${externalDnsPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")} #check on ACK condition
+#      template:
+#        apiVersion: eks.services.k8s.aws/v1alpha1
+#        kind: PodIdentityAssociation
+#        metadata:
+#          namespace: "${schema.spec.name}"
+#          name: "${schema.spec.name}-external-dns"
+#          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
+#          # This prevents accidental deletion of Pod Identity associations that may be in use
+#          # annotations:
+#          #   services.k8s.aws/deletion-policy: retain
+#          ownerReferences:
+#            - apiVersion: kro.run/v1alpha1
+#              kind: ${schema.kind}
+#              name: ${schema.metadata.name}
+#              uid: ${schema.metadata.uid}
+#              blockOwnerDeletion: true
+#              controller: false
+#          annotations:
+#            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+#            services.k8s.aws/region: ${schema.spec.region}
+#            services.k8s.aws/deletion-policy: retain
+#        spec:
+#          clusterName: "${ekscluster.spec.name}"
+#          namespace: external-dns
+#          roleARN: "${externalDnsRole.status.ackResourceMetadata.arn}"
+#          serviceAccount: external-dns
+#
+#
+#    ###########################################################
+#    # AWS Load Balancer Controller Pod Identity
+#    # The LBC service account (kube-system/aws-load-balancer-controller-sa)
+#    # needs ELB/EC2/ACM/WAF/Shield permissions. Without this association the
+#    # controller runs credential-less (IMDS fallback fails), builds no ingress
+#    # model, and every platform ingress (keycloak, backstage, grafana, ...) gets
+#    # no listener rule -> the platform ALB serves its default 404 for everything.
+#    ###########################################################
+#    - id: lbcPolicy
+#      template:
+#        apiVersion: iam.services.k8s.aws/v1alpha1
+#        kind: Policy
+#        metadata:
+#          namespace: "${schema.spec.name}"
+#          name: "${schema.spec.name}-lbc"
+#          ownerReferences:
+#            - apiVersion: kro.run/v1alpha1
+#              kind: ${schema.kind}
+#              name: ${schema.metadata.name}
+#              uid: ${schema.metadata.uid}
+#              blockOwnerDeletion: true
+#              controller: false
+#          annotations:
+#            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+#            services.k8s.aws/region: ${schema.spec.region}
+#            services.k8s.aws/deletion-policy: retain
+#            services.k8s.aws/adoption-policy: adopt-or-create
+#            services.k8s.aws/adoption-fields: |
+#              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-lbc"}
+#        spec:
+#          name: "${schema.spec.name}-lbc"
+#          policyDocument: |
+#            {
+#              "Version": "2012-10-17",
+#              "Statement": [
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["iam:CreateServiceLinkedRole"],
+#                  "Resource": "*",
+#                  "Condition": {"StringEquals": {"iam:AWSServiceName": "elasticloadbalancing.amazonaws.com"}}
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": [
+#                    "ec2:DescribeAccountAttributes","ec2:DescribeAddresses","ec2:DescribeAvailabilityZones",
+#                    "ec2:DescribeInternetGateways","ec2:DescribeVpcs","ec2:DescribeVpcPeeringConnections",
+#                    "ec2:DescribeSubnets","ec2:DescribeSecurityGroups","ec2:DescribeInstances",
+#                    "ec2:DescribeNetworkInterfaces","ec2:DescribeTags","ec2:DescribeCoipPools",
+#                    "ec2:GetCoipPoolUsage","ec2:DescribeInstanceTypes","ec2:GetSecurityGroupsForVpc",
+#                    "elasticloadbalancing:DescribeLoadBalancers","elasticloadbalancing:DescribeLoadBalancerAttributes",
+#                    "elasticloadbalancing:DescribeListeners","elasticloadbalancing:DescribeListenerAttributes",
+#                    "elasticloadbalancing:DescribeListenerCertificates","elasticloadbalancing:DescribeSSLPolicies",
+#                    "elasticloadbalancing:DescribeRules","elasticloadbalancing:DescribeTargetGroups",
+#                    "elasticloadbalancing:DescribeTargetGroupAttributes","elasticloadbalancing:DescribeTargetHealth",
+#                    "elasticloadbalancing:DescribeTags","elasticloadbalancing:DescribeTrustStores"
+#                  ],
+#                  "Resource": "*"
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": [
+#                    "cognito-idp:DescribeUserPoolClient","acm:ListCertificates","acm:DescribeCertificate",
+#                    "iam:ListServerCertificates","iam:GetServerCertificate","waf-regional:GetWebACL",
+#                    "waf-regional:GetWebACLForResource","waf-regional:AssociateWebACL","waf-regional:DisassociateWebACL",
+#                    "wafv2:GetWebACL","wafv2:GetWebACLForResource","wafv2:AssociateWebACL","wafv2:DisassociateWebACL",
+#                    "shield:GetSubscriptionState","shield:DescribeProtection","shield:CreateProtection","shield:DeleteProtection"
+#                  ],
+#                  "Resource": "*"
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["ec2:AuthorizeSecurityGroupIngress","ec2:RevokeSecurityGroupIngress"],
+#                  "Resource": "*"
+#                },
+#                {"Effect": "Allow", "Action": ["ec2:CreateSecurityGroup"], "Resource": "*"},
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["ec2:CreateTags"],
+#                  "Resource": "arn:aws:ec2:*:*:security-group/*",
+#                  "Condition": {
+#                    "StringEquals": {"ec2:CreateAction": "CreateSecurityGroup"},
+#                    "Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "false"}
+#                  }
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["ec2:CreateTags","ec2:DeleteTags"],
+#                  "Resource": "arn:aws:ec2:*:*:security-group/*",
+#                  "Condition": {"Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "true","aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["ec2:AuthorizeSecurityGroupIngress","ec2:RevokeSecurityGroupIngress","ec2:DeleteSecurityGroup"],
+#                  "Resource": "*",
+#                  "Condition": {"Null": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["elasticloadbalancing:CreateLoadBalancer","elasticloadbalancing:CreateTargetGroup"],
+#                  "Resource": "*",
+#                  "Condition": {"Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "false"}}
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["elasticloadbalancing:CreateListener","elasticloadbalancing:DeleteListener","elasticloadbalancing:CreateRule","elasticloadbalancing:DeleteRule"],
+#                  "Resource": "*"
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["elasticloadbalancing:AddTags","elasticloadbalancing:RemoveTags"],
+#                  "Resource": [
+#                    "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
+#                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
+#                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
+#                  ],
+#                  "Condition": {"Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "true","aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["elasticloadbalancing:AddTags","elasticloadbalancing:RemoveTags"],
+#                  "Resource": [
+#                    "arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*",
+#                    "arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*",
+#                    "arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*",
+#                    "arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*"
+#                  ]
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": [
+#                    "elasticloadbalancing:ModifyLoadBalancerAttributes","elasticloadbalancing:SetIpAddressType",
+#                    "elasticloadbalancing:SetSecurityGroups","elasticloadbalancing:SetSubnets","elasticloadbalancing:DeleteLoadBalancer",
+#                    "elasticloadbalancing:ModifyTargetGroup","elasticloadbalancing:ModifyTargetGroupAttributes","elasticloadbalancing:DeleteTargetGroup"
+#                  ],
+#                  "Resource": "*",
+#                  "Condition": {"Null": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "false"}}
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["elasticloadbalancing:AddTags"],
+#                  "Resource": [
+#                    "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
+#                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
+#                    "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
+#                  ],
+#                  "Condition": {
+#                    "StringEquals": {"elasticloadbalancing:CreateAction": ["CreateTargetGroup","CreateLoadBalancer"]},
+#                    "Null": {"aws:RequestTag/elbv2.k8s.aws/cluster": "false"}
+#                  }
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": ["elasticloadbalancing:RegisterTargets","elasticloadbalancing:DeregisterTargets"],
+#                  "Resource": "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*"
+#                },
+#                {
+#                  "Effect": "Allow",
+#                  "Action": [
+#                    "elasticloadbalancing:SetWebAcl","elasticloadbalancing:ModifyListener","elasticloadbalancing:AddListenerCertificates",
+#                    "elasticloadbalancing:RemoveListenerCertificates","elasticloadbalancing:ModifyRule","elasticloadbalancing:SetRulePriorities"
+#                  ],
+#                  "Resource": "*"
+#                }
+#              ]
+#            }
+#
+#    - id: lbcRole
+#      template:
+#        apiVersion: iam.services.k8s.aws/v1alpha1
+#        kind: Role
+#        metadata:
+#          namespace: "${schema.spec.name}"
+#          name: "${schema.spec.name}-lbc-role"
+#          ownerReferences:
+#            - apiVersion: kro.run/v1alpha1
+#              kind: ${schema.kind}
+#              name: ${schema.metadata.name}
+#              uid: ${schema.metadata.uid}
+#              blockOwnerDeletion: true
+#              controller: false
+#          annotations:
+#            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+#            policy: "${lbcPolicy.status.ackResourceMetadata.arn}"
+#            services.k8s.aws/region: ${schema.spec.region}
+#            services.k8s.aws/deletion-policy: retain
+#        spec:
+#          name: "${schema.spec.name}-lbc-role"
+#          policyRefs:
+#            - from:
+#                name: "${schema.spec.name}-lbc"
+#          assumeRolePolicyDocument: |
+#            {
+#              "Version": "2012-10-17",
+#              "Statement": [
+#                {
+#                  "Effect": "Allow",
+#                  "Principal": {"Service": "pods.eks.amazonaws.com"},
+#                  "Action": ["sts:AssumeRole","sts:TagSession"]
+#                }
+#              ]
+#            }
+#
+#    - id: lbcPodIdentityAssociation
+#      readyWhen:
+#      - ${lbcPodIdentityAssociation.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+#      template:
+#        apiVersion: eks.services.k8s.aws/v1alpha1
+#        kind: PodIdentityAssociation
+#        metadata:
+#          namespace: "${schema.spec.name}"
+#          name: "${schema.spec.name}-lbc"
+#          ownerReferences:
+#            - apiVersion: kro.run/v1alpha1
+#              kind: ${schema.kind}
+#              name: ${schema.metadata.name}
+#              uid: ${schema.metadata.uid}
+#              blockOwnerDeletion: true
+#              controller: false
+#          annotations:
+#            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+#            services.k8s.aws/region: ${schema.spec.region}
+#            services.k8s.aws/deletion-policy: retain
+#        spec:
+#          clusterName: "${ekscluster.spec.name}"
+#          namespace: kube-system
+#          roleARN: "${lbcRole.status.ackResourceMetadata.arn}"
+#          serviceAccount: aws-load-balancer-controller-sa
+#
+#
+#    ###########################################################
+#    # Keycloak Config Pod Identity
+#    # The keycloak-config job (keycloak/keycloak-config SA) publishes the
+#    # keycloak-clients secret to Secrets Manager (aws secretsmanager
+#    # create/put-secret-value). Without credentials it cannot write the secret,
+#    # so ESO never syncs keycloak-clients and Backstage / Argo-Workflows SSO break.
+#    ###########################################################
+#    - id: keycloakConfigPolicy
+#      template:
+#        apiVersion: iam.services.k8s.aws/v1alpha1
+#        kind: Policy
+#        metadata:
+#          namespace: "${schema.spec.name}"
+#          name: "${schema.spec.name}-keycloak-config"
+#          ownerReferences:
+#            - apiVersion: kro.run/v1alpha1
+#              kind: ${schema.kind}
+#              name: ${schema.metadata.name}
+#              uid: ${schema.metadata.uid}
+#              blockOwnerDeletion: true
+#              controller: false
+#          annotations:
+#            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+#            services.k8s.aws/region: ${schema.spec.region}
+#            services.k8s.aws/deletion-policy: retain
+#            services.k8s.aws/adoption-policy: adopt-or-create
+#            services.k8s.aws/adoption-fields: |
+#              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-keycloak-config"}
+#        spec:
+#          name: "${schema.spec.name}-keycloak-config"
+#          policyDocument: |
+#            {
+#              "Version": "2012-10-17",
+#              "Statement": [
+#                {
+#                  "Effect": "Allow",
+#                  "Action": [
+#                    "secretsmanager:CreateSecret",
+#                    "secretsmanager:PutSecretValue",
+#                    "secretsmanager:GetSecretValue",
+#                    "secretsmanager:DescribeSecret",
+#                    "secretsmanager:TagResource"
+#                  ],
+#                  "Resource": "*"
+#                }
+#              ]
+#            }
+#
+#    - id: keycloakConfigRole
+#      template:
+#        apiVersion: iam.services.k8s.aws/v1alpha1
+#        kind: Role
+#        metadata:
+#          namespace: "${schema.spec.name}"
+#          name: "${schema.spec.name}-keycloak-config-role"
+#          ownerReferences:
+#            - apiVersion: kro.run/v1alpha1
+#              kind: ${schema.kind}
+#              name: ${schema.metadata.name}
+#              uid: ${schema.metadata.uid}
+#              blockOwnerDeletion: true
+#              controller: false
+#          annotations:
+#            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+#            policy: "${keycloakConfigPolicy.status.ackResourceMetadata.arn}"
+#            services.k8s.aws/region: ${schema.spec.region}
+#            services.k8s.aws/deletion-policy: retain
+#        spec:
+#          name: "${schema.spec.name}-keycloak-config-role"
+#          policyRefs:
+#            - from:
+#                name: "${schema.spec.name}-keycloak-config"
+#          assumeRolePolicyDocument: |
+#            {
+#              "Version": "2012-10-17",
+#              "Statement": [
+#                {
+#                  "Effect": "Allow",
+#                  "Principal": {"Service": "pods.eks.amazonaws.com"},
+#                  "Action": ["sts:AssumeRole","sts:TagSession"]
+#                }
+#              ]
+#            }
+#
+#    - id: keycloakConfigPodIdentityAssociation
+#      readyWhen:
+#      - ${keycloakConfigPodIdentityAssociation.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+#      template:
+#        apiVersion: eks.services.k8s.aws/v1alpha1
+#        kind: PodIdentityAssociation
+#        metadata:
+#          namespace: "${schema.spec.name}"
+#          name: "${schema.spec.name}-keycloak-config"
+#          ownerReferences:
+#            - apiVersion: kro.run/v1alpha1
+#              kind: ${schema.kind}
+#              name: ${schema.metadata.name}
+#              uid: ${schema.metadata.uid}
+#              blockOwnerDeletion: true
+#              controller: false
+#          annotations:
+#            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+#            services.k8s.aws/region: ${schema.spec.region}
+#            services.k8s.aws/deletion-policy: retain
+#        spec:
+#          clusterName: "${ekscluster.spec.name}"
+#          namespace: keycloak
+#          roleARN: "${keycloakConfigRole.status.ackResourceMetadata.arn}"
+#          serviceAccount: keycloak-config
 
 
     ###########################################################
