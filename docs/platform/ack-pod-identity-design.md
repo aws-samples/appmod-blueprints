@@ -1,9 +1,24 @@
 # Design: `ack-pod-identity` addon (Option 4)
 
-Status: **STEPS 1-2 IMPLEMENTED** (chart + registry entry + drift test), verified by
-render only — NOT yet deployed. Steps 3-4 (set `provider: kro-ack` on spokes, then strip
-the RGD blocks) still pending. All 4 original open items resolved with live evidence
-(2026-08-24); see "Open items" at the bottom.
+Status: **DEPLOYED AND VALIDATED ON THE HUB** (2026-08-25). Spokes NOT done.
+
+Hub outcome: app `ack-pod-identities-peeks-hub` Synced/Healthy, all 6 ACK resources
+`ACK.ResourceSynced=True`, `/keycloak` and `/backstage` both return 200, LBC reconciling
+normally, and **external-dns fixed** (was failing `no EC2 IMDS role found`, now reports
+"All records are already up to date").
+
+Note on the rollout: a staged rollout (external-dns only, via a fleet-config cluster
+overlay) was pushed but did NOT take effect — ArgoCD synced the app from its cached copy of
+the overlay repo before re-reading it, so lbc + external-dns + keycloak deployed at once and
+the IAM role swap happened immediately. The correct order is to push the overlay AND confirm
+ArgoCD has picked it up BEFORE flipping `addonsRepoRevision`. The outcome was safe only
+because the policies had been compared beforehand (lbc byte-identical, keycloak a strict
+superset) — preparation, not sequencing, is what saved it.
+
+Related issues: **#775** (hub self-adoption / CAPI pivot — the adoption semantics
+established here answer its step 3), **#813** (duplicate IAMRoleSelector scope → infinite
+ACK reconcile loop; makes `iamRoleSelectors.enabled=false` mandatory on the spokes),
+**#647** (GitOps diff preview on PRs — natural home for the drift test).
 
 Scope was REDUCED as a result: only **4** identities migrate (eso, lbc, external-dns,
 keycloak), not 8. The other 4 RGD blocks (adotCollector, cloudwatchObservability,
@@ -102,14 +117,39 @@ MIGRATE these 4 (enabled in at least one environment, real consumer exists):
 | external-dns | enable_external_dns | **kube-system** | **external-dns-sa** | FIX A — see below |
 | keycloak | enable_keycloak | keycloak | keycloak-config | control-plane only |
 
-DO NOT MIGRATE — dead code, delete from RGD (no consumer on ANY cluster):
+DO NOT MIGRATE YET — **disabled addons, NOT dead code** (correction, see below):
 
-| identity | why dead (evidence) |
-|----------|---------------------|
-| adot-collector | **No `adot` entry in the addon registry at all.** Live PIA targets `adot-collector-kubeprometheus/adot-collector-kubeprometheus` (from schema `adot_collector_namespace`/`_service_account`); that namespace does not exist on hub, spoke-dev or spoke-prod. Same category as `otel-collector`. |
-| cloudwatch-observability | Gate label is `enable_cw_prometheus` (registry entry `cw-prometheus`, ns `amazon-cloudwatch`) — set **false** in control-plane, absent in dev/prod. The `amazon-cloudwatch` namespace does not exist on any cluster, and the CloudWatch Observability EKS addon is not installed (`list-addons` on hub returns only `aws-mountpoint-s3-csi-driver`). |
-| cni-metrics-helper | `enable_cni_metrics_helper: false` in control-plane, absent in dev/prod. |
-| kyverno-policy-reporter | `enable_kyverno_policy_reporter: false` in control-plane, absent in dev/prod. (The `kyverno` ns does exist on spokes, but the reporter addon is off.) |
+| identity | status |
+|----------|--------|
+| cni-metrics-helper | real registry addon (`observability.yaml:285`), `enable_cni_metrics_helper: false` in control-plane / absent in dev+prod |
+| kyverno-policy-reporter | real registry addon (`security.yaml:138`), `enable_kyverno_policy_reporter: false` / absent |
+| cloudwatch-observability | gate is `enable_cw_prometheus` (registry entry `cw-prometheus`, `observability.yaml:255`), `false` / absent; `amazon-cloudwatch` ns exists on no cluster |
+| adot-collector | no `adot` registry entry, BUT `observability-aws/files/scraper-config.yaml` has an `adot-collector` scrape job and `enable_observability_aws: true` on the hub |
+
+### CORRECTION: these are NOT dead code — migrate them, do not delete
+
+An earlier revision of this doc called these four "dead code to delete". That was wrong.
+All four map to real registry addons (or, for adot, to a real scrape target in an enabled
+addon); they are merely **disabled in this particular install**, and `enable_*` is
+per-environment config that anyone can flip to `true` tomorrow.
+
+The RGD pre-creates their identities **unconditionally** — crude, but deliberate: the
+identity exists in advance so that enabling the addon just works. Deleting the RGD blocks
+*without* adding the identities to this chart would therefore be a **functional
+regression**: enable `cni_metrics_helper` later and the addon comes up with no pod identity,
+failing with exactly the `no EC2 IMDS role found` symptom that made external-dns so
+annoying to diagnose.
+
+Correct action: **migrate all of them into this chart with `enable_*` gating**, which is
+strictly better than the RGD (conditional instead of unconditional).
+
+**Blocked on verification first.** The namespace/serviceAccount owner is NOT established
+for two of them: nothing confirms which component actually owns
+`amazon-cloudwatch/cloudwatch-agent` (the CloudWatch Observability EKS addon is not
+installed — `list-addons` on the hub returns only `aws-mountpoint-s3-csi-driver`) or
+`adot-collector-kubeprometheus/adot-collector-kubeprometheus`. Migrating on an assumed
+mapping would reproduce the external-dns SA bug exactly. Verify the real SA per addon
+before adding these four identities.
 
 ### FIX A is a LIVE OUTAGE, not a latent mismatch
 
@@ -128,14 +168,28 @@ level=error msg="Failed to do run once: soft error
 
 Worth fixing independently of this migration.
 
-### The hub has NO ACK CRs for its addon pod identities
+### The hub's addon pod identities exist in AWS with NO CR — because their RGD lived in kind
 
 `kubectl get podidentityassociations.eks.services.k8s.aws -A` returns only the
 `peeks-spoke-dev-*` / `peeks-spoke-prod-*` set (created by the RGD, namespace = cluster
 name) plus ray/cicd ones. The hub's own associations (external-secrets, lbc, keycloak,
-external-dns, ...) exist in **AWS only** — created by the kind/crossplane bootstrap, with
-no CR. So on the hub `ack-pod-identity` MUST adopt pre-existing AWS associations. This is
-why open item 3 was the gating risk. It is now proven to work.
+external-dns, ...) exist in **AWS only**.
+
+The hub was NOT provisioned without an RGD — its `EksCluster` RGD instance ran **in the
+ephemeral bootstrap kind cluster**, which no longer exists. So the AWS resources follow the
+**RGD naming convention** while having no CR on the hub. That single fact explains the role
+swap documented below: the live roles are `peeks-hub-lbc-role` /
+`peeks-hub-external-dns-role` / `peeks-hub-keycloak-config-role` (RGD naming), whereas this
+chart uses the crossplane-pod-identity naming (`peeks-hub-LBCPodIdentityRole`, ...). Names
+differ → Role/Policy are NOT adopted, they are created new → and because the
+PodIdentityAssociation IS adopted (keyed on ns+SA), its `roleARN` gets repointed.
+
+Moving that management onto the hub itself is tracked separately as **issue #775**
+(`feat: hub self-adoption — pivot management from ephemeral kind to hub EKS`, CAPI pivot
+pattern). Its implementation step 3 — "with `adopt: true` or by setting the correct owner
+references so ACK adopts the existing AWS resources instead of recreating them" — is
+answered concretely by the per-resource adoption semantics established here (see the
+Migration section). Out of scope for this PR.
 
 Bootstrap providers (`provider-aws-iam`, `provider-aws-eks`) STAY in the RGD
 (`includeWhen: provider=="kro-ack" && enable_crossplane_aws=="true"`) — genuine
@@ -144,14 +198,11 @@ chicken-and-egg, not addon-gated. NOT migrated.
 `otel-collector` in the Crossplane chart is DEAD CODE (no matching addon; real addon is
 `opentelemetry-operator`, which needs no pod identity). Remove from shared values.
 
-## RGD changes (must accompany, else ACK-vs-ACK 409)
+## RGD changes — and the deletion-policy trap (CORRECTED)
 
-Remove these addon PIA blocks (Role+Policy+Association) from `rg-eks.yaml`:
-
-- **Migrated** (the new app owns them on kro-ack clusters): externalDns, lbc,
-  keycloakConfig.
-- **Dead code** (no consumer anywhere — just delete, nothing takes over): adotCollector,
-  cloudwatchObservability, cniMetricsHelper, kyvernoPolicyReporter.
+Blocks that the new app takes over on kro-ack clusters: externalDns, lbc, keycloakConfig.
+The other four (adotCollector, cloudwatchObservability, cniMetricsHelper,
+kyvernoPolicyReporter) must be **migrated, not deleted** — see the correction above.
 
 **KEEP externalSecrets for now.** The `ack_pod_identities` registry entry deliberately does
 NOT gate `eso`, mirroring `pod_identities` (the hub reuses an existing role for ESO and its
@@ -163,6 +214,50 @@ and verified.
 
 KEEP also: clusterRole, nodeRole, podIdentityAddon, argocd*, crossplane*Provider
 (bootstrap), capability roles, VPC/SG/cluster.
+
+### !! Removing an RGD block DESTROYS the live AWS resource
+
+All 18 `services.k8s.aws/deletion-policy: retain` annotations in `rg-eks.yaml` are
+**commented out**, and the live spoke CRs confirm it (`deletion-policy: NOT SET` on
+`peeks-spoke-dev-lbc`). ACK's default is to **delete the AWS resource** when the CR is
+deleted. So removing a block → KRO deletes the child CR → **ACK deletes the live IAM role
+and pod identity association** → the spoke addon loses its credentials. An earlier revision
+of this doc said "just remove the blocks", which was dangerously incomplete.
+
+### Why the spokes are harder than the hub
+
+The hub had **no live overlap**: its RGD instance ran in the ephemeral kind cluster, so
+nothing on the hub was managing those PIAs when the chart took over. The spokes DO have live
+`EksclusterWithVpc` instances actively managing PIAs for the same cluster + namespace +
+serviceAccount. Two ACK CRs targeting one association would fight over `roleARN`.
+
+### Safe sequence for the spokes
+
+1. **Compare policies first.** Do NOT assume the hub's happy outcome generalises: there the
+   chart's `LBCControllerPolicy` happened to be byte-identical to the live `peeks-hub-lbc`.
+   The spokes differ — e.g. `peeks-spoke-dev-external-dns-role` carries
+   `peeks-spoke-dev-ack-iam`, not a same-named chart policy.
+2. **Add `deletion-policy: retain`** to the blocks about to be removed. Deploy and confirm
+   the annotation is present on the live CRs.
+3. **Remove the blocks.** CRs disappear; AWS resources are retained, so the addons keep
+   working.
+4. **Set `addons.provider = "kro-ack"`** in `peeks-spoke-dev/config` and
+   `peeks-spoke-prod/config` (Secrets Manager) → the chart is selected and adopts the
+   retained resources.
+5. **Set `iamRoleSelectors.enabled: false` for the spokes.** MANDATORY, not cosmetic:
+   `multi-acct` already emits iam+eks selectors for those namespaces
+   (`configs/multi-acct/values.yaml` in fleet-config lists both spokes), and two selectors
+   with an identical (namespace, group) scope put the ACK controller in an infinite
+   reconcile loop — empty `status{}`, zero AWS API calls, resource never created. Documented
+   in **issue #813**. Identical `arn:` values do not help; the duplicated scope is the bug.
+
+Step 3 must precede step 4 so the RGD and the chart never manage the same association
+simultaneously. Between the two nothing manages them, but the AWS resources persist
+(retained), so there is no outage window.
+
+Also: write `provider` into whatever **seeds** the cluster config (the `kro-clusters` values
+template / RGD schema), not just the live secret — otherwise a re-seed silently drops it,
+the same failure mode as `overlay_repo_url`.
 
 ## Sync ordering / bootstrap safety
 
