@@ -142,10 +142,24 @@ ack_pod_identities:
   goTemplateOptions:
     - "missingkey=zero"
   annotationsAppSet:
-    # Wave 4, same as pod_identities: before the controllers that consume these
-    # identities (lbc/external-dns/keycloak at wave 5). A PreSync CRD-wait hook in the
-    # chart additionally gates the apply on the ACK CRDs being Established.
-    argocd.argoproj.io/sync-wave: '4'
+    # Wave -4, deliberately EARLIER than pod_identities (wave 4). The crossplane twin sits
+    # at 4 because it must follow crossplane-base (wave 3), which registers the
+    # iam/eks.aws.upbound.io CRDs. This chart has NO such dependency: ACK runs as an EKS
+    # Capability, so its CRDs come from the AWS-managed control plane and readiness is
+    # gated by the chart's own PreSync CRD-wait hook, not by a wave.
+    #
+    # Why as early as possible: ArgoCD marks this app Synced as soon as the CRs are
+    # APPLIED, not when ACK.ResourceSynced=True. The consumers start right after
+    # (aws-load-balancer-controller / external-dns / ingress-class-alb at wave 5,
+    # keycloak at 6), so at wave 4 there is almost no slack for ACK to actually create the
+    # association in AWS -- a pod can start before its credentials exist and then fail with
+    # "no EC2 IMDS role found" until the podidentity-pod-restart CronJob rescues it.
+    # Wave -4 buys the whole -4..5 window instead.
+    #
+    # Lower bound: must stay AFTER multi-acct (wave -5), which emits the IAMRoleSelectors
+    # the spokes rely on (this chart ships its own only where multi-acct does not cover the
+    # namespace -- see iamRoleSelectors.enabled and issue #813).
+    argocd.argoproj.io/sync-wave: '-4'
   selector:
     matchExpressions:
       - key: environment
@@ -162,11 +176,18 @@ ack_pod_identities:
       enabled: true
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     identities:
-      # Deliberately mirrors pod_identities: eso is NOT gated here. The hub reuses an
-      # existing role for ESO and its association is bootstrap-owned; spokes enable eso
-      # via the env overlay. Taking ESO over here would churn the identity that feeds
-      # every secret on the platform. Consequence: the externalSecrets block must STAY in
-      # rg-eks.yaml until eso is explicitly enabled via overlay on kro-ack clusters.
+      # SCOPE BOUNDARY: eso is deliberately NOT managed here -- the EksCluster RGD keeps
+      # ownership of external-secrets/external-secrets-sa. This is not just caution, the
+      # sync waves make it structural: external-secrets is at wave -1, and no addon app can
+      # create a pod identity association before the addon that needs it comes up that
+      # early. ESO must be authenticated before anything else can resolve its secrets, so
+      # its identity has to exist from cluster-creation time -- i.e. from the RGD.
+      # Consequence: keep the externalSecrets block in rg-eks.yaml. The `eso` entry still
+      # exists in this chart's values.yaml (enabled: false) so the drift test keeps
+      # guarding its policy document against the crossplane chart.
+      # WARNING: do NOT enable eso via an overlay on a kro-ack cluster -- the RGD already
+      # targets the same (namespace, serviceAccount), and two ACK CRs on one association
+      # fight over roleARN indefinitely.
       lbc:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:

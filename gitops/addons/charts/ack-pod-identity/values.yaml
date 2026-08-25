@@ -27,6 +27,12 @@ crdWait:
   - roles.iam.services.k8s.aws
   - podidentityassociations.eks.services.k8s.aws
 identities:
+  # eso: OWNED BY THE EksCluster RGD on kro-ack clusters, NOT by this chart. Kept here
+  # (enabled: false) only so the drift test keeps comparing its policy document against
+  # crossplane-pod-identity. Do NOT enable it via an overlay: the RGD targets the same
+  # (namespace, serviceAccount), and two ACK CRs on one association fight over roleARN.
+  # Rationale: external-secrets syncs at wave -1, far earlier than any pod-identity app
+  # can run, so ESO's identity must exist from cluster-creation time.
   eso:
     enabled: false
     roleName: ESOPodIdentityRole

@@ -1068,6 +1068,7 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/deletion-policy: retain
         spec:
           name: "${schema.spec.name}-ack-iam"
           policyDocument: |
@@ -1118,6 +1119,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             policy: "${externalDnsPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/deletion-policy: retain
         spec:
           name: "${schema.spec.name}-external-dns-role"
           policyRefs:
@@ -1163,6 +1165,7 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/deletion-policy: retain
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: external-dns
@@ -1195,6 +1198,7 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/deletion-policy: retain
             services.k8s.aws/adoption-policy: adopt-or-create
             services.k8s.aws/adoption-fields: |
               {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-lbc"}
@@ -1353,6 +1357,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             policy: "${lbcPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/deletion-policy: retain
         spec:
           name: "${schema.spec.name}-lbc-role"
           policyRefs:
@@ -1389,6 +1394,7 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/deletion-policy: retain
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: kube-system
@@ -1420,6 +1426,7 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/deletion-policy: retain
             services.k8s.aws/adoption-policy: adopt-or-create
             services.k8s.aws/adoption-fields: |
               {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-keycloak-config"}
@@ -1461,6 +1468,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             policy: "${keycloakConfigPolicy.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/deletion-policy: retain
         spec:
           name: "${schema.spec.name}-keycloak-config-role"
           policyRefs:
@@ -1497,6 +1505,7 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/deletion-policy: retain
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: keycloak
