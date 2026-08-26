@@ -1341,6 +1341,13 @@ tasks:
         KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
         if [ -f "$KRO_VALUES" ] && yq -e '.clusters."{{.CLUSTER}}".cidr.vpcCidr' "$KRO_VALUES" >/dev/null 2>&1; then
           echo "  Spoke {{.CLUSTER}} already has a CIDR — keeping existing values (idempotent)."
+          # Backfill provider on pre-existing entries written before the provider
+          # field was added. Without provider=kro-ack the spoke's ArgoCD cluster
+          # secret gets an empty provider label, so the addon registry routes it to
+          # the CROSSPLANE pod-identity chart (selector provider NotIn [kro-ack]
+          # matches empty), which then 409-conflicts with the ACK associations the
+          # kro EksCluster RGD already created. Force it here so re-runs self-heal.
+          CLUSTER={{.CLUSTER}} yq -i '.clusters.[env(CLUSTER)].provider = "kro-ack"' "$KRO_VALUES"
         else
           OCTET=$(printf '%s' '{{.CLUSTER}}' | cksum | awk '{print ($1 % 253) + 2}')
           # Ensure the file exists with a clusters: map (may already have other spokes)
@@ -1359,6 +1366,7 @@ tasks:
             "clusterName": env(CLUSTER),
             "tenant": "workshop",
             "environment": env(ENV),
+            "provider": "kro-ack",
             "region": env(AWS_REGION),
             "k8sVersion": env(K8S_VERSION),
             "accountId": (env(AWS_ACCOUNT_ID) | . tag = "!!str"),
