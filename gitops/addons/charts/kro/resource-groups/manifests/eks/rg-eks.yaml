@@ -1010,6 +1010,30 @@ spec:
                 }
               ]
             }
+    ###########################################################
+    # Pod Identity Associations — adoption posture
+    #
+    # All PodIdentityAssociations below default to
+    #   services.k8s.aws/adoption-policy: adopt-or-create
+    #   services.k8s.aws/deletion-policy: retain
+    # Rationale: a target (namespace, serviceAccount) may already carry a live
+    # EKS Pod Identity Association — created by the bootstrap, by a prior run, or
+    # under a previous role name (e.g. the crossplane-provider role unification).
+    # A bare ACK Create then fails with 409 ResourceInUseException and the CR stays
+    # ACK.ResourceSynced=Unknown forever. adopt-or-create adopts the live
+    # association (ACK matches it by clusterName+namespace+serviceAccount, no
+    # adoption-fields needed) and reconciles its roleARN to the desired value.
+    # retain avoids de-authenticating a running controller on an ArgoCD prune;
+    # it does not leak on teardown because the association is cluster-scoped and
+    # dies with the EKS Cluster (which is delete, not retain).
+    #
+    # SCOPE: this adopt-or-create default is applied to PodIdentityAssociations
+    # only. The other ACK resources in this RGD (Cluster, SecurityGroup, Role,
+    # AccessEntry, Capability, Addon) still do a plain Create and are NOT set to
+    # cluster / IAM role is a larger, riskier design decision tracked separately
+    # in https://github.com/aws-samples/appmod-blueprints/issues/775 ("adopt
+    # existing cluster"). Do not widen adopt-or-create beyond PIAs in this PR.
+    ###########################################################
     - id: externalSecretsPodIdentityAssociation
       readyWhen:
       - ${externalSecretsPodIdentityAssociation.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")} #check on ACK condition
