@@ -51,7 +51,7 @@ spec:
        apiVersion: services.k8s.aws/v1alpha1
        kind: IAMRoleSelector
        metadata:
-          name: ${schema.metadata.namespace}-iam
+          name: ${schema.metadata.namespace}-${schema.metadata.name}-iam
        spec:
           arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-iam
           namespaceSelector:
@@ -70,7 +70,7 @@ spec:
        apiVersion: services.k8s.aws/v1alpha1
        kind: IAMRoleSelector
        metadata:
-          name: ${schema.metadata.namespace}-ecr
+          name: ${schema.metadata.namespace}-${schema.metadata.name}-ecr
        spec:
           arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-ecr
           namespaceSelector:
@@ -89,7 +89,7 @@ spec:
        apiVersion: services.k8s.aws/v1alpha1
        kind: IAMRoleSelector
        metadata:
-          name: ${schema.metadata.namespace}-eks
+          name: ${schema.metadata.namespace}-${schema.metadata.name}-eks
        spec:
           arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-eks
           namespaceSelector:

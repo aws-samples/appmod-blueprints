@@ -28,8 +28,14 @@ spec:
             - ${schema.metadata.namespace}
         resourceTypeSelector:
           - group: s3.services.k8s.aws
-            kind: ""
-            version: ""
+            kind: Bucket
+            version: v1alpha1
+        # Scope this selector to only the Bucket owned by this Kro instance.
+        # Without this, every S3Bucket instance creates a namespace-wide selector,
+        # causing ACK to enter an infinite read loop on any second instance (bug #813).
+        resourceLabelSelector:
+          matchLabels:
+            kro.run/instance-name: ${schema.metadata.name}
   - id: s3bucket
     readyWhen:
       - ${s3bucket.status.conditions[0].status == "True"}
