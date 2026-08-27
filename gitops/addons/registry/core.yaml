@@ -1,0 +1,544 @@
+# Core infrastructure addons
+# Wave ordering: -1 (external-secrets, default-storage-class) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (efs-csi, pod-identities) → 5 (lbc, ingress-class-alb, external-dns)
+# NOTE: pod-identities runs at wave 4 (after crossplane-base at wave 3, defined
+# in platform.yaml) because it creates iam.aws.upbound.io / eks.aws.upbound.io
+# resources whose CRDs are registered by the Crossplane providers. A PreSync
+# CRD-readiness gate in the crossplane-pod-identity chart additionally blocks
+# its Sync phase until those CRDs are Established (cross-Application sync-waves
+# are best-effort, so the gate guarantees correctness).
+
+default-storage-class:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/default-storage-class'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  goTemplateOptions:
+    - "missingkey=zero"
+  selector:
+    matchExpressions:
+      - key: enable_default_storage_class
+        operator: In
+        values: ['true']
+
+env_config:
+  namespace: crossplane-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-env-config'
+  goTemplateOptions:
+    - "missingkey=zero"
+  annotationsAppSet:
+    # Plain EnvironmentConfig manifest. clusterName/region resolve immediately;
+    # vpcId/subnet/SG annotations are published by the platform-cluster Composition
+    # and the EnvironmentConfig converges as the cluster secret gains them.
+    argocd.argoproj.io/sync-wave: '6'
+  selector:
+    matchExpressions:
+      - key: enable_crossplane
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      vpcId: '{{.metadata.annotations.aws_vpc_id}}'
+      clusterSecurityGroupId: '{{.metadata.annotations.aws_cluster_security_group_id}}'
+      privateSubnetIds: '{{.metadata.annotations.aws_private_subnet_ids}}'
+      publicSubnetIds: '{{.metadata.annotations.aws_public_subnet_ids}}'
+
+pod_identities:
+  namespace: crossplane-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-pod-identity'
+  destinationHub: true
+  goTemplateOptions:
+    - "missingkey=zero"
+  annotationsAppSet:
+    # Wave 4: after crossplane-base (wave 3) registers the iam/eks CRDs, and
+    # before the controllers that consume these identities (lbc/external-dns/
+    # keycloak at wave 5). A PreSync CRD-wait hook in the chart further gates
+    # the actual apply on CRD availability.
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: environment
+        operator: Exists
+      # crossplane-pod-identity is the CROSSPLANE provider's mechanism. On the
+      # kro-ack provider, pod identities are created by the KRO EksCluster RGD (ACK),
+      # and Crossplane's own providers are not bootstrapped there — so these CRs would
+      # be permanently Degraded (SYNCED=False) and are a latent 409 conflict with the
+      # ACK-created associations. Exclude kro-ack clusters. NotIn also matches clusters
+      # with NO provider label (crossplane/legacy), so only provider=kro-ack is excluded.
+      - key: provider
+        operator: NotIn
+        values: ["kro-ack"]
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+    identities:
+      # Pod identity enablement derived from cluster labels.
+      # eso identity is intentionally omitted here: the hub (control-plane)
+      # reuses the Crossplane provider role for ESO; spoke clusters enable
+      # it via env overlay.
+      lbc:
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
+      external-dns:
+        enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      keycloak:
+        enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
+  ignoreDifferences:
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: Policy
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /status
+    - group: eks.aws.upbound.io
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+
+# ACK mirror of pod_identities, for clusters provisioned by the kro-ack provider.
+#
+# Why a second chart instead of parameterizing the first: the repo already models the
+# crossplane/kro-ack duality as one chart per backend (abstractions/crossplane vs
+# abstractions/kro, clusters-crossplane.yaml vs clusters-kro.yaml). Only the rendered CRD
+# kinds differ -- iam.services.k8s.aws/eks.services.k8s.aws instead of *.aws.upbound.io.
+# The identities and their IAM policy documents are kept identical to
+# crossplane-pod-identity (a CI drift test enforces it). See
+# docs/platform/ack-pod-identity-design.md.
+#
+# Selection is the exact complement of pod_identities above: that entry excludes
+# provider=kro-ack, this one requires it, so a cluster gets exactly ONE of the two and
+# the 409 ResourceInUseException conflict on a shared SA cannot recur.
+#
+# namespace = cluster name (NOT crossplane-system): ACK resolves which IAM role to assume
+# per namespace via IAMRoleSelector/CARM, and the existing selectors (from multi-acct) are
+# keyed on namespaceSelector.names = <cluster name>. destinationHub keeps the CRs on the
+# hub, where the ACK capability reconciles them, matching the EksCluster RGD convention.
+ack_pod_identities:
+  namespace: '{{.metadata.annotations.aws_cluster_name}}'
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/ack-pod-identity'
+  destinationHub: true
+  goTemplateOptions:
+    - "missingkey=zero"
+  annotationsAppSet:
+    # Wave -4, deliberately EARLIER than pod_identities (wave 4). The crossplane twin sits
+    # at 4 because it must follow crossplane-base (wave 3), which registers the
+    # iam/eks.aws.upbound.io CRDs. This chart has NO such dependency: ACK runs as an EKS
+    # Capability, so its CRDs come from the AWS-managed control plane and readiness is
+    # gated by the chart's own PreSync CRD-wait hook, not by a wave.
+    #
+    # Why as early as possible: ArgoCD marks this app Synced as soon as the CRs are
+    # APPLIED, not when ACK.ResourceSynced=True. The consumers start right after
+    # (aws-load-balancer-controller / external-dns / ingress-class-alb at wave 5,
+    # keycloak at 6), so at wave 4 there is almost no slack for ACK to actually create the
+    # association in AWS -- a pod can start before its credentials exist and then fail with
+    # "no EC2 IMDS role found" until the podidentity-pod-restart CronJob rescues it.
+    # Wave -4 buys the whole -4..5 window instead.
+    #
+    # Lower bound: must stay AFTER multi-acct (wave -5). multi-acct is the SOLE owner of
+    # IAMRoleSelectors (CARM), and ACK cannot reconcile this chart's CRs without a selector
+    # covering their namespace for iam+eks. INVARIANT: every cluster running this addon must
+    # appear in multi-acct's `clusters` map. This chart used to ship its own selectors as a
+    # stopgap for the hub; that duplicated ownership and risked the issue #813 failure mode
+    # (two selectors with an identical (namespace, group) scope put the ACK controller in an
+    # infinite reconcile loop -- empty status, zero API calls, silent).
+    argocd.argoproj.io/sync-wave: '-4'
+  selector:
+    matchExpressions:
+      - key: environment
+        operator: Exists
+      - key: provider
+        operator: In
+        values: ["kro-ack"]
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+    identities:
+      # SCOPE BOUNDARY: eso is deliberately NOT managed here -- the EksCluster RGD keeps
+      # ownership of external-secrets/external-secrets-sa. This is not just caution, the
+      # sync waves make it structural: external-secrets is at wave -1, and no addon app can
+      # create a pod identity association before the addon that needs it comes up that
+      # early. ESO must be authenticated before anything else can resolve its secrets, so
+      # its identity has to exist from cluster-creation time -- i.e. from the RGD.
+      # Consequence: keep the externalSecrets block in rg-eks.yaml. The `eso` entry still
+      # exists in this chart's values.yaml (enabled: false) so the drift test keeps
+      # guarding its policy document against the crossplane chart.
+      # WARNING: do NOT enable eso via an overlay on a kro-ack cluster -- the RGD already
+      # targets the same (namespace, serviceAccount), and two ACK CRs on one association
+      # fight over roleARN indefinitely.
+      lbc:
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
+      external-dns:
+        enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      keycloak:
+        enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
+  ignoreDifferences:
+    # ACK writes reconciliation state into /status; never diff on it.
+    - group: iam.services.k8s.aws
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.services.k8s.aws
+      kind: Policy
+      jsonPointers:
+        - /status
+    - group: eks.services.k8s.aws
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+
+argocd:
+  namespace: argocd
+  chartName: argo-cd
+  releaseName: argocd
+  chartRepository: https://argoproj.github.io/argo-helm
+  defaultVersion: '9.5.12'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '0'
+  selector:
+    matchExpressions:
+      - key: enable_argocd
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      domain: '{{.metadata.annotations.ingress_domain_name}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    configs:
+      cm:
+        url: https://{{.metadata.annotations.ingress_domain_name}}/argocd
+        oidc.config: |
+          name: Keycloak
+          issuer: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform
+          clientID: argocd
+          enablePKCEAuthentication: true
+          requestedScopes: ["openid", "profile", "email", "groups"]
+
+metrics-server:
+  namespace: kube-system
+  chartName: metrics-server
+  chartRepository: https://kubernetes-sigs.github.io/metrics-server
+  defaultVersion: '3.13.0'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '0'
+  selector:
+    matchExpressions:
+      - key: enable_metrics_server
+        operator: In
+        values: ['true']
+
+cert-manager:
+  namespace: cert-manager
+  chartName: cert-manager
+  releaseName: cert-manager
+  chartRepository: https://charts.jetstack.io
+  defaultVersion: 'v1.20.2'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '2'
+  selector:
+    matchExpressions:
+      - key: enable_cert_manager
+        operator: In
+        values: ['true']
+
+external-secrets:
+  namespace: external-secrets
+  chartName: external-secrets
+  chartRepository: https://charts.external-secrets.io
+  defaultVersion: '2.4.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  syncPolicy:
+    automated:
+      selfHeal: false
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+  selector:
+    matchExpressions:
+      - key: enable_external_secrets
+        operator: In
+        values: ['true']
+  valuesObject:
+    serviceAccount:
+      name: external-secrets-sa
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+  additionalResources:
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/cluster-secret-store'
+      helm:
+        releaseName: cluster-secret-store
+        valuesObject:
+          aws:
+            region: '{{.metadata.annotations.aws_region}}'
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
+      helm:
+        releaseName: eso-credential-check
+        valuesObject:
+          targets:
+            - name: eso
+              namespace: external-secrets
+              serviceAccount: external-secrets-sa
+              deploymentLabel: app.kubernetes.io/name=external-secrets
+
+ingress-class-alb:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/ingress-class-alb'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  goTemplateOptions:
+    - "missingkey=zero"
+  selector:
+    matchExpressions:
+      - key: enable_ingress_class_alb
+        operator: In
+        values: ['true']
+  valuesObject:
+    controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
+    loadBalancerName: '{{if eq (default "false" .metadata.annotations.insecure) "true"}}{{.metadata.annotations.aws_cluster_name}}-platform{{end}}'
+    # In insecure mode the platform ALB is created internal (the consumer fronts it
+    # with its own edge — e.g. CloudFront — over a VPC-origin/private backend). The
+    # IngressClassParams scheme MUST match the adopted ALB's scheme — ALB scheme is
+    # immutable, so a mismatch makes the LBC refuse to attach listener rules, leaving
+    # every ingress with no address and the ALB's default 404 action.
+    scheme: '{{if eq (default "false" .metadata.annotations.insecure) "true"}}internal{{else}}internet-facing{{end}}'
+
+aws-load-balancer-controller:
+  namespace: kube-system
+  chartName: aws-load-balancer-controller
+  chartRepository: https://aws.github.io/eks-charts
+  defaultVersion: '1.14.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_aws_load_balancer_controller
+        operator: In
+        values: ['true']
+  goTemplateOptions:
+    - "missingkey=zero"
+  valuesObject:
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    vpcId: '{{.metadata.annotations.aws_vpc_id}}'
+    region: '{{.metadata.annotations.aws_region}}'
+    # Let cert-manager issue and rotate the webhook serving cert + inject the
+    # caBundle, instead of the chart's self-signed cert-gen Job. The cert-gen
+    # Job regenerates the cert out-of-band, which drifts the webhook caBundle
+    # away from the serving cert and breaks Ingress admission with
+    # "x509: certificate signed by unknown authority". cert-manager keeps the
+    # serving cert and the injected caBundle from the same issuer, so they
+    # always rotate together. cert-manager syncs at wave 2 (before LBC at 5).
+    enableCertManager: true
+    serviceAccount:
+      create: true
+      name: aws-load-balancer-controller-sa
+  # cert-manager now owns the webhook TLS material, so the chart's self-signed
+  # cert-gen Job no longer runs and the previous caBundle drift is gone. The
+  # ignoreDifferences below are retained as a harmless safety net in case the
+  # cert is rotated by cert-manager between Argo refreshes.
+  ignoreDifferences:
+    - group: ''
+      kind: Secret
+      name: aws-load-balancer-tls
+      namespace: kube-system
+      jsonPointers:
+        - /data
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      name: aws-load-balancer-webhook
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      name: aws-load-balancer-webhook
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+  additionalResources:
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
+      helm:
+        releaseName: lbc-credential-check
+        valuesObject:
+          targets:
+            - name: lbc
+              namespace: kube-system
+              serviceAccount: aws-load-balancer-controller-sa
+              deploymentLabel: app.kubernetes.io/name=aws-load-balancer-controller
+
+image-prepuller:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/image-prepuller'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '1'
+  selector:
+    matchExpressions:
+      - key: enable_image_prepuller
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+
+aws-efs-csi-driver:
+  namespace: kube-system
+  chartName: aws-efs-csi-driver
+  chartRepository: https://kubernetes-sigs.github.io/aws-efs-csi-driver
+  defaultVersion: '4.1.0'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_aws_efs_csi_driver
+        operator: In
+        values: ['true']
+  valuesObject:
+    controller:
+      serviceAccount:
+        name: efs-csi-controller-sa
+        annotations:
+          eks.amazonaws.com/role-arn: '{{default "" (index .metadata.annotations "aws_efs_csi_driver_iam_role_arn")}}'
+    node:
+      serviceAccount:
+        name: efs-csi-node-sa
+        annotations:
+          eks.amazonaws.com/role-arn: '{{default "" (index .metadata.annotations "aws_efs_csi_driver_iam_role_arn")}}'
+
+external-dns:
+  namespace: kube-system
+  chartName: external-dns
+  chartRepository: https://kubernetes-sigs.github.io/external-dns
+  defaultVersion: '1.21.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_external_dns
+        operator: In
+        values: ['true']
+  valuesObject:
+    domainFilters:
+      - '{{.metadata.annotations.ingress_domain_name}}'
+    txtOwnerId: '{{.metadata.annotations.aws_cluster_name}}'
+    extraArgs:
+      - --aws-zone-match-parent
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: http
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      failureThreshold: 5
+      timeoutSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: http
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      failureThreshold: 5
+      timeoutSeconds: 10
+    serviceAccount:
+      name: external-dns-sa
+  additionalResources:
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
+      helm:
+        releaseName: external-dns-credential-check
+        valuesObject:
+          targets:
+            - name: external-dns
+              namespace: kube-system
+              serviceAccount: external-dns-sa
+              deploymentLabel: app.kubernetes.io/name=external-dns
+
+# ─── Karpenter (self-managed, alongside EKS Auto Mode) ──────────────────────
+# Self-managed Karpenter for dedicated workload pools (e.g. Kata nested-virt nodes)
+# that Auto Mode's Bottlerocket nodes can't host. Coexists with Auto Mode: each
+# controller owns only NodePools whose nodeClassRef.group matches its NodeClass API
+# (Auto Mode = eks.amazonaws.com; self-managed = karpenter.k8s.aws), so neither
+# manages the other's NodeClaims.
+#
+# Single wrapper chart (addons/charts/karpenter): upstream karpenter as a Helm
+# DEPENDENCY (values nested under `karpenter:`) + the Crossplane IAM it needs
+# (controller pod-identity, node role + access entry, optional manageAddons-gated
+# vpc-cni/kube-proxy). One enable_karpenter flip brings up controller + IAM together.
+# The EC2NodeClass + NodePool objects are supplied by the consuming layer (e.g. the
+# agentic kata-nodepool addon), NOT here.
+#
+# CRDs: the upstream subchart ships CRDs in crds/ (Helm install-if-absent) + the app
+# uses ServerSideApply, so the shared karpenter.sh nodepools/nodeclaims CRDs that Auto
+# Mode owns are left intact; only the non-shared karpenter.k8s.aws/ec2nodeclasses is added.
+# v1.14.0: first upstream release with cpuOptions.nestedVirtualization (needed for Kata).
+karpenter:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/karpenter'
+  defaultVersion: '0.1.0'
+  annotationsAppSet:
+    # After crossplane-base (wave 3) registers iam/eks CRDs. The in-chart IAM
+    # resources carry their own negative sync-waves so they apply first within this app.
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_karpenter
+        operator: In
+        values: ['true']
+  valuesObject:
+    # Top-level: consumed by the IAM templates (policy ARNs, external-names).
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+    # Upstream controller settings nest under the subchart name `karpenter:`.
+    # (affinity override + Pod-Identity SA are chart defaults; only clusterName
+    # needs per-cluster injection here.)
+    karpenter:
+      settings:
+        clusterName: '{{.metadata.annotations.aws_cluster_name}}'

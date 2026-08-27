@@ -145,9 +145,10 @@ spec:
           workerCpu: ${{ parameters.modelName === 'mistral-7b-neuron' and '8' or parameters.workerCpu }}
           workerMemory: ${{ parameters.modelName === 'mistral-7b-neuron' and '32Gi' or parameters.workerMemory }}
           headGpu: "0"
-          workerGpu: ${{ parameters.modelName === 'mistral-7b-neuron' and '2' or '0' }}
+          workerGpu: ${{ parameters.modelName === 'mistral-7b-neuron' and '2' or '1' }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
           ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
+          insecure: ${{ steps['fetchSystem'].output.entity.spec.insecure | default(true) }}
           argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
           git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
           aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
@@ -338,7 +339,7 @@ spec:
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.name }}-ray-service
         icon: git
       - title: ArgoCD Project
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/settings/argocd/projects/${{ parameters.name }}-ray-project
+        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/settings/projects/${{ parameters.name }}-ray-project
         icon: web
       - title: Ray Serve Endpoint (After Deployment)
         url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/ray-serve/${{ parameters.name }}/

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: platform-cluster
+description: Crossplane XRD and Composition for provisioning EKS platform clusters (VPC + EKS Auto Mode + IAM)
+type: application
+version: 0.1.0

@@ -1,0 +1,33 @@
+# IAM Role for the EKS KRO Capability
+# Mirrors argocd-capability-role.yaml. Created by Crossplane before the KRO
+# capability is created. KRO orchestrates in-cluster Kubernetes resources
+# (ResourceGraphDefinitions); the underlying AWS calls are made by the ACK
+# controllers, so this role needs only the capability trust — no AWS permissions.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: kro-capability-role
+  namespace: crossplane-system
+  annotations:
+    crossplane.io/external-name: CLUSTER_NAME-KROCapabilityRole
+spec:
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "capabilities.eks.amazonaws.com"
+            },
+            "Action": [
+              "sts:AssumeRole",
+              "sts:TagSession"
+            ]
+          }
+        ]
+      }
+    tags:
+      managed-by: crossplane
+      purpose: eks-kro-capability

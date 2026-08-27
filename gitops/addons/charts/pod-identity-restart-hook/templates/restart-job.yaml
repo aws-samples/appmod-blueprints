@@ -1,0 +1,81 @@
+{{- range $target := .Values.targets }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $target.name }}-credential-check-sa
+  namespace: {{ $target.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $target.name }}-credential-check-role
+  namespace: {{ $target.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $target.name }}-credential-check-binding
+  namespace: {{ $target.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $target.name }}-credential-check-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ $target.name }}-credential-check-sa
+    namespace: {{ $target.namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $target.name }}-credential-check
+  namespace: {{ $target.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      serviceAccountName: {{ $target.name }}-credential-check-sa
+      containers:
+        - name: check
+          image: bitnami/kubectl:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              SA="{{ $target.serviceAccount }}"
+              NS="{{ $target.namespace }}"
+              LABEL="{{ $target.deploymentLabel }}"
+              POD=$(kubectl get pods -n $NS -l $LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+              if [ -z "$POD" ]; then
+                echo "No pod found with label $LABEL in $NS, skipping"
+                exit 0
+              fi
+              if kubectl get pod $POD -n $NS -o jsonpath='{.spec.containers[0].env[*].name}' | grep -q AWS_CONTAINER_CREDENTIALS_FULL_URI; then
+                echo "Pod identity credentials already injected, no restart needed"
+              else
+                echo "Missing pod identity credentials, restarting deployment"
+                kubectl rollout restart deployment -n $NS -l $LABEL
+                kubectl rollout status deployment -n $NS -l $LABEL --timeout=120s
+              fi
+      restartPolicy: Never
+{{- end }}

@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Check Helm Template Syntax",
+  "description": "Before writing Helm template files, verify that Go template syntax is balanced (matching {{ and }}) and common patterns are correct.",
+  "version": "1",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": [
+      "write"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "If this write operation is creating or modifying a Helm template file (.tpl or .yaml in a templates/ directory), verify: (1) all {{ and }} are balanced, (2) define/end blocks are matched, (3) range/end blocks are matched, (4) if/else/end blocks are matched, (5) no stray backticks or unescaped quotes. If not a Helm template file, skip this check."
+  }
+}

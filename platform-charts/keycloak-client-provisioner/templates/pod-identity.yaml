@@ -1,0 +1,70 @@
+{{/*
+  Self-provisioned IAM Role + PodIdentityAssociation for the provisioner Job.
+  Runs on the hub, reconciled by the hub's iam/eks Crossplane providers.
+  Grants secretsmanager write on the OIDC contract paths the Job populates.
+  Consistent with every other workload: the chart brings its own identity;
+  no central per-workload registration in the pod-identities overlay.
+*/}}
+{{- $clusterName := required "clusterName is required for pod identity" .Values.clusterName -}}
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: {{ $clusterName }}-keycloak-client-provisioner-role
+  labels:
+    platform.gitops.io/role: keycloak-client-provisioner
+    platform.gitops.io/cluster: {{ $clusterName }}
+  annotations:
+    crossplane.io/external-name: {{ $clusterName }}-KeycloakClientProvisionerRole
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [{
+          "Effect": "Allow",
+          "Principal": {"Service": "pods.eks.amazonaws.com"},
+          "Action": ["sts:AssumeRole", "sts:TagSession"]
+        }]
+      }
+    inlinePolicy:
+      - name: KeycloakClientProvisionerSecretsManager
+        policy: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:DescribeSecret"
+              ],
+              "Resource": "arn:aws:secretsmanager:*:*:secret:*/oidc/*"
+            }]
+          }
+    tags:
+      platform.gitops.io/role: keycloak-client-provisioner
+      platform.gitops.io/cluster: {{ $clusterName }}
+  providerConfigRef:
+    name: default
+---
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: PodIdentityAssociation
+metadata:
+  name: {{ $clusterName }}-keycloak-client-provisioner
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  forProvider:
+    clusterName: {{ $clusterName }}
+    namespace: keycloak
+    serviceAccount: {{ .Values.serviceAccountName }}
+    roleArnSelector:
+      matchLabels:
+        platform.gitops.io/role: keycloak-client-provisioner
+        platform.gitops.io/cluster: {{ $clusterName }}
+    region: {{ required "region is required" .Values.region }}
+  providerConfigRef:
+    name: default

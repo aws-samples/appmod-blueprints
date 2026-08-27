@@ -89,4 +89,4 @@ spec:
         url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/applications/argocd/${{parameters.name}}
       - title: Argo Workflows
         icon: argo
-        url: https://${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}/argo-workflows/workflows/argo/${{parameters.name}}
+        url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/argo-workflows/workflows/argo/${{parameters.name}}

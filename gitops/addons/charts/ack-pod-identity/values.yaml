@@ -1,0 +1,426 @@
+# ACK-managed IAM roles/policies + EKS pod identity associations for platform addons.
+#
+# DO NOT hand-edit the identities[*].policy.document blocks. They MUST stay
+# semantically identical to gitops/addons/charts/crossplane-pod-identity/values.yaml
+# (this file was generated from it). A CI drift test asserts equality -- the two
+# charts are per-backend mirrors and divergence here is a security bug.
+#
+# Only 4 identities live here. adot-collector / cloudwatch-observability /
+# cni-metrics-helper / kyverno-policy-reporter are deliberately absent: they have no
+# consumer on any cluster (see docs/platform/ack-pod-identity-design.md).
+aws:
+  region: ''
+  clusterName: ''
+  accountId: ''
+crdWait:
+  enabled: true
+  timeoutSeconds: 600
+  image: bitnami/kubectl:latest
+  crds:
+  - policies.iam.services.k8s.aws
+  - roles.iam.services.k8s.aws
+  - podidentityassociations.eks.services.k8s.aws
+identities:
+  # eso: OWNED BY THE EksCluster RGD on kro-ack clusters, NOT by this chart. Kept here
+  # (enabled: false) only so the drift test keeps comparing its policy document against
+  # crossplane-pod-identity. Do NOT enable it via an overlay: the RGD targets the same
+  # (namespace, serviceAccount), and two ACK CRs on one association fight over roleARN.
+  # Rationale: external-secrets syncs at wave -1, far earlier than any pod-identity app
+  # can run, so ESO's identity must exist from cluster-creation time.
+  eso:
+    enabled: false
+    roleName: ESOPodIdentityRole
+    namespace: external-secrets
+    serviceAccount: external-secrets-sa
+    tags:
+      managed-by: ack
+      purpose: eso-pod-identity
+    policy:
+      name: ESOSecretsManagerPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:ListSecrets",
+                "secretsmanager:BatchGetSecretValue",
+                "secretsmanager:ListSecretVersionIds",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:GetResourcePolicy",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:CreateSecret",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:TagResource",
+                "secretsmanager:DeleteResourcePolicy"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:DeleteSecret"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "secretsmanager:ResourceTag/managed-by": "external-secrets"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ssm:DescribeParameters"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ssm:GetParametersByPath",
+                "ssm:GetParameters",
+                "ssm:GetParameter"
+              ],
+              "Resource": "arn:aws:ssm:*:*:parameter/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "kms:Decrypt"
+              ],
+              "Resource": "arn:aws:kms:*:*:key/*"
+            }
+          ]
+        }
+  lbc:
+    enabled: false
+    roleName: LBCPodIdentityRole
+    namespace: kube-system
+    serviceAccount: aws-load-balancer-controller-sa
+    tags:
+      managed-by: ack
+      purpose: lbc-pod-identity
+    policy:
+      name: LBCControllerPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["iam:CreateServiceLinkedRole"],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:AWSServiceName": "elasticloadbalancing.amazonaws.com"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:DescribeAccountAttributes",
+                "ec2:DescribeAddresses",
+                "ec2:DescribeAvailabilityZones",
+                "ec2:DescribeInternetGateways",
+                "ec2:DescribeVpcs",
+                "ec2:DescribeVpcPeeringConnections",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeInstances",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DescribeTags",
+                "ec2:DescribeCoipPools",
+                "ec2:GetCoipPoolUsage",
+                "ec2:DescribeInstanceTypes",
+                "ec2:GetSecurityGroupsForVpc",
+                "elasticloadbalancing:DescribeLoadBalancers",
+                "elasticloadbalancing:DescribeLoadBalancerAttributes",
+                "elasticloadbalancing:DescribeListeners",
+                "elasticloadbalancing:DescribeListenerAttributes",
+                "elasticloadbalancing:DescribeListenerCertificates",
+                "elasticloadbalancing:DescribeSSLPolicies",
+                "elasticloadbalancing:DescribeRules",
+                "elasticloadbalancing:DescribeTargetGroups",
+                "elasticloadbalancing:DescribeTargetGroupAttributes",
+                "elasticloadbalancing:DescribeTargetHealth",
+                "elasticloadbalancing:DescribeTags",
+                "elasticloadbalancing:DescribeTrustStores"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "cognito-idp:DescribeUserPoolClient",
+                "acm:ListCertificates",
+                "acm:DescribeCertificate",
+                "iam:ListServerCertificates",
+                "iam:GetServerCertificate",
+                "waf-regional:GetWebACL",
+                "waf-regional:GetWebACLForResource",
+                "waf-regional:AssociateWebACL",
+                "waf-regional:DisassociateWebACL",
+                "wafv2:GetWebACL",
+                "wafv2:GetWebACLForResource",
+                "wafv2:AssociateWebACL",
+                "wafv2:DisassociateWebACL",
+                "shield:GetSubscriptionState",
+                "shield:DescribeProtection",
+                "shield:CreateProtection",
+                "shield:DeleteProtection"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["ec2:CreateSecurityGroup"],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["ec2:CreateTags"],
+              "Resource": "arn:aws:ec2:*:*:security-group/*",
+              "Condition": {
+                "StringEquals": {
+                  "ec2:CreateAction": "CreateSecurityGroup"
+                },
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["ec2:CreateTags", "ec2:DeleteTags"],
+              "Resource": "arn:aws:ec2:*:*:security-group/*",
+              "Condition": {
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress",
+                "ec2:DeleteSecurityGroup"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Null": {
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:CreateLoadBalancer",
+                "elasticloadbalancing:CreateTargetGroup"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:CreateListener",
+                "elasticloadbalancing:DeleteListener",
+                "elasticloadbalancing:CreateRule",
+                "elasticloadbalancing:DeleteRule"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:AddTags",
+                "elasticloadbalancing:RemoveTags"
+              ],
+              "Resource": [
+                "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
+                "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
+                "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
+              ],
+              "Condition": {
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:AddTags",
+                "elasticloadbalancing:RemoveTags"
+              ],
+              "Resource": [
+                "arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*",
+                "arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*",
+                "arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*",
+                "arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*"
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:ModifyLoadBalancerAttributes",
+                "elasticloadbalancing:SetIpAddressType",
+                "elasticloadbalancing:SetSecurityGroups",
+                "elasticloadbalancing:SetSubnets",
+                "elasticloadbalancing:DeleteLoadBalancer",
+                "elasticloadbalancing:ModifyTargetGroup",
+                "elasticloadbalancing:ModifyTargetGroupAttributes",
+                "elasticloadbalancing:DeleteTargetGroup"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Null": {
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["elasticloadbalancing:AddTags"],
+              "Resource": [
+                "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
+                "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
+                "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "elasticloadbalancing:CreateAction": [
+                    "CreateTargetGroup",
+                    "CreateLoadBalancer"
+                  ]
+                },
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:RegisterTargets",
+                "elasticloadbalancing:DeregisterTargets"
+              ],
+              "Resource": "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:SetWebAcl",
+                "elasticloadbalancing:ModifyListener",
+                "elasticloadbalancing:AddListenerCertificates",
+                "elasticloadbalancing:RemoveListenerCertificates",
+                "elasticloadbalancing:ModifyRule",
+                "elasticloadbalancing:SetRulePriorities"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+  external-dns:
+    enabled: false
+    roleName: ExternalDNSPodIdentityRole
+    namespace: kube-system
+    serviceAccount: external-dns-sa
+    tags:
+      managed-by: ack
+      purpose: external-dns-pod-identity
+    policy:
+      name: ExternalDNSRoute53Policy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "route53:ChangeResourceRecordSets"
+              ],
+              "Resource": "arn:aws:route53:::hostedzone/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "route53:ListHostedZones",
+                "route53:ListHostedZonesByName",
+                "route53:ListResourceRecordSets"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+  keycloak:
+    enabled: false
+    roleName: KeycloakConfigPodIdentityRole
+    namespace: keycloak
+    serviceAccount: keycloak-config
+    tags:
+      managed-by: ack
+      purpose: keycloak-config-pod-identity
+    policy:
+      name: KeycloakConfigSecretsPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:TagResource"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sso:CreateApplication",
+                "sso:PutApplicationGrant",
+                "sso:PutApplicationAuthenticationMethod",
+                "sso:PutApplicationAccessScope",
+                "sso:DescribeApplication",
+                "sso:ListApplications",
+                "sso-directory:SearchUsers",
+                "sso-directory:SearchGroups",
+                "sso-directory:CreateUser",
+                "sso-directory:DescribeUser",
+                "sso-directory:UpdateUser",
+                "sso-directory:ListGroupMemberships",
+                "sso-directory:AddMemberToGroup",
+                "identitystore:CreateUser",
+                "identitystore:DescribeUser",
+                "identitystore:ListUsers",
+                "identitystore:CreateGroupMembership",
+                "identitystore:ListGroupMemberships",
+                "identitystore:ListGroups"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }

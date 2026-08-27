@@ -1,0 +1,38 @@
+valueFiles:
+  - "values.yaml"
+
+syncPolicy:
+  automated:
+    # selfHeal:true so addons auto-converge to Git without a manual sync (e.g. when
+    # a spoke first becomes reachable). Safe with prune:false: adds/updates to match
+    # Git but never deletes. Per-addon charts may override via chartConfig.syncPolicy.
+    selfHeal: true
+    allowEmpty: true
+    prune: false
+  retry:
+    limit: -1 # number of failed sync attempt retries; unlimited number of attempts if less than 0
+    backoff:
+      duration: 5s # the amount to back off. Default unit is seconds, but could also be a duration (e.g. "2m", "1h")
+      factor: 2 # a factor to multiply the base duration after each failed retry
+      maxDuration: 10m # the maximum amount of time allowed for the backoff strategy
+  syncOptions:
+    - CreateNamespace=true
+
+syncPolicyAppSet:
+  preserveResourcesOnDeletion: true
+
+useSelectors: true
+useValuesFilePrefix: false
+
+appsetPrefix: ""
+namespace: argocd
+
+repoURLGit: "{{.metadata.annotations.addonsRepoURL}}"
+repoURLGitRevision: "{{.metadata.annotations.addonsRepoRevision}}"
+repoURLGitBasePath: "{{.metadata.annotations.addonsRepoBasepath}}"
+overlayBasePath: ""
+
+# Overlay multi-repo (optional, injected by bootstrap/addons.yaml valuesObject)
+overlayRepoURLGit: ""
+overlayRepoURLGitRevision: "main"
+overlayRepoURLGitBasePath: ""

@@ -1,0 +1,57 @@
+aws:
+  region: ""
+  accountId: ""
+  vpcId: ""
+  clusterName: ""
+
+ingress:
+  domainName: ""
+
+resourcePrefix: ""
+
+amp:
+  enabled: true
+  alias: ""  # defaults to <resourcePrefix>-observability-amp
+
+amg:
+  enabled: true
+  name: ""  # defaults to <resourcePrefix>-observability
+  grafanaVersion: "12.4"
+  roleArn: ""  # IAM role ARN for AMG workspace (required for CURRENT_ACCOUNT access type)
+  dataSources:
+    - CLOUDWATCH
+    - PROMETHEUS
+    - XRAY
+  notificationDestinations:
+    - SNS
+  # VPC subnet IDs for AMG (from hub cluster)
+  subnetIds: []
+  # Security group ID for AMG egress
+  securityGroupId: ""
+
+saml:
+  adminRoleValues:
+    - grafana-admin
+  editorRoleValues:
+    - grafana-editor
+    - grafana-viewer
+  emailAssertion: "mail"
+  groupsAssertion: "groups"
+  loginAssertion: "mail"
+  nameAssertion: "displayName"
+  orgAssertion: "org"
+  roleAssertion: "role"
+  loginValidityDuration: 120
+
+scraper:
+  enabled: true
+  scrapeInterval: "30s"
+  scrapeTimeout: "10s"
+  # Cluster-specific values (populated per-cluster by ApplicationSet)
+  clusterArn: ""
+  clusterSubnetIds: []
+  clusterSecurityGroupIds: []
+
+# Spoke cluster scrapers — add entries here for each spoke cluster
+# Format: clusterName: {clusterArn, subnetIds (comma-separated), securityGroupIds (comma-separated)}
+spokeScrapers: {}

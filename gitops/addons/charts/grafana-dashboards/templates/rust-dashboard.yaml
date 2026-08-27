@@ -295,7 +295,7 @@ spec:
                 "type": "prometheus",
                 "uid": "$datasource"
               },
-              "expr": "sum(rate(container_cpu_usage_seconds_total{container=\"rust-microservice\", namespace=\"team-rust\"}[1m])) by (pod)",
+              "expr": "sum(rate(container_cpu_usage_seconds_total{k8s_container_name=\"rust-microservice\", k8s_namespace_name=\"team-rust\"}[1m])) by (pod)",
               "legendFormat": "{{ `{{pod}}` }}",
               "refId": "A"
             }
@@ -329,7 +329,7 @@ spec:
                 "type": "prometheus",
                 "uid": "$datasource"
               },
-              "expr": "sum(container_memory_working_set_bytes{container=\"rust-microservice\", namespace=\"team-rust\"}) by (pod) / 1024 / 1024",
+              "expr": "sum(container_memory_working_set_bytes{k8s_container_name=\"rust-microservice\", k8s_namespace_name=\"team-rust\"}) by (pod) / 1024 / 1024",
               "legendFormat": "{{ `{{pod}}` }}",
               "refId": "A"
             }

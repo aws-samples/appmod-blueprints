@@ -1,0 +1,5 @@
+apiVersion: v2
+name: crossplane-pod-identity
+description: Crossplane-managed IAM roles, policies, and EKS pod identity associations for platform addons
+type: application
+version: 0.1.0

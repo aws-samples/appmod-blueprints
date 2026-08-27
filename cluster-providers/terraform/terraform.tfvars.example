@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and fill in values from config.local.yaml
+
+cluster_name       = ""
+aws_region         = ""
+aws_account_id     = ""
+repo_url           = ""
+repo_revision      = "main"
+repo_basepath      = "gitops/"
+domain             = ""
+resource_prefix    = ""
+idc_instance_arn   = ""
+idc_region         = ""
+idc_admin_group_id = ""

@@ -1,0 +1,29 @@
+vela-core:
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+  workflow:
+    backoff:
+      maxTime:
+        failedState: 180
+    step:
+      errorRetryTimes: 15
+
+cluster-gateway:
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+workflow:
+  nodeSelector:
+    karpenter.sh/nodepool: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"

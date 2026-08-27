@@ -1,0 +1,657 @@
+# Platform infrastructure and tooling addons
+# Wave ordering: -5 (multi-acct) → -3 (kro) → -2 (kro-manifests) → -1 (bootstrap) → 3-7 (tools)
+
+crossplane:
+  namespace: crossplane-system
+  chartName: crossplane
+  releaseName: crossplane
+  chartRepository: https://charts.crossplane.io/stable
+  defaultVersion: '2.2.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '2'
+  selector:
+    matchExpressions:
+      - key: enable_crossplane
+        operator: In
+        values: ['true']
+  valuesObject:
+    args: []
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+
+crossplane-base:
+  namespace: crossplane-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/crossplane-base'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_crossplane
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+    functions:
+      patchAndTransform:
+        version: "v0.10.0"
+      environmentConfigs:
+        version: "v0.3.0"
+      celFilter:
+        version: "v0.2.0"
+    providers:
+      family:
+        version: "v2.6.1"
+      iam:
+        version: "v2.6.1"
+        createIdentity: false
+      ec2:
+        version: "v2.6.1"
+        createIdentity: true
+      eks:
+        version: "v2.6.1"
+        createIdentity: false
+      rds:
+        version: "v2.6.1"
+        createIdentity: true
+      dynamodb:
+        version: "v2.6.1"
+        createIdentity: true
+      amp:
+        version: "v2.6.1"
+        createIdentity: true
+      grafana:
+        version: "v2.6.1"
+        createIdentity: true
+      kubernetes:
+        version: "v1.2.1"
+  ignoreDifferences:
+    - group: pkg.crossplane.io
+      kind: Provider
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: pkg.crossplane.io
+      kind: Function
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: kubernetes.crossplane.io
+      kind: ProviderConfig
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /status
+    - group: eks.aws.upbound.io
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status
+
+backstage:
+  namespace: backstage
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/backstage'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '4'
+  selector:
+    matchExpressions:
+      - key: enable_backstage
+        operator: In
+        values: ['true']
+  valuesObject:
+    ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
+    insecure: '{{default "false" .metadata.annotations.insecure}}'
+    workshop_git_branch: '{{.metadata.annotations.addonsRepoRevision}}'
+    gitlab_domain_name: '{{default "" .metadata.annotations.gitlab_domain_name}}'
+    git_username: 'user1'
+    working_repo: 'fleet-config'
+    argocd_hostname: '{{default .metadata.annotations.ingress_domain_name .metadata.annotations.aws_argocd_url}}'
+    admin_role_name: '{{default "" .metadata.annotations.admin_role_name}}'
+    model_s3_bucket: '{{.metadata.annotations.resource_prefix}}-ray-models-{{.metadata.annotations.aws_account_id}}'
+    spoke_dev_cluster_name: '{{ or (index .metadata.annotations "spoke_dev_cluster_name") (printf "%s-spoke-dev" .metadata.annotations.resource_prefix) }}'
+    spoke_prod_cluster_name: '{{ or (index .metadata.annotations "spoke_prod_cluster_name") (printf "%s-spoke-prod" .metadata.annotations.resource_prefix) }}'
+    global:
+      aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      region: '{{.metadata.annotations.aws_region}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      resource_prefix: '{{.metadata.annotations.resource_prefix}}'
+      insecure: '{{default "false" .metadata.annotations.insecure}}'
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/resourceVersion
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: ''
+      kind: Secret
+      jsonPointers:
+        - /metadata/resourceVersion
+        - /metadata/managedFields
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /metadata/managedFields
+        - /status
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+      jsonPointers:
+        - /rules
+        - /metadata/labels
+        - /metadata/annotations
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+      jsonPointers:
+        - /subjects
+        - /roleRef
+        - /metadata/labels
+        - /metadata/annotations
+
+kro:
+  namespace: kro-system
+  chartName: kro
+  chartNamespace: kro/charts
+  chartRepository: registry.k8s.io
+  defaultVersion: '0.6.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-3'
+  selector:
+    matchExpressions:
+      - key: enable_kro
+        operator: In
+        values: ['true']
+
+kro-manifests:
+  namespace: kro
+  type: manifest
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests'
+  directory:
+    recurse: true
+    exclude: '{cicd-pipeline/**,huggingface/**,ray-service/**}'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-2'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests
+        operator: In
+        values: ['true']
+
+kro-manifests-hub:
+  namespace: kro
+  type: manifest
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests'
+  directory:
+    recurse: true
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-2'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests_hub
+        operator: In
+        values: ['true']
+
+eks-capabilities-rbac:
+  namespace: kro
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/eks-capabilities-rbac'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-3'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+
+# Hub variant: the hub reconciles kro spoke claims (EksclusterWithVpc), so its own
+# kro/ack capability role needs the same ACK RBAC. The hub uses enable_kro_manifests_hub
+# (not enable_kro_manifests) to avoid the path-excluded spoke kro-manifests app, so the
+# spoke-scoped eks-capabilities-rbac above never lands on the hub. Bind it here too.
+eks-capabilities-rbac-hub:
+  namespace: kro
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/eks-capabilities-rbac'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-3'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests_hub
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+
+multi-acct:
+  namespace: kro
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/multi-acct'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-5'
+  selector:
+    matchExpressions:
+      - key: enable_multi_acct
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      # Needed so the chart can self-cover the cluster it runs on. .Values.clusters only
+      # ever lists SPOKES (written by the spokes:enable-* task into the fleet-config
+      # overlay), so without this the hub gets no IAMRoleSelector and every hub-side ACK
+      # resource silently never reconciles. See templates/iam-role-selectors.yaml.
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+
+# Self-healing restart of workload pods that raced ahead of their EKS Pod Identity
+# association (#8). Deployed wherever KubeVela apps run; the CronJob only deletes
+# pods that are missing injected creds AND whose SA has a PodIdentityAssociation.
+podidentity-pod-restart:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/podidentity-pod-restart'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '5'
+  selector:
+    matchExpressions:
+      - key: enable_kubevela
+        operator: In
+        values: ['true']
+  valuesObject:
+    namespace: kube-system
+
+kubevela:
+  namespace: vela-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kubevela'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '3'
+  selector:
+    matchExpressions:
+      - key: enable_kubevela
+        operator: In
+        values: ['true']
+  valuesObject:
+    systemDefinitionNamespace: vela-system
+  # Replicates the inherited default syncPolicy and adds ServerSideApply so the
+  # apiserver-defaulted fields on the vela-core admission webhooks
+  # (matchPolicy/namespaceSelector/objectSelector/timeoutSeconds/rules.scope) are
+  # reconciled via server-side field ownership instead of showing as permanent
+  # drift. NOTE: a per-addon syncPolicy fully overrides the default, so the
+  # default values are replicated below.
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+  ignoreDifferences:
+    # vela-core webhook configs: caBundle is injected at runtime, and the
+    # API server / vela-core default or mutate several fields (failurePolicy,
+    # matchPolicy, timeoutSeconds, reinvocationPolicy, selectors, rules.scope).
+    # Use jqPathExpressions so all webhooks (any count) are covered.
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+        - .webhooks[].failurePolicy
+        - .webhooks[].matchPolicy
+        - .webhooks[].timeoutSeconds
+        - .webhooks[].reinvocationPolicy
+        - .webhooks[].namespaceSelector
+        - .webhooks[].objectSelector
+        - .webhooks[].rules[].scope
+      jsonPointers:
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
+        - .webhooks[].failurePolicy
+        - .webhooks[].matchPolicy
+        - .webhooks[].timeoutSeconds
+        - .webhooks[].reinvocationPolicy
+        - .webhooks[].namespaceSelector
+        - .webhooks[].objectSelector
+        - .webhooks[].rules[].scope
+      jsonPointers:
+        - /metadata/generation
+        - /metadata/managedFields
+    - group: '*'
+      kind: '*'
+      managedFieldsManagers:
+        - vela-core
+        - cert-manager
+        - webhook-cert-manager
+        - kube-controller-manager
+        - apiserver
+
+devlake:
+  namespace: devlake
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/devlake'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '7'
+  selector:
+    matchExpressions:
+      - key: enable_devlake
+        operator: In
+        values: ['true']
+  valuesObject:
+    clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    clusterRegion: '{{.metadata.annotations.aws_region}}'
+    namespace: devlake
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /status
+        - /metadata/generation
+        - /metadata/managedFields
+      jqPathExpressions:
+        - '.spec.data[]?.remoteRef.nullBytePolicy'
+        - '.spec.dataFrom[]?.extract.nullBytePolicy'
+    - group: argoproj.io
+      kind: Workflow
+      jsonPointers:
+        - /spec
+        - /status
+        - /metadata/generation
+    - group: iam.aws.upbound.io
+      kind: Role
+      jsonPointers:
+        - /status
+    - group: iam.aws.upbound.io
+      kind: RolePolicyAttachment
+      jsonPointers:
+        - /status
+    - group: eks.aws.upbound.io
+      kind: PodIdentityAssociation
+      jsonPointers:
+        - /status
+    - group: ''
+      kind: Secret
+      name: devlake-grafana
+      # grafana auto-generates admin-password; ArgoCD repo-server render differs
+      # from the live (lookup-preserved) value on every sync.
+      jsonPointers:
+        - /data
+    - group: apps
+      kind: Deployment
+      name: devlake-grafana
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1secret
+        - /spec/template/metadata/annotations/checksum~1config
+        - /spec/template/metadata/annotations/checksum~1sc-dashboard-provider-config
+
+# GitLab is no longer deployed as an EKS addon — it runs via docker-compose on the IDE EC2 instance.
+# The CloudFront distribution and NLB are created by CDK (team-stack.ts).
+
+ack-iam:
+  namespace: ack-system
+  chartName: iam-chart
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  defaultVersion: '1.3.16'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_ack_iam
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: ack-iam-controller
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+
+ack-eks:
+  namespace: ack-system
+  chartName: eks-chart
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  defaultVersion: '1.6.0'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_ack_eks
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: ack-eks-controller
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+
+ack-ec2:
+  namespace: ack-system
+  chartName: ec2-chart
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  defaultVersion: '1.3.4'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_ack_ec2
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: ack-ec2-controller
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+
+ack-ecr:
+  namespace: ack-system
+  chartName: ecr-chart
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  defaultVersion: '1.5.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_ack_ecr
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: ack-ecr-controller
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+
+ack-s3:
+  namespace: ack-system
+  chartName: s3-chart
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  defaultVersion: '1.3.1'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_ack_s3
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: ack-s3-controller
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+
+ack-dynamodb:
+  namespace: ack-system
+  chartName: dynamodb-chart
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  defaultVersion: '1.2.19'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_ack_dynamodb
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: ack-dynamodb-controller
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+
+ack-efs:
+  namespace: ack-system
+  chartName: efs-chart
+  chartNamespace: aws-controllers-k8s
+  chartRepository: public.ecr.aws
+  defaultVersion: '1.0.6'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '0'
+  selector:
+    matchExpressions:
+      - key: enable_ack_efs
+        operator: In
+        values: ['true']
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+    serviceAccount:
+      name: ack-efs-controller
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations/controller-gen.kubebuilder.io~1version
+
+# Bootstrap NodePools created EARLY (sync-wave -1) so any pools exist before addons
+# that target them schedule. The generic solution creates only the GPU/Trainium pools
+# (a real capability with no built-in equivalent) and relies on the EKS Auto Mode
+# built-in system/general-purpose pools for everything else. Consumers that need tuned
+# pools supply them via their overlay as customNodepools.pools (e.g. the workshop's
+# system-peeks/general-purpose-peeks). Gated by the enable_platform_manifests_bootstrap
+# cluster annotation (default "true", wired in rg-eks-vpc.yaml). Does NOT include
+# the ClusterSecretStore — that lives in platform-manifests-post to avoid a
+# circular dependency.
+platform-manifests-bootstrap:
+  namespace: default
+  defaultVersion: '1.0.0'
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/platform-manifests-bootstrap'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-1'
+  selector:
+    matchExpressions:
+      - key: enable_platform_manifests_bootstrap
+        operator: In
+        values: ['true']
+  valuesObject:
+    # Custom Karpenter NodePools are supplied by the consumer's overlay
+    # (customNodepools.pools). The generic solution creates none and relies on the
+    # EKS Auto Mode built-in system/general-purpose pools.
+    gpu:
+      enabled: true
+
+platform-manifests:
+  namespace: default
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/platform-manifests'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '6'
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+  selector:
+    matchExpressions:
+      - key: enable_platform_manifests
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      region: '{{.metadata.annotations.aws_region}}'
+
+platform-manifests-post:
+  namespace: default
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/platform-manifests-post'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '8'
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+  selector:
+    matchExpressions:
+      - key: enable_platform_manifests
+        operator: In
+        values: ['true']
+  valuesObject:
+    global:
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      accountId: '{{.metadata.annotations.aws_account_id}}'
+      region: '{{.metadata.annotations.aws_region}}'

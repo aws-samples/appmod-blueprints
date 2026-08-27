@@ -1,4 +1,11 @@
-{{- range $key, $value := .Values.clusters }}
+{{/* Same effective map as templates/iam-role-selectors.yaml -- see the rationale there. */}}
+{{- $all := deepCopy (default dict .Values.clusters) }}
+{{- $self := default "" .Values.global.clusterName }}
+{{- $acct := default "" .Values.global.accountId }}
+{{- if and $self $acct (not (hasKey $all $self)) }}
+{{-   $_ := set $all $self $acct }}
+{{- end }}
+{{- range $key, $value := $all }}
 ---
 apiVersion: v1
 kind: Namespace

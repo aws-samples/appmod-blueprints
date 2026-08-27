@@ -1,0 +1,12 @@
+apiVersion: v2
+name: crossplane-env-config
+description: >-
+  Publishes a per-cluster Crossplane EnvironmentConfig named 'env-config'
+  carrying this cluster's ambient metadata (clusterName, region, vpcId,
+  privateSubnetIds, publicSubnetIds, clusterSecurityGroupId). A pure declarative
+  manifest whose values come from the cluster's ArgoCD-secret annotations —
+  clusterName/region from the fleet-secret chart, VPC/subnet facts from the
+  platform-cluster Composition that creates both hub and spokes. No Job, no AWS
+  API calls, no Pod Identity; ArgoCD keeps it in sync.
+type: application
+version: 0.2.0

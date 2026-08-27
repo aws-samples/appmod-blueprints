@@ -1,0 +1,90 @@
+# IAM Role for the EKS ACK Capability
+# Mirrors argocd-capability-role.yaml. Created by Crossplane before the ACK
+# capability is created. The ACK controllers assume this role to manage AWS
+# resources; the inline RolePolicy below grants the LEAST-PRIVILEGE set the
+# Flow D (Lambda MicroVM Agent Sandbox) MicrovmSandbox RGD needs — IAM roles
+# for the MicroVM build/exec identities and the S3 code-artifact bucket only.
+# Broaden this policy if other ACK consumers are added on the hub.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: ack-capability-role
+  namespace: crossplane-system
+  labels:
+    capability: ack
+  annotations:
+    crossplane.io/external-name: CLUSTER_NAME-ACKCapabilityRole
+spec:
+  forProvider:
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "capabilities.eks.amazonaws.com"
+            },
+            "Action": [
+              "sts:AssumeRole",
+              "sts:TagSession"
+            ]
+          }
+        ]
+      }
+    tags:
+      managed-by: crossplane
+      purpose: eks-ack-capability
+---
+# Least-privilege permissions for Flow D's GA ACK resources (iam + s3), scoped by
+# resource-name pattern. Attached to the ACK capability role above.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicy
+metadata:
+  name: ack-capability-flow-d-microvm
+  namespace: crossplane-system
+spec:
+  forProvider:
+    roleSelector:
+      matchControllerRef: false
+      matchLabels:
+        capability: ack
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Sid": "S3MicrovmArtifacts",
+            "Effect": "Allow",
+            "Action": [
+              "s3:CreateBucket", "s3:DeleteBucket",
+              "s3:PutBucketTagging", "s3:GetBucketTagging",
+              "s3:PutBucketPolicy", "s3:GetBucketPolicy", "s3:DeleteBucketPolicy",
+              "s3:PutEncryptionConfiguration", "s3:GetEncryptionConfiguration",
+              "s3:PutBucketVersioning", "s3:GetBucketVersioning",
+              "s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock",
+              "s3:GetBucketLocation", "s3:ListBucket", "s3:ListAllMyBuckets",
+              "s3:PutObject", "s3:GetObject", "s3:DeleteObject"
+            ],
+            "Resource": [
+              "arn:aws:s3:::*-microvm-artifacts",
+              "arn:aws:s3:::*-microvm-artifacts/*"
+            ]
+          },
+          {
+            "Sid": "IAMMicrovmRoles",
+            "Effect": "Allow",
+            "Action": [
+              "iam:CreateRole", "iam:DeleteRole", "iam:GetRole",
+              "iam:TagRole", "iam:UntagRole", "iam:ListRoleTags",
+              "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy", "iam:ListRolePolicies",
+              "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:ListAttachedRolePolicies",
+              "iam:UpdateAssumeRolePolicy", "iam:PassRole"
+            ],
+            "Resource": [
+              "arn:aws:iam::*:role/*-microvm-build",
+              "arn:aws:iam::*:role/*-microvm-exec"
+            ]
+          }
+        ]
+      }

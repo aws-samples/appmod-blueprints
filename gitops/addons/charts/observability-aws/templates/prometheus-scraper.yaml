@@ -1,0 +1,39 @@
+{{- if and .Values.scraper.enabled .Values.scraper.clusterArn }}
+apiVersion: amp.aws.upbound.io/v1beta1
+kind: Scraper
+metadata:
+  name: {{ .Values.resourcePrefix }}-scraper-{{ .Values.aws.clusterName }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    alias: {{ .Values.resourcePrefix }}-{{ .Values.aws.clusterName }}
+    source:
+      - eks:
+          - clusterArn: {{ .Values.scraper.clusterArn }}
+            subnetIds:
+              {{- if kindIs "string" .Values.scraper.clusterSubnetIds }}
+              {{- range (splitList "," .Values.scraper.clusterSubnetIds) }}
+              - {{ . | trim }}
+              {{- end }}
+              {{- else }}
+              {{- toYaml .Values.scraper.clusterSubnetIds | nindent 14 }}
+              {{- end }}
+            securityGroupIds:
+              {{- if kindIs "string" .Values.scraper.clusterSecurityGroupIds }}
+              {{- range (splitList "," .Values.scraper.clusterSecurityGroupIds) }}
+              - {{ . | trim }}
+              {{- end }}
+              {{- else }}
+              {{- toYaml .Values.scraper.clusterSecurityGroupIds | nindent 14 }}
+              {{- end }}
+    destination:
+      - amp:
+          - workspaceArnRef:
+              name: {{ .Values.resourcePrefix }}-amp
+    scrapeConfiguration: {{ .Files.Get "files/scraper-config.yaml" | replace "{scrape_interval}" .Values.scraper.scrapeInterval | replace "{scrape_timeout}" .Values.scraper.scrapeTimeout | replace "{cluster}" .Values.aws.clusterName | replace "{region}" .Values.aws.region | replace "{account_id}" (.Values.aws.accountId | toString) | quote }}
+  providerConfigRef:
+    name: default
+{{- end }}

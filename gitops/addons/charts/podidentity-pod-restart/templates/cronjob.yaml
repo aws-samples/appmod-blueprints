@@ -1,0 +1,89 @@
+{{- $ns := .Values.namespace | default "kube-system" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: podidentity-pod-restart
+  namespace: {{ $ns }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: podidentity-pod-restart
+rules:
+  # Read pods everywhere + delete the credential-less ones so they respawn mutated.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+  # Read PodIdentityAssociations to learn which (namespace, serviceAccount) pairs
+  # are SUPPOSED to have injected credentials. Both the Crossplane (upbound) and
+  # ACK CRDs are covered; missing CRDs are simply skipped at runtime.
+  - apiGroups: ["eks.aws.upbound.io"]
+    resources: ["podidentityassociations"]
+    verbs: ["get", "list"]
+  - apiGroups: ["eks.services.k8s.aws"]
+    resources: ["podidentityassociations"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: podidentity-pod-restart
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: podidentity-pod-restart
+subjects:
+  - kind: ServiceAccount
+    name: podidentity-pod-restart
+    namespace: {{ $ns }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: podidentity-pod-restart
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  schedule: {{ .Values.schedule | default "*/2 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 120
+      template:
+        spec:
+          serviceAccountName: podidentity-pod-restart
+          restartPolicy: Never
+          containers:
+            - name: restart
+              image: {{ .Values.image | default "bitnami/kubectl:latest" | quote }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # Build the set of (namespace serviceAccount) pairs that have a
+                  # Ready PodIdentityAssociation, from whichever CRDs are installed.
+                  PAIRS=""
+                  for CRD in podidentityassociations.eks.aws.upbound.io podidentityassociations.eks.services.k8s.aws; do
+                    kubectl get "$CRD" -A >/dev/null 2>&1 || continue
+                    # upbound: spec.forProvider.{namespace,serviceAccount}; ack: spec.{namespace,serviceAccount}
+                    P=$(kubectl get "$CRD" -A -o jsonpath='{range .items[*]}{.spec.forProvider.namespace}{" "}{.spec.forProvider.serviceAccount}{" "}{.spec.namespace}{" "}{.spec.serviceAccount}{"\n"}{end}' 2>/dev/null || true)
+                    PAIRS="$PAIRS
+                  $P"
+                  done
+                  echo "$PAIRS" | while read -r UPNS UPSA ACKNS ACKSA; do
+                    NS="${UPNS:-$ACKNS}"; SA="${UPSA:-$ACKSA}"
+                    [ -z "$NS" ] && continue
+                    [ -z "$SA" ] && continue
+                    for POD in $(kubectl get pods -n "$NS" -o jsonpath="{range .items[?(@.spec.serviceAccountName=='$SA')]}{.metadata.name}{'\n'}{end}" 2>/dev/null); do
+                      if kubectl get pod "$POD" -n "$NS" -o jsonpath='{.spec.containers[*].env[*].name}' 2>/dev/null | grep -q AWS_CONTAINER_CREDENTIALS_FULL_URI; then
+                        continue
+                      fi
+                      echo "restart: $NS/$POD (sa=$SA) missing pod-identity creds"
+                      kubectl delete pod "$POD" -n "$NS" --wait=false 2>/dev/null || true
+                    done
+                  done
+                  echo "done"

@@ -1,0 +1,18 @@
+{
+  "enabled": true,
+  "name": "Helm Lint Charts",
+  "description": "Runs helm lint on the appset-chart and fleet-secret chart after template files are modified to catch rendering errors.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "gitops/charts/**/*.yaml",
+      "gitops/charts/**/*.tpl"
+    ]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "helm lint gitops/charts/appset-chart 2>&1 || true; helm lint gitops/charts/fleet-secret 2>&1 || true",
+    "timeout": 30
+  }
+}

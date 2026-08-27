@@ -1,0 +1,28 @@
+{{- if .Values.amg.enabled }}
+apiVersion: grafana.aws.upbound.io/v1beta1
+kind: WorkspaceSAMLConfiguration
+metadata:
+  name: {{ .Values.resourcePrefix }}-amg-saml
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    workspaceIdRef:
+      name: {{ .Values.resourcePrefix }}-amg
+    idpMetadataUrl: "https://{{ .Values.ingress.domainName }}/keycloak/realms/platform/protocol/saml/descriptor"
+    adminRoleValues:
+      {{- toYaml .Values.saml.adminRoleValues | nindent 6 }}
+    editorRoleValues:
+      {{- toYaml .Values.saml.editorRoleValues | nindent 6 }}
+    emailAssertion: {{ .Values.saml.emailAssertion }}
+    groupsAssertion: {{ .Values.saml.groupsAssertion }}
+    loginAssertion: {{ .Values.saml.loginAssertion }}
+    nameAssertion: {{ .Values.saml.nameAssertion }}
+    orgAssertion: {{ .Values.saml.orgAssertion }}
+    roleAssertion: {{ .Values.saml.roleAssertion }}
+    loginValidityDuration: {{ .Values.saml.loginValidityDuration }}
+  providerConfigRef:
+    name: default
+{{- end }}

@@ -1,0 +1,485 @@
+aws: {}
+
+# PreSync gate that blocks this app's Sync phase until the Crossplane provider
+# CRDs (iam.aws.upbound.io / eks.aws.upbound.io) are Established. Prevents the
+# bootstrap race where pod-identity resources are applied before the providers
+# have registered their CRDs. See templates/crd-wait-hook.yaml.
+crdWait:
+  enabled: true
+  timeoutSeconds: 600
+  image: bitnami/kubectl:latest
+  crds:
+    - policies.iam.aws.upbound.io
+    - roles.iam.aws.upbound.io
+    - rolepolicyattachments.iam.aws.upbound.io
+    - podidentityassociations.eks.aws.upbound.io
+
+identities:
+  eso:
+    enabled: false
+    roleName: ESOPodIdentityRole
+    namespace: external-secrets
+    serviceAccount: external-secrets-sa
+    tags:
+      managed-by: crossplane
+      purpose: eso-pod-identity
+    policy:
+      name: ESOSecretsManagerPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:ListSecrets",
+                "secretsmanager:BatchGetSecretValue",
+                "secretsmanager:ListSecretVersionIds",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:GetResourcePolicy",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:CreateSecret",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:TagResource",
+                "secretsmanager:DeleteResourcePolicy"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:DeleteSecret"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "secretsmanager:ResourceTag/managed-by": "external-secrets"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ssm:DescribeParameters"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ssm:GetParametersByPath",
+                "ssm:GetParameters",
+                "ssm:GetParameter"
+              ],
+              "Resource": "arn:aws:ssm:*:*:parameter/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "kms:Decrypt"
+              ],
+              "Resource": "arn:aws:kms:*:*:key/*"
+            }
+          ]
+        }
+
+  lbc:
+    enabled: false
+    roleName: LBCPodIdentityRole
+    namespace: kube-system
+    serviceAccount: aws-load-balancer-controller-sa
+    tags:
+      managed-by: crossplane
+      purpose: lbc-pod-identity
+    policy:
+      name: LBCControllerPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["iam:CreateServiceLinkedRole"],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:AWSServiceName": "elasticloadbalancing.amazonaws.com"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:DescribeAccountAttributes",
+                "ec2:DescribeAddresses",
+                "ec2:DescribeAvailabilityZones",
+                "ec2:DescribeInternetGateways",
+                "ec2:DescribeVpcs",
+                "ec2:DescribeVpcPeeringConnections",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeInstances",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DescribeTags",
+                "ec2:DescribeCoipPools",
+                "ec2:GetCoipPoolUsage",
+                "ec2:DescribeInstanceTypes",
+                "ec2:GetSecurityGroupsForVpc",
+                "elasticloadbalancing:DescribeLoadBalancers",
+                "elasticloadbalancing:DescribeLoadBalancerAttributes",
+                "elasticloadbalancing:DescribeListeners",
+                "elasticloadbalancing:DescribeListenerAttributes",
+                "elasticloadbalancing:DescribeListenerCertificates",
+                "elasticloadbalancing:DescribeSSLPolicies",
+                "elasticloadbalancing:DescribeRules",
+                "elasticloadbalancing:DescribeTargetGroups",
+                "elasticloadbalancing:DescribeTargetGroupAttributes",
+                "elasticloadbalancing:DescribeTargetHealth",
+                "elasticloadbalancing:DescribeTags",
+                "elasticloadbalancing:DescribeTrustStores"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "cognito-idp:DescribeUserPoolClient",
+                "acm:ListCertificates",
+                "acm:DescribeCertificate",
+                "iam:ListServerCertificates",
+                "iam:GetServerCertificate",
+                "waf-regional:GetWebACL",
+                "waf-regional:GetWebACLForResource",
+                "waf-regional:AssociateWebACL",
+                "waf-regional:DisassociateWebACL",
+                "wafv2:GetWebACL",
+                "wafv2:GetWebACLForResource",
+                "wafv2:AssociateWebACL",
+                "wafv2:DisassociateWebACL",
+                "shield:GetSubscriptionState",
+                "shield:DescribeProtection",
+                "shield:CreateProtection",
+                "shield:DeleteProtection"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["ec2:CreateSecurityGroup"],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["ec2:CreateTags"],
+              "Resource": "arn:aws:ec2:*:*:security-group/*",
+              "Condition": {
+                "StringEquals": {
+                  "ec2:CreateAction": "CreateSecurityGroup"
+                },
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["ec2:CreateTags", "ec2:DeleteTags"],
+              "Resource": "arn:aws:ec2:*:*:security-group/*",
+              "Condition": {
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress",
+                "ec2:DeleteSecurityGroup"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Null": {
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:CreateLoadBalancer",
+                "elasticloadbalancing:CreateTargetGroup"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:CreateListener",
+                "elasticloadbalancing:DeleteListener",
+                "elasticloadbalancing:CreateRule",
+                "elasticloadbalancing:DeleteRule"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:AddTags",
+                "elasticloadbalancing:RemoveTags"
+              ],
+              "Resource": [
+                "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
+                "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
+                "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
+              ],
+              "Condition": {
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:AddTags",
+                "elasticloadbalancing:RemoveTags"
+              ],
+              "Resource": [
+                "arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*",
+                "arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*",
+                "arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*",
+                "arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*"
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:ModifyLoadBalancerAttributes",
+                "elasticloadbalancing:SetIpAddressType",
+                "elasticloadbalancing:SetSecurityGroups",
+                "elasticloadbalancing:SetSubnets",
+                "elasticloadbalancing:DeleteLoadBalancer",
+                "elasticloadbalancing:ModifyTargetGroup",
+                "elasticloadbalancing:ModifyTargetGroupAttributes",
+                "elasticloadbalancing:DeleteTargetGroup"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "Null": {
+                  "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["elasticloadbalancing:AddTags"],
+              "Resource": [
+                "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
+                "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
+                "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "elasticloadbalancing:CreateAction": [
+                    "CreateTargetGroup",
+                    "CreateLoadBalancer"
+                  ]
+                },
+                "Null": {
+                  "aws:RequestTag/elbv2.k8s.aws/cluster": "false"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:RegisterTargets",
+                "elasticloadbalancing:DeregisterTargets"
+              ],
+              "Resource": "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "elasticloadbalancing:SetWebAcl",
+                "elasticloadbalancing:ModifyListener",
+                "elasticloadbalancing:AddListenerCertificates",
+                "elasticloadbalancing:RemoveListenerCertificates",
+                "elasticloadbalancing:ModifyRule",
+                "elasticloadbalancing:SetRulePriorities"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+
+  external-dns:
+    enabled: false
+    roleName: ExternalDNSPodIdentityRole
+    namespace: kube-system
+    serviceAccount: external-dns-sa
+    tags:
+      managed-by: crossplane
+      purpose: external-dns-pod-identity
+    policy:
+      name: ExternalDNSRoute53Policy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "route53:ChangeResourceRecordSets"
+              ],
+              "Resource": "arn:aws:route53:::hostedzone/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "route53:ListHostedZones",
+                "route53:ListHostedZonesByName",
+                "route53:ListResourceRecordSets"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+
+  otel-collector:
+    enabled: false
+    roleName: OtelCollectorRole
+    namespace: otel
+    serviceAccount: otel-collector
+    tags:
+      managed-by: crossplane
+      purpose: otel-collector-observability
+    policy:
+      name: OtelCollectorPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+                "xray:GetSamplingStatisticSummaries"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "aps:RemoteWrite",
+                "aps:GetSeries",
+                "aps:GetLabels",
+                "aps:GetMetricMetadata"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+
+  keycloak:
+    enabled: false
+    roleName: KeycloakConfigPodIdentityRole
+    namespace: keycloak
+    serviceAccount: keycloak-config
+    tags:
+      managed-by: crossplane
+      purpose: keycloak-config-pod-identity
+    policy:
+      name: KeycloakConfigSecretsPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:TagResource"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sso:CreateApplication",
+                "sso:PutApplicationGrant",
+                "sso:PutApplicationAuthenticationMethod",
+                "sso:PutApplicationAccessScope",
+                "sso:DescribeApplication",
+                "sso:ListApplications",
+                "sso-directory:SearchUsers",
+                "sso-directory:SearchGroups",
+                "sso-directory:CreateUser",
+                "sso-directory:DescribeUser",
+                "sso-directory:UpdateUser",
+                "sso-directory:ListGroupMemberships",
+                "sso-directory:AddMemberToGroup",
+                "identitystore:CreateUser",
+                "identitystore:DescribeUser",
+                "identitystore:ListUsers",
+                "identitystore:CreateGroupMembership",
+                "identitystore:ListGroupMemberships",
+                "identitystore:ListGroups"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+
+  # Bootstrap identities for the spoke's Crossplane providers. The iam/eks
+  # providers are createIdentity:false in the addon registry (crossplane-base
+  # does NOT create their roles) because a provider cannot create the very
+  # credentials it needs to run (chicken-and-egg). These identities are
+  # provisioned from the HUB instead: the hub's provider-aws-iam/eks (which
+  # already have credentials) create the role + PodIdentityAssociation on the
+  # target spoke (clusterName=<spoke>). Disabled by default; enabled in the
+  # spoke (dev/prod) pod-identities overlays.
+  crossplane-iam-provider:
+    enabled: false
+    roleName: CrossplaneIAMProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-iam
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-iam-provider-bootstrap
+    managedPolicyArns:
+      - arn:aws:iam::aws:policy/AdministratorAccess
+
+  crossplane-eks-provider:
+    enabled: false
+    roleName: CrossplaneEKSProviderRole
+    namespace: crossplane-system
+    serviceAccount: provider-aws-eks
+    tags:
+      managed-by: crossplane
+      purpose: crossplane-eks-provider-bootstrap
+    managedPolicyArns:
+      - arn:aws:iam::aws:policy/AdministratorAccess
