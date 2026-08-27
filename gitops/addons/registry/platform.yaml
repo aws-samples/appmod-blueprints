@@ -256,6 +256,11 @@ multi-acct:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
+      # Needed so the chart can self-cover the cluster it runs on. .Values.clusters only
+      # ever lists SPOKES (written by the spokes:enable-* task into the fleet-config
+      # overlay), so without this the hub gets no IAMRoleSelector and every hub-side ACK
+      # resource silently never reconciles. See templates/iam-role-selectors.yaml.
+      accountId: '{{.metadata.annotations.aws_account_id}}'
 
 # Self-healing restart of workload pods that raced ahead of their EKS Pod Identity
 # association (#8). Deployed wherever KubeVela apps run; the CronJob only deletes
