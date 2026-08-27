@@ -138,7 +138,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
         spec:
-          refreshInterval: 1h
+          refreshInterval: 1m
           secretStoreRef:
             name: aws-secrets-manager
             kind: ClusterSecretStore

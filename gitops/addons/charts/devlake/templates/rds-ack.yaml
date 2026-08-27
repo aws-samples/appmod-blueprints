@@ -4,7 +4,7 @@ metadata:
   name: devlake-mysql
   namespace: {{ .Values.namespace | default "devlake" }}
   annotations:
-    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-wave: "-3"
 spec:
   databaseName: devlake
   engineVersion: {{ .Values.rds.engineVersion | default "8.0.mysql_aurora.3.10.0" }}

@@ -3,7 +3,7 @@ kind: IAMRoleSelector
 metadata:
   name: {{ .Values.namespace | default "devlake" }}-ec2
   annotations:
-    argocd.argoproj.io/sync-wave: "-3"
+    argocd.argoproj.io/sync-wave: "-4"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   arn: arn:aws:iam::{{ .Values.awsAccountId }}:role/{{ .Values.resourcePrefix }}-cluster-mgmt-ec2
@@ -20,7 +20,7 @@ kind: IAMRoleSelector
 metadata:
   name: {{ .Values.namespace | default "devlake" }}-rds
   annotations:
-    argocd.argoproj.io/sync-wave: "-3"
+    argocd.argoproj.io/sync-wave: "-4"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   arn: arn:aws:iam::{{ .Values.awsAccountId }}:role/{{ .Values.resourcePrefix }}-cluster-mgmt-rds
