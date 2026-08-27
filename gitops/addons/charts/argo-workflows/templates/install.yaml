@@ -3050,15 +3050,15 @@ metadata:
 data:
   config: |-
     sso:
-      # insecureSkipVerify: true
-      issuer: https://{{ .Values.ingress_domain_name }}/keycloak/realms/platform
+      insecureSkipVerify: true
+      issuer: https://{{ .Values.ingress_domain_name | default .Values.gitlab_domain_name }}/keycloak/realms/platform
       clientId:
         name: keycloak-oidc
         key: client-id
       clientSecret:
         name: keycloak-oidc
         key: secret-key
-      redirectUrl: https://{{ .Values.ingress_domain_name }}/argo-workflows/oauth2/callback
+      redirectUrl: https://{{ .Values.ingress_domain_name | default .Values.gitlab_domain_name }}/argo-workflows/oauth2/callback
       rbac:
         enabled: true
       scopes:
@@ -3108,7 +3108,13 @@ spec:
       - args:
         - server
         - --configmap=workflow-controller-configmap
-        - --auth-mode=client
+        # Always use SSO (Keycloak OIDC). The sso block is configured in the
+        # workflow-controller-configmap and the argo-workflows Keycloak client
+        # exists (keycloak-oidc ExternalSecret). This was previously gated on
+        # .Values.insecure, which put the workshop (insecure=true — TLS terminated
+        # upstream at CloudFront) into --auth-mode=client, so the UI's SSO login hit
+        # /oauth2/redirect = HTTP 501. SSO works behind CloudFront (HTTPS issuer +
+        # redirect), consistent with ArgoCD/Grafana/Backstage which do not gate on insecure.
         - --auth-mode=sso
         - "--base-href=/argo-workflows/"
         - "--secure=false"
@@ -3143,7 +3149,15 @@ spec:
         - mountPath: /tmp
           name: tmp
       nodeSelector:
+{{- if .Values.server.nodeSelector }}
+{{ toYaml .Values.server.nodeSelector | indent 8 }}
+{{- else }}
         kubernetes.io/os: linux
+{{- end }}
+{{- with .Values.server.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
       securityContext:
         runAsNonRoot: true
       serviceAccountName: argo-server
@@ -3201,7 +3215,15 @@ spec:
           readOnlyRootFilesystem: true
           runAsNonRoot: true
       nodeSelector:
+{{- if .Values.controller.nodeSelector }}
+{{ toYaml .Values.controller.nodeSelector | indent 8 }}
+{{- else }}
         kubernetes.io/os: linux
+{{- end }}
+{{- with .Values.controller.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
       priorityClassName: workflow-controller
       securityContext:
         runAsNonRoot: true

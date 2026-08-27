@@ -1,0 +1,15 @@
+# Per-cluster values are injected by the addon ApplicationSet from the cluster's
+# ArgoCD-secret annotations. clusterName/region are always present (fleet-secret);
+# vpcId/subnets/clusterSecurityGroupId are populated by the platform-cluster
+# Composition once the VPC is provisioned (the EnvironmentConfig converges as the
+# annotations appear — ArgoCD re-renders when the cluster secret changes).
+global:
+  clusterName: ""
+
+aws:
+  region: ""
+  vpcId: ""
+  clusterSecurityGroupId: ""
+  # Comma-joined subnet id lists (split into YAML sequences by the template).
+  privateSubnetIds: ""
+  publicSubnetIds: ""

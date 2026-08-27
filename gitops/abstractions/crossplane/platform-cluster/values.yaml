@@ -1,0 +1,19 @@
+# Default values — no clusters provisioned by default.
+# Override per-environment via fleet/spoke-values/default/crossplane-clusters/values.yaml
+# or per-tenant via fleet/spoke-values/tenants/<tenant>/crossplane-clusters/values.yaml
+
+global:
+  argoCDRoleArn: ""
+  # AWS account ID, used to build ACK capability-role inline-policy ARNs
+  # (<prefix>-cluster-mgmt-* and <cluster>-*). Per-cluster accountId takes precedence.
+  accountId: ""
+  # Default AWS region for clusters that don't set their own.
+  # Injected by the bootstrap ApplicationSet from the hub cluster's
+  # aws_region annotation. Per-cluster `region` in
+  # fleet/spoke-values/.../crossplane-clusters/values.yaml takes precedence.
+  defaultRegion: ""
+
+xrd:
+  enabled: true
+
+clusters: {}

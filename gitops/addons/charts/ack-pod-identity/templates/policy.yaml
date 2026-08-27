@@ -1,0 +1,35 @@
+{{- range $name, $identity := .Values.identities }}
+{{- if and $identity.policy (not (eq (toString $identity.enabled) "false")) }}
+---
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: Policy
+metadata:
+  name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity-policy
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    services.k8s.aws/region: {{ $.Values.aws.region }}
+    # Adopt a pre-existing policy instead of failing CreatePolicy with 409
+    # EntityAlreadyExists. IAM policies are keyed by ARN, which ACK cannot derive
+    # from spec.name alone, so adoption-fields MUST supply it. (Contrast with
+    # PodIdentityAssociation below, which needs no adoption-fields.)
+    services.k8s.aws/adoption-policy: adopt-or-create
+    services.k8s.aws/adoption-fields: |
+      {"arn":"arn:aws:iam::{{ $.Values.aws.accountId }}:policy/{{ $.Values.aws.clusterName }}-{{ $identity.policy.name }}"}
+    # Never delete the underlying IAM policy on prune -- it may be referenced by
+    # roles this chart does not own (Terraform/bootstrap-created).
+    services.k8s.aws/deletion-policy: retain
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  name: {{ $.Values.aws.clusterName }}-{{ $identity.policy.name }}
+  policyDocument: |
+{{ $identity.policy.document | indent 4 }}
+  {{- if $identity.tags }}
+  tags:
+    {{- range $k, $v := $identity.tags }}
+    - key: {{ $k }}
+      value: {{ $v | quote }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}

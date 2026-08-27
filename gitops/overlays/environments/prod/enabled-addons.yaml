@@ -1,0 +1,22 @@
+enabledAddons:
+  # Core
+  metrics_server: true
+  ingress_class_alb: true
+  aws_load_balancer_controller: true
+  default_storage_class: true
+  external_secrets: true
+  external_dns: true
+  cert_manager: true
+  # Security
+  kyverno: true
+  kyverno_policies: true
+  # Observability
+  kube_state_metrics: true
+  prometheus_node_exporter: true
+  aws_for_fluentbit: true
+  kubevela: true
+  argo_rollouts: true
+  # Platform
+  platform_manifests_bootstrap: true
+  crossplane: true
+  kro_manifests: true

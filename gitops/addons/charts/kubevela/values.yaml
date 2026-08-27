@@ -21,7 +21,7 @@ vela-core:
   
   # Node Selection for System Nodepool
   nodeSelector:
-    karpenter.sh/nodepool: system-peeks
+    karpenter.sh/nodepool: system
   
   # Tolerations for system nodes
   tolerations:

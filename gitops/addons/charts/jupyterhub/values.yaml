@@ -1,0 +1,13 @@
+global:
+  ingress_domain_name: ""
+  clusterName: ""
+jupyterhub:
+  ingress:
+    enabled: false
+  hub:
+    # JupyterHub must know its base URL so it generates correct redirect URLs
+    # and correctly handles requests arriving at /jupyterhub on the shared ALB.
+    baseUrl: /jupyterhub
+  proxy:
+    service:
+      type: ClusterIP

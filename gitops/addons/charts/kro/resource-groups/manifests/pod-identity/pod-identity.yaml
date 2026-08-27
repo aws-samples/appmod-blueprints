@@ -32,6 +32,13 @@ spec:
       kind: Policy
       metadata:
         name: ${schema.spec.name}-pod-policy
+        annotations:
+          # Prefer adopting a pre-existing policy over failing CreatePolicy with 409.
+          # NOTE: adoption-fields (ARN) is intentionally omitted here — this policy has a
+          # user-settable spec.path and this schema has no accountId, so a templated ARN
+          # cannot be built reliably. With adopt-or-create alone, adoption works only when
+          # the controller can resolve the policy; otherwise it surfaces an explicit 409.
+          services.k8s.aws/adoption-policy: adopt-or-create
       spec:
         name: ${schema.spec.name}-pod-policy
         description: ${schema.spec.values.policy.description}

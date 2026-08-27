@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ .Values.global.resourcePrefix | default "peeks" }}-image-prepuller
+  name: {{ .Values.global.clusterName }}-image-prepuller
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: image-prepuller

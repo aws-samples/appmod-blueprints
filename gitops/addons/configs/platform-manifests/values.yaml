@@ -1,0 +1,15 @@
+# Platform manifests default configuration
+# Override per-environment in overlays/environments/<env>/platform-manifests/values.yaml
+
+gpu:
+  enabled: false  # Enable GPU Karpenter nodepools — set true per environment
+
+customNodepools:
+  enabled: false  # Enable custom Karpenter nodepools — set true per environment
+
+# Hugging Face models to download and store in S3.
+# Default is EMPTY (opt-in): the HuggingFaceModel kro CRD is only installed on the
+# control-plane/hub (kro-manifests-hub deploys the huggingface RGD; spokes exclude it),
+# so sample model CRs must only be enabled where the CRD exists. Enable per environment
+# via overlays/environments/<env>/platform-manifests/values.yaml when ML is required.
+huggingfaceModels: []

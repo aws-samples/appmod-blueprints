@@ -1,0 +1,35 @@
+{{- range $name, $identity := .Values.identities }}
+{{- if not (eq (toString $identity.enabled) "false") }}
+---
+apiVersion: eks.services.k8s.aws/v1alpha1
+kind: PodIdentityAssociation
+metadata:
+  name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    services.k8s.aws/region: {{ $.Values.aws.region }}
+    # VERIFIED 2026-08-24: adopt-or-create ALONE adopts a pre-existing association.
+    # ACK looks PodIdentityAssociation up by clusterName + namespace + serviceAccount
+    # (ListPodIdentityAssociations filters), NOT by the AWS-generated associationID,
+    # so no adoption-fields are required or possible here. This is what makes the
+    # zero-downtime cutover work, including adopting the hub's bootstrap-created
+    # associations that have no CR. See docs/platform/ack-pod-identity-design.md.
+    services.k8s.aws/adoption-policy: adopt-or-create
+    # Never delete the live association on prune -- it may be the one keeping a
+    # running controller authenticated.
+    services.k8s.aws/deletion-policy: retain
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  clusterName: {{ $.Values.aws.clusterName }}
+  namespace: {{ $identity.namespace }}
+  serviceAccount: {{ $identity.serviceAccount }}
+  roleRef:
+    from:
+      name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity-role
+  {{- if $identity.tags }}
+  tags:
+    {{- toYaml $identity.tags | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

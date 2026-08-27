@@ -1,0 +1,5 @@
+apiVersion: v2
+name: observability-aws
+description: AMP workspace, AMG workspace with SAML, and Prometheus Scrapers via Crossplane
+type: application
+version: 0.1.0

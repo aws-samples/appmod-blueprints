@@ -1,0 +1,65 @@
+{{- if and .Values.amg.enabled .Values.aws.vpcId (not .Values.amg.securityGroupId) }}
+---
+apiVersion: ec2.aws.upbound.io/v1beta1
+kind: SecurityGroup
+metadata:
+  name: {{ .Values.resourcePrefix }}-amg-sg
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    name: {{ .Values.resourcePrefix }}-amg-sg
+    description: "Security group for Amazon Managed Grafana"
+    vpcId: {{ .Values.aws.vpcId }}
+    tags:
+      Name: {{ .Values.resourcePrefix }}-amg-sg
+      managed-by: crossplane
+  providerConfigRef:
+    name: default
+---
+apiVersion: ec2.aws.upbound.io/v1beta1
+kind: SecurityGroupRule
+metadata:
+  name: {{ .Values.resourcePrefix }}-amg-egress-https
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    type: egress
+    fromPort: 443
+    toPort: 443
+    protocol: tcp
+    cidrBlocks:
+      - "0.0.0.0/0"
+    description: "Allow HTTPS egress"
+    securityGroupIdRef:
+      name: {{ .Values.resourcePrefix }}-amg-sg
+  providerConfigRef:
+    name: default
+---
+apiVersion: ec2.aws.upbound.io/v1beta1
+kind: SecurityGroupRule
+metadata:
+  name: {{ .Values.resourcePrefix }}-amg-egress-http
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    type: egress
+    fromPort: 80
+    toPort: 80
+    protocol: tcp
+    cidrBlocks:
+      - "0.0.0.0/0"
+    description: "Allow HTTP egress"
+    securityGroupIdRef:
+      name: {{ .Values.resourcePrefix }}-amg-sg
+  providerConfigRef:
+    name: default
+{{- end }}

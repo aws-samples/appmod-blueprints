@@ -1,0 +1,49 @@
+{{- if .Values.amg.enabled }}
+apiVersion: grafana.aws.upbound.io/v1beta2
+kind: Workspace
+metadata:
+  name: {{ .Values.resourcePrefix }}-amg
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    name: {{ .Values.amg.name | default (printf "%s-observability" .Values.resourcePrefix) }}
+    accountAccessType: CURRENT_ACCOUNT
+    authenticationProviders:
+      - SAML
+    permissionType: SERVICE_MANAGED
+    dataSources:
+      {{- toYaml .Values.amg.dataSources | nindent 6 }}
+    notificationDestinations:
+      {{- toYaml .Values.amg.notificationDestinations | nindent 6 }}
+    grafanaVersion: {{ .Values.amg.grafanaVersion | quote }}
+    configuration: '{"unifiedAlerting":{"enabled":true},"plugins":{"pluginAdminEnabled":false}}'
+    {{- if .Values.amg.roleArn }}
+    roleArn: {{ .Values.amg.roleArn }}
+    {{- else }}
+    roleArnRef:
+      name: {{ .Values.resourcePrefix }}-amg-workspace-role
+    {{- end }}
+    {{- if .Values.amg.subnetIds }}
+    vpcConfiguration:
+      securityGroupIds:
+        {{- if .Values.amg.securityGroupId }}
+        - {{ .Values.amg.securityGroupId }}
+        {{- end }}
+      subnetIds:
+        {{- if kindIs "string" .Values.amg.subnetIds }}
+        {{- range (splitList "," .Values.amg.subnetIds) }}
+        - {{ . | trim }}
+        {{- end }}
+        {{- else }}
+        {{- toYaml .Values.amg.subnetIds | nindent 8 }}
+        {{- end }}
+    {{- end }}
+    tags:
+      managed-by: crossplane
+      purpose: observability
+  providerConfigRef:
+    name: default
+{{- end }}

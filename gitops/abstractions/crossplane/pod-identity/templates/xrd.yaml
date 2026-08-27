@@ -1,0 +1,43 @@
+{{- if .Values.xrd.enabled }}
+# XPodIdentity — grants a workload an AWS IAM identity via EKS Pod Identity.
+# Callers pass only the ServiceAccount + namespace; clusterName/region are
+# resolved from the env-config EnvironmentConfig by the Composition.
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xpodidentities.platform.gitops.io
+spec:
+  group: platform.gitops.io
+  names:
+    kind: XPodIdentity
+    plural: xpodidentities
+  claimNames:
+    kind: PodIdentity
+    plural: podidentities
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                serviceAccount:
+                  type: string
+                  description: Name of the ServiceAccount to bind the IAM role to (also used to derive the IAM role name, "<serviceAccount>-role")
+                namespace:
+                  type: string
+                  description: Namespace of the ServiceAccount
+              required:
+                - serviceAccount
+                - namespace
+            status:
+              type: object
+              properties:
+                roleArn:
+                  type: string
+                  description: ARN of the IAM role created for this identity
+{{- end }}

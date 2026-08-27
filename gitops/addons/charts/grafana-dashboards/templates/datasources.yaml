@@ -12,6 +12,7 @@ spec:
     name: Prometheus
     type: prometheus
     access: proxy
+    uid: prometheus
     url: ${AMP_ENDPOINT_URL}
     isDefault: true
     jsonData:
@@ -69,3 +70,27 @@ spec:
       connMaxLifetime: 14400
       timeInterval: "1m"
       tlsSkipVerify: true
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: xray-datasource
+  namespace: grafana-operator
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "external-grafana"
+  datasource:
+    name: X-Ray
+    type: grafana-x-ray-datasource
+    access: proxy
+    uid: xray
+    jsonData:
+      defaultRegion: ${AWS_REGION}
+      authType: default
+  valuesFrom:
+    - targetPath: "jsonData.defaultRegion"
+      valueFrom:
+        secretKeyRef:
+          name: "grafana-amp-creds"
+          key: AWS_REGION

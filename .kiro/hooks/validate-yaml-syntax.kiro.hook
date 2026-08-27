@@ -1,0 +1,18 @@
+{
+  "enabled": true,
+  "name": "Validate YAML Syntax",
+  "description": "Runs yamllint on YAML files after they are created or edited to catch syntax errors early. Skips Helm template files (.tpl) since they contain Go template syntax.",
+  "version": "1",
+  "when": {
+    "type": "fileCreated",
+    "patterns": [
+      "gitops/**/*.yaml",
+      "gitops/**/*.yml"
+    ]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "python3 -c \"import yaml, sys; [yaml.safe_load(open(f)) for f in sys.argv[1:] if not f.endswith('.tpl')]\" \"${file}\"",
+    "timeout": 10
+  }
+}

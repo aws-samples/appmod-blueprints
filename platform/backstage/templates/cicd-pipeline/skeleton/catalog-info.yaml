@@ -48,7 +48,7 @@ metadata:
     - url: https://${{values.gitlab_hostname}}/${{values.git_username}}/${{values.appname}}-cicd
       title: GitLab Repository
       icon: gitlab
-    - url: https://${{values.argocd_hostname}}/argo-workflows/workflow-templates/${{values.namespace}}/${{values.appname}}-cicd-cicd-workflow
+    - url: https://${{values.ingress_hostname}}/argo-workflows/workflow-templates/${{values.namespace}}/${{values.appname}}-cicd-cicd-workflow
       title: CI/CD Workflow Template
       icon: workflow
     - url: https://${{values.argocd_hostname}}/applications/argocd/${{values.appname}}-cicd

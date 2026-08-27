@@ -1,0 +1,94 @@
+aws:
+  region: ""
+  clusterName: ""
+  accountId: ""
+
+# Name of the hub/control-plane cluster. The argocd-namespace secret-writer RBAC
+# (in provider-kubernetes.yaml) is only rendered when aws.clusterName == hubClusterName,
+# because spoke clusters have no "argocd" namespace and would fail to sync.
+hubClusterName: hub
+
+providerConfig:
+  enabled: true
+  name: default
+
+# All functions disabled by default. Set version to enable.
+functions:
+  patchAndTransform:
+    version: ""
+  environmentConfigs:
+    version: ""
+  celFilter:
+    version: ""
+
+# All providers disabled by default. Set version to enable.
+# Each enabled provider (except family) gets its own SA, DRC, IAM role, and pod identity.
+# Set createIdentity: false to skip IAM role + pod identity creation (for bootstrap-managed providers).
+providers:
+  family:
+    version: ""
+  iam:
+    version: ""
+    serviceAccount: provider-aws-iam
+    roleName: CrossplaneIAMProviderRole
+    createIdentity: true
+  ec2:
+    version: ""
+    serviceAccount: provider-aws-ec2
+    roleName: CrossplaneEC2ProviderRole
+    createIdentity: true
+  eks:
+    version: ""
+    serviceAccount: provider-aws-eks
+    roleName: CrossplaneEKSProviderRole
+    createIdentity: true
+  s3:
+    version: ""
+    serviceAccount: provider-aws-s3
+    roleName: CrossplaneS3ProviderRole
+    createIdentity: true
+  dynamodb:
+    version: ""
+    serviceAccount: provider-aws-dynamodb
+    roleName: CrossplaneDynamoDBProviderRole
+    createIdentity: true
+  rds:
+    version: ""
+    serviceAccount: provider-aws-rds
+    roleName: CrossplaneRDSProviderRole
+    createIdentity: true
+  secretsmanager:
+    version: ""
+    serviceAccount: provider-aws-secretsmanager
+    roleName: CrossplaneSecretsManagerProviderRole
+    createIdentity: true
+  amp:
+    version: ""
+    serviceAccount: provider-aws-amp
+    roleName: CrossplaneAMPProviderRole
+    createIdentity: true
+  grafana:
+    version: ""
+    serviceAccount: provider-aws-grafana
+    roleName: CrossplaneGrafanaProviderRole
+    createIdentity: true
+  kubernetes:
+    version: ""
+    serviceAccount: provider-kubernetes
+    createIdentity: false
+
+namespace: crossplane-system
+
+# Default reconcile tuning applied to every provider's DeploymentRuntimeConfig.
+# Lower maxReconcileRate reduces concurrent AWS API calls during the initial bootstrap
+# burst, avoiding IAM/EKS throttling that leaves resources stuck in
+# 'crossplane.io/external-create-pending'. The Upbound provider default is 100 (very
+# aggressive for global, rate-limited IAM). Override per-provider with
+# providers.<name>.maxReconcileRate.
+providerDefaults:
+  maxReconcileRate: 6
+
+# PostSync hook that restarts credential-less Crossplane provider pods so they
+# pick up their EKS Pod Identity token once the PIA is active (spoke-side
+# equivalent of `task hub:restart-identity-pods`). Set false to disable.
+providerCredentialRestart: true

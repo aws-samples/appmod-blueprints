@@ -1,0 +1,69 @@
+# Enabled addons map for the control-plane (hub) environment.
+# All addon keys use underscores matching the enable_<addon> label convention.
+# All values are boolean. Every known addon is listed explicitly.
+enabledAddons:
+  # Core
+  argocd: false
+  metrics_server: true
+  ingress_class_alb: true
+  aws_load_balancer_controller: true
+  default_storage_class: true
+  cert_manager: true
+  external_secrets: true
+  external_dns: true
+  aws_efs_csi_driver: false
+  image_prepuller: true
+  # GitOps
+  argo_events: true
+  argo_rollouts: true
+  argo_workflows: true
+  kargo: true
+  flux: false
+  # Security
+  keycloak: true
+  kyverno: false
+  kyverno_policies: false
+  kyverno_policy_reporter: false
+  # Observability
+  grafana: false
+  grafana_operator: true
+  grafana_dashboards: true
+  kube_state_metrics: true
+  prometheus_node_exporter: true
+  opentelemetry_operator: false
+  cw_prometheus: false
+  aws_for_fluentbit: false
+  cni_metrics_helper: false
+  # Platform
+  crossplane: true
+  kro: false
+  kro_manifests: false
+  kro_manifests_hub: true
+  multi_acct: true
+  platform_manifests_bootstrap: true
+  platform_manifests: true
+  backstage: true
+  kubevela: true
+  devlake: true
+  gitlab: false  # GitLab runs on EC2 (docker-compose), not EKS
+  # ACK controllers
+  ack_iam: false
+  ack_eks: false
+  ack_ec2: false
+  ack_ecr: false
+  ack_s3: false
+  ack_dynamodb: false
+  ack_efs: false
+  # ML/AI
+  jupyterhub: true
+  kubeflow: false
+  mlflow: false
+  ray_operator: true
+  spark_operator: true
+  airflow: false
+  # AWS Resources (Crossplane-managed VPC secrets etc.)
+  aws_resources: true
+  # Observability AWS (AMP + AMG via Crossplane)
+  observability_aws: true
+  # Agent Platform (deploys from sample-agent-platform-on-eks repo)
+  agent_platform: false

@@ -37,4 +37,5 @@ spec:
     hostname: ${{values.gitlab_hostname}}
     username: ${{values.git_username}}
   ingressHostname: ${{values.ingress_hostname}}
+  insecure: ${{values.insecure | default(true, true)}}
   createdBy: ${{values.created_by}}

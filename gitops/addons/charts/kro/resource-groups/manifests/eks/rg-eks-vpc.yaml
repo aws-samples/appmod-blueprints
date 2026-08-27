@@ -13,17 +13,30 @@ spec:
       name: string
       tenant: string | default="auto1"
       environment: string | default="staging"
+      provider: string | default=""
       region: string | default="us-west-2"
       k8sVersion: string | default="1.34"
       accountId: string
       managementAccountId: string
       argoCdHubRoleArn: string
-      argoCdCapabilityRoleArn: string
+      argoCdCapabilityRoleArn: string | default=""
       adminRoleName: string | default="Admin"
+      # Optional second cluster-admin role (e.g. the IDE/instance *SharedRole*),
+      # passed through to the nested EksCluster. See rg-eks.yaml for rationale.
+      adminInstanceRoleName: string | default=""
       fleetSecretManagerSecretNameSuffix: string | default="argocd-secret"
+      # "false" (default) => use the fleet-secrets ApplicationSet + Secrets Manager
+      # (fleet-secret contract) to create the ArgoCD cluster registration Secret.
+      # "true" => the RGD creates the Secret directly (legacy fallback).
+      createArgocdClusterSecret: string | default="false"
       domainName: string | default="cluster.example.com"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
+      argocdCapability:
+        enabled: string | default="false"
+        idcInstanceArn: string | default=""
+        idcRegion: string | default=""
+        adminGroupId: string | default=""
       cidr:
         vpcCidr: string | default="10.0.0.0/16"
         publicSubnet1Cidr: string | default="10.0.1.0/24"
@@ -32,7 +45,14 @@ spec:
         privateSubnet2Cidr: string | default="10.0.12.0/24"
       workloads: string | default="false" # Define if we want to deploy workloads application
       gitops:
-        addonsRepoBasePath: string | default="gitops/addons/"
+        # Base path is the repo-root prefix that consumers append subpaths to,
+        # e.g. the addon ApplicationSet builds "<addonsRepoBasePath>addons/charts/<name>",
+        # the root appset builds "<addonsRepoBasePath>bootstrap", and the
+        # crossplane abstractions build "<addonsRepoBasePath>abstractions/...".
+        # It must therefore be "gitops/" (NOT "gitops/addons/"); otherwise every
+        # path is doubled to "gitops/addons/addons/..." which does not exist and
+        # leaves all of the cluster's Argo CD apps in "Unknown" (ComparisonError).
+        addonsRepoBasePath: string | default="gitops/"
         addonsRepoPath: string | default="bootstrap"
         addonsRepoRevision: string | default="main"
         addonsRepoUrl: string | default="https://github.com/aws-samples/appmod-blueprints"
@@ -153,6 +173,7 @@ spec:
           name: ${schema.spec.name}
           tenant: ${schema.spec.tenant}
           environment: ${schema.spec.environment}
+          provider: ${schema.spec.provider}
           region: ${schema.spec.region}
           accountId: ${schema.spec.accountId}
           managementAccountId: ${schema.spec.managementAccountId}
@@ -160,10 +181,17 @@ spec:
           argoCdCapabilityRoleArn: ${schema.spec.argoCdCapabilityRoleArn}
           k8sVersion: ${schema.spec.k8sVersion}
           adminRoleName: ${schema.spec.adminRoleName}
+          adminInstanceRoleName: ${schema.spec.adminInstanceRoleName}
           fleetSecretManagerSecretNameSuffix: ${schema.spec.fleetSecretManagerSecretNameSuffix}
+          createArgocdClusterSecret: ${schema.spec.createArgocdClusterSecret}
           domainName: ${schema.spec.domainName}
           resourcePrefix: ${schema.spec.resourcePrefix}
           git_username: ${schema.spec.git_username}
+          argocdCapability:
+            enabled: ${schema.spec.argocdCapability.enabled}
+            idcInstanceArn: ${schema.spec.argocdCapability.idcInstanceArn}
+            idcRegion: ${schema.spec.argocdCapability.idcRegion}
+            adminGroupId: ${schema.spec.argocdCapability.adminGroupId}
           network:
             vpcID: ${vpc.status.vpcID}
             subnets:

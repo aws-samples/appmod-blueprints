@@ -1,5 +1,5 @@
 global:
-  resourcePrefix: ""
+  clusterName: ""
 
 images:
   - public.ecr.aws/seb-demo/ray:2.49.0-py311-gpu

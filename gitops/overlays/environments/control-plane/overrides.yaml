@@ -1,0 +1,7 @@
+# Environment-level value overrides for the control-plane environment.
+# Add Helm value overrides here that apply to all clusters in this environment.
+# These values are layered after registry domain files and before cluster-level overrides.
+# Example:
+#   metrics_server:
+#     valuesObject:
+#       replicas: 2

@@ -1,0 +1,11 @@
+# Workshop tuned Karpenter NodePools (general-purpose-peeks / system-peeks) are now
+# defined ONCE in the shared workshop configs layer so they apply to ALL clusters
+# (hub AND spokes):
+#
+#   workshop/overlay/configs/platform-manifests-bootstrap/values.yaml
+#
+# They previously lived here, under overlays/environments/control-plane, which is
+# applied to the hub only — that is why the spokes never rendered the -peeks pools.
+# This file is intentionally kept (as an empty override) because the hub
+# platform-manifests-bootstrap Application still references this valueFile path;
+# add hub-only NodePool overrides here if ever needed.

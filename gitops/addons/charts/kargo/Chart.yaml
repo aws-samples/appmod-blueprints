@@ -1,0 +1,15 @@
+apiVersion: v2
+name: kargo
+description: >-
+  Kargo as a single platform addon: wraps the upstream Kargo chart as a
+  dependency (values nested under the `kargo:` key) and adds the platform API
+  Ingress, rendered locally so it can switch ALB listeners on the `insecure`
+  flag (HTTP:80 vs HTTPS:443 + ssl-redirect) like the other platform ingresses
+  (argo-workflows/backstage/keycloak). The upstream chart's own ingress is
+  disabled. One `enable_kargo` flip brings up Kargo + its ingress together.
+type: application
+version: 0.1.0
+dependencies:
+  - name: kargo
+    version: '1.11.0'
+    repository: oci://ghcr.io/akuity/kargo-charts

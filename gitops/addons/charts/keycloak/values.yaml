@@ -1,0 +1,8 @@
+global:
+  ingress_domain_name: ""
+aws:
+  region: "us-west-2"
+  cluster_name: ""
+  grafana_url: ""
+keycloak:
+  resources: {}

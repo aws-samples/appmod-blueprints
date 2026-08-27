@@ -1,0 +1,24 @@
+global:
+  ingress_domain_name: ""
+  clusterName: ""
+kubeflow:
+  centralDashboard:
+    oidc:
+      clientId: ""
+      issuer: ""
+      authUrl: ""
+      scopes: ""
+      usernameKey: ""
+      groupsKey: ""
+  components:
+    katib:
+      enabled: true
+    pipelines:
+      enabled: true
+    trainingOperator:
+      enabled: true
+  ingress:
+    enabled: true
+    className: nginx
+    host: ""
+    annotations: {}

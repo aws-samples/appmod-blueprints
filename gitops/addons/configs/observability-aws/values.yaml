@@ -1,0 +1,4 @@
+# Spoke scraper values are now dynamically populated from hub cluster secret
+# annotations (sourced from Secrets Manager via ExternalSecret).
+# No hardcoded values needed here.
+spokeScrapers: {}

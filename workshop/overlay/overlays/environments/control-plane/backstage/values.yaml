@@ -1,0 +1,4 @@
+# Workshop pins Backstage to the tuned system-peeks pool (daytime do-not-disrupt).
+# The generic default is the built-in `system` pool.
+global:
+  systemNodepool: system-peeks

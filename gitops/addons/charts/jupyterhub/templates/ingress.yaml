@@ -1,20 +1,33 @@
+{{- /* insecure: HTTP-only ingress, no cert (consumer terminates TLS upstream, e.g. CloudFront). */ -}}
+{{- $insecure := .Values.global.insecure -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: jupyterhub
   namespace: jupyterhub
   annotations:
-    nginx.ingress.kubernetes.io/use-regex: "true"
+{{- if $insecure }}
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+{{- else }}
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+{{- end }}
 spec:
-  ingressClassName: nginx
+  ingressClassName: platform
   rules:
-  - host: {{ .Values.global.ingress_domain_name | quote }}
-    http:
-      paths:
-      - path: /jupyterhub(/|$)(.*)
-        pathType: ImplementationSpecific
-        backend:
-          service:
-            name: proxy-public
-            port:
-              number: 80
+{{- if $insecure }}
+    - http:
+{{- else }}
+    - host: {{ .Values.global.ingress_domain_name }}
+      http:
+{{- end }}
+        paths:
+          - path: /jupyterhub
+            pathType: Prefix
+            backend:
+              service:
+                name: proxy-public
+                port:
+                  number: 80

@@ -1,0 +1,35 @@
+# Shared defaults merged before all domain files.
+# These values are inherited by every addon entry unless overridden.
+
+syncPolicy:
+  automated:
+    # Default selfHeal:true so addons auto-converge to Git without a manual sync
+    # (e.g. when a spoke first becomes reachable). Safe with prune:false: ArgoCD
+    # adds/updates to match Git but never deletes. Individual addons may still pin
+    # selfHeal:false in their registry entry (e.g. external-secrets, kubevela, kyverno).
+    selfHeal: true
+    allowEmpty: true
+    prune: false
+  retry:
+    limit: -1
+    backoff:
+      duration: 5s
+      factor: 2
+      maxDuration: 10m
+  syncOptions:
+    - CreateNamespace=true
+
+syncPolicyAppSet:
+  preserveResourcesOnDeletion: true
+
+useSelectors: true
+
+repoURLGit: '{{.metadata.annotations.addonsRepoURL}}'
+repoURLGitRevision: '{{.metadata.annotations.addonsRepoRevision}}'
+repoURLGitBasePath: '{{.metadata.annotations.addonsRepoBasepath}}addons/configs'
+overlayBasePath: '{{.metadata.annotations.addonsRepoBasepath}}overlays'
+
+valueFiles:
+  - "values.yaml"
+
+useValuesFilePrefix: false

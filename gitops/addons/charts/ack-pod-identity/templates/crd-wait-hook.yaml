@@ -1,0 +1,100 @@
+{{- if (default dict .Values.crdWait).enabled }}
+# PreSync gate: block this app's Sync phase until the ACK CRDs that the
+# Policy / Role / PodIdentityAssociation resources depend on are Established.
+#
+# Why this exists:
+#   ACK runs as an EKS Capability, so its CRDs are registered by the AWS-managed
+#   control plane rather than by an in-cluster Deployment we sync. On a freshly
+#   provisioned cluster the capability can still be coming up when this app first
+#   syncs, and Argo CD sync-waves do not order across Applications. Without this
+#   gate the first Sync fails with "no matches for kind PodIdentityAssociation in
+#   version eks.services.k8s.aws/v1alpha1", and a stale API-discovery cache can
+#   block self-healing until a hard refresh. Gating on the real dependency makes
+#   convergence deterministic instead of relying on retry/backoff luck.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.aws.clusterName }}-ack-crd-wait-sa
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-20"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.aws.clusterName }}-ack-crd-wait
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-20"
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.aws.clusterName }}-ack-crd-wait
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-20"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.aws.clusterName }}-ack-crd-wait
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.aws.clusterName }}-ack-crd-wait-sa
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.aws.clusterName }}-ack-crd-wait
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-19"
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: {{ add (default 600 (default dict .Values.crdWait).timeoutSeconds) 60 }}
+  # NOTE: Do NOT set ttlSecondsAfterFinished here. The k8s TTL controller would
+  # race Argo CD's hook lifecycle (hook-delete-policy) and could delete this Job
+  # before Argo CD records its terminal status, leaving the sync stuck forever on
+  # "waiting for completion of hook Job". Argo CD is the sole owner of this Job.
+  template:
+    spec:
+      serviceAccountName: {{ .Values.aws.clusterName }}-ack-crd-wait-sa
+      restartPolicy: Never
+      containers:
+        - name: wait
+          image: {{ (default dict .Values.crdWait).image | default "bitnami/kubectl:latest" }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              TIMEOUT={{ default 600 (default dict .Values.crdWait).timeoutSeconds }}
+              CRDS="{{ join " " (default (list "policies.iam.services.k8s.aws" "roles.iam.services.k8s.aws" "podidentityassociations.eks.services.k8s.aws") (default dict .Values.crdWait).crds) }}"
+              echo "Waiting up to ${TIMEOUT}s for ACK CRDs to be Established: ${CRDS}"
+              for crd in $CRDS; do
+                echo "  -> waiting for ${crd}"
+                # Poll for existence first: 'kubectl wait' errors immediately if
+                # the CRD object does not exist yet, so loop until it appears.
+                deadline=$(( $(date +%s) + TIMEOUT ))
+                until kubectl get crd "$crd" >/dev/null 2>&1; do
+                  if [ "$(date +%s)" -ge "$deadline" ]; then
+                    echo "ERROR: timed out waiting for CRD ${crd} to be created"
+                    exit 1
+                  fi
+                  sleep 5
+                done
+                kubectl wait --for=condition=Established "crd/${crd}" --timeout="${TIMEOUT}s"
+              done
+              echo "All required ACK CRDs are Established."
+{{- end }}

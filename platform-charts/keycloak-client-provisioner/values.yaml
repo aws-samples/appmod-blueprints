@@ -1,0 +1,52 @@
+# Environment this provisioner run targets.
+# Set by the client-provisioner ApplicationSet from .labels.environment on
+# the spoke cluster secret.
+environment: ""
+
+# Keycloak base URL reachable from the hub cluster.
+# Example: http://keycloak.keycloak.svc.cluster.local:8080/keycloak
+keycloakUrl: ""
+
+# Keycloak realm the clients are created in.
+# Defaults to the shared "platform" realm (where the keycloak config Job
+# provisions users, groups, roles, and mappers). Customers can override
+# per hub/spoke — set this to their own realm name via the fleet-member
+# values (oidc.realm) which the client-provisioner ApplicationSet passes through.
+realmName: "platform"
+
+# AWS region for Secrets Manager writes.
+region: ""
+
+# Hub cluster name — the cluster this Job runs on. Used to scope the
+# self-provisioned IAM Role + PodIdentityAssociation. Set by the
+# client-provisioner ApplicationSet from the hub cluster secret.
+clusterName: ""
+
+# Secrets Manager key prefix for OIDC contracts.
+# Final path: <secretPathPrefix>/<environment>/oidc/<client.name>
+# Default empty = "oidc/<environment>/oidc/<client.name>"
+secretPathPrefix: ""
+
+# Reference to the K8s Secret carrying Keycloak admin credentials.
+# Expected keys: KC_BOOTSTRAP_ADMIN_PASSWORD
+adminSecretName: "keycloak-config"
+adminSecretNamespace: "keycloak"
+
+# Service account used by the Job (must have a Pod Identity association
+# granting secretsmanager:PutSecretValue on the target paths).
+serviceAccountName: "keycloak-client-provisioner"
+
+# OIDC clients to provision.
+# Each entry creates one Keycloak client and writes one Secrets Manager entry.
+# name + environment must be unique per provisioner release.
+clients: []
+# - name: my-service          # becomes clientId "<name>-<environment>" in Keycloak
+#   type: confidential        # "confidential" or "public"
+#   flows:
+#     - authorization_code    # standardFlowEnabled
+#     # - client_credentials  # serviceAccountsEnabled
+#     # - direct_access       # directAccessGrantsEnabled
+#   redirectUris:
+#     - "https://my-service.dev.example.com/callback"
+#   audience: my-service-dev  # written into the contract; used by resource servers
+#   groupsClaim: realm_access.roles  # default for Keycloak

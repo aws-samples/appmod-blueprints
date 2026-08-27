@@ -1,0 +1,14 @@
+# Spoke dev clusters get their own ESO pod identity provisioned by
+# Crossplane on the hub (chart default is false; opt in here).
+identities:
+  # eso is intentionally NOT set here: on kro-ack clusters the ESO pod identity
+  # is owned by the EksCluster RGD (created at cluster-creation time, wave -1).
+  # Enabling it here would make a second ACK/Crossplane CR target the same
+  # (namespace, serviceAccount) and 409-conflict on the association.
+  # Bootstrap the spoke's Crossplane iam/eks providers from the hub (see chart
+  # values.yaml). Without these, the spoke's createIdentity:false providers have
+  # no credentials and all spoke Crossplane providers fail (IMDS fallback).
+  crossplane-iam-provider:
+    enabled: true
+  crossplane-eks-provider:
+    enabled: true
