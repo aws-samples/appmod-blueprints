@@ -1,0 +1,82 @@
+# Defaults for nodepool toggles (consumed by gpu-nodepool.yaml, custom-nodepools.yaml).
+# These are normally overridden by the ApplicationSet at deploy time.
+gpu:
+  enabled: false
+customNodepools:
+  enabled: false
+
+# Optional `spokeName` is rendered as a `peeks.io/spoke=<spokeName>` AWS tag
+# on every volume provisioned by the EBS StorageClasses below. Useful for
+# cost attribution and inventory.
+#
+# spokeName: spoke-prod-euw1
+
+storageClasses:
+  # efs:
+    # fileSystemId: fs-12345678
+    # efs-sc:
+    #   reclaimPolicy: Delete
+    #   directoryPerms: "700"
+    #   basePath: /data
+    #   mountOptions:
+    #     - nfsvers=4.1
+
+  ebs:
+    # Legacy default — unchanged, kept for backwards compatibility.
+    ebs-sc-gp3:
+      reclaimPolicy: Retain
+      volumeType: gp3
+      size: 20Gi
+      iops: 3000
+      throughput: 125
+
+    # PeEKS default StorageClass — performance-tuned, no backup tier.
+    # Workloads that need AWS Backup coverage should use one of the
+    # tier-labeled StorageClasses below (peeks-gold-gp3 / peeks-silver-gp3 /
+    # peeks-bronze-gp3) so the volume is tagged with `peeks.io/backup-tier`,
+    # which the BackupSelection in the BackupPolicy RGD matches on.
+    peeks-gp3:
+      reclaimPolicy: Retain
+      volumeType: gp3
+      iops: 3000
+      throughput: 125
+      tags:
+        peeks.io/managed-by: peeks-platform
+
+    # PeEKS DR-aware StorageClasses — workloads opt into a backup tier by
+    # picking the matching SC in their PVC manifest. The `peeks.io/backup-tier`
+    # tag is propagated to the EBS volume by the EBS CSI driver and is what
+    # the BackupSelection (BackupPolicy RGD) uses to gate inclusion in a
+    # BackupPlan. No central ConfigMap, no platform ticket — the workload
+    # author chooses its own tier at PVC creation time.
+    #
+    # Tier policies (defined in the BackupPolicy RGD):
+    #   gold   — RPO 1h, retention 30d, cross-region copy
+    #   silver — RPO 24h, retention 14d, cross-region copy
+    #   bronze — RPO 24h, retention 7d, single-region
+    peeks-gold-gp3:
+      reclaimPolicy: Retain
+      volumeType: gp3
+      iops: 3000
+      throughput: 125
+      tags:
+        peeks.io/managed-by: peeks-platform
+        peeks.io/backup-tier: gold
+
+    peeks-silver-gp3:
+      reclaimPolicy: Retain
+      volumeType: gp3
+      iops: 3000
+      throughput: 125
+      tags:
+        peeks.io/managed-by: peeks-platform
+        peeks.io/backup-tier: silver
+
+    peeks-bronze-gp3:
+      reclaimPolicy: Delete
+      volumeType: gp3
+      iops: 3000
+      throughput: 125
+      tags:
+        peeks.io/managed-by: peeks-platform
+        peeks.io/backup-tier: bronze

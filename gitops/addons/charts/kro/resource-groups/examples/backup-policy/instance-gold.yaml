@@ -1,0 +1,15 @@
+---
+apiVersion: kro.run/v1alpha1
+kind: BackupPolicy
+metadata:
+  name: spoke-prod-euw1-gold
+  namespace: default
+spec:
+  tier: gold
+  spokeName: spoke-prod-euw1
+  region: eu-west-1
+  copyDestinationRegion: eu-west-3
+  # Pre-created destination vault ARN in eu-west-3 for cross-region copy
+  copyDestinationVaultARN: arn:aws:backup:eu-west-3:000000000000:backup-vault:peeks-spoke-prod-euw1-gold-dr
+  # Pre-created AWS Backup service role
+  iamRoleARN: arn:aws:iam::000000000000:role/AWSBackupDefaultServiceRole
