@@ -45,9 +45,10 @@ plugins=(
 
 export TERM="xterm-256color"
 
-#I don't want to share history between terminals
-setopt no_share_history
-unsetopt share_history
+# History: don't share live history between parallel terminals.
+# The actual override lives AFTER `source $ZSH/oh-my-zsh.sh` (see below), because
+# oh-my-zsh's lib/history.zsh forces `setopt share_history` and would override
+# anything set here before the source.
 
 
 alias k=kubectl
@@ -57,6 +58,13 @@ alias emacs=emacs-nox
 alias kns=kubens
 alias kctx=kubectx
 source $ZSH/oh-my-zsh.sh
+
+# Disable live history sharing between parallel terminals (override oh-my-zsh's
+# lib/history.zsh which forces share_history). Each session keeps its own live
+# history; commands are appended to HISTFILE but are NOT imported into other
+# already-running sessions.
+unsetopt share_history
+setopt inc_append_history
 
 alias python=python3
 alias pip=pip3
