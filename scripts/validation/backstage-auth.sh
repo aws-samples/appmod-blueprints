@@ -12,7 +12,13 @@ set -euo pipefail
 backstage_get_token() {
   local COOKIE_JAR
   COOKIE_JAR=$(mktemp)
-  trap "rm -f ${COOKIE_JAR} /tmp/_bs_s2.txt /tmp/_bs_s3.txt /tmp/_bs_s4.txt /tmp/_bs_frame.txt" RETURN
+  # `trap ... RETURN` is bash-only. Under zsh (the workshop IDE's default shell) it
+  # errors with "trap: undefined signal: RETURN" and, with `set -e`, aborts the
+  # function so BS_TOKEN is never set. Register the cleanup only under bash; the temp
+  # files live under /tmp and are harmless if left uncleaned under zsh.
+  if [ -n "${BASH_VERSION:-}" ]; then
+    trap "rm -f ${COOKIE_JAR} /tmp/_bs_s2.txt /tmp/_bs_s3.txt /tmp/_bs_s4.txt /tmp/_bs_frame.txt" RETURN
+  fi
 
   # Step 1: Session cookie
   curl -sLk -c "${COOKIE_JAR}" "${BACKSTAGE_URL}" -o /dev/null
