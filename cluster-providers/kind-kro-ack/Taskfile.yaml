@@ -1230,10 +1230,36 @@ tasks:
       # 4. cluster-addons Application (no cascade)
       - '{{.KC}} patch application cluster-addons -n argocd --type merge -p ''{"metadata":{"finalizers":[]}}'' 2>/dev/null || true'
       - '{{.KC}} delete application cluster-addons -n argocd --wait=false 2>/dev/null || true'
-      # 5. Delete addon ApplicationSets in reverse sync-wave order, SKIPPING infra stack
+      # 5. Delete APPLICATION WORKLOADS first (spoke-workloads AppProject): rust/java/
+      #    golang/dotnet/next-js apps, CI/CD pipelines, progressive-delivery rollouts.
+      #    Deleting their ArgoCD Applications removes the kro AppmodService/CICDPipeline/
+      #    RayService CRs, so kro/ACK (still alive on the hub) delete the app AWS
+      #    resources they own (IAM roles/policies, ECR repos, DynamoDB tables) and the
+      #    Rollouts/Services on the spokes. MUST happen before spoke-cluster deletion.
+      - printf '{{.C_ERR}}▸ Deleting application workloads (spoke-workloads project)...{{.C_RESET}}\n'
+      - cmd: |
+          for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.project}{"\n"}{end}' 2>/dev/null | awk '$2=="spoke-workloads"{print $1}'); do
+            echo "Deleting workload $app..."
+            {{.KC}} delete application $app -n argocd --timeout=300s 2>/dev/null || \
+            ({{.KC}} patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+             {{.KC}} delete application $app -n argocd --wait=false 2>/dev/null) || true
+          done
+        ignore_error: true
+      # 6. Delete SPOKE CLUSTERS (after their workloads, before hub addons): the hub
+      #    KRO/Crossplane provisioners tear down the spoke EKS clusters.
+      - printf '{{.C_ERR}}▸ Deleting spoke clusters...{{.C_RESET}}\n'
+      - '{{.KC}} patch applicationset clusters -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}'' 2>/dev/null || true'
+      - sleep 3
+      - '{{.KC}} delete applicationset clusters -n argocd --timeout=60s 2>/dev/null || true'
+      - cmd: |
+          {{.KC}} wait --for=delete applications -n argocd -l app.kubernetes.io/instance=clusters --timeout=600s 2>/dev/null || \
+          ({{.KC}} patch application clusters -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+           {{.KC}} delete application clusters -n argocd --wait=false 2>/dev/null) || true
+        ignore_error: true
+      # 7. Delete HUB ADDONS in reverse sync-wave order, SKIPPING the infra stack.
       - cmd: |
           if echo " {{.INFRA_STACK}} " | grep -q " {{.ITEM}} "; then
-            echo "Skipping {{.ITEM}} (infra stack — deleted after clusters)"
+            echo "Skipping {{.ITEM}} (infra stack — deleted last)"
           elif {{.KC}} get applicationset {{.ITEM}} -n argocd >/dev/null 2>&1; then
             echo "Deleting {{.ITEM}}..."
             {{.KC}} patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
@@ -1246,17 +1272,7 @@ tasks:
         ignore_error: true
         for:
           var: ADDONS
-      # 6. Delete spoke clusters (clusters appset) while KRO/Crossplane are still alive
-      - printf '{{.C_ERR}}▸ Deleting spoke clusters...{{.C_RESET}}\n'
-      - '{{.KC}} patch applicationset clusters -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}'' 2>/dev/null || true'
-      - sleep 3
-      - '{{.KC}} delete applicationset clusters -n argocd --timeout=60s 2>/dev/null || true'
-      - cmd: |
-          {{.KC}} wait --for=delete applications -n argocd -l app.kubernetes.io/instance=clusters --timeout=600s 2>/dev/null || \
-          ({{.KC}} patch application clusters -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
-           {{.KC}} delete application clusters -n argocd --wait=false 2>/dev/null) || true
-        ignore_error: true
-      # 7. Delete infra stack LAST, reverse order (consumers -> controllers)
+      # 8. Delete the INFRA-PROVISIONING STACK LAST, reverse order (consumers -> controllers).
       - cmd: |
           for ADDON in kro-manifests-hub kro-manifests kro ack-efs ack-dynamodb ack-s3 ack-ecr ack-ec2 ack-eks ack-iam crossplane-base crossplane; do
             if {{.KC}} get applicationset $ADDON -n argocd >/dev/null 2>&1; then
