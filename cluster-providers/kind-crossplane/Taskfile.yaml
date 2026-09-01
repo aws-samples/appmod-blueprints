@@ -260,9 +260,16 @@ tasks:
             exit 1
           fi
           printf '{{.C_STEP}}▸ Resolving domain via domainResolver (%s)...{{.C_RESET}}\n' "$RESOLVER"
-          D=$("$RESOLVER_CMD" | tr -d '[:space:]' || true)
+          # CONTRACT: the resolver BLOCKS until its hostname is known, then prints the
+          # hostname as the LAST non-empty line of stdout, and exits 0. Progress logging
+          # is fine — put it on stderr by preference, but any leading stdout lines are
+          # discarded too, so a chatty resolver still works. The value is validated below,
+          # so a malformed one fails HERE rather than surfacing later as broken ingress.
+          RESOLVER_OUT=$("$RESOLVER_CMD" || true)
+          D=$(printf '%s\n' "$RESOLVER_OUT" | grep -v '^[[:space:]]*$' | tail -n 1 | tr -d '[:space:]' || true)
           if [ -z "$D" ]; then
-            printf '{{.C_ERR}}✗ domainResolver returned nothing: %s{{.C_RESET}}\n' "$RESOLVER"
+            printf '{{.C_ERR}}✗ domainResolver printed no hostname: %s{{.C_RESET}}\n' "$RESOLVER"
+            printf '{{.C_INFO}}  It must print the hostname as the last non-empty line of stdout and exit 0.{{.C_RESET}}\n'
             exit 1
           fi
         fi
@@ -305,6 +312,30 @@ tasks:
           printf '{{.C_INFO}}  Continuing would leave ingress_domain_name empty and misconfigure every addon.{{.C_RESET}}\n'
           exit 1
         fi
+        # Validate before persisting. This value becomes ingress_domain_name on the cluster
+        # secret and is templated into every addon's ingress host rules, so a malformed one
+        # fails much later and confusingly (broken ingress, bad OIDC issuer). Pattern
+        # matches config.schema.json's `domain`.
+        if ! printf '%s' "$D" | grep -Eq '^[a-z0-9][a-z0-9.-]+[a-z0-9]$'; then
+          printf '{{.C_ERR}}✗ Resolved domain is not a valid hostname: %s{{.C_RESET}}\n' "$D"
+          printf '{{.C_INFO}}  Expected something like idp.example.com or d123.cloudfront.net{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  (lowercase alphanumerics, dots and hyphens; must start and end alphanumeric){{.C_RESET}}\n'
+          exit 1
+        fi
+        # A CloudFront hostname implies the consumer terminates TLS at CloudFront, so the
+        # ALB must serve plain HTTP. With insecure=false the AWS Load Balancer Controller
+        # looks for an ACM cert matching this host and will not find one. Warn rather than
+        # fail: a consumer may legitimately front *.cloudfront.net differently.
+        case "$D" in
+          *.cloudfront.net)
+            INSECURE_NOW=$(yq '.insecure // false' "$CFG" 2>/dev/null || echo "false")
+            if [ "$INSECURE_NOW" != "true" ]; then
+              printf '{{.C_ERR}}⚠ %s is a CloudFront hostname but insecure=false.{{.C_RESET}}\n' "$D"
+              printf '{{.C_INFO}}  The ALB will try to find an ACM certificate for this host and fail.{{.C_RESET}}\n'
+              printf '{{.C_INFO}}  Set insecure: true so the ALB serves HTTP and CloudFront terminates TLS.{{.C_RESET}}\n'
+            fi
+            ;;
+        esac
         # Persist so the nested _install:platform process (and re-runs) pick it up.
         yq -i ".domain = \"$D\"" "$CFG"
         printf '{{.C_OK}}✓ domain resolved: %s{{.C_RESET}}\n' "$D"

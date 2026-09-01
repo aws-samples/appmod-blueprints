@@ -54,18 +54,37 @@ domain: "<your-domain>"                      # e.g. idp.example.com
 # whose domain only exists once it reaches Deployed (5–15 min).
 #
 # Leave `domain: ""` and point `domainResolver` at a command that BLOCKS until the
-# hostname is known and prints it to stdout (exit 0). The platform runs it once, at the
-# moment the domain is first needed — after the ~20 min cluster build, so your
-# provisioning and the cluster build overlap. `task install` stays a single command.
+# hostname is known. The platform runs it once, at the moment the domain is first
+# needed — after the ~20 min cluster build, so your provisioning and the cluster build
+# overlap. `task install` stays a single command.
 #
 #   domain: ""
 #   domainResolver: "./my-provisioning/resolve-domain.sh"
 #
+# RESOLVER CONTRACT
+#   - must BLOCK until the hostname exists, then exit 0
+#   - must print the hostname as the LAST non-empty line of stdout
+#   - progress/logging: prefer stderr. Earlier stdout lines are discarded, so a chatty
+#     resolver still works, but stderr keeps it unambiguous.
+#   - the value is validated as a hostname before use; a malformed one fails the install
+#     immediately rather than surfacing later as broken ingress
+#   - path is repo-root-relative, or absolute; must be executable
+#
+# A one-liner is enough, e.g.:
+#   #!/bin/sh
+#   aws cloudfront wait distribution-deployed --id "$ID" >&2
+#   aws cloudfront get-distribution --id "$ID" --query 'Distribution.DomainName' --output text
+#
 # Resolution order (first non-empty wins):
 #   1. `domain` above          — when set, the resolver is NOT run at all
 #   2. `domainResolver`        — a command printing the hostname
-#   3. private/async-domain    — a file, relative to the repo root (back-compat)
+#   3. private/async-domain    — a file, relative to the repo root (back-compat);
+#                                polled for up to 5 min if not yet written
 #   4. otherwise install fails loudly rather than deploying with an empty domain
+#
+# NOTE: a *.cloudfront.net hostname implies `insecure: true` below (CloudFront
+# terminates TLS, the ALB serves HTTP). The platform warns if that combination is
+# inconsistent.
 domainResolver: ""
 
 # TLS / exposure:

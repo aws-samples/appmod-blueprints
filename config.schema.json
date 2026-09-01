@@ -176,7 +176,7 @@
     "domainResolver": {
       "type": "string",
       "default": "",
-      "description": "Optional extension point for a hostname that is not knowable when install starts (e.g. a CloudFront distribution still deploying). A command, relative to the repo root or absolute, that BLOCKS until the hostname is known and prints it to stdout, exiting 0. Only consulted when `domain` is empty. Resolution order: domain -> domainResolver -> private/async-domain (back-compat) -> fail. The platform never provisions the hostname."
+      "description": "Optional extension point for a hostname that is not knowable when install starts (e.g. a CloudFront distribution still deploying). A command, repo-root-relative or absolute and executable, that BLOCKS until the hostname is known and prints it as the LAST non-empty line of stdout, exiting 0. Prefer stderr for progress output. The value is validated as a hostname before use. Only consulted when `domain` is empty. Resolution order: domain -> domainResolver -> private/async-domain (polled up to 5 min) -> fail. The platform never provisions the hostname."
     },
     "insecure": {
       "type": "boolean",
