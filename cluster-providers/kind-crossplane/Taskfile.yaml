@@ -288,7 +288,14 @@ tasks:
           # is fine — put it on stderr by preference, but any leading stdout lines are
           # discarded too, so a chatty resolver still works. The value is validated below,
           # so a malformed one fails HERE rather than surfacing later as broken ingress.
-          RESOLVER_OUT=$("$RESOLVER_CMD" || true)
+          #
+          # The resolver is given platform context via the environment, so it needs no
+          # arguments and `domainResolver` stays a plain path:
+          #   PLATFORM_CONFIG_FILE — absolute path to config.local.yaml
+          #   PLATFORM_REPO_ROOT   — absolute path to the platform repo root
+          # A reusable resolver reads whatever it needs (cluster name, region, ...) from
+          # the config file rather than taking flags. See scripts/resolve-cloudfront-domain.sh.
+          RESOLVER_OUT=$(PLATFORM_CONFIG_FILE="$CFG" PLATFORM_REPO_ROOT="{{.ROOT_DIR}}" "$RESOLVER_CMD" || true)
           D=$(printf '%s\n' "$RESOLVER_OUT" | grep -v '^[[:space:]]*$' | tail -n 1 | tr -d '[:space:]' || true)
           if [ -z "$D" ]; then
             printf '{{.C_ERR}}✗ domainResolver printed no hostname: %s{{.C_RESET}}\n' "$RESOLVER"

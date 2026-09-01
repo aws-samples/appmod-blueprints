@@ -32,7 +32,8 @@
 #         via AWS CLI (no aws:cloudformation:* tags → the AWS LBC can adopt it cleanly)
 #       - Creates CloudFront VPC Origin pointing to the ALB
 #       - Creates CloudFront Distribution → gets domain d*.cloudfront.net
-#       - Writes domain to config.local.yaml and private/async-domain
+#       - Writes domain: "" + domainResolver into config.local.yaml; the platform
+#         resolves the CloudFront hostname during `task install`
 #       All steps are IDEMPOTENT — safe to re-run.
 #
 #  3. Write <repo-root>/config.local.yaml with:
@@ -249,12 +250,14 @@ printf 'aws:\n'                                        >> "$OUTPUT_FILE"
 printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
-# domain is always empty at config-generation time. The CloudFront distribution is
-# created inline by _start_platform_infra (below), which writes the resolved domain to
-# private/async-domain; the platform's domain:resolve reads it from there during
-# `task install`. There is no hub:create-platform-cf task — that name never existed.
-DOMAIN_VALUE=""
-printf 'domain: "%s"\n' "$DOMAIN_VALUE"                >> "$OUTPUT_FILE"
+# domain is empty at config-generation time: the CloudFront distribution is created in
+# the background by _start_platform_infra (below) and its hostname does not exist yet.
+# Instead of communicating it through a file, declare the platform's supported extension
+# point — domainResolver — and let `task install` resolve it after the cluster build.
+# scripts/resolve-cloudfront-domain.sh looks the distribution up by Comment, so it works
+# on re-runs and needs no state passed between the two scripts.
+printf 'domain: ""\n'                                  >> "$OUTPUT_FILE"
+printf 'domainResolver: "scripts/resolve-cloudfront-domain.sh"\n' >> "$OUTPUT_FILE"
 printf 'insecure: true\n'                              >> "$OUTPUT_FILE"
 printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
 printf 'ingressName: ""\n'                             >> "$OUTPUT_FILE"
@@ -336,7 +339,6 @@ mkdir -p "$_PLATFORM_INFRA_DIR"
 _VPC_ORIGIN_FILE="$_PLATFORM_INFRA_DIR/vpc-origin-id.txt"
 _ALB_ARN_FILE="$_PLATFORM_INFRA_DIR/alb-arn.txt"
 _INFRA_LOG="/tmp/create-config-infra.log"
-_INFRA_PID_FILE="$_PLATFORM_INFRA_DIR/pid.txt"
 
 CF_DOMAIN=""
 
@@ -495,7 +497,6 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     fi
     if [ -n "$_CF_DOMAIN_EXISTING" ]; then
       echo "[$(date +%H:%M:%S)] ↻ Reusing CloudFront: $_CF_DOMAIN_EXISTING"
-      echo -n "$_CF_DOMAIN_EXISTING" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
     fi
 
     # Wait for VPC Origin Deployed (CF requires Deployed state)
@@ -511,7 +512,6 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     echo -n "$VPC_ORIGIN_ID" > "$_VPC_ORIGIN_FILE"
 
     # Create CloudFront distribution now that VPC Origin is Deployed
-    # This runs inside the background job so it works even with WAIT_FOR_CF=false
     if [ -z "${_CF_DOMAIN_EXISTING:-}" ]; then
       HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
       ALB_DNS_BG=$(aws elbv2 describe-load-balancers \
@@ -547,143 +547,42 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
       [ "$_CF_DOMAIN" = "None" ] && _CF_DOMAIN=""
       echo "[$(date +%H:%M:%S)] CF_DOMAIN result: $_CF_DOMAIN"
       if [ -n "$_CF_DOMAIN" ]; then
-        echo -n "$_CF_DOMAIN" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
-        # Also write directly to REPO_ROOT/private/async-domain for WAIT_FOR_CF=false mode
-        REPO_ROOT_BG=$(cd "$(dirname "$0")/.." && pwd)
-        mkdir -p "${REPO_ROOT_BG}/private"
-        echo -n "$_CF_DOMAIN" > "${REPO_ROOT_BG}/private/async-domain"
-        echo "[$(date +%H:%M:%S)] ✓ CloudFront domain written: $_CF_DOMAIN"
+        # No file is written: the platform's domainResolver
+        # (scripts/resolve-cloudfront-domain.sh) discovers this distribution by its
+        # Comment. Nothing needs to be handed between the two scripts.
+        echo "[$(date +%H:%M:%S)] ✓ CloudFront created: $_CF_DOMAIN"
       else
-        echo "[$(date +%H:%M:%S)] WARN: CF creation failed in background job"
+        echo "[$(date +%H:%M:%S)] ERROR: CloudFront creation failed — task install will fail"
+        echo "[$(date +%H:%M:%S)]        in domain:resolve with a timeout. See this log."
       fi
     fi
   }
   export -f _start_platform_infra
   export _PLATFORM_INFRA_DIR _VPC_ORIGIN_FILE _ALB_ARN_FILE _INFRA_LOG RESOURCE_PREFIX
 
-  # Check idempotency first — if CF already exists, no need for background job
-  _CF_COMMENT="${RESOURCE_PREFIX}-hub-platform"
-  CF_DOMAIN=$(aws cloudfront list-distributions \
-    --query "DistributionList.Items[?Comment=='${_CF_COMMENT}'].DomainName | [0]" \
-    --output text 2>/dev/null | tr -d '[:space:]')
-  [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
+  # Launch provisioning in the background and return immediately. The platform's
+  # domain:resolve calls scripts/resolve-cloudfront-domain.sh (wired in as domainResolver
+  # above), which looks the distribution up by Comment and blocks until it exists. So this
+  # script does not need to wait, communicate the domain through a file, or re-create the
+  # distribution on a second code path.
+  #
+  # Idempotency is handled inside the background function: it reuses an existing
+  # distribution (by Comment, then by VPC origin) rather than creating a duplicate. A
+  # re-run is therefore safe, and the resolver re-derives the domain from AWS each time.
+  echo "  ▸ Starting ALB + VPC Origin + CloudFront creation in background..."
+  bash -c '_start_platform_infra "$@"' _ "$REGION" "$HUB_VPC_ID" "${HUB_SUBNET_IDS:-}" &
+  echo "  ▸ Background PID=$! (log: $_INFRA_LOG)"
 
-  if [ -n "$CF_DOMAIN" ]; then
-    echo "  ↻ Reusing CloudFront: $CF_DOMAIN (skipping background infra)"
-    # Write domain to config immediately — same as new creation path
-    yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
-      sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
-    mkdir -p "${REPO_ROOT}/private"
-    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/async-domain"
-    echo "  ✓ domain written to config: $CF_DOMAIN"
-  else
-    echo "  ▸ Starting ALB+VPC Origin creation in background..."
-    bash -c '_start_platform_infra "$@"' _ "$REGION" "$HUB_VPC_ID" "${HUB_SUBNET_IDS:-}" &
-    _INFRA_PID=$!
-    echo "$_INFRA_PID" > "$_INFRA_PID_FILE"
-    echo "  ▸ Background PID=$_INFRA_PID (VPC Origin deploys while IDC is detected)"
-  fi
+fi  # end HUB_VPC_ID block
 
-fi  # end HUB_VPC_ID block — will rejoin after config is written
-
-
-# ── Rejoin background platform infra (if started) ─────────────────────────
-# When WAIT_FOR_CF=false (used by task install parallelization), exit here
-# after writing config.local.yaml. The background infra job keeps running and
-# will write private/async-domain when ready. task install polls for it
-# before hub:claim so DOMAIN is always set when the EKS cluster is created.
-if [ "${WAIT_FOR_CF:-true}" = "false" ] && [ -n "${HUB_VPC_ID:-}" ]; then
-  echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
-  yq '.' "$OUTPUT_FILE" >/dev/null
-  echo "[$(date +%H:%M:%S)] ✓ create-config.sh complete (WAIT_FOR_CF=false — CF domain will be written by background job)"
-  echo "    clusterProvider=$CLUSTER_PROVIDER region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
-  exit 0
+echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
+yq '.' "$OUTPUT_FILE" >/dev/null
+echo "[$(date +%H:%M:%S)] ✓ create-config.sh complete"
+echo "    clusterProvider=$CLUSTER_PROVIDER region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
+if [ -n "${HUB_VPC_ID:-}" ]; then
+  echo "    domain resolved during 'task install' via domainResolver (CloudFront still deploying)"
 fi
-
-# ── Wait for background infra (default WAIT_FOR_CF=true) ────────────────────
-echo "[$(date +%H:%M:%S)] DEBUG rejoin: HUB_VPC_ID=${HUB_VPC_ID:-EMPTY} CF_DOMAIN=${CF_DOMAIN:-EMPTY} INFRA_PID_FILE=${_INFRA_PID_FILE:-EMPTY} PID_EXISTS=$([ -f "${_INFRA_PID_FILE:-/dev/null}" ] && echo yes || echo no)"
-if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${CF_DOMAIN:-}" ]; then
-  echo "[$(date +%H:%M:%S)] DEBUG: CF already set — skipping rejoin"
-  : # CF already existed, nothing to do
-elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
-  _INFRA_PID=$(cat "$_INFRA_PID_FILE" 2>/dev/null)
-  if [ -n "$_INFRA_PID" ]; then
-    echo "  ▸ Waiting for background VPC Origin to finish..."
-    # Poll the background PID with kill -0 (robust: works even if the process
-    # already exited and was reaped). Stream new log lines incrementally.
-    _LOG_LINES=0
-    while kill -0 "$_INFRA_PID" 2>/dev/null; do
-      if [ -f "$_INFRA_LOG" ]; then
-        _TOTAL=$(wc -l < "$_INFRA_LOG" 2>/dev/null || echo 0)
-        if [ "$_TOTAL" -gt "$_LOG_LINES" ]; then
-          tail -n +$((_LOG_LINES + 1)) "$_INFRA_LOG" 2>/dev/null
-          _LOG_LINES=$_TOTAL
-        fi
-      fi
-      sleep 3
-    done
-    # Print any remaining log lines after the process exited
-    if [ -f "$_INFRA_LOG" ]; then
-      tail -n +$((_LOG_LINES + 1)) "$_INFRA_LOG" 2>/dev/null || true
-    fi
-    echo "[$(date +%H:%M:%S)]   ✓ Background infra finished"
-  fi
-
-  VPC_ORIGIN_ID=$(cat "$_VPC_ORIGIN_FILE" 2>/dev/null || echo "")
-  ALB_ARN=$(cat "$_ALB_ARN_FILE" 2>/dev/null || echo "")
-
-  # CF domain written by background job (created in parallel with VPC Origin wait)
-  CF_DOMAIN=$(cat "${_PLATFORM_INFRA_DIR}/cf-domain.txt" 2>/dev/null | tr -d '[:space:]') || CF_DOMAIN=""
-  [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
-
-  if [ -z "$CF_DOMAIN" ] && [ -n "$VPC_ORIGIN_ID" ]; then
-    # Fallback: CF not created in background — create now (VPC Origin is Deployed)
-    echo "[$(date +%H:%M:%S)]   ▸ Creating CloudFront distribution..."
-    ALB_DNS=$(aws elbv2 describe-load-balancers \
-      --load-balancer-arns "$ALB_ARN" --region "$REGION" \
-      --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null) || ALB_DNS=""
-    echo "[$(date +%H:%M:%S)]   ALB_DNS=$ALB_DNS VPC_ORIGIN_ID=$VPC_ORIGIN_ID"
-    HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
-    CF_DOMAIN=$(aws cloudfront create-distribution \
-      --distribution-config "{
-        \"CallerReference\": \"${HUB_CLUSTER_NAME}-platform-$(date +%s)\",
-        \"Comment\": \"${HUB_CLUSTER_NAME}-platform\",
-        \"Enabled\": true,
-        \"Origins\": {\"Quantity\": 1, \"Items\": [{
-          \"Id\": \"vpc-origin\",
-          \"DomainName\": \"$ALB_DNS\",
-          \"VpcOriginConfig\": {
-            \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
-            \"OriginReadTimeout\": 60,
-            \"OriginKeepaliveTimeout\": 5
-          }
-        }]},
-        \"DefaultCacheBehavior\": {
-          \"TargetOriginId\": \"vpc-origin\",
-          \"ViewerProtocolPolicy\": \"redirect-to-https\",
-          \"AllowedMethods\": {\"Quantity\": 7,
-            \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"],
-            \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
-          \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
-          \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
-          \"Compress\": true},
-        \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
-        \"PriceClass\": \"PriceClass_100\"
-      }" --query "Distribution.DomainName" --output text 2>&1) || CF_DOMAIN=""
-    echo "[$(date +%H:%M:%S)]   CF_DOMAIN result: $CF_DOMAIN"
-    [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
-  fi
-
-  if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
-    yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
-      sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
-    mkdir -p "${REPO_ROOT}/private"
-    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/async-domain"
-    echo "[$(date +%H:%M:%S)]   ✓ CloudFront: $CF_DOMAIN"
-    echo "[$(date +%H:%M:%S)]   ✓ domain written to config.local.yaml and private/async-domain"
-  fi
-  rm -rf "$_PLATFORM_INFRA_DIR" 2>/dev/null || true
-fi
+exit 0
 
 # --- Validate --------------------------------------------------------------
 echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
