@@ -709,7 +709,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "echo \"Performance gate: pass\"; exit 0"
+                              - "RESULT=$(ab -n 1000 -c 10 http://${schema.metadata.name}-preview:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); echo \"Time per request: $RESULT ms (threshold ${schema.spec.performanceGate.extraArgs} ms)\"; if [ \"$RESULT\" -lt ${schema.spec.performanceGate.extraArgs} ]; then echo PASS; exit 0; else echo FAIL; exit 1; fi"
                         restartPolicy: Never
                     backoffLimit: 0
 
