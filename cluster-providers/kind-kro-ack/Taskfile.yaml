@@ -1187,24 +1187,6 @@ tasks:
       best-effort — safe to run even if the hub is already gone. Adapted from
       kind-crossplane. Must run BEFORE the hub cluster is deleted.
     vars:
-      # Enabled addons in reverse sync-wave order (highest wave deleted first).
-      ADDONS:
-        sh: |
-          ENABLED_LABELS=$(for f in {{.GITOPS_ROOT}}/overlays/environments/*/enabled-addons.yaml; do
-            [ -f "$f" ] && yq -r '.enabledAddons | to_entries[] | select(.value == true) | "enable_" + .key' "$f"
-          done | sort -u)
-          REGISTRY=$(yq eval-all '. as $item ireduce ({}; . * $item)' \
-            {{.GITOPS_ROOT}}/addons/registry/core.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/gitops.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/security.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/observability.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/ml.yaml \
-            {{.GITOPS_ROOT}}/addons/registry/platform.yaml)
-          echo "$REGISTRY" | yq -r 'to_entries[] | .key + " " + .value.selector.matchExpressions[0].key + " " + (.value.annotationsAppSet."argocd.argoproj.io/sync-wave" // "0")' | while read addon selector wave; do
-            if echo "$ENABLED_LABELS" | grep -qx "$selector"; then
-              echo "$wave $addon"
-            fi
-          done | sort -rn | awk '{print $2}'
       # Infra-provisioning stack: controllers that must stay alive to delete other
       # AWS resources and the spoke clusters. Skipped in the per-addon pass (step 5)
       # and deleted LAST, after the spoke clusters (step 7).
@@ -1274,30 +1256,58 @@ tasks:
           done
         ignore_error: true
       # 7. Delete HUB ADDONS in reverse sync-wave order, SKIPPING the infra stack.
+      #    Addons are discovered LIVE from the cluster (kubectl), not from the static
+      #    registry files, so addons enabled outside the registry are still cleaned up.
+      #    Child apps are matched by ownerReference (ArgoCD does not label generated apps
+      #    uniformly), and the finalizer/deletion waits are skipped when an addon has no
+      #    child apps — avoiding the per-addon 30s/120s timeouts on disabled addons.
       - cmd: |
-          if echo " {{.INFRA_STACK}} " | grep -q " {{.ITEM}} "; then
-            echo "Skipping {{.ITEM}} (infra stack — deleted last)"
-          elif {{.KC}} get applicationset {{.ITEM}} -n argocd >/dev/null 2>&1; then
-            echo "Deleting {{.ITEM}}..."
-            {{.KC}} patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
-            sleep 3
-            {{.KC}} delete applicationset {{.ITEM}} -n argocd --timeout=180s 2>/dev/null || true
-            {{.KC}} wait --for=delete applications -n argocd -l addonName={{.ITEM}} --timeout=120s 2>/dev/null || true
-          else
-            echo "Skipping {{.ITEM}} (not found)"
-          fi
+          SKIP="{{.INFRA_STACK}} bootstrap cluster-addons agent-platform fleet-secrets hub-fleet-secret clusters clusters-kro abstractions pod-identities"
+          ADDONS=$({{.KC}} get applicationsets -n argocd \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.annotations.argocd\.argoproj\.io/sync-wave}{"\n"}{end}' 2>/dev/null \
+          | while read name wave; do
+            [ -z "$name" ] && continue
+            wave="${wave:-0}"
+            skip=false
+            for s in $SKIP; do if [ "$name" = "$s" ]; then skip=true; break; fi; done
+            [ "$skip" = "true" ] && continue
+            echo "$wave $name"
+          done | sort -rn | awk '{print $2}' || true)
+          for ADDON in $ADDONS; do
+            {{.KC}} get applicationset "$ADDON" -n argocd >/dev/null 2>&1 || continue
+            echo "Deleting $ADDON..."
+            {{.KC}} patch applicationset "$ADDON" -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
+            CHILDREN=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null)
+            if [ -n "$CHILDREN" ]; then
+              E=0; while [ $E -lt 30 ]; do
+                F=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.finalizers}{end}" 2>/dev/null)
+                echo "$F" | grep -q resources-finalizer && break
+                sleep 2; E=$((E + 2))
+              done
+            fi
+            {{.KC}} delete applicationset "$ADDON" -n argocd --timeout=180s 2>&1 || true
+            if [ -n "$CHILDREN" ]; then
+              E=0; while [ $E -lt 120 ]; do
+                R=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{end}" 2>/dev/null)
+                [ -z "$R" ] && break
+                sleep 5; E=$((E + 5))
+              done
+            fi
+          done
         ignore_error: true
-        for:
-          var: ADDONS
       # 8. Delete the INFRA-PROVISIONING STACK LAST, reverse order (consumers -> controllers).
       - cmd: |
           for ADDON in kro-manifests-hub kro-manifests kro ack-efs ack-dynamodb ack-s3 ack-ecr ack-ec2 ack-eks ack-iam crossplane-base crossplane; do
             if {{.KC}} get applicationset $ADDON -n argocd >/dev/null 2>&1; then
               echo "Deleting $ADDON..."
-              {{.KC}} patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+              {{.KC}} patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
               sleep 3
-              {{.KC}} delete applicationset $ADDON -n argocd --timeout=180s 2>/dev/null || true
-              {{.KC}} wait --for=delete applications -n argocd -l addonName=$ADDON --timeout=120s 2>/dev/null || true
+              {{.KC}} delete applicationset $ADDON -n argocd --timeout=180s 2>&1 || true
+              E=0; while [ $E -lt 120 ]; do
+                R=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{end}" 2>/dev/null)
+                [ -z "$R" ] && break
+                sleep 5; E=$((E + 5))
+              done
             fi
           done
         ignore_error: true
