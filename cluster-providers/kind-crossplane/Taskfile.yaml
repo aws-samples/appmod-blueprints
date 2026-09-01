@@ -267,9 +267,33 @@ tasks:
           fi
         fi
         if [ -z "$D" ]; then
-          D=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]' || true)
+          # Back-compat path: an external job writes the hostname to private/async-domain
+          # (what the workshop's create-config.sh does in its parallel mode). POLL rather
+          # than read once — the writer may not have finished yet. kind-kro-ack previously
+          # polled 20 min for this, before hub:claim; the wait is shorter now because this
+          # runs AFTER the ~20 min cluster build, so an asynchronously-created hostname
+          # (CloudFront: 5-15 min) is normally already written by the time we get here.
+          # Bounded so a missing writer fails in minutes with a clear message instead of
+          # hanging the install indefinitely.
+          DOMAIN_FILE="{{.ROOT_DIR}}/private/async-domain"
+          ASYNC_TRIES=20   # 20 x 15s = 5 min
+          _i=0
+          while [ "$_i" -lt "$ASYNC_TRIES" ]; do
+            if [ -s "$DOMAIN_FILE" ]; then
+              D=$(cat "$DOMAIN_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+              if [ "$D" = "null" ]; then D=""; fi
+              if [ -n "$D" ]; then break; fi
+            fi
+            if [ "$_i" = "0" ]; then
+              printf '{{.C_STEP}}▸ No domain yet — polling %s for up to 5 min...{{.C_RESET}}\n' "$DOMAIN_FILE"
+            fi
+            _i=$((_i + 1))
+            sleep 15
+          done
           if [ -n "$D" ]; then
-            printf '{{.C_INFO}}  domain from private/async-domain: %s{{.C_RESET}}\n' "$D"
+            printf '{{.C_INFO}}  domain from private/async-domain (after %ss): %s{{.C_RESET}}\n' "$((_i * 15))" "$D"
+          else
+            printf '{{.C_ERR}}✗ Timed out after 5 min waiting for %s{{.C_RESET}}\n' "$DOMAIN_FILE"
           fi
         fi
         if [ -z "$D" ]; then
