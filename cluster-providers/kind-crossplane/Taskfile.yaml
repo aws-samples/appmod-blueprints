@@ -1325,7 +1325,7 @@ tasks:
         SPOKE_PROD_ARN=""
         SPOKE_PROD_SUBNETS=""
         SPOKE_PROD_SG=""
-        for CLUSTER in spoke-dev spoke-prod; do
+        for CLUSTER in {{.RESOURCE_PREFIX}}-spoke-dev {{.RESOURCE_PREFIX}}-spoke-prod; do
           SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
           if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
             SPOKE_ALL_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
@@ -1335,7 +1335,7 @@ tasks:
             fi
             SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
             echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
-            if [ "$CLUSTER" = "spoke-dev" ]; then
+            if [ "$CLUSTER" = "{{.RESOURCE_PREFIX}}-spoke-dev" ]; then
               SPOKE_DEV_ARN="$SPOKE_ARN"
               SPOKE_DEV_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
               SPOKE_DEV_SG="$SPOKE_SG"

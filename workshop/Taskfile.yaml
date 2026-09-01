@@ -131,6 +131,18 @@ tasks:
       # Non-fatal: never fails the install (spoke apps may legitimately still be settling).
       - task: wait-for-spokes
       - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Re-seed observability now that spokes are ACTIVE. The initial seed runs in background
+      # during hub install (before spokes exist) so spoke_dev/prod_cluster_arn annotations
+      # are empty → no spoke AMP scrapers. Re-running here ensures spoke scraper values are
+      # written to Secrets Manager and propagated to the ArgoCD cluster secret via ESO.
+      # This fixes issue #41 (AMP scraper hub-only, spoke-dev metrics missing in Phase 30.5).
+      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && task kind-kro-ack:secrets-manager:seed-observability; fi'
+      - 'printf "{{.C_INFO}}  [%ds] observability re-seeded with spoke scraper data{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Register spoke OIDC providers in IAM (required for IRSA on kro-ack clusters).
+      # This is a temporary workaround until prometheus/common/sigv4 supports Pod Identity.
+      # See: https://github.com/argoproj/argo-rollouts/issues/4536
+      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && task kind-kro-ack:spokes:register-oidc-providers; fi'
+      - 'printf "{{.C_INFO}}  [%ds] OIDC providers registered{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
       - |

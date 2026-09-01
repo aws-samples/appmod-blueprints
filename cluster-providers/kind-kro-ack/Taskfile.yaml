@@ -1596,7 +1596,7 @@ tasks:
         SPOKE_PROD_ARN=""
         SPOKE_PROD_SUBNETS=""
         SPOKE_PROD_SG=""
-        for CLUSTER in spoke-dev spoke-prod; do
+        for CLUSTER in {{.RESOURCE_PREFIX}}-spoke-dev {{.RESOURCE_PREFIX}}-spoke-prod; do
           SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
           if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
             SPOKE_ALL_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
@@ -1606,7 +1606,7 @@ tasks:
             fi
             SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
             echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
-            if [ "$CLUSTER" = "spoke-dev" ]; then
+            if [ "$CLUSTER" = "{{.RESOURCE_PREFIX}}-spoke-dev" ]; then
               SPOKE_DEV_ARN="$SPOKE_ARN"
               SPOKE_DEV_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
               SPOKE_DEV_SG="$SPOKE_SG"
@@ -1957,4 +1957,64 @@ tasks:
           done
           printf '{{.C_OK}}✓ Spoke provider identity seeding complete.{{.C_RESET}}\n'
 
+
+
+  spokes:register-oidc-providers:
+    desc: >-
+      Register the OIDC issuer of each spoke cluster as an IAM OpenID Connect
+      provider. Required for IRSA (IAM Roles for Service Accounts) to work on
+      spoke clusters — e.g. Argo Rollouts querying AMP with SigV4 auth.
+      EKS creates the OIDC endpoint automatically but does NOT register the
+      provider in IAM; this task bridges that gap. Idempotent (safe to re-run).
+      NOTE: this is a temporary workaround until prometheus/common/sigv4 is
+      updated to use aws-sdk-go-v2 (which supports Pod Identity natively).
+      Tracking: https://github.com/argoproj/argo-rollouts/issues/4536
+               https://github.com/argoproj/argo-rollouts/pull/5010
+    cmds:
+      - cmd: |
+          SPOKES=$(ls "{{.GITOPS_ROOT}}/fleet/members" 2>/dev/null | grep -vx "{{.HUB_CLUSTER_NAME}}" || true)
+          if [ -z "$SPOKES" ]; then
+            printf '{{.C_INFO}}  No spoke members under fleet/members; nothing to register.{{.C_RESET}}\n'
+            exit 0
+          fi
+          for SPOKE in $SPOKES; do
+            STATUS=$(aws eks describe-cluster --name "$SPOKE" --region {{.AWS_REGION}} \
+              --query 'cluster.status' --output text 2>/dev/null || echo "NONE")
+            if [ "$STATUS" != "ACTIVE" ]; then
+              printf '{{.C_INFO}}  Skipping %s (cluster status: %s){{.C_RESET}}\n' "$SPOKE" "$STATUS"
+              continue
+            fi
+            ISSUER=$(aws eks describe-cluster --name "$SPOKE" --region {{.AWS_REGION}} \
+              --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null)
+            if [ -z "$ISSUER" ]; then
+              printf '{{.C_ERR}}  %s: no OIDC issuer found — skipping{{.C_RESET}}\n' "$SPOKE"
+              continue
+            fi
+            # Strip https:// — IAM stores providers without scheme
+            OIDC_HOST="${ISSUER#https://}"
+            PROVIDER_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:oidc-provider/${OIDC_HOST}"
+            # Check if already registered (idempotent)
+            if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$PROVIDER_ARN" \
+                 >/dev/null 2>&1; then
+              printf '{{.C_INFO}}  %s: OIDC provider already registered (%s){{.C_RESET}}\n' "$SPOKE" "$OIDC_HOST"
+              continue
+            fi
+            # Get the TLS thumbprint for the OIDC endpoint
+            THUMBPRINT=$(echo | openssl s_client \
+              -servername "oidc.eks.{{.AWS_REGION}}.amazonaws.com" \
+              -connect "oidc.eks.{{.AWS_REGION}}.amazonaws.com:443" 2>/dev/null \
+              | openssl x509 -fingerprint -noout -sha1 2>/dev/null \
+              | sed 's/://g' | awk -F= '{print tolower($2)}')
+            if [ -z "$THUMBPRINT" ]; then
+              # Fallback: use the well-known EKS OIDC thumbprint
+              THUMBPRINT="9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
+            fi
+            aws iam create-open-id-connect-provider \
+              --url "$ISSUER" \
+              --client-id-list "sts.amazonaws.com" \
+              --thumbprint-list "$THUMBPRINT" \
+              --region {{.AWS_REGION}} >/dev/null
+            printf '{{.C_OK}}  ✓ %s: OIDC provider registered (%s){{.C_RESET}}\n' "$SPOKE" "$OIDC_HOST"
+          done
+          printf '{{.C_OK}}✓ Spoke OIDC provider registration complete.{{.C_RESET}}\n'
 
