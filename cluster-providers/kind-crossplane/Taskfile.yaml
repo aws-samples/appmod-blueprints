@@ -1561,9 +1561,15 @@ tasks:
           # spokes by name prefix rather than an explicit list (the old hardcoded list
           # covered only 7 hub roles + 3 hub policies, missing agentcore/bifrost/AMP/
           # Grafana/Keycloak/langfuse/Otel roles and ALL spoke roles + policies).
+          # Denylist: never sweep the infra/bootstrap/CFN roles or the argo-rollouts
+          # roles (#831) even though they share the cluster-name prefix — deleting them
+          # breaks teardown or a subsequent redeploy on a reused account. (Mirrors the
+          # kind-kro-ack sweep guard.)
+          DENY_RE='(-team-stack-|SharedRole|-cluster-mgmt-|-cluster-role$|-cluster-node-role$|-crossplane-provider|Crossplane.*ProviderRole|-argo-rollouts)'
           SPOKE_PREFIXES=$(yq -r '.spokes // {} | keys | .[]' {{.CONFIG_FILE}} 2>/dev/null)
           for PREFIX in {{.HUB_CLUSTER_NAME}} $SPOKE_PREFIXES; do
             for ROLE in $(aws iam list-roles --query "Roles[?starts_with(RoleName,'${PREFIX}-')].RoleName" --output text 2>/dev/null); do
+              echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (infra/bootstrap/CFN — not swept)"; continue; }
               for POLICY_ARN in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
                 aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$POLICY_ARN" 2>/dev/null || true
               done
@@ -1573,6 +1579,8 @@ tasks:
               aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
             done
             for POLICY_ARN in $(aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName,'${PREFIX}-')].Arn" --output text 2>/dev/null); do
+              PNAME=$(echo "$POLICY_ARN" | sed 's|.*/||')
+              echo "$PNAME" | grep -qE "$DENY_RE" && { echo "  skip policy $PNAME (infra/bootstrap — not swept)"; continue; }
               for V in $(aws iam list-policy-versions --policy-arn "$POLICY_ARN" --query 'Versions[?!IsDefaultVersion].VersionId' --output text 2>/dev/null); do
                 aws iam delete-policy-version --policy-arn "$POLICY_ARN" --version-id "$V" 2>/dev/null || true
               done
