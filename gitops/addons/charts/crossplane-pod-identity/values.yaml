@@ -412,6 +412,9 @@ identities:
 
   argo-rollouts:
     enabled: false
+    # skipPIA: skip creating the PodIdentityAssociation.
+    # See ack-pod-identity values comment for explanation.
+    skipPIA: true
     roleName: argo-rollouts
     namespace: argo-rollouts
     serviceAccount: argo-rollouts

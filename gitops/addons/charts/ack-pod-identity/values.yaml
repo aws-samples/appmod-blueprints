@@ -383,6 +383,12 @@ identities:
 
   argo-rollouts:
     enabled: false
+    # skipPIA: skip creating the PodIdentityAssociation.
+    # Argo Rollouts uses the IRSA SA annotation (eks.amazonaws.com/role-arn) which
+    # requires IRSA (AWS_WEB_IDENTITY_TOKEN_FILE) not Pod Identity. The sigv4 library
+    # (prometheus/common/sigv4 v0.1.0, aws-sdk-go v1.38) only supports the web-identity
+    # token file, not the Pod Identity token file injected by AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE.
+    skipPIA: true
     roleName: argo-rollouts
     namespace: argo-rollouts
     serviceAccount: argo-rollouts
