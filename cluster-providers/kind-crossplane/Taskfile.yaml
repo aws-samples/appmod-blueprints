@@ -63,8 +63,28 @@ vars:
     sh: yq '.fleetRepo.revision // .repo.revision' {{.CONFIG_FILE}}
   FLEET_REPO_BASEPATH:
     sh: yq '.fleetRepo.basepath // .repo.basepath' {{.CONFIG_FILE}}
+  # Ingress domain. Consumer-provided — the platform never creates it (see config.yaml).
+  #
+  # Precedence (first non-empty wins): `domain` in config, then private/async-domain.
+  # `domainResolver` is NOT run here: this var is evaluated at go-task PARSE time, i.e.
+  # before install has built anything, and blocking there would serialise the resolver
+  # against the cluster build and destroy the overlap it exists to provide. The resolver
+  # is invoked by `domain:resolve` (mid-install), which writes the result into config;
+  # the domain-dependent phase then runs as a NESTED go-task process so this var is
+  # re-parsed and picks the value up. See `_install:platform`.
+  #
+  # NOTE: `yq '.domain'` alone yields the STRING "null" for a missing key, which is
+  # non-empty and silently defeats every downstream `[ -z ... ]` check — that is how an
+  # `ingress_domain_name: "null"` could reach the cluster secret. `// ""` plus the grep
+  # normalises absent/empty/null to the empty string.
   DOMAIN:
-    sh: yq '.domain' {{.CONFIG_FILE}}
+    sh: |
+      D=$(yq '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true)
+      if [ "$D" = "null" ]; then D=""; fi
+      if [ -z "$D" ]; then
+        D=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]' || true)
+      fi
+      printf '%s' "$D"
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
   INGRESS_NAME:
@@ -142,9 +162,41 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] credentials:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: crossplane:setup
       - 'printf "{{.C_INFO}}  [%ds] crossplane:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # The platform does not provision a domain/CloudFront. hub:seed reads the
-      # consumer-provided `domain` from config into ingress_domain_name.
-      - task: hub:seed
+      # ── Domain seam ────────────────────────────────────────────────────────────
+      # Everything ABOVE is domain-independent (kind, credentials, Crossplane, the hub
+      # claim, and inside hub:seed-infra the ~20 min EKS build). Everything BELOW needs
+      # the ingress domain, starting with secrets-manager:seed which writes
+      # ingress_domain_name into <hub>/config.
+      #
+      # Placing the seam here is what lets a consumer provision an asynchronously-created
+      # hostname (e.g. CloudFront) in parallel with the cluster build: domain:resolve is
+      # not reached until the cluster is up, so the resolver usually returns immediately.
+      - task: hub:seed-infra
+      - 'printf "{{.C_INFO}}  [%ds] hub:seed-infra done (cluster ready){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      - task: domain:resolve
+      # Run the domain-dependent phase as a NESTED go-task PROCESS, not a `task:` dep.
+      # go-task evaluates global vars ONCE at parse time, so every {{.DOMAIN}} in THIS
+      # process is still the pre-resolution value (verified). A fresh process re-parses
+      # them, so DOMAIN is correct in all its consumers (urls, secrets-manager:seed,
+      # the GitLab fallback, KC_DOMAIN) with no runtime-read gymnastics at each site.
+      # `_install:platform` has no `desc:`, so it stays out of `task --list`: the public
+      # surface remains the single `task install`.
+      # Invoked from the repo root via the root Taskfile namespace for the same reason
+      # documented on install:phase1-observability-bg (a bare `task _install:platform`
+      # would re-resolve ROOT_DIR to this provider directory).
+      - |
+        REPO_ROOT="{{.ROOT_DIR}}" \
+          sh -c 'cd "$REPO_ROOT" && task kind-crossplane:_install:platform'
+
+  # Domain-dependent half of install. Invoked as a separate process by `install` (above)
+  # so global vars are re-parsed after domain:resolve. Deliberately has NO `desc:` so it
+  # does not appear in `task --list` — this is platform internals, not public API.
+  _install:platform:
+    vars:
+      INSTALL_START:
+        sh: date +%s
+    cmds:
+      - task: hub:seed-platform
       - 'printf "{{.C_INFO}}  [%ds] hub:seed done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Force ESO to immediately refresh the cluster secret from Secrets Manager
       # so all annotations (insecure, ingress_domain_name, etc.) are populated
@@ -166,7 +218,72 @@ tasks:
       # hub only and exposes the PlatformCluster abstraction; consumers (e.g. the
       # workshop, or OAP) declare spokes against their own repo / via PlatformCluster
       # claims. See workshop/ for the reference consumer.
-      - 'printf "{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      - 'printf "{{.C_OK}}✓ Platform hub bootstrap complete. Run task status.{{.C_RESET}}\n"'
+
+  # Resolve the ingress domain, once, at the point it is first needed.
+  #
+  # Order (first non-empty wins):
+  #   1. `domain` in config.local.yaml — set by the consumer up front. Resolver NOT run.
+  #   2. `domainResolver`             — a consumer command that BLOCKS until its hostname
+  #                                     exists and prints it to stdout (the extension
+  #                                     point; the platform never learns what CloudFront
+  #                                     is). Its result is written back into config.
+  #   3. private/async-domain        — file written by an external job (back-compat with
+  #                                     the pre-resolver contract).
+  #   4. otherwise FAIL — deploying with an empty domain silently misconfigures every
+  #      addon that templates ingress_domain_name (keycloak, backstage, grafana, ...).
+  #
+  # No `desc:` — internals, not public API.
+  domain:resolve:
+    cmds:
+      - |
+        # NOTE: no `[ ... ] && cmd` short-circuits below. This Taskfile sets errexit, and
+        # under go-task's mvdan/sh a failing test as the last statement of a block makes
+        # the enclosing compound return non-zero, which aborts the script silently
+        # (verified: it exited 1 before printing any diagnostics). Explicit `if` only.
+        CFG="{{.CONFIG_FILE}}"
+        D=$(yq '.domain // ""' "$CFG" 2>/dev/null | grep -v '^$' || true)
+        if [ "$D" = "null" ]; then D=""; fi
+        if [ -n "$D" ]; then
+          printf '{{.C_OK}}✓ domain from config: %s{{.C_RESET}}\n' "$D"
+          exit 0
+        fi
+        RESOLVER=$(yq '.domainResolver // ""' "$CFG" 2>/dev/null | grep -v '^$' || true)
+        if [ "$RESOLVER" = "null" ]; then RESOLVER=""; fi
+        if [ -n "$RESOLVER" ]; then
+          case "$RESOLVER" in
+            /*) RESOLVER_CMD="$RESOLVER" ;;
+            *)  RESOLVER_CMD="{{.ROOT_DIR}}/$RESOLVER" ;;
+          esac
+          if [ ! -x "$RESOLVER_CMD" ]; then
+            printf '{{.C_ERR}}✗ domainResolver is not executable: %s{{.C_RESET}}\n' "$RESOLVER_CMD"
+            exit 1
+          fi
+          printf '{{.C_STEP}}▸ Resolving domain via domainResolver (%s)...{{.C_RESET}}\n' "$RESOLVER"
+          D=$("$RESOLVER_CMD" | tr -d '[:space:]' || true)
+          if [ -z "$D" ]; then
+            printf '{{.C_ERR}}✗ domainResolver returned nothing: %s{{.C_RESET}}\n' "$RESOLVER"
+            exit 1
+          fi
+        fi
+        if [ -z "$D" ]; then
+          D=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]' || true)
+          if [ -n "$D" ]; then
+            printf '{{.C_INFO}}  domain from private/async-domain: %s{{.C_RESET}}\n' "$D"
+          fi
+        fi
+        if [ -z "$D" ]; then
+          printf '{{.C_ERR}}✗ No ingress domain.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Set one of, in %s:{{.C_RESET}}\n' "$CFG"
+          printf '{{.C_INFO}}    domain: "idp.example.com"       # known up front{{.C_RESET}}\n'
+          printf '{{.C_INFO}}    domainResolver: "./resolve.sh"  # blocks, prints hostname{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  or write the hostname to {{.ROOT_DIR}}/private/async-domain{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Continuing would leave ingress_domain_name empty and misconfigure every addon.{{.C_RESET}}\n'
+          exit 1
+        fi
+        # Persist so the nested _install:platform process (and re-runs) pick it up.
+        yq -i ".domain = \"$D\"" "$CFG"
+        printf '{{.C_OK}}✓ domain resolved: %s{{.C_RESET}}\n' "$D"
 
   install:finalize:
     internal: true
@@ -493,7 +610,19 @@ tasks:
           --set identities.eso.enabled=true
           | kubectl apply -f -
 
+  # hub:seed is kept as a single entry point for anyone invoking it directly (and for
+  # hub:update). `install` calls the two halves separately, because the ingress domain is
+  # resolved between them — see the "Domain seam" comment in `install`.
   hub:seed:
+    cmds:
+      - task: hub:seed-infra
+      - task: domain:resolve
+      - task: hub:seed-platform
+
+  # Domain-INDEPENDENT half: everything up to and including the cluster-mgmt roles.
+  # Contains the long EKS build wait, which is what a consumer's asynchronous hostname
+  # provisioning (e.g. CloudFront) overlaps with. No `desc:` — internals.
+  hub:seed-infra:
     cmds:
       - task: credentials:refresh
       - printf '{{.C_STEP}}▸ Waiting for hub cluster...{{.C_RESET}}\n'
@@ -550,6 +679,12 @@ tasks:
       - printf '{{.C_STEP}}▸ Waiting for EKS Capabilities (argocd/kro/ack) to be Ready...{{.C_RESET}}\n'
       - kubectl wait --for=condition=Ready --timeout=900s capabilities.eks.aws.upbound.io --all
       - task: hub:create-mgmt-roles
+
+  # Domain-DEPENDENT half: the first step writes ingress_domain_name into <hub>/config,
+  # and the last applies root-appset, which is when ArgoCD begins deploying addons. The
+  # domain must therefore be resolved before this runs. No `desc:` — internals.
+  hub:seed-platform:
+    cmds:
       - task: secrets-manager:seed
       - task: secrets-manager:seed-keycloak
       - task: secrets-manager:seed-secrets
@@ -1031,9 +1166,12 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id: $id, subnet_ids: $subnet_ids, cluster_security_group_id: $cluster_security_group_id}' | jq -c .)
         # Base metadata (string), then re-merge preserved overlay_* keys (only when set).
-        if [ -z "{{.INGRESS_DOMAIN}}" ]; then
-          echo "ERROR: domain is empty — set 'domain' in config.local.yaml before running hub:seed."
-          echo "       Without a domain, ingress_domain_name in the cluster secret will be empty and all ArgoCD addon apps will misconfigure."
+        if [ -z "{{.INGRESS_DOMAIN}}" ] || [ "{{.INGRESS_DOMAIN}}" = "null" ]; then
+          echo "ERROR: ingress domain is empty."
+          echo "       Set 'domain' in config.local.yaml, or set 'domainResolver' to a command that prints it,"
+          echo "       or write it to private/async-domain. See config.yaml for the resolution order."
+          echo "       Without a domain, ingress_domain_name in the cluster secret would be empty and every"
+          echo "       addon that templates it (keycloak, backstage, grafana, ...) would misconfigure."
           exit 1
         fi
         METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"{{.ARGOCD_URL}}"}'

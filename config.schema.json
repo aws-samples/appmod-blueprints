@@ -136,7 +136,7 @@
                 "enabled": {
                   "type": "boolean",
                   "default": false,
-                  "description": "Enable the Managed ACK capability (GA AWS service controllers: iam/s3/…)."
+                  "description": "Enable the Managed ACK capability (GA AWS service controllers: iam/s3/\u2026)."
                 }
               }
             }
@@ -170,13 +170,18 @@
     },
     "domain": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9.-]+[a-z0-9]$",
-      "description": "Ingress hostname for the platform, provisioned by the CONSUMER (Route53, CloudFront, etc.). The platform never creates it. Used for ingress host rules and printed URLs. Must be unique per stack."
+      "pattern": "^$|^[a-z0-9][a-z0-9.-]+[a-z0-9]$",
+      "description": "Ingress hostname for the platform, provisioned by the CONSUMER (Route53, CloudFront, etc.). The platform never creates it. Used for ingress host rules and printed URLs. Must be unique per stack. May be empty ONLY when the hostname is not knowable up front - see domainResolver."
+    },
+    "domainResolver": {
+      "type": "string",
+      "default": "",
+      "description": "Optional extension point for a hostname that is not knowable when install starts (e.g. a CloudFront distribution still deploying). A command, relative to the repo root or absolute, that BLOCKS until the hostname is known and prints it to stdout, exiting 0. Only consulted when `domain` is empty. Resolution order: domain -> domainResolver -> private/async-domain (back-compat) -> fail. The platform never provisions the hostname."
     },
     "insecure": {
       "type": "boolean",
       "default": false,
-      "description": "When true, platform ingress serves plain HTTP (no cert) — the consumer terminates TLS upstream (e.g. CloudFront). When false (default), the ALB serves HTTPS and uses an ACM cert (auto-discovered by host, or certificateArn if set)."
+      "description": "When true, platform ingress serves plain HTTP (no cert) \u2014 the consumer terminates TLS upstream (e.g. CloudFront). When false (default), the ALB serves HTTPS and uses an ACM cert (auto-discovered by host, or certificateArn if set)."
     },
     "certificateArn": {
       "type": "string",

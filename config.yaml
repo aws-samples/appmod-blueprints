@@ -49,11 +49,24 @@ aws:
 # The platform never creates it — it only uses it for ingress host rules and URLs.
 domain: "<your-domain>"                      # e.g. idp.example.com
 
-# Optional: if your domain is resolved asynchronously (e.g. a CloudFront distribution
-# still deploying) rather than known upfront, leave `domain` empty and have your
-# provisioning job write the resolved hostname to private/async-domain (relative to
-# the repo root) — cluster bootstrap will poll it (see hub:wait-for-domain) instead of
-# blocking synchronously. Ignored entirely once `domain` above is set.
+# EXTENSION POINT — for a hostname that is not knowable when `task install` starts.
+# The usual case: a CloudFront distribution you create in parallel with the cluster,
+# whose domain only exists once it reaches Deployed (5–15 min).
+#
+# Leave `domain: ""` and point `domainResolver` at a command that BLOCKS until the
+# hostname is known and prints it to stdout (exit 0). The platform runs it once, at the
+# moment the domain is first needed — after the ~20 min cluster build, so your
+# provisioning and the cluster build overlap. `task install` stays a single command.
+#
+#   domain: ""
+#   domainResolver: "./my-provisioning/resolve-domain.sh"
+#
+# Resolution order (first non-empty wins):
+#   1. `domain` above          — when set, the resolver is NOT run at all
+#   2. `domainResolver`        — a command printing the hostname
+#   3. private/async-domain    — a file, relative to the repo root (back-compat)
+#   4. otherwise install fails loudly rather than deploying with an empty domain
+domainResolver: ""
 
 # TLS / exposure:
 #   insecure: false (default) — ALB serves HTTPS; uses an ACM cert (auto-discovered
