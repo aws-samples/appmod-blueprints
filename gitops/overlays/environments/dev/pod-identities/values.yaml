@@ -12,3 +12,8 @@ identities:
     enabled: true
   crossplane-eks-provider:
     enabled: true
+  # Argo Rollouts needs AMP query permissions to run the metrics analysis gate
+  # (Phase 30.5 — Metrics Driven Decisions). The SA annotation sets the role ARN
+  # to <clusterName>-argo-rollouts; this entry creates that role + PIA via ACK.
+  argo-rollouts:
+    enabled: true
