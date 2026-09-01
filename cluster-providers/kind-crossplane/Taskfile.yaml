@@ -297,8 +297,11 @@ tasks:
           fi
         fi
         if [ -z "$D" ]; then
-          # Back-compat path: an external job writes the hostname to private/async-domain
-          # (what the workshop's create-config.sh does in its parallel mode). POLL rather
+          # INTERNAL back-compat path — NOT part of the consumer contract. Retained only
+          # for the in-repo workshop (create-config.sh's parallel mode), which predates
+          # domainResolver and still writes this file. Consumers must use `domain` or
+          # `domainResolver`; this fallback is undocumented publicly and may be removed.
+          # POLL rather
           # than read once — the writer may not have finished yet. kind-kro-ack previously
           # polled 20 min for this, before hub:claim; the wait is shorter now because this
           # runs AFTER the ~20 min cluster build, so an asynchronously-created hostname

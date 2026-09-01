@@ -78,9 +78,12 @@ domain: "<your-domain>"                      # e.g. idp.example.com
 # Resolution order (first non-empty wins):
 #   1. `domain` above          — when set, the resolver is NOT run at all
 #   2. `domainResolver`        — a command printing the hostname
-#   3. private/async-domain    — a file, relative to the repo root (back-compat);
-#                                polled for up to 5 min if not yet written
-#   4. otherwise install fails loudly rather than deploying with an empty domain
+#   3. otherwise install fails loudly rather than deploying with an empty domain
+#
+# `domain` and `domainResolver` are the ONLY supported ways to supply the hostname.
+# (There is a third, internal fallback retained solely for the in-repo workshop, which
+# predates this extension point. It is an implementation detail, is not part of the
+# consumer contract, and may be removed without notice — do not build against it.)
 #
 # NOTE: a *.cloudfront.net hostname implies `insecure: true` below (CloudFront
 # terminates TLS, the ALB serves HTTP). The platform warns if that combination is
