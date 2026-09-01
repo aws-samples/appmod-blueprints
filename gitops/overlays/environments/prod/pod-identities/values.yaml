@@ -24,7 +24,11 @@ identities:
   crossplane-eks-provider:
     enabled: true
   # Argo Rollouts needs AMP query permissions to run the metrics analysis gate
-  # (Phase 30.5 — Metrics Driven Decisions). The SA annotation sets the role ARN
-  # to <clusterName>-argo-rollouts; this entry creates that role + PIA via ACK.
+  # (Phase 30.5 — Metrics Driven Decisions). skipPIA=true: only the IAM Role is
+  # created (no PodIdentityAssociation). The SA uses IRSA (eks.amazonaws.com/role-arn
+  # annotation in gitops.yaml) because prometheus/common/sigv4 v0.1.0 only supports
+  # AWS_WEB_IDENTITY_TOKEN_FILE (IRSA), not AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE
+  # (Pod Identity). See: https://github.com/argoproj/argo-rollouts/issues/4536
+  # This will be removed once argoproj/argo-rollouts#5010 is merged and released.
   argo-rollouts:
     enabled: true
