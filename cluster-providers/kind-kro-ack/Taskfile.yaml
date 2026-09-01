@@ -1214,6 +1214,25 @@ tasks:
       # 4. cluster-addons Application (no cascade)
       - '{{.KC}} patch application cluster-addons -n argocd --type merge -p ''{"metadata":{"finalizers":[]}}'' 2>/dev/null || true'
       - '{{.KC}} delete application cluster-addons -n argocd --wait=false 2>/dev/null || true'
+      # 4.5. Delete the agent-platform chain (optional agentic overlay). Stop the
+      #      AppSet FIRST (preserveResources) so it does not regenerate its child apps,
+      #      then orphan the child apps. No-op when agent-platform is not deployed
+      #      (absent on rc3). Mirrors the kind-crossplane path so the two providers stay
+      #      symmetric — without this, agent-platform is only in the step-7 SKIP, so its
+      #      AppSet would survive and regenerate the workloads deleted in step 5.
+      - cmd: |
+          if {{.KC}} get applicationset agent-platform -n argocd >/dev/null 2>&1; then
+            echo "Stopping agent-platform AppSet..."
+            {{.KC}} patch applicationset agent-platform -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>&1 || true
+            sleep 3
+            {{.KC}} delete applicationset agent-platform -n argocd --timeout=30s 2>&1 || true
+          fi
+          for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -E '^agent-platform-' || true); do
+            echo "Stopping $app..."
+            {{.KC}} patch application "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>&1 || true
+            {{.KC}} delete application "$app" -n argocd --wait=false 2>&1 || true
+          done
+        ignore_error: true
       # 5. Delete APPLICATION WORKLOADS first — all ArgoCD Applications whose project is
       #    NOT 'default' (addons) or 'platform' (infra). On kro-c1 these are rust-project,
       #    java-project, cpu-ray-project, spoke-workloads (rust/java/golang/dotnet/next-js
@@ -1406,6 +1425,21 @@ tasks:
               aws iam delete-policy-version --policy-arn "$POL" --version-id "$V" 2>/dev/null || true
             done
             echo "  deleting ACK IAM policy $POL"; aws iam delete-policy --policy-arn "$POL" 2>/dev/null || true
+          done
+          # 5. Orphaned ACK-managed ECR repositories. The CICD RGD names repos
+          #    "${PREFIX}/<app>" and "${PREFIX}/<app>/cache", so scope by the "${PREFIX}/"
+          #    (or "${PREFIX}-") name prefix AND require an ACK ownership tag.
+          #    NOTE: DynamoDB tables use arbitrary user-provided names (tableName) with no
+          #    deployment-scoping prefix/tag, so they are intentionally NOT swept — a broad
+          #    tag-only delete would risk other deployments' tables. They rely on graceful
+          #    CR deletion (the workload step waits before stripping finalizers). Same for
+          #    EFS (optional addon, not created by the app RGDs).
+          [ -n "$PREFIX" ] && for REPO in $(aws ecr describe-repositories --region "$REGION" --query "repositories[?starts_with(repositoryName, '${PREFIX}/') || starts_with(repositoryName, '${PREFIX}-')].repositoryName" --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$REPO" ] && continue
+            ARN=$(aws ecr describe-repositories --region "$REGION" --repository-names "$REPO" --query 'repositories[0].repositoryArn' --output text 2>/dev/null)
+            ACK=$(aws ecr list-tags-for-resource --region "$REGION" --resource-arn "$ARN" --query "length(tags[?starts_with(Key, 'services.k8s.aws/')])" --output text 2>/dev/null || echo 0)
+            [ "$ACK" = "0" ] && { echo "  skip ECR $REPO (not ACK-managed)"; continue; }
+            echo "  deleting ACK ECR repo $REPO"; aws ecr delete-repository --region "$REGION" --repository-name "$REPO" --force 2>/dev/null || true
           done
         ignore_error: true
       - cmd: |
