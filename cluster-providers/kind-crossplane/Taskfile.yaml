@@ -198,11 +198,36 @@ tasks:
         # the repo root). That made the background seed abort immediately with
         # "config.local.yaml: no such file or directory", so grafana_api_key / AMP
         # creds were never written and Grafana (external-grafana) failed to
-        # reconcile. Resolve the repo root from the workshop env vars (set by
-        # /etc/profile.d/workshop.sh) rather than {{.ROOT_DIR}} templating, which
-        # expands empty inside this backgrounded subshell.
-        REPO_ROOT="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}"
-        ( cd "$REPO_ROOT" && task kind-crossplane:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &
+        # reconcile.
+        #
+        # The repo root comes from {{.ROOT_DIR}}: go-task expands it at TEMPLATE time,
+        # before any shell runs, so the backgrounded subshell below cannot affect it
+        # (verified). In an included Taskfile ROOT_DIR is the ROOT Taskfile's directory
+        # — i.e. the repo root — not this file's directory (that is TASKFILE_DIR).
+        #
+        # Do NOT reintroduce WORKSPACE_PATH / WORKING_REPO here. Those are Workshop
+        # Studio env vars; on any other machine (a customer running from an arbitrary
+        # checkout) both defaults are wrong, so this backgrounded job cd'd into a
+        # nonexistent directory and failed SILENTLY — the exact failure the workshop
+        # env vars were added to fix.
+        REPO_ROOT="{{.ROOT_DIR}}"
+        # Fail loudly rather than silently seeding nothing: `task kind-crossplane:...`
+        # below requires the root Taskfile to be present at REPO_ROOT.
+        if [ ! -f "$REPO_ROOT/Taskfile.yaml" ]; then
+          printf '{{.C_ERR}}✗ observability seed not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
+          exit 1
+        fi
+        # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`.
+        # go-task runs cmds through the mvdan/sh interpreter, which KILLS its background
+        # jobs when the task body exits. A bare `( ... ) &` is therefore terminated almost
+        # immediately: verified that the redirect target is never even created, so the
+        # long AMP poll (30+ min) could never survive. Only a fast-failing child ever
+        # produced log output, which is why this looked like it worked.
+        # The outer `sh` exits at once, orphaning the subshell so it outlives go-task.
+        # REPO_ROOT is passed through the environment (not interpolated into the script
+        # string) so paths containing spaces or quotes are safe.
+        REPO_ROOT="$REPO_ROOT" \
+          sh -c '( cd "$REPO_ROOT" && task kind-crossplane:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &'
         printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'
 
   install:phase1-playwright-prefetch:

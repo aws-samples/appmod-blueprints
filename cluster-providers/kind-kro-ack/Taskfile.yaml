@@ -197,8 +197,29 @@ tasks:
     desc: Seed observability in background — non-blocking so slow AMP provisioning doesn't delay install
     cmds:
       - |
-        REPO_ROOT="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}"
-        ( cd "$REPO_ROOT" && task kind-kro-ack:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &
+        # Repo root from {{.ROOT_DIR}} (expanded by go-task at TEMPLATE time, before any
+        # shell runs — the backgrounded subshell below cannot affect it; verified). In an
+        # included Taskfile ROOT_DIR is the ROOT Taskfile's directory, i.e. the repo root
+        # (this file's own directory is TASKFILE_DIR).
+        #
+        # Do NOT reintroduce WORKSPACE_PATH / WORKING_REPO here. Those are Workshop Studio
+        # env vars; on any other machine both defaults are wrong, so this backgrounded job
+        # cd'd into a nonexistent directory and failed SILENTLY.
+        REPO_ROOT="{{.ROOT_DIR}}"
+        # Fail loudly rather than silently seeding nothing: `task kind-kro-ack:...` below
+        # requires the root Taskfile to be present at REPO_ROOT.
+        if [ ! -f "$REPO_ROOT/Taskfile.yaml" ]; then
+          printf '{{.C_ERR}}✗ observability seed not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
+          exit 1
+        fi
+        # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`.
+        # go-task runs cmds through the mvdan/sh interpreter, which KILLS its background
+        # jobs when the task body exits — verified that a bare `( ... ) &` never even
+        # creates its redirect target, so the long AMP poll could never survive. The outer
+        # `sh` exits at once, orphaning the subshell so it outlives go-task. REPO_ROOT is
+        # passed via the environment so paths with spaces/quotes are safe.
+        REPO_ROOT="$REPO_ROOT" \
+          sh -c '( cd "$REPO_ROOT" && task kind-kro-ack:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &'
         printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'
 
   install:finalize:
