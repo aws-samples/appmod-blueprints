@@ -118,6 +118,29 @@ tasks:
       - yq '.repo.url' {{.CONFIG_FILE}} | grep -qv null || { echo "repo.url not set in config.local.yaml"; exit 1; }
       - printf '{{.C_STEP}}▸ Checking AWS credentials...{{.C_RESET}}\n'
       - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
+      # PROVIDER CAPABILITY GUARD. kind-crossplane cannot yet provision the hub into a
+      # pre-existing VPC: the platform-cluster Composition is a single
+      # function-patch-and-transform step with a static resource list, which cannot omit the
+      # 14+ networking resources it creates. See issue #833.
+      #
+      # Fail rather than ignore. clusterProvider is a selectable CFN parameter, so a consumer
+      # that supplies hub.network.vpcId (as the workshop and OAP do, to place the hub in the
+      # VPC whose ALB already backs their CloudFront distribution) but picks this provider
+      # would otherwise get a SECOND VPC created silently, leaving CloudFront pointing at an
+      # ALB the cluster cannot use — a broken platform with no error anywhere.
+      - |
+        NET_VPC=$(yq '.hub.network.vpcId // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true)
+        if [ "$NET_VPC" = "null" ]; then NET_VPC=""; fi
+        if [ -n "$NET_VPC" ]; then
+          printf '{{.C_ERR}}✗ hub.network.vpcId is set (%s) but kind-crossplane cannot import an existing VPC.{{.C_RESET}}\n' "$NET_VPC"
+          printf '{{.C_INFO}}  It would create a NEW VPC and ignore yours, silently breaking any ALB/CloudFront{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  pre-created in that VPC.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Options:{{.C_RESET}}\n'
+          printf '{{.C_INFO}}    - set clusterProvider: "kind-kro-ack" (supports existing-VPC import today), or{{.C_RESET}}\n'
+          printf '{{.C_INFO}}    - remove hub.network and let the platform create the VPC (no pre-created ALB){{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Tracking: https://github.com/aws-samples/appmod-blueprints/issues/833{{.C_RESET}}\n'
+          exit 1
+        fi
       - printf '{{.C_OK}}✓ All pre-flight checks passed.{{.C_RESET}}\n'
 
   init:
