@@ -249,9 +249,10 @@ printf 'aws:\n'                                        >> "$OUTPUT_FILE"
 printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
-# domain is always empty at config-generation time.
-# hub:create-platform-cf writes the real CF domain to private/async-domain
-# and hub:seed reads it from there (lazy resolution, not from config).
+# domain is always empty at config-generation time. The CloudFront distribution is
+# created inline by _start_platform_infra (below), which writes the resolved domain to
+# private/async-domain; the platform's domain:resolve reads it from there during
+# `task install`. There is no hub:create-platform-cf task — that name never existed.
 DOMAIN_VALUE=""
 printf 'domain: "%s"\n' "$DOMAIN_VALUE"                >> "$OUTPUT_FILE"
 printf 'insecure: true\n'                              >> "$OUTPUT_FILE"
@@ -349,16 +350,32 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     HUB_CLUSTER_NAME="${RESOURCE_PREFIX:-peeks}-hub"
     ALB_NAME="${HUB_CLUSTER_NAME}-platform"
 
-    # Wait for pre-requisites (VPC + subnets)
-    echo "[$(date +%H:%M:%S)] Waiting for pre-requisites..."
+    # Wait for pre-requisites: the VPC must actually be resolvable, since everything
+    # below (security group, ALB, VPC origin) is created inside it.
+    #
+    # Previously this loop gated on `[ -f /etc/profile.d/workshop.sh ]` as a proxy for
+    # "VPC prerequisites ready". That file has no writer in this repo — it comes from the
+    # CDK bootstrap — so on a self-paced run it never appears, the loop burned all 30
+    # attempts (~5 min) and then proceeded anyway, printing "Pre-requisites ready". Gate on
+    # the real precondition instead, and fail loudly if it is never met rather than
+    # continuing into ALB creation that cannot succeed.
+    echo "[$(date +%H:%M:%S)] Waiting for VPC $HUB_VPC_ID to be resolvable..."
+    _vpc_ready=false
     for _i in $(seq 1 30); do
-      [ -f /etc/profile.d/workshop.sh ] || { sleep 10; continue; }
       _vpc=$(aws ec2 describe-vpcs --vpc-ids "$HUB_VPC_ID" --region "$REGION" \
         --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
-      [ -z "$_vpc" ] || [ "$_vpc" = "None" ] && { sleep 10; continue; }
-      break
+      if [ -n "$_vpc" ] && [ "$_vpc" != "None" ]; then
+        _vpc_ready=true
+        break
+      fi
+      sleep 10
     done
-    echo "[$(date +%H:%M:%S)] Pre-requisites ready"
+    if [ "$_vpc_ready" != "true" ]; then
+      echo "[$(date +%H:%M:%S)] ERROR: VPC $HUB_VPC_ID not resolvable after ~5 min in $REGION."
+      echo "                    Cannot create the platform ALB or CloudFront distribution."
+      exit 1
+    fi
+    echo "[$(date +%H:%M:%S)] Pre-requisites ready (VPC $_vpc)"
 
     VPC_CIDR=$(aws ec2 describe-vpcs --vpc-ids "$HUB_VPC_ID" --region "$REGION" \
       --query 'Vpcs[0].CidrBlock' --output text 2>/dev/null)
