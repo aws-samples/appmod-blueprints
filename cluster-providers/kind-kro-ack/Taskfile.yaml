@@ -1188,8 +1188,10 @@ tasks:
       kind-crossplane. Must run BEFORE the hub cluster is deleted.
     vars:
       # Infra-provisioning stack: controllers that must stay alive to delete other
-      # AWS resources and the spoke clusters. Skipped in the per-addon pass (step 5)
-      # and deleted LAST, after the spoke clusters (step 7).
+      # AWS resources and the spoke clusters. Skipped in the per-addon pass (step 7)
+      # and deleted LAST, after the spoke clusters (step 8).
+      # NOTE: keep in sync with the SKIP list in step 7 and the explicit reverse-order
+      # list in step 8 — adding/removing an ACK controller means updating all three.
       INFRA_STACK: "argocd crossplane crossplane-base kro kro-manifests kro-manifests-hub ack-iam ack-eks ack-ec2 ack-ecr ack-s3 ack-dynamodb ack-efs"
       KC: "KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl"
     cmds:
@@ -1311,12 +1313,12 @@ tasks:
             fi
           done
         ignore_error: true
-      # 8. fleet-secrets
+      # 9. fleet-secrets
       - printf '{{.C_ERR}}▸ Deleting fleet-secrets...{{.C_RESET}}\n'
       - '{{.KC}} patch applicationset fleet-secrets -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}'' 2>/dev/null || true'
       - sleep 3
       - '{{.KC}} delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true'
-      # 9. Force-delete any leftover Applications (strip finalizers)
+      # 10. Force-delete any leftover Applications (strip finalizers)
       - cmd: |
           for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
             echo "Deleting leftover app $app..."
@@ -1374,22 +1376,36 @@ tasks:
           for ID in $(aws logs describe-deliveries --region "$REGION" --query "deliveries[?contains(deliverySourceName, '{{.HUB_CLUSTER_NAME}}')].id" --output text 2>/dev/null); do
             aws logs delete-delivery --id "$ID" --region "$REGION" 2>/dev/null || true
           done
-          # 3. Orphaned IAM roles with the resource prefix (ACK-managed)
-          [ -n "$PREFIX" ] && for ROLE in $(aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" --output text 2>/dev/null); do
+          # 3. Orphaned ACK-managed IAM roles. Scope by BOTH the resource prefix AND
+          #    an ACK ownership tag (services.k8s.aws/*), and skip infra/bootstrap/CFN
+          #    roles by name. Deleting the IDE execution role (*-team-stack-*/*SharedRole*),
+          #    the cluster/provider roles, or the argo-rollouts roles would break the
+          #    teardown or the CloudFormation stack delete — so they are never swept.
+          DENY_RE='(-team-stack-|SharedRole|-cluster-mgmt-|-cluster-role$|-cluster-node-role$|-crossplane-provider|Crossplane.*ProviderRole|-argo-rollouts)'
+          [ -n "$PREFIX" ] && aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read ROLE; do
+            [ -z "$ROLE" ] && continue
+            echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (infra/bootstrap/CFN — not swept)"; continue; }
+            ACK=$(aws iam list-role-tags --role-name "$ROLE" --query "length(Tags[?starts_with(Key, 'services.k8s.aws/')])" --output text 2>/dev/null || echo 0)
+            [ "$ACK" = "0" ] && { echo "  skip role $ROLE (not ACK-managed)"; continue; }
             for P in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
               aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$P" 2>/dev/null || true
             done
             for IP in $(aws iam list-role-policies --role-name "$ROLE" --query 'PolicyNames[]' --output text 2>/dev/null); do
               aws iam delete-role-policy --role-name "$ROLE" --policy-name "$IP" 2>/dev/null || true
             done
-            echo "  deleting IAM role $ROLE"; aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
+            echo "  deleting ACK IAM role $ROLE"; aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
           done
-          # 4. Orphaned customer-managed IAM policies with the resource prefix
-          [ -n "$PREFIX" ] && for POL in $(aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" --output text 2>/dev/null); do
+          # 4. Orphaned ACK-managed customer IAM policies (same scoping as roles:
+          #    prefix + services.k8s.aws/* tag + name denylist; DENY_RE from step 3).
+          [ -n "$PREFIX" ] && aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" --output text 2>/dev/null | tr '\t' '\n' | while read POL; do
+            [ -z "$POL" ] && continue
+            echo "$POL" | grep -qE "$DENY_RE" && { echo "  skip policy $POL (infra/bootstrap — not swept)"; continue; }
+            ACK=$(aws iam list-policy-tags --policy-arn "$POL" --query "length(Tags[?starts_with(Key, 'services.k8s.aws/')])" --output text 2>/dev/null || echo 0)
+            [ "$ACK" = "0" ] && { echo "  skip policy $POL (not ACK-managed)"; continue; }
             for V in $(aws iam list-policy-versions --policy-arn "$POL" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do
               aws iam delete-policy-version --policy-arn "$POL" --version-id "$V" 2>/dev/null || true
             done
-            echo "  deleting IAM policy $POL"; aws iam delete-policy --policy-arn "$POL" 2>/dev/null || true
+            echo "  deleting ACK IAM policy $POL"; aws iam delete-policy --policy-arn "$POL" 2>/dev/null || true
           done
         ignore_error: true
       - cmd: |
