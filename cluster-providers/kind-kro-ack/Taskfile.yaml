@@ -1178,6 +1178,112 @@ tasks:
     cmds:
       - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
 
+  hub:destroy-addons:
+    desc: >-
+      Gracefully remove all addons from the HUB EKS cluster (no git changes) so the
+      on-hub ACK/KRO/Crossplane controllers delete their managed AWS resources
+      (team IAM roles/policies, ALBs, DynamoDB, spoke clusters) while still alive.
+      Deletes the infra-provisioning stack (crossplane/kro/ack) LAST. All steps are
+      best-effort — safe to run even if the hub is already gone. Adapted from
+      kind-crossplane. Must run BEFORE the hub cluster is deleted.
+    vars:
+      # Enabled addons in reverse sync-wave order (highest wave deleted first).
+      ADDONS:
+        sh: |
+          ENABLED_LABELS=$(for f in {{.GITOPS_ROOT}}/overlays/environments/*/enabled-addons.yaml; do
+            [ -f "$f" ] && yq -r '.enabledAddons | to_entries[] | select(.value == true) | "enable_" + .key' "$f"
+          done | sort -u)
+          REGISTRY=$(yq eval-all '. as $item ireduce ({}; . * $item)' \
+            {{.GITOPS_ROOT}}/addons/registry/core.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/gitops.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/security.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/observability.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/ml.yaml \
+            {{.GITOPS_ROOT}}/addons/registry/platform.yaml)
+          echo "$REGISTRY" | yq -r 'to_entries[] | .key + " " + .value.selector.matchExpressions[0].key + " " + (.value.annotationsAppSet."argocd.argoproj.io/sync-wave" // "0")' | while read addon selector wave; do
+            if echo "$ENABLED_LABELS" | grep -qx "$selector"; then
+              echo "$wave $addon"
+            fi
+          done | sort -rn | awk '{print $2}'
+      # Infra-provisioning stack: controllers that must stay alive to delete other
+      # AWS resources and the spoke clusters. Skipped in the per-addon pass (step 5)
+      # and deleted LAST, after the spoke clusters (step 7).
+      INFRA_STACK: "argocd crossplane crossplane-base kro kro-manifests kro-manifests-hub ack-iam ack-eks ack-ec2 ack-ecr ack-s3 ack-dynamodb ack-efs"
+      KC: "KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl"
+    cmds:
+      # Best-effort hub kubeconfig — if the hub EKS is already gone, every kubectl
+      # below no-ops (2>/dev/null || true) and the task still completes cleanly.
+      - cmd: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig >/dev/null 2>&1
+        ignore_error: true
+      - printf '{{.C_ERR}}▸ Stopping all regeneration...{{.C_RESET}}\n'
+      # 1. bootstrap ApplicationSet (preserveResources) — stop recreating bootstrap App
+      - '{{.KC}} patch applicationset bootstrap -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}'' 2>/dev/null || true'
+      - sleep 3
+      - '{{.KC}} delete applicationset bootstrap -n argocd --timeout=30s 2>/dev/null || true'
+      # 2. bootstrap Application (no cascade)
+      - '{{.KC}} patch application bootstrap -n argocd --type merge -p ''{"metadata":{"finalizers":[]}}'' 2>/dev/null || true'
+      - '{{.KC}} delete application bootstrap -n argocd --wait=false 2>/dev/null || true'
+      # 3. cluster-addons ApplicationSet (preserveResources) — stop generating addon appsets
+      - '{{.KC}} patch applicationset cluster-addons -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}'' 2>/dev/null || true'
+      - sleep 3
+      - '{{.KC}} delete applicationset cluster-addons -n argocd --timeout=30s 2>/dev/null || true'
+      # 4. cluster-addons Application (no cascade)
+      - '{{.KC}} patch application cluster-addons -n argocd --type merge -p ''{"metadata":{"finalizers":[]}}'' 2>/dev/null || true'
+      - '{{.KC}} delete application cluster-addons -n argocd --wait=false 2>/dev/null || true'
+      # 5. Delete addon ApplicationSets in reverse sync-wave order, SKIPPING infra stack
+      - cmd: |
+          if echo " {{.INFRA_STACK}} " | grep -q " {{.ITEM}} "; then
+            echo "Skipping {{.ITEM}} (infra stack — deleted after clusters)"
+          elif {{.KC}} get applicationset {{.ITEM}} -n argocd >/dev/null 2>&1; then
+            echo "Deleting {{.ITEM}}..."
+            {{.KC}} patch applicationset {{.ITEM}} -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+            sleep 3
+            {{.KC}} delete applicationset {{.ITEM}} -n argocd --timeout=180s 2>/dev/null || true
+            {{.KC}} wait --for=delete applications -n argocd -l addonName={{.ITEM}} --timeout=120s 2>/dev/null || true
+          else
+            echo "Skipping {{.ITEM}} (not found)"
+          fi
+        ignore_error: true
+        for:
+          var: ADDONS
+      # 6. Delete spoke clusters (clusters appset) while KRO/Crossplane are still alive
+      - printf '{{.C_ERR}}▸ Deleting spoke clusters...{{.C_RESET}}\n'
+      - '{{.KC}} patch applicationset clusters -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}'' 2>/dev/null || true'
+      - sleep 3
+      - '{{.KC}} delete applicationset clusters -n argocd --timeout=60s 2>/dev/null || true'
+      - cmd: |
+          {{.KC}} wait --for=delete applications -n argocd -l app.kubernetes.io/instance=clusters --timeout=600s 2>/dev/null || \
+          ({{.KC}} patch application clusters -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+           {{.KC}} delete application clusters -n argocd --wait=false 2>/dev/null) || true
+        ignore_error: true
+      # 7. Delete infra stack LAST, reverse order (consumers -> controllers)
+      - cmd: |
+          for ADDON in kro-manifests-hub kro-manifests kro ack-efs ack-dynamodb ack-s3 ack-ecr ack-ec2 ack-eks ack-iam crossplane-base crossplane; do
+            if {{.KC}} get applicationset $ADDON -n argocd >/dev/null 2>&1; then
+              echo "Deleting $ADDON..."
+              {{.KC}} patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+              sleep 3
+              {{.KC}} delete applicationset $ADDON -n argocd --timeout=180s 2>/dev/null || true
+              {{.KC}} wait --for=delete applications -n argocd -l addonName=$ADDON --timeout=120s 2>/dev/null || true
+            fi
+          done
+        ignore_error: true
+      # 8. fleet-secrets
+      - printf '{{.C_ERR}}▸ Deleting fleet-secrets...{{.C_RESET}}\n'
+      - '{{.KC}} patch applicationset fleet-secrets -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}'' 2>/dev/null || true'
+      - sleep 3
+      - '{{.KC}} delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true'
+      # 9. Force-delete any leftover Applications (strip finalizers)
+      - cmd: |
+          for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+            echo "Deleting leftover app $app..."
+            {{.KC}} delete application $app -n argocd --timeout=300s 2>/dev/null || \
+            ({{.KC}} patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+             {{.KC}} delete application $app -n argocd --wait=false 2>/dev/null) || true
+          done
+        ignore_error: true
+      - printf '{{.C_OK}}✓ Hub addons removed.{{.C_RESET}}\n'
+
   destroy:
     desc: Full teardown — delete KRO instances, wait for ACK to clean up AWS resources, delete Kind
     vars:
@@ -1185,6 +1291,11 @@ tasks:
     cmds:
       - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
       - task: credentials:refresh
+      # Gracefully tear down the addon layer on the HUB EKS FIRST, so on-hub
+      # ACK/KRO/Crossplane controllers delete their managed AWS resources (team IAM
+      # roles/policies, ALBs, DynamoDB) and the spoke clusters while still alive.
+      # All-best-effort: a no-op if the hub is already gone.
+      - task: hub:destroy-addons
       # Delete the hub claim — KRO cascades to ACK which deletes AWS resources
       - printf '{{.C_ERR}}▸ Deleting hub cluster claim...{{.C_RESET}}\n'
       - kubectl delete eksclusterwithvpc {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} --timeout=60s 2>/dev/null || true
@@ -1199,6 +1310,39 @@ tasks:
       # Clean up Secrets Manager
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
+      # Best-effort sweep of AWS resources the addon controllers may have orphaned —
+      # prevents redeploy conflicts on a reused account: IAM EntityAlreadyExists,
+      # ALB DuplicateLoadBalancerName, delivery-source ConflictException.
+      # Prefix-scoped; never fails destroy.
+      - printf '{{.C_ERR}}▸ Sweeping leftover AWS resources ({{.RESOURCE_PREFIX}}-*)...{{.C_RESET}}\n'
+      - cmd: |
+          REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"
+          # 1. Orphaned ALBs created by the load-balancer-controller (k8s-platform-*)
+          for ARN in $(aws elbv2 describe-load-balancers --region "$REGION" --query "LoadBalancers[?starts_with(LoadBalancerName, 'k8s-platform-')].LoadBalancerArn" --output text 2>/dev/null); do
+            echo "  deleting ALB $ARN"; aws elbv2 delete-load-balancer --load-balancer-arn "$ARN" --region "$REGION" 2>/dev/null || true
+          done
+          # 2. Orphaned CloudWatch delivery sources for this hub
+          for ID in $(aws logs describe-deliveries --region "$REGION" --query "deliveries[?contains(deliverySourceName, '{{.HUB_CLUSTER_NAME}}')].id" --output text 2>/dev/null); do
+            aws logs delete-delivery --id "$ID" --region "$REGION" 2>/dev/null || true
+          done
+          # 3. Orphaned IAM roles with the resource prefix (ACK-managed)
+          [ -n "$PREFIX" ] && for ROLE in $(aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" --output text 2>/dev/null); do
+            for P in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
+              aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$P" 2>/dev/null || true
+            done
+            for IP in $(aws iam list-role-policies --role-name "$ROLE" --query 'PolicyNames[]' --output text 2>/dev/null); do
+              aws iam delete-role-policy --role-name "$ROLE" --policy-name "$IP" 2>/dev/null || true
+            done
+            echo "  deleting IAM role $ROLE"; aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
+          done
+          # 4. Orphaned customer-managed IAM policies with the resource prefix
+          [ -n "$PREFIX" ] && for POL in $(aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" --output text 2>/dev/null); do
+            for V in $(aws iam list-policy-versions --policy-arn "$POL" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do
+              aws iam delete-policy-version --policy-arn "$POL" --version-id "$V" 2>/dev/null || true
+            done
+            echo "  deleting IAM policy $POL"; aws iam delete-policy --policy-arn "$POL" 2>/dev/null || true
+          done
+        ignore_error: true
       - cmd: |
           if [ "{{.CLEANUP_KIND}}" = "true" ]; then
             kind delete cluster --name {{.KIND_CLUSTER_NAME}}
