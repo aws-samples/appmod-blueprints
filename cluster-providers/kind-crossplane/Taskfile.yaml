@@ -960,8 +960,21 @@ tasks:
   secrets-manager:seed:
     desc: Seed hub cluster config into AWS Secrets Manager for ExternalSecrets
     vars:
+      # ArgoCD EKS Capability server URL (host, no scheme). The capability may not be ACTIVE
+      # yet when hub:seed first runs, so retry briefly rather than capturing an empty value
+      # (an empty aws_argocd_url makes platform.yaml fall back to the CloudFront domain, which
+      # does NOT serve ArgoCD -> broken Backstage deep-links). Falls back to the previously
+      # stored value in the cmds below if this still resolves empty.
       ARGOCD_URL:
-        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null | sed 's|https://||' || echo ""
+        sh: |
+          for _ in $(seq 1 30); do
+            U=$(aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd \
+                  --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null \
+                | sed 's|https://||')
+            if [ -n "$U" ] && [ "$U" != "None" ]; then echo "$U"; exit 0; fi
+            sleep 10
+          done
+          echo ""
       CLUSTER_ARN:
         sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.CONFIG_FILE}}):cluster/$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
       VPC_ID:
@@ -998,6 +1011,12 @@ tasks:
         OVL_URL=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .overlay_repo_url) // empty' 2>/dev/null)
         OVL_REV=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .overlay_repo_revision) // empty' 2>/dev/null)
         OVL_BP=$(echo "$PREV_SECRET"  | jq -r 'try (.metadata | fromjson | .overlay_repo_basepath) // empty' 2>/dev/null)
+        # Fall back to the previously stored aws_argocd_url if a fresh describe-capability
+        # lookup returned empty (transient / capability not ACTIVE), so a re-seed never blanks
+        # a good value.
+        PREV_ARGOCD=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .aws_argocd_url) // empty' 2>/dev/null)
+        ARGOCD_FINAL="{{.ARGOCD_URL}}"
+        [ -z "$ARGOCD_FINAL" ] && ARGOCD_FINAL="$PREV_ARGOCD"
         # Build VPC JSON for the aws-resources chart ExternalSecret
         PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | jq -R . | jq -s .)
         VPC_JSON=$(jq -n \
@@ -1011,7 +1030,7 @@ tasks:
           echo "       Without a domain, ingress_domain_name in the cluster secret will be empty and all ArgoCD addon apps will misconfigure."
           exit 1
         fi
-        METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"{{.ARGOCD_URL}}"}'
+        METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"'"$ARGOCD_FINAL"'"}'
         if [ -n "$OVL_URL" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg u "$OVL_URL" --arg r "$OVL_REV" --arg b "$OVL_BP" '. + {overlay_repo_url:$u, overlay_repo_revision:$r, overlay_repo_basepath:$b}')
           echo "Preserving existing overlay wiring: overlay_repo_url=$OVL_URL"
