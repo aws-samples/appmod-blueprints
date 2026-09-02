@@ -1,4 +1,6 @@
-# Workshop pins GitLab to the tuned system-peeks pool (daytime do-not-disrupt).
-# The generic default is the built-in `system` pool.
+# Workshop pins GitLab to the tuned general-purpose-peeks pool: amd64, a do-not-disrupt
+# budget, and larger instances (GitLab is heavy). It is a user-facing app, not critical
+# control-plane, so it is kept OFF the CriticalAddonsOnly system-peeks pool.
+# The generic default is the built-in `general-purpose` pool.
 global:
-  systemNodepool: system-peeks
+  generalPurposeNodepool: general-purpose-peeks
