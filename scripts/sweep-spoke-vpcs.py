@@ -96,6 +96,26 @@ for vpc_id in spoke_vpcs:
             try: ec2.release_address(AllocationId=alloc_id)
             except: pass
 
+    # Wait for any lingering async ENIs to clear before attempting VPC delete.
+    # AMP scrapers (amp_collector ENIs) take 3-5 min to release after deletion.
+    # NAT GW ENIs also clear asynchronously after the 30s wait above.
+    for attempt in range(12):  # up to ~2 min of additional waiting
+        enis = ec2.describe_network_interfaces(
+            Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])['NetworkInterfaces']
+        if not enis:
+            break
+        # Only async-cleanup ENIs? Keep waiting. Other ENIs = real blocking dependency.
+        async_types = {'amp_collector', 'natGateway'}
+        blocking = [e for e in enis if e.get('InterfaceType', '') not in async_types]
+        if blocking:
+            for e in blocking:
+                print(f'    ⚠ blocking ENI: {e["NetworkInterfaceId"]} '
+                      f'{e.get("InterfaceType","")} {e.get("Description","")[:50]}')
+            break  # Non-async ENI found — stop waiting, delete_vpc will fail with detail
+        print(f'    Waiting for {len(enis)} async ENI(s) to clear '
+              f'(attempt {attempt+1}/12)...')
+        time.sleep(10)
+
     try:
         ec2.delete_vpc(VpcId=vpc_id)
         print(f'  ✓ deleted spoke VPC {vpc_id}')

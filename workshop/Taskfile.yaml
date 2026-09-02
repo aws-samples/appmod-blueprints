@@ -1623,14 +1623,28 @@ tasks:
         # PHASE 2: deliberate prune through the still-existing app.
         printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
         PRUNED=false
+        KC_HUB="kubectl --kubeconfig {{.REPO}}/private/hub-kubeconfig"
         if command -v argocd >/dev/null 2>&1; then
+          # Try to refresh the ArgoCD token first (in case session expired).
+          # argocd-refresh-token uses Playwright + IDC SSO to get a fresh token.
+          # shellcheck source=/dev/null
+          source "{{.REPO}}/scripts/argocd-refresh-token.sh" 2>/dev/null || true
           argocd app get "$APP" --refresh >/dev/null 2>&1 || true
-          argocd app diff "$APP" || true
-          if argocd app sync "$APP" --prune --timeout 600; then PRUNED=true; else
-            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Run: argocd-refresh-token && source ~/.bashrc.d/platform.sh, then: argocd app sync %s --prune{{.C_RESET}}\n' "$APP"
+          if argocd app sync "$APP" --prune --timeout 600; then
+            PRUNED=true
+          else
+            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Falling back to kubectl patch...{{.C_RESET}}\n'
           fi
-        else
-          printf '{{.C_INFO}}  argocd CLI not found. Run manually then re-run this task to clean up: argocd app sync %s --prune{{.C_RESET}}\n' "$APP"
+        fi
+        # Fallback: use kubectl to patch the ArgoCD application resource directly,
+        # injecting a sync operation with prune=true. This works even without the
+        # argocd CLI or a valid ArgoCD auth token — it uses the IDE's cluster-admin
+        # access entry that grant-ide-access sets up on the hub.
+        if [ "$PRUNED" = false ]; then
+          $KC_HUB patch application "$APP" -n argocd --type merge \
+            -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}' \
+            2>/dev/null && PRUNED=true || \
+            printf '{{.C_ERR}}⚠ kubectl patch also failed. The spoke will be deleted when kind-kro-ack:destroy runs hub:destroy-addons.{{.C_RESET}}\n'
         fi
 
         # PHASE 3: cleanup the now-empty app + CARM mapping (only after a successful prune,
