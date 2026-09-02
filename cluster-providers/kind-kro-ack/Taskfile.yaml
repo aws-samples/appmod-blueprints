@@ -1512,41 +1512,8 @@ tasks:
           #     The hub platform CloudFront distribution uses a VPC Origin pointing to
           #     the internal ALB ingress. After the ALB is deleted, CloudFront VPC origin
           #     ENIs remain in the private subnets, blocking VPC deletion via CFN.
-          #     Disable→delete the distribution first (required by CloudFront API), then
-          #     delete the VPC origin. Name-scoped to "${HUB}-*".
-          for VO_ID in $(aws cloudfront list-vpc-origins \
-                --query "VpcOriginList.Items[?starts_with(Name, '${HUB}-')].Id" \
-                --output text 2>/dev/null | tr '\t' '\n'); do
-            [ -z "$VO_ID" ] && continue
-            # Find distributions that reference this VPC origin
-            for DIST_ID in $(aws cloudfront list-distributions \
-                  --query "DistributionList.Items[?Origins.Items[?DomainName!=null]].Id" \
-                  --output text 2>/dev/null | tr '\t' '\n'); do
-              USES_VO=$(aws cloudfront get-distribution --id "$DIST_ID" \
-                --query "Distribution.DistributionConfig.Origins.Items[?VpcOriginConfig.VpcOriginId=='${VO_ID}'].Id | [0]" \
-                --output text 2>/dev/null || true)
-              if [ -n "$USES_VO" ] && [ "$USES_VO" != "None" ]; then
-                echo "  disabling CF distribution $DIST_ID (uses VPC origin $VO_ID)..."
-                ETAG=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'ETag' --output text 2>/dev/null)
-                aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig' --output json 2>/dev/null \
-                  | python3 -c "import json,sys; d=json.load(sys.stdin); d['Enabled']=False; print(json.dumps(d))" \
-                  | aws cloudfront update-distribution --id "$DIST_ID" --if-match "$ETAG" \
-                      --distribution-config /dev/stdin >/dev/null 2>/dev/null || true
-                # Wait for Deployed
-                for i in $(seq 1 20); do
-                  S=$(aws cloudfront get-distribution --id "$DIST_ID" --query 'Distribution.Status' --output text 2>/dev/null)
-                  [ "$S" = "Deployed" ] && break; sleep 15
-                done
-                ETAG2=$(aws cloudfront get-distribution --id "$DIST_ID" --query 'ETag' --output text 2>/dev/null)
-                aws cloudfront delete-distribution --id "$DIST_ID" --if-match "$ETAG2" 2>/dev/null || true
-                echo "  ✓ deleted CF distribution $DIST_ID"
-              fi
-            done
-            # Delete VPC origin
-            VO_ETAG=$(aws cloudfront get-vpc-origin --id "$VO_ID" --query 'ETag' --output text 2>/dev/null)
-            aws cloudfront delete-vpc-origin --id "$VO_ID" --if-match "$VO_ETAG" 2>/dev/null || true
-            echo "  ✓ deleted CF VPC origin $VO_ID"
-          done
+          #     Strategy: delete all ${HUB}-* VPC origins and their distributions.
+          python3 "{{.ROOT_DIR}}/scripts/sweep-cloudfront.py" "{{.HUB_CLUSTER_NAME}}" 2>&1 || true
           # 6b. ALL remaining peeks-* IAM roles (not just ACK-tagged). Crossplane provider
           #     roles, ExternalDNS, LBC, Kargo, KeycloakConfig, argo-rollouts IRSA roles etc.
           #     are NOT ACK-tagged but are workshop-owned and cause EntityAlreadyExists on
@@ -1632,43 +1599,7 @@ tasks:
           done
           # 6h. Orphaned spoke VPCs (ACK ec2 VPC resources that survived cluster delete).
           #     Scoped by the EKS ACK tag (eks:kubernetes-resource-name=<PREFIX>-spoke-*).
-          for VPC_ID in $(aws ec2 describe-vpcs --region "$REGION" \
-                --filters "Name=tag:eks:kubernetes-resource-name,Values=${PREFIX}-spoke-dev-vpc,${PREFIX}-spoke-prod-vpc" \
-                --query 'Vpcs[].VpcId' --output text 2>/dev/null | tr '\t' '\n'); do
-            [ -z "$VPC_ID" ] && continue
-            echo "  Cleaning spoke VPC $VPC_ID..."
-            # Delete NAT GWs, IGWs, subnets, RTs, SGs, then VPC
-            for NAT in $(aws ec2 describe-nat-gateways --region "$REGION" \
-                  --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available" \
-                  --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null | tr '\t' '\n'); do
-              aws ec2 delete-nat-gateway --nat-gateway-id "$NAT" --region "$REGION" 2>/dev/null || true
-            done
-            for IGW in $(aws ec2 describe-internet-gateways --region "$REGION" \
-                  --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
-                  --query 'InternetGateways[].InternetGatewayId' --output text 2>/dev/null | tr '\t' '\n'); do
-              aws ec2 detach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$VPC_ID" --region "$REGION" 2>/dev/null || true
-              aws ec2 delete-internet-gateway --internet-gateway-id "$IGW" --region "$REGION" 2>/dev/null || true
-            done
-            for SN in $(aws ec2 describe-subnets --region "$REGION" \
-                  --filters "Name=vpc-id,Values=$VPC_ID" \
-                  --query 'Subnets[].SubnetId' --output text 2>/dev/null | tr '\t' '\n'); do
-              aws ec2 delete-subnet --subnet-id "$SN" --region "$REGION" 2>/dev/null || true
-            done
-            for RT in $(aws ec2 describe-route-tables --region "$REGION" \
-                  --filters "Name=vpc-id,Values=$VPC_ID" \
-                  --query 'RouteTables[?!Associations[?Main]].RouteTableId' --output text 2>/dev/null | tr '\t' '\n'); do
-              aws ec2 delete-route-table --route-table-id "$RT" --region "$REGION" 2>/dev/null || true
-            done
-            for SG in $(aws ec2 describe-security-groups --region "$REGION" \
-                  --filters "Name=vpc-id,Values=$VPC_ID" \
-                  --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null | tr '\t' '\n'); do
-              aws ec2 delete-security-group --group-id "$SG" --region "$REGION" 2>/dev/null || true
-            done
-            sleep 30  # Wait for NAT GW async deletion
-            aws ec2 delete-vpc --vpc-id "$VPC_ID" --region "$REGION" 2>/dev/null \
-              && echo "  ✓ deleted spoke VPC $VPC_ID" \
-              || echo "  ⚠ spoke VPC $VPC_ID still has dependencies (manual cleanup may be needed)"
-          done
+          python3 "{{.ROOT_DIR}}/scripts/sweep-spoke-vpcs.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" 2>&1 || true
         ignore_error: true
       - cmd: |
           if [ "{{.CLEANUP_KIND}}" = "true" ]; then
