@@ -87,8 +87,11 @@ spec:
             prometheus_monitoring['enable'] = false
 
             # Disable CI/CD features
-            # gitlab_ci['enable'] = false
-            # gitlab_rails['gitlab_default_projects_features_builds'] = false
+            # CI/CD is handled by Argo Workflows (GitLab webhook -> argo-events -> workflows),
+            # not GitLab's native CI. No GitLab runners are deployed, so leaving native
+            # CI/CD enabled makes Auto DevOps fire on the first push and fail (no runner).
+            gitlab_ci['enable'] = false
+            gitlab_rails['gitlab_default_projects_features_builds'] = false
 
             # Disable container registry
             registry['enable'] = false
