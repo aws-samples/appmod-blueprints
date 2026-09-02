@@ -32,7 +32,7 @@
 #         via AWS CLI (no aws:cloudformation:* tags → the AWS LBC can adopt it cleanly)
 #       - Creates CloudFront VPC Origin pointing to the ALB
 #       - Creates CloudFront Distribution → gets domain d*.cloudfront.net
-#       - Writes domain to config.local.yaml and private/async-domain
+#       - Reserves the CloudFront hostname and writes it to config.local.yaml
 #       All steps are IDEMPOTENT — safe to re-run.
 #
 #  3. Write <repo-root>/config.local.yaml with:
@@ -239,6 +239,26 @@ fi
 [ -z "$ADMIN_ROLE_NAME" ] && ADMIN_ROLE_NAME="WSParticipantRole"
 
 # --- Write config.local.yaml (printf, never heredoc) -----------------------
+# ── Reserve the CloudFront hostname (before writing config) ───────────────────
+# The platform needs its ingress hostname AT install time (Keycloak realm URLs, the OIDC
+# issuer, ingress hosts, ArgoCD/Backstage base URLs). Deriving it from infrastructure the
+# install itself creates would be circular, so reserve it up front instead: creating a
+# distribution with a placeholder origin returns its *.cloudfront.net name in about a
+# second, with no VPC and no load balancer required. `domain` is then an ordinary static
+# config value and nothing has to resolve it mid-install.
+#
+# The real origin is attached AFTER install by scripts/cloudfront-attach-origin.sh, once
+# the load balancer controller has created the platform ALB.
+echo "[$(date +%H:%M:%S)] ▸ Reserving CloudFront hostname..."
+CF_DOMAIN=$(HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub" \
+  "$REPO_ROOT/scripts/cloudfront-reserve-domain.sh") || CF_DOMAIN=""
+if [ -z "$CF_DOMAIN" ]; then
+  echo "[$(date +%H:%M:%S)] ERROR: could not reserve a CloudFront hostname." >&2
+  echo "                    The platform cannot be installed without a domain." >&2
+  exit 1
+fi
+echo "[$(date +%H:%M:%S)] ✓ Reserved $CF_DOMAIN"
+
 echo "▸ Writing $OUTPUT_FILE ..."
 printf 'clusterProvider: "%s"\n' "$CLUSTER_PROVIDER"  >  "$OUTPUT_FILE"
 printf 'repo:\n'                                       >> "$OUTPUT_FILE"
@@ -249,12 +269,11 @@ printf 'aws:\n'                                        >> "$OUTPUT_FILE"
 printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
-# domain is always empty at config-generation time. The CloudFront distribution is
-# created inline by _start_platform_infra (below), which writes the resolved domain to
-# private/async-domain; the platform's domain:resolve reads it from there during
-# `task install`. There is no hub:create-platform-cf task — that name never existed.
-DOMAIN_VALUE=""
-printf 'domain: "%s"\n' "$DOMAIN_VALUE"                >> "$OUTPUT_FILE"
+# The hostname was reserved above, so it is known here and written as a plain static
+# value. insecure=true means the ALB serves HTTP with CloudFront terminating TLS; it also
+# makes the platform create the ALB as `internal` with the predictable name
+# <cluster>-platform, which is what cloudfront-attach-origin.sh looks for afterwards.
+printf 'domain: "%s"\n' "$CF_DOMAIN"                   >> "$OUTPUT_FILE"
 printf 'insecure: true\n'                              >> "$OUTPUT_FILE"
 printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
 printf 'ingressName: ""\n'                             >> "$OUTPUT_FILE"
@@ -311,380 +330,6 @@ printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 # When HUB_VPC_ID is set (shared IDE VPC), create the internal ALB + CloudFront
 # distribution NOW so the domain is known before `task install` runs hub:claim.
 # hub:claim passes domainName from config, so it must be set here.
-# ── Platform ALB + CloudFront (parallel with IDC detection above) ─────────────
-# We launch ALB+VPC Origin creation in the BACKGROUND (before IDC detection) so
-# the ~8min VPC Origin deploy overlaps with the ~2min IDC polling. Then after
-# config is written, we wait for the VPC Origin, create the CF distribution
-# (domain known immediately), and update the config with the domain.
-#
-# Timeline:
-#   t=0   start_platform_infra() in background  ─┐
-#   t=0   IDC detection / admin role (~2min)      │ parallel
-#   t=2   write config.local.yaml                 │
-#   t~8   VPC Origin Deployed ←────────────────── ┘
-#   t~8   create CF distribution → CF_DOMAIN known
-#   t~8   update config domain, write cloudfront-domain
-#   t~8   task install begins (hub:claim gets correct domainName)
-
-# Use fixed /tmp paths so background subshell can write and main shell can read.
-# A mktemp dir would require export and subshell inheritance which is fragile.
-# Use BASHPID (current shell PID) not $$ (which can be parent PID in subshells)
-_PLATFORM_INFRA_DIR="/tmp/create-config-infra-${BASHPID:-$$}"
-# Clean up any leftover dirs from previous runs
-rm -rf /tmp/create-config-infra-* 2>/dev/null || true
-mkdir -p "$_PLATFORM_INFRA_DIR"
-_VPC_ORIGIN_FILE="$_PLATFORM_INFRA_DIR/vpc-origin-id.txt"
-_ALB_ARN_FILE="$_PLATFORM_INFRA_DIR/alb-arn.txt"
-_INFRA_LOG="/tmp/create-config-infra.log"
-_INFRA_PID_FILE="$_PLATFORM_INFRA_DIR/pid.txt"
-
-CF_DOMAIN=""
-
-if [ -n "${HUB_VPC_ID:-}" ]; then
-
-  # ── Background function: create ALB SG + ALB + VPC Origin ─────────────────
-  _start_platform_infra() {
-    set -euo pipefail
-    exec >> "$_INFRA_LOG" 2>&1
-    REGION="$1"; HUB_VPC_ID="$2"; HUB_SUBNET_IDS="$3"
-    HUB_CLUSTER_NAME="${RESOURCE_PREFIX:-peeks}-hub"
-    ALB_NAME="${HUB_CLUSTER_NAME}-platform"
-
-    # Wait for pre-requisites: the VPC must actually be resolvable, since everything
-    # below (security group, ALB, VPC origin) is created inside it.
-    #
-    # Previously this loop gated on `[ -f /etc/profile.d/workshop.sh ]` as a proxy for
-    # "VPC prerequisites ready". That file has no writer in this repo — it comes from the
-    # CDK bootstrap — so on a self-paced run it never appears, the loop burned all 30
-    # attempts (~5 min) and then proceeded anyway, printing "Pre-requisites ready". Gate on
-    # the real precondition instead, and fail loudly if it is never met rather than
-    # continuing into ALB creation that cannot succeed.
-    echo "[$(date +%H:%M:%S)] Waiting for VPC $HUB_VPC_ID to be resolvable..."
-    _vpc_ready=false
-    for _i in $(seq 1 30); do
-      _vpc=$(aws ec2 describe-vpcs --vpc-ids "$HUB_VPC_ID" --region "$REGION" \
-        --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
-      if [ -n "$_vpc" ] && [ "$_vpc" != "None" ]; then
-        _vpc_ready=true
-        break
-      fi
-      sleep 10
-    done
-    if [ "$_vpc_ready" != "true" ]; then
-      echo "[$(date +%H:%M:%S)] ERROR: VPC $HUB_VPC_ID not resolvable after ~5 min in $REGION."
-      echo "                    Cannot create the platform ALB or CloudFront distribution."
-      exit 1
-    fi
-    echo "[$(date +%H:%M:%S)] Pre-requisites ready (VPC $_vpc)"
-
-    VPC_CIDR=$(aws ec2 describe-vpcs --vpc-ids "$HUB_VPC_ID" --region "$REGION" \
-      --query 'Vpcs[0].CidrBlock' --output text 2>/dev/null)
-
-    # ALB SG
-    SG_NAME="${HUB_CLUSTER_NAME}-platform-alb-sg"
-    SG_ID=$(aws ec2 describe-security-groups \
-      --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$HUB_VPC_ID" \
-      --region "$REGION" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
-    [ "$SG_ID" = "None" ] && SG_ID=""
-    if [ -z "$SG_ID" ]; then
-      SG_ID=$(aws ec2 create-security-group \
-        --group-name "$SG_NAME" \
-        --description "Platform ALB (internal, CloudFront VPC Origin)" \
-        --vpc-id "$HUB_VPC_ID" --region "$REGION" \
-        --query 'GroupId' --output text 2>/dev/null) || \
-      SG_ID=$(aws ec2 describe-security-groups \
-        --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$HUB_VPC_ID" \
-        --region "$REGION" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
-      aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
-        --protocol tcp --port 80 --cidr "$VPC_CIDR" --region "$REGION" >/dev/null 2>&1 || true
-    fi
-    echo "[$(date +%H:%M:%S)] ALB SG: $SG_ID"
-
-    # Subnets
-    PRIVATE_SUBNETS=""
-    echo "[$(date +%H:%M:%S)] DEBUG: HUB_SUBNET_IDS='${HUB_SUBNET_IDS:-}' HUB_VPC_ID='$HUB_VPC_ID'"
-    if [ -n "${HUB_SUBNET_IDS:-}" ]; then
-      PRIVATE_SUBNETS=$(echo "$HUB_SUBNET_IDS" | tr -d "[]'" | tr ',' ' ')
-      echo "[$(date +%H:%M:%S)] DEBUG: Subnets from HUB_SUBNET_IDS: $PRIVATE_SUBNETS"
-    fi
-    if [ -z "$PRIVATE_SUBNETS" ]; then
-      echo "[$(date +%H:%M:%S)] DEBUG: Falling back to tag lookup for subnets..."
-      PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
-        --filters "Name=vpc-id,Values=$HUB_VPC_ID" \
-                  "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
-        --region "$REGION" \
-        --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text 2>/dev/null | \
-        sort -k2 -u | awk '{print $1}' | tr '\n' ' ')
-      echo "[$(date +%H:%M:%S)] DEBUG: Subnets from tag lookup: '${PRIVATE_SUBNETS}'"
-    fi
-    [ -z "$PRIVATE_SUBNETS" ] && { echo "ERROR: no subnets found (HUB_SUBNET_IDS empty and tag lookup returned nothing)"; exit 1; }
-
-    # Tag subnets
-    for _sn in $PRIVATE_SUBNETS; do
-      aws ec2 create-tags --resources "$_sn" --region "$REGION" \
-        --tags Key=kubernetes.io/role/internal-elb,Value=1 >/dev/null 2>&1 || true
-    done
-
-    # ALB
-    echo "[$(date +%H:%M:%S)] DEBUG: Subnets final: $PRIVATE_SUBNETS"
-    ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" \
-      --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null) || ALB_ARN=""
-    [ "$ALB_ARN" = "None" ] && ALB_ARN=""
-    echo "[$(date +%H:%M:%S)] DEBUG: Existing ALB_ARN='$ALB_ARN'"
-    if [ -z "$ALB_ARN" ]; then
-      ALB_ARN=$(aws elbv2 create-load-balancer \
-        --name "$ALB_NAME" --subnets $PRIVATE_SUBNETS \
-        --security-groups "$SG_ID" --scheme internal --type application \
-        --tags Key=elbv2.k8s.aws/cluster,Value="$HUB_CLUSTER_NAME" \
-               Key=ingress.k8s.aws/stack,Value=platform \
-               Key=ingress.k8s.aws/resource,Value=LoadBalancer \
-        --region "$REGION" \
-        --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null) || true
-      if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then
-        ALB_ARN=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" \
-          --region "$REGION" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null)
-        [ "$ALB_ARN" = "None" ] && ALB_ARN=""
-      fi
-      [ -z "$ALB_ARN" ] && { echo "ERROR: ALB creation failed"; exit 1; }
-      aws elbv2 create-listener --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80 \
-        --default-actions "Type=fixed-response,FixedResponseConfig={MessageBody=Not Found,StatusCode=404,ContentType=text/plain}" \
-        --region "$REGION" >/dev/null 2>&1 || true
-    fi
-    echo "[$(date +%H:%M:%S)] ALB: $ALB_ARN"
-    echo -n "$ALB_ARN" > "$_ALB_ARN_FILE"
-
-    # VPC Origin
-    VPC_ORIGIN_NAME="${HUB_CLUSTER_NAME}-platform-vpc-origin"
-    VPC_ORIGIN_ID=$(aws cloudfront list-vpc-origins \
-      --query "VpcOriginList.Items[?Name=='$VPC_ORIGIN_NAME'].Id" \
-      --output text 2>/dev/null | tr -d '[:space:]')
-    [ "$VPC_ORIGIN_ID" = "None" ] && VPC_ORIGIN_ID=""
-    if [ -z "$VPC_ORIGIN_ID" ]; then
-      VPC_ORIGIN_ID=$(aws cloudfront create-vpc-origin \
-        --vpc-origin-endpoint-config "{
-          \"Name\": \"$VPC_ORIGIN_NAME\",
-          \"Arn\": \"$ALB_ARN\",
-          \"HTTPPort\": 80,
-          \"HTTPSPort\": 443,
-          \"OriginProtocolPolicy\": \"http-only\",
-          \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
-        }" --query 'VpcOrigin.Id' --output text 2>/dev/null)
-    fi
-    echo "[$(date +%H:%M:%S)] VPC Origin: $VPC_ORIGIN_ID (waiting for Deployed...)"
-    echo -n "$VPC_ORIGIN_ID" > "$_VPC_ORIGIN_FILE"
-
-    # Start CF distribution creation immediately — don't wait for VPC Origin Deployed.
-    # AWS accepts a CF distribution with a VPC Origin still Deploying.
-    # Check if CF already exists (idempotency)
-    # 1. Look up by comment (normal case)
-    _CF_COMMENT="${RESOURCE_PREFIX}-hub-platform"
-    _CF_DOMAIN_EXISTING=$(aws cloudfront list-distributions \
-      --query "DistributionList.Items[?Comment=='${_CF_COMMENT}'].DomainName | [0]" \
-      --output text 2>/dev/null | tr -d '[:space:]')
-    [ "$_CF_DOMAIN_EXISTING" = "None" ] && _CF_DOMAIN_EXISTING=""
-    # 2. Fallback: if no CF found by comment, check if any CF uses our VPC Origin
-    #    (happens when CF was created without the comment due to a partial run)
-    if [ -z "$_CF_DOMAIN_EXISTING" ] && [ -n "$VPC_ORIGIN_ID" ]; then
-      _CF_DOMAIN_EXISTING=$(aws cloudfront list-distributions \
-        --query "DistributionList.Items[?Origins.Items[?VpcOriginConfig.VpcOriginId=='${VPC_ORIGIN_ID}']].DomainName | [0]" \
-        --output text 2>/dev/null | tr -d '[:space:]')
-      [ "$_CF_DOMAIN_EXISTING" = "None" ] && _CF_DOMAIN_EXISTING=""
-      if [ -n "$_CF_DOMAIN_EXISTING" ]; then
-        echo "[$(date +%H:%M:%S)] ↻ Found existing CloudFront by VPC Origin: $_CF_DOMAIN_EXISTING"
-      fi
-    fi
-    if [ -n "$_CF_DOMAIN_EXISTING" ]; then
-      echo "[$(date +%H:%M:%S)] ↻ Reusing CloudFront: $_CF_DOMAIN_EXISTING"
-      echo -n "$_CF_DOMAIN_EXISTING" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
-    fi
-
-    # Wait for VPC Origin Deployed (CF requires Deployed state)
-    for _i in $(seq 1 60); do
-      STATE=$(aws cloudfront get-vpc-origin --id "$VPC_ORIGIN_ID" \
-        --query 'VpcOrigin.Status' --output text 2>/dev/null || echo "Pending")
-      [ "$STATE" = "Deployed" ] && break
-      [ $((${_i:-0} % 4)) -eq 0 ] && echo "[$(date +%H:%M:%S)] VPC Origin ${_i}x15s: $STATE"
-      sleep 15
-    done
-    [ "$STATE" != "Deployed" ] && { echo "ERROR: VPC Origin not Deployed"; exit 1; }
-    echo "[$(date +%H:%M:%S)] VPC Origin Deployed: $VPC_ORIGIN_ID"
-    echo -n "$VPC_ORIGIN_ID" > "$_VPC_ORIGIN_FILE"
-
-    # Create CloudFront distribution now that VPC Origin is Deployed
-    # This runs inside the background job so it works even with WAIT_FOR_CF=false
-    if [ -z "${_CF_DOMAIN_EXISTING:-}" ]; then
-      HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
-      ALB_DNS_BG=$(aws elbv2 describe-load-balancers \
-        --load-balancer-arns "$ALB_ARN" --region "$REGION" \
-        --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null) || ALB_DNS_BG=""
-      echo "[$(date +%H:%M:%S)] Creating CloudFront distribution..."
-      _CF_DOMAIN=$(aws cloudfront create-distribution \
-        --distribution-config "{
-          \"CallerReference\": \"${HUB_CLUSTER_NAME}-platform-$(date +%s)\",
-          \"Comment\": \"${HUB_CLUSTER_NAME}-platform\",
-          \"Enabled\": true,
-          \"Origins\": {\"Quantity\": 1, \"Items\": [{
-            \"Id\": \"vpc-origin\",
-            \"DomainName\": \"$ALB_DNS_BG\",
-            \"VpcOriginConfig\": {
-              \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
-              \"OriginReadTimeout\": 60,
-              \"OriginKeepaliveTimeout\": 5
-            }
-          }]},
-          \"DefaultCacheBehavior\": {
-            \"TargetOriginId\": \"vpc-origin\",
-            \"ViewerProtocolPolicy\": \"redirect-to-https\",
-            \"AllowedMethods\": {\"Quantity\": 7,
-              \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"],
-              \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
-            \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
-            \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
-            \"Compress\": true},
-          \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
-          \"PriceClass\": \"PriceClass_100\"
-        }" --query "Distribution.DomainName" --output text 2>&1) || _CF_DOMAIN=""
-      [ "$_CF_DOMAIN" = "None" ] && _CF_DOMAIN=""
-      echo "[$(date +%H:%M:%S)] CF_DOMAIN result: $_CF_DOMAIN"
-      if [ -n "$_CF_DOMAIN" ]; then
-        echo -n "$_CF_DOMAIN" > "${_PLATFORM_INFRA_DIR}/cf-domain.txt"
-        # Also write directly to REPO_ROOT/private/async-domain for WAIT_FOR_CF=false mode
-        REPO_ROOT_BG=$(cd "$(dirname "$0")/.." && pwd)
-        mkdir -p "${REPO_ROOT_BG}/private"
-        echo -n "$_CF_DOMAIN" > "${REPO_ROOT_BG}/private/async-domain"
-        echo "[$(date +%H:%M:%S)] ✓ CloudFront domain written: $_CF_DOMAIN"
-      else
-        echo "[$(date +%H:%M:%S)] WARN: CF creation failed in background job"
-      fi
-    fi
-  }
-  export -f _start_platform_infra
-  export _PLATFORM_INFRA_DIR _VPC_ORIGIN_FILE _ALB_ARN_FILE _INFRA_LOG RESOURCE_PREFIX
-
-  # Check idempotency first — if CF already exists, no need for background job
-  _CF_COMMENT="${RESOURCE_PREFIX}-hub-platform"
-  CF_DOMAIN=$(aws cloudfront list-distributions \
-    --query "DistributionList.Items[?Comment=='${_CF_COMMENT}'].DomainName | [0]" \
-    --output text 2>/dev/null | tr -d '[:space:]')
-  [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
-
-  if [ -n "$CF_DOMAIN" ]; then
-    echo "  ↻ Reusing CloudFront: $CF_DOMAIN (skipping background infra)"
-    # Write domain to config immediately — same as new creation path
-    yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
-      sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
-    mkdir -p "${REPO_ROOT}/private"
-    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/async-domain"
-    echo "  ✓ domain written to config: $CF_DOMAIN"
-  else
-    echo "  ▸ Starting ALB+VPC Origin creation in background..."
-    bash -c '_start_platform_infra "$@"' _ "$REGION" "$HUB_VPC_ID" "${HUB_SUBNET_IDS:-}" &
-    _INFRA_PID=$!
-    echo "$_INFRA_PID" > "$_INFRA_PID_FILE"
-    echo "  ▸ Background PID=$_INFRA_PID (VPC Origin deploys while IDC is detected)"
-  fi
-
-fi  # end HUB_VPC_ID block — will rejoin after config is written
-
-
-# ── Rejoin background platform infra (if started) ─────────────────────────
-# When WAIT_FOR_CF=false (used by task install parallelization), exit here
-# after writing config.local.yaml. The background infra job keeps running and
-# will write private/async-domain when ready. task install polls for it
-# before hub:claim so DOMAIN is always set when the EKS cluster is created.
-if [ "${WAIT_FOR_CF:-true}" = "false" ] && [ -n "${HUB_VPC_ID:-}" ]; then
-  echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
-  yq '.' "$OUTPUT_FILE" >/dev/null
-  echo "[$(date +%H:%M:%S)] ✓ create-config.sh complete (WAIT_FOR_CF=false — CF domain will be written by background job)"
-  echo "    clusterProvider=$CLUSTER_PROVIDER region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
-  exit 0
-fi
-
-# ── Wait for background infra (default WAIT_FOR_CF=true) ────────────────────
-echo "[$(date +%H:%M:%S)] DEBUG rejoin: HUB_VPC_ID=${HUB_VPC_ID:-EMPTY} CF_DOMAIN=${CF_DOMAIN:-EMPTY} INFRA_PID_FILE=${_INFRA_PID_FILE:-EMPTY} PID_EXISTS=$([ -f "${_INFRA_PID_FILE:-/dev/null}" ] && echo yes || echo no)"
-if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${CF_DOMAIN:-}" ]; then
-  echo "[$(date +%H:%M:%S)] DEBUG: CF already set — skipping rejoin"
-  : # CF already existed, nothing to do
-elif [ -n "${HUB_VPC_ID:-}" ] && [ -f "${_INFRA_PID_FILE:-/dev/null}" ]; then
-  _INFRA_PID=$(cat "$_INFRA_PID_FILE" 2>/dev/null)
-  if [ -n "$_INFRA_PID" ]; then
-    echo "  ▸ Waiting for background VPC Origin to finish..."
-    # Poll the background PID with kill -0 (robust: works even if the process
-    # already exited and was reaped). Stream new log lines incrementally.
-    _LOG_LINES=0
-    while kill -0 "$_INFRA_PID" 2>/dev/null; do
-      if [ -f "$_INFRA_LOG" ]; then
-        _TOTAL=$(wc -l < "$_INFRA_LOG" 2>/dev/null || echo 0)
-        if [ "$_TOTAL" -gt "$_LOG_LINES" ]; then
-          tail -n +$((_LOG_LINES + 1)) "$_INFRA_LOG" 2>/dev/null
-          _LOG_LINES=$_TOTAL
-        fi
-      fi
-      sleep 3
-    done
-    # Print any remaining log lines after the process exited
-    if [ -f "$_INFRA_LOG" ]; then
-      tail -n +$((_LOG_LINES + 1)) "$_INFRA_LOG" 2>/dev/null || true
-    fi
-    echo "[$(date +%H:%M:%S)]   ✓ Background infra finished"
-  fi
-
-  VPC_ORIGIN_ID=$(cat "$_VPC_ORIGIN_FILE" 2>/dev/null || echo "")
-  ALB_ARN=$(cat "$_ALB_ARN_FILE" 2>/dev/null || echo "")
-
-  # CF domain written by background job (created in parallel with VPC Origin wait)
-  CF_DOMAIN=$(cat "${_PLATFORM_INFRA_DIR}/cf-domain.txt" 2>/dev/null | tr -d '[:space:]') || CF_DOMAIN=""
-  [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
-
-  if [ -z "$CF_DOMAIN" ] && [ -n "$VPC_ORIGIN_ID" ]; then
-    # Fallback: CF not created in background — create now (VPC Origin is Deployed)
-    echo "[$(date +%H:%M:%S)]   ▸ Creating CloudFront distribution..."
-    ALB_DNS=$(aws elbv2 describe-load-balancers \
-      --load-balancer-arns "$ALB_ARN" --region "$REGION" \
-      --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null) || ALB_DNS=""
-    echo "[$(date +%H:%M:%S)]   ALB_DNS=$ALB_DNS VPC_ORIGIN_ID=$VPC_ORIGIN_ID"
-    HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub"
-    CF_DOMAIN=$(aws cloudfront create-distribution \
-      --distribution-config "{
-        \"CallerReference\": \"${HUB_CLUSTER_NAME}-platform-$(date +%s)\",
-        \"Comment\": \"${HUB_CLUSTER_NAME}-platform\",
-        \"Enabled\": true,
-        \"Origins\": {\"Quantity\": 1, \"Items\": [{
-          \"Id\": \"vpc-origin\",
-          \"DomainName\": \"$ALB_DNS\",
-          \"VpcOriginConfig\": {
-            \"VpcOriginId\": \"$VPC_ORIGIN_ID\",
-            \"OriginReadTimeout\": 60,
-            \"OriginKeepaliveTimeout\": 5
-          }
-        }]},
-        \"DefaultCacheBehavior\": {
-          \"TargetOriginId\": \"vpc-origin\",
-          \"ViewerProtocolPolicy\": \"redirect-to-https\",
-          \"AllowedMethods\": {\"Quantity\": 7,
-            \"Items\": [\"GET\",\"HEAD\",\"OPTIONS\",\"PUT\",\"POST\",\"PATCH\",\"DELETE\"],
-            \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
-          \"CachePolicyId\": \"4135ea2d-6df8-44a3-9df3-4b5a84be39ad\",
-          \"OriginRequestPolicyId\": \"216adef6-5c7f-47e4-b989-5492eafa07d3\",
-          \"Compress\": true},
-        \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
-        \"PriceClass\": \"PriceClass_100\"
-      }" --query "Distribution.DomainName" --output text 2>&1) || CF_DOMAIN=""
-    echo "[$(date +%H:%M:%S)]   CF_DOMAIN result: $CF_DOMAIN"
-    [ "$CF_DOMAIN" = "None" ] && CF_DOMAIN=""
-  fi
-
-  if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then
-    yq -i ".domain = \"$CF_DOMAIN\"" "$OUTPUT_FILE" 2>/dev/null || \
-      sed -i "s|domain: .*|domain: \"$CF_DOMAIN\"|" "$OUTPUT_FILE"
-    mkdir -p "${REPO_ROOT}/private"
-    echo -n "$CF_DOMAIN" > "${REPO_ROOT}/private/async-domain"
-    echo "[$(date +%H:%M:%S)]   ✓ CloudFront: $CF_DOMAIN"
-    echo "[$(date +%H:%M:%S)]   ✓ domain written to config.local.yaml and private/async-domain"
-  fi
-  rm -rf "$_PLATFORM_INFRA_DIR" 2>/dev/null || true
-fi
-
 # --- Validate --------------------------------------------------------------
 echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
 yq '.' "$OUTPUT_FILE" >/dev/null
@@ -693,4 +338,7 @@ echo "[$(date +%H:%M:%S)] ✓ create-config.sh complete"
 echo "    clusterProvider=$CLUSTER_PROVIDER region=$REGION accountId=$ACCOUNT_ID prefix=$RESOURCE_PREFIX"
 echo "    clusterName=${RESOURCE_PREFIX}-hub adminRole=$ADMIN_ROLE_NAME"
 echo "    idcInstance=$IDC_ARN adminGroupId=${IDC_GROUP:-<empty>}"
-echo "    domain=\"\" (CloudFront exposure mode) cloudfrontDomain=${CF_DOMAIN:-<not detected>}"
+echo "    domain=\"$CF_DOMAIN\" (CloudFront, origin not yet attached)"
+echo ""
+echo "    NEXT: once 'task install' finishes, point CloudFront at the platform ALB:"
+echo "      scripts/cloudfront-attach-origin.sh"

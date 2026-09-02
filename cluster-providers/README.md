@@ -127,6 +127,32 @@ must expose these tasks in its `Taskfile.yaml`:
 
 The root Taskfile calls these as `<provider-name>:install`, etc.
 
+### Domain handling (required behaviour)
+
+A provider reads `domain` from config and must **fail rather than install with an empty
+one** — an empty domain silently misconfigures Keycloak realm URLs, the OIDC issuer and
+every ingress host. The domain is a static config value; providers do not resolve, discover,
+or wait for it.
+
+Consumers without a registered domain reserve a free CloudFront hostname before installing
+(`scripts/cloudfront-reserve-domain.sh`, then `scripts/cloudfront-attach-origin.sh`
+afterwards). That is entirely outside the provider: it produces an ordinary `domain` value,
+so no provider needs CloudFront-specific code. See
+[docs/platform/cloudfront-exposure.md](../docs/platform/cloudfront-exposure.md).
+
+### Capability parity (binding)
+
+Providers are interchangeable behind one `config.yaml`, so **a capability added to one
+provider must be added to all of them**. Where that is not yet true, the lacking provider
+must **fail fast** with a clear message rather than silently ignore the input — a silently
+ignored field means `config.local.yaml` means different things depending on
+`clusterProvider`.
+
+Current known gap: `kind-crossplane` cannot provision the hub into a pre-existing VPC, so it
+rejects `hub.network.vpcId` in pre-flight
+([#833](https://github.com/aws-samples/appmod-blueprints/issues/833)). `kind-kro-ack`
+supports it. This does not affect CloudFront exposure, which needs no pre-existing VPC.
+
 ### Configuration
 
 Providers read shared configuration from `gitops/config.yaml`:
@@ -139,9 +165,11 @@ Providers read shared configuration from `gitops/config.yaml`:
 | `repo.basepath` | Path prefix in the repo |
 | `hub.clusterName` | Hub cluster name |
 | `hub.kubernetesVersion` | Kubernetes version |
+| `hub.network.vpcId`, `hub.network.subnetIds` | Optional: install into an existing VPC instead of creating one. Only `subnetIds[0]` and `[1]` are read. `kind-kro-ack` only; `kind-crossplane` fails fast (see above) |
 | `aws.region` | AWS region |
 | `aws.accountId` | AWS account ID |
-| `domain` | Base domain for ingress |
+| `domain` | Ingress hostname. Must be known before install |
+| `insecure` | ALB serves plain HTTP because TLS is terminated upstream (e.g. CloudFront). Also makes the platform ALB `internal` and names it `<clusterName>-platform` |
 | `identityCenter.*` | AWS Identity Center config (for EKS ArgoCD Capability) |
 | `argocdCapability.*` | ArgoCD capability config |
 

@@ -855,7 +855,7 @@ if __name__ == "__main__":
 
     if not args.keycloak_dns or args.keycloak_dns in ("null", "None", ""):
         print("ERROR: --keycloak-dns is empty. Platform domain not set — cannot configure Keycloak.", file=sys.stderr)
-        print("Fix: ensure private/async-domain exists or set 'domain' in config.local.yaml, then run: task idc:configure", file=sys.stderr)
+        print("Fix: set 'domain' in config.local.yaml, then run: task idc:configure", file=sys.stderr)
         sys.exit(1)
 
     result = asyncio.run(configure_identity_center(

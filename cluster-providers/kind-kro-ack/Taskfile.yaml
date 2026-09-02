@@ -46,10 +46,7 @@ vars:
   REPO_BASEPATH:
     sh: yq '.repo.basepath' {{.CONFIG_FILE}}
   DOMAIN:
-    sh: |
-      D=$(yq '.domain // ""' {{.CONFIG_FILE}} | grep -v '^$' || true)
-      [ -z "$D" ] && D=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]' || true)
-      echo "${D:-}"
+    sh: yq '.domain // ""' {{.CONFIG_FILE}}
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
   INGRESS_NAME:
@@ -151,7 +148,6 @@ tasks:
       - task: kro:install-eso-bootstrap
       - task: kro:install-cluster-secret-store-bootstrap
       - task: kro:apply-rgds
-      - task: hub:wait-for-domain
       - task: hub:claim
       - task: hub:wait-for-eks
       - task: hub:authorize-ide-access
@@ -597,49 +593,6 @@ tasks:
         echo "[$(date +%H:%M:%S)] ✓ gitlab:init-ec2 background job complete"
         rm -f "$PID_FILE"
 
-  hub:wait-for-domain:
-    desc: Wait for `domain` to be available in config.local.yaml, written by an async consumer job to private/async-domain (e.g. the workshop's create-config.sh provisioning CloudFront in the background). No-op if domain is already set.
-    cmds:
-      - |
-        # Optional file a consumer can write asynchronously with the resolved domain
-        # (fixed path private/async-domain, relative to the repo root — e.g. the
-        # workshop's create-config.sh, once its CloudFront distribution is ready) —
-        # lets hub:claim start without blocking on a synchronous domain provisioning
-        # step. Consumers with a static domain never hit this: `domain` is already
-        # set in config.local.yaml and this task exits immediately below.
-        DOMAIN_FILE="{{.ROOT_DIR}}/private/async-domain"
-        CONFIG_FILE="{{.CONFIG_FILE}}"
-        # If domain already in config or file exists, nothing to do
-        EXISTING=$(yq '.domain // ""' "$CONFIG_FILE" 2>/dev/null | tr -d '[:space:]')
-        if [ -n "$EXISTING" ] && [ "$EXISTING" != '""' ] && [ "$EXISTING" != "null" ]; then
-          echo "[$(date +%H:%M:%S)] ✓ domain already set: $EXISTING"
-          exit 0
-        fi
-        if [ -f "$DOMAIN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
-          D=$(cat "$DOMAIN_FILE" | tr -d '[:space:]')
-          if [ -n "$D" ]; then
-            yq -i ".domain = \"$D\"" "$CONFIG_FILE" 2>/dev/null || \
-              sed -i "s|domain: .*|domain: \"$D\"|" "$CONFIG_FILE"
-            echo "[$(date +%H:%M:%S)] ✓ domain loaded from file: $D"
-            exit 0
-          fi
-        fi
-        echo "[$(date +%H:%M:%S)] ▸ Waiting for domain (async consumer job)..."
-        for _i in $(seq 1 80); do
-          if [ -f "$DOMAIN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
-            D=$(cat "$DOMAIN_FILE" | tr -d '[:space:]')
-            if [ -n "$D" ] && [ "$D" != "null" ]; then
-              yq -i ".domain = \"$D\"" "$CONFIG_FILE" 2>/dev/null || \
-                sed -i "s|domain: .*|domain: \"$D\"|" "$CONFIG_FILE"
-              echo "[$(date +%H:%M:%S)] ✓ domain ready: $D"
-              exit 0
-            fi
-          fi
-          [ $((_i % 4)) -eq 0 ] && echo "[$(date +%H:%M:%S)]   still waiting for domain (${_i}x15s)..."
-          sleep 15
-        done
-        echo "[$(date +%H:%M:%S)] ⚠ domain not available after 20min — continuing with empty domain"
-
   hub:claim:
     desc: Apply hub cluster claim (EksCluster or EksclusterWithVpc depending on hub.network)
     cmds:
@@ -922,14 +875,16 @@ tasks:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         GIT_DOMAIN=$(cat {{.ROOT_DIR}}/private/git-domain 2>/dev/null || yq '.gitDomain // ""' {{.CONFIG_FILE}} || true)
-        # Read domain at runtime (not from global DOMAIN var which is evaluated at task load
-        # time, before the private/async-domain artifact exists). This ensures
-        # ingress_domain_name is correctly set even when hub:seed runs shortly after the
-        # domain is written.
-        RUNTIME_DOMAIN=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]')
-        [ -z "$RUNTIME_DOMAIN" ] && RUNTIME_DOMAIN=$(yq '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
+        # Read at runtime rather than via the global DOMAIN var: go-task evaluates global
+        # `vars:` once at parse time, so a value written into config during this run would
+        # not be visible here.
+        # `yq` yields the STRING "null" for a missing key, which is non-empty and would
+        # defeat the guard below, so normalise it.
+        RUNTIME_DOMAIN=$(yq '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
+        if [ "$RUNTIME_DOMAIN" = "null" ]; then RUNTIME_DOMAIN=""; fi
         if [ -z "$RUNTIME_DOMAIN" ]; then
-          echo "ERROR: domain is empty — set 'domain' in config.local.yaml or write it to private/async-domain before running hub:seed."
+          echo "ERROR: domain is empty — set 'domain' in config.local.yaml before running hub:seed."
+          echo "       For CloudFront exposure, reserve one first: scripts/cloudfront-reserve-domain.sh"
           echo "       Without a domain, ingress_domain_name in the cluster secret will be empty and all ArgoCD addon apps will misconfigure."
           exit 1
         fi

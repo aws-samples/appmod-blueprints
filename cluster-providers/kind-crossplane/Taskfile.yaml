@@ -1182,12 +1182,7 @@ tasks:
     desc: Seed observability credentials (AMP endpoint, AMG API key) into Secrets Manager
     vars:
       KC_DOMAIN:
-        sh: |
-          if [ -f {{.ROOT_DIR}}/private/async-domain ]; then
-            cat {{.ROOT_DIR}}/private/async-domain
-          else
-            echo "{{.DOMAIN}}"
-          fi
+        sh: echo "{{.DOMAIN}}"
     cmds:
       - |
         set -e
