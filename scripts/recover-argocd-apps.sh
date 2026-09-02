@@ -4,6 +4,14 @@
 # Source utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/colors.sh"
+# argocd-utils.sh defines all the recovery helper functions used below
+# (get_infrastructure_report, detect_sync_timeout_pattern, terminate_argocd_operation,
+#  sync_argocd_app, verify_keycloak_secrets, refresh_keycloak_dependent_apps,
+#  verify_namespace_exists, verify_kubevela_dependencies, recover_stuck_workflows,
+#  detect_null_phase_workflows, trigger_workflow_manually, generate_dependency_report).
+# It was dropped when scripts/ was migrated out of platform/infra/terraform/scripts/;
+# without this source the recovery phases silently no-op ("command not found" on stderr).
+source "$SCRIPT_DIR/argocd-utils.sh"
 
 # Check for pods in CrashLoopBackOff that need restart across all clusters
 print_info "Checking for pods in CrashLoopBackOff across all clusters..."

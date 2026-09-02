@@ -170,7 +170,15 @@ spec:
         						}]
         					}
         					env: [
-        						if parameter.env != _|_ for _, e in parameter.env {e},
+        						if parameter.env != _|_ for _, e in parameter.env if e.name != "APP_BASE_PATH" {e},
+        						// APP_BASE_PATH is derived from appPath so prefixed asset/image URLs follow the app path.
+        						// NOTE (kubevela): appPath and the path-based-ingress trait path are SEPARATE inputs and
+        						// MUST be set to the same value, or prefixed assets 404. (The kro RGD derives both from
+        						// a single ingress.path; on the OAM path the manifest/scaffolder must keep them in sync.)
+        						{
+        							name:  "APP_BASE_PATH"
+        							value: parameter.appPath
+        						},
         						if parameter.serviceAccount != "default" {
         							{
         								name:  "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"

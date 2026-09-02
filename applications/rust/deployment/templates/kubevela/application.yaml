@@ -16,13 +16,13 @@ spec:
         port: 8080
         targetPort: 8080
         replicas: 2
+        # appPath drives APP_BASE_PATH (image URL prefix); keep it EQUAL to the
+        # path-based-ingress trait path below, else prefixed assets 404.
         appPath: "/rust-app"
         serviceAccount: rust-service-account-<environment>
         env:
           - name: APP_ENV
             value: "DEV"
-          - name: APP_BASE_PATH
-            value: "/rust-app"
           - name: TABLE_NAME
             value: rust-app-table-<environment>
           - name: AWS_REGION
@@ -50,7 +50,7 @@ spec:
             # unhealthy targets on the OSS LBC). Uses the healthcheckPath trait param.
             healthcheckPath: /collection/FRONT_PAGE
             http:
-              /rust-app: 8080
+              /rust-app: 8080  # keep in sync with appPath above
 
     - name: rust-service-account-<environment>
       type: dp-service-account

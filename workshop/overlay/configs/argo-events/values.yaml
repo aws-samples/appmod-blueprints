@@ -1,0 +1,7 @@
+# Workshop: pin to the tuned system-peeks pool (amd64, do-not-disrupt). The built-in
+# `system` pool allows arm64; this override (merged over the base config via the
+# $overlay/configs/<addon>/values.yaml source) forces amd64. CriticalAddonsOnly
+# toleration already comes from the generic base config. Generic clusters keep `system`.
+controller:
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks

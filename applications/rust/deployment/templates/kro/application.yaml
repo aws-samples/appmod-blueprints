@@ -13,8 +13,6 @@ spec:
   clusterName: <cluster_name>
   accountId: "${AWS_ACCOUNT_ID}"
   env:
-    - name: APP_BASE_PATH
-      value: "/rust-app"
     - name: TABLE_NAME
       value: rust-app-table-<environment>
     - name: AWS_REGION

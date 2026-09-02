@@ -131,6 +131,18 @@ tasks:
       # Non-fatal: never fails the install (spoke apps may legitimately still be settling).
       - task: wait-for-spokes
       - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Re-seed observability now that spokes are ACTIVE. The initial seed runs in background
+      # during hub install (before spokes exist) so spoke_dev/prod_cluster_arn annotations
+      # are empty → no spoke AMP scrapers. Re-running here ensures spoke scraper values are
+      # written to Secrets Manager and propagated to the ArgoCD cluster secret via ESO.
+      # This fixes issue #41 (AMP scraper hub-only, spoke-dev metrics missing in Phase 30.5).
+      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && task kind-kro-ack:secrets-manager:seed-observability; fi'
+      - 'printf "{{.C_INFO}}  [%ds] observability re-seeded with spoke scraper data{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Register spoke OIDC providers in IAM (required for IRSA on kro-ack clusters).
+      # This is a temporary workaround until prometheus/common/sigv4 supports Pod Identity.
+      # See: https://github.com/argoproj/argo-rollouts/issues/4536
+      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && task kind-kro-ack:spokes:register-oidc-providers; fi'
+      - 'printf "{{.C_INFO}}  [%ds] OIDC providers registered{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
       - |
@@ -429,16 +441,26 @@ tasks:
         set_var AWS_ACCOUNT_ID "{{.AWS_ACCOUNT_ID}}"
         PREFIX="{{.RESOURCE_PREFIX}}"
         AMG_ENDPOINT=""
-        AMG_WS_ID=$(aws grafana list-workspaces --region "{{.AWS_REGION}}" \
-          --query "workspaces[?name=='${PREFIX}-observability'].id | [0]" --output text 2>/dev/null || echo "")
-        if [ -n "$AMG_WS_ID" ] && [ "$AMG_WS_ID" != "None" ]; then
-          AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WS_ID" \
-            --region "{{.AWS_REGION}}" --query 'workspace.endpoint' --output text 2>/dev/null || echo "")
-        fi
+        # AMG is provisioned asynchronously by Crossplane and may not be ACTIVE yet when
+        # setup-env runs. Retry briefly so GRAFANA_URL resolves to the real AMG endpoint
+        # instead of a non-existent CloudFront /grafana path — there is NO in-cluster
+        # Grafana behind the ALB; Grafana is Amazon Managed Grafana (AMG).
+        for _ in $(seq 1 18); do
+          AMG_WS_ID=$(aws grafana list-workspaces --region "{{.AWS_REGION}}" \
+            --query "workspaces[?name=='${PREFIX}-observability'].id | [0]" --output text 2>/dev/null || echo "")
+          if [ -n "$AMG_WS_ID" ] && [ "$AMG_WS_ID" != "None" ]; then
+            AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WS_ID" \
+              --region "{{.AWS_REGION}}" --query 'workspace.endpoint' --output text 2>/dev/null || echo "")
+          fi
+          [ -n "$AMG_ENDPOINT" ] && [ "$AMG_ENDPOINT" != "None" ] && break
+          sleep 10
+        done
         if [ -n "$AMG_ENDPOINT" ] && [ "$AMG_ENDPOINT" != "None" ]; then
           set_var GRAFANA_URL "https://${AMG_ENDPOINT}"
         else
-          set_var GRAFANA_URL "https://${CF}/grafana"
+          # Never fall back to ${CF}/grafana — that path does not exist (404). Point at the
+          # AMG console workspace listing so the link is always valid (SAML login via Keycloak).
+          set_var GRAFANA_URL "https://{{.AWS_REGION}}.console.aws.amazon.com/grafana/home?region={{.AWS_REGION}}#/workspaces"
         fi
         set_var GITLAB_URL "https://${GITLAB_CF}"
         set_var GITLAB_DOMAIN "${GITLAB_CF}"
@@ -1601,14 +1623,28 @@ tasks:
         # PHASE 2: deliberate prune through the still-existing app.
         printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
         PRUNED=false
+        KC_HUB="kubectl --kubeconfig {{.REPO}}/private/hub-kubeconfig"
         if command -v argocd >/dev/null 2>&1; then
+          # Try to refresh the ArgoCD token first (in case session expired).
+          # argocd-refresh-token uses Playwright + IDC SSO to get a fresh token.
+          # shellcheck source=/dev/null
+          source "{{.REPO}}/scripts/argocd-refresh-token.sh" 2>/dev/null || true
           argocd app get "$APP" --refresh >/dev/null 2>&1 || true
-          argocd app diff "$APP" || true
-          if argocd app sync "$APP" --prune --timeout 600; then PRUNED=true; else
-            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Run: argocd-refresh-token && source ~/.bashrc.d/platform.sh, then: argocd app sync %s --prune{{.C_RESET}}\n' "$APP"
+          if argocd app sync "$APP" --prune --timeout 600; then
+            PRUNED=true
+          else
+            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Falling back to kubectl patch...{{.C_RESET}}\n'
           fi
-        else
-          printf '{{.C_INFO}}  argocd CLI not found. Run manually then re-run this task to clean up: argocd app sync %s --prune{{.C_RESET}}\n' "$APP"
+        fi
+        # Fallback: use kubectl to patch the ArgoCD application resource directly,
+        # injecting a sync operation with prune=true. This works even without the
+        # argocd CLI or a valid ArgoCD auth token — it uses the IDE's cluster-admin
+        # access entry that grant-ide-access sets up on the hub.
+        if [ "$PRUNED" = false ]; then
+          $KC_HUB patch application "$APP" -n argocd --type merge \
+            -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}' \
+            2>/dev/null && PRUNED=true || \
+            printf '{{.C_ERR}}⚠ kubectl patch also failed. The spoke will be deleted when kind-kro-ack:destroy runs hub:destroy-addons.{{.C_RESET}}\n'
         fi
 
         # PHASE 3: cleanup the now-empty app + CARM mapping (only after a successful prune,
