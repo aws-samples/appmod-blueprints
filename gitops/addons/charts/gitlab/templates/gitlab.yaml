@@ -34,7 +34,7 @@ spec:
         app: gitlab
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: {{ (.Values.global | default dict).systemNodepool | default "system" }}
+        karpenter.sh/nodepool: {{ (.Values.global | default dict).generalPurposeNodepool | default "general-purpose" }}
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
