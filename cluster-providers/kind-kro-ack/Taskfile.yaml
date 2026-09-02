@@ -1377,32 +1377,22 @@ tasks:
     cmds:
       - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
       - task: credentials:refresh
-      # Submit hub cluster claim deletion FIRST — before hub:destroy-addons.
-      # This tells KRO to start EKS cluster deletion while addon cleanup runs
-      # in parallel, reducing total destroy time by ~10-15 min.
-      # Deleting the claim here (while all ArgoCD/KRO AppSets are still alive)
-      # means KRO processes the deletion correctly via the living Kind cluster.
-      - printf '{{.C_ERR}}▸ Submitting hub cluster claim deletion (parallel with addon cleanup)...{{.C_RESET}}\n'
-      - kubectl delete eksclusterwithvpc {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} --timeout=60s 2>/dev/null || true
-      # Kill the Kind cluster immediately so KRO can no longer reconcile the
-      # eksclusterwithvpc resource. Without this, KRO sees the hub EKS cluster
-      # go NOT_FOUND (after deletion) and RECREATES it (standard KRO reconcile
-      # loop: desired ≠ actual → create). Killing Kind stops the reconcile loop
-      # while the AWS EKS deletion is still in progress.
+      # Kill the Kind cluster FIRST — before hub:destroy-addons.
+      # This stops KRO from reconciling the hub eksclusterwithvpc resource.
+      # Without this, KRO may recreate the hub EKS cluster after we delete it
+      # (standard KRO reconcile: desired state ≠ actual → create).
+      # hub:destroy-addons only needs the hub EKS cluster API (via hub-kubeconfig),
+      # not the Kind cluster, so killing Kind here is safe.
       - cmd: |
           kind delete cluster --name {{.KIND_CLUSTER_NAME}} 2>/dev/null || true
           printf '{{.C_OK}}✓ Kind cluster removed — KRO cannot recreate hub EKS.\n'
         ignore_error: true
       # Gracefully tear down the addon layer on the HUB EKS.
-      # EKS cluster deletion runs concurrently on the AWS side.
       # All-best-effort: a no-op if the hub is already gone.
       - task: hub:destroy-addons
-      # Delete any remaining EKS Capabilities (ack, argocd, kro).
-      # hub:destroy-addons may have deleted the capability roles (via ACK CR deletion),
-      # which causes the capabilities to go DEGRADED. Delete them explicitly here so
-      # aws eks delete-cluster can proceed (fails with ResourceInUseException if any
-      # capability is still registered).
-      - printf '{{.C_ERR}}▸ Deleting remaining EKS Capabilities (ack, argocd, kro)...{{.C_RESET}}\n'
+      # Delete EKS Capabilities (ack, argocd, kro) directly via AWS API.
+      # aws eks delete-cluster fails with ResourceInUseException if capabilities exist.
+      - printf '{{.C_ERR}}▸ Deleting EKS Capabilities (ack, argocd, kro)...{{.C_RESET}}\n'
       - cmd: |
           for CAP in ack argocd kro; do
             STATUS=$(aws eks list-capabilities --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
@@ -1422,12 +1412,19 @@ tasks:
             sleep 15
           done
         ignore_error: true
+      # Delete the hub EKS cluster directly via AWS API (bypasses KRO entirely).
+      # Kind is already dead so KRO cannot recreate it.
+      - printf '{{.C_ERR}}▸ Deleting hub EKS cluster via AWS API...{{.C_RESET}}\n'
+      - cmd: |
+          STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+          if [ "$STATUS" != "NOT_FOUND" ] && [ "$STATUS" != "DELETING" ]; then
+            aws eks delete-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} 2>/dev/null || true
+            echo "  Submitted hub EKS cluster deletion"
+          fi
+        ignore_error: true
       - printf '{{.C_STEP}}▸ Waiting for EKS cluster deletion...{{.C_RESET}}\n'
       - cmd: |
-          # Wait for the actual AWS EKS cluster to be gone.
-          # The cluster claim was submitted at the start (before hub:destroy-addons),
-          # so by the time we reach here, the hub EKS may already be gone or close
-          # to it. With Kind already killed, KRO cannot recreate the cluster.
           for i in $(seq 1 120); do
             STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
               --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
