@@ -44,7 +44,6 @@ keycloak:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
       gitlab_domain_name: '{{ or (index .metadata.annotations "gitlab_domain_name") .metadata.annotations.ingress_domain_name }}'
       insecure: '{{default "false" .metadata.annotations.insecure}}'
-      systemNodepool: '{{ index .metadata.annotations "system_nodepool" | default "system" }}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
