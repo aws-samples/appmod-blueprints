@@ -206,10 +206,53 @@ spec:
         content: "\n  ${{ parameters.clusterName }}: \"${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\""
     - id: addKroClusterConfig
       name: Update kro Clusters Configuration
-      action: roadiehq:utils:fs:append
+      # Use roadiehq:utils:merge (not fs:append): merge creates the file (and parent
+      # dirs) if missing and deep-merges into an existing one, so this works for any
+      # tenant whether or not tenants/<tenant>/kro-clusters/values.yaml already exists.
+      # fs:append required the file to pre-exist and raised ENOENT for tenants that
+      # were never seeded with a kro-clusters/values.yaml (e.g. control-plane).
+      action: roadiehq:utils:merge
       input:
         path: ./repo/gitops/fleet/spoke-values/tenants/${{ parameters.tenant }}/kro-clusters/values.yaml
-        content: "\n  ${{ parameters.clusterName }}:\n    managementAccountId: \"${{ parameters.managementAccountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\"\n    accountId: \"${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\"\n    tenant: \"${{ parameters.tenant }}\"\n    environment: \"${{ parameters.environment }}\"\n    region: \"${{ parameters.region }}\"\n    k8sVersion: \"${{ parameters.k8sVersion }}\"\n    resourcePrefix: \"${{ parameters.resourcePrefix }}\"\n    adminRoleName: \"${{ steps['fetchSystem'].output.entity.spec.admin_role_name }}\"\n    domainName: \"${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}\"\n    gitops:\n      addonsRepoUrl: \"${{ parameters.addonsRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n      fleetRepoUrl: \"${{ parameters.fleetRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n      platformRepoUrl: \"${{ parameters.platformRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n      workloadRepoUrl: \"${{ parameters.workloadRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}\"\n    addons:\n      enable_argo_rollouts: \"true\"\n      enable_cert_manager: \"true\"\n      enable_cni_metrics_helper: \"true\"\n      enable_crossplane: \"true\"\n      enable_crossplane_aws: \"true\"\n      enable_external_secrets: \"true\"\n      enable_flux: \"true\"\n      enable_ingress_nginx: \"true\"\n      enable_kube_state_metrics: \"true\"\n      enable_kubevela: \"true\"\n      enable_metrics_server: \"true\"\n      enable_platform_manifests: \"true\"\n      enable_prometheus_node_exporter: \"true\"\n      enable_aws_for_fluentbit: \"true\"\n      enable_kro_manifests: \"true\"\n      enable_platform_manifests_bootstrap: \"true\"\n      enable_ingress_class_alb: \"${{ parameters.enableIngressClassAlb }}\"\n      enable_kyverno: \"${{ parameters.enableKyverno }}\"\n      enable_kyverno_policies: \"${{ parameters.enableKyvernoPolicies }}\"\n      enable_kyverno_policy_reporter: \"${{ parameters.enableKyvernoPolicyReporter }}\"\n      enable_aws_efs_csi_driver: \"${{ parameters.enableAwsEfsCsiDriver }}\""
+        content:
+          clusters:
+            ${{ parameters.clusterName }}:
+              managementAccountId: "${{ parameters.managementAccountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}"
+              accountId: "${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}"
+              tenant: "${{ parameters.tenant }}"
+              environment: "${{ parameters.environment }}"
+              region: "${{ parameters.region }}"
+              k8sVersion: "${{ parameters.k8sVersion }}"
+              resourcePrefix: "${{ parameters.resourcePrefix }}"
+              adminRoleName: "${{ steps['fetchSystem'].output.entity.spec.admin_role_name }}"
+              domainName: "${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}"
+              gitops:
+                addonsRepoUrl: "${{ parameters.addonsRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}"
+                fleetRepoUrl: "${{ parameters.fleetRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}"
+                platformRepoUrl: "${{ parameters.platformRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}"
+                workloadRepoUrl: "${{ parameters.workloadRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}"
+              addons:
+                enable_argo_rollouts: "true"
+                enable_cert_manager: "true"
+                enable_cni_metrics_helper: "true"
+                enable_crossplane: "true"
+                enable_crossplane_aws: "true"
+                enable_external_secrets: "true"
+                enable_flux: "true"
+                enable_ingress_nginx: "true"
+                enable_kube_state_metrics: "true"
+                enable_kubevela: "true"
+                enable_metrics_server: "true"
+                enable_platform_manifests: "true"
+                enable_prometheus_node_exporter: "true"
+                enable_aws_for_fluentbit: "true"
+                enable_kro_manifests: "true"
+                enable_platform_manifests_bootstrap: "true"
+                enable_ingress_class_alb: "${{ parameters.enableIngressClassAlb }}"
+                enable_kyverno: "${{ parameters.enableKyverno }}"
+                enable_kyverno_policies: "${{ parameters.enableKyvernoPolicies }}"
+                enable_kyverno_policy_reporter: "${{ parameters.enableKyvernoPolicyReporter }}"
+                enable_aws_efs_csi_driver: "${{ parameters.enableAwsEfsCsiDriver }}"
     - id: addKroClusterJson
       name: Register kro cluster for the ApplicationSet git generator
       action: roadiehq:utils:fs:write
@@ -262,7 +305,7 @@ spec:
       name: Add cluster JSON for ApplicationSet discovery
       action: roadiehq:utils:fs:write
       input:
-        path: ./repo/gitops/fleet/kro-values/tenants/${{ parameters.tenant }}/kro-clusters/clusters/${{ parameters.clusterName }}.json
+        path: ./repo/gitops/fleet/spoke-values/tenants/${{ parameters.tenant }}/kro-clusters/clusters/${{ parameters.clusterName }}.json
         content: |
           {"clusterName": "${{ parameters.clusterName }}"}
     - id: createGitlabMergeRequest
