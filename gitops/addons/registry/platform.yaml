@@ -133,6 +133,8 @@ backstage:
       accountId: '{{.metadata.annotations.aws_account_id}}'
       resource_prefix: '{{.metadata.annotations.resource_prefix}}'
       insecure: '{{default "false" .metadata.annotations.insecure}}'
+      systemNodepool: '{{ index .metadata.annotations "system_nodepool" | default "system" }}'
+      generalPurposeNodepool: '{{ index .metadata.annotations "general_purpose_nodepool" | default "general-purpose" }}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
