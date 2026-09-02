@@ -170,7 +170,11 @@ spec:
         						}]
         					}
         					env: [
-        						if parameter.env != _|_ for _, e in parameter.env {e},
+        						if parameter.env != _|_ for _, e in parameter.env if e.name != "APP_BASE_PATH" {e},
+        						{
+        							name:  "APP_BASE_PATH"
+        							value: parameter.appPath
+        						},
         						if parameter.serviceAccount != "default" {
         							{
         								name:  "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"
