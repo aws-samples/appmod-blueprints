@@ -309,7 +309,7 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
     - id: rolloutWithoutDynamoDB
       includeWhen:
@@ -363,7 +363,7 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
     - id: rolloutWithGatesAndDynamoDB
       includeWhen:
@@ -429,7 +429,7 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
     - id: rolloutWithGatesWithoutDynamoDB
       includeWhen:
@@ -495,7 +495,7 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
     # Services removed from Kro - Argo Rollouts will create and manage them automatically
     # - id: service
