@@ -441,16 +441,26 @@ tasks:
         set_var AWS_ACCOUNT_ID "{{.AWS_ACCOUNT_ID}}"
         PREFIX="{{.RESOURCE_PREFIX}}"
         AMG_ENDPOINT=""
-        AMG_WS_ID=$(aws grafana list-workspaces --region "{{.AWS_REGION}}" \
-          --query "workspaces[?name=='${PREFIX}-observability'].id | [0]" --output text 2>/dev/null || echo "")
-        if [ -n "$AMG_WS_ID" ] && [ "$AMG_WS_ID" != "None" ]; then
-          AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WS_ID" \
-            --region "{{.AWS_REGION}}" --query 'workspace.endpoint' --output text 2>/dev/null || echo "")
-        fi
+        # AMG is provisioned asynchronously by Crossplane and may not be ACTIVE yet when
+        # setup-env runs. Retry briefly so GRAFANA_URL resolves to the real AMG endpoint
+        # instead of a non-existent CloudFront /grafana path — there is NO in-cluster
+        # Grafana behind the ALB; Grafana is Amazon Managed Grafana (AMG).
+        for _ in $(seq 1 18); do
+          AMG_WS_ID=$(aws grafana list-workspaces --region "{{.AWS_REGION}}" \
+            --query "workspaces[?name=='${PREFIX}-observability'].id | [0]" --output text 2>/dev/null || echo "")
+          if [ -n "$AMG_WS_ID" ] && [ "$AMG_WS_ID" != "None" ]; then
+            AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WS_ID" \
+              --region "{{.AWS_REGION}}" --query 'workspace.endpoint' --output text 2>/dev/null || echo "")
+          fi
+          [ -n "$AMG_ENDPOINT" ] && [ "$AMG_ENDPOINT" != "None" ] && break
+          sleep 10
+        done
         if [ -n "$AMG_ENDPOINT" ] && [ "$AMG_ENDPOINT" != "None" ]; then
           set_var GRAFANA_URL "https://${AMG_ENDPOINT}"
         else
-          set_var GRAFANA_URL "https://${CF}/grafana"
+          # Never fall back to ${CF}/grafana — that path does not exist (404). Point at the
+          # AMG console workspace listing so the link is always valid (SAML login via Keycloak).
+          set_var GRAFANA_URL "https://{{.AWS_REGION}}.console.aws.amazon.com/grafana/home?region={{.AWS_REGION}}#/workspaces"
         fi
         set_var GITLAB_URL "https://${GITLAB_CF}"
         set_var GITLAB_DOMAIN "${GITLAB_CF}"
