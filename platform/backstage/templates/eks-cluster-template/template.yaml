@@ -281,13 +281,6 @@ spec:
             owner: user:guest
             lifecycle: experimental
             type: service
-    - id: addClusterJsonForAppSet
-      name: Add cluster JSON for ApplicationSet discovery
-      action: roadiehq:utils:fs:write
-      input:
-        path: ./repo/gitops/fleet/spoke-values/tenants/${{ parameters.tenant }}/kro-clusters/clusters/${{ parameters.clusterName }}.json
-        content: |
-          {"clusterName": "${{ parameters.clusterName }}"}
     - id: createGitlabMergeRequest
       name: Create a Merge Request
       action: publish:gitlab:merge-request
