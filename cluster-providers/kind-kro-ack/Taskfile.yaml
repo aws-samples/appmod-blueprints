@@ -1543,12 +1543,21 @@ tasks:
             echo "  deleting IAM policy $POL"; aws iam delete-policy --policy-arn "$POL" 2>/dev/null || true
           done
           # 6d. Secrets Manager: bootstrap secrets not cleaned by SM delete commands above.
-          for SECRET in "${HUB}/secrets" "${HUB}/keycloak-clients" \
+          for SECRET in "${HUB}/secrets" "${HUB}/keycloak-clients" "${HUB}/config" "${HUB}/keycloak" \
                         "${PREFIX}/team-rust/amp-workspace" "${PREFIX}/team-java/amp-workspace" \
-                        "${PREFIX}/platform/amp"; do
+                        "${PREFIX}/platform/amp" "${PREFIX}-devlake/mysql-connection"; do
             aws secretsmanager delete-secret --secret-id "$SECRET" \
               --force-delete-without-recovery --region "$REGION" 2>/dev/null || true
-            echo "  deleted secret $SECRET (if existed)"
+          done
+          echo "  deleted bootstrap secrets (if existed)"
+          # 6di. Delete all other peeks-* Secrets Manager secrets by prefix.
+          for SECRET_ARN in $(aws secretsmanager list-secrets --region "$REGION" \
+                --filters Key=name,Values="${PREFIX}" \
+                --query 'SecretList[].ARN' --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$SECRET_ARN" ] && continue
+            aws secretsmanager delete-secret --secret-id "$SECRET_ARN" \
+              --force-delete-without-recovery --region "$REGION" 2>/dev/null || true
+            echo "  ✓ deleted secret $SECRET_ARN"
           done
           # 6e. AMP workspaces tagged with the resource prefix (Crossplane-managed,
           #     orphaned when crossplane-base AppSet is deleted before workspace CR).
@@ -1558,6 +1567,24 @@ tasks:
             [ -z "$WS_ID" ] && continue
             aws amp delete-workspace --workspace-id "$WS_ID" --region "$REGION" 2>/dev/null || true
             echo "  ✓ deleted AMP workspace $WS_ID"
+          done
+          # 6ei. AMP scrapers (created by observability bootstrap, not deleted with workspace).
+          for SCRAPER_ID in $(aws amp list-scrapers --region "$REGION" \
+                --query 'scrapers[].scraperId' --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$SCRAPER_ID" ] && continue
+            aws amp delete-scraper --scraper-id "$SCRAPER_ID" --region "$REGION" 2>/dev/null || true
+            echo "  ✓ deleted AMP scraper $SCRAPER_ID"
+          done
+          # 6eii. DevLake RDS instance (created by KubeVela in kind-kro-ack path).
+          #       Named devlake-mysql-db-* and scoped to the peeks VPC. Not ACK-tagged.
+          for DB in $(aws rds describe-db-instances --region "$REGION" \
+                --query "DBInstances[?starts_with(DBInstanceIdentifier, 'devlake-')].DBInstanceIdentifier" \
+                --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$DB" ] && continue
+            aws rds delete-db-instance --db-instance-identifier "$DB" \
+              --skip-final-snapshot --delete-automated-backups \
+              --region "$REGION" 2>/dev/null || true
+            echo "  ✓ initiated RDS deletion: $DB"
           done
           # 6f. EKS OIDC providers for peeks clusters. IRSA uses cluster-specific OIDC
           #     providers that accumulate across re-deploys (one per EKS cluster per run).
@@ -1600,6 +1627,38 @@ tasks:
           # 6h. Orphaned spoke VPCs (ACK ec2 VPC resources that survived cluster delete).
           #     Scoped by the EKS ACK tag (eks:kubernetes-resource-name=<PREFIX>-spoke-*).
           python3 "{{.ROOT_DIR}}/scripts/sweep-spoke-vpcs.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" 2>&1 || true
+          # 6i. IDE VPC non-default security groups (created by workshop, not by CFN).
+          #     These include ALB SGs, EKS cluster SGs, RDS SGs, AMG SGs, k8s-traffic SGs.
+          #     If left, they block CFN's VPC deletion → DELETE_FAILED on VPC subnet.
+          #     We only delete SGs in the CFN-managed workshop VPC, identified by the
+          #     aws:cloudformation:stack-name tag on the VPC.
+          for VPC_ID in $(aws ec2 describe-vpcs --region "$REGION" \
+                --filters "Name=tag:aws:cloudformation:stack-id,Values=*" \
+                --query 'Vpcs[].VpcId' --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$VPC_ID" ] && continue
+            # Check if this VPC belongs to our workshop stack (has the stack tag)
+            STACK_TAG=$(aws ec2 describe-vpcs --region "$REGION" --vpc-ids "$VPC_ID" \
+              --query "Vpcs[0].Tags[?Key=='aws:cloudformation:stack-name'].Value | [0]" \
+              --output text 2>/dev/null || true)
+            echo "$STACK_TAG" | grep -qi "tCaT\|peeks-workshop" || continue
+            echo "  Cleaning SGs in workshop VPC $VPC_ID..."
+            # Revoke cross-SG rules first, then delete
+            SG_IDS=$(aws ec2 describe-security-groups --region "$REGION" \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+              --output text 2>/dev/null | tr '\t' '\n')
+            for SG in $SG_IDS; do
+              [ -z "$SG" ] && continue
+              # Revoke any cross-SG references
+              SG_IN=$(aws ec2 describe-security-groups --region "$REGION" --group-ids "$SG" \
+                --query 'SecurityGroups[0].IpPermissions[?UserIdGroupPairs]' \
+                --output json 2>/dev/null)
+              [ -n "$SG_IN" ] && [ "$SG_IN" != "[]" ] && \
+                aws ec2 revoke-security-group-ingress --region "$REGION" \
+                  --group-id "$SG" --ip-permissions "$SG_IN" 2>/dev/null || true
+              aws ec2 delete-security-group --group-id "$SG" --region "$REGION" 2>/dev/null || true
+            done
+          done
         ignore_error: true
       - cmd: |
           if [ "{{.CLEANUP_KIND}}" = "true" ]; then
