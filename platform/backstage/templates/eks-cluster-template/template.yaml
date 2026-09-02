@@ -281,26 +281,6 @@ spec:
             owner: user:guest
             lifecycle: experimental
             type: service
-    # - id: mergeConfig
-    #   name: Update Clusters Configuration
-    #   action: roadiehq:utils:merge
-    #   input:
-    #     path: ./repo/gitops/fleet/kro-values/tenants/tenant1/kro-clusters/values.yaml
-    #     content:
-    #       clusters:
-    #         '${{ parameters.clusterName }}': '${{ parameters.accountId }}'
-    #         preserveYamlComments: true
-    # - id: parse
-    #   name: read file
-    #   action: roadiehq:utils:fs:parse
-    #   input:
-    #     path: ./repo/gitops/addons/tenants/tenant1/default/addons/multi-acct/values.yaml
-    # - id: log
-    #   name: Console.log
-    #   action: debug:log
-    #   input:
-    #     message: |
-    #       Content: `${{ steps['parse'].output.content }}`
     - id: addClusterJsonForAppSet
       name: Add cluster JSON for ApplicationSet discovery
       action: roadiehq:utils:fs:write
