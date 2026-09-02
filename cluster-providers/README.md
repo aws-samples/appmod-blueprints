@@ -22,6 +22,7 @@ Any provider must produce a running hub cluster that satisfies the conditions be
 | `config.yaml` | `hub.clusterName`, `aws.region`, `aws.accountId` | Cluster identity |
 | `config.yaml` | `repo.url`, `repo.revision`, `repo.basepath` | Git source for ArgoCD |
 | `config.yaml` | `domain`, `resourcePrefix`, `ingressName` | Ingress and naming |
+| `config.yaml` | `domainResolver` | Consumer command supplying an ingress hostname that does not exist yet at install time (e.g. a CloudFront distribution). See [docs/platform/domain-resolution-design.md](../docs/platform/domain-resolution-design.md) |
 | `config.yaml` | `identityCenter.*`, `argocdCapability.*` | EKS ArgoCD Capability setup |
 | `addons/registry/core.yaml` | `argocd.defaultVersion`, `external-secrets.defaultVersion` | Versions (no hardcoding) |
 | AWS credentials | IAM permissions | EKS, VPC, IAM, Secrets Manager, Pod Identity |
@@ -127,6 +128,34 @@ must expose these tasks in its `Taskfile.yaml`:
 
 The root Taskfile calls these as `<provider-name>:install`, etc.
 
+### Domain resolution (required behaviour, not a task)
+
+A provider must resolve the ingress hostname **between its domain-independent and
+domain-dependent work**, not at the start of `install`. Resolution order is `domain` in
+config, then `domainResolver`, then fail; a provider must never deploy with an empty
+domain. Both shipped providers implement this as `hub:seed-infra` → `domain:resolve` →
+`hub:seed-platform`, with the second phase run as a **nested `task` process** because
+go-task evaluates global `vars:` only once, at parse time.
+
+Placing resolution late is what lets a consumer provision an asynchronously-created
+hostname (typically CloudFront, 5–15 min) in parallel with the ~20 min cluster build.
+
+Full rationale, the resolver contract, and the traps involved:
+[docs/platform/domain-resolution-design.md](../docs/platform/domain-resolution-design.md).
+
+### Capability parity (binding)
+
+Providers are interchangeable behind one `config.yaml`, so **a capability added to one
+provider must be added to all of them**. Where that is not yet true, the lacking provider
+must **fail fast** with a clear message rather than silently ignore the input — a silently
+ignored field means `config.local.yaml` means different things depending on
+`clusterProvider`.
+
+Current known gap: `kind-crossplane` cannot provision the hub into a pre-existing VPC, so
+it rejects `hub.network.vpcId` in pre-flight
+([#833](https://github.com/aws-samples/appmod-blueprints/issues/833)). `kind-kro-ack`
+supports it.
+
 ### Configuration
 
 Providers read shared configuration from `gitops/config.yaml`:
@@ -139,9 +168,12 @@ Providers read shared configuration from `gitops/config.yaml`:
 | `repo.basepath` | Path prefix in the repo |
 | `hub.clusterName` | Hub cluster name |
 | `hub.kubernetesVersion` | Kubernetes version |
+| `hub.network.vpcId`, `hub.network.subnetIds` | Optional: provision the hub into an existing VPC instead of creating one. Only `subnetIds[0]` and `[1]` are read. Supported by `kind-kro-ack`; `kind-crossplane` fails fast (see above) |
 | `aws.region` | AWS region |
 | `aws.accountId` | AWS account ID |
-| `domain` | Base domain for ingress |
+| `domain` | Base domain for ingress. May be empty only when `domainResolver` is set |
+| `domainResolver` | Command that blocks until the ingress hostname is known and prints it |
+| `insecure` | ALB serves plain HTTP (consumer terminates TLS upstream, e.g. CloudFront) |
 | `identityCenter.*` | AWS Identity Center config (for EKS ArgoCD Capability) |
 | `argocdCapability.*` | ArgoCD capability config |
 
