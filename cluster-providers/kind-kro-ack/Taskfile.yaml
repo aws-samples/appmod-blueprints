@@ -887,9 +887,20 @@ tasks:
       CLUSTER_ARN:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null
       # ArgoCD EKS Capability server URL (host, no scheme) so Backstage links to the
-      # capability endpoint, not the CloudFront domain. Empty until the capability is ACTIVE.
+      # capability endpoint, not the CloudFront domain. The capability may not be ACTIVE
+      # yet when hub:seed first runs, so retry briefly rather than capturing an empty value
+      # (an empty aws_argocd_url makes platform.yaml fall back to the CloudFront domain,
+      # which does NOT serve ArgoCD -> broken deep-links in Backstage).
       ARGOCD_URL:
-        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null | sed 's|https://||' || echo ""
+        sh: |
+          for _ in $(seq 1 30); do
+            U=$(aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd \
+                  --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null \
+                | sed 's|https://||')
+            if [ -n "$U" ] && [ "$U" != "None" ]; then echo "$U"; exit 0; fi
+            sleep 10
+          done
+          echo ""
       VPC_ID:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
       # Private subnets + cluster SG for the devlake RDS `vpc` object (see cmds). Mirrors the
@@ -917,6 +928,28 @@ tasks:
           exit 1
         fi
         echo "[hub:seed] ingress_domain_name=$RUNTIME_DOMAIN"
+        # Preserve overlay + argocd wiring across re-seeds. This task rebuilds the entire
+        # <hub>/config metadata from scratch and has no status: guard, so it runs on every
+        # install. Without re-merging these, a second run WIPES:
+        #   - overlay_repo_url/revision/basepath -> disables the whole fleet-config overlay
+        #     fleet-wide and orphans spokes that exist only in the overlay
+        #     (see docs multi-repo-architecture.md "re-seed must preserve overlay_repo_url");
+        #   - aws_argocd_url -> falls back to the CloudFront domain (which does not serve
+        #     ArgoCD) -> broken Backstage deep-links.
+        EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
+          --query SecretString --output text 2>/dev/null || echo "")
+        PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""
+        if [ -n "$EXISTING" ]; then
+          EMETA=$(echo "$EXISTING" | jq -r '.metadata // "{}"' | jq -c '. as $m | (if ($m|type)=="string" then ($m|fromjson) else $m end)' 2>/dev/null || echo "{}")
+          PRESERVED_OVERLAY_URL=$(echo "$EMETA"  | jq -r '.overlay_repo_url // ""')
+          PRESERVED_OVERLAY_REV=$(echo "$EMETA"  | jq -r '.overlay_repo_revision // ""')
+          PRESERVED_OVERLAY_BASE=$(echo "$EMETA" | jq -r '.overlay_repo_basepath // ""')
+          PRESERVED_ARGOCD=$(echo "$EMETA"       | jq -r '.aws_argocd_url // ""')
+        fi
+        # Prefer a freshly-resolved capability URL; fall back to the previously stored one so a
+        # transient describe-capability miss never blanks a good value.
+        ARGOCD_FINAL="{{.ARGOCD_URL}}"
+        [ -z "$ARGOCD_FINAL" ] && ARGOCD_FINAL="$PRESERVED_ARGOCD"
         # The aws-resources ExternalSecret reads <hub>/config property `vpc` into
         # peeks-hub-vpc-secret.vpc_data; the init-env-config Job then parses .id / .subnet_ids /
         # .cluster_security_group_id from it to build the vpc-config EnvironmentConfig that the
@@ -928,12 +961,22 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id:$id, subnet_ids:$subnet_ids, cluster_security_group_id:$cluster_security_group_id}' | jq -c .)
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"'"$RUNTIME_DOMAIN"'","ingress_name":"{{.HUB_CLUSTER_NAME}}-platform","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.INGRESS_CERT_ARN}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"'"$GIT_DOMAIN"'","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"{{.ARGOCD_URL}}"}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"'"$RUNTIME_DOMAIN"'","ingress_name":"{{.HUB_CLUSTER_NAME}}-platform","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.INGRESS_CERT_ARN}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"'"$GIT_DOMAIN"'","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"'"$ARGOCD_FINAL"'"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '{"provider":"kro-ack"}' \
           --arg vpc "$VPC_JSON" \
           '{metadata: $metadata, config: $config, server: $server, addons: $addons, vpc: $vpc}')
+        # Re-merge preserved overlay wiring into the metadata (only keys that are non-empty),
+        # so a re-seed never drops the fleet-config overlay.
+        SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
+          --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
+          '.metadata |= ( (fromjson) as $m
+             | $m
+             | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
+             | (if $orv != "" then .overlay_repo_revision = $orv else . end)
+             | (if $ob  != "" then .overlay_repo_basepath = $ob  else . end)
+             | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}} 2>/dev/null \
