@@ -49,45 +49,22 @@ aws:
 # The platform never creates it — it only uses it for ingress host rules and URLs.
 domain: "<your-domain>"                      # e.g. idp.example.com
 
-# EXTENSION POINT — for a hostname that is not knowable when `task install` starts.
-# The usual case: a CloudFront distribution you create in parallel with the cluster,
-# whose domain only exists once it reaches Deployed (5–15 min).
+# EXTENSION POINT — for a hostname that does not exist yet when `task install` starts
+# (typically a CloudFront distribution you create in parallel with the cluster).
+# Set `domain: ""` and point this at a command. Resolution order: `domain`, then
+# `domainResolver`, else install fails. These two are the ONLY supported inputs.
 #
-# Leave `domain: ""` and point `domainResolver` at a command that BLOCKS until the
-# hostname is known. The platform runs it once, at the moment the domain is first
-# needed — after the ~20 min cluster build, so your provisioning and the cluster build
-# overlap. `task install` stays a single command.
+# Resolver contract: BLOCK until the hostname is known, print it as the LAST non-empty
+# line of stdout, exit 0. Progress to stderr. Path is repo-root-relative or absolute and
+# must be executable. The value is validated as a hostname before use.
+# Environment provided: PLATFORM_CONFIG_FILE, PLATFORM_REPO_ROOT.
 #
+# For CloudFront, use the shipped one:
 #   domain: ""
-#   domainResolver: "./my-provisioning/resolve-domain.sh"
+#   domainResolver: "scripts/resolve-cloudfront-domain.sh"
 #
-# RESOLVER CONTRACT
-#   - must BLOCK until the hostname exists, then exit 0
-#   - must print the hostname as the LAST non-empty line of stdout
-#   - progress/logging: prefer stderr. Earlier stdout lines are discarded, so a chatty
-#     resolver still works, but stderr keeps it unambiguous.
-#   - the value is validated as a hostname before use; a malformed one fails the install
-#     immediately rather than surfacing later as broken ingress
-#   - path is repo-root-relative, or absolute; must be executable
-#
-# A one-liner is enough, e.g.:
-#   #!/bin/sh
-#   aws cloudfront wait distribution-deployed --id "$ID" >&2
-#   aws cloudfront get-distribution --id "$ID" --query 'Distribution.DomainName' --output text
-#
-# Resolution order (first non-empty wins):
-#   1. `domain` above          — when set, the resolver is NOT run at all
-#   2. `domainResolver`        — a command printing the hostname
-#   3. otherwise install fails loudly rather than deploying with an empty domain
-#
-# `domain` and `domainResolver` are the ONLY supported ways to supply the hostname.
-# (There is a third, internal fallback retained solely for the in-repo workshop, which
-# predates this extension point. It is an implementation detail, is not part of the
-# consumer contract, and may be removed without notice — do not build against it.)
-#
-# NOTE: a *.cloudfront.net hostname implies `insecure: true` below (CloudFront
-# terminates TLS, the ALB serves HTTP). The platform warns if that combination is
-# inconsistent.
+# The resolver runs after the ~20 min cluster build, so your provisioning overlaps it.
+# A *.cloudfront.net hostname requires `insecure: true` below; the platform warns if not.
 domainResolver: ""
 
 # TLS / exposure:

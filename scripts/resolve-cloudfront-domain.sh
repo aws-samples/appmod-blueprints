@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
 # Reusable `domainResolver` for CloudFront exposure: prints the platform distribution's
-# domain name once it exists. Used by the in-repo workshop and by external consumers
-# (e.g. OAP) — wire it up with, in config.local.yaml:
+# domain name once it exists. Used by the in-repo workshop and by external consumers.
 #
-#     domain: ""
-#     domainResolver: "scripts/resolve-cloudfront-domain.sh"
+#   domain: ""
+#   domainResolver: "scripts/resolve-cloudfront-domain.sh"
 #
-# Contract (see config.yaml): block until the hostname is known, print it as the last
-# non-empty line of stdout, exit 0. Progress goes to stderr.
+# Contract (config.yaml): block until the hostname is known, print it as the last
+# non-empty stdout line, exit 0; progress to stderr.
 #
-# It waits for the distribution to EXIST, not to be Deployed: create-distribution returns
-# DomainName immediately, and the platform only needs the hostname to template ingress
-# rules. Deployment status matters for serving traffic, which happens later regardless.
+# Waits for the distribution to EXIST, not to be Deployed: create-distribution returns
+# DomainName immediately and the platform only needs the hostname string.
+# Looks it up every run rather than reading a recorded value, so it is idempotent and
+# survives the distribution or ALB being recreated.
 #
-# Inputs (all optional; PLATFORM_* are exported by the platform's domain:resolve):
-#   PLATFORM_CONFIG_FILE  path to config.local.yaml (used to derive the Comment)
-#   PLATFORM_REPO_ROOT    platform repo root (fallback for locating the config)
-#   CF_DISTRIBUTION_ID    look up this distribution directly
-#   CF_COMMENT            match on this Comment (default: "<hub.clusterName>-platform")
-#   CF_TIMEOUT_SECONDS    default 900        CF_POLL_SECONDS  default 15
-#
-# Looks the distribution up on every run rather than reading a recorded value, so it is
-# idempotent and survives the distribution or ALB being recreated.
+# Optional inputs (PLATFORM_* are exported by the platform's domain:resolve):
+#   PLATFORM_CONFIG_FILE / PLATFORM_REPO_ROOT  locate config.local.yaml
+#   CF_DISTRIBUTION_ID   look up this id directly
+#   CF_COMMENT           match this Comment (default "<hub.clusterName>-platform")
+#   CF_TIMEOUT_SECONDS   default 900        CF_POLL_SECONDS  default 15
+# Exits: 0 hostname printed, 1 bad prerequisite, 2 timed out.
 set -euo pipefail
 
 log(){ printf '[resolve-cf] %s\n' "$*" >&2; }

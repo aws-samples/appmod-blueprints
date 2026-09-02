@@ -63,20 +63,12 @@ vars:
     sh: yq '.fleetRepo.revision // .repo.revision' {{.CONFIG_FILE}}
   FLEET_REPO_BASEPATH:
     sh: yq '.fleetRepo.basepath // .repo.basepath' {{.CONFIG_FILE}}
-  # Ingress domain. Consumer-provided — the platform never creates it (see config.yaml).
-  #
-  # Precedence (first non-empty wins): `domain` in config, then private/async-domain.
-  # `domainResolver` is NOT run here: this var is evaluated at go-task PARSE time, i.e.
-  # before install has built anything, and blocking there would serialise the resolver
-  # against the cluster build and destroy the overlap it exists to provide. The resolver
-  # is invoked by `domain:resolve` (mid-install), which writes the result into config;
-  # the domain-dependent phase then runs as a NESTED go-task process so this var is
-  # re-parsed and picks the value up. See `_install:platform`.
-  #
-  # NOTE: `yq '.domain'` alone yields the STRING "null" for a missing key, which is
-  # non-empty and silently defeats every downstream `[ -z ... ]` check — that is how an
-  # `ingress_domain_name: "null"` could reach the cluster secret. `// ""` plus the grep
-  # normalises absent/empty/null to the empty string.
+  # Ingress domain (consumer-provided; see config.yaml). Precedence: config, then the
+  # internal async-domain fallback. `domainResolver` is NOT run here — global vars are
+  # evaluated at PARSE time, so blocking here would serialise the resolver against the
+  # cluster build. domain:resolve runs it mid-install; _install:platform then re-parses.
+  # `yq '.domain'` alone yields the STRING "null" for a missing key, which is non-empty
+  # and defeats `[ -z ]` checks — hence `// ""` + grep.
   DOMAIN:
     sh: |
       D=$(yq '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true)
@@ -185,28 +177,18 @@ tasks:
       - 'printf "{{.C_INFO}}  [%ds] credentials:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: crossplane:setup
       - 'printf "{{.C_INFO}}  [%ds] crossplane:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # ── Domain seam ────────────────────────────────────────────────────────────
-      # Everything ABOVE is domain-independent (kind, credentials, Crossplane, the hub
-      # claim, and inside hub:seed-infra the ~20 min EKS build). Everything BELOW needs
-      # the ingress domain, starting with secrets-manager:seed which writes
-      # ingress_domain_name into <hub>/config.
-      #
-      # Placing the seam here is what lets a consumer provision an asynchronously-created
-      # hostname (e.g. CloudFront) in parallel with the cluster build: domain:resolve is
-      # not reached until the cluster is up, so the resolver usually returns immediately.
+      # ── Domain seam ───────────────────────────────────────────────────────────
+      # Above: domain-independent, including the ~20 min EKS build in hub:seed-infra.
+      # Below: needs the domain (secrets-manager:seed writes ingress_domain_name).
+      # The seam is here so a consumer's async hostname provisioning overlaps the build.
       - task: hub:seed-infra
       - 'printf "{{.C_INFO}}  [%ds] hub:seed-infra done (cluster ready){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: domain:resolve
-      # Run the domain-dependent phase as a NESTED go-task PROCESS, not a `task:` dep.
-      # go-task evaluates global vars ONCE at parse time, so every {{.DOMAIN}} in THIS
-      # process is still the pre-resolution value (verified). A fresh process re-parses
-      # them, so DOMAIN is correct in all its consumers (urls, secrets-manager:seed,
-      # the GitLab fallback, KC_DOMAIN) with no runtime-read gymnastics at each site.
-      # `_install:platform` has no `desc:`, so it stays out of `task --list`: the public
-      # surface remains the single `task install`.
-      # Invoked from the repo root via the root Taskfile namespace for the same reason
-      # documented on install:phase1-observability-bg (a bare `task _install:platform`
-      # would re-resolve ROOT_DIR to this provider directory).
+      # NESTED go-task PROCESS, deliberately not a `task:` dep. go-task evaluates global
+      # vars ONCE at parse time, so {{.DOMAIN}} in THIS process is still pre-resolution;
+      # a fresh process re-parses, fixing all 4 consumers with no per-site runtime reads.
+      # No `desc:` on _install:platform keeps it out of `task --list`.
+      # Run from the repo root via the root namespace, else ROOT_DIR re-resolves here.
       - |
         REPO_ROOT="{{.ROOT_DIR}}" \
           sh -c 'cd "$REPO_ROOT" && task kind-crossplane:_install:platform'
@@ -260,10 +242,8 @@ tasks:
   domain:resolve:
     cmds:
       - |
-        # NOTE: no `[ ... ] && cmd` short-circuits below. This Taskfile sets errexit, and
-        # under go-task's mvdan/sh a failing test as the last statement of a block makes
-        # the enclosing compound return non-zero, which aborts the script silently
-        # (verified: it exited 1 before printing any diagnostics). Explicit `if` only.
+        # No `[ ... ] && cmd` below: under errexit, go-task's mvdan/sh aborts when a
+        # failing test ends a block — silently, before any diagnostics. Explicit `if` only.
         CFG="{{.CONFIG_FILE}}"
         D=$(yq '.domain // ""' "$CFG" 2>/dev/null | grep -v '^$' || true)
         if [ "$D" = "null" ]; then D=""; fi
@@ -283,18 +263,9 @@ tasks:
             exit 1
           fi
           printf '{{.C_STEP}}▸ Resolving domain via domainResolver (%s)...{{.C_RESET}}\n' "$RESOLVER"
-          # CONTRACT: the resolver BLOCKS until its hostname is known, then prints the
-          # hostname as the LAST non-empty line of stdout, and exits 0. Progress logging
-          # is fine — put it on stderr by preference, but any leading stdout lines are
-          # discarded too, so a chatty resolver still works. The value is validated below,
-          # so a malformed one fails HERE rather than surfacing later as broken ingress.
-          #
-          # The resolver is given platform context via the environment, so it needs no
-          # arguments and `domainResolver` stays a plain path:
-          #   PLATFORM_CONFIG_FILE — absolute path to config.local.yaml
-          #   PLATFORM_REPO_ROOT   — absolute path to the platform repo root
-          # A reusable resolver reads whatever it needs (cluster name, region, ...) from
-          # the config file rather than taking flags. See scripts/resolve-cloudfront-domain.sh.
+          # Contract (config.yaml): blocks, prints the hostname as the LAST non-empty
+          # stdout line, exits 0. Validated below so malformed output fails here rather
+          # than later as broken ingress. Context passed via env so no args are needed.
           RESOLVER_OUT=$(PLATFORM_CONFIG_FILE="$CFG" PLATFORM_REPO_ROOT="{{.ROOT_DIR}}" "$RESOLVER_CMD" || true)
           D=$(printf '%s\n' "$RESOLVER_OUT" | grep -v '^[[:space:]]*$' | tail -n 1 | tr -d '[:space:]' || true)
           if [ -z "$D" ]; then
@@ -304,36 +275,33 @@ tasks:
           fi
         fi
         if [ -z "$D" ]; then
-          # INTERNAL back-compat path — NOT part of the consumer contract. Retained only
-          # for the in-repo workshop (create-config.sh's parallel mode), which predates
-          # domainResolver and still writes this file. Consumers must use `domain` or
-          # `domainResolver`; this fallback is undocumented publicly and may be removed.
-          # POLL rather
-          # than read once — the writer may not have finished yet. kind-kro-ack previously
-          # polled 20 min for this, before hub:claim; the wait is shorter now because this
-          # runs AFTER the ~20 min cluster build, so an asynchronously-created hostname
-          # (CloudFront: 5-15 min) is normally already written by the time we get here.
-          # Bounded so a missing writer fails in minutes with a clear message instead of
-          # hanging the install indefinitely.
+          # INTERNAL fallback, NOT part of the consumer contract — retained only for
+          # configs written by an older create-config.sh, and removable.
+          #
+          # Poll ONLY if the file already exists: that means a writer is involved and may
+          # still be finishing. If it is absent entirely, nothing is going to create it, so
+          # fail at once rather than making someone who simply forgot to set `domain` wait
+          # out the timeout for a message telling them they forgot.
           DOMAIN_FILE="{{.ROOT_DIR}}/private/async-domain"
-          ASYNC_TRIES=20   # 20 x 15s = 5 min
-          _i=0
-          while [ "$_i" -lt "$ASYNC_TRIES" ]; do
-            if [ -s "$DOMAIN_FILE" ]; then
-              D=$(cat "$DOMAIN_FILE" 2>/dev/null | tr -d '[:space:]' || true)
-              if [ "$D" = "null" ]; then D=""; fi
-              if [ -n "$D" ]; then break; fi
+          if [ -e "$DOMAIN_FILE" ]; then
+            _i=0
+            while [ "$_i" -lt 20 ]; do   # 20 x 15s = 5 min
+              if [ -s "$DOMAIN_FILE" ]; then
+                D=$(cat "$DOMAIN_FILE" 2>/dev/null | tr -d '[:space:]' || true)
+                if [ "$D" = "null" ]; then D=""; fi
+                if [ -n "$D" ]; then break; fi
+              fi
+              if [ "$_i" = "0" ]; then
+                printf '{{.C_STEP}}▸ %s exists but is empty — waiting up to 5 min for its writer...{{.C_RESET}}\n' "$DOMAIN_FILE"
+              fi
+              _i=$((_i + 1))
+              sleep 15
+            done
+            if [ -n "$D" ]; then
+              printf '{{.C_INFO}}  domain from private/async-domain (after %ss): %s{{.C_RESET}}\n' "$((_i * 15))" "$D"
+            else
+              printf '{{.C_ERR}}✗ %s never produced a hostname (waited %ss){{.C_RESET}}\n' "$DOMAIN_FILE" "$((_i * 15))"
             fi
-            if [ "$_i" = "0" ]; then
-              printf '{{.C_STEP}}▸ No domain yet — polling %s for up to 5 min...{{.C_RESET}}\n' "$DOMAIN_FILE"
-            fi
-            _i=$((_i + 1))
-            sleep 15
-          done
-          if [ -n "$D" ]; then
-            printf '{{.C_INFO}}  domain from private/async-domain (after %ss): %s{{.C_RESET}}\n' "$((_i * 15))" "$D"
-          else
-            printf '{{.C_ERR}}✗ Timed out after 5 min waiting for %s{{.C_RESET}}\n' "$DOMAIN_FILE"
           fi
         fi
         if [ -z "$D" ]; then
@@ -345,20 +313,16 @@ tasks:
           printf '{{.C_INFO}}  Continuing would leave ingress_domain_name empty and misconfigure every addon.{{.C_RESET}}\n'
           exit 1
         fi
-        # Validate before persisting. This value becomes ingress_domain_name on the cluster
-        # secret and is templated into every addon's ingress host rules, so a malformed one
-        # fails much later and confusingly (broken ingress, bad OIDC issuer). Pattern
-        # matches config.schema.json's `domain`.
+        # Validate before persisting: this becomes ingress_domain_name and is templated
+        # into every addon's ingress rules. Pattern matches config.schema.json `domain`.
         if ! printf '%s' "$D" | grep -Eq '^[a-z0-9][a-z0-9.-]+[a-z0-9]$'; then
           printf '{{.C_ERR}}✗ Resolved domain is not a valid hostname: %s{{.C_RESET}}\n' "$D"
           printf '{{.C_INFO}}  Expected something like idp.example.com or d123.cloudfront.net{{.C_RESET}}\n'
           printf '{{.C_INFO}}  (lowercase alphanumerics, dots and hyphens; must start and end alphanumeric){{.C_RESET}}\n'
           exit 1
         fi
-        # A CloudFront hostname implies the consumer terminates TLS at CloudFront, so the
-        # ALB must serve plain HTTP. With insecure=false the AWS Load Balancer Controller
-        # looks for an ACM cert matching this host and will not find one. Warn rather than
-        # fail: a consumer may legitimately front *.cloudfront.net differently.
+        # CloudFront terminates TLS, so the ALB must serve HTTP. With insecure=false the
+        # LBC hunts for an ACM cert matching this host and fails. Warn, don't block.
         case "$D" in
           *.cloudfront.net)
             INSECURE_NOW=$(yq '.insecure // false' "$CFG" 2>/dev/null || echo "false")
@@ -405,16 +369,12 @@ tasks:
         # creds were never written and Grafana (external-grafana) failed to
         # reconcile.
         #
-        # The repo root comes from {{.ROOT_DIR}}: go-task expands it at TEMPLATE time,
-        # before any shell runs, so the backgrounded subshell below cannot affect it
-        # (verified). In an included Taskfile ROOT_DIR is the ROOT Taskfile's directory
-        # — i.e. the repo root — not this file's directory (that is TASKFILE_DIR).
-        #
-        # Do NOT reintroduce WORKSPACE_PATH / WORKING_REPO here. Those are Workshop
-        # Studio env vars; on any other machine (a customer running from an arbitrary
-        # checkout) both defaults are wrong, so this backgrounded job cd'd into a
-        # nonexistent directory and failed SILENTLY — the exact failure the workshop
-        # env vars were added to fix.
+        # {{.ROOT_DIR}} is expanded at TEMPLATE time, before any shell runs, so the
+        # backgrounded subshell cannot affect it. In an included Taskfile it is the ROOT
+        # Taskfile's dir (the repo root); this file's own dir is TASKFILE_DIR.
+        # Do NOT reintroduce WORKSPACE_PATH / WORKING_REPO: Workshop Studio env vars whose
+        # defaults are wrong elsewhere, which made this job cd into nothing and fail
+        # SILENTLY.
         REPO_ROOT="{{.ROOT_DIR}}"
         # Fail loudly rather than silently seeding nothing: `task kind-crossplane:...`
         # below requires the root Taskfile to be present at REPO_ROOT.
@@ -422,15 +382,10 @@ tasks:
           printf '{{.C_ERR}}✗ observability seed not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
           exit 1
         fi
-        # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`.
-        # go-task runs cmds through the mvdan/sh interpreter, which KILLS its background
-        # jobs when the task body exits. A bare `( ... ) &` is therefore terminated almost
-        # immediately: verified that the redirect target is never even created, so the
-        # long AMP poll (30+ min) could never survive. Only a fast-failing child ever
-        # produced log output, which is why this looked like it worked.
-        # The outer `sh` exits at once, orphaning the subshell so it outlives go-task.
-        # REPO_ROOT is passed through the environment (not interpolated into the script
-        # string) so paths containing spaces or quotes are safe.
+        # DETACH via double-fork, NOT a bare `( ... ) &`: go-task's mvdan/sh KILLS its
+        # background jobs when the task body exits — verified the redirect target was
+        # never even created, so the 30+ min AMP poll could never survive. The outer `sh`
+        # exits at once, orphaning the subshell. REPO_ROOT via env so spaces are safe.
         REPO_ROOT="$REPO_ROOT" \
           sh -c '( cd "$REPO_ROOT" && task kind-crossplane:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &'
         printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'

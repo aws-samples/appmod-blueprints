@@ -250,12 +250,9 @@ printf 'aws:\n'                                        >> "$OUTPUT_FILE"
 printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
-# domain is empty at config-generation time: the CloudFront distribution is created in
-# the background by _start_platform_infra (below) and its hostname does not exist yet.
-# Instead of communicating it through a file, declare the platform's supported extension
-# point — domainResolver — and let `task install` resolve it after the cluster build.
-# scripts/resolve-cloudfront-domain.sh looks the distribution up by Comment, so it works
-# on re-runs and needs no state passed between the two scripts.
+# domain is empty here: the distribution is created in the background below and its
+# hostname does not exist yet. Declare the platform's domainResolver instead of passing a
+# file, and let `task install` resolve it after the cluster build.
 printf 'domain: ""\n'                                  >> "$OUTPUT_FILE"
 printf 'domainResolver: "scripts/resolve-cloudfront-domain.sh"\n' >> "$OUTPUT_FILE"
 printf 'insecure: true\n'                              >> "$OUTPUT_FILE"
@@ -352,15 +349,10 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
     HUB_CLUSTER_NAME="${RESOURCE_PREFIX:-peeks}-hub"
     ALB_NAME="${HUB_CLUSTER_NAME}-platform"
 
-    # Wait for pre-requisites: the VPC must actually be resolvable, since everything
-    # below (security group, ALB, VPC origin) is created inside it.
-    #
-    # Previously this loop gated on `[ -f /etc/profile.d/workshop.sh ]` as a proxy for
-    # "VPC prerequisites ready". That file has no writer in this repo — it comes from the
-    # CDK bootstrap — so on a self-paced run it never appears, the loop burned all 30
-    # attempts (~5 min) and then proceeded anyway, printing "Pre-requisites ready". Gate on
-    # the real precondition instead, and fail loudly if it is never met rather than
-    # continuing into ALB creation that cannot succeed.
+    # Gate on the real precondition: the VPC must resolve, since the SG, ALB and VPC
+    # origin are all created inside it. This previously gated on the existence of
+    # /etc/profile.d/workshop.sh (no writer in this repo — it comes from the CDK), so on a
+    # self-paced run it burned all 30 attempts and continued anyway.
     echo "[$(date +%H:%M:%S)] Waiting for VPC $HUB_VPC_ID to be resolvable..."
     _vpc_ready=false
     for _i in $(seq 1 30); do
@@ -547,9 +539,7 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
       [ "$_CF_DOMAIN" = "None" ] && _CF_DOMAIN=""
       echo "[$(date +%H:%M:%S)] CF_DOMAIN result: $_CF_DOMAIN"
       if [ -n "$_CF_DOMAIN" ]; then
-        # No file is written: the platform's domainResolver
-        # (scripts/resolve-cloudfront-domain.sh) discovers this distribution by its
-        # Comment. Nothing needs to be handed between the two scripts.
+        # No file written: domainResolver discovers this distribution by Comment.
         echo "[$(date +%H:%M:%S)] ✓ CloudFront created: $_CF_DOMAIN"
       else
         echo "[$(date +%H:%M:%S)] ERROR: CloudFront creation failed — task install will fail"
@@ -560,15 +550,11 @@ if [ -n "${HUB_VPC_ID:-}" ]; then
   export -f _start_platform_infra
   export _PLATFORM_INFRA_DIR _VPC_ORIGIN_FILE _ALB_ARN_FILE _INFRA_LOG RESOURCE_PREFIX
 
-  # Launch provisioning in the background and return immediately. The platform's
-  # domain:resolve calls scripts/resolve-cloudfront-domain.sh (wired in as domainResolver
-  # above), which looks the distribution up by Comment and blocks until it exists. So this
-  # script does not need to wait, communicate the domain through a file, or re-create the
-  # distribution on a second code path.
-  #
-  # Idempotency is handled inside the background function: it reuses an existing
-  # distribution (by Comment, then by VPC origin) rather than creating a duplicate. A
-  # re-run is therefore safe, and the resolver re-derives the domain from AWS each time.
+  # Launch provisioning in the background and return. The platform's domain:resolve calls
+  # scripts/resolve-cloudfront-domain.sh, which finds the distribution by Comment and
+  # blocks until it exists — so nothing needs waiting for, passing through a file, or
+  # re-creating on a second code path. The background function reuses an existing
+  # distribution rather than duplicating it, so a re-run is safe.
   echo "  ▸ Starting ALB + VPC Origin + CloudFront creation in background..."
   bash -c '_start_platform_infra "$@"' _ "$REGION" "$HUB_VPC_ID" "${HUB_SUBNET_IDS:-}" &
   echo "  ▸ Background PID=$! (log: $_INFRA_LOG)"
