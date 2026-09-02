@@ -1405,6 +1405,16 @@ tasks:
       # Delete the hub claim — KRO cascades to ACK which deletes AWS resources
       - printf '{{.C_ERR}}▸ Deleting hub cluster claim...{{.C_RESET}}\n'
       - kubectl delete eksclusterwithvpc {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} --timeout=60s 2>/dev/null || true
+      # Delete the Kind cluster IMMEDIATELY after submitting the hub claim deletion.
+      # KRO runs on Kind and keeps reconciling the eksclusterwithvpc resource. If we
+      # wait 30 min for EKS deletion BEFORE killing Kind, KRO will see the EKS cluster
+      # go NOT_FOUND and RECREATE it (standard KRO reconcile: desired ≠ actual → create).
+      # Killing Kind first stops KRO from interfering with the deletion. Best-effort:
+      # if Kind is already gone this is a no-op.
+      - cmd: |
+          kind delete cluster --name {{.KIND_CLUSTER_NAME}} 2>/dev/null || true
+          printf '{{.C_OK}}✓ Kind cluster removed — KRO can no longer reconcile hub.\n'
+        ignore_error: true
       - printf '{{.C_STEP}}▸ Waiting for EKS cluster deletion...{{.C_RESET}}\n'
       - cmd: |
           # Wait for the actual AWS EKS cluster to be gone — not just the KRO resource.
