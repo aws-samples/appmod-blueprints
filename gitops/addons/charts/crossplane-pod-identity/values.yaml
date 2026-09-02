@@ -409,38 +409,6 @@ identities:
     tags:
       managed-by: crossplane
       purpose: keycloak-config-pod-identity
-
-  argo-rollouts:
-    enabled: false
-    # skipPIA: skip creating the PodIdentityAssociation.
-    # See ack-pod-identity values comment for explanation.
-    skipPIA: true
-    roleName: argo-rollouts
-    namespace: argo-rollouts
-    serviceAccount: argo-rollouts
-    tags:
-      managed-by: crossplane
-      purpose: argo-rollouts-amp-query
-    policy:
-      name: ArgoRolloutsAMPQueryPolicy
-      document: |
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Effect": "Allow",
-              "Action": [
-                "aps:QueryMetrics",
-                "aps:GetMetricMetadata",
-                "aps:GetSeries",
-                "aps:GetLabels",
-                "aps:ListWorkspaces",
-                "aps:DescribeWorkspace"
-              ],
-              "Resource": "*"
-            }
-          ]
-        }
     policy:
       name: KeycloakConfigSecretsPolicy
       document: |
@@ -480,6 +448,38 @@ identities:
                 "identitystore:CreateGroupMembership",
                 "identitystore:ListGroupMemberships",
                 "identitystore:ListGroups"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+
+  argo-rollouts:
+    enabled: false
+    # skipPIA: skip creating the PodIdentityAssociation.
+    # See ack-pod-identity values comment for explanation.
+    skipPIA: true
+    roleName: argo-rollouts
+    namespace: argo-rollouts
+    serviceAccount: argo-rollouts
+    tags:
+      managed-by: crossplane
+      purpose: argo-rollouts-amp-query
+    policy:
+      name: ArgoRolloutsAMPQueryPolicy
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "aps:QueryMetrics",
+                "aps:GetMetricMetadata",
+                "aps:GetSeries",
+                "aps:GetLabels",
+                "aps:ListWorkspaces",
+                "aps:DescribeWorkspace"
               ],
               "Resource": "*"
             }
