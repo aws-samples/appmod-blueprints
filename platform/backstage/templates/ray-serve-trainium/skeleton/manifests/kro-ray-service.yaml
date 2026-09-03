@@ -22,7 +22,7 @@ spec:
   awsAccountId: "${{values.aws_account_id}}"
   resourcePrefix: ${{values.resource_prefix}}
   maxLength: "${{values.maxLength | default('100', true)}}"
-  rayServeFile: ${{values.rayServeFile | default('https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/main/gitops/workloads/ray/trainium-serve-neuron.zip', true)}}
+  rayServeFile: ${{values.rayServeFile | default('https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/release/v0.3.0-rc3/gitops/workloads/ray/trainium-serve-neuron.zip', true)}}
   replicas: ${{values.replicas | default(1, true)}}
   acceleratorType: ${{values.acceleratorType | default('trainium', true)}}
   resources:
