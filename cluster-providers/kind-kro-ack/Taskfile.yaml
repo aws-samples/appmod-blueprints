@@ -152,6 +152,15 @@ tasks:
       - task: kro:install-cluster-secret-store-bootstrap
       - task: kro:apply-rgds
       - task: hub:wait-for-domain
+      # Create the cluster-mgmt IAM roles BEFORE hub:claim.
+      # The eksclusterwithvpc RGD immediately tries to create ACK-managed IAM resources
+      # (cniMetricsHelperPolicy, adotCollectorPolicy, etc.) when KRO reconciles the claim.
+      # ACK EKS Capability assumes the peeks-cluster-mgmt-iam role (created here) to create
+      # those AWS IAM resources. Without these roles, ACK cannot reconcile the Policy CRs and
+      # KRO stays stuck reporting:
+      #   "cniMetricsHelperPolicy.status.ackResourceMetadata.arn: no such key: arn (data pending)"
+      # Running this before hub:claim ensures the roles exist when ACK first processes the CRs.
+      - task: hub:create-mgmt-roles
       - task: hub:claim
       - task: hub:wait-for-eks
       - task: hub:authorize-ide-access
@@ -2210,7 +2219,7 @@ tasks:
     desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq)
     vars:
       ACK_CAPABILITY_ROLE:
-        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' || echo "{{.HUB_CLUSTER_NAME}}-argocd-capability-role"
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' || echo "{{.HUB_CLUSTER_NAME}}-ack-capability-role"
     cmds:
       - printf '{{.C_STEP}}▸ Creating cluster-mgmt IAM roles for ACK...{{.C_RESET}}\n'
       - |
