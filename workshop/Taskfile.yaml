@@ -213,7 +213,7 @@ tasks:
               | while read NS SVC; do
                   kubectl --kubeconfig "$KC" delete svc "$SVC" -n "$NS" \
                     --timeout=60s 2>/dev/null || true
-                done
+                done || true
             kubectl --kubeconfig "$KC" delete pvc --all-namespaces --all \
               --timeout=120s 2>/dev/null || true
             rm -f "$KC"
