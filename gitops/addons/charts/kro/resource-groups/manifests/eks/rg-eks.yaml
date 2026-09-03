@@ -400,6 +400,43 @@ spec:
           clusterName: "${schema.spec.name}"
 
     ###########################################################
+    # IAM OIDC provider (IRSA) — created in the spoke's OWN account
+    ###########################################################
+    # Register the cluster's EKS OIDC issuer as an IAM OIDC provider at
+    # cluster-creation time, in the spoke account itself. Required for IRSA
+    # (AssumeRoleWithWebIdentity): Argo Rollouts queries AMP with SigV4 and
+    # prometheus/common/sigv4 only supports the IRSA token file, not Pod Identity
+    # (https://github.com/argoproj/argo-rollouts/issues/4536). Doing this in the
+    # RGD (vs a hub-side task) fixes cross-account (the spoke may be in another
+    # account), timing (created with the cluster, before the IRSA roles), and
+    # discovery. Replaces the former spokes:register-oidc-providers task.
+    - id: oidcProvider
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: OpenIDConnectProvider
+        metadata:
+          name: "${schema.spec.name}-oidc"
+          namespace: "${schema.spec.name}"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+            # force dependency on ekscluster: the OIDC issuer only exists once ACTIVE
+            eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
+        spec:
+          url: "${ekscluster.status.identity.oidc.issuer}"
+          clientIDs:
+            - sts.amazonaws.com
+          thumbprints:
+            - "9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
+
+    ###########################################################
     # ArgoCD Integration
     ###########################################################
     - id: argocdRole
