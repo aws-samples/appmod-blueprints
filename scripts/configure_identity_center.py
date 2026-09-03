@@ -620,7 +620,11 @@ async def configure_identity_center(
             # --- Step 6: Wait for Keycloak SAML descriptor ---
             print("Waiting for Keycloak SAML descriptor...", file=sys.stderr)
             saml_url = f"https://{keycloak_dns}/keycloak/realms/platform/protocol/saml/descriptor"
-            deadline = time.time() + 1800
+            # 5 min is ample: the caller (task idc:configure) already waits for the
+            # SAML descriptor (HTTP 200) before invoking this script, so the realm
+            # exists and the descriptor responds in seconds. Fail fast otherwise
+            # (was 1800s / 30 min — a 30-minute hang on failure, see #821/#856).
+            deadline = time.time() + 300
             while True:
                 try:
                     resp = requests.get(saml_url, verify=False, timeout=10)
@@ -631,7 +635,7 @@ async def configure_identity_center(
                 except Exception:
                     pass
                 if time.time() > deadline:
-                    raise TimeoutError("Keycloak SAML endpoint not available after 30 minutes")
+                    raise TimeoutError("Keycloak SAML endpoint not available after 5 minutes")
                 print("Keycloak not ready, retrying in 30s...", file=sys.stderr)
                 time.sleep(30)
 
