@@ -1240,6 +1240,34 @@ spec:
                 fromFieldPath: status.atProvider.vpcConfig.clusterSecurityGroupId
                 toFieldPath: status.clusterSecurityGroupId
 
+          # IAM OIDC provider (IRSA) for the cluster's EKS OIDC issuer, created in the
+          # cluster's OWN account. Required for AssumeRoleWithWebIdentity: Argo Rollouts
+          # queries AMP with SigV4 and prometheus/common/sigv4 only supports IRSA, not
+          # Pod Identity (https://github.com/argoproj/argo-rollouts/issues/4536). url is
+          # patched from status.oidcIssuer (published by eks-cluster above); Required
+          # holds creation until the issuer is known. Mirrors the ACK EksCluster RGD
+          # (rg-eks.yaml) and replaces the former hub-side register-oidc-providers task.
+          - name: oidc-provider
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: OpenIDConnectProvider
+              spec:
+                forProvider:
+                  clientIdList:
+                    - sts.amazonaws.com
+                  thumbprintList:
+                    - "9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.oidcIssuer
+                toFieldPath: spec.forProvider.url
+                policy:
+                  fromFieldPath: Required
+
           # Publish status.vpcId onto the ArgoCD cluster Secret (argocd/<clusterName>).
           # Composition is the source of truth for VPC id; this annotation is consumed
           # by addon ApplicationSets (e.g. aws-load-balancer-controller --vpc-id).

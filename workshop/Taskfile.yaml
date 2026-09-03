@@ -138,11 +138,6 @@ tasks:
       # This fixes issue #41 (AMP scraper hub-only, spoke-dev metrics missing in Phase 30.5).
       - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && task kind-kro-ack:secrets-manager:seed-observability; fi'
       - 'printf "{{.C_INFO}}  [%ds] observability re-seeded with spoke scraper data{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Register spoke OIDC providers in IAM (required for IRSA on kro-ack clusters).
-      # This is a temporary workaround until prometheus/common/sigv4 supports Pod Identity.
-      # See: https://github.com/argoproj/argo-rollouts/issues/4536
-      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && task kind-kro-ack:spokes:register-oidc-providers; fi'
-      - 'printf "{{.C_INFO}}  [%ds] OIDC providers registered{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
       - |

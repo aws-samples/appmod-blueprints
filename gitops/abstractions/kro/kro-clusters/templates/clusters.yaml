@@ -13,6 +13,10 @@ spec:
   name: {{ $name }}
   tenant: {{ $cluster.tenant | default "tenant1" | quote }}
   environment: {{ $cluster.environment | default "staging" | quote }}
+  # delete (default) tears IAM roles/OIDC down with the cluster — safe for
+  # test/workshop events even on prod clusters. Set retain per-cluster only for
+  # genuinely-persistent deployments.
+  deletionPolicy: {{ $cluster.deletionPolicy | default "delete" | quote }}
   provider: {{ $cluster.provider | default "" | quote }}
   region: {{ $cluster.region | default "us-west-2" | quote }}
   k8sVersion: {{ $cluster.k8sVersion | default "1.34" | quote }}
