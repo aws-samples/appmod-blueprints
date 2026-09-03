@@ -153,6 +153,17 @@ tasks:
       - task: kro:apply-rgds
       - task: hub:wait-for-domain
       - task: hub:claim
+      # After hub:claim submits the eksclusterwithvpc, the KRO RGD immediately tries to
+      # reconcile ACK IAM/EKS resources (cniMetricsHelperPolicy etc.). Those resources
+      # need ACK controllers to have AWS credentials, injected via EKS Pod Identity.
+      # The PIAs are created by the ack-pod-identities ArgoCD AppSet (wave -4), which
+      # deploys once ArgoCD is up on the hub. However, the EKS Capabilities install ACK
+      # asynchronously and the Pod Identity webhook may not have injected creds yet.
+      # This step waits for the hub EKS to be ACTIVE first (so ArgoCD + ACK are running),
+      # then restarts the ACK IAM/EKS controllers to pick up their Pod Identity credentials,
+      # then waits for the KRO instance to converge.
+      - task: hub:wait-for-hub-active
+      - task: hub:restart-ack-controllers
       - task: hub:wait-for-eks
       - task: hub:authorize-ide-access
       # Re-check credentials before hub:seed — if this is a resumed install
@@ -746,6 +757,72 @@ tasks:
       # Without this, KRO fails with "namespace argocd not found" until ArgoCD
       # is installed by hub:argocd:install later in the sequence.
       - kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+
+  hub:wait-for-hub-active:
+    desc: >-
+      Wait for the hub EKS cluster to be ACTIVE in AWS (does not wait for full KRO
+      reconciliation). Used as a gate before restarting ACK controllers to pick up
+      their Pod Identity credentials — the PIAs are created by the ack-pod-identities
+      AppSet which is deployed once the ArgoCD EKS Capability is up on the hub.
+    cmds:
+      - cmd: |
+          printf '{{.C_STEP}}▸ Waiting for hub EKS cluster to be ACTIVE in AWS...{{.C_RESET}}\n'
+          for i in $(seq 1 120); do
+            STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+              --query 'cluster.status' --output text 2>/dev/null || echo "")
+            if [ "$STATUS" = "ACTIVE" ]; then
+              printf '{{.C_OK}}✓ Hub EKS ACTIVE after %ds{{.C_RESET}}\n' "$((i * 15))"
+              break
+            fi
+            printf '{{.C_INFO}}  [%s/120] Hub EKS status: %s{{.C_RESET}}\n' "$i" "${STATUS:-not-found}"
+            sleep 15
+          done
+          if [ "$STATUS" != "ACTIVE" ]; then
+            printf '{{.C_ERR}}✗ Hub EKS not ACTIVE after 30 min{{.C_RESET}}\n'
+            exit 1
+          fi
+        ignore_error: false
+
+  hub:restart-ack-controllers:
+    desc: >-
+      Restart ACK IAM/EKS/EC2 controller pods so the EKS Pod Identity webhook
+      injects fresh AWS credentials. Called after hub:wait-for-hub-active because
+      the PIAs (created by ack-pod-identities AppSet, wave -4) only exist once
+      ArgoCD is up on the hub. Without this restart the ACK controllers start with
+      no credentials and fail to reconcile the eksclusterwithvpc RGD resources
+      (Policy/Role/PodIdentityAssociation), causing KRO to report
+      "cniMetricsHelperPolicy.status.ackResourceMetadata.arn: no such key: arn".
+    cmds:
+      - cmd: |
+          KC={{.ROOT_DIR}}/private/hub-kubeconfig
+          aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --kubeconfig "$KC" >/dev/null 2>&1 || true
+          printf '{{.C_STEP}}▸ Waiting for ACK pod identity associations to be created...{{.C_RESET}}\n'
+          # ack-pod-identities AppSet (wave -4) creates PIAs for ACK controllers.
+          # Wait up to 5 min for at least the IAM controller's PIA to exist.
+          for i in $(seq 1 20); do
+            PIA_COUNT=$(aws eks list-pod-identity-associations \
+              --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+              --query "length(associations[?contains(serviceAccount, 'ack')])" \
+              --output text 2>/dev/null || echo 0)
+            [ "$PIA_COUNT" -gt 0 ] && { printf '{{.C_OK}}✓ %s ACK PIAs exist.{{.C_RESET}}\n' "$PIA_COUNT"; break; }
+            printf '{{.C_INFO}}  [%s/20] Waiting for ACK PIAs...{{.C_RESET}}\n' "$i"
+            sleep 15
+          done
+          printf '{{.C_STEP}}▸ Restarting ACK controllers to pick up Pod Identity credentials...{{.C_RESET}}\n'
+          # Restart the controller pods so the webhook injects the newly-created credentials.
+          for ns in ack-system; do
+            PODS=$(KUBECONFIG="$KC" kubectl get pods -n "$ns" \
+              --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null | \
+              grep -E "ack-(iam|eks|ec2|ecr|s3|dynamodb|secretsmanager)" || true)
+            for pod in $PODS; do
+              KUBECONFIG="$KC" kubectl delete pod "$pod" -n "$ns" --force --grace-period=0 2>/dev/null || true
+            done
+          done
+          # Wait 30s for pods to restart and credentials to be injected
+          sleep 30
+          printf '{{.C_OK}}✓ ACK controllers restarted — credentials will be injected by Pod Identity.{{.C_RESET}}\n'
+        ignore_error: true
 
   hub:wait-for-eks:
     desc: Wait for the hub cluster instance to reach ACTIVE state and the EKS cluster to exist in AWS
