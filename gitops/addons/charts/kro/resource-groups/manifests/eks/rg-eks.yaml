@@ -15,6 +15,11 @@ spec:
       name: string
       tenant: string
       environment: string
+      # ACK deletion-policy for this cluster's IAM roles + OIDC provider.
+      # "delete" (default) = torn down with the cluster (test/workshop events,
+      # even for environment=prod). "retain" = keep the AWS resources on delete
+      # (genuinely-persistent deployments). Decoupled from environment on purpose.
+      deletionPolicy: string | default="delete"
       # Identity backend for this cluster's addons: "kro-ack" (pod identities created
       # by this ACK RGD) or "crossplane"/"" (crossplane-pod-identity app). Stamped onto
       # the argocd cluster secret label so the pod_identities app excludes kro-ack.
@@ -247,7 +252,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-cluster-role"
           policies:
@@ -294,7 +299,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-cluster-node-role"
           policies:
@@ -432,7 +437,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
             # force dependency on ekscluster: the OIDC issuer only exists once ACTIVE
             eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
         spec:
@@ -466,7 +471,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
             #force dependency on ekscluster
             eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
             #force dependency on podIdentityAddon so that we create argo cluster secret after podIdentity correctly configured
@@ -922,7 +927,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-argocd-capability-role"
           policies:
@@ -1662,7 +1667,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-crossplane-provider"
           policies:
@@ -1777,7 +1782,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-adot-collector-role"
           policies:
@@ -1858,7 +1863,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-kyverno-policy-reporter-role"
           policies:
@@ -1978,7 +1983,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-cni-metrics-helper-role"
           policies:
@@ -2058,7 +2063,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-cloudwatch-observability-role"
           policies:
@@ -2144,7 +2149,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           # schema.spec.name already carries the resource prefix (e.g. peeks-spoke-dev),
           # so do NOT prepend resourcePrefix again (was producing peeks-peeks-...).
@@ -2218,7 +2223,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: "${schema.spec.environment == 'prod' ? 'retain' : 'delete'}"
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           # schema.spec.name already carries the resource prefix (e.g. peeks-spoke-dev),
           # so do NOT prepend resourcePrefix again (was producing peeks-peeks-...).
