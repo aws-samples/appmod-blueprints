@@ -1,5 +1,6 @@
 {{- range $name, $identity := .Values.identities }}
 {{- if not (eq (toString $identity.enabled) "false") }}
+{{- if not (eq (toString $identity.skipPIA) "true") }}
 ---
 apiVersion: eks.services.k8s.aws/v1alpha1
 kind: PodIdentityAssociation
@@ -31,5 +32,6 @@ spec:
   tags:
     {{- toYaml $identity.tags | nindent 4 }}
   {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

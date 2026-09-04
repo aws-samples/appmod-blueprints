@@ -152,6 +152,15 @@ tasks:
       - task: kro:install-cluster-secret-store-bootstrap
       - task: kro:apply-rgds
       - task: hub:wait-for-domain
+      # Create the cluster-mgmt IAM roles BEFORE hub:claim.
+      # The eksclusterwithvpc RGD immediately tries to create ACK-managed IAM resources
+      # (cniMetricsHelperPolicy, adotCollectorPolicy, etc.) when KRO reconciles the claim.
+      # ACK EKS Capability assumes the peeks-cluster-mgmt-iam role (created here) to create
+      # those AWS IAM resources. Without these roles, ACK cannot reconcile the Policy CRs and
+      # KRO stays stuck reporting:
+      #   "cniMetricsHelperPolicy.status.ackResourceMetadata.arn: no such key: arn (data pending)"
+      # Running this before hub:claim ensures the roles exist when ACK first processes the CRs.
+      - task: hub:create-mgmt-roles
       - task: hub:claim
       - task: hub:wait-for-eks
       - task: hub:authorize-ide-access
@@ -886,6 +895,21 @@ tasks:
     vars:
       CLUSTER_ARN:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null
+      # ArgoCD EKS Capability server URL (host, no scheme) so Backstage links to the
+      # capability endpoint, not the CloudFront domain. The capability may not be ACTIVE
+      # yet when hub:seed first runs, so retry briefly rather than capturing an empty value
+      # (an empty aws_argocd_url makes platform.yaml fall back to the CloudFront domain,
+      # which does NOT serve ArgoCD -> broken deep-links in Backstage).
+      ARGOCD_URL:
+        sh: |
+          for _ in $(seq 1 30); do
+            U=$(aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd \
+                  --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null \
+                | sed 's|https://||')
+            if [ -n "$U" ] && [ "$U" != "None" ]; then echo "$U"; exit 0; fi
+            sleep 10
+          done
+          echo ""
       VPC_ID:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
       # Private subnets + cluster SG for the devlake RDS `vpc` object (see cmds). Mirrors the
@@ -913,6 +937,28 @@ tasks:
           exit 1
         fi
         echo "[hub:seed] ingress_domain_name=$RUNTIME_DOMAIN"
+        # Preserve overlay + argocd wiring across re-seeds. This task rebuilds the entire
+        # <hub>/config metadata from scratch and has no status: guard, so it runs on every
+        # install. Without re-merging these, a second run WIPES:
+        #   - overlay_repo_url/revision/basepath -> disables the whole fleet-config overlay
+        #     fleet-wide and orphans spokes that exist only in the overlay
+        #     (see docs multi-repo-architecture.md "re-seed must preserve overlay_repo_url");
+        #   - aws_argocd_url -> falls back to the CloudFront domain (which does not serve
+        #     ArgoCD) -> broken Backstage deep-links.
+        EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
+          --query SecretString --output text 2>/dev/null || echo "")
+        PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""
+        if [ -n "$EXISTING" ]; then
+          EMETA=$(echo "$EXISTING" | jq -r '.metadata // "{}"' | jq -c '. as $m | (if ($m|type)=="string" then ($m|fromjson) else $m end)' 2>/dev/null || echo "{}")
+          PRESERVED_OVERLAY_URL=$(echo "$EMETA"  | jq -r '.overlay_repo_url // ""')
+          PRESERVED_OVERLAY_REV=$(echo "$EMETA"  | jq -r '.overlay_repo_revision // ""')
+          PRESERVED_OVERLAY_BASE=$(echo "$EMETA" | jq -r '.overlay_repo_basepath // ""')
+          PRESERVED_ARGOCD=$(echo "$EMETA"       | jq -r '.aws_argocd_url // ""')
+        fi
+        # Prefer a freshly-resolved capability URL; fall back to the previously stored one so a
+        # transient describe-capability miss never blanks a good value.
+        ARGOCD_FINAL="{{.ARGOCD_URL}}"
+        [ -z "$ARGOCD_FINAL" ] && ARGOCD_FINAL="$PRESERVED_ARGOCD"
         # The aws-resources ExternalSecret reads <hub>/config property `vpc` into
         # peeks-hub-vpc-secret.vpc_data; the init-env-config Job then parses .id / .subnet_ids /
         # .cluster_security_group_id from it to build the vpc-config EnvironmentConfig that the
@@ -924,12 +970,22 @@ tasks:
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id:$id, subnet_ids:$subnet_ids, cluster_security_group_id:$cluster_security_group_id}' | jq -c .)
         SECRET_VALUE=$(jq -n \
-          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"'"$RUNTIME_DOMAIN"'","ingress_name":"{{.HUB_CLUSTER_NAME}}-platform","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.INGRESS_CERT_ARN}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"'"$GIT_DOMAIN"'","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":""}' \
+          --arg metadata '{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","fleetRepoURL":"{{.REPO_URL}}","fleetRepoRevision":"{{.REPO_REVISION}}","fleetRepoBasepath":"{{.REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"'"$RUNTIME_DOMAIN"'","ingress_name":"{{.HUB_CLUSTER_NAME}}-platform","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","resource_prefix":"{{.RESOURCE_PREFIX}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.INGRESS_CERT_ARN}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"'"$GIT_DOMAIN"'","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"'"$ARGOCD_FINAL"'"}' \
           --arg config '{"tlsClientConfig":{"insecure":false}}' \
           --arg server '{{.CLUSTER_ARN}}' \
           --arg addons '{"provider":"kro-ack"}' \
           --arg vpc "$VPC_JSON" \
           '{metadata: $metadata, config: $config, server: $server, addons: $addons, vpc: $vpc}')
+        # Re-merge preserved overlay wiring into the metadata (only keys that are non-empty),
+        # so a re-seed never drops the fleet-config overlay.
+        SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
+          --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
+          '.metadata |= ( (fromjson) as $m
+             | $m
+             | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
+             | (if $orv != "" then .overlay_repo_revision = $orv else . end)
+             | (if $ob  != "" then .overlay_repo_basepath = $ob  else . end)
+             | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}} 2>/dev/null \
@@ -1178,6 +1234,194 @@ tasks:
     cmds:
       - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
 
+  hub:destroy-addons:
+    desc: >-
+      Gracefully remove all addons from the HUB EKS cluster (no git changes) so the
+      on-hub ACK/KRO/Crossplane controllers delete their managed AWS resources
+      (team IAM roles/policies, ALBs, DynamoDB, spoke clusters) while still alive.
+      Deletes the infra-provisioning stack (crossplane/kro/ack) LAST. All steps are
+      best-effort — safe to run even if the hub is already gone. Adapted from
+      kind-crossplane. Must run BEFORE the hub cluster is deleted.
+    vars:
+      # Infra-provisioning stack: controllers that must stay alive to delete other
+      # AWS resources and the spoke clusters. Skipped in the per-addon pass (step 7)
+      # and deleted LAST, after the spoke clusters (step 8).
+      # NOTE: keep in sync with the SKIP list in step 7 and the explicit reverse-order
+      # list in step 8 — adding/removing an ACK controller means updating all three.
+      INFRA_STACK: "argocd crossplane crossplane-base kro kro-manifests kro-manifests-hub ack-iam ack-eks ack-ec2 ack-ecr ack-s3 ack-dynamodb ack-efs"
+      KC: "KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl"
+    cmds:
+      # Best-effort hub kubeconfig — if the hub EKS is already gone, every kubectl
+      # below no-ops (2>/dev/null || true) and the task still completes cleanly.
+      - cmd: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig >/dev/null 2>&1
+        ignore_error: true
+      - printf '{{.C_ERR}}▸ Stopping all regeneration...{{.C_RESET}}\n'
+      # 1. bootstrap ApplicationSet (preserveResources) — stop recreating bootstrap App
+      - '{{.KC}} patch applicationset bootstrap -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}'' 2>/dev/null || true'
+      - sleep 3
+      - '{{.KC}} delete applicationset bootstrap -n argocd --timeout=30s 2>/dev/null || true'
+      # 2. bootstrap Application (no cascade)
+      - '{{.KC}} patch application bootstrap -n argocd --type merge -p ''{"metadata":{"finalizers":[]}}'' 2>/dev/null || true'
+      - '{{.KC}} delete application bootstrap -n argocd --wait=false 2>/dev/null || true'
+      # 3. cluster-addons ApplicationSet (preserveResources) — stop generating addon appsets
+      - '{{.KC}} patch applicationset cluster-addons -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}'' 2>/dev/null || true'
+      - sleep 3
+      - '{{.KC}} delete applicationset cluster-addons -n argocd --timeout=30s 2>/dev/null || true'
+      # 4. cluster-addons Application (no cascade)
+      - '{{.KC}} patch application cluster-addons -n argocd --type merge -p ''{"metadata":{"finalizers":[]}}'' 2>/dev/null || true'
+      - '{{.KC}} delete application cluster-addons -n argocd --wait=false 2>/dev/null || true'
+      # 4.5. Delete the agent-platform chain (optional agentic overlay). Stop the
+      #      AppSet FIRST (preserveResources) so it does not regenerate its child apps,
+      #      then orphan the child apps. No-op when agent-platform is not deployed
+      #      (absent on rc3). Mirrors the kind-crossplane path so the two providers stay
+      #      symmetric — without this, agent-platform is only in the step-7 SKIP, so its
+      #      AppSet would survive and regenerate the workloads deleted in step 5.
+      - cmd: |
+          if {{.KC}} get applicationset agent-platform -n argocd >/dev/null 2>&1; then
+            echo "Stopping agent-platform AppSet..."
+            {{.KC}} patch applicationset agent-platform -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>&1 || true
+            sleep 3
+            {{.KC}} delete applicationset agent-platform -n argocd --timeout=30s 2>&1 || true
+          fi
+          for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -E '^agent-platform-' || true); do
+            echo "Stopping $app..."
+            {{.KC}} patch application "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>&1 || true
+            {{.KC}} delete application "$app" -n argocd --wait=false 2>&1 || true
+          done
+        ignore_error: true
+      # 4.6. Delete bootstrap-level AppSets that are in the SKIP list for step 7 but
+      #      are never explicitly stopped — they regenerate per-cluster apps during
+      #      step 10's force-delete loop, causing an infinite loop.
+      #      - abstractions: generates crossplane-base-<cluster> apps for each cluster
+      #      - hub-fleet-secret: generates fleet-secret-<cluster> apps
+      #      - pod-identities: generates pod-identity-<cluster> apps
+      #      Stop each with preserveResources=true first so child apps are orphaned
+      #      (not cascade-deleted), then delete the AppSet itself.
+      - cmd: |
+          for AS in abstractions hub-fleet-secret pod-identities; do
+            if {{.KC}} get applicationset "$AS" -n argocd >/dev/null 2>&1; then
+              echo "Stopping $AS AppSet..."
+              {{.KC}} patch applicationset "$AS" -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>&1 || true
+              sleep 3
+              {{.KC}} delete applicationset "$AS" -n argocd --timeout=30s 2>&1 || true
+            fi
+          done
+        ignore_error: true
+      # 5. Delete APPLICATION WORKLOADS first — all ArgoCD Applications whose project is
+      #    NOT 'default' (addons) or 'platform' (infra). On kro-c1 these are rust-project,
+      #    java-project, cpu-ray-project, spoke-workloads (rust/java/golang/dotnet/next-js
+      #    apps, CI/CD pipelines, ray, progressive-delivery). Deleting them removes the kro
+      #    AppmodService/CICDPipeline/RayService CRs so kro/ACK (still alive on the hub)
+      #    delete the app-owned AWS resources (IAM roles/policies, ECR repos, DynamoDB) and
+      #    the Rollouts/Services on the spokes. MUST happen before spoke-cluster deletion.
+      - printf '{{.C_ERR}}▸ Deleting application workloads (non-default/platform projects)...{{.C_RESET}}\n'
+      - cmd: |
+          for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.project}{"\n"}{end}' 2>/dev/null | awk '$2!="default" && $2!="platform" && $2!=""{print $1}'); do
+            echo "Deleting workload $app..."
+            {{.KC}} delete application $app -n argocd --timeout=300s 2>/dev/null || \
+            ({{.KC}} patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+             {{.KC}} delete application $app -n argocd --wait=false 2>/dev/null) || true
+          done
+        ignore_error: true
+      # 6. Delete SPOKE CLUSTERS (after their workloads, before hub addons): the hub
+      #    KRO/Crossplane provisioners tear down the spoke EKS. kro-ack spokes are
+      #    generated by the 'clusters-kro' ApplicationSet (apps clusters-kro-<spoke>);
+      #    'clusters' covers any crossplane/fleet-registered ones.
+      - printf '{{.C_ERR}}▸ Deleting spoke clusters...{{.C_RESET}}\n'
+      - cmd: |
+          for AS in clusters-kro clusters; do
+            if {{.KC}} get applicationset $AS -n argocd >/dev/null 2>&1; then
+              {{.KC}} patch applicationset $AS -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>/dev/null || true
+              sleep 3
+              {{.KC}} delete applicationset $AS -n argocd --timeout=60s 2>/dev/null || true
+            fi
+          done
+        ignore_error: true
+      # Wait for spoke-provisioning apps to disappear (no common label — match by name),
+      # then force-strip finalizers on any that are stuck.
+      - cmd: |
+          for i in $(seq 1 40); do
+            REMAIN=$({{.KC}} get applications -n argocd -o name 2>/dev/null | grep -Ec 'clusters-kro-|clusters-.*spoke') || REMAIN=0
+            [ "$REMAIN" -eq 0 ] && break
+            echo "  waiting for $REMAIN spoke-provisioning app(s) to delete..."; sleep 15
+          done
+          for app in $({{.KC}} get applications -n argocd -o name 2>/dev/null | grep -E 'clusters-kro-|clusters-.*spoke' | sed 's|.*/||'); do
+            {{.KC}} patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+            {{.KC}} delete application $app -n argocd --wait=false 2>/dev/null || true
+          done
+        ignore_error: true
+      # 7. Delete HUB ADDONS in reverse sync-wave order, SKIPPING the infra stack.
+      #    Addons are discovered LIVE from the cluster (kubectl), not from the static
+      #    registry files, so addons enabled outside the registry are still cleaned up.
+      #    Child apps are matched by ownerReference (ArgoCD does not label generated apps
+      #    uniformly), and the finalizer/deletion waits are skipped when an addon has no
+      #    child apps — avoiding the per-addon 30s/120s timeouts on disabled addons.
+      - cmd: |
+          SKIP="{{.INFRA_STACK}} bootstrap cluster-addons agent-platform fleet-secrets hub-fleet-secret clusters clusters-kro abstractions pod-identities"
+          ADDONS=$({{.KC}} get applicationsets -n argocd \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.annotations.argocd\.argoproj\.io/sync-wave}{"\n"}{end}' 2>/dev/null \
+          | while read name wave; do
+            [ -z "$name" ] && continue
+            wave="${wave:-0}"
+            skip=false
+            for s in $SKIP; do if [ "$name" = "$s" ]; then skip=true; break; fi; done
+            [ "$skip" = "true" ] && continue
+            echo "$wave $name"
+          done | sort -rn | awk '{print $2}' || true)
+          for ADDON in $ADDONS; do
+            {{.KC}} get applicationset "$ADDON" -n argocd >/dev/null 2>&1 || continue
+            echo "Deleting $ADDON..."
+            {{.KC}} patch applicationset "$ADDON" -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
+            CHILDREN=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null)
+            if [ -n "$CHILDREN" ]; then
+              E=0; while [ $E -lt 30 ]; do
+                F=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.finalizers}{end}" 2>/dev/null)
+                echo "$F" | grep -q resources-finalizer && break
+                sleep 2; E=$((E + 2))
+              done
+            fi
+            {{.KC}} delete applicationset "$ADDON" -n argocd --timeout=180s 2>&1 || true
+            if [ -n "$CHILDREN" ]; then
+              E=0; while [ $E -lt 120 ]; do
+                R=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{end}" 2>/dev/null)
+                [ -z "$R" ] && break
+                sleep 5; E=$((E + 5))
+              done
+            fi
+          done
+        ignore_error: true
+      # 8. Delete the INFRA-PROVISIONING STACK LAST, reverse order (consumers -> controllers).
+      - cmd: |
+          for ADDON in kro-manifests-hub kro-manifests kro ack-efs ack-dynamodb ack-s3 ack-ecr ack-ec2 ack-eks ack-iam crossplane-base crossplane; do
+            if {{.KC}} get applicationset $ADDON -n argocd >/dev/null 2>&1; then
+              echo "Deleting $ADDON..."
+              {{.KC}} patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
+              sleep 3
+              {{.KC}} delete applicationset $ADDON -n argocd --timeout=180s 2>&1 || true
+              E=0; while [ $E -lt 120 ]; do
+                R=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{end}" 2>/dev/null)
+                [ -z "$R" ] && break
+                sleep 5; E=$((E + 5))
+              done
+            fi
+          done
+        ignore_error: true
+      # 9. fleet-secrets
+      - printf '{{.C_ERR}}▸ Deleting fleet-secrets...{{.C_RESET}}\n'
+      - '{{.KC}} patch applicationset fleet-secrets -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}'' 2>/dev/null || true'
+      - sleep 3
+      - '{{.KC}} delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true'
+      # 10. Force-delete any leftover Applications (strip finalizers)
+      - cmd: |
+          for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+            echo "Deleting leftover app $app..."
+            {{.KC}} delete application $app -n argocd --timeout=300s 2>/dev/null || \
+            ({{.KC}} patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+             {{.KC}} delete application $app -n argocd --wait=false 2>/dev/null) || true
+          done
+        ignore_error: true
+      - printf '{{.C_OK}}✓ Hub addons removed.{{.C_RESET}}\n'
+
   destroy:
     desc: Full teardown — delete KRO instances, wait for ACK to clean up AWS resources, delete Kind
     vars:
@@ -1185,20 +1429,294 @@ tasks:
     cmds:
       - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
       - task: credentials:refresh
-      # Delete the hub claim — KRO cascades to ACK which deletes AWS resources
-      - printf '{{.C_ERR}}▸ Deleting hub cluster claim...{{.C_RESET}}\n'
-      - kubectl delete eksclusterwithvpc {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} --timeout=60s 2>/dev/null || true
+      # Kill the Kind cluster FIRST — before hub:destroy-addons.
+      # This stops KRO from reconciling the hub eksclusterwithvpc resource.
+      # Without this, KRO may recreate the hub EKS cluster after we delete it
+      # (standard KRO reconcile: desired state ≠ actual → create).
+      # hub:destroy-addons only needs the hub EKS cluster API (via hub-kubeconfig),
+      # not the Kind cluster, so killing Kind here is safe.
+      - cmd: |
+          kind delete cluster --name {{.KIND_CLUSTER_NAME}} 2>/dev/null || true
+          printf '{{.C_OK}}✓ Kind cluster removed — KRO cannot recreate hub EKS.\n'
+        ignore_error: true
+      # Gracefully tear down the addon layer on the HUB EKS.
+      # All-best-effort: a no-op if the hub is already gone.
+      - task: hub:destroy-addons
+      # Delete EKS Capabilities (ack, argocd, kro) directly via AWS API.
+      # aws eks delete-cluster fails with ResourceInUseException if capabilities exist.
+      - printf '{{.C_ERR}}▸ Deleting EKS Capabilities (ack, argocd, kro)...{{.C_RESET}}\n'
+      - cmd: |
+          for CAP in ack argocd kro; do
+            STATUS=$(aws eks list-capabilities --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+              --query "capabilities[?capabilityName=='${CAP}'].status | [0]" --output text 2>/dev/null || echo "")
+            if [ -n "$STATUS" ] && [ "$STATUS" != "None" ] && [ "$STATUS" != "" ]; then
+              echo "  Deleting capability $CAP (status: $STATUS)..."
+              aws eks delete-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name "$CAP" \
+                --region {{.AWS_REGION}} 2>/dev/null || true
+            fi
+          done
+          # Wait up to 5 min for all capabilities to be gone
+          for i in $(seq 1 20); do
+            COUNT=$(aws eks list-capabilities --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+              --query 'length(capabilities)' --output text 2>/dev/null || echo 0)
+            [ "$COUNT" = "0" ] && break
+            printf '  [%s/20] %s capabilities remaining...\n' "$i" "$COUNT"
+            sleep 15
+          done
+        ignore_error: true
+      # Delete the hub EKS cluster directly via AWS API (bypasses KRO entirely).
+      # Kind is already dead so KRO cannot recreate it.
+      - printf '{{.C_ERR}}▸ Deleting hub EKS cluster via AWS API...{{.C_RESET}}\n'
+      - cmd: |
+          STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+          if [ "$STATUS" != "NOT_FOUND" ] && [ "$STATUS" != "DELETING" ]; then
+            aws eks delete-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} 2>/dev/null || true
+            echo "  Submitted hub EKS cluster deletion"
+          fi
+        ignore_error: true
       - printf '{{.C_STEP}}▸ Waiting for EKS cluster deletion...{{.C_RESET}}\n'
-      - |
-        for i in $(seq 1 120); do
-          EXISTS=$(kubectl get ekscluster {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} 2>/dev/null && echo "yes" || echo "no")
-          [ "$EXISTS" = "no" ] && break
-          printf '{{.C_INFO}}  [%s/120] Waiting for deletion...{{.C_RESET}}\n' "$i"
-          sleep 15
-        done
+      - cmd: |
+          for i in $(seq 1 120); do
+            STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+              --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+            [ "$STATUS" = "NOT_FOUND" ] && break
+            printf '{{.C_INFO}}  [%s/120] Hub EKS status: %s...{{.C_RESET}}\n' "$i" "$STATUS"
+            sleep 15
+          done
+        ignore_error: true
       # Clean up Secrets Manager
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
       - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
+      # Best-effort sweep of AWS resources the addon controllers may have orphaned —
+      # prevents redeploy conflicts on a reused account: IAM EntityAlreadyExists,
+      # ALB DuplicateLoadBalancerName, delivery-source ConflictException.
+      # Prefix-scoped; never fails destroy.
+      - printf '{{.C_ERR}}▸ Sweeping leftover AWS resources ({{.RESOURCE_PREFIX}}-*)...{{.C_RESET}}\n'
+      - cmd: |
+          REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"
+          # 1. ALBs from the load-balancer-controller — scoped by the elbv2.k8s.aws/cluster
+          #    tag to our "${PREFIX}-*" clusters (hub + spokes). Tag-based (not name-based)
+          #    so we never touch unrelated clusters' ALBs, and we also catch non-"k8s-*"
+          #    names (e.g. the hub ingress ALB).
+          for ARN in $(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null); do
+            CL=$(aws elbv2 describe-tags --region "$REGION" --resource-arns "$ARN" --query "TagDescriptions[0].Tags[?Key=='elbv2.k8s.aws/cluster']|[0].Value" --output text 2>/dev/null)
+            case "$CL" in
+              "${PREFIX}-"*) echo "  deleting ALB $ARN (cluster $CL)"; aws elbv2 delete-load-balancer --load-balancer-arn "$ARN" --region "$REGION" 2>/dev/null || true ;;
+            esac
+          done
+          # 2. Orphaned CloudWatch delivery sources for this hub
+          for ID in $(aws logs describe-deliveries --region "$REGION" --query "deliveries[?contains(deliverySourceName, '{{.HUB_CLUSTER_NAME}}')].id" --output text 2>/dev/null); do
+            aws logs delete-delivery --id "$ID" --region "$REGION" 2>/dev/null || true
+          done
+          # 3. Orphaned ACK-managed IAM roles. Scope by BOTH the resource prefix AND
+          #    an ACK ownership tag (services.k8s.aws/*), and skip infra/bootstrap/CFN
+          #    roles by name. Deleting the IDE execution role (*-team-stack-*/*SharedRole*),
+          #    the cluster/provider roles, or the argo-rollouts roles would break the
+          #    teardown or the CloudFormation stack delete — so they are never swept.
+          DENY_RE='(-team-stack-|SharedRole|-cluster-mgmt-|-cluster-role$|-cluster-node-role$|-crossplane-provider|Crossplane.*ProviderRole|-argo-rollouts)'
+          [ -n "$PREFIX" ] && aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read ROLE; do
+            [ -z "$ROLE" ] && continue
+            echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (infra/bootstrap/CFN — not swept)"; continue; }
+            ACK=$(aws iam list-role-tags --role-name "$ROLE" --query "length(Tags[?starts_with(Key, 'services.k8s.aws/')])" --output text 2>/dev/null || echo 0)
+            [ "$ACK" = "0" ] && { echo "  skip role $ROLE (not ACK-managed)"; continue; }
+            for P in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
+              aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$P" 2>/dev/null || true
+            done
+            for IP in $(aws iam list-role-policies --role-name "$ROLE" --query 'PolicyNames[]' --output text 2>/dev/null); do
+              aws iam delete-role-policy --role-name "$ROLE" --policy-name "$IP" 2>/dev/null || true
+            done
+            echo "  deleting ACK IAM role $ROLE"; aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
+          done
+          # 4. Orphaned ACK-managed customer IAM policies (same scoping as roles:
+          #    prefix + services.k8s.aws/* tag + name denylist; DENY_RE from step 3).
+          [ -n "$PREFIX" ] && aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" --output text 2>/dev/null | tr '\t' '\n' | while read POL; do
+            [ -z "$POL" ] && continue
+            echo "$POL" | grep -qE "$DENY_RE" && { echo "  skip policy $POL (infra/bootstrap — not swept)"; continue; }
+            ACK=$(aws iam list-policy-tags --policy-arn "$POL" --query "length(Tags[?starts_with(Key, 'services.k8s.aws/')])" --output text 2>/dev/null || echo 0)
+            [ "$ACK" = "0" ] && { echo "  skip policy $POL (not ACK-managed)"; continue; }
+            for V in $(aws iam list-policy-versions --policy-arn "$POL" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do
+              aws iam delete-policy-version --policy-arn "$POL" --version-id "$V" 2>/dev/null || true
+            done
+            echo "  deleting ACK IAM policy $POL"; aws iam delete-policy --policy-arn "$POL" 2>/dev/null || true
+          done
+          # 5. Orphaned ACK-managed ECR repositories. The CICD RGD names repos
+          #    "${PREFIX}/<app>" and "${PREFIX}/<app>/cache", so scope by the "${PREFIX}/"
+          #    (or "${PREFIX}-") name prefix AND require an ACK ownership tag.
+          #    NOTE: DynamoDB tables use arbitrary user-provided names (tableName) with no
+          #    deployment-scoping prefix/tag, so they are intentionally NOT swept — a broad
+          #    tag-only delete would risk other deployments' tables. They rely on graceful
+          #    CR deletion (the workload step waits before stripping finalizers). Same for
+          #    EFS (optional addon, not created by the app RGDs).
+          [ -n "$PREFIX" ] && for REPO in $(aws ecr describe-repositories --region "$REGION" --query "repositories[?starts_with(repositoryName, '${PREFIX}/') || starts_with(repositoryName, '${PREFIX}-')].repositoryName" --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$REPO" ] && continue
+            ARN=$(aws ecr describe-repositories --region "$REGION" --repository-names "$REPO" --query 'repositories[0].repositoryArn' --output text 2>/dev/null)
+            ACK=$(aws ecr list-tags-for-resource --region "$REGION" --resource-arn "$ARN" --query "length(tags[?starts_with(Key, 'services.k8s.aws/')])" --output text 2>/dev/null || echo 0)
+            [ "$ACK" = "0" ] && { echo "  skip ECR $REPO (not ACK-managed)"; continue; }
+            echo "  deleting ACK ECR repo $REPO"; aws ecr delete-repository --region "$REGION" --repository-name "$REPO" --force 2>/dev/null || true
+          done
+        ignore_error: true
+      # 6. Extended sweep — resources not cleaned by ACK CR deletion or CFN:
+      #    CloudFront VPC origins + distributions, remaining IAM roles/policies
+      #    (Crossplane/pod-identity/LBC/etc — not ACK-tagged), Secrets Manager,
+      #    AMP workspaces, OIDC providers, CW log groups, spoke VPCs.
+      #    All best-effort; safe to run on a fresh account (most loops are no-ops).
+      - printf '{{.C_ERR}}▸ Extended AWS sweep (CloudFront, IAM, Secrets, AMP, OIDC, VPCs)...{{.C_RESET}}\n'
+      - cmd: |
+          REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"
+          HUB="{{.HUB_CLUSTER_NAME}}"
+          # 6a. CloudFront VPC Origins and Distributions associated with this hub.
+          #     The hub platform CloudFront distribution uses a VPC Origin pointing to
+          #     the internal ALB ingress. After the ALB is deleted, CloudFront VPC origin
+          #     ENIs remain in the private subnets, blocking VPC deletion via CFN.
+          #     Strategy: delete all ${HUB}-* VPC origins and their distributions.
+          python3 "{{.ROOT_DIR}}/scripts/sweep-cloudfront.py" "{{.HUB_CLUSTER_NAME}}" 2>&1 || true
+          # 6b. ALL remaining peeks-* IAM roles (not just ACK-tagged). Crossplane provider
+          #     roles, ExternalDNS, LBC, Kargo, KeycloakConfig, argo-rollouts IRSA roles etc.
+          #     are NOT ACK-tagged but are workshop-owned and cause EntityAlreadyExists on
+          #     re-deploy. Same denylist as step 3 to protect CFN/cluster roles.
+          DENY_RE='(-team-stack-|SharedRole)'
+          [ -n "$PREFIX" ] && aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" \
+              --output text 2>/dev/null | tr '\t' '\n' | while read ROLE; do
+            [ -z "$ROLE" ] && continue
+            echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (CFN — not swept)"; continue; }
+            for P in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
+              aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$P" 2>/dev/null || true
+            done
+            for IP in $(aws iam list-role-policies --role-name "$ROLE" --query 'PolicyNames[]' --output text 2>/dev/null); do
+              aws iam delete-role-policy --role-name "$ROLE" --policy-name "$IP" 2>/dev/null || true
+            done
+            echo "  deleting IAM role $ROLE"; aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
+          done
+          # 6c. ALL remaining peeks-* IAM policies (not just ACK-tagged).
+          [ -n "$PREFIX" ] && aws iam list-policies --scope Local \
+              --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" \
+              --output text 2>/dev/null | tr '\t' '\n' | while read POL; do
+            [ -z "$POL" ] && continue
+            echo "$POL" | grep -qE "$DENY_RE" && continue
+            for V in $(aws iam list-policy-versions --policy-arn "$POL" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do
+              aws iam delete-policy-version --policy-arn "$POL" --version-id "$V" 2>/dev/null || true
+            done
+            echo "  deleting IAM policy $POL"; aws iam delete-policy --policy-arn "$POL" 2>/dev/null || true
+          done
+          # 6d. Secrets Manager: bootstrap secrets not cleaned by SM delete commands above.
+          for SECRET in "${HUB}/secrets" "${HUB}/keycloak-clients" "${HUB}/config" "${HUB}/keycloak" \
+                        "${PREFIX}/team-rust/amp-workspace" "${PREFIX}/team-java/amp-workspace" \
+                        "${PREFIX}/platform/amp" "${PREFIX}-devlake/mysql-connection"; do
+            aws secretsmanager delete-secret --secret-id "$SECRET" \
+              --force-delete-without-recovery --region "$REGION" 2>/dev/null || true
+          done
+          echo "  deleted bootstrap secrets (if existed)"
+          # 6di. Delete all other peeks-* Secrets Manager secrets by prefix.
+          for SECRET_ARN in $(aws secretsmanager list-secrets --region "$REGION" \
+                --filters Key=name,Values="${PREFIX}" \
+                --query 'SecretList[].ARN' --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$SECRET_ARN" ] && continue
+            aws secretsmanager delete-secret --secret-id "$SECRET_ARN" \
+              --force-delete-without-recovery --region "$REGION" 2>/dev/null || true
+            echo "  ✓ deleted secret $SECRET_ARN"
+          done
+          # 6e. AMP workspaces tagged with the resource prefix (Crossplane-managed,
+          #     orphaned when crossplane-base AppSet is deleted before workspace CR).
+          for WS_ID in $(aws amp list-workspaces --region "$REGION" \
+                --query "workspaces[?starts_with(alias, '${PREFIX}')].workspaceId" \
+                --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$WS_ID" ] && continue
+            aws amp delete-workspace --workspace-id "$WS_ID" --region "$REGION" 2>/dev/null || true
+            echo "  ✓ deleted AMP workspace $WS_ID"
+          done
+          # 6ei. AMP scrapers (created by observability bootstrap, not deleted with workspace).
+          for SCRAPER_ID in $(aws amp list-scrapers --region "$REGION" \
+                --query 'scrapers[].scraperId' --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$SCRAPER_ID" ] && continue
+            aws amp delete-scraper --scraper-id "$SCRAPER_ID" --region "$REGION" 2>/dev/null || true
+            echo "  ✓ deleted AMP scraper $SCRAPER_ID"
+          done
+          # 6eii. DevLake RDS instance (created by KubeVela in kind-kro-ack path).
+          #       Named devlake-mysql-db-* and scoped to the peeks VPC. Not ACK-tagged.
+          for DB in $(aws rds describe-db-instances --region "$REGION" \
+                --query "DBInstances[?starts_with(DBInstanceIdentifier, 'devlake-')].DBInstanceIdentifier" \
+                --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$DB" ] && continue
+            aws rds delete-db-instance --db-instance-identifier "$DB" \
+              --skip-final-snapshot --delete-automated-backups \
+              --region "$REGION" 2>/dev/null || true
+            echo "  ✓ initiated RDS deletion: $DB"
+          done
+          # 6f. EKS OIDC providers for peeks clusters. IRSA uses cluster-specific OIDC
+          #     providers that accumulate across re-deploys (one per EKS cluster per run).
+          #     Only delete providers whose URL matches ${REGION} — never delete providers
+          #     for other regions (agent-sandbox, us-east-1 deployments, etc.).
+          ACCT=$(aws sts get-caller-identity --query 'Account' --output text 2>/dev/null)
+          # Build the list of known active clusters to preserve their OIDC providers
+          ACTIVE_OIDCS=""
+          for C in $(aws eks list-clusters --region "$REGION" --query 'clusters[]' --output text 2>/dev/null | tr '\t' '\n'); do
+            OI=$(aws eks describe-cluster --name "$C" --region "$REGION" \
+              --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || true)
+            [ -n "$OI" ] && ACTIVE_OIDCS="$ACTIVE_OIDCS ${OI##*/}"
+          done
+          for ARN in $(aws iam list-open-id-connect-providers \
+                --query 'OpenIDConnectProviderList[].Arn' --output text 2>/dev/null | tr '\t' '\n'); do
+            URL=$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$ARN" \
+              --query 'Url' --output text 2>/dev/null || true)
+            # Only sweep EKS OIDC providers in this region
+            echo "$URL" | grep -q "oidc.eks.${REGION}.amazonaws.com" || continue
+            OIDC_ID="${URL##*/}"
+            # Skip if this is an active cluster's OIDC
+            KEEP=false
+            for AO in $ACTIVE_OIDCS; do
+              [ "$AO" = "$OIDC_ID" ] && { KEEP=true; break; }
+            done
+            $KEEP && { echo "  skip active cluster OIDC $OIDC_ID"; continue; }
+            aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$ARN" 2>/dev/null || true
+            echo "  ✓ deleted OIDC provider $OIDC_ID"
+          done
+          # 6g. CloudWatch Log Groups for deleted EKS clusters.
+          for LG_PREFIX in "/aws/eks/${PREFIX}-hub" "/aws/eks/${PREFIX}-spoke-dev" "/aws/eks/${PREFIX}-spoke-prod"; do
+            for LG in $(aws logs describe-log-groups --region "$REGION" \
+                  --log-group-name-prefix "$LG_PREFIX" \
+                  --query 'logGroups[].logGroupName' --output text 2>/dev/null | tr '\t' '\n'); do
+              [ -z "$LG" ] && continue
+              aws logs delete-log-group --log-group-name "$LG" --region "$REGION" 2>/dev/null || true
+              echo "  ✓ deleted CW log group $LG"
+            done
+          done
+          # 6h. Orphaned spoke VPCs (ACK ec2 VPC resources that survived cluster delete).
+          #     Scoped by the EKS ACK tag (eks:kubernetes-resource-name=<PREFIX>-spoke-*).
+          python3 "{{.ROOT_DIR}}/scripts/sweep-spoke-vpcs.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" 2>&1 || true
+          # 6i. IDE VPC non-default security groups (created by workshop, not by CFN).
+          #     These include ALB SGs, EKS cluster SGs, RDS SGs, AMG SGs, k8s-traffic SGs.
+          #     If left, they block CFN's VPC deletion → DELETE_FAILED on VPC subnet.
+          #     We only delete SGs in the CFN-managed workshop VPC, identified by the
+          #     aws:cloudformation:stack-name tag on the VPC.
+          for VPC_ID in $(aws ec2 describe-vpcs --region "$REGION" \
+                --filters "Name=tag:aws:cloudformation:stack-id,Values=*" \
+                --query 'Vpcs[].VpcId' --output text 2>/dev/null | tr '\t' '\n'); do
+            [ -z "$VPC_ID" ] && continue
+            # Check if this VPC belongs to our workshop stack (has the stack tag)
+            STACK_TAG=$(aws ec2 describe-vpcs --region "$REGION" --vpc-ids "$VPC_ID" \
+              --query "Vpcs[0].Tags[?Key=='aws:cloudformation:stack-name'].Value | [0]" \
+              --output text 2>/dev/null || true)
+            echo "$STACK_TAG" | grep -qi "tCaT\|peeks-workshop" || continue
+            echo "  Cleaning SGs in workshop VPC $VPC_ID..."
+            # Revoke cross-SG rules first, then delete
+            SG_IDS=$(aws ec2 describe-security-groups --region "$REGION" \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+              --output text 2>/dev/null | tr '\t' '\n')
+            for SG in $SG_IDS; do
+              [ -z "$SG" ] && continue
+              # Revoke any cross-SG references
+              SG_IN=$(aws ec2 describe-security-groups --region "$REGION" --group-ids "$SG" \
+                --query 'SecurityGroups[0].IpPermissions[?UserIdGroupPairs]' \
+                --output json 2>/dev/null)
+              [ -n "$SG_IN" ] && [ "$SG_IN" != "[]" ] && \
+                aws ec2 revoke-security-group-ingress --region "$REGION" \
+                  --group-id "$SG" --ip-permissions "$SG_IN" 2>/dev/null || true
+              aws ec2 delete-security-group --group-id "$SG" --region "$REGION" 2>/dev/null || true
+            done
+          done
+        ignore_error: true
       - cmd: |
           if [ "{{.CLEANUP_KIND}}" = "true" ]; then
             kind delete cluster --name {{.KIND_CLUSTER_NAME}}
@@ -1596,7 +2114,7 @@ tasks:
         SPOKE_PROD_ARN=""
         SPOKE_PROD_SUBNETS=""
         SPOKE_PROD_SG=""
-        for CLUSTER in spoke-dev spoke-prod; do
+        for CLUSTER in {{.RESOURCE_PREFIX}}-spoke-dev {{.RESOURCE_PREFIX}}-spoke-prod; do
           SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
           if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
             SPOKE_ALL_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
@@ -1606,7 +2124,7 @@ tasks:
             fi
             SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
             echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
-            if [ "$CLUSTER" = "spoke-dev" ]; then
+            if [ "$CLUSTER" = "{{.RESOURCE_PREFIX}}-spoke-dev" ]; then
               SPOKE_DEV_ARN="$SPOKE_ARN"
               SPOKE_DEV_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
               SPOKE_DEV_SG="$SPOKE_SG"
@@ -1701,7 +2219,7 @@ tasks:
     desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq)
     vars:
       ACK_CAPABILITY_ROLE:
-        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' || echo "{{.HUB_CLUSTER_NAME}}-argocd-capability-role"
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' | grep -v '^$' || echo "{{.HUB_CLUSTER_NAME}}-ack-capability-role"
     cmds:
       - printf '{{.C_STEP}}▸ Creating cluster-mgmt IAM roles for ACK...{{.C_RESET}}\n'
       - |
@@ -1763,6 +2281,10 @@ tasks:
           ]
         }'
         # Allow ACK capability role to assume cluster-mgmt roles
+        # Best-effort: the ACK capability role only exists after the hub EKS cluster
+        # is created. When this task runs before hub:claim (new ordering for PR #861),
+        # the role doesn't exist yet — skip gracefully. hub:seed re-runs this task
+        # once the hub is up, which will apply the policy correctly.
         aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
           "Version": "2012-10-17",
           "Statement": [{
@@ -1770,7 +2292,7 @@ tasks:
             "Action": ["sts:AssumeRole", "sts:TagSession"],
             "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
           }]
-        }'
+        }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
 
@@ -1956,5 +2478,3 @@ tasks:
             done
           done
           printf '{{.C_OK}}✓ Spoke provider identity seeding complete.{{.C_RESET}}\n'
-
-

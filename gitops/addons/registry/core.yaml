@@ -176,6 +176,9 @@ ack_pod_identities:
       region: '{{.metadata.annotations.aws_region}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
+      # oidcIssuer is used to build IRSA trust policies for identities with skipPIA=true.
+      # Written to the cluster secret by the EksCluster RGD at cluster-creation time.
+      oidcIssuer: '{{.metadata.annotations.eks_oidc_issuer}}'
     identities:
       # SCOPE BOUNDARY: eso is deliberately NOT managed here -- the EksCluster RGD keeps
       # ownership of external-secrets/external-secrets-sa. This is not just caution, the

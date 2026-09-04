@@ -315,6 +315,78 @@ spec:
                 fromFieldPath: status.atProvider.id
                 toFieldPath: status.natGatewayId
 
+          # Usage: block EIP deletion until NAT Gateway is gone
+          - name: natgw-uses-eip
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: EIP
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: NATGateway
+                  resourceSelector:
+                    matchControllerRef: true
+
+          # Usage: block InternetGateway deletion until Routes are gone
+          - name: route-uses-igw
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: InternetGateway
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: Route
+                  resourceSelector:
+                    matchControllerRef: true
+
+          # Usage: block NATGateway deletion until Routes are gone
+          - name: route-uses-natgw
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: NATGateway
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: Route
+                  resourceSelector:
+                    matchControllerRef: true
+
+          # Usage: block RouteTables deletion until RouteTableAssociations are gone
+          - name: rta-uses-rt
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: RouteTable
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: RouteTableAssociation
+                  resourceSelector:
+                    matchControllerRef: true
+
           # Public Route Table + Route
           - name: public-rt
             base:
@@ -1168,6 +1240,34 @@ spec:
                 fromFieldPath: status.atProvider.vpcConfig.clusterSecurityGroupId
                 toFieldPath: status.clusterSecurityGroupId
 
+          # IAM OIDC provider (IRSA) for the cluster's EKS OIDC issuer, created in the
+          # cluster's OWN account. Required for AssumeRoleWithWebIdentity: Argo Rollouts
+          # queries AMP with SigV4 and prometheus/common/sigv4 only supports IRSA, not
+          # Pod Identity (https://github.com/argoproj/argo-rollouts/issues/4536). url is
+          # patched from status.oidcIssuer (published by eks-cluster above); Required
+          # holds creation until the issuer is known. Mirrors the ACK EksCluster RGD
+          # (rg-eks.yaml) and replaces the former hub-side register-oidc-providers task.
+          - name: oidc-provider
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: OpenIDConnectProvider
+              spec:
+                forProvider:
+                  clientIdList:
+                    - sts.amazonaws.com
+                  thumbprintList:
+                    - "9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
+            patches:
+              - type: PatchSet
+                patchSetName: common
+              - type: PatchSet
+                patchSetName: tags
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.oidcIssuer
+                toFieldPath: spec.forProvider.url
+                policy:
+                  fromFieldPath: Required
+
           # Publish status.vpcId onto the ArgoCD cluster Secret (argocd/<clusterName>).
           # Composition is the source of truth for VPC id; this annotation is consumed
           # by addon ApplicationSets (e.g. aws-load-balancer-controller --vpc-id).
@@ -1283,6 +1383,42 @@ spec:
           # filtered out below when managedNodeGroup is disabled.
           # pod-identity-agent is NOT filtered — it is required on all clusters
           # (including Auto Mode) for EKS Pod Identity to function.
+
+          # Usage: block Subnet deletion until EKS Cluster is gone (ENIs hold subnets)
+          - name: cluster-uses-subnets
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: Subnet
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: eks.aws.upbound.io/v1beta2
+                  kind: Cluster
+                  resourceSelector:
+                    matchControllerRef: true
+
+          # Usage: block VPC deletion until EKS Cluster is gone
+          - name: cluster-uses-vpc
+            base:
+              apiVersion: protection.crossplane.io/v1beta1
+              kind: Usage
+              spec:
+                replayDeletion: true
+                of:
+                  apiVersion: ec2.aws.upbound.io/v1beta1
+                  kind: VPC
+                  resourceSelector:
+                    matchControllerRef: true
+                by:
+                  apiVersion: eks.aws.upbound.io/v1beta2
+                  kind: Cluster
+                  resourceSelector:
+                    matchControllerRef: true
 
           - name: addon-vpc-cni
             base:

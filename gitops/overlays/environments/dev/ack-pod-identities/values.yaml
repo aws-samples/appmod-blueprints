@@ -1,0 +1,19 @@
+# kro-ack spoke Pod Identity enablement (ack-pod-identity chart).
+#
+# Read by the ack_pod_identities ApplicationSet (provider=kro-ack clusters),
+# which loads overlays/environments/<env>/ack-pod-identities/values.yaml — the
+# ACK twin of the crossplane pod-identities/ overlay. This dir was missing, so
+# argo-rollouts stayed at the chart default (enabled:false) on kro-ack spokes and
+# no IRSA role was created → the Phase 30.5 metrics gate could not query AMP.
+#
+# NOTE: this is the ACK-path copy of pod-identities/<env>/values.yaml. The
+# crossplane-only bootstrap identities (crossplane-iam-provider / -eks-provider)
+# are intentionally omitted — the ack-pod-identity chart does not define them.
+identities:
+  # Argo Rollouts needs AMP query permissions for the metrics analysis gate
+  # (Phase 30.5). skipPIA=true → only the IAM Role is created (no PodIdentity
+  # association); the SA uses IRSA because prometheus/common/sigv4 only supports
+  # AWS_WEB_IDENTITY_TOKEN_FILE (IRSA), not Pod Identity.
+  # See: https://github.com/argoproj/argo-rollouts/issues/4536
+  argo-rollouts:
+    enabled: true
