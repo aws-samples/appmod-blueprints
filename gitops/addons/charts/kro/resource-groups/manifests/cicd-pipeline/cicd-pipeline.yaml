@@ -241,6 +241,7 @@ spec:
               {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy"}
           # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
           # the AWS policy when deleting this Kro instance (may be referenced by other resources)
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -248,8 +249,6 @@ spec:
                uid: ${schema.metadata.uid}
                blockOwnerDeletion: true
                controller: false
-          annotations:
-             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
        spec:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-ecr-policy
           description: ECR access policy for CI/CD pipeline
