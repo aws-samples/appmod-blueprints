@@ -2281,6 +2281,10 @@ tasks:
           ]
         }'
         # Allow ACK capability role to assume cluster-mgmt roles
+        # Best-effort: the ACK capability role only exists after the hub EKS cluster
+        # is created. When this task runs before hub:claim (new ordering for PR #861),
+        # the role doesn't exist yet — skip gracefully. hub:seed re-runs this task
+        # once the hub is up, which will apply the policy correctly.
         aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
           "Version": "2012-10-17",
           "Statement": [{
@@ -2288,7 +2292,7 @@ tasks:
             "Action": ["sts:AssumeRole", "sts:TagSession"],
             "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
           }]
-        }'
+        }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
 
