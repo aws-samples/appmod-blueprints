@@ -1941,6 +1941,8 @@ spec:
               {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-cni-metrics-helper-policy"}
             # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
             # the AWS policy when deleting this Kro instance (may be referenced by other resources)
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -1948,9 +1950,6 @@ spec:
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
         spec:
           name: "${schema.spec.name}-cni-metrics-helper-policy"
           description: "Policy to allow cni metrics helper put metrics to CloudWatch"
