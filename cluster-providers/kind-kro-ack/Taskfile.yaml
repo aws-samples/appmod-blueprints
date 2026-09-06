@@ -64,7 +64,7 @@ vars:
   INGRESS_CERT_ARN:
     sh: yq '.certificateArn // ""' {{.CONFIG_FILE}}
   ADMIN_ROLE_NAME:
-    sh: yq '.hub.adminRoleName // "Admin"' {{.CONFIG_FILE}}
+    sh: yq '.hub.adminRoleName // .adminRoleName // "Admin"' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
     sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
