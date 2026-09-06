@@ -286,6 +286,7 @@ if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${HUB_SUBNET_IDS:-}" ]; then
   SUBNET3=$(echo "$SUBNETS" | sed -n '3p')
   printf 'hub:\n'                                      >> "$OUTPUT_FILE"
   printf '  clusterName: "%s-hub"\n' "$RESOURCE_PREFIX" >> "$OUTPUT_FILE"
+  printf '  adminRoleName: "%s"\n' "$ADMIN_ROLE_NAME"   >> "$OUTPUT_FILE"
   printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"  >> "$OUTPUT_FILE"
   printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"
   printf '  network:\n'                                >> "$OUTPUT_FILE"
@@ -299,6 +300,7 @@ if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${HUB_SUBNET_IDS:-}" ]; then
 else
   printf 'hub:\n'                                      >> "$OUTPUT_FILE"
   printf '  clusterName: "%s-hub"\n' "$RESOURCE_PREFIX" >> "$OUTPUT_FILE"
+  printf '  adminRoleName: "%s"\n' "$ADMIN_ROLE_NAME"   >> "$OUTPUT_FILE"
   printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"  >> "$OUTPUT_FILE"
   printf '  vpcCidr: "%s"\n'      "$VPC_CIDR"          >> "$OUTPUT_FILE"
   printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"

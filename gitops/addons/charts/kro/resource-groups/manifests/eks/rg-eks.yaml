@@ -386,29 +386,14 @@ spec:
             tenant: ${schema.spec.tenant}
             environment: ${schema.spec.environment}
 
-    - id: podIdentityAddon
-      template:
-        apiVersion: eks.services.k8s.aws/v1alpha1
-        kind: Addon
-        metadata:
-          name: eks-pod-identity-agent
-          namespace: "${schema.spec.name}"
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            clusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
-            services.k8s.aws/region: ${schema.spec.region}
-            services.k8s.aws/adoption-policy: adopt-or-create
-        spec:
-          name: eks-pod-identity-agent
-          addonVersion: v1.3.4-eksbuild.1
-          clusterName: "${schema.spec.name}"
+    # NOTE: The eks-pod-identity-agent Addon node was intentionally removed.
+    # Every cluster provisioned by this RGD runs in EKS Auto Mode
+    # (compute.enabled=true), where the Pod Identity Agent is built into the
+    # managed nodes and cannot be installed as a self-managed addon. Applying it
+    # fails with "InvalidParameterException: Addon version specified is not
+    # supported" and leaves the resource ACK.ResourceSynced=Unknown, which held
+    # the whole EksCluster instance in IN_PROGRESS. The PodIdentityAssociation
+    # nodes below work without this addon in Auto Mode.
 
     ###########################################################
     # IAM OIDC provider (IRSA) — created in the spoke's OWN account
@@ -476,8 +461,7 @@ spec:
             services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
             #force dependency on ekscluster
             eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
-            #force dependency on podIdentityAddon so that we create argo cluster secret after podIdentity correctly configured
-            # Pod Identity enabled by default in EKS Auto Mode
+            # Pod Identity is enabled by default in EKS Auto Mode (no addon needed).
         spec:
           name: "${schema.spec.name}-argocd-role"
           assumeRolePolicyDocument: |
