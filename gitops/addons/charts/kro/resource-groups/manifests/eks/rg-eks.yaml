@@ -962,6 +962,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             argocd.argoproj.io/sync-options: Prune=false
         spec:
@@ -1102,7 +1103,7 @@ spec:
             # PodIdentityAssociation (bootstrap/prior run); adopt it instead of a bare
             # Create that would 409. retain keeps it on prune (never de-auth a controller).
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: retain
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: external-secrets
@@ -1706,7 +1707,7 @@ spec:
             # its roleARN to the unified crossplane-provider role. retain keeps the live
             # association on prune so a running provider is never de-authenticated.
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: retain
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: crossplane-system
@@ -1742,7 +1743,7 @@ spec:
             # its roleARN to the unified crossplane-provider role. retain keeps the live
             # association on prune so a running provider is never de-authenticated.
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: retain
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: crossplane-system
@@ -1819,7 +1820,7 @@ spec:
             # adopt-or-create by default: adopt any live association on this SA instead
             # of a bare Create that would 409; retain keeps it on prune.
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: retain
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: "${schema.spec.addons.adot_collector_namespace}"
@@ -1900,7 +1901,7 @@ spec:
             # adopt-or-create by default: adopt any live association on this SA instead
             # of a bare Create that would 409; retain keeps it on prune.
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: retain
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: kyverno
@@ -2019,7 +2020,7 @@ spec:
             # adopt-or-create by default: adopt any live association on this SA instead
             # of a bare Create that would 409; retain keeps it on prune.
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: retain
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: kube-system
@@ -2099,7 +2100,7 @@ spec:
             # adopt-or-create by default: adopt any live association on this SA instead
             # of a bare Create that would 409; retain keeps it on prune.
             services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/deletion-policy: retain
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${ekscluster.spec.name}"
           namespace: amazon-cloudwatch
@@ -2260,6 +2261,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+              services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
               services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
@@ -2318,6 +2320,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+              services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
               services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false

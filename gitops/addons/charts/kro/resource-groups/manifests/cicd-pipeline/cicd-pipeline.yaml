@@ -357,6 +357,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
+             services.k8s.aws/adoption-policy: adopt-or-create
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Implicit dependencies through template references
              roleArn: ${iamrole.status.ackResourceMetadata.arn}
