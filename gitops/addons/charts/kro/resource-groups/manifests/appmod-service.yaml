@@ -216,6 +216,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           clusterName: ${schema.spec.clusterName}
