@@ -136,7 +136,14 @@ tasks:
       # are empty → no spoke AMP scrapers. Re-running here ensures spoke scraper values are
       # written to Secrets Manager and propagated to the ArgoCD cluster secret via ESO.
       # This fixes issue #41 (AMP scraper hub-only, spoke-dev metrics missing in Phase 30.5).
-      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && task kind-kro-ack:secrets-manager:seed-observability; fi'
+      # Re-seed in the BACKGROUND. seed-observability blocks up to 60min polling for the
+      # AMP workspace (provisioned by Crossplane), whose creation is flaky/slow on a fresh
+      # account (IAM eventual-consistency + etcd throttling on the kind bootstrap cluster).
+      # Running it inline can stall the whole install past the CFN IdeInitScriptWaitCondition
+      # (~2h) → CREATE_FAILED, even though the platform is otherwise up. The
+      # peeks-observability-seed.timer already retries this on a schedule, so fire-and-forget
+      # here (best-effort, non-blocking) to write spoke-scraper values once AMP is ACTIVE.
+      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && nohup task kind-kro-ack:secrets-manager:seed-observability >/tmp/seed-observability-reseed.log 2>&1 & echo "  observability re-seed launched in background (PID $!); peeks-observability-seed.timer also retries."; fi'
       - 'printf "{{.C_INFO}}  [%ds] observability re-seeded with spoke scraper data{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
