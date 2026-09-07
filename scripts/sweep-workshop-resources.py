@@ -257,11 +257,25 @@ except Exception as e:
 #    Workshop secrets (peeks/*) that may survive task destroy.
 # ---------------------------------------------------------------------------
 try:
-    for s in sm.list_secrets(Filters=[{"Key": "name", "Values": [prefix]}])["SecretList"]:
-        try:
-            sm.delete_secret(SecretId=s["ARN"], ForceDeleteWithoutRecovery=True)
-        except Exception:
-            pass
+    # IncludePlannedDeletion=True is critical: a secret already SCHEDULED for
+    # deletion (from a prior teardown that used the default recovery window — e.g.
+    # the ACK-managed <cluster>/config secrets) is INVISIBLE to a normal
+    # list_secrets, yet its name stays reserved for the whole recovery window and
+    # blocks the next deploy's CreateSecret ("a secret with this name is already
+    # scheduled for deletion"). Force-delete active AND scheduled ones so redeploys
+    # on a reused account are not blocked.
+    _reaped = 0
+    for _page in sm.get_paginator("list_secrets").paginate(
+        IncludePlannedDeletion=True,
+        Filters=[{"Key": "name", "Values": [prefix]}],
+    ):
+        for s in _page.get("SecretList", []):
+            try:
+                sm.delete_secret(SecretId=s["ARN"], ForceDeleteWithoutRecovery=True)
+                _reaped += 1
+            except Exception:
+                pass
+    log(f"Secrets Manager: force-deleted {_reaped} secret(s) (incl. scheduled-for-deletion)")
 except Exception as e:
     log(f"Secrets Manager: {e}")
 

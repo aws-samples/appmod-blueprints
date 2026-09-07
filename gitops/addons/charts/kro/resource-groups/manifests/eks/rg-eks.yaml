@@ -665,6 +665,7 @@ spec:
           annotations:
             services.k8s.aws/region: ${schema.spec.managementRegion}
             services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
+            services.k8s.aws/adoption-policy: adopt-or-create
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -724,6 +725,7 @@ spec:
           annotations:
             services.k8s.aws/region: ${schema.spec.managementRegion}
             services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
+            services.k8s.aws/adoption-policy: adopt-or-create
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
