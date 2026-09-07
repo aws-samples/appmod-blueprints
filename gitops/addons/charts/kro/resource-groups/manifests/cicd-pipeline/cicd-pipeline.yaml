@@ -116,6 +116,8 @@ spec:
           # This prevents accidental deletion of ECR repositories containing production container images
           # annotations:
           #   services.k8s.aws/deletion-policy: retain
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -177,6 +179,8 @@ spec:
           # This prevents accidental deletion of ECR repositories containing cached build layers
           # annotations:
           #   services.k8s.aws/deletion-policy: retain
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -388,6 +392,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.aws.region}
         spec:
