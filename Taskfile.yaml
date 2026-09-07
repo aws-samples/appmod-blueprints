@@ -209,6 +209,24 @@ tasks:
           LG="/aws/eks/$C/capability/$CAP"; LG_ARN="arn:aws:logs:$REGION:$ACCT:log-group:$LG"
           aws logs create-log-group --log-group-name "$LG" --region "$REGION" 2>/dev/null || true
           aws logs put-retention-policy --log-group-name "$LG" --retention-in-days 30 --region "$REGION" >/dev/null 2>&1 || true
+          # put-delivery-source is NOT idempotent across cluster re-creation. On a REUSED
+          # account a delivery source named "$C-$CAP" can survive from a prior cluster
+          # incarnation, still pointing at the OLD capability ARN. CloudWatch then rejects
+          # the update to the new ARN with a hard error ("Update to existing Delivery Source
+          # with new ResourceId is not allowed. Please create a new Delivery Source
+          # instead."), which aborts the whole `task install` (and, in the workshop consumer
+          # flow, everything after it: overlay wiring, spokes, IDC). Reconcile first: if a
+          # stale source points elsewhere, delete its dependent delivery + the source, then
+          # (re)create. Same/absent ARN -> put is a no-op create.
+          EXISTING_SRC_ARN=$(aws logs describe-delivery-sources --region "$REGION" --query "deliverySources[?name=='$C-$CAP'].resourceArns[0] | [0]" --output text 2>/dev/null || echo "None")
+          if [ -n "$EXISTING_SRC_ARN" ] && [ "$EXISTING_SRC_ARN" != "None" ] && [ "$EXISTING_SRC_ARN" != "$CAP_ARN" ]; then
+            echo "  $C: stale '$CAP' delivery source ($EXISTING_SRC_ARN) — recreating for $CAP_ARN"
+            # A delivery source cannot be deleted while a delivery references it — delete the delivery first.
+            for D in $(aws logs describe-deliveries --region "$REGION" --query "deliveries[?deliverySourceName=='$C-$CAP'].id" --output text 2>/dev/null); do
+              [ -n "$D" ] && [ "$D" != "None" ] && aws logs delete-delivery --id "$D" --region "$REGION" >/dev/null 2>&1 || true
+            done
+            aws logs delete-delivery-source --name "$C-$CAP" --region "$REGION" >/dev/null 2>&1 || true
+          fi
           aws logs put-delivery-source --name "$C-$CAP" --resource-arn "$CAP_ARN" --log-type "$LOGTYPE" --region "$REGION" >/dev/null
           aws logs put-delivery-destination --name "$C-$CAP-cwl" --delivery-destination-configuration "destinationResourceArn=$LG_ARN" --region "$REGION" >/dev/null
           DEST_ARN=$(aws logs describe-delivery-destinations --region "$REGION" --query "deliveryDestinations[?name=='$C-$CAP-cwl'].arn | [0]" --output text)
