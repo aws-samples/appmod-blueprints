@@ -284,20 +284,38 @@ try:
             except Exception:
                 pass
         pending.append(spoke)
-    for spoke in pending:  # wait ~5 min for capabilities to clear, then delete the cluster
-        for _ in range(20):
+    for spoke in pending:  # retry delete_cluster until capabilities finish deleting
+        # ACK capabilities can take ~15-20 min to finish DELETING; delete_cluster fails
+        # with ResourceInUseException ("Cluster has capabilities attached") until they
+        # clear. A single attempt after a fixed short wait (the old 5 min) races ACK and
+        # leaves the spoke orphaned. Retry delete_cluster (up to ~25 min) instead: as soon
+        # as the capabilities clear the call succeeds.
+        submitted = False
+        for i in range(100):  # ~25 min (100 × 15s)
             try:
-                if not eks.list_capabilities(clusterName=spoke).get("capabilities", []):
+                if eks.describe_cluster(name=spoke)["cluster"]["status"] == "DELETING":
+                    submitted = True
                     break
-            except Exception:
+            except eks.exceptions.ResourceNotFoundException:
+                submitted = True
                 break
-            time.sleep(15)
-        try:
-            if eks.describe_cluster(name=spoke)["cluster"]["status"] != "DELETING":
+            except Exception:
+                pass
+            try:
                 eks.delete_cluster(name=spoke)
                 log(f"  Spoke {spoke} deletion submitted")
-        except Exception as e:
-            log(f"  Spoke {spoke} delete: {e}")
+                submitted = True
+                break
+            except eks.exceptions.ResourceNotFoundException:
+                submitted = True
+                break
+            except Exception as e:
+                # Typically ResourceInUseException while capabilities are still DELETING.
+                if i % 8 == 0:
+                    log(f"  Spoke {spoke}: waiting for capabilities to clear before delete ({e.__class__.__name__})")
+                time.sleep(15)
+        if not submitted:
+            log(f"  Spoke {spoke}: delete still blocked after ~25 min — leaving for the next sweep")
     for spoke in pending:  # wait up to ~15 min per spoke for full deletion
         for _ in range(30):
             try:
