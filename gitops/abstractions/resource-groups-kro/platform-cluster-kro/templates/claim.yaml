@@ -15,6 +15,7 @@ spec:
   environment: {{ .Values.environment | default "dev" }}
   provider: kro-ack
   region: {{ .Values.region | default $.Values.global.region | default "us-west-2" }}
+  managementRegion: {{ .Values.region | default $.Values.global.region | default "us-west-2" }}
   k8sVersion: {{ .Values.kubernetesVersion | default "1.32" | quote }}
   accountId: {{ .Values.accountId | default $.Values.global.accountId | quote }}
   managementAccountId: {{ .Values.managementAccountId | default $.Values.global.accountId | quote }}
