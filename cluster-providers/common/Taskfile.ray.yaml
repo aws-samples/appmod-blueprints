@@ -22,7 +22,7 @@ tasks:
             echo "  ✓ S3 bucket {{.RAY_BUCKET}} exists"
           else
             aws s3api create-bucket --bucket "{{.RAY_BUCKET}}" --region {{.AWS_REGION}} \
-              --create-bucket-configuration LocationConstraint={{.AWS_REGION}} --output text >/dev/null
+              {{if ne .AWS_REGION "us-east-1"}}--create-bucket-configuration LocationConstraint={{.AWS_REGION}}{{end}} --output text >/dev/null
             aws s3api put-public-access-block --bucket "{{.RAY_BUCKET}}" \
               --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
             echo "  ✓ S3 bucket {{.RAY_BUCKET}} created"
