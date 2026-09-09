@@ -717,10 +717,20 @@ tasks:
     vars:
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty'
@@ -890,10 +900,20 @@ tasks:
     vars:
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_USERNAME:
         sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
@@ -993,10 +1013,20 @@ tasks:
     vars:
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_USERNAME:
         sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
@@ -1008,6 +1038,14 @@ tasks:
     cmds:
       - |
         OVERLAY_URL="https://{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        # Guard: never wire the overlay to a broken/wrong host. If the GitLab domain
+        # could not be resolved (private/git-domain not written yet), skip and let a
+        # later run wire it — wiring a wrong host silently breaks every overlay-aware
+        # app (incl. clusters-kro → spokes never provision).
+        if [ -z "{{.GIT_DOMAIN}}" ]; then
+          printf '{{.C_ERR}}⚠ GitLab domain unresolved (private/git-domain missing) — skipping overlay wiring; re-run task {{.CLUSTER_PROVIDER}}:hub:set-overlay-repo once GitLab is reachable.{{.C_RESET}}\n'
+          exit 0
+        fi
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         KC="{{.REPO}}/private/hub-kubeconfig"
 
@@ -1178,10 +1216,20 @@ tasks:
       CLUSTER: '{{.CLI_ARGS}}'
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
@@ -1311,10 +1359,20 @@ tasks:
       CLUSTER: '{{.CLI_ARGS}}'
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
@@ -1506,10 +1564,20 @@ tasks:
       CLUSTER: '{{.CLI_ARGS}}'
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
@@ -1572,10 +1640,20 @@ tasks:
       CLUSTER: '{{.CLI_ARGS}}'
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
@@ -1674,10 +1752,20 @@ tasks:
     vars:
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
