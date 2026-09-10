@@ -19,6 +19,31 @@ metadata:
     argocd.argoproj.io/sync-wave: "-2"
 spec:
   name: {{ $.Values.aws.clusterName }}-{{ $identity.roleName }}
+  {{- if and (eq (toString $identity.skipPIA) "true") $.Values.aws.oidcIssuer }}
+  # skipPIA=true: this identity uses IRSA instead of Pod Identity.
+  # The SA annotation eks.amazonaws.com/role-arn triggers IRSA injection
+  # (AWS_WEB_IDENTITY_TOKEN_FILE) which is supported by aws-sdk-go v1.38+.
+  # See: https://github.com/argoproj/argo-rollouts/issues/4536
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "Federated": "arn:aws:iam::{{ $.Values.aws.accountId }}:oidc-provider/{{ trimPrefix "https://" $.Values.aws.oidcIssuer }}"
+          },
+          "Action": "sts:AssumeRoleWithWebIdentity",
+          "Condition": {
+            "StringEquals": {
+              "{{ trimPrefix "https://" $.Values.aws.oidcIssuer }}:sub": "system:serviceaccount:{{ $identity.namespace }}:{{ $identity.serviceAccount }}",
+              "{{ trimPrefix "https://" $.Values.aws.oidcIssuer }}:aud": "sts.amazonaws.com"
+            }
+          }
+        }
+      ]
+    }
+  {{- else }}
   assumeRolePolicyDocument: |
     {
       "Version": "2012-10-17",
@@ -35,6 +60,7 @@ spec:
         }
       ]
     }
+  {{- end }}
   {{- if $identity.managedPolicyArns }}
   policies:
     {{- range $identity.managedPolicyArns }}

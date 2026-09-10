@@ -9,7 +9,7 @@ metadata:
     services.k8s.aws/adoption-policy: adopt-or-create
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  arn: arn:aws:iam::{{ $accountId }}:role/peeks-cluster-mgmt-iam
+  arn: arn:aws:iam::{{ $accountId }}:role/{{ .Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-iam
   namespaceSelector:
     names:
       - ray-system
@@ -26,7 +26,7 @@ metadata:
     services.k8s.aws/adoption-policy: adopt-or-create
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  arn: arn:aws:iam::{{ $accountId }}:role/peeks-cluster-mgmt-eks
+  arn: arn:aws:iam::{{ $accountId }}:role/{{ .Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-eks
   namespaceSelector:
     names:
       - ray-system
