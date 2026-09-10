@@ -40,6 +40,53 @@ def log(msg):
     print(f"[sweep] {msg}", flush=True)
 
 
+hub_vpc_id = None
+spokes = [f"{prefix}-spoke-dev", f"{prefix}-spoke-prod"]
+
+
+def _revoke_sg_rules(sg):
+    """Revoke a security group's ingress/egress rules so circular SG references
+    (e.g. eks-cluster-sg ↔ k8s-traffic-*) don't block deletion."""
+    gid = sg["GroupId"]
+    if sg.get("IpPermissions"):
+        try:
+            ec2.revoke_security_group_ingress(GroupId=gid, IpPermissions=sg["IpPermissions"])
+        except Exception:
+            pass
+    if sg.get("IpPermissionsEgress"):
+        try:
+            ec2.revoke_security_group_egress(GroupId=gid, IpPermissions=sg["IpPermissionsEgress"])
+        except Exception:
+            pass
+
+
+def _delete_vpc_sgs(vpc_id):
+    """Delete every non-default, non-CloudFormation-owned security group in a VPC.
+    Two passes (revoke all rules, then delete all) to survive circular references.
+    Leaves CFN-owned SGs (aws:cloudformation:* tag) and the VPC itself untouched.
+    Returns the number of SGs deleted."""
+    try:
+        sgs = [
+            s for s in ec2.describe_security_groups(
+                Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+            )["SecurityGroups"]
+            if s["GroupName"] != "default"
+            and not any(t["Key"].startswith("aws:cloudformation:") for t in s.get("Tags", []))
+        ]
+    except Exception:
+        return 0
+    for s in sgs:
+        _revoke_sg_rules(s)
+    deleted = 0
+    for s in sgs:
+        try:
+            ec2.delete_security_group(GroupId=s["GroupId"])
+            deleted += 1
+        except Exception:
+            pass
+    return deleted
+
+
 # ---------------------------------------------------------------------------
 # 1. EKS Capabilities
 #    Must be deleted before aws eks delete-cluster, otherwise delete-cluster
@@ -187,7 +234,9 @@ except Exception as e:
 #    so that Auto Mode ENIs are fully released from the IDE VPC subnets.
 # ---------------------------------------------------------------------------
 try:
-    cluster_status = eks.describe_cluster(name=hub)["cluster"]["status"]
+    _hub = eks.describe_cluster(name=hub)["cluster"]
+    cluster_status = _hub["status"]
+    hub_vpc_id = _hub.get("resourcesVpcConfig", {}).get("vpcId") or hub_vpc_id
     if cluster_status != "DELETING":
         eks.delete_cluster(name=hub)
         log("  Hub EKS cluster deletion submitted")
@@ -209,6 +258,78 @@ except eks.exceptions.ResourceNotFoundException:
     log("  Hub EKS cluster already gone")
 except Exception as e:
     log(f"Hub EKS: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 6b. Orphaned spoke EKS clusters
+#     If `task destroy` was cut short (e.g. the CFN Delete path did not wait for
+#     it to finish), the KRO/ACK-provisioned spoke clusters can remain ACTIVE.
+#     Nothing else reaps them, and their VPCs (sections 10/14) cannot be deleted
+#     while the cluster is alive. Delete capabilities first, then the clusters,
+#     then wait for all to be gone (Auto Mode releases ENIs on cluster delete).
+# ---------------------------------------------------------------------------
+try:
+    pending = []
+    for spoke in spokes:
+        try:
+            s_status = eks.describe_cluster(name=spoke)["cluster"]["status"]
+        except eks.exceptions.ResourceNotFoundException:
+            continue
+        except Exception as e:
+            log(f"  Spoke {spoke}: {e}")
+            continue
+        for cap in eks.list_capabilities(clusterName=spoke).get("capabilities", []):
+            try:
+                eks.delete_capability(clusterName=spoke, capabilityName=cap["capabilityName"])
+            except Exception:
+                pass
+        pending.append(spoke)
+    for spoke in pending:  # retry delete_cluster until capabilities finish deleting
+        # ACK capabilities can take ~15-20 min to finish DELETING; delete_cluster fails
+        # with ResourceInUseException ("Cluster has capabilities attached") until they
+        # clear. A single attempt after a fixed short wait (the old 5 min) races ACK and
+        # leaves the spoke orphaned. Retry delete_cluster (up to ~25 min) instead: as soon
+        # as the capabilities clear the call succeeds.
+        submitted = False
+        for i in range(100):  # ~25 min (100 × 15s)
+            try:
+                if eks.describe_cluster(name=spoke)["cluster"]["status"] == "DELETING":
+                    submitted = True
+                    break
+            except eks.exceptions.ResourceNotFoundException:
+                submitted = True
+                break
+            except Exception:
+                pass
+            try:
+                eks.delete_cluster(name=spoke)
+                log(f"  Spoke {spoke} deletion submitted")
+                submitted = True
+                break
+            except eks.exceptions.ResourceNotFoundException:
+                submitted = True
+                break
+            except Exception as e:
+                # Typically ResourceInUseException while capabilities are still DELETING.
+                if i % 8 == 0:
+                    log(f"  Spoke {spoke}: waiting for capabilities to clear before delete ({e.__class__.__name__})")
+                time.sleep(15)
+        if not submitted:
+            log(f"  Spoke {spoke}: delete still blocked after ~25 min — leaving for the next sweep")
+    for spoke in pending:  # wait up to ~15 min per spoke for full deletion
+        for _ in range(30):
+            try:
+                eks.describe_cluster(name=spoke)
+            except eks.exceptions.ResourceNotFoundException:
+                log(f"  Spoke {spoke}: deleted")
+                break
+            except Exception:
+                break
+            time.sleep(30)
+    if not pending:
+        log("No orphaned spoke clusters to delete")
+except Exception as e:
+    log(f"Orphaned spoke clusters: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -358,16 +479,8 @@ try:
                 ec2.delete_route_table(RouteTableId=rt["RouteTableId"])
             except Exception:
                 pass
-        # Security Groups (non-default)
-        for sg in ec2.describe_security_groups(
-            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
-        )["SecurityGroups"]:
-            if sg["GroupName"] == "default":
-                continue
-            try:
-                ec2.delete_security_group(GroupId=sg["GroupId"])
-            except Exception:
-                pass
+        # Security Groups (non-default) — revoke rules first (circular refs)
+        _delete_vpc_sgs(vpc_id)
         # VPC
         try:
             ec2.delete_vpc(VpcId=vpc_id)
@@ -522,10 +635,8 @@ try:
         for sg in ec2.describe_security_groups(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["SecurityGroups"]:
             if sg["GroupName"] == "default":
                 continue
-            try:
-                ec2.delete_security_group(GroupId=sg["GroupId"])
-            except Exception:
-                pass
+            _revoke_sg_rules(sg)
+        _delete_vpc_sgs(vpc_id)
         for attempt in range(6):  # retry while ENIs finish detaching (~2 min)
             try:
                 ec2.delete_vpc(VpcId=vpc_id)
@@ -557,6 +668,173 @@ try:
         log("No orphan spoke/Crossplane VPCs to reap")
 except Exception as e:
     log(f"Orphan VPC reaper: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 15. Leftover hub security groups in the IDE (CloudFormation-owned) VPC
+#     When the hub cluster shares the IDE VPC, its runtime SGs survive
+#     `task destroy`: eks-cluster-sg-<hub>-*, k8s-traffic-*, k8s-platform-*,
+#     <prefix>-hub-ingress-http/https, <prefix>-hub-platform-alb-sg,
+#     <prefix>-amg-sg, rds-mysql-sg-*. Via circular references they block
+#     CloudFormation from deleting the IDE VPC → stack DELETE_FAILED. Delete
+#     those SGs (revoke rules first) but LEAVE the VPC itself to CloudFormation
+#     (_delete_vpc_sgs skips CFN-owned SGs, so the IDE's own SG is untouched).
+# ---------------------------------------------------------------------------
+try:
+    vpc_id = hub_vpc_id
+    if not vpc_id:
+        # Fallback: locate the IDE VPC by its Name tag when the hub was already gone.
+        for v in ec2.describe_vpcs(
+            Filters=[{"Name": "tag:Name", "Values": [f"{prefix}-workshop/IDE-VPC", f"{prefix}-workshop*"]}]
+        ).get("Vpcs", []):
+            vpc_id = v["VpcId"]
+            break
+    if vpc_id:
+        n = _delete_vpc_sgs(vpc_id)
+        log(
+            f"Cleared {n} leftover security group(s) in IDE/hub VPC {vpc_id}"
+            if n else f"No leftover security groups in IDE/hub VPC {vpc_id}"
+        )
+    else:
+        log("IDE/hub VPC not found — skipping leftover SG cleanup")
+except Exception as e:
+    log(f"IDE VPC SG cleanup: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 16. Final authoritative re-sweep of recreatable resources + ENI gate
+#     Sections 2-5 delete CloudFront / ALB / RDS / AMP scrapers BEFORE the hub
+#     cluster is deleted (section 6). While the hub is still alive its
+#     ACK / Crossplane / addon controllers RE-CREATE those resources, which then
+#     end up orphaned once the hub is gone — observed on a reused account where
+#     `task destroy` did not fully stop the controllers first: the CloudFront
+#     "peeks-hub-platform" distribution + VPC origin, the DevLake RDS, the AMP
+#     scrapers and the hub security groups all came back and their ENIs
+#     (cloudfront_managed / RDSNetworkInterface / amp_collector) blocked the IDE
+#     VPC subnet deletion → stack DELETE_FAILED.
+#     Now that the hub AND spokes are deleted (sections 6/6b) the controllers are
+#     gone, so re-delete anything that came back, re-clear the IDE VPC security
+#     groups, then WAIT for those service-managed ENIs to detach so CloudFormation
+#     can delete the subnets. Cheap when nothing was recreated (the common case).
+# ---------------------------------------------------------------------------
+try:
+    def _find_ide_vpc():
+        """The IDE VPC is the only CloudFormation-owned VPC (aws:cloudformation:*
+        tags). Reliable even when the hub cluster was already gone at section 6."""
+        if hub_vpc_id:
+            return hub_vpc_id
+        for v in ec2.describe_vpcs().get("Vpcs", []):
+            if any(t["Key"].startswith("aws:cloudformation:") for t in v.get("Tags", [])):
+                return v["VpcId"]
+        return None
+
+    ide_vpc = _find_ide_vpc()
+
+    # 16a. AMP scrapers (recreated by the AMP capability / addon)
+    try:
+        for s in amp.list_scrapers().get("scrapers", []):
+            try:
+                amp.delete_scraper(scraperId=s["scraperId"])
+                log(f"  [re-sweep] Deleted recreated AMP scraper {s['scraperId']}")
+            except Exception:
+                pass
+    except Exception as e:
+        log(f"  [re-sweep] AMP: {e}")
+
+    # 16b. ALBs (recreated by the AWS Load Balancer Controller)
+    try:
+        for lb in elbv2.describe_load_balancers()["LoadBalancers"]:
+            if lb["LoadBalancerName"].startswith(prefix + "-"):
+                elbv2.delete_load_balancer(LoadBalancerArn=lb["LoadBalancerArn"])
+                log(f"  [re-sweep] Deleted recreated ALB {lb['LoadBalancerName']}")
+    except Exception as e:
+        log(f"  [re-sweep] ALB: {e}")
+
+    # 16c. RDS (recreated by ACK)
+    try:
+        for db in rds.describe_db_instances()["DBInstances"]:
+            if db["DBInstanceIdentifier"].startswith("devlake") \
+               and db["DBInstanceStatus"] not in ("deleting",):
+                rds.delete_db_instance(
+                    DBInstanceIdentifier=db["DBInstanceIdentifier"],
+                    SkipFinalSnapshot=True,
+                    DeleteAutomatedBackups=True,
+                )
+                log(f"  [re-sweep] Deleting recreated RDS {db['DBInstanceIdentifier']}")
+    except Exception as e:
+        log(f"  [re-sweep] RDS: {e}")
+
+    # 16d. CloudFront distribution + VPC origin (recreated by Crossplane)
+    try:
+        vos = cf.list_vpc_origins().get("VpcOriginList", {}).get("Items", [])
+        vo_ids = {vo["Id"] for vo in vos if vo.get("Name", "").startswith(hub + "-")}
+        dist_ids = set()
+        for d in cf.list_distributions().get("DistributionList", {}).get("Items", []):
+            if d.get("Comment", "").startswith(hub):
+                dist_ids.add(d["Id"])
+                continue
+            for o in d.get("Origins", {}).get("Items", []):
+                if o.get("VpcOriginConfig", {}).get("VpcOriginId", "") in vo_ids:
+                    dist_ids.add(d["Id"])
+        for dist_id in dist_ids:
+            resp = cf.get_distribution_config(Id=dist_id)
+            etag, cfg = resp["ETag"], resp["DistributionConfig"]
+            if cfg.get("Enabled", True):
+                cfg["Enabled"] = False
+                cf.update_distribution(Id=dist_id, DistributionConfig=cfg, IfMatch=etag)
+                log(f"  [re-sweep] Disabling recreated CF distribution {dist_id}...")
+                for _ in range(30):
+                    if cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed":
+                        break
+                    time.sleep(15)
+            etag2 = cf.get_distribution(Id=dist_id)["ETag"]
+            cf.delete_distribution(Id=dist_id, IfMatch=etag2)
+            log(f"  [re-sweep] Deleted recreated CF distribution {dist_id}")
+        if dist_ids:
+            time.sleep(5)
+        for vo_id in vo_ids:
+            try:
+                etag = cf.get_vpc_origin(Id=vo_id)["ETag"]
+                cf.delete_vpc_origin(Id=vo_id, IfMatch=etag)
+                log(f"  [re-sweep] Deleted recreated CF VPC origin {vo_id}")
+            except Exception:
+                pass
+    except Exception as e:
+        log(f"  [re-sweep] CloudFront: {e}")
+
+    # 16e. Re-clear leftover SGs in the IDE VPC (recreated / missed by section 15)
+    if ide_vpc:
+        n = _delete_vpc_sgs(ide_vpc)
+        if n:
+            log(f"  [re-sweep] Cleared {n} more leftover SG(s) in IDE VPC {ide_vpc}")
+
+    # 16f. ENI gate — wait for the service-managed ENIs that block subnet deletion
+    #      (cloudfront_managed / amp_collector / RDSNetworkInterface) to detach.
+    if ide_vpc:
+        def _blocking_enis():
+            out = []
+            try:
+                for e in ec2.describe_network_interfaces(
+                    Filters=[{"Name": "vpc-id", "Values": [ide_vpc]}]
+                )["NetworkInterfaces"]:
+                    if e.get("InterfaceType") in ("amp_collector", "cloudfront_managed") \
+                       or e.get("Description", "").startswith("RDSNetworkInterface"):
+                        out.append(e["NetworkInterfaceId"])
+            except Exception:
+                pass
+            return out
+        for i in range(36):  # up to ~12 min (36 × 20 s) — RDS ENI release is the long pole
+            b = _blocking_enis()
+            if not b:
+                log(f"  [re-sweep] No blocking ENIs left in IDE VPC {ide_vpc}")
+                break
+            if i % 3 == 0:
+                log(f"  [re-sweep] Waiting for {len(b)} blocking ENI(s) to detach from IDE VPC {ide_vpc}...")
+            time.sleep(20)
+    else:
+        log("  [re-sweep] IDE VPC not found — skipping final re-sweep")
+except Exception as e:
+    log(f"Final re-sweep: {e}")
 
 
 log("Extended sweep complete.")

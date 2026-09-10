@@ -680,6 +680,12 @@ tasks:
           tenant: platform
           environment: control-plane
           region: {{.AWS_REGION}}
+          # managementRegion drives the ACK region annotation on the cluster-config
+          # Secrets Manager secret (clusterConfigSecret). For this single-region/account
+          # workshop it must equal the deploy region; otherwise it defaults to us-west-2
+          # (RGD schema) and the secret is created in us-west-2 while everything else is
+          # in AWS_REGION → clusterConfigSecret never syncs → hub EKS never ACTIVE.
+          managementRegion: {{.AWS_REGION}}
           k8sVersion: "{{.HUB_K8S_VERSION}}"
           accountId: "{{.AWS_ACCOUNT_ID}}"
           managementAccountId: "{{.AWS_ACCOUNT_ID}}"
