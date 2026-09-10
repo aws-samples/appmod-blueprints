@@ -104,6 +104,12 @@ tasks:
       - 'cd {{.PLATFORM_DIR}} && task install'
       - 'printf "{{.C_INFO}}  [%ds] platform install done ({{.PLATFORM_DIR}}){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - printf '{{.C_OK}}✓ Platform hub install complete.{{.C_RESET}}\n'
+      # Point CloudFront at the ALB the load balancer controller just created. Must happen
+      # HERE: the ALB does not exist until the platform install above, and post-install ->
+      # idc:configure reaches Keycloak *through* the CloudFront domain, so the origin has to
+      # be attached before then or IDC federation cannot work. Doing it now also lets the
+      # distribution propagate while spokes and ray run.
+      - task: cloudfront:attach
       # Wire the GitLab fleet-config overlay to the hub, then declare spokes into it.
       # The platform's guarded ApplicationSets reconcile these into live clusters.
       - task: set-overlay-repo
@@ -362,6 +368,22 @@ tasks:
 
   # ============================================================
   # POST-INSTALL
+  cloudfront:attach:
+    desc: Point the reserved CloudFront distribution at the platform ALB (no-op unless insecure mode)
+    cmds:
+      - |
+        # Only meaningful when something upstream terminates TLS, i.e. the CloudFront
+        # exposure mode. With a real domain there is no distribution to attach.
+        if [ "{{.EXPOSURE_MODE}}" != "cloudfront" ]; then
+          printf '{{.C_INFO}}  Not in CloudFront mode (insecure=false) — nothing to attach.{{.C_RESET}}\n'
+          exit 0
+        fi
+        printf '{{.C_STEP}}▸ Attaching CloudFront to the platform ALB...{{.C_RESET}}\n'
+        # Idempotent: exits 0 having changed nothing if already pointed at the current ALB.
+        # Also self-heals a stale origin left by an ALB that was replaced.
+        PLATFORM_CONFIG_FILE="{{.CONFIG_FILE}}" \
+          "{{.PLATFORM_DIR}}/scripts/cloudfront-attach-origin.sh"
+
   # Run after task install to complete workshop-specific setup
   # ============================================================
 

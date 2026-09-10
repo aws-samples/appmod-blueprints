@@ -25,11 +25,14 @@ Auto-detects your AWS environment and generates `config.local.yaml` at the repo 
 4. Writes `config.local.yaml` with that hostname as a static `domain` plus `insecure: true`
 
 The ALB is **not** created here. The platform's load balancer controller creates it during
-`task install` (named `<clusterName>-platform` and `internal`, because `insecure: true`). The
-distribution is pointed at it afterwards:
+`task install` (named `<clusterName>-platform` and `internal`, because `insecure: true`).
+The distribution is pointed at it automatically by the workshop's own `install` task, which
+runs `cloudfront:attach` right after the platform install — before `post-install`, since IDC
+federation reaches Keycloak through the CloudFront domain. To re-point it by hand (it is
+idempotent, and also repairs a stale origin):
 
 ```bash
-scripts/cloudfront-attach-origin.sh    # after task install
+task cloudfront:attach          # from the workshop directory
 ```
 
 That ordering is deliberate. The platform needs its hostname at install time, but deriving the

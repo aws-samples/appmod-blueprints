@@ -39,6 +39,12 @@ scripts/cloudfront-attach-origin.sh
 Both scripts are shipped by the platform and are the same ones the workshop uses. You should
 not need to reimplement either.
 
+Wire step 3 into your own install flow rather than leaving it to an operator. The workshop
+does this: `workshop/Taskfile.yaml`'s `install` calls `cloudfront:attach` immediately after
+the platform install and before `post-install`, because IDC federation reaches Keycloak
+*through* the CloudFront domain and would fail while the origin is still a placeholder.
+Placing it there also lets the distribution propagate while later steps run.
+
 ### Required config
 
 ```yaml
