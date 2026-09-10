@@ -27,13 +27,13 @@
 #       - adminRoleName                    from WS_PARTICIPANT_ROLE_ARN or caller identity
 #       - clusterProvider                  from CFN stack parameter or CLUSTER_PROVIDER env
 #
-#  2. Create Platform ALB + CloudFront (when HUB_VPC_ID is set = shared IDE VPC mode):
-#       - Creates internal ALB "peeks-hub-platform" in the IDE VPC private subnets
-#         via AWS CLI (no aws:cloudformation:* tags → the AWS LBC can adopt it cleanly)
-#       - Creates CloudFront VPC Origin pointing to the ALB
-#       - Creates CloudFront Distribution → gets domain d*.cloudfront.net
-#       - Reserves the CloudFront hostname and writes it to config.local.yaml
-#       All steps are IDEMPOTENT — safe to re-run.
+#  2. Reserve the CloudFront hostname (scripts/cloudfront-reserve-domain.sh):
+#       - Creates a distribution with a placeholder origin; returns its d*.cloudfront.net
+#         name in about a second, needing NO VPC and NO load balancer
+#       - Writes it to config.local.yaml as a static `domain` plus insecure: true
+#       Idempotent — a re-run reuses the existing distribution.
+#       The ALB is created later by the load balancer controller during `task install`,
+#       and the distribution is pointed at it by workshop task `cloudfront:attach`.
 #
 #  3. Write <repo-root>/config.local.yaml with:
 #       - clusterProvider, repo.url/revision, hub.clusterName/version/network
@@ -87,8 +87,11 @@
 #   K8S_VERSION       (default: 1.35)
 #   FORCE             (default: false) — set to true to overwrite existing config
 #   ADMIN_ROLE_NAME   (default: derived from WS_PARTICIPANT_ROLE_ARN or caller identity)
-#   HUB_VPC_ID        (default: from CDK bootstrap env) — triggers ALB+CF creation
-#   HUB_SUBNET_IDS    (default: from CDK bootstrap env) — private subnet IDs for ALB
+#   HUB_VPC_ID        (default: from CDK bootstrap env) — OPTIONAL: install the hub into
+#                     this existing VPC instead of letting the platform create one.
+#                     kind-kro-ack only; kind-crossplane rejects it (see issue #833).
+#                     NOT required for CloudFront exposure.
+#   HUB_SUBNET_IDS    (default: from CDK bootstrap env) — private subnets for that VPC
 #
 
 set -euo pipefail
@@ -328,10 +331,6 @@ fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 
-# --- Platform CloudFront (CloudFront mode only) ------------------------------
-# When HUB_VPC_ID is set (shared IDE VPC), create the internal ALB + CloudFront
-# distribution NOW so the domain is known before `task install` runs hub:claim.
-# hub:claim passes domainName from config, so it must be set here.
 # --- Validate --------------------------------------------------------------
 echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
 yq '.' "$OUTPUT_FILE" >/dev/null
