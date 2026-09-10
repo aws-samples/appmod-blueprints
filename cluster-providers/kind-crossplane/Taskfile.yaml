@@ -118,6 +118,29 @@ tasks:
       - yq '.repo.url' {{.CONFIG_FILE}} | grep -qv null || { echo "repo.url not set in config.local.yaml"; exit 1; }
       - printf '{{.C_STEP}}▸ Checking AWS credentials...{{.C_RESET}}\n'
       - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
+      # PROVIDER CAPABILITY GUARD. kind-crossplane cannot yet provision the hub into a
+      # pre-existing VPC: the platform-cluster Composition is a single
+      # function-patch-and-transform step with a static resource list, which cannot omit the
+      # 14+ networking resources it creates. See issue #833.
+      #
+      # Fail rather than ignore. clusterProvider is a selectable CFN parameter, so a consumer
+      # that supplies hub.network.vpcId (as the workshop and OAP do, to place the hub in the
+      # VPC whose ALB already backs their CloudFront distribution) but picks this provider
+      # would otherwise get a SECOND VPC created silently, leaving CloudFront pointing at an
+      # ALB the cluster cannot use — a broken platform with no error anywhere.
+      - |
+        NET_VPC=$(yq '.hub.network.vpcId // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true)
+        if [ "$NET_VPC" = "null" ]; then NET_VPC=""; fi
+        if [ -n "$NET_VPC" ]; then
+          printf '{{.C_ERR}}✗ hub.network.vpcId is set (%s) but kind-crossplane cannot import an existing VPC.{{.C_RESET}}\n' "$NET_VPC"
+          printf '{{.C_INFO}}  It would create a NEW VPC and ignore yours, silently breaking any ALB/CloudFront{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  pre-created in that VPC.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Options:{{.C_RESET}}\n'
+          printf '{{.C_INFO}}    - set clusterProvider: "kind-kro-ack" (supports existing-VPC import today), or{{.C_RESET}}\n'
+          printf '{{.C_INFO}}    - remove hub.network and let the platform create the VPC (no pre-created ALB){{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Tracking: https://github.com/aws-samples/appmod-blueprints/issues/833{{.C_RESET}}\n'
+          exit 1
+        fi
       - printf '{{.C_OK}}✓ All pre-flight checks passed.{{.C_RESET}}\n'
 
   init:
@@ -198,11 +221,36 @@ tasks:
         # the repo root). That made the background seed abort immediately with
         # "config.local.yaml: no such file or directory", so grafana_api_key / AMP
         # creds were never written and Grafana (external-grafana) failed to
-        # reconcile. Resolve the repo root from the workshop env vars (set by
-        # /etc/profile.d/workshop.sh) rather than {{.ROOT_DIR}} templating, which
-        # expands empty inside this backgrounded subshell.
-        REPO_ROOT="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}"
-        ( cd "$REPO_ROOT" && task kind-crossplane:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &
+        # reconcile.
+        #
+        # The repo root comes from {{.ROOT_DIR}}: go-task expands it at TEMPLATE time,
+        # before any shell runs, so the backgrounded subshell below cannot affect it
+        # (verified). In an included Taskfile ROOT_DIR is the ROOT Taskfile's directory
+        # — i.e. the repo root — not this file's directory (that is TASKFILE_DIR).
+        #
+        # Do NOT reintroduce WORKSPACE_PATH / WORKING_REPO here. Those are Workshop
+        # Studio env vars; on any other machine (a customer running from an arbitrary
+        # checkout) both defaults are wrong, so this backgrounded job cd'd into a
+        # nonexistent directory and failed SILENTLY — the exact failure the workshop
+        # env vars were added to fix.
+        REPO_ROOT="{{.ROOT_DIR}}"
+        # Fail loudly rather than silently seeding nothing: `task kind-crossplane:...`
+        # below requires the root Taskfile to be present at REPO_ROOT.
+        if [ ! -f "$REPO_ROOT/Taskfile.yaml" ]; then
+          printf '{{.C_ERR}}✗ observability seed not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
+          exit 1
+        fi
+        # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`.
+        # go-task runs cmds through the mvdan/sh interpreter, which KILLS its background
+        # jobs when the task body exits. A bare `( ... ) &` is therefore terminated almost
+        # immediately: verified that the redirect target is never even created, so the
+        # long AMP poll (30+ min) could never survive. Only a fast-failing child ever
+        # produced log output, which is why this looked like it worked.
+        # The outer `sh` exits at once, orphaning the subshell so it outlives go-task.
+        # REPO_ROOT is passed through the environment (not interpolated into the script
+        # string) so paths containing spaces or quotes are safe.
+        REPO_ROOT="$REPO_ROOT" \
+          sh -c '( cd "$REPO_ROOT" && task kind-crossplane:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &'
         printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'
 
   install:phase1-playwright-prefetch:
@@ -1153,12 +1201,7 @@ tasks:
     desc: Seed observability credentials (AMP endpoint, AMG API key) into Secrets Manager
     vars:
       KC_DOMAIN:
-        sh: |
-          if [ -f {{.ROOT_DIR}}/private/async-domain ]; then
-            cat {{.ROOT_DIR}}/private/async-domain
-          else
-            echo "{{.DOMAIN}}"
-          fi
+        sh: echo "{{.DOMAIN}}"
     cmds:
       - |
         set -e

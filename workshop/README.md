@@ -19,11 +19,26 @@ Auto-detects your AWS environment and generates `config.local.yaml` at the repo 
 **What it does:**
 1. Detects AWS region, account ID, IAM Identity Center instance, Developers group, admin role
 2. Reads `ClusterProvider` from the CloudFormation stack parameter (or `CLUSTER_PROVIDER` env var)
-3. **Creates the platform ALB + CloudFront** (when `HUB_VPC_ID` is set — Workshop Studio mode):
-   - Internal ALB `peeks-hub-platform` in the IDE VPC private subnets
-   - CloudFront VPC Origin + Distribution → gets `d*.cloudfront.net` domain
-   - Writes domain into `config.local.yaml` so `hub:claim` has it at install time
-4. Writes `config.local.yaml` and `private/async-domain`
+3. **Reserves a CloudFront hostname** via `scripts/cloudfront-reserve-domain.sh` — creates a
+   distribution with a placeholder origin, which returns its `d*.cloudfront.net` name in about
+   a second and needs no VPC and no load balancer
+4. Writes `config.local.yaml` with that hostname as a static `domain` plus `insecure: true`
+
+The ALB is **not** created here. The platform's load balancer controller creates it during
+`task install` (named `<clusterName>-platform` and `internal`, because `insecure: true`).
+The distribution is pointed at it automatically by the workshop's own `install` task, which
+runs `cloudfront:attach` right after the platform install — before `post-install`, since IDC
+federation reaches Keycloak through the CloudFront domain. To re-point it by hand (it is
+idempotent, and also repairs a stale origin):
+
+```bash
+task cloudfront:attach          # from the workshop directory
+```
+
+That ordering is deliberate. The platform needs its hostname at install time, but deriving the
+hostname from infrastructure the install creates would be circular. Reserving the name up front
+breaks the cycle, so `domain` is an ordinary static value and nothing has to resolve it
+mid-install. See [docs/platform/cloudfront-exposure.md](../docs/platform/cloudfront-exposure.md).
 
 **Environment overrides:**
 
