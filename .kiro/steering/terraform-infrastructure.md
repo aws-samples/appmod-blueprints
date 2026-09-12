@@ -7,16 +7,25 @@ fileMatchPattern: "**/terraform/**/*"
 
 ## Infrastructure Location
 
-All Terraform code is located in: `platform/infra/terraform/`
+Terraform is one of the pluggable cluster providers. Its code lives in: `cluster-providers/terraform/`
+(the old `platform/infra/terraform/` tree has been removed). It is selected by setting
+`clusterProvider: terraform` in `config.local.yaml` and driven via `task install` / `task destroy`.
 
 ## Project Structure
 
 ```
-platform/infra/terraform/
-├── modules/              # Reusable Terraform modules
-├── environments/         # Environment-specific configurations
-├── scripts/             # Helper scripts
-└── main.tf              # Root module
+cluster-providers/terraform/
+├── eks.tf                 # EKS Auto Mode cluster
+├── vpc.tf                 # VPC, subnets, IGW, NAT
+├── iam.tf                 # Cluster/node roles, ArgoCD capability role, ESO pod identity role
+├── argocd-capability.tf   # EKS ArgoCD Capability (via AWS CLI)
+├── secrets-manager.tf     # <cluster>/config + <cluster>/keycloak secrets
+├── helm.tf                # External Secrets Operator bootstrap
+├── variables.tf           # Input variables
+├── outputs.tf             # Output values
+├── versions.tf            # Provider versions
+├── terraform.tfvars.example
+└── Taskfile.yaml          # install / status / destroy tasks
 ```
 
 ## EKS Cluster Configuration

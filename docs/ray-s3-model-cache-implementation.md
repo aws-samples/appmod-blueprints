@@ -7,15 +7,15 @@ This document describes the implemented S3-based model caching system for Ray Se
 
 To add a new model to the cache:
 
-1. Update `gitops/addons/bootstrap/default/addons.yaml`:
+1. Add the model to `gitops/addons/configs/ray-operator/values.yaml`:
 ```yaml
-ray-operator:
-  valuesObject:
-    modelPrestage:
-      models:
-        - name: new-model
-          huggingfaceId: "org/model-name"
-          s3Path: "models/new-model"
+modelPrestage:
+  models:
+    new-model:
+      enabled: true
+      repoId: "org/model-name"
+      memory: "8Gi"
+      storageSize: "20Gi"
 ```
 
 2. Sync ray-operator addon:
@@ -44,45 +44,34 @@ kubectl get jobs -n ray-system | grep prestage
 
 ### 1. S3 Bucket and IAM Roles
 
-**Created by Terraform**: `platform/infra/terraform/common/model-storage.tf`
+**Created by the cluster provider**: `cluster-providers/common/Taskfile.ray.yaml` (the `setup` task,
+run during `task install`). This provider-agnostic task (shared by the `kind-crossplane` and
+`kind-kro-ack` providers) provisions, via the AWS CLI:
 
-```hcl
-# S3 bucket for model storage
-resource "aws_s3_bucket" "ray_models" {
-  bucket = "${local.context_prefix}-ray-models-${data.aws_caller_identity.current.account_id}"
-}
-
-# IAM role for model prestage jobs
-resource "aws_iam_role" "model_prestage" {
-  name = "${local.context_prefix}-model-prestage-role"
-  # Permissions: s3:PutObject, s3:GetObject, s3:ListBucket
-}
-
-# IAM role for Ray workers
-resource "aws_iam_role" "ray_worker" {
-  name = "${local.context_prefix}-ray-worker-role"
-  # Permissions: s3:GetObject, s3:ListBucket (read-only)
-}
-```
+- **S3 bucket** `<resourcePrefix>-ray-models-<accountId>` (public access blocked) for model storage
+- **IAM role** `<resourcePrefix>-model-prestage-role` — for model prestage jobs (`s3:PutObject`, `s3:GetObject`, `s3:ListBucket`)
+- **IAM role** `<resourcePrefix>-ray-worker-role` — for Ray workers (`s3:GetObject`, `s3:ListBucket`, read-only)
+- Plus the ECR repo, custom vLLM image, Mountpoint-S3 CSI driver, and Pod Identity associations
 
 **Outputs**:
 - Bucket: `peeks-ray-models-<AWS_ACCOUNT_ID>`
 - Models path: `s3://peeks-ray-models-<AWS_ACCOUNT_ID>/models/`
 
-**GitOps Bridge Integration**:
+**Cluster-secret metadata injection**:
 
-The S3 bucket name is dynamically injected into the ray-operator addon via GitOps bridge cluster secret annotations:
+The S3 bucket name is dynamically injected into the ray-operator addon via cluster-secret annotations:
 
-1. **Terraform adds metadata** to cluster secret (`platform/infra/terraform/common/locals.tf`):
-```hcl
-addons_metadata = {
-  resource_prefix = var.resource_prefix  # "peeks"
-  aws_account_id  = data.aws_caller_identity.current.account_id  # "<AWS_ACCOUNT_ID>"
-  # ... other metadata
-}
+1. **The cluster provider seeds metadata** (`resource_prefix`, `aws_account_id`, etc.) into the
+   `<cluster>/config` Secrets Manager entry; the `fleet-secret` chart writes it onto the cluster
+   secret annotations.
+
+2. **The addon registry** derives the bucket name from those annotations
+   (`gitops/addons/registry/platform.yaml`):
+```yaml
+    model_s3_bucket: '{{.metadata.annotations.resource_prefix}}-ray-models-{{.metadata.annotations.aws_account_id}}'
 ```
 
-2. **ArgoCD ApplicationSet** reads annotations (`gitops/addons/bootstrap/default/addons.yaml`):
+   and the ray-operator ApplicationSet passes it through to the chart:
 ```yaml
 ray-operator:
   valuesObject:
@@ -98,7 +87,7 @@ This approach ensures the S3 bucket name is consistent across all environments w
 
 **Location**: `gitops/addons/charts/ray-operator/templates/model-prestage-job.yaml`
 
-**Configuration**: `gitops/addons/bootstrap/default/addons.yaml`
+**Configuration**: `gitops/addons/configs/ray-operator/values.yaml`
 
 ```yaml
 ray-operator:
@@ -125,7 +114,7 @@ ray-operator:
 
 ### 3. S3 CSI Driver Integration
 
-**Enabled in**: `gitops/addons/bootstrap/default/addons.yaml`
+**Enabled in**: `gitops/addons/configs/ray-operator/values.yaml`
 
 ```yaml
 mountpoint-s3-csi-driver:
@@ -249,7 +238,7 @@ workerMemory: ${{ parameters.modelId === '/mnt/models/models/mistral-7b' and '48
 
 ### Initial Setup (Already Completed)
 
-1. ✅ Terraform creates S3 bucket and IAM roles
+1. ✅ The cluster provider (`cluster-providers/common/Taskfile.ray.yaml`) creates the S3 bucket and IAM roles
 2. ✅ Ray operator addon enabled with modelPrestage config
 3. ✅ Model prestage jobs run and populate S3 bucket
 4. ✅ S3 CSI driver installed

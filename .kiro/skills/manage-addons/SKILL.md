@@ -1,6 +1,6 @@
 ---
 name: manage-addons
-description: Add, configure, or modify GitOps addons on the PEEKS platform. Use when adding a new addon, enabling an addon on a cluster, configuring addon values, troubleshooting addon deployment, or modifying hub-config.yaml. Do NOT use for general kubectl troubleshooting — use troubleshoot-platform instead.
+description: Add, configure, or modify GitOps addons on the PEEKS platform. Use when adding a new addon, enabling an addon on a cluster, configuring addon values, troubleshooting addon deployment, or editing addon enablement (`enabled-addons.yaml`). Do NOT use for general kubectl troubleshooting — use troubleshoot-platform instead.
 ---
 
 # Manage Addons
@@ -23,24 +23,24 @@ The platform uses a three-tier configuration system:
 
 | Layer | File | Purpose |
 |-------|------|---------|
-| Addon definitions | `gitops/addons/bootstrap/default/addons.yaml` | Central registry of all addons |
-| Environment config | `gitops/addons/environments/{env}/addons.yaml` | Per-environment enablement |
-| Cluster config | `platform/infra/terraform/hub-config.yaml` | Per-cluster activation via labels |
+| Addon registry | `gitops/addons/registry/<domain>.yaml` | Central registry of all addons (core, platform, security, observability, ml, gitops) |
+| Environment enablement | `gitops/overlays/environments/<env>/enabled-addons.yaml` | Per-environment enablement (source of truth for cluster secret `enable_*` labels) |
+| Value overlays | `gitops/overlays/environments/<env>/<addon>/values.yaml` | Per-environment/cluster value overrides |
 
 **Constraints:**
 - You MUST prefer GitOps workflow (modify Git → commit → push → ArgoCD sync) over manual kubectl apply because manual changes drift from Git state
-- You MUST NOT manually modify cluster secrets — always update through `hub-config.yaml` because Terraform owns these resources
+- You MUST NOT manually modify cluster secrets — always update through `gitops/overlays/environments/<env>/enabled-addons.yaml` because the fleet-secret chart generates these labels from it
 - Read-only kubectl operations (get, describe, logs) are allowed without confirmation
 
 ### 2. Add a New Addon
 
 **Constraints:**
-- You MUST add the addon entry in `gitops/addons/bootstrap/default/addons.yaml` with selector and valuesObject
-- You MUST add `enable_<addon>: false` to all clusters in `hub-config.yaml`
+- You MUST add the addon entry in the appropriate `gitops/addons/registry/<domain>.yaml` with selector and valuesObject
+- You MUST add `enable_<addon>: false` to the relevant `gitops/overlays/environments/<env>/enabled-addons.yaml`
 - You MUST choose an appropriate sync wave based on dependencies (see references/sync-waves.md)
 - You MUST NOT put dynamic template values (`{{.metadata.annotations.*}}`) in values.yaml files because they will be overridden — see [references/values-separation.md](references/values-separation.md)
 - You SHOULD create a values overlay at `gitops/addons/default/addons/<addon>/values.yaml` for static config
-- You SHOULD use `deploy.sh` scripts, never raw `terraform apply`
+- You SHOULD apply changes via GitOps (commit → push → ArgoCD sync); use `task install` for provider bootstrap, never raw `terraform apply`
 
 ### 3. Configure Addon Values
 

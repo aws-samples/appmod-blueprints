@@ -98,5 +98,5 @@ argocd app diff <app> && argocd app sync <app> --prune
   appset YAML, or the disable tasks above.
 - Treat any prune/delete of a live cluster as high-risk: remove from Git, show
   the diff, and confirm before syncing with `--prune`.
-- For full teardown use `destroy.sh`, never prune.
+- For full teardown use `task destroy`, never prune.
 - ArgoCD CLI auth errors: `argocd-refresh-token && source ~/.bashrc.d/platform.sh`.
