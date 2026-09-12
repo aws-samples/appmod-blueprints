@@ -22,6 +22,7 @@ topologySpreadConstraints:
 - maxSkew: 1
   topologyKey: topology.kubernetes.io/zone
   whenUnsatisfiable: DoNotSchedule
+  minDomains: 2
   labelSelector:
     matchLabels:
       app.kubernetes.io/name: cert-manager
@@ -48,6 +49,7 @@ cainjector:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
     whenUnsatisfiable: DoNotSchedule
+    minDomains: 2
     labelSelector:
       matchLabels:
         app.kubernetes.io/name: cainjector
@@ -74,6 +76,7 @@ webhook:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
     whenUnsatisfiable: DoNotSchedule
+    minDomains: 2
     labelSelector:
       matchLabels:
         app.kubernetes.io/name: webhook
