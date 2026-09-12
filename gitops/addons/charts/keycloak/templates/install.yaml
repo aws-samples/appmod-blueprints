@@ -85,12 +85,17 @@ spec:
               matchLabels:
                 app: keycloak
             topologyKey: kubernetes.io/hostname
-      # Prefer spreading across AZs, but do not block scheduling if only one AZ has
-      # capacity (hostname anti-affinity above already guarantees separate nodes).
+      # Force the two replicas across >=2 AZs (not just separate nodes). minDomains: 2
+      # makes the 2nd replica unschedulable until a node exists in a second AZ, so the
+      # provisioner (Karpenter / EKS Auto Mode) opens one — guaranteeing a full-AZ
+      # disruption always leaves a Keycloak pod running (issue #892). minDomains is GA
+      # since k8s 1.30 (cluster is on 1.35). Kept DoNotSchedule to match the other
+      # critical add-ons; the hostname anti-affinity above still guarantees separate nodes.
       topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: topology.kubernetes.io/zone
-        whenUnsatisfiable: ScheduleAnyway
+        whenUnsatisfiable: DoNotSchedule
+        minDomains: 2
         labelSelector:
           matchLabels:
             app: keycloak

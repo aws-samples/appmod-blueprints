@@ -31,7 +31,13 @@ customNodepools:
           consolidationPolicy: WhenEmptyOrUnderutilized
           consolidateAfter: 5m
           budgets:
+            # Daytime workshop hours (06:00-20:00): block ALL voluntary disruption.
+            # A budget with no schedule is ALWAYS active, so the previous unscheduled
+            # `nodes: "0"` permanently masked the nightly window below (issue #892).
             - nodes: "0"
+              schedule: "0 6 * * *"
+              duration: 14h
+            # Nightly consolidation window (20:00-22:00): allow up to 30%.
             - nodes: "30%"
               schedule: "0 20 * * *"
               duration: 2h
@@ -71,7 +77,13 @@ customNodepools:
           consolidationPolicy: WhenEmptyOrUnderutilized
           consolidateAfter: 5m
           budgets:
+            # Daytime workshop hours (06:00-20:00): block ALL voluntary disruption.
+            # A budget with no schedule is ALWAYS active, so the previous unscheduled
+            # `nodes: "0"` permanently masked the nightly window below (issue #892).
             - nodes: "0"
+              schedule: "0 6 * * *"
+              duration: 14h
+            # Nightly consolidation window (20:00-22:00): allow up to 30%.
             - nodes: "30%"
               schedule: "0 20 * * *"
               duration: 2h
