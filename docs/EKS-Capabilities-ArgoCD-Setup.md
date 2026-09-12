@@ -8,32 +8,41 @@ When using EKS Capabilities, ArgoCD runs as a managed service outside the cluste
 
 ## Required Changes
 
-### 1. GitOps Bridge Configuration
+### 1. Cluster Secret (ArgoCD cluster registration)
 
-Update the `gitops_bridge_bootstrap` module in `platform/infra/terraform/common/argocd.tf` to create the cluster secret with the EKS cluster ARN:
+The active cluster provider (under `cluster-providers/`) creates the ArgoCD **seed cluster secret**
+in the `argocd` namespace during bootstrap. Because ArgoCD runs as an EKS Capability outside the
+cluster, the secret's `server` field must be the **EKS cluster ARN** (not
+`https://kubernetes.default.svc`). The minimal seed secret looks like:
 
-```hcl
-module "gitops_bridge_bootstrap" {
-  source  = "gitops-bridge-dev/gitops-bridge/helm"
-  version = "0.1.0"
-  
-  create  = true
-  install = false  # Skip ArgoCD installation since EKS Capabilities provides it
-  
-  cluster = {
-    cluster_name = local.hub_cluster.name
-    environment  = local.hub_cluster.environment
-    metadata     = local.addons_metadata[local.hub_cluster_key]
-    addons       = local.addons[local.hub_cluster_key]
-    server       = data.aws_eks_cluster.clusters[local.hub_cluster_key].arn  # Use cluster ARN
-  }
-
-  apps = local.argocd_apps
-}
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: <clusterName>
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    fleet_member: control-plane
+    environment: control-plane
+  annotations:
+    addonsRepoURL: <repo.url>
+    addonsRepoRevision: <repo.revision>
+    addonsRepoBasepath: <repo.basepath>
+stringData:
+  name: <clusterName>
+  server: <clusterARN>   # EKS cluster ARN, NOT https://kubernetes.default.svc
+  config: '{"tlsClientConfig":{"insecure":false}}'
 ```
 
+The `fleet-secret` chart later enriches this seed secret with the full set of `enable_*` labels and
+metadata annotations. See `cluster-providers/README.md` ("Seed Cluster Secret" and "The Contract")
+for the complete provider contract. Where the secret is created depends on the provider — e.g.
+`cluster-providers/terraform/` (`argocd-capability.tf` / `secrets-manager.tf`) for the terraform
+provider, or the Crossplane Composition / KRO RGD for the kind providers.
+
 **Key points:**
-- Set `install = false` to skip ArgoCD installation
+- ArgoCD is provided by the EKS Capability — no ArgoCD is installed into the cluster
 - Set `server` to the EKS cluster ARN instead of `https://kubernetes.default.svc`
 
 ### 2. EKS Access Policy
@@ -116,7 +125,7 @@ argocd app list
 
 **Cause:** The cluster secret uses `name` instead of `server` with the cluster ARN.
 
-**Solution:** Update the gitops_bridge_bootstrap module to include `server = data.aws_eks_cluster.clusters[...].arn` (see step 1 above).
+**Solution:** Ensure the cluster secret sets `server` to the EKS cluster ARN (see step 1 above).
 
 ### Error: "cluster is disabled"
 

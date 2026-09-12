@@ -101,7 +101,7 @@ kubectl get applications.argoproj.io -n argocd -o json | jq -r '.items[] | selec
 **For MCP tool failures:**
 - If EKS MCP tools fail, provide equivalent kubectl or AWS CLI commands as fallback
 - If Terraform MCP tools fail, use `terraform state` commands for inspection only
-- You MUST NOT run `terraform apply` or `terraform destroy` directly — use `deploy.sh`/`destroy.sh` scripts because they handle backend config and state management
+- You MUST NOT run `terraform apply` or `terraform destroy` directly — drive the configured cluster provider via `task install` / `task destroy` because they handle provider selection, backend config, and state management
 
 **Constraints:**
 - You MUST wait at least 150 seconds after a new AWS Load Balancer shows "active" before testing connectivity because DNS propagation takes up to 5 minutes
