@@ -49,7 +49,19 @@ spec:
     # JSON gitops.* value still wins; final fallback is "main".
     addonsRepoRevision: {{ $g.addonsRepoRevision | default $global.addonsRepoRevision | default "main" | quote }}
     fleetRepoRevision: {{ $g.fleetRepoRevision | default $global.fleetRepoRevision | default "main" | quote }}
-    {{- range $k, $v := (omit $g "addonsRepoRevision" "fleetRepoRevision") }}
+    # Inherit the repo URL from the control-plane too (not just the revision). Guarded:
+    # only emit when a value is present, otherwise the EksclusterWithVpc RGD's own
+    # default applies. Without this the spoke tracks the control-plane revision against
+    # the RGD's aws-samples default repo, which breaks fork / PR-branch deployments.
+    {{- $addonsUrl := $g.addonsRepoUrl | default $global.addonsRepoUrl }}
+    {{- if $addonsUrl }}
+    addonsRepoUrl: {{ $addonsUrl | quote }}
+    {{- end }}
+    {{- $fleetUrl := $g.fleetRepoUrl | default $global.fleetRepoUrl }}
+    {{- if $fleetUrl }}
+    fleetRepoUrl: {{ $fleetUrl | quote }}
+    {{- end }}
+    {{- range $k, $v := (omit $g "addonsRepoRevision" "fleetRepoRevision" "addonsRepoUrl" "fleetRepoUrl") }}
     {{ $k }}: {{ $v | quote }}
     {{- end }}
   {{- if $cluster.addons }}
