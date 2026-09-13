@@ -6,6 +6,11 @@ metadata:
   name: jupyterhub
   namespace: jupyterhub
   annotations:
+    # JupyterHub's proxy-public returns 302 on "/" (redirects to {baseUrl}/hub/),
+    # so the AWS LBC default health check (GET / expecting 200) marks the target
+    # unhealthy (Target.ResponseCodeMismatch [302]). Point the health check at the
+    # hub's dedicated health endpoint (200) under the configured baseUrl instead.
+    alb.ingress.kubernetes.io/healthcheck-path: /jupyterhub/hub/health
 {{- if $insecure }}
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
