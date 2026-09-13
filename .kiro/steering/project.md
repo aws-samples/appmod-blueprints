@@ -10,11 +10,16 @@ Companion repo: [platform-engineering-on-eks](../platform-engineering-on-eks/) h
 
 | Path | Purpose |
 |------|---------|
-| `platform/infra/terraform/cluster/` | Terraform — EKS clusters (hub, spoke-dev, spoke-prod) |
-| `platform/infra/terraform/common/` | Terraform — platform addons (ArgoCD, secrets, pod identity, observability) |
-| `platform/infra/terraform/identity-center/` | Terraform — IDC/SCIM integration |
+| `Taskfile.yaml` | Entry point — `task install/status/destroy` delegate to the configured cluster provider |
+| `config.yaml` / `config.local.yaml` | Single config consumed by all providers (`clusterProvider`, repo, hub, aws, domain) |
+| `cluster-providers/kind-crossplane/` | Provider — Kind + Crossplane bootstrap of the hub EKS cluster (default) |
+| `cluster-providers/kind-kro-ack/` | Provider — Kind + KRO/ACK bootstrap of the hub EKS cluster |
+| `cluster-providers/terraform/` | Provider — direct Terraform provisioning of the hub EKS cluster |
+| `cluster-providers/byoc/` | Provider — Bring Your Own Cluster (existing cluster) |
+| `cluster-providers/common/` | Shared bootstrap logic reused by the providers |
 | `scripts/` | Workshop scripts: IDC config, ArgoCD token automation, setup validation |
-| `platform/infra/terraform/hub-config.yaml` | Single source of truth for cluster addon enablement |
+| `gitops/overlays/environments/<env>/enabled-addons.yaml` | Per-environment addon enablement (source of truth for cluster secret `enable_*` labels) |
+| `gitops/addons/registry/<domain>.yaml` | Addon registry (core, platform, security, observability, ml, gitops) |
 | `gitops/addons/` | ArgoCD addon definitions, charts, environments, tenants |
 | `gitops/apps/` | Application deployment manifests (backend, frontend, rollouts) |
 | `gitops/fleet/` | Fleet management (Kro values, bootstrap, members) |
@@ -30,7 +35,7 @@ Companion repo: [platform-engineering-on-eks](../platform-engineering-on-eks/) h
 
 ## Tech Stack
 
-- **IaC:** Terraform (cluster, common, identity-center modules)
+- **IaC:** Pluggable cluster providers under `cluster-providers/` (kind-crossplane, kind-kro-ack, terraform, byoc), selected via `clusterProvider` in `config.local.yaml`
 - **GitOps:** ArgoCD ApplicationSets with sync waves (-5 to 6)
 - **Kubernetes:** EKS Auto Mode + EKS Capabilities (ArgoCD, Kro, ACK)
 - **IDP:** Backstage with Keycloak SSO
@@ -41,10 +46,10 @@ Companion repo: [platform-engineering-on-eks](../platform-engineering-on-eks/) h
 
 ## Key Conventions
 
-- Resource prefix: `peeks` (flows from env var through Terraform to cluster secrets)
+- Resource prefix: `peeks` (flows from env var through the cluster provider to cluster secrets)
 - Cluster names: `peeks-hub`, `peeks-spoke-dev`, `peeks-spoke-prod`
-- Deployment scripts: always use `deploy.sh` / `destroy.sh`, never raw `terraform apply/destroy`
-- Addon enablement: `hub-config.yaml` → Terraform → cluster secret labels → ArgoCD ApplicationSets
+- Deployment: always use `task install` / `task destroy` (they delegate to the configured `clusterProvider`), never raw `terraform apply/destroy`
+- Addon enablement: `gitops/overlays/environments/<env>/enabled-addons.yaml` → cluster secret `enable_*` labels → ArgoCD ApplicationSets
 - Dynamic values (resource_prefix, domain, region) live in `addons.yaml` valuesObject only, never in `values.yaml`
 
 ## Two Usage Contexts
@@ -101,8 +106,8 @@ These are facts about the deployed platform that have been confirmed multiple ti
 - The control-plane components (`argo-cd-argocd-server`, `argo-cd-argocd-application-controller`, `argo-cd-argocd-repo-server`, etc.) **run inside the AWS-managed control plane** and are **not visible** via `kubectl get pods -n argocd`. That namespace looks empty for pods even when ArgoCD is fully operational.
 - What IS visible in the `argocd` namespace: `Application`, `ApplicationSet`, `AppProject`, and cluster `Secret` objects — these are user-facing CRDs that ArgoCD reconciles from outside.
 - "ArgoCD is broken because the namespace is empty" is **always wrong**. Verify ArgoCD health by checking that `Application` resources are reconciling (sync/health status) rather than by looking for pods.
-- Self-managed ArgoCD values files (e.g. anything under `gitops/addons/configs/argo-cd/values.yaml` or `platform/infra/terraform/common/manifests/argocd-initial-values.yaml`) are **dead code** from a prior install path and have been removed. The Capability does not consume them.
-- Capability configuration lives in `platform/infra/terraform/common/argocd.tf` and the EKS cluster module — not in Helm values files.
+- Self-managed ArgoCD values files (e.g. any `argocd-initial-values.yaml` under `gitops/addons/configs/argo-cd/` or a prior `platform/infra/terraform` install path) are **dead code** from a prior install path and have been removed. The Capability does not consume them.
+- Capability configuration lives with the active cluster provider under `cluster-providers/` (e.g. `cluster-providers/terraform/argocd-capability.tf` for the terraform provider; the Crossplane Composition / KRO RGD for the kind providers) — not in Helm values files.
 
 ### Multi-cluster register pattern
 
@@ -134,7 +139,7 @@ Note: The `-bootstrap` suffix is misleading — it's not hub-only bootstrap, it'
 
 ## Key Rules
 
-- **Use deploy.sh/destroy.sh** — never raw `terraform apply` or `terraform destroy`
+- **Use `task install`/`task destroy`** — they delegate to the configured `clusterProvider`; never run raw `terraform apply` or `terraform destroy`
 - **GitOps first** — modify Git files and let ArgoCD sync, don't `kubectl apply` manually
 - **Dynamic values only in addons.yaml** — never put template expressions in values.yaml
 - **Check env vars with echo** — `echo $AWS_REGION` etc., don't dump full environment
