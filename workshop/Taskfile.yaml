@@ -234,6 +234,32 @@ tasks:
       - printf '{{.C_STEP}}▸ Phase 2 — deleting spoke clusters...{{.C_RESET}}\n'
       - task: spokes:disable-all
 
+      # Phase 2.5: release the Crossplane-managed DevLake RDS while the hub
+      # controllers are still alive, and WAIT for Crossplane to reap the composed
+      # AWS resources (RDS cluster, subnet group, and — critically — the security
+      # group rds-mysql-sg-*). Otherwise that SG is orphaned in the IDE VPC once
+      # the hub/Crossplane is destroyed, and blocks VPC + CloudFormation stack
+      # deletion. Same philosophy as spokes:disable-all above. See appmod-blueprints#895.
+      - |
+        printf '{{.C_STEP}}▸ Phase 2.5 — releasing Crossplane-managed DevLake RDS...{{.C_RESET}}\n'
+        export KUBECONFIG={{.HUB_KUBECONFIG}}
+        # Delete the KubeVela Application (cascades to the RelationalDatabase claim
+        # → XRelationalDatabase), and the claim directly in case the App is already gone.
+        kubectl delete application.core.oam.dev devlake-rds-mysql -n devlake --wait=false 2>/dev/null || true
+        kubectl delete relationaldatabases.awsblueprints.io --all -A --wait=false 2>/dev/null || true
+        # Wait up to 15 min for Crossplane to delete the composed Upbound managed
+        # resources — this is what actually deletes the AWS security group.
+        for i in $(seq 1 90); do
+          REMAIN=$(kubectl get securitygroups.ec2.aws.upbound.io,clusters.rds.aws.upbound.io,subnetgroups.rds.aws.upbound.io \
+            -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$REMAIN" = "0" ]; then
+            printf '{{.C_OK}}  ✓ Crossplane RDS managed resources reaped.{{.C_RESET}}\n'
+            break
+          fi
+          printf '{{.C_INFO}}  [%s/90] waiting for %s Crossplane RDS managed resource(s)...{{.C_RESET}}\n' "$i" "$REMAIN"
+          sleep 10
+        done
+
       # Phase 3: destroy the hub (addons → EKS → Kind → IAM → Secrets)
       - printf '{{.C_STEP}}▸ Phase 3 — destroying hub platform ({{.PROVIDER}})...{{.C_RESET}}\n'
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy'
