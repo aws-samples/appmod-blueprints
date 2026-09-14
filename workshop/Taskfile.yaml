@@ -230,33 +230,57 @@ tasks:
           done
         fi
 
-      # Phase 1b: delete app-layer kro RGD instances on the hub so that kro/ACK
-      # DEPROVISION their composed cloud resources (e.g. the CICDPipeline's two
-      # ECR repositories, and AppmodService / HuggingFaceModel-owned S3/IAM/
-      # PodIdentity) BEFORE the hub controllers are torn down in Phase 3. If these
-      # instances survive the hub teardown, ACK never reconciles their deletion
-      # and the AWS resources are orphaned — e.g. ECR repos peeks/<app>* are left
-      # behind (they are NOT part of the CloudFormation stack, so delete-stack
-      # never removes them either).
-      # Delete by KIND across all namespaces (-A) so out-of-band instances (e.g.
-      # ordered directly rather than via git) are reaped too, and --wait so the
-      # kro/ACK finalizers block until the AWS side is actually deprovisioned.
+      # Phase 1b: tear down app-layer workloads that own cloud resources, so kro/ACK
+      # DEPROVISION them (e.g. the CICDPipeline's two ECR repositories, ray S3 models)
+      # BEFORE the hub controllers are destroyed in Phase 3. Otherwise ACK never
+      # reconciles their deletion and the AWS resources are orphaned — e.g. ECR repos
+      # peeks/<app>* are left behind (they are NOT part of the CloudFormation stack, so
+      # delete-stack never removes them either).
+      #
+      # These instances (CICDPipeline, AppmodService, ray HuggingFaceModel/RayService,
+      # ...) are created by the Backstage scaffolder as ArgoCD Applications with
+      # syncPolicy.automated.selfHeal=true. Deleting the kro instance DIRECTLY does not
+      # work: ArgoCD immediately re-creates it (self-heal), so ACK never deprovisions
+      # the cloud resource. The correct approach is to delete the Backstage-managed
+      # ArgoCD Applications (label app.kubernetes.io/managed-by=backstage) with a
+      # foreground cascade: ArgoCD's resources-finalizer then tears down the kro
+      # instances they manage — and, via the kro + ACK finalizers, their composed cloud
+      # resources — with no self-heal. A by-kind sweep afterwards catches any remaining
+      # out-of-band instances (not managed by a Backstage ArgoCD app, so not self-healed).
       # Infra RGDs (ekscluster/eksclusterwithvpc/vpc) are intentionally excluded:
       # spokes are handled by Phase 2 and the hub by Phase 3.
       - |
-        printf '{{.C_STEP}}▸ Phase 1b — deleting app-layer RGD instances on hub (ACK deprovision)...{{.C_RESET}}\n'
+        printf '{{.C_STEP}}▸ Phase 1b — tearing down app-layer workloads (ArgoCD apps → kro → ACK deprovision)...{{.C_RESET}}\n'
         if kubectl --kubeconfig {{.HUB_KUBECONFIG}} cluster-info >/dev/null 2>&1; then
+          # 1) Delete Backstage-scaffolded ArgoCD Applications with a foreground cascade
+          #    so their managed kro instances (and cloud resources) are removed rather
+          #    than self-healed. The argocd resources-finalizer blocks until the managed
+          #    resources — and the ACK finalizers on their ECR/S3 — are actually gone.
+          if kubectl --kubeconfig {{.HUB_KUBECONFIG}} get applications -n argocd \
+               -l app.kubernetes.io/managed-by=backstage -o name 2>/dev/null | grep -q .; then
+            printf '{{.C_INFO}}  Deleting Backstage-managed ArgoCD apps (foreground cascade)...{{.C_RESET}}\n'
+            kubectl --kubeconfig {{.HUB_KUBECONFIG}} delete applications -n argocd \
+              -l app.kubernetes.io/managed-by=backstage \
+              --cascade=foreground --wait=true --timeout=300s --ignore-not-found 2>/dev/null || \
+              printf '{{.C_ERR}}  ⚠ ArgoCD app cleanup timed out — cloud resources may need a manual sweep.{{.C_RESET}}\n'
+            # Tidy up their AppProjects too (same label).
+            kubectl --kubeconfig {{.HUB_KUBECONFIG}} delete appprojects -n argocd \
+              -l app.kubernetes.io/managed-by=backstage --ignore-not-found 2>/dev/null || true
+          else
+            printf '{{.C_INFO}}  No Backstage-managed ArgoCD apps found.{{.C_RESET}}\n'
+          fi
+          # 2) Safety net: sweep any remaining app-layer kro instances by kind. Out-of-band
+          #    instances (applied directly, not via a Backstage ArgoCD app) are not
+          #    self-healed, so a direct delete sticks. --wait blocks on kro/ACK finalizers.
           for KIND in cicdpipeline appmodservice huggingfacemodel rayservice; do
-            # Skip kinds whose CRD isn't installed on this hub (module not deployed).
             kubectl --kubeconfig {{.HUB_KUBECONFIG}} get "$KIND" -A >/dev/null 2>&1 || continue
-            printf '{{.C_INFO}}  Deleting %s instances (all namespaces)...{{.C_RESET}}\n' "$KIND"
             kubectl --kubeconfig {{.HUB_KUBECONFIG}} delete "$KIND" --all -A \
               --wait=true --timeout=300s --ignore-not-found 2>/dev/null || \
               printf '{{.C_ERR}}  ⚠ %s cleanup timed out — ACK resources may need a manual sweep.{{.C_RESET}}\n' "$KIND"
           done
-          printf '{{.C_OK}}  ✓ app-layer RGD instances deleted (ACK deprovisioned their cloud resources).{{.C_RESET}}\n'
+          printf '{{.C_OK}}  ✓ app-layer workloads torn down (cloud resources deprovisioned).{{.C_RESET}}\n'
         else
-          printf '{{.C_INFO}}  Hub unreachable — skipping app-layer RGD cleanup.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Hub unreachable — skipping app-layer teardown.{{.C_RESET}}\n'
         fi
 
       # Phase 2: delete spoke clusters via fleet overlay + wait for AWS deletion
