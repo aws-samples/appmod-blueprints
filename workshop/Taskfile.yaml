@@ -230,6 +230,35 @@ tasks:
           done
         fi
 
+      # Phase 1b: delete app-layer kro RGD instances on the hub so that kro/ACK
+      # DEPROVISION their composed cloud resources (e.g. the CICDPipeline's two
+      # ECR repositories, and AppmodService / HuggingFaceModel-owned S3/IAM/
+      # PodIdentity) BEFORE the hub controllers are torn down in Phase 3. If these
+      # instances survive the hub teardown, ACK never reconciles their deletion
+      # and the AWS resources are orphaned — e.g. ECR repos peeks/<app>* are left
+      # behind (they are NOT part of the CloudFormation stack, so delete-stack
+      # never removes them either).
+      # Delete by KIND across all namespaces (-A) so out-of-band instances (e.g.
+      # ordered directly rather than via git) are reaped too, and --wait so the
+      # kro/ACK finalizers block until the AWS side is actually deprovisioned.
+      # Infra RGDs (ekscluster/eksclusterwithvpc/vpc) are intentionally excluded:
+      # spokes are handled by Phase 2 and the hub by Phase 3.
+      - |
+        printf '{{.C_STEP}}▸ Phase 1b — deleting app-layer RGD instances on hub (ACK deprovision)...{{.C_RESET}}\n'
+        if kubectl --kubeconfig {{.HUB_KUBECONFIG}} cluster-info >/dev/null 2>&1; then
+          for KIND in cicdpipeline appmodservice huggingfacemodel rayservice; do
+            # Skip kinds whose CRD isn't installed on this hub (module not deployed).
+            kubectl --kubeconfig {{.HUB_KUBECONFIG}} get "$KIND" -A >/dev/null 2>&1 || continue
+            printf '{{.C_INFO}}  Deleting %s instances (all namespaces)...{{.C_RESET}}\n' "$KIND"
+            kubectl --kubeconfig {{.HUB_KUBECONFIG}} delete "$KIND" --all -A \
+              --wait=true --timeout=300s --ignore-not-found 2>/dev/null || \
+              printf '{{.C_ERR}}  ⚠ %s cleanup timed out — ACK resources may need a manual sweep.{{.C_RESET}}\n' "$KIND"
+          done
+          printf '{{.C_OK}}  ✓ app-layer RGD instances deleted (ACK deprovisioned their cloud resources).{{.C_RESET}}\n'
+        else
+          printf '{{.C_INFO}}  Hub unreachable — skipping app-layer RGD cleanup.{{.C_RESET}}\n'
+        fi
+
       # Phase 2: delete spoke clusters via fleet overlay + wait for AWS deletion
       - printf '{{.C_STEP}}▸ Phase 2 — deleting spoke clusters...{{.C_RESET}}\n'
       - task: spokes:disable-all
