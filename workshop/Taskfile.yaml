@@ -1903,7 +1903,14 @@ tasks:
         for i in $(seq 1 90); do
           LIVE=""
           for c in $ALL_SPOKES; do
-            aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1 && LIVE="$LIVE $c"
+            # NOTE: errexit is global (set: [errexit,...] at the top of this Taskfile).
+            # `describe-cluster ... && LIVE=...` aborts the whole task with the aws exit
+            # code (254) the moment a spoke is gone — exactly the state we are polling
+            # for. Use an `if` (exempt from errexit) so a deleted spoke is a normal,
+            # non-fatal outcome and the loop keeps polling the rest.
+            if aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1; then
+              LIVE="$LIVE $c"
+            fi
           done
           if [ -z "$(echo $LIVE | tr -d ' ')" ]; then
             printf '{{.C_OK}}✓ All spoke clusters deleted from AWS.{{.C_RESET}}\n'; break
@@ -1915,7 +1922,10 @@ tasks:
         # operator can intervene before/after the hub goes away.
         STILL_LIVE=""
         for c in $ALL_SPOKES; do
-          aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1 && STILL_LIVE="$STILL_LIVE $c"
+          # if-guarded (not `&&`) so a deleted spoke does not trip global errexit — see note above.
+          if aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1; then
+            STILL_LIVE="$STILL_LIVE $c"
+          fi
         done
         if [ -n "$(echo $STILL_LIVE | tr -d ' ')" ]; then
           printf '{{.C_ERR}}⚠ Spoke clusters still present after wait:%s{{.C_RESET}}\n' "$STILL_LIVE"
