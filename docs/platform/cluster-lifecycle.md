@@ -103,7 +103,7 @@ argocd-refresh-token && source ~/.bashrc.d/platform.sh
 - **Don't `kubectl delete` / `argocd app delete` while the cluster is still in
   Git.** Auto-sync is on, so ArgoCD will just recreate it. Remove it from Git
   first, then prune.
-- For a **full environment teardown**, use `destroy.sh`, not prune. Prune is for
+- For a **full environment teardown**, use `task destroy`, not prune. Prune is for
   selective, intentional removals.
 
 ## Related files

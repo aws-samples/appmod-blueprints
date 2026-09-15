@@ -8,8 +8,13 @@ cluster is created.
 
 | Provider | Description | When to use |
 |----------|-------------|-------------|
-| `kind-crossplane/` | Kind + Crossplane (zero Terraform) | Greenfield, full GitOps |
+| `kind-crossplane/` | Kind bootstrap + Crossplane provisions the hub EKS cluster (default) | Greenfield, full GitOps, no Terraform |
+| `kind-kro-ack/` | Kind bootstrap + KRO/ACK provisions the hub EKS cluster | Greenfield, full GitOps, KRO/ACK-based provisioning |
+| `terraform/` | Direct Terraform provisioning of the hub EKS cluster (no Kind, no Crossplane) | Teams standardized on Terraform |
 | `byoc/` | Bring Your Own Cluster | Existing cluster, any cloud provider |
+
+The provider is selected via `clusterProvider` in `config.yaml` / `config.local.yaml` and driven
+through the root `Taskfile.yaml` (`task install` / `task status` / `task destroy`).
 
 ## The Contract
 
@@ -165,10 +170,10 @@ Providers read shared configuration from `gitops/config.yaml`:
 | `repo.basepath` | Path prefix in the repo |
 | `hub.clusterName` | Hub cluster name |
 | `hub.kubernetesVersion` | Kubernetes version |
-| `hub.network.vpcId`, `hub.network.subnetIds` | Optional: install into an existing VPC instead of creating one. Only `subnetIds[0]` and `[1]` are read. `kind-kro-ack` only; `kind-crossplane` fails fast (see above) |
+| `hub.network.vpcId`, `hub.network.subnetIds` | Optional: install into an existing VPC instead of creating one. Only `subnetIds[0]` and `[1]` are read. `kind-kro-ack` only; `kind-crossplane` fails fast (see Capability parity above) |
 | `aws.region` | AWS region |
 | `aws.accountId` | AWS account ID |
-| `domain` | Ingress hostname. Must be known before install |
+| `domain` | Ingress hostname. Must be known before install (see Domain handling above) |
 | `insecure` | ALB serves plain HTTP because TLS is terminated upstream (e.g. CloudFront). Also makes the platform ALB `internal` and names it `<clusterName>-platform` |
 | `identityCenter.*` | AWS Identity Center config (for EKS ArgoCD Capability) |
 | `argocdCapability.*` | ArgoCD capability config |

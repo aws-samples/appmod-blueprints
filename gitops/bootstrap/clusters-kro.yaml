@@ -80,6 +80,13 @@ spec:
                 # of falling back to the EksclusterWithVpc RGD's "main" default.
                 addonsRepoRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
                 fleetRepoRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+                # Also propagate the repo URL (not just the revision), so spokes track the
+                # same fork/repo as the control-plane. Without this, the EksclusterWithVpc
+                # RGD falls back to its aws-samples default and the spoke tries to resolve
+                # the control-plane's revision against the wrong repo (fails when deploying
+                # from a fork / PR branch).
+                addonsRepoUrl: '{{ .metadata.annotations.addonsRepoURL }}'
+                fleetRepoUrl: '{{ .metadata.annotations.fleetRepoURL }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
               - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'

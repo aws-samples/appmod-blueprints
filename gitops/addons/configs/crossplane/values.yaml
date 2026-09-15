@@ -20,6 +20,7 @@ topologySpreadConstraints:
 - maxSkew: 1
   topologyKey: topology.kubernetes.io/zone
   whenUnsatisfiable: DoNotSchedule
+  minDomains: 2
   labelSelector:
     matchLabels:
       app: crossplane
@@ -47,6 +48,7 @@ rbacManager:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
     whenUnsatisfiable: DoNotSchedule
+    minDomains: 2
     labelSelector:
       matchLabels:
         app: crossplane-rbac-manager
