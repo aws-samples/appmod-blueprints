@@ -80,6 +80,8 @@ spec:
       kind: PodIdentityAssociation
       metadata:
         name: ${schema.spec.name}-pod-association-${schema.spec.values.piAssociation.serviceAccount}
+        annotations:
+          services.k8s.aws/adoption-policy: adopt-or-create
       spec:
         clusterName: ${schema.spec.values.aws.clusterName}
         roleARN: ${podrole.status.ackResourceMetadata.arn}

@@ -1,0 +1,65 @@
+version: '3'
+
+tasks:
+  build-cpu:
+    desc: Build CPU serve config zip file
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - cp cpu-app.py app.py
+      - zip cpu-serve-config.zip app.py
+      - rm app.py
+      - echo "✅ Built cpu-serve-config.zip"
+    sources:
+      - cpu-app.py
+    generates:
+      - cpu-serve-config.zip
+
+  build-gpu:
+    desc: Build GPU serve config zip file
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - cp gpu-app.py app.py
+      - zip gpu-serve-transformers.zip app.py
+      - rm app.py
+      - echo "✅ Built gpu-serve-transformers.zip"
+    sources:
+      - gpu-app.py
+    generates:
+      - gpu-serve-transformers.zip
+
+  build-all:
+    desc: Build both CPU and GPU zip files
+    cmds:
+      - task: build-cpu
+      - task: build-gpu
+      - echo "✅ All zip files built successfully"
+
+  extract-cpu:
+    desc: Extract CPU zip to verify contents
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - unzip -l cpu-serve-config.zip
+
+  extract-gpu:
+    desc: Extract GPU zip to verify contents
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - unzip -l gpu-serve-transformers.zip
+
+  verify:
+    desc: Verify both zip files
+    cmds:
+      - task: extract-cpu
+      - task: extract-gpu
+
+  clean:
+    desc: Remove generated zip files
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - rm -f cpu-serve-config.zip gpu-serve-transformers.zip
+      - echo "✅ Cleaned up zip files"
+
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list

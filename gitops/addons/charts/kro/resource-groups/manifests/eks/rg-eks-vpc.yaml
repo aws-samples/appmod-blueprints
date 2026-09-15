@@ -13,8 +13,17 @@ spec:
       name: string
       tenant: string | default="auto1"
       environment: string | default="staging"
+      deletionPolicy: string | default="delete"
       provider: string | default=""
       region: string | default="us-west-2"
+      # Region where the hub's ACK controllers manage this cluster's cross-region
+      # resources (e.g. the Secrets Manager config secrets). Passed through to the
+      # nested EksCluster (which wires it to services.k8s.aws/region, see rg-eks.yaml).
+      # MUST be declared here: the spoke/platform instances set spec.managementRegion
+      # (gitops/abstractions/.../clusters.yaml, claim.yaml) and kro rejects any field
+      # not declared in the RGD schema ("field not declared in schema"), which
+      # otherwise blocks EksclusterWithVpc (spoke) creation entirely.
+      managementRegion: string | default="us-west-2"
       k8sVersion: string | default="1.34"
       accountId: string
       managementAccountId: string
@@ -173,8 +182,10 @@ spec:
           name: ${schema.spec.name}
           tenant: ${schema.spec.tenant}
           environment: ${schema.spec.environment}
+          deletionPolicy: ${schema.spec.deletionPolicy}
           provider: ${schema.spec.provider}
           region: ${schema.spec.region}
+          managementRegion: ${schema.spec.managementRegion}
           accountId: ${schema.spec.accountId}
           managementAccountId: ${schema.spec.managementAccountId}
           argoCdHubRoleArn: ${schema.spec.argoCdHubRoleArn}

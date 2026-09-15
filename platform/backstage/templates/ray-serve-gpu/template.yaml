@@ -60,7 +60,7 @@ spec:
         rayServeFile:
           title: Ray Serve Config (ZIP)
           type: string
-          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/main/gitops/workloads/ray/gpu-serve-transformers.zip"
+          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/release/v0.3.0-rc3/gitops/workloads/ray/gpu-serve-transformers.zip"
           ui:help: 'URL to the Ray Serve application zip file (vLLM)'
       required:
         - name

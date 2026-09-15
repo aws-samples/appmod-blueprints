@@ -107,8 +107,8 @@ the platform bootstrap deployed everything correctly. **Do NOT fix issues manual
 (no `helm install`, no `argocd cluster add`, no `kubectl apply` of addons). Instead:
 
 1. **Identify** what is missing or broken.
-2. **Trace the root cause** back to the bootstrap scripts (`deploy.sh`, SSM documents,
-   Terraform, GitOps ApplicationSets) to understand *why* it wasn't deployed.
+2. **Trace the root cause** back to the bootstrap (the `task install` cluster-provider flow,
+   SSM documents, the workshop Taskfile, GitOps ApplicationSets) to understand *why* it wasn't deployed.
 3. **Log each issue** with the specific bootstrap script/step that should have handled it.
 4. **Stop and report** — the platform build scripts need fixing, not manual workarounds.
 
@@ -139,7 +139,7 @@ kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster \
 
 If spoke clusters are missing, trace the root cause:
 - Which bootstrap step registers spoke clusters with ArgoCD?
-- Check the SSM document / `deploy.sh` / Terraform that creates cluster secrets.
+- Check the SSM document / `task install` cluster-provider bootstrap that creates cluster secrets.
 - Check the `clusters` ApplicationSet and the GitOps fleet config.
 - Flag as 🔴 Blocker with the specific script that failed.
 
@@ -194,9 +194,10 @@ curl -s -H "Authorization: Bearer $BS_TOKEN" \
 **Expected**: A real hostname (e.g., `d3asb3i2t94xpq.cloudfront.net`).
 
 If it shows `{{ values.gitlabDomain }}`, the `catalog-info.yaml` was never rendered
-by the bootstrap. Trace to `platform/infra/terraform/scripts/utils.sh` →
-`update_backstage_templates()` which does the `yq` substitution and git push.
-Flag as 🔴 Blocker — identify which deploy step should have called this function.
+by the bootstrap. Trace to the `backstage-catalog` bootstrap step (`task backstage-catalog`
+→ the cluster provider's `hub:backstage-catalog`), which performs the substitution and
+updates the `backstage-dynamic-catalog` ConfigMap.
+Flag as 🔴 Blocker — identify which deploy step should have called this.
 
 ### 0.4 — DNS_DEV / DNS_PROD
 

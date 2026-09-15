@@ -46,10 +46,7 @@ vars:
   REPO_BASEPATH:
     sh: yq '.repo.basepath' {{.CONFIG_FILE}}
   DOMAIN:
-    sh: |
-      D=$(yq '.domain // ""' {{.CONFIG_FILE}} | grep -v '^$' || true)
-      [ -z "$D" ] && D=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]' || true)
-      echo "${D:-}"
+    sh: yq '.domain // ""' {{.CONFIG_FILE}}
   RESOURCE_PREFIX:
     sh: yq '.resourcePrefix // ""' {{.CONFIG_FILE}}
   INGRESS_NAME:
@@ -64,7 +61,7 @@ vars:
   INGRESS_CERT_ARN:
     sh: yq '.certificateArn // ""' {{.CONFIG_FILE}}
   ADMIN_ROLE_NAME:
-    sh: yq '.hub.adminRoleName // "Admin"' {{.CONFIG_FILE}}
+    sh: yq '.hub.adminRoleName // .adminRoleName // "Admin"' {{.CONFIG_FILE}}
   CAPABILITY_NAME:
     sh: yq '.argocdCapability.name // "argocd"' {{.CONFIG_FILE}}
   IDC_INSTANCE_ARN:
@@ -151,7 +148,15 @@ tasks:
       - task: kro:install-eso-bootstrap
       - task: kro:install-cluster-secret-store-bootstrap
       - task: kro:apply-rgds
-      - task: hub:wait-for-domain
+      # Create the cluster-mgmt IAM roles BEFORE hub:claim.
+      # The eksclusterwithvpc RGD immediately tries to create ACK-managed IAM resources
+      # (cniMetricsHelperPolicy, adotCollectorPolicy, etc.) when KRO reconciles the claim.
+      # ACK EKS Capability assumes the peeks-cluster-mgmt-iam role (created here) to create
+      # those AWS IAM resources. Without these roles, ACK cannot reconcile the Policy CRs and
+      # KRO stays stuck reporting:
+      #   "cniMetricsHelperPolicy.status.ackResourceMetadata.arn: no such key: arn (data pending)"
+      # Running this before hub:claim ensures the roles exist when ACK first processes the CRs.
+      - task: hub:create-mgmt-roles
       - task: hub:claim
       - task: hub:wait-for-eks
       - task: hub:authorize-ide-access
@@ -197,8 +202,29 @@ tasks:
     desc: Seed observability in background — non-blocking so slow AMP provisioning doesn't delay install
     cmds:
       - |
-        REPO_ROOT="${WORKSPACE_PATH:-/home/ec2-user/environment}/${WORKING_REPO:-platform-on-eks-workshop}"
-        ( cd "$REPO_ROOT" && task kind-kro-ack:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &
+        # Repo root from {{.ROOT_DIR}} (expanded by go-task at TEMPLATE time, before any
+        # shell runs — the backgrounded subshell below cannot affect it; verified). In an
+        # included Taskfile ROOT_DIR is the ROOT Taskfile's directory, i.e. the repo root
+        # (this file's own directory is TASKFILE_DIR).
+        #
+        # Do NOT reintroduce WORKSPACE_PATH / WORKING_REPO here. Those are Workshop Studio
+        # env vars; on any other machine both defaults are wrong, so this backgrounded job
+        # cd'd into a nonexistent directory and failed SILENTLY.
+        REPO_ROOT="{{.ROOT_DIR}}"
+        # Fail loudly rather than silently seeding nothing: `task kind-kro-ack:...` below
+        # requires the root Taskfile to be present at REPO_ROOT.
+        if [ ! -f "$REPO_ROOT/Taskfile.yaml" ]; then
+          printf '{{.C_ERR}}✗ observability seed not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
+          exit 1
+        fi
+        # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`.
+        # go-task runs cmds through the mvdan/sh interpreter, which KILLS its background
+        # jobs when the task body exits — verified that a bare `( ... ) &` never even
+        # creates its redirect target, so the long AMP poll could never survive. The outer
+        # `sh` exits at once, orphaning the subshell so it outlives go-task. REPO_ROOT is
+        # passed via the environment so paths with spaces/quotes are safe.
+        REPO_ROOT="$REPO_ROOT" \
+          sh -c '( cd "$REPO_ROOT" && task kind-kro-ack:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &'
         printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'
 
   install:finalize:
@@ -576,49 +602,6 @@ tasks:
         echo "[$(date +%H:%M:%S)] ✓ gitlab:init-ec2 background job complete"
         rm -f "$PID_FILE"
 
-  hub:wait-for-domain:
-    desc: Wait for `domain` to be available in config.local.yaml, written by an async consumer job to private/async-domain (e.g. the workshop's create-config.sh provisioning CloudFront in the background). No-op if domain is already set.
-    cmds:
-      - |
-        # Optional file a consumer can write asynchronously with the resolved domain
-        # (fixed path private/async-domain, relative to the repo root — e.g. the
-        # workshop's create-config.sh, once its CloudFront distribution is ready) —
-        # lets hub:claim start without blocking on a synchronous domain provisioning
-        # step. Consumers with a static domain never hit this: `domain` is already
-        # set in config.local.yaml and this task exits immediately below.
-        DOMAIN_FILE="{{.ROOT_DIR}}/private/async-domain"
-        CONFIG_FILE="{{.CONFIG_FILE}}"
-        # If domain already in config or file exists, nothing to do
-        EXISTING=$(yq '.domain // ""' "$CONFIG_FILE" 2>/dev/null | tr -d '[:space:]')
-        if [ -n "$EXISTING" ] && [ "$EXISTING" != '""' ] && [ "$EXISTING" != "null" ]; then
-          echo "[$(date +%H:%M:%S)] ✓ domain already set: $EXISTING"
-          exit 0
-        fi
-        if [ -f "$DOMAIN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
-          D=$(cat "$DOMAIN_FILE" | tr -d '[:space:]')
-          if [ -n "$D" ]; then
-            yq -i ".domain = \"$D\"" "$CONFIG_FILE" 2>/dev/null || \
-              sed -i "s|domain: .*|domain: \"$D\"|" "$CONFIG_FILE"
-            echo "[$(date +%H:%M:%S)] ✓ domain loaded from file: $D"
-            exit 0
-          fi
-        fi
-        echo "[$(date +%H:%M:%S)] ▸ Waiting for domain (async consumer job)..."
-        for _i in $(seq 1 80); do
-          if [ -f "$DOMAIN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
-            D=$(cat "$DOMAIN_FILE" | tr -d '[:space:]')
-            if [ -n "$D" ] && [ "$D" != "null" ]; then
-              yq -i ".domain = \"$D\"" "$CONFIG_FILE" 2>/dev/null || \
-                sed -i "s|domain: .*|domain: \"$D\"|" "$CONFIG_FILE"
-              echo "[$(date +%H:%M:%S)] ✓ domain ready: $D"
-              exit 0
-            fi
-          fi
-          [ $((_i % 4)) -eq 0 ] && echo "[$(date +%H:%M:%S)]   still waiting for domain (${_i}x15s)..."
-          sleep 15
-        done
-        echo "[$(date +%H:%M:%S)] ⚠ domain not available after 20min — continuing with empty domain"
-
   hub:claim:
     desc: Apply hub cluster claim (EksCluster or EksclusterWithVpc depending on hub.network)
     cmds:
@@ -671,6 +654,12 @@ tasks:
           tenant: platform
           environment: control-plane
           region: {{.AWS_REGION}}
+          # managementRegion drives the ACK region annotation on the cluster-config
+          # Secrets Manager secret (clusterConfigSecret). For this single-region/account
+          # workshop it must equal the deploy region; otherwise it defaults to us-west-2
+          # (RGD schema) and the secret is created in us-west-2 while everything else is
+          # in AWS_REGION → clusterConfigSecret never syncs → hub EKS never ACTIVE.
+          managementRegion: {{.AWS_REGION}}
           k8sVersion: "{{.HUB_K8S_VERSION}}"
           accountId: "{{.AWS_ACCOUNT_ID}}"
           managementAccountId: "{{.AWS_ACCOUNT_ID}}"
@@ -916,14 +905,16 @@ tasks:
       - |
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         GIT_DOMAIN=$(cat {{.ROOT_DIR}}/private/git-domain 2>/dev/null || yq '.gitDomain // ""' {{.CONFIG_FILE}} || true)
-        # Read domain at runtime (not from global DOMAIN var which is evaluated at task load
-        # time, before the private/async-domain artifact exists). This ensures
-        # ingress_domain_name is correctly set even when hub:seed runs shortly after the
-        # domain is written.
-        RUNTIME_DOMAIN=$(cat {{.ROOT_DIR}}/private/async-domain 2>/dev/null | tr -d '[:space:]')
-        [ -z "$RUNTIME_DOMAIN" ] && RUNTIME_DOMAIN=$(yq '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
+        # Read at runtime rather than via the global DOMAIN var: go-task evaluates global
+        # `vars:` once at parse time, so a value written into config during this run would
+        # not be visible here.
+        # `yq` yields the STRING "null" for a missing key, which is non-empty and would
+        # defeat the guard below, so normalise it.
+        RUNTIME_DOMAIN=$(yq '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
+        if [ "$RUNTIME_DOMAIN" = "null" ]; then RUNTIME_DOMAIN=""; fi
         if [ -z "$RUNTIME_DOMAIN" ]; then
-          echo "ERROR: domain is empty — set 'domain' in config.local.yaml or write it to private/async-domain before running hub:seed."
+          echo "ERROR: domain is empty — set 'domain' in config.local.yaml before running hub:seed."
+          echo "       For CloudFront exposure, reserve one first: scripts/cloudfront-reserve-domain.sh"
           echo "       Without a domain, ingress_domain_name in the cluster secret will be empty and all ArgoCD addon apps will misconfigure."
           exit 1
         fi
@@ -1402,13 +1393,32 @@ tasks:
       - '{{.KC}} patch applicationset fleet-secrets -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}'' 2>/dev/null || true'
       - sleep 3
       - '{{.KC}} delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true'
-      # 10. Force-delete any leftover Applications (strip finalizers)
+      # 10. Force-delete ALL leftover ArgoCD objects, generators-first + finalizers-first,
+      #     bounded and NON-blocking. Some leftover apps (e.g. crossplane-base-<spoke>,
+      #     generated by the 'abstractions' AppSet) point at spoke clusters that are already
+      #     deleted, so their argocd resources-finalizer can never complete — a per-app
+      #     `delete --timeout=300s` blocks 300s each, and any surviving generator AppSet keeps
+      #     recreating them, so the naive loop could hang indefinitely (observed >1h). Here we
+      #     (a) delete every remaining ApplicationSet first (finalizers stripped) so nothing
+      #     regenerates, then (b) strip finalizers off all remaining Applications BEFORE a
+      #     non-blocking delete, in a small bounded number of passes.
       - cmd: |
-          for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
-            echo "Deleting leftover app $app..."
-            {{.KC}} delete application $app -n argocd --timeout=300s 2>/dev/null || \
-            ({{.KC}} patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
-             {{.KC}} delete application $app -n argocd --wait=false 2>/dev/null) || true
+          # 10a. Kill any surviving generator AppSets so they stop recreating child apps.
+          for as in $({{.KC}} get applicationsets -n argocd -o name 2>/dev/null); do
+            {{.KC}} patch "$as" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+            {{.KC}} delete "$as" -n argocd --wait=false 2>/dev/null || true
+          done
+          # 10b. Strip finalizers on ALL remaining Applications, THEN delete non-blocking.
+          #      Bounded 3-pass loop catches last stragglers without ever blocking.
+          for pass in 1 2 3; do
+            APPS=$({{.KC}} get applications -n argocd -o name 2>/dev/null)
+            [ -z "$APPS" ] && break
+            for app in $APPS; do
+              echo "Force-deleting leftover $app..."
+              {{.KC}} patch "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+            done
+            {{.KC}} delete applications -n argocd --all --wait=false 2>/dev/null || true
+            sleep 5
           done
         ignore_error: true
       - printf '{{.C_OK}}✓ Hub addons removed.{{.C_RESET}}\n'
@@ -2210,7 +2220,7 @@ tasks:
     desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq)
     vars:
       ACK_CAPABILITY_ROLE:
-        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' || echo "{{.HUB_CLUSTER_NAME}}-argocd-capability-role"
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' | grep -v '^$' || echo "{{.HUB_CLUSTER_NAME}}-ack-capability-role"
     cmds:
       - printf '{{.C_STEP}}▸ Creating cluster-mgmt IAM roles for ACK...{{.C_RESET}}\n'
       - |
@@ -2272,6 +2282,10 @@ tasks:
           ]
         }'
         # Allow ACK capability role to assume cluster-mgmt roles
+        # Best-effort: the ACK capability role only exists after the hub EKS cluster
+        # is created. When this task runs before hub:claim (new ordering for PR #861),
+        # the role doesn't exist yet — skip gracefully. hub:seed re-runs this task
+        # once the hub is up, which will apply the policy correctly.
         aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
           "Version": "2012-10-17",
           "Statement": [{
@@ -2279,7 +2293,7 @@ tasks:
             "Action": ["sts:AssumeRole", "sts:TagSession"],
             "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
           }]
-        }'
+        }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
 
@@ -2465,65 +2479,3 @@ tasks:
             done
           done
           printf '{{.C_OK}}✓ Spoke provider identity seeding complete.{{.C_RESET}}\n'
-
-
-
-  spokes:register-oidc-providers:
-    desc: >-
-      Register the OIDC issuer of each spoke cluster as an IAM OpenID Connect
-      provider. Required for IRSA (IAM Roles for Service Accounts) to work on
-      spoke clusters — e.g. Argo Rollouts querying AMP with SigV4 auth.
-      EKS creates the OIDC endpoint automatically but does NOT register the
-      provider in IAM; this task bridges that gap. Idempotent (safe to re-run).
-      NOTE: this is a temporary workaround until prometheus/common/sigv4 is
-      updated to use aws-sdk-go-v2 (which supports Pod Identity natively).
-      Tracking: https://github.com/argoproj/argo-rollouts/issues/4536
-               https://github.com/argoproj/argo-rollouts/pull/5010
-    cmds:
-      - cmd: |
-          SPOKES=$(ls "{{.GITOPS_ROOT}}/fleet/members" 2>/dev/null | grep -vx "{{.HUB_CLUSTER_NAME}}" || true)
-          if [ -z "$SPOKES" ]; then
-            printf '{{.C_INFO}}  No spoke members under fleet/members; nothing to register.{{.C_RESET}}\n'
-            exit 0
-          fi
-          for SPOKE in $SPOKES; do
-            STATUS=$(aws eks describe-cluster --name "$SPOKE" --region {{.AWS_REGION}} \
-              --query 'cluster.status' --output text 2>/dev/null || echo "NONE")
-            if [ "$STATUS" != "ACTIVE" ]; then
-              printf '{{.C_INFO}}  Skipping %s (cluster status: %s){{.C_RESET}}\n' "$SPOKE" "$STATUS"
-              continue
-            fi
-            ISSUER=$(aws eks describe-cluster --name "$SPOKE" --region {{.AWS_REGION}} \
-              --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null)
-            if [ -z "$ISSUER" ]; then
-              printf '{{.C_ERR}}  %s: no OIDC issuer found — skipping{{.C_RESET}}\n' "$SPOKE"
-              continue
-            fi
-            # Strip https:// — IAM stores providers without scheme
-            OIDC_HOST="${ISSUER#https://}"
-            PROVIDER_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:oidc-provider/${OIDC_HOST}"
-            # Check if already registered (idempotent)
-            if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$PROVIDER_ARN" \
-                 >/dev/null 2>&1; then
-              printf '{{.C_INFO}}  %s: OIDC provider already registered (%s){{.C_RESET}}\n' "$SPOKE" "$OIDC_HOST"
-              continue
-            fi
-            # Get the TLS thumbprint for the OIDC endpoint
-            THUMBPRINT=$(echo | openssl s_client \
-              -servername "oidc.eks.{{.AWS_REGION}}.amazonaws.com" \
-              -connect "oidc.eks.{{.AWS_REGION}}.amazonaws.com:443" 2>/dev/null \
-              | openssl x509 -fingerprint -noout -sha1 2>/dev/null \
-              | sed 's/://g' | awk -F= '{print tolower($2)}')
-            if [ -z "$THUMBPRINT" ]; then
-              # Fallback: use the well-known EKS OIDC thumbprint
-              THUMBPRINT="9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
-            fi
-            aws iam create-open-id-connect-provider \
-              --url "$ISSUER" \
-              --client-id-list "sts.amazonaws.com" \
-              --thumbprint-list "$THUMBPRINT" \
-              --region {{.AWS_REGION}} >/dev/null
-            printf '{{.C_OK}}  ✓ %s: OIDC provider registered (%s){{.C_RESET}}\n' "$SPOKE" "$OIDC_HOST"
-          done
-          printf '{{.C_OK}}✓ Spoke OIDC provider registration complete.{{.C_RESET}}\n'
-

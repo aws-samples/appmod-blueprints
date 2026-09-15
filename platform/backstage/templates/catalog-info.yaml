@@ -28,7 +28,8 @@ metadata:
   description: Holds system information i.e, hostname, IP, OS, etc
 spec:
   owner: guest
-  # values dynamically replaced by platform/infra/terraform/common/deploy.sh on bootstrap
+  # values dynamically populated at bootstrap via `task backstage-catalog`
+  # (the cluster provider's hub:backstage-catalog step updates the backstage-dynamic-catalog ConfigMap)
   ingress_hostname: '{{ values.ingressDomain }}'
   gitlab_hostname: '{{ values.gitlabDomain }}'
   argocd_hostname: '{{ values.argocdDomain }}'

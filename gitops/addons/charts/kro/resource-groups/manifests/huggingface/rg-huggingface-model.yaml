@@ -126,6 +126,8 @@ spec:
         metadata:
           name: ${schema.metadata.name}-podidentity
           namespace: ${schema.spec.namespace}
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
         spec:
           clusterName: ${schema.spec.clusterName}
           namespace: ${schema.spec.namespace}

@@ -4,16 +4,17 @@ This document explains how the platform uses the GitOps Bridge pattern to dynami
 
 ## Overview
 
-The GitOps Bridge is a data pipeline that passes infrastructure metadata from Terraform to Kubernetes secrets. Argo CD ApplicationSets then use these cluster secrets to dynamically determine which addons to deploy to each cluster.
+The GitOps Bridge is a data pipeline that passes infrastructure metadata into Kubernetes cluster secrets. Argo CD ApplicationSets then use these cluster secrets to dynamically determine which addons to deploy to each cluster. Cluster metadata originates from the active cluster provider (under `cluster-providers/`) and per-environment addon enablement from `enabled-addons.yaml`.
 
 ```mermaid
 graph TB
-    subgraph "Terraform Layer"
-        TF[Terraform]
-        HUB_CONFIG[hub-config.yaml]
+    subgraph "Provider / Config Layer"
+        PROVIDER[Cluster Provider<br/>cluster-providers/*]
+        ENABLED[enabled-addons.yaml]
     end
     
     subgraph "GitOps Bridge"
+        FLEET[fleet-secret chart]
         CLUSTER_SECRETS[Cluster Secrets<br/>Labels & Annotations]
     end
     
@@ -27,8 +28,10 @@ graph TB
         AWS_SM[AWS Secrets Manager]
     end
     
-    TF --> HUB_CONFIG
-    HUB_CONFIG --> CLUSTER_SECRETS
+    PROVIDER --> AWS_SM
+    ENABLED --> FLEET
+    AWS_SM --> FLEET
+    FLEET --> CLUSTER_SECRETS
     CLUSTER_SECRETS --> APPSETS
     APPSETS --> APPS
     ESO --> AWS_SM
@@ -39,9 +42,9 @@ graph TB
 
 The platform uses a three-tier GitOps configuration system:
 
-### 1. Addon Definitions
+### 1. Addon Registry
 
-Located in `gitops/addons/bootstrap/default/addons.yaml`, this is the central registry of all available platform addons:
+Located in `gitops/addons/registry/<domain>.yaml` (core, platform, security, observability, ml, gitops), this is the central registry of all available platform addons:
 
 ```yaml
 jupyterhub:
@@ -65,37 +68,38 @@ jupyterhub:
 
 ### 2. Environment Configuration
 
-Located in `gitops/addons/environments/{environment}/addons.yaml`, this enables addons for specific environments:
+Located in `gitops/overlays/environments/<env>/enabled-addons.yaml`, this enables addons for specific environments:
 
 ```yaml
-jupyterhub:
-  enabled: true
-keycloak:
-  enabled: true
-backstage:
-  enabled: true
+jupyterhub: true
+keycloak: true
+backstage: true
 ```
 
 ### 3. Cluster Configuration
 
-Located in `platform/infra/terraform/hub-config.yaml`, this defines per-cluster addon activation:
+Per-environment addon activation is declared in `gitops/overlays/environments/<env>/enabled-addons.yaml`
+(the source of truth for the cluster secret `enable_*` labels):
 
 ```yaml
-clusters:
-  hub:
-    addons:
-      enable_jupyterhub: true
-      enable_keycloak: true
-      enable_backstage: true
-  spoke-dev:
-    addons:
-      enable_jupyterhub: false
-      enable_keycloak: false
+# gitops/overlays/environments/control-plane/enabled-addons.yaml
+jupyterhub: true
+keycloak: true
+backstage: true
+```
+
+```yaml
+# gitops/overlays/environments/dev/enabled-addons.yaml
+jupyterhub: false
+keycloak: false
 ```
 
 ## Cluster Secrets
 
-Terraform creates Kubernetes secrets for each cluster with labels and annotations that ApplicationSets use for dynamic configuration.
+The `fleet-secret` chart generates a Kubernetes cluster secret for each cluster with the labels and
+annotations that ApplicationSets use for dynamic configuration. The `enable_*` labels are derived
+from the environment's `enabled-addons.yaml`; other annotations (region, account, domain, resource
+prefix) come from the `<cluster>/config` Secrets Manager entry seeded by the cluster provider.
 
 ### Labels (for addon selection)
 
@@ -224,7 +228,7 @@ These changes allow addons to deploy in parallel with other services instead of 
 
 ## Deployment Flow
 
-1. **Terraform** reads `hub-config.yaml` and creates cluster secrets with appropriate labels
+1. **The cluster provider** seeds cluster metadata into Secrets Manager; the `fleet-secret` chart reads `enabled-addons.yaml` and creates cluster secrets with the appropriate `enable_*` labels
 2. **Cluster secrets** are created in the `argocd` namespace with addon enablement labels
 3. **ApplicationSets** detect clusters matching their label selectors
 4. **Applications** are generated for each matching cluster
@@ -234,11 +238,10 @@ These changes allow addons to deploy in parallel with other services instead of 
 
 ## Adding a New Addon
 
-1. Define the addon in `gitops/addons/bootstrap/default/addons.yaml`
-2. Enable in environment config `gitops/addons/environments/{env}/addons.yaml`
-3. Add enablement flag to `platform/infra/terraform/hub-config.yaml`
-4. Apply Terraform changes to update cluster secrets
-5. Argo CD automatically detects and deploys the addon
+1. Define the addon in the appropriate `gitops/addons/registry/<domain>.yaml`
+2. Enable it in the environment's `gitops/overlays/environments/<env>/enabled-addons.yaml`
+3. Commit and push — the `fleet-secret` chart regenerates the cluster secret `enable_*` labels
+4. Argo CD automatically detects and deploys the addon
 
 ## References
 

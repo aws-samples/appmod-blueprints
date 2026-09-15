@@ -1,6 +1,17 @@
 # values for the addon
 replicas: 2
 
+# HA spread: force replicas across >=2 zones so a node/AZ disruption
+# always leaves a landing zone (see issue #892).
+topologySpreadConstraints:
+- maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: DoNotSchedule
+  minDomains: 2
+  labelSelector:
+    matchLabels:
+      app.kubernetes.io/name: metrics-server
+
 podDisruptionBudget:
   enabled: true
   maxUnavailable: 1

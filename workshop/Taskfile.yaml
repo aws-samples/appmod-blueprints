@@ -49,14 +49,15 @@ vars:
     sh: yq '.identityCenter.adminGroupId' {{.CONFIG_FILE}}
   GIT_USERNAME:
     sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
+  # `domain` is always populated before install (create-config.sh reserves a CloudFront
+  # hostname up front), so an empty domain no longer indicates CloudFront mode. `insecure`
+  # is the real signal: the ALB serves HTTP because something upstream terminates TLS.
   EXPOSURE_MODE:
-    sh: 'if [ -z "$(yq ''.domain // ""'' {{.CONFIG_FILE}})" ]; then echo "cloudfront"; else echo "domain"; fi'
-  # NOTE: this taskfile-level var is evaluated ONCE at load time (before the platform
-  # CloudFront is created mid-install), so it is only used for informational messaging
-  # in pre-install. Tasks that need the LIVE value (idc:configure, setup-env) resolve it
-  # in their own task-level vars from private/async-domain (+ AWS fallback).
+    sh: 'if [ "$(yq ''.insecure // false'' {{.CONFIG_FILE}})" = "true" ]; then echo "cloudfront"; else echo "domain"; fi'
+  # Safe as a global var now: the domain is static in config from the start, so there is
+  # no longer a stale-at-parse-time problem for consumers to work around.
   CLOUDFRONT_DOMAIN:
-    sh: cat {{.REPO}}/private/async-domain 2>/dev/null | tr -d '[:space:]' || true
+    sh: yq -r '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^null$' || true
   C_STEP:
     sh: printf '\033[1;33m'
   C_OK:
@@ -103,6 +104,12 @@ tasks:
       - 'cd {{.PLATFORM_DIR}} && task install'
       - 'printf "{{.C_INFO}}  [%ds] platform install done ({{.PLATFORM_DIR}}){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - printf '{{.C_OK}}✓ Platform hub install complete.{{.C_RESET}}\n'
+      # Point CloudFront at the ALB the load balancer controller just created. Must happen
+      # HERE: the ALB does not exist until the platform install above, and post-install ->
+      # idc:configure reaches Keycloak *through* the CloudFront domain, so the origin has to
+      # be attached before then or IDC federation cannot work. Doing it now also lets the
+      # distribution propagate while spokes and ray run.
+      - task: cloudfront:attach
       # Wire the GitLab fleet-config overlay to the hub, then declare spokes into it.
       # The platform's guarded ApplicationSets reconcile these into live clusters.
       - task: set-overlay-repo
@@ -136,13 +143,15 @@ tasks:
       # are empty → no spoke AMP scrapers. Re-running here ensures spoke scraper values are
       # written to Secrets Manager and propagated to the ArgoCD cluster secret via ESO.
       # This fixes issue #41 (AMP scraper hub-only, spoke-dev metrics missing in Phase 30.5).
-      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && task kind-kro-ack:secrets-manager:seed-observability; fi'
+      # Re-seed in the BACKGROUND. seed-observability blocks up to 60min polling for the
+      # AMP workspace (provisioned by Crossplane), whose creation is flaky/slow on a fresh
+      # account (IAM eventual-consistency + etcd throttling on the kind bootstrap cluster).
+      # Running it inline can stall the whole install past the CFN IdeInitScriptWaitCondition
+      # (~2h) → CREATE_FAILED, even though the platform is otherwise up. The
+      # peeks-observability-seed.timer already retries this on a schedule, so fire-and-forget
+      # here (best-effort, non-blocking) to write spoke-scraper values once AMP is ACTIVE.
+      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && nohup task kind-kro-ack:secrets-manager:seed-observability >/tmp/seed-observability-reseed.log 2>&1 & echo "  observability re-seed launched in background (PID $!); peeks-observability-seed.timer also retries."; fi'
       - 'printf "{{.C_INFO}}  [%ds] observability re-seeded with spoke scraper data{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Register spoke OIDC providers in IAM (required for IRSA on kro-ack clusters).
-      # This is a temporary workaround until prometheus/common/sigv4 supports Pod Identity.
-      # See: https://github.com/argoproj/argo-rollouts/issues/4536
-      - 'if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then cd {{.PLATFORM_DIR}} && task kind-kro-ack:spokes:register-oidc-providers; fi'
-      - 'printf "{{.C_INFO}}  [%ds] OIDC providers registered{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Write platform URLs + credentials to ~/.bashrc.d/platform.sh for IDE use
       - task: setup-env
       - |
@@ -213,7 +222,7 @@ tasks:
               | while read NS SVC; do
                   kubectl --kubeconfig "$KC" delete svc "$SVC" -n "$NS" \
                     --timeout=60s 2>/dev/null || true
-                done
+                done || true
             kubectl --kubeconfig "$KC" delete pvc --all-namespaces --all \
               --timeout=120s 2>/dev/null || true
             rm -f "$KC"
@@ -221,9 +230,88 @@ tasks:
           done
         fi
 
+      # Phase 1b: tear down app-layer workloads that own cloud resources, so kro/ACK
+      # DEPROVISION them (e.g. the CICDPipeline's two ECR repositories, ray S3 models)
+      # BEFORE the hub controllers are destroyed in Phase 3. Otherwise ACK never
+      # reconciles their deletion and the AWS resources are orphaned — e.g. ECR repos
+      # peeks/<app>* are left behind (they are NOT part of the CloudFormation stack, so
+      # delete-stack never removes them either).
+      #
+      # These instances (CICDPipeline, AppmodService, ray HuggingFaceModel/RayService,
+      # ...) are created by the Backstage scaffolder as ArgoCD Applications with
+      # syncPolicy.automated.selfHeal=true. Deleting the kro instance DIRECTLY does not
+      # work: ArgoCD immediately re-creates it (self-heal), so ACK never deprovisions
+      # the cloud resource. The correct approach is to delete the Backstage-managed
+      # ArgoCD Applications (label app.kubernetes.io/managed-by=backstage) with a
+      # foreground cascade: ArgoCD's resources-finalizer then tears down the kro
+      # instances they manage — and, via the kro + ACK finalizers, their composed cloud
+      # resources — with no self-heal. A by-kind sweep afterwards catches any remaining
+      # out-of-band instances (not managed by a Backstage ArgoCD app, so not self-healed).
+      # Infra RGDs (ekscluster/eksclusterwithvpc/vpc) are intentionally excluded:
+      # spokes are handled by Phase 2 and the hub by Phase 3.
+      - |
+        printf '{{.C_STEP}}▸ Phase 1b — tearing down app-layer workloads (ArgoCD apps → kro → ACK deprovision)...{{.C_RESET}}\n'
+        if kubectl --kubeconfig {{.HUB_KUBECONFIG}} cluster-info >/dev/null 2>&1; then
+          # 1) Delete Backstage-scaffolded ArgoCD Applications with a foreground cascade
+          #    so their managed kro instances (and cloud resources) are removed rather
+          #    than self-healed. The argocd resources-finalizer blocks until the managed
+          #    resources — and the ACK finalizers on their ECR/S3 — are actually gone.
+          if kubectl --kubeconfig {{.HUB_KUBECONFIG}} get applications -n argocd \
+               -l app.kubernetes.io/managed-by=backstage -o name 2>/dev/null | grep -q .; then
+            printf '{{.C_INFO}}  Deleting Backstage-managed ArgoCD apps (foreground cascade)...{{.C_RESET}}\n'
+            kubectl --kubeconfig {{.HUB_KUBECONFIG}} delete applications -n argocd \
+              -l app.kubernetes.io/managed-by=backstage \
+              --cascade=foreground --wait=true --timeout=300s --ignore-not-found 2>/dev/null || \
+              printf '{{.C_ERR}}  ⚠ ArgoCD app cleanup timed out — cloud resources may need a manual sweep.{{.C_RESET}}\n'
+            # Tidy up their AppProjects too (same label).
+            kubectl --kubeconfig {{.HUB_KUBECONFIG}} delete appprojects -n argocd \
+              -l app.kubernetes.io/managed-by=backstage --ignore-not-found 2>/dev/null || true
+          else
+            printf '{{.C_INFO}}  No Backstage-managed ArgoCD apps found.{{.C_RESET}}\n'
+          fi
+          # 2) Safety net: sweep any remaining app-layer kro instances by kind. Out-of-band
+          #    instances (applied directly, not via a Backstage ArgoCD app) are not
+          #    self-healed, so a direct delete sticks. --wait blocks on kro/ACK finalizers.
+          for KIND in cicdpipeline appmodservice huggingfacemodel rayservice; do
+            kubectl --kubeconfig {{.HUB_KUBECONFIG}} get "$KIND" -A >/dev/null 2>&1 || continue
+            kubectl --kubeconfig {{.HUB_KUBECONFIG}} delete "$KIND" --all -A \
+              --wait=true --timeout=300s --ignore-not-found 2>/dev/null || \
+              printf '{{.C_ERR}}  ⚠ %s cleanup timed out — ACK resources may need a manual sweep.{{.C_RESET}}\n' "$KIND"
+          done
+          printf '{{.C_OK}}  ✓ app-layer workloads torn down (cloud resources deprovisioned).{{.C_RESET}}\n'
+        else
+          printf '{{.C_INFO}}  Hub unreachable — skipping app-layer teardown.{{.C_RESET}}\n'
+        fi
+
       # Phase 2: delete spoke clusters via fleet overlay + wait for AWS deletion
       - printf '{{.C_STEP}}▸ Phase 2 — deleting spoke clusters...{{.C_RESET}}\n'
       - task: spokes:disable-all
+
+      # Phase 2.5: release the Crossplane-managed DevLake RDS while the hub
+      # controllers are still alive, and WAIT for Crossplane to reap the composed
+      # AWS resources (RDS cluster, subnet group, and — critically — the security
+      # group rds-mysql-sg-*). Otherwise that SG is orphaned in the IDE VPC once
+      # the hub/Crossplane is destroyed, and blocks VPC + CloudFormation stack
+      # deletion. Same philosophy as spokes:disable-all above. See appmod-blueprints#895.
+      - |
+        printf '{{.C_STEP}}▸ Phase 2.5 — releasing Crossplane-managed DevLake RDS...{{.C_RESET}}\n'
+        export KUBECONFIG={{.HUB_KUBECONFIG}}
+        # Delete the KubeVela Application (cascades to the RelationalDatabase claim
+        # → XRelationalDatabase), and the claim directly in case the App is already gone.
+        kubectl delete application.core.oam.dev devlake-rds-mysql -n devlake --wait=false 2>/dev/null || true
+        kubectl delete relationaldatabases.awsblueprints.io --all -A --wait=false 2>/dev/null || true
+        # Wait up to 15 min for Crossplane to delete the composed Upbound managed
+        # resources — this is what actually deletes the AWS security group.
+        for i in $(seq 1 90); do
+          REMAIN=$(kubectl get securitygroups.ec2.aws.upbound.io,clusters.rds.aws.upbound.io,subnetgroups.rds.aws.upbound.io \
+            -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$REMAIN" = "0" ]; then
+            printf '{{.C_OK}}  ✓ Crossplane RDS managed resources reaped.{{.C_RESET}}\n'
+            break
+          fi
+          printf '{{.C_INFO}}  [%s/90] waiting for %s Crossplane RDS managed resource(s)...{{.C_RESET}}\n' "$i" "$REMAIN"
+          sleep 10
+        done
 
       # Phase 3: destroy the hub (addons → EKS → Kind → IAM → Secrets)
       - printf '{{.C_STEP}}▸ Phase 3 — destroying hub platform ({{.PROVIDER}})...{{.C_RESET}}\n'
@@ -357,13 +445,14 @@ tasks:
         printf '    1. CDK bootstrap.sh provisions the IDE/GitLab CloudFront + GitLab CE,\n'
         printf '       writes private/git-domain\n'
         printf '    2. SSM SetupIDE runs create-config.sh which generates config.local.yaml\n'
-        printf '       (auto-detects region, account, IDC; sets domain: "" for cloudfront mode\n'
+        printf '       (auto-detects region, account, IDC; reserves the CloudFront domain\n'
         printf '        and gitDomain from private/git-domain).\n'
-        printf '       NOTE: the PLATFORM CloudFront domain is NOT a prerequisite and is NOT\n'
-        printf '       stored in config.local.yaml — it is created by cloudfront:hub-distribution\n'
-        printf '       during task install and recorded in private/async-domain.\n'
+        printf '       NOTE: create-config.sh RESERVES the platform CloudFront hostname up\n'
+        printf '       front and writes it to config.local.yaml, so `domain` is set before\n'
+        printf '       install. The origin is attached afterwards by\n'
+        printf '       scripts/cloudfront-attach-origin.sh.\n'
         printf '    3. task install + task workshop:post-install run automatically\n'
-        printf '  For self-paced: just run create-config.sh; task install creates the platform CloudFront.\n'
+        printf '  For self-paced: run create-config.sh, task install, then cloudfront-attach-origin.sh.\n'
         if [ -z "{{.CLOUDFRONT_DOMAIN}}" ]; then
           printf '{{.C_INFO}}  ℹ platform CloudFront domain not created yet — it will be created during task install.{{.C_RESET}}\n'
         else
@@ -372,6 +461,22 @@ tasks:
 
   # ============================================================
   # POST-INSTALL
+  cloudfront:attach:
+    desc: Point the reserved CloudFront distribution at the platform ALB (no-op unless insecure mode)
+    cmds:
+      - |
+        # Only meaningful when something upstream terminates TLS, i.e. the CloudFront
+        # exposure mode. With a real domain there is no distribution to attach.
+        if [ "{{.EXPOSURE_MODE}}" != "cloudfront" ]; then
+          printf '{{.C_INFO}}  Not in CloudFront mode (insecure=false) — nothing to attach.{{.C_RESET}}\n'
+          exit 0
+        fi
+        printf '{{.C_STEP}}▸ Attaching CloudFront to the platform ALB...{{.C_RESET}}\n'
+        # Idempotent: exits 0 having changed nothing if already pointed at the current ALB.
+        # Also self-heals a stale origin left by an ALB that was replaced.
+        PLATFORM_CONFIG_FILE="{{.CONFIG_FILE}}" \
+          "{{.PLATFORM_DIR}}/scripts/cloudfront-attach-origin.sh"
+
   # Run after task install to complete workshop-specific setup
   # ============================================================
 
@@ -404,11 +509,15 @@ tasks:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
       CF_DOMAIN:
         sh: |
-          D=$(cat {{.REPO}}/private/async-domain 2>/dev/null | tr -d '[:space:]')
-          [ -z "$D" ] && D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
-            --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
-            --output text 2>/dev/null | tr -d '[:space:]')
-          [ "$D" = "None" ] && D=""
+          # config is authoritative: the hostname was reserved before install.
+          D=$(yq -r '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
+          if [ "$D" = "null" ]; then D=""; fi
+          if [ -z "$D" ]; then
+            D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
+              --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
+              --output text 2>/dev/null | tr -d '[:space:]')
+            if [ "$D" = "None" ]; then D=""; fi
+          fi
           echo "$D"
       GIT_DOMAIN_VAR:
         sh: yq '.gitDomain // ""' {{.CONFIG_FILE}} | grep -v '^$' || cat {{.REPO}}/private/git-domain 2>/dev/null || true
@@ -505,36 +614,18 @@ tasks:
       KC_ADMIN_PASSWORD:
         sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
       KEYCLOAK_DNS:
+        # One path for both exposure modes: the domain is a static config value in each
+        # case, whether it was supplied by the consumer or reserved from CloudFront before
+        # install. No runtime discovery, no race with a distribution being created.
         sh: |
-          if [ "{{.EXPOSURE_MODE}}" = "cloudfront" ]; then
-            # Resolve the platform CloudFront domain at TASK-RUN time from the runtime
-            # artifact (created by create-config.sh), with fallbacks. Do NOT use the
-            # taskfile-level CLOUDFRONT_DOMAIN var: global vars are evaluated once at
-            # load — before the distribution exists — so it is always empty here.
-            D=$(cat {{.REPO}}/private/async-domain 2>/dev/null | tr -d '[:space:]')
-            if [ -z "$D" ]; then
-              D=$(aws cloudfront list-distributions --region {{.AWS_REGION}} \
-                --query "DistributionList.Items[?Comment=='{{.HUB_CLUSTER_NAME}}-platform'].DomainName | [0]" \
-                --output text 2>/dev/null | tr -d '[:space:]')
-            fi
-            [ "$D" = "None" ] && D=""
-            # Last-resort fallback: config.local.yaml. create-config.sh writes the
-            # domain there once the distribution is created — covers the case where
-            # private/async-domain and the AWS Comment lookup above both race
-            # or miss (e.g. this task runs before the distribution reaches Deployed).
-            if [ -z "$D" ]; then
-              D=$(yq '.domain' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
-              [ "$D" = "null" ] && D=""
-            fi
-            echo "$D"
-          else
-            yq '.domain' {{.CONFIG_FILE}}
-          fi
+          D=$(yq -r '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
+          if [ "$D" = "null" ]; then D=""; fi
+          echo "$D"
     cmds:
       - |
         case "{{.KEYCLOAK_DNS}}" in
           ""|null|None)
-            printf '{{.C_ERR}}⚠ KEYCLOAK_DNS is empty — CloudFront domain not set. Fix: write domain to workshop/private/async-domain then run: task idc:configure{{.C_RESET}}\n'
+            printf '{{.C_ERR}}⚠ KEYCLOAK_DNS is empty — no domain in config.local.yaml.{{.C_RESET}}\n'
             exit 1
           ;;
         esac
@@ -631,12 +722,12 @@ tasks:
       - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
       - |
         IDC_SUCCESS=false
-        # Fail-fast: if KEYCLOAK_DNS is empty (domain not written to private/async-domain),
-        # don't waste time curling — skip immediately with a clear message.
+        # Fail-fast: if KEYCLOAK_DNS is empty (no domain in config) don't waste time
+        # curling — skip immediately with a clear message.
         case "{{.KEYCLOAK_DNS}}" in
           ""|null|None)
-            printf '{{.C_ERR}}⚠ KEYCLOAK_DNS is empty — platform CloudFront domain not set.{{.C_RESET}}\n'
-            printf '{{.C_INFO}}  Fix: ensure private/async-domain exists, then run: task idc:configure{{.C_RESET}}\n'
+            printf '{{.C_ERR}}⚠ IDC skipped: KEYCLOAK_DNS is empty — platform CloudFront domain not set.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Fix: set `domain` in config.local.yaml, then run: task idc:configure{{.C_RESET}}\n'
           ;;
           *)
         # Pre-check: if Keycloak returns 404/000 the ALB/LBC is not reconciled yet.
@@ -644,7 +735,7 @@ tasks:
         KC_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" "https://{{.KEYCLOAK_DNS}}/keycloak/realms/master" --max-time 30 2>/dev/null || echo "000")
         case "$KC_STATUS" in
           000|000000|404)
-            printf '{{.C_ERR}}⚠ Keycloak not reachable (HTTP %s) — skipping IDC config. Run: task idc:configure{{.C_RESET}}\n' "$KC_STATUS"
+            printf '{{.C_ERR}}⚠ IDC skipped: Keycloak not reachable (HTTP %s). Run: task idc:configure{{.C_RESET}}\n' "$KC_STATUS"
           ;;
           *)
             # Also wait for the platform realm SAML descriptor — Keycloak needs extra time
@@ -663,7 +754,7 @@ tasks:
               sleep 15
             done
             if [ "$SAML_OK" = "false" ]; then
-              printf '{{.C_ERR}}⚠ Keycloak platform SAML descriptor not available after 5min — skipping IDC config. Run: task idc:configure{{.C_RESET}}\n'
+              printf '{{.C_ERR}}⚠ IDC skipped: Keycloak platform SAML descriptor not available after 5min. Run: task idc:configure{{.C_RESET}}\n'
             else
             printf '{{.C_INFO}}  Keycloak reachable (HTTP %s) — running IDC configuration...{{.C_RESET}}\n' "$KC_STATUS"
             if python3 {{.REPO}}/scripts/configure_identity_center.py \
@@ -715,10 +806,20 @@ tasks:
     vars:
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty'
@@ -888,10 +989,20 @@ tasks:
     vars:
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_USERNAME:
         sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
@@ -991,10 +1102,20 @@ tasks:
     vars:
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_USERNAME:
         sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
@@ -1006,6 +1127,14 @@ tasks:
     cmds:
       - |
         OVERLAY_URL="https://{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        # Guard: never wire the overlay to a broken/wrong host. If the GitLab domain
+        # could not be resolved (private/git-domain not written yet), skip and let a
+        # later run wire it — wiring a wrong host silently breaks every overlay-aware
+        # app (incl. clusters-kro → spokes never provision).
+        if [ -z "{{.GIT_DOMAIN}}" ]; then
+          printf '{{.C_ERR}}⚠ GitLab domain unresolved (private/git-domain missing) — skipping overlay wiring; re-run task {{.CLUSTER_PROVIDER}}:hub:set-overlay-repo once GitLab is reachable.{{.C_RESET}}\n'
+          exit 0
+        fi
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
         KC="{{.REPO}}/private/hub-kubeconfig"
 
@@ -1176,10 +1305,20 @@ tasks:
       CLUSTER: '{{.CLI_ARGS}}'
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
@@ -1309,10 +1448,20 @@ tasks:
       CLUSTER: '{{.CLI_ARGS}}'
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
@@ -1504,10 +1653,20 @@ tasks:
       CLUSTER: '{{.CLI_ARGS}}'
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
@@ -1570,10 +1729,20 @@ tasks:
       CLUSTER: '{{.CLI_ARGS}}'
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
@@ -1672,10 +1841,20 @@ tasks:
     vars:
       GIT_DOMAIN:
         sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain, written by
+          # bootstrap.sh from IDE_DOMAIN). Do NOT fall back to {{.DOMAIN}}: that is
+          # the *platform* CloudFront (<prefix>-hub-platform) — a DIFFERENT
+          # distribution. Using it for a GitLab URL wires fleet-config / the overlay
+          # to the wrong host (fleet-config unreachable → the clusters-kro
+          # ApplicationSet cannot generate spoke apps → spokes never provision), and
+          # on reused accounts {{.DOMAIN}} is itself picked non-deterministically
+          # (`Comment==<prefix>-hub-platform | [0]`, may be a stale leftover). Prefer
+          # private/git-domain, then config .gitDomain; leave empty otherwise so
+          # callers can guard/retry instead of wiring a wrong URL.
           if [ -f {{.REPO}}/private/git-domain ]; then
             cat {{.REPO}}/private/git-domain
           else
-            echo "{{.DOMAIN}}"
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
           fi
       GIT_PASSWORD:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
@@ -1724,7 +1903,14 @@ tasks:
         for i in $(seq 1 90); do
           LIVE=""
           for c in $ALL_SPOKES; do
-            aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1 && LIVE="$LIVE $c"
+            # NOTE: errexit is global (set: [errexit,...] at the top of this Taskfile).
+            # `describe-cluster ... && LIVE=...` aborts the whole task with the aws exit
+            # code (254) the moment a spoke is gone — exactly the state we are polling
+            # for. Use an `if` (exempt from errexit) so a deleted spoke is a normal,
+            # non-fatal outcome and the loop keeps polling the rest.
+            if aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1; then
+              LIVE="$LIVE $c"
+            fi
           done
           if [ -z "$(echo $LIVE | tr -d ' ')" ]; then
             printf '{{.C_OK}}✓ All spoke clusters deleted from AWS.{{.C_RESET}}\n'; break
@@ -1736,7 +1922,10 @@ tasks:
         # operator can intervene before/after the hub goes away.
         STILL_LIVE=""
         for c in $ALL_SPOKES; do
-          aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1 && STILL_LIVE="$STILL_LIVE $c"
+          # if-guarded (not `&&`) so a deleted spoke does not trip global errexit — see note above.
+          if aws eks describe-cluster --name "$c" --region {{.AWS_REGION}} >/dev/null 2>&1; then
+            STILL_LIVE="$STILL_LIVE $c"
+          fi
         done
         if [ -n "$(echo $STILL_LIVE | tr -d ' ')" ]; then
           printf '{{.C_ERR}}⚠ Spoke clusters still present after wait:%s{{.C_RESET}}\n' "$STILL_LIVE"

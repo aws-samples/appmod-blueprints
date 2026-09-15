@@ -145,6 +145,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           tableName: ${schema.spec.components.dynamodb.tableName}
@@ -216,6 +217,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           clusterName: ${schema.spec.clusterName}
@@ -421,6 +423,13 @@ spec:
                 app: ${schema.metadata.name}
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
+                # Gate args live in the pod-template annotations so that changing
+                # functionalGate/performanceGate.extraArgs alters the Rollout pod spec
+                # (new pod-template hash) -> Argo Rollouts creates a new revision and
+                # re-runs the analysis on `argocd app sync`, with no manual
+                # `kubectl argo rollouts retry/restart` (mirrors KubeVela publishVersion). See GitLab #36.
+                appmod.io/functional-gate-args: "${schema.spec.functionalGate.extraArgs}"
+                appmod.io/performance-gate-args: "${schema.spec.performanceGate.extraArgs}"
             spec:
               serviceAccountName: ${serviceaccountWithDynamoDB.metadata.name}
               containers:
@@ -487,6 +496,13 @@ spec:
                 app: ${schema.metadata.name}
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
+                # Gate args live in the pod-template annotations so that changing
+                # functionalGate/performanceGate.extraArgs alters the Rollout pod spec
+                # (new pod-template hash) -> Argo Rollouts creates a new revision and
+                # re-runs the analysis on `argocd app sync`, with no manual
+                # `kubectl argo rollouts retry/restart` (mirrors KubeVela publishVersion). See GitLab #36.
+                appmod.io/functional-gate-args: "${schema.spec.functionalGate.extraArgs}"
+                appmod.io/performance-gate-args: "${schema.spec.performanceGate.extraArgs}"
             spec:
               serviceAccountName: ${serviceaccountWithoutDynamoDB.metadata.name}
               containers:

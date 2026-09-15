@@ -21,12 +21,12 @@ Ensures all Terraform operations follow Infrastructure as Code best practices an
 - NEVER run `terraform destroy` without explicit user confirmation and explanation of what will be destroyed (ID: TF_DESTROY_CONFIRM)
 - ALWAYS create a backup before state manipulation: `terraform state pull > backup.tfstate` (ID: TF_STATE_BACKUP)
 
-### Workshop Context
+### Cluster Provider Context
 
-- Infrastructure is pre-deployed and managed via Terraform - focus on understanding and extending rather than creating from scratch (ID: TF_PREDEPLOYED)
-- Terraform files are located in `/home/ec2-user/environment/platform-on-eks-workshop/platform/infra/terraform/` directory (ID: TF_WORKSHOP_STRUCTURE)
+- Terraform is now **one of several pluggable cluster providers** (`kind-crossplane`, `kind-kro-ack`, `terraform`, `byoc`), selected via `clusterProvider` in `config.local.yaml` — it is no longer the default nor the only deployment path (ID: TF_PROVIDER_MODEL)
+- The Terraform provider lives in `cluster-providers/terraform/` (flat `.tf` files: `eks.tf`, `vpc.tf`, `iam.tf`, `argocd-capability.tf`, `secrets-manager.tf`, etc.) — the old `platform/infra/terraform/` tree has been removed (ID: TF_PROVIDER_STRUCTURE)
 - Use `terraform show` and `terraform state show` to explore existing resources without modifications (ID: TF_EXPLORE)
-- NEVER use terraform apply or terraform destroy directly, ALWAYS use the deployment scripts `deploy.sh` or `destroy.sh` (ID: TF_USE_SCRIPTS)
+- NEVER run `terraform apply`/`terraform destroy` directly — always drive the provider through the Taskfile: `task install` / `task destroy` (which delegate to `terraform:install` / `terraform:destroy` when `clusterProvider: terraform`) (ID: TF_USE_TASKFILE)
 
 ## Priority
 
