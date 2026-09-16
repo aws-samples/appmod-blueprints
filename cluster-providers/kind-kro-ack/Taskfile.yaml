@@ -2253,7 +2253,7 @@ tasks:
         }
         # Create all 7 roles in parallel — each is independent
         _PIDS=""
-        for service in ec2 eks iam ecr s3 dynamodb secretsmanager; do
+        for service in ec2 eks iam ecr s3 dynamodb secretsmanager rds; do
           (
             ROLE_NAME="{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}"
             if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
