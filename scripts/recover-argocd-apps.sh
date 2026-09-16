@@ -253,7 +253,11 @@ echo "$stuck_apps" | while IFS='|' read -r app health sync phase finished issue_
 done
 
 echo ""
-print_success "Recovery complete. Run again to verify all apps are healthy."
+print_info "Waiting up to ${FINAL_VERIFY_TIMEOUT:-120}s for recovered applications to settle before reporting..."
+final_verify_settle "${FINAL_VERIFY_TIMEOUT:-120}"
+
+echo ""
+print_success "Recovery complete."
 
 echo ""
 generate_dependency_report

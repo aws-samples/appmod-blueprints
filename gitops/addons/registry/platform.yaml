@@ -363,6 +363,7 @@ devlake:
         operator: In
         values: ['true']
   valuesObject:
+    resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
     namespace: devlake
