@@ -520,6 +520,55 @@ terminate_argocd_operation() {
         print_warning "ArgoCD CLI authentication failed, using direct kubectl approach"
         kubectl patch application.argoproj.io "$app_name" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
     fi
+
+    # terminate-op and the operationState patch are asynchronous: the application
+    # controller needs a moment to drop .operation and settle operationState.
+    # Syncing before it clears fails with "another operation is already in
+    # progress", so wait (bounded) for the operation to actually clear.
+    wait_for_operation_cleared "$app_name" 60 || true
+}
+
+# Wait (bounded) for an application's in-progress operation to clear.
+# Returns 0 once .operation is absent and operationState.phase is not
+# Running/Terminating, or 1 after <timeout> seconds.
+wait_for_operation_cleared() {
+    local app_name=$1
+    local timeout=${2:-60}
+    local waited=0 op phase
+    while [ "$waited" -lt "$timeout" ]; do
+        op=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.operation}' 2>/dev/null)
+        phase=$(kubectl get application "$app_name" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+        if [ -z "$op" ] && [ "$phase" != "Running" ] && [ "$phase" != "Terminating" ]; then
+            return 0
+        fi
+        sleep 3
+        waited=$((waited + 3))
+    done
+    print_warning "Operation for $app_name still not cleared after ${timeout}s"
+    return 1
+}
+
+# Poll all ArgoCD apps until each is Healthy+Synced or the timeout elapses.
+# Recovery syncs (and ArgoCD auto-sync) frequently finish a few seconds after
+# the recovery actions are issued, so a mid-flight snapshot can mislabel an app
+# as KO when it is about to become healthy. This makes the final report reflect
+# the settled state. Always returns 0 (reporting is best-effort).
+final_verify_settle() {
+    local timeout=${1:-120}
+    local interval=${2:-10}
+    local waited=0 not_ready
+    while [ "$waited" -lt "$timeout" ]; do
+        not_ready=$(kubectl get applications -n argocd -o json 2>/dev/null | \
+            jq -r '[.items[] | select((.status.health.status // "") != "Healthy" or (.status.sync.status // "") != "Synced")] | length')
+        if [ "${not_ready:-1}" = "0" ]; then
+            print_success "All applications settled to Healthy/Synced after ${waited}s"
+            return 0
+        fi
+        sleep "$interval"
+        waited=$((waited + interval))
+    done
+    print_info "Settle wait elapsed after ${timeout}s; ${not_ready:-?} app(s) still reconciling — see final report below"
+    return 0
 }
 
 # Function to refresh ArgoCD application
@@ -651,10 +700,22 @@ sync_argocd_app() {
     # Try ArgoCD CLI first if available and authenticated
     if authenticate_argocd; then
         print_info "Using ArgoCD CLI to sync $app_name"
-        argocd app sync "$app_name" $force_flag --timeout 200 || {
-            print_warning "ArgoCD CLI sync failed, falling back to kubectl"
-            kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
-        }
+        local sync_out
+        if ! sync_out=$(argocd app sync "$app_name" $force_flag --timeout 200 2>&1); then
+            if echo "$sync_out" | grep -q "another operation is already in progress"; then
+                # Not a real failure: an operation is still in flight (a termination
+                # settling, or an auto-sync). Wait for it to clear, then retry once.
+                print_info "$app_name already has an operation in progress; waiting for it to clear, then retrying sync"
+                wait_for_operation_cleared "$app_name" 60 || true
+                argocd app sync "$app_name" $force_flag --timeout 200 || {
+                    print_warning "ArgoCD CLI sync retry failed, falling back to kubectl"
+                    kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
+                }
+            else
+                print_warning "ArgoCD CLI sync failed, falling back to kubectl"
+                kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
+            fi
+        fi
     else
         print_warning "ArgoCD CLI authentication failed, using kubectl"
         kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
