@@ -614,6 +614,7 @@ tasks:
             s3) echo "arn:aws:iam::aws:policy/AmazonS3FullAccess";;
             dynamodb) echo "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess";;
             secretsmanager) echo "arn:aws:iam::aws:policy/SecretsManagerReadWrite";;
+            rds) echo "arn:aws:iam::aws:policy/AmazonRDSFullAccess arn:aws:iam::aws:policy/SecretsManagerReadWrite";;
           esac
         }
         for service in ec2 eks iam ecr s3 dynamodb secretsmanager rds; do
@@ -638,6 +639,18 @@ tasks:
             {"Effect": "Allow", "Action": ["iam:GetRole","iam:ListRoleTags"], "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*"},
             {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*", "Condition": {"StringEquals": {"iam:PassedToService": "pods.eks.amazonaws.com"}}}
           ]
+        }'
+        # RDS role needs KMS to use aws/rds (storage) and aws/secretsmanager (managed
+        # master password). AmazonRDSFullAccess lacks kms:CreateGrant, so without this
+        # RDS's key binding fails with KMSKeyNotAccessibleFault [null].
+        RDS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-rds"
+        aws iam put-role-policy --role-name "$RDS_ROLE" --policy-name rds-kms --policy-document '{
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Action": ["kms:CreateGrant","kms:DescribeKey","kms:GenerateDataKey","kms:GenerateDataKeyWithoutPlaintext","kms:Decrypt","kms:Encrypt","kms:ReEncryptFrom","kms:ReEncryptTo","kms:RetireGrant","kms:ListGrants","kms:ListAliases"],
+            "Resource": "*"
+          }]
         }'
         # Allow ACK capability role to assume cluster-mgmt roles
         aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
