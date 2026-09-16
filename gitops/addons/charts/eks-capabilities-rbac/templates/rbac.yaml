@@ -72,6 +72,10 @@ rules:
 - apiGroups: ["ecr.services.k8s.aws"]
   resources: ["*"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK RDS — needed for the devlake RelationalDatabase RGD (DBSubnetGroup/DBCluster/DBInstance)
+- apiGroups: ["rds.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Kro custom resources
 - apiGroups: ["kro.run"]
   resources: ["*"]
