@@ -366,6 +366,7 @@ devlake:
     resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
+    awsAccountId: '{{.metadata.annotations.aws_account_id}}'
     namespace: devlake
     rds:
       vpcId: '{{default "" (index .metadata.annotations "aws_vpc_id")}}'
