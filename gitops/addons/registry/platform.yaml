@@ -367,6 +367,9 @@ devlake:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
     namespace: devlake
+    rds:
+      vpcId: '{{default "" (index .metadata.annotations "aws_vpc_id")}}'
+      privateSubnetIds: '{{default "" (index .metadata.annotations "aws_private_subnet_ids")}}'
     devlake:
       grafana:
         external:
