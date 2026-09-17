@@ -28,10 +28,13 @@ spec:
     {{- end }}
     {{- if .Values.amg.subnetIds }}
     vpcConfiguration:
+      {{- if .Values.amg.securityGroupId }}
       securityGroupIds:
-        {{- if .Values.amg.securityGroupId }}
         - {{ .Values.amg.securityGroupId }}
-        {{- end }}
+      {{- else }}
+      securityGroupIdRefs:
+        - name: {{ .Values.resourcePrefix }}-amg-sg
+      {{- end }}
       subnetIds:
         {{- if kindIs "string" .Values.amg.subnetIds }}
         {{- range (splitList "," .Values.amg.subnetIds) }}
