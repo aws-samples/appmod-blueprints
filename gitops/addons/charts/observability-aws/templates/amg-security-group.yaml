@@ -1,4 +1,4 @@
-{{- if and .Values.amg.enabled .Values.aws.vpcId (not .Values.amg.securityGroupId) }}
+{{- if and .Values.amg.enabled .Values.aws.vpcId }}
 ---
 apiVersion: ec2.aws.upbound.io/v1beta1
 kind: SecurityGroup

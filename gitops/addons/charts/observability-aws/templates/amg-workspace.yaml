@@ -26,15 +26,10 @@ spec:
     roleArnRef:
       name: {{ .Values.resourcePrefix }}-amg-workspace-role
     {{- end }}
-    {{- if .Values.amg.subnetIds }}
+    {{- if and .Values.amg.subnetIds .Values.amg.securityGroupId }}
     vpcConfiguration:
-      {{- if .Values.amg.securityGroupId }}
       securityGroupIds:
         - {{ .Values.amg.securityGroupId }}
-      {{- else }}
-      securityGroupIdRefs:
-        - name: {{ .Values.resourcePrefix }}-amg-sg
-      {{- end }}
       subnetIds:
         {{- if kindIs "string" .Values.amg.subnetIds }}
         {{- range (splitList "," .Values.amg.subnetIds) }}

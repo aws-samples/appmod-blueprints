@@ -1,8 +1,4 @@
 devlake:
-  # The platform runs its own grafana-operator Grafana (serving the DORA
-  # dashboards via the devlake-mysql-api datasource), so the DevLake subchart's
-  # bundled Grafana is redundant. Disabling it also removes the devlake-grafana
-  # admin-password sync churn that the registry ignoreDifferences entries exist for.
   grafana:
     enabled: false
   mysql:
