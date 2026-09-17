@@ -14,5 +14,5 @@ version: 0.1.0
 dependencies:
   - name: karpenter
     # First upstream release with cpuOptions.nestedVirtualization (Kata).
-    version: '1.14.0'
+    version: '1.14.1'
     repository: oci://public.ecr.aws/karpenter
