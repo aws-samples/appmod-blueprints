@@ -1,47 +1,28 @@
-{{- if .Values.amg.enabled }}
-apiVersion: grafana.aws.upbound.io/v1beta2
-kind: Workspace
+{{- if and .Values.amg.enabled .Values.aws.vpcId .Values.amg.subnetIds }}
+apiVersion: kro.run/v1alpha1
+kind: GrafanaWorkspaceWithVpc
 metadata:
   name: {{ .Values.resourcePrefix }}-amg
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "1"
 spec:
-  forProvider:
-    region: {{ .Values.aws.region }}
-    name: {{ .Values.amg.name | default (printf "%s-observability" .Values.resourcePrefix) }}
-    accountAccessType: CURRENT_ACCOUNT
-    authenticationProviders:
-      - SAML
-    permissionType: SERVICE_MANAGED
-    dataSources:
-      {{- toYaml .Values.amg.dataSources | nindent 6 }}
-    notificationDestinations:
-      {{- toYaml .Values.amg.notificationDestinations | nindent 6 }}
-    grafanaVersion: {{ .Values.amg.grafanaVersion | quote }}
-    configuration: '{"unifiedAlerting":{"enabled":true},"plugins":{"pluginAdminEnabled":false}}'
-    {{- if .Values.amg.roleArn }}
-    roleArn: {{ .Values.amg.roleArn }}
+  resourcePrefix: {{ .Values.resourcePrefix }}
+  region: {{ .Values.aws.region }}
+  vpcId: {{ .Values.aws.vpcId }}
+  workspaceName: {{ .Values.amg.name | default (printf "%s-observability" .Values.resourcePrefix) }}
+  roleArnRefName: {{ .Values.resourcePrefix }}-amg-workspace-role
+  grafanaVersion: {{ .Values.amg.grafanaVersion | quote }}
+  subnetIds:
+    {{- if kindIs "string" .Values.amg.subnetIds }}
+    {{- range (splitList "," .Values.amg.subnetIds) }}
+    - {{ . | trim }}
+    {{- end }}
     {{- else }}
-    roleArnRef:
-      name: {{ .Values.resourcePrefix }}-amg-workspace-role
+    {{- toYaml .Values.amg.subnetIds | nindent 4 }}
     {{- end }}
-    {{- if and .Values.amg.subnetIds .Values.amg.securityGroupId }}
-    vpcConfiguration:
-      securityGroupIds:
-        - {{ .Values.amg.securityGroupId }}
-      subnetIds:
-        {{- if kindIs "string" .Values.amg.subnetIds }}
-        {{- range (splitList "," .Values.amg.subnetIds) }}
-        - {{ . | trim }}
-        {{- end }}
-        {{- else }}
-        {{- toYaml .Values.amg.subnetIds | nindent 8 }}
-        {{- end }}
-    {{- end }}
-    tags:
-      managed-by: crossplane
-      purpose: observability
-  providerConfigRef:
-    name: default
+  dataSources:
+    {{- toYaml .Values.amg.dataSources | nindent 4 }}
+  notificationDestinations:
+    {{- toYaml .Values.amg.notificationDestinations | nindent 4 }}
 {{- end }}

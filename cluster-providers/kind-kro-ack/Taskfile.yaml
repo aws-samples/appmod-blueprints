@@ -2282,9 +2282,6 @@ tasks:
             {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*", "Condition": {"StringEquals": {"iam:PassedToService": "pods.eks.amazonaws.com"}}}
           ]
         }'
-        # RDS role needs KMS to use aws/rds (storage) and aws/secretsmanager (managed
-        # master password). AmazonRDSFullAccess lacks kms:CreateGrant, so without this
-        # RDS's key binding fails with KMSKeyNotAccessibleFault [null].
         RDS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-rds"
         aws iam put-role-policy --role-name "$RDS_ROLE" --policy-name rds-kms --policy-document '{
           "Version": "2012-10-17",
