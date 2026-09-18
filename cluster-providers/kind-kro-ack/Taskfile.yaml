@@ -739,7 +739,8 @@ tasks:
   hub:wait-for-eks:
     desc: Wait for the hub cluster instance to reach ACTIVE state and the EKS cluster to exist in AWS
     vars:
-      WAIT_TIMEOUT_SEC: '{{.WAIT_TIMEOUT_SEC | default "2400"}}'
+      WAIT_TIMEOUT_SEC: '{{.WAIT_TIMEOUT_SEC | default "3000"}}'
+      WAIT_RETRY_SEC: '{{.WAIT_RETRY_SEC | default "600"}}'
       WAIT_INTERVAL_SEC: '{{.WAIT_INTERVAL_SEC | default "30"}}'
       HUB_KIND: '{{if .HUB_VPC_ID}}ekscluster{{else}}eksclusterwithvpc{{end}}'
     cmds:
@@ -775,7 +776,24 @@ tasks:
           sleep {{.WAIT_INTERVAL_SEC}}
         done
         if [ "$STATE" != "ACTIVE" ]; then
-          printf '{{.C_ERR}}✗ {{.HUB_KIND}} not ACTIVE after {{.WAIT_TIMEOUT_SEC}}s (last state: %s){{.C_RESET}}\n' "$STATE"
+          # Do NOT abort on the first timeout. A transient ACK dependency (e.g. a child
+          # node briefly reporting "no such key: arn (data pending)" before ACK populates
+          # a status ARN) can keep the instance out of ACTIVE past the window even though
+          # it is still converging. Nudge KRO to re-reconcile, then grant one extra grace
+          # window before failing. The whole install is idempotent and resumable, so a
+          # transient must not permanently skip the post-wait hub:seed (app-of-apps) step.
+          printf '{{.C_INFO}}  {{.HUB_KIND}} not ACTIVE after {{.WAIT_TIMEOUT_SEC}}s (state: %s) — nudging reconcile, retrying for {{.WAIT_RETRY_SEC}}s...{{.C_RESET}}\n' "${STATE:-<empty>}"
+          kubectl get {{.HUB_KIND}} {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.conditions}' 2>/dev/null || true
+          kubectl annotate {{.HUB_KIND}} {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} kro.run/reconcile-nudge="$(date +%s)" --overwrite 2>/dev/null || true
+          GRACE_END=$(( $(date +%s) + {{.WAIT_RETRY_SEC}} ))
+          while [ "$(date +%s)" -lt "$GRACE_END" ]; do
+            STATE=$(kubectl get {{.HUB_KIND}} {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+            if [ "$STATE" = "ACTIVE" ]; then break; fi
+            sleep {{.WAIT_INTERVAL_SEC}}
+          done
+        fi
+        if [ "$STATE" != "ACTIVE" ]; then
+          printf '{{.C_ERR}}✗ {{.HUB_KIND}} not ACTIVE after {{.WAIT_TIMEOUT_SEC}}s + {{.WAIT_RETRY_SEC}}s grace (last state: %s){{.C_RESET}}\n' "$STATE"
           kubectl get {{.HUB_KIND}} {{.HUB_CLUSTER_NAME}} -n {{.HUB_CLUSTER_NAME}} -o jsonpath='{.status.conditions}' 2>/dev/null || true
           exit 1
         fi

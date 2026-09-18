@@ -795,13 +795,21 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            # #force dependency on ekscluster (NOT on argocdRole's ACK status ARN).
+            # Previously principalARN read ${argocdRole.status.ackResourceMetadata.arn};
+            # if ACK had not yet populated the Role's status when KRO evaluated this node,
+            # the whole instance stalled with "no such key: arn (data pending)" and could
+            # time out `task install`. The Role name is deterministic, so we build the
+            # principal ARN directly (as accessEntryAdmin below already does) and gate
+            # only on the cluster existing — removing the transient race entirely.
+            eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
         spec:
           clusterName: "${schema.spec.name}"
           accessPolicies:
             - accessScope:
                 type: "cluster"
               policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-          principalARN: "${argocdRole.status.ackResourceMetadata.arn}"
+          principalARN: "arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.name}-argocd-role"
           type: STANDARD
 
     - id: accessEntryArgocdCapability
