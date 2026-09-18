@@ -11,6 +11,7 @@ spec:
   targetPort: 8080
   serviceAccount: java-service-account
   clusterName: peeks-spoke-dev
+  resourcePrefix: peeks
   env:
     - name: APP_ENV
       value: "DEV"

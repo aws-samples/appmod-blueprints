@@ -59,6 +59,7 @@ spec:
           environment: ${{ parameters.environment }}
           region: ${{ parameters.region }}
           accountId: ${{ parameters.accountId | default(steps['fetchSystem'].output.entity.spec.aws_account_id) }}
+          resource_prefix: ${{ steps['fetchSystem'].output.entity.spec.resource_prefix }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
     - id: publish
       name: Publishing to GitLab repository

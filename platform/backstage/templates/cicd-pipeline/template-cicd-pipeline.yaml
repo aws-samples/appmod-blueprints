@@ -93,7 +93,7 @@ spec:
           ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
           git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}
           cluster_name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
-          aws_resource_prefix: peeks
+          aws_resource_prefix: ${{ steps['fetchSystem'].output.entity.spec.resource_prefix }}
           dockerfile_path: ${{parameters.dockerfile_path}}
           deployment_path: ${{parameters.deployment_path}}
           created_by: ${{ (user.entity.spec.profile.displayName | default(user.entity.metadata.name) | default(user.ref) | default("backstage-user")) | replace(" ", "-") }}
