@@ -5,5 +5,5 @@ type: application
 version: 0.1.0
 dependencies:
 - name: flux2
-  version: "2.12.4"
+  version: "2.19.0"
   repository: "https://fluxcd-community.github.io/helm-charts"

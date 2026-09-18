@@ -1,28 +1,79 @@
-apiVersion: argoproj.io/v1alpha1
-kind: Application
+# Minimal Redis for the Dapr dev state store.
+#
+# Replaces the former Bitnami Helm chart (registry-1.docker.io/bitnamicharts/redis):
+# Bitnami deleted its public image catalog on 2025-09-29, so that chart can no
+# longer pull images without a paid Bitnami Secure Images subscription.
+#
+# Uses the official `redis` image and keeps the exact names the dev Dapr Component
+# (statestore.yaml) expects, so nothing else needs to change:
+#   - Service `redis-master` on :6379
+#   - Secret  `redis` with key `redis-password`
+#
+# Dev-only state store (single replica, internal ClusterIP). Not used by the PEEKS
+# workshop. Auth is disabled by default (empty password) for the dev quickstart;
+# to enable it, set a value in the Secret below and add `--requirepass` to the args.
+apiVersion: v1
+kind: Secret
 metadata:
-  name: redis-dapr
-  namespace: argocd
+  name: redis
   labels:
-    env: dev
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io
+    app: redis
+type: Opaque
+stringData:
+  redis-password: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels:
+    app: redis
 spec:
-  project: default
-  source:
-    repoURL: 'registry-1.docker.io/bitnamicharts'
-    targetRevision: 25.3.2
-    helm:
-      values: |
-        architecture: standalone
-      releaseName: redis
-    chart: redis
-  destination:
-    name: 'dev-cluster'
-    namespace: default
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          args: ["--save", "", "--appendonly", "no"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-master
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      protocol: TCP
+      port: 6379
+      targetPort: 6379
+  type: ClusterIP

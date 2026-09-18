@@ -5,5 +5,5 @@ type: application
 version: 0.1.0
 dependencies:
   - name: mlflow
-    version: '0.7.19'
+    version: '1.11.7'
     repository: https://community-charts.github.io/helm-charts
