@@ -123,7 +123,7 @@ kind: IAMRoleSelector
 metadata:
   name: rds-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix | default "peeks" }}-cluster-mgmt-rds"
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-rds"
   namespaceSelector:
     names:
       - {{ $key }}
