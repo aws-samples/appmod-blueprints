@@ -363,9 +363,18 @@ devlake:
         operator: In
         values: ['true']
   valuesObject:
+    resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     clusterRegion: '{{.metadata.annotations.aws_region}}'
+    awsAccountId: '{{.metadata.annotations.aws_account_id}}'
     namespace: devlake
+    rds:
+      vpcId: '{{default "" (index .metadata.annotations "aws_vpc_id")}}'
+      privateSubnetIds: '{{default "" (index .metadata.annotations "aws_private_subnet_ids")}}'
+    devlake:
+      grafana:
+        external:
+          url: '{{index .metadata.annotations "aws_grafana_url" | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

@@ -4,5 +4,5 @@ description: Ray Operator with ServiceAccounts for model storage
 version: 0.1.0
 dependencies:
   - name: kuberay-operator
-    version: "1.2.2"
+    version: "1.7.0"
     repository: https://ray-project.github.io/kuberay-helm/

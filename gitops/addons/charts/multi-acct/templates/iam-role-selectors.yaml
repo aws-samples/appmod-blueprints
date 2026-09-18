@@ -117,4 +117,19 @@ spec:
     - group: secretsmanager.services.k8s.aws
       kind: ""
       version: ""
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: rds-{{ $key }}
+spec:
+  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-rds"
+  namespaceSelector:
+    names:
+      - {{ $key }}
+  resourceTypeSelector:
+    - group: rds.services.k8s.aws
+      kind: ""
+      version: ""
 {{- end }}
+---

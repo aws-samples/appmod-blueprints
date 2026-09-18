@@ -34,6 +34,7 @@ sm = boto3.client("secretsmanager", region_name=region)
 logs = boto3.client("logs", region_name=region)
 cf = boto3.client("cloudfront")
 grafana = boto3.client("grafana", region_name=region)
+ecr = boto3.client("ecr", region_name=region)
 
 
 def log(msg):
@@ -399,6 +400,33 @@ try:
     log(f"Secrets Manager: force-deleted {_reaped} secret(s) (incl. scheduled-for-deletion)")
 except Exception as e:
     log(f"Secrets Manager: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 8b. ECR repositories (imperatively-created, NOT ACK-managed)
+#     The Ray/vLLM module builds a custom inference image and pushes it to an
+#     ECR repo created imperatively by the Ray build Task
+#     (cluster-providers/common/Taskfile.ray.yaml: `aws ecr create-repository
+#     <prefix>-ray-vllm-custom`). Unlike the app-layer repos (e.g. <prefix>/rust,
+#     <prefix>/java) which are ACK-managed via the CICDPipeline RGD and get
+#     cascade-deprovisioned on teardown, this repo has no owning CR, so
+#     `task destroy` leaves it behind (a confirmed orphan on reused accounts).
+#     Force-delete it (removes any images too).
+# ---------------------------------------------------------------------------
+try:
+    _reaped = 0
+    for _name in [f"{prefix}-ray-vllm-custom"]:
+        try:
+            ecr.delete_repository(repositoryName=_name, force=True)
+            _reaped += 1
+            log(f"  Deleted ECR repository {_name}")
+        except ecr.exceptions.RepositoryNotFoundException:
+            pass
+        except Exception as e:
+            log(f"  ECR {_name}: {e}")
+    log(f"ECR: force-deleted {_reaped} orphaned repository(ies)")
+except Exception as e:
+    log(f"ECR: {e}")
 
 
 # ---------------------------------------------------------------------------
