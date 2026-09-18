@@ -44,6 +44,26 @@
         }
       }
     },
+    "fleetRepo": {
+      "type": "object",
+      "description": "Optional. Repository hosting FLEET content (fleet/members, fleet/spoke-values, overlays) when it lives apart from the platform charts — e.g. a consumer repo that owns its own fleet while consuming platform addons from repo.url. Each field falls back independently to the matching repo.* value when omitted. Honoured by the kind-crossplane and kind-kro-ack providers.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Git repository URL hosting the fleet content. Defaults to repo.url"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Git branch or tag for the fleet content. Defaults to repo.revision"
+        },
+        "basepath": {
+          "type": "string",
+          "description": "Path within the fleet repo to the gitops directory (must end with /). Defaults to repo.basepath"
+        }
+      }
+    },
     "hub": {
       "type": "object",
       "required": [
