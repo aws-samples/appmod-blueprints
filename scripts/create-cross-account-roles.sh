@@ -32,7 +32,8 @@ create_target_roles() {
   local HUB_ACCOUNT_ID="$1"
   echo "Creating cluster-mgmt roles (trusting hub account $HUB_ACCOUNT_ID)..."
 
-  TRUST_POLICY=$(cat <<EOF
+  TRUST_POLICY=$(
+    cat <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -52,7 +53,7 @@ create_target_roles() {
   ]
 }
 EOF
-)
+  )
 
   declare -A MANAGED_POLICIES
   MANAGED_POLICIES[ec2]="arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess"
@@ -72,7 +73,7 @@ EOF
   INLINE_POLICIES[dynamodb]='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:*"],"Resource":"*"}]}'
   INLINE_POLICIES[secretsmanager]='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["secretsmanager:*"],"Resource":"*"}]}'
 
-  for service in ec2 eks iam ecr s3 dynamodb secretsmanager; do
+  for service in ec2 eks iam ecr s3 dynamodb secretsmanager rds; do
     ROLE_NAME="${RESOURCE_PREFIX}-cluster-mgmt-${service}"
     if aws iam get-role --role-name "$ROLE_NAME" &>/dev/null; then
       aws iam update-assume-role-policy --role-name "$ROLE_NAME" --policy-document "$TRUST_POLICY"
@@ -116,9 +117,9 @@ echo ""
 
 # Step 1: Create roles in target account
 echo "--- Step 1: Target account roles ---"
-CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/${RESOURCE_PREFIX}-cluster-mgmt-iam" --role-session-name setup 2>/dev/null || \
-        aws sts assume-role --role-arn "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole" --role-session-name setup 2>/dev/null || \
-        echo "")
+CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/${RESOURCE_PREFIX}-cluster-mgmt-iam" --role-session-name setup 2>/dev/null ||
+  aws sts assume-role --role-arn "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole" --role-session-name setup 2>/dev/null ||
+  echo "")
 
 if [ -z "$CREDS" ]; then
   echo "⚠️  Cannot assume role in target account. Run with --target-only from the target account first."

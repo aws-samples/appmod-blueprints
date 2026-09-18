@@ -21,7 +21,7 @@ observability-aws:
       domainName: '{{default "" (index .metadata.annotations "ingress_domain_name")}}'
     resourcePrefix: '{{default "" (index .metadata.annotations "resource_prefix")}}'
     amg:
-      subnetIds: ""
+      subnetIds: '{{default "" (index .metadata.annotations "aws_private_subnet_ids")}}'
     scraper:
       clusterArn: '{{default "" (index .metadata.annotations "aws_cluster_arn")}}'
       clusterSubnetIds: '{{default "" (index .metadata.annotations "aws_private_subnet_ids")}}'

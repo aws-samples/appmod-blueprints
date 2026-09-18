@@ -1,4 +1,6 @@
 devlake:
+  grafana:
+    enabled: false
   mysql:
     useExternal: true
     externalServer: "devlake-mysql-service"
@@ -20,6 +22,26 @@ devlake:
       FORCE_MIGRATION: "true"
     image:
       tag: v1.0.3-beta7
+    livenessProbe:
+      httpGet:
+        path: /ping
+        port: 8080
+        scheme: HTTP
+      initialDelaySeconds: 120
+      periodSeconds: 15
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 40
+    readinessProbe:
+      httpGet:
+        path: /ping
+        port: 8080
+        scheme: HTTP
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 40
     resources:
       requests:
         cpu: 100m
