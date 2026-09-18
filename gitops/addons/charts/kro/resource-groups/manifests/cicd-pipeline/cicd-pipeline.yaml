@@ -53,7 +53,7 @@ spec:
        metadata:
           name: ${schema.metadata.namespace}-${schema.metadata.name}-iam
        spec:
-          arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-iam
+          arn: arn:aws:iam::${schema.spec.aws.accountId}:role/${schema.spec.aws.resourcePrefix}-cluster-mgmt-iam
           namespaceSelector:
              names:
                 - ${schema.metadata.namespace}
@@ -72,7 +72,7 @@ spec:
        metadata:
           name: ${schema.metadata.namespace}-${schema.metadata.name}-ecr
        spec:
-          arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-ecr
+          arn: arn:aws:iam::${schema.spec.aws.accountId}:role/${schema.spec.aws.resourcePrefix}-cluster-mgmt-ecr
           namespaceSelector:
              names:
                 - ${schema.metadata.namespace}
@@ -91,7 +91,7 @@ spec:
        metadata:
           name: ${schema.metadata.namespace}-${schema.metadata.name}-eks
        spec:
-          arn: arn:aws:iam::${schema.spec.aws.accountId}:role/peeks-cluster-mgmt-eks
+          arn: arn:aws:iam::${schema.spec.aws.accountId}:role/${schema.spec.aws.resourcePrefix}-cluster-mgmt-eks
           namespaceSelector:
              names:
                 - ${schema.metadata.namespace}
