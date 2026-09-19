@@ -344,6 +344,16 @@ tasks:
 
   kind:create:
     desc: Create Kind cluster (skips if exists)
+    # See the note in cluster-providers/kind-kro-ack/Taskfile.yaml: this reports an
+    # unreachable container runtime rather than letting `kind create` emit a raw socket
+    # error. Runtime AGNOSTIC by design — KIND_EXPERIMENTAL_PROVIDER is the operator's
+    # environment, not ours to detect or set.
+    preconditions:
+      - sh: kind get clusters >/dev/null 2>&1
+        msg: |
+          No container runtime reachable for kind.
+          Start Docker, or export KIND_EXPERIMENTAL_PROVIDER for another runtime
+          (e.g. KIND_EXPERIMENTAL_PROVIDER=podman), then re-run.
     status:
       - kind get clusters 2>/dev/null | grep -q "^{{.KIND_CLUSTER_NAME}}$"
     cmds:

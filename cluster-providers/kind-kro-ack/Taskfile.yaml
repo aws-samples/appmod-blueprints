@@ -247,6 +247,17 @@ tasks:
 
   kind:create:
     desc: Create Kind cluster (skips if exists)
+    # `kind get clusters` exercises kind's own provider connection, so this reports an
+    # unreachable container runtime instead of letting `kind create` fail with a raw
+    # socket error that names neither the cause nor the remedy. Deliberately runtime
+    # AGNOSTIC: runtime selection is kind's contract via KIND_EXPERIMENTAL_PROVIDER and
+    # belongs in the operator's environment, not in these Taskfiles.
+    preconditions:
+      - sh: kind get clusters >/dev/null 2>&1
+        msg: |
+          No container runtime reachable for kind.
+          Start Docker, or export KIND_EXPERIMENTAL_PROVIDER for another runtime
+          (e.g. KIND_EXPERIMENTAL_PROVIDER=podman), then re-run.
     status:
       - kind get clusters 2>/dev/null | grep -q "^{{.KIND_CLUSTER_NAME}}$"
     cmds:
@@ -333,14 +344,21 @@ tasks:
             ST=$(echo  "$EXPORTED" | sed -n 's/^AWS_SESSION_TOKEN=//p')
           fi
         fi
-        [ -z "$AKI" ] || [ -z "$SAK" ] && echo "ERROR: empty credentials" && exit 1
+        if [ -z "$AKI" ] || [ -z "$SAK" ]; then echo "ERROR: empty credentials"; exit 1; fi
         rm -f {{.ROOT_DIR}}/private/aws-creds.ini
         install -m 600 /dev/null {{.ROOT_DIR}}/private/aws-creds.ini
         {
           echo "[default]"
           echo "aws_access_key_id = $AKI"
           echo "aws_secret_access_key = $SAK"
-          [ -n "$ST" ] && echo "aws_session_token = $ST"
+          # MUST be an `if`, not `[ -n "$ST" ] && echo ...`. As the last command of the
+          # brace group, a bare test sets the group's exit status, so with plain IAM user
+          # credentials (no session token) the group returns 1 and errexit aborts the task
+          # — the file is written correctly, only the status is wrong. Role, SSO and
+          # instance-profile credentials all carry a session token, which is why this only
+          # ever fails for long-lived access keys. kind-crossplane fixed this in 932df63e;
+          # keep both providers on the `if` form.
+          if [ -n "$ST" ]; then echo "aws_session_token = $ST"; fi
         } > {{.ROOT_DIR}}/private/aws-creds.ini
       - kubectl -n {{.ACK_NAMESPACE}} create secret generic aws-credentials
           --from-file=credentials={{.ROOT_DIR}}/private/aws-creds.ini
