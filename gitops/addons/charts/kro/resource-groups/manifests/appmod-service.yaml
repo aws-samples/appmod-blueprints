@@ -170,7 +170,7 @@ spec:
         apiVersion: iam.services.k8s.aws/v1alpha1
         kind: Role
         metadata:
-          name: ${schema.metadata.name}-role
+          name: ${schema.spec.resourcePrefix}-${schema.metadata.name}-role
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -181,7 +181,7 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
-          name: ${schema.metadata.name}-role
+          name: ${schema.spec.resourcePrefix}-${schema.metadata.name}-role
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",
