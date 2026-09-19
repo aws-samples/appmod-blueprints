@@ -12,6 +12,9 @@ spec:
     spec:
       name: string
       region: string
+      # Used only for the platform.gitops.io/prefix ownership tag below, so teardown
+      # can discover this VPC without relying on the cluster name.
+      resourcePrefix: string | default="peeks"
       cidr:
         vpcCidr: string | default="10.0.0.0/16"
         publicSubnet1Cidr: string | default="10.0.1.0/24"
@@ -51,6 +54,15 @@ spec:
         tags:
           - key: "Name"
             value: ${schema.spec.name}-vpc
+          # Name-independent ownership tags, matching the crossplane platform-cluster
+          # Composition. The VPC is the anchor for teardown: when a spoke is torn down
+          # the EKS cluster usually goes first, so by sweep time the cluster is gone and
+          # the VPC, NAT gateway, EIP and subnets are what remain. Tagging the VPC lets
+          # the sweeper find them for a cluster of any name.
+          - key: "platform.gitops.io/prefix"
+            value: ${schema.spec.resourcePrefix}
+          - key: "platform.gitops.io/cluster"
+            value: ${schema.spec.name}
   - id: internetGateway
     template:
       apiVersion: ec2.services.k8s.aws/v1alpha1
