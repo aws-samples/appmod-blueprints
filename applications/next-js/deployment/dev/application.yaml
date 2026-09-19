@@ -12,6 +12,7 @@ spec:
   serviceAccount: nextjs-service-account
   clusterName: "${CLUSTER_NAME}"
   accountId: "${AWS_ACCOUNT_ID}"
+  resourcePrefix: "${RESOURCE_PREFIX}"
   env:
     - name: API_BASE_URL
       value: "http://rust-microservice.team-rust.svc.cluster.local:8080"
