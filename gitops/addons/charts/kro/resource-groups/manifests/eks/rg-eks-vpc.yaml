@@ -151,6 +151,7 @@ spec:
       spec:
         name: ${schema.spec.name}
         region: ${schema.spec.region}
+        resourcePrefix: ${schema.spec.resourcePrefix}
         cidr:
           vpcCidr: ${schema.spec.cidr.vpcCidr}
           publicSubnet1Cidr: ${schema.spec.cidr.publicSubnet1Cidr}

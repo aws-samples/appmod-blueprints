@@ -344,6 +344,16 @@ tasks:
 
   kind:create:
     desc: Create Kind cluster (skips if exists)
+    # See the note in cluster-providers/kind-kro-ack/Taskfile.yaml: this reports an
+    # unreachable container runtime rather than letting `kind create` emit a raw socket
+    # error. Runtime AGNOSTIC by design — KIND_EXPERIMENTAL_PROVIDER is the operator's
+    # environment, not ours to detect or set.
+    preconditions:
+      - sh: kind get clusters >/dev/null 2>&1
+        msg: |
+          No container runtime reachable for kind.
+          Start Docker, or export KIND_EXPERIMENTAL_PROVIDER for another runtime
+          (e.g. KIND_EXPERIMENTAL_PROVIDER=podman), then re-run.
     status:
       - kind get clusters 2>/dev/null | grep -q "^{{.KIND_CLUSTER_NAME}}$"
     cmds:
@@ -599,7 +609,7 @@ tasks:
             "Condition": {"ArnLike": {"aws:PrincipalArn": [
               "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.ACK_CAPABILITY_ROLE}}",
               "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-ack-*",
-              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-spoke-*-ack-capability-role"
+              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*-ack-capability-role"
             ]}}
           }]
         }
@@ -631,13 +641,20 @@ tasks:
         done
         # Inline policies for EKS role: AccessEntry, PodIdentity, PassRole
         EKS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-eks"
+        # PassRole: scoped by the service the role is passed TO, not by role name.
+        # Cluster names are customer-supplied and arbitrary, and the spoke resource graph
+        # names every role after the CLUSTER, so a name-based grant denies any cluster whose
+        # name does not start with RESOURCE_PREFIX — and it denies it only at CreateCluster,
+        # after the VPC, subnets and NAT gateway already exist. The four services are exactly
+        # the trust targets of the roles this platform passes (cluster, node, capability,
+        # pod-identity). Keep in sync with cluster-providers/kind-kro-ack/Taskfile.yaml.
         aws iam put-role-policy --role-name "$EKS_ROLE" --policy-name eks-access-management --policy-document '{
           "Version": "2012-10-17",
           "Statement": [
             {"Effect": "Allow", "Action": ["eks:*"], "Resource": "*"},
             {"Effect": "Allow", "Action": ["iam:PassRole","iam:GetRole","iam:ListRoleTags"], "Resource": ["arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-*","arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*-microservice-*"]},
             {"Effect": "Allow", "Action": ["iam:GetRole","iam:ListRoleTags"], "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*"},
-            {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*", "Condition": {"StringEquals": {"iam:PassedToService": "pods.eks.amazonaws.com"}}}
+            {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*", "Condition": {"StringEquals": {"iam:PassedToService": ["pods.eks.amazonaws.com","eks.amazonaws.com","ec2.amazonaws.com","capabilities.eks.amazonaws.com"]}}}
           ]
         }'
         RDS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-rds"

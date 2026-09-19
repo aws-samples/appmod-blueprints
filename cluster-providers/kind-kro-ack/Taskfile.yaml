@@ -247,6 +247,17 @@ tasks:
 
   kind:create:
     desc: Create Kind cluster (skips if exists)
+    # `kind get clusters` exercises kind's own provider connection, so this reports an
+    # unreachable container runtime instead of letting `kind create` fail with a raw
+    # socket error that names neither the cause nor the remedy. Deliberately runtime
+    # AGNOSTIC: runtime selection is kind's contract via KIND_EXPERIMENTAL_PROVIDER and
+    # belongs in the operator's environment, not in these Taskfiles.
+    preconditions:
+      - sh: kind get clusters >/dev/null 2>&1
+        msg: |
+          No container runtime reachable for kind.
+          Start Docker, or export KIND_EXPERIMENTAL_PROVIDER for another runtime
+          (e.g. KIND_EXPERIMENTAL_PROVIDER=podman), then re-run.
     status:
       - kind get clusters 2>/dev/null | grep -q "^{{.KIND_CLUSTER_NAME}}$"
     cmds:
@@ -333,14 +344,21 @@ tasks:
             ST=$(echo  "$EXPORTED" | sed -n 's/^AWS_SESSION_TOKEN=//p')
           fi
         fi
-        [ -z "$AKI" ] || [ -z "$SAK" ] && echo "ERROR: empty credentials" && exit 1
+        if [ -z "$AKI" ] || [ -z "$SAK" ]; then echo "ERROR: empty credentials"; exit 1; fi
         rm -f {{.ROOT_DIR}}/private/aws-creds.ini
         install -m 600 /dev/null {{.ROOT_DIR}}/private/aws-creds.ini
         {
           echo "[default]"
           echo "aws_access_key_id = $AKI"
           echo "aws_secret_access_key = $SAK"
-          [ -n "$ST" ] && echo "aws_session_token = $ST"
+          # MUST be an `if`, not `[ -n "$ST" ] && echo ...`. As the last command of the
+          # brace group, a bare test sets the group's exit status, so with plain IAM user
+          # credentials (no session token) the group returns 1 and errexit aborts the task
+          # — the file is written correctly, only the status is wrong. Role, SSO and
+          # instance-profile credentials all carry a session token, which is why this only
+          # ever fails for long-lived access keys. kind-crossplane fixed this in 932df63e;
+          # keep both providers on the `if` form.
+          if [ -n "$ST" ]; then echo "aws_session_token = $ST"; fi
         } > {{.ROOT_DIR}}/private/aws-creds.ini
       - kubectl -n {{.ACK_NAMESPACE}} create secret generic aws-credentials
           --from-file=credentials={{.ROOT_DIR}}/private/aws-creds.ini
@@ -2253,6 +2271,14 @@ tasks:
     cmds:
       - printf '{{.C_STEP}}▸ Creating cluster-mgmt IAM roles for ACK...{{.C_RESET}}\n'
       - |
+        # Trust: the third pattern admits ANY spoke's ACK capability role, not just
+        # <prefix>-spoke-*. The spoke resource graph names that role
+        # ${schema.spec.name}-ack-capability-role (rg-eks.yaml), so with a name-scoped
+        # pattern a spoke called e.g. `oap-dev` provisioned fine and then could not assume
+        # <prefix>-cluster-mgmt-* from its own ACK — failing at the trust boundary AFTER the
+        # cluster existed. Cluster names are customer-supplied, so they cannot carry
+        # authorization meaning. The principal is still constrained to this account (the
+        # Principal is this account's root) and to the platform-specific role suffix.
         TRUST_POLICY=$(cat <<EOF
         {
           "Version": "2012-10-17",
@@ -2263,7 +2289,7 @@ tasks:
             "Condition": {"ArnLike": {"aws:PrincipalArn": [
               "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.ACK_CAPABILITY_ROLE}}",
               "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-ack-*",
-              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-spoke-*-ack-capability-role"
+              "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*-ack-capability-role"
             ]}}
           }]
         }
@@ -2302,13 +2328,25 @@ tasks:
         for _pid in $_PIDS; do wait "$_pid" || true; done
         # Inline policies for EKS role: AccessEntry, PodIdentity, PassRole
         EKS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-eks"
+        # PassRole: scoped by the service the role is passed TO, not by role name.
+        # The spoke RGD names every role after the CLUSTER (${schema.spec.name}-cluster-role,
+        # -cluster-node-role, -ack-capability-role, ...), so a cluster whose name does not
+        # start with RESOURCE_PREFIX produced roles the name-based grant below could not pass,
+        # and CreateCluster failed with AccessDenied on iam:PassRole AFTER the VPC, subnets
+        # and NAT gateway had already been created. Cluster names are customer-supplied and
+        # arbitrary, so they cannot be relied on for authorization.
+        # The four services are exactly the trust targets of the roles this platform passes:
+        #   eks.amazonaws.com              cluster role
+        #   ec2.amazonaws.com              node role (EKS Auto Mode computeConfig.nodeRoleArn)
+        #   capabilities.eks.amazonaws.com argocd/ack/kro capability roles
+        #   pods.eks.amazonaws.com         pod identity roles (was the only entry here)
         aws iam put-role-policy --role-name "$EKS_ROLE" --policy-name eks-access-management --policy-document '{
           "Version": "2012-10-17",
           "Statement": [
             {"Effect": "Allow", "Action": ["eks:*"], "Resource": "*"},
             {"Effect": "Allow", "Action": ["iam:PassRole","iam:GetRole"], "Resource": ["arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-*","arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*-microservice-*"]},
             {"Effect": "Allow", "Action": ["iam:GetRole","iam:ListRoleTags"], "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*"},
-            {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*", "Condition": {"StringEquals": {"iam:PassedToService": "pods.eks.amazonaws.com"}}}
+            {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*", "Condition": {"StringEquals": {"iam:PassedToService": ["pods.eks.amazonaws.com","eks.amazonaws.com","ec2.amazonaws.com","capabilities.eks.amazonaws.com"]}}}
           ]
         }'
         RDS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-rds"
