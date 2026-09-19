@@ -80,6 +80,13 @@ spec:
                 # of falling back to the EksclusterWithVpc RGD's "main" default.
                 addonsRepoRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
                 fleetRepoRevision: '{{ .metadata.annotations.fleetRepoRevision }}'
+                # Owner prefix for the platform.gitops.io/prefix tag the EksCluster and
+                # Vpc resource graphs stamp on the cluster and VPC. Teardown discovers
+                # spoke resources by that tag rather than by a <prefix>-spoke-* name, so
+                # it has to be the REAL prefix: without this the RGD falls back to its
+                # schema default ("peeks") and a differently-prefixed install would tag
+                # every spoke as belonging to "peeks" and sweep nothing.
+                resourcePrefix: '{{ .metadata.annotations.resource_prefix }}'
                 # Also propagate the repo URL (not just the revision), so spokes track the
                 # same fork/repo as the control-plane. Without this, the EksclusterWithVpc
                 # RGD falls back to its aws-samples default and the spoke tries to resolve
