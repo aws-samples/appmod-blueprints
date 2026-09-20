@@ -385,6 +385,12 @@ spec:
             kro-management: ${schema.spec.name}
             tenant: ${schema.spec.tenant}
             environment: ${schema.spec.environment}
+            # Name-independent ownership tags, matching what the crossplane
+            # platform-cluster Composition patches. Cluster names are arbitrary, so
+            # teardown cannot enumerate resources by a <prefix>-spoke-* name pattern;
+            # it discovers them by these tags instead.
+            platform.gitops.io/prefix: ${schema.spec.resourcePrefix}
+            platform.gitops.io/cluster: ${schema.spec.name}
 
     # NOTE: The eks-pod-identity-agent Addon node was intentionally removed.
     # Every cluster provisioned by this RGD runs in EKS Auto Mode

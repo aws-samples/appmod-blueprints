@@ -158,6 +158,36 @@ rejects `hub.network.vpcId` in pre-flight
 ([#833](https://github.com/aws-samples/appmod-blueprints/issues/833)). `kind-kro-ack`
 supports it. This does not affect CloudFront exposure, which needs no pre-existing VPC.
 
+### Cluster naming (arbitrary, with two real limits)
+
+Cluster names are **customer-supplied and arbitrary**. Nothing derives them from, or
+validates them against, `resourcePrefix`: `oap-dev`, `team-a` and `sandbox` are all valid
+spoke names. The prefix exists only to scope account/region-global AWS resource names (IAM
+roles, AMP/AMG workspaces, security groups, ECR) so parallel installs do not collide.
+
+Authorization and teardown therefore key on something other than the name:
+
+- **IAM** grants are scoped by the service a role is passed to (`iam:PassedToService`) and,
+  for the cluster-mgmt trust policy, by the platform-specific role suffix. They are **not**
+  scoped by a `<resourcePrefix>-spoke-*` name pattern. That pattern previously denied any
+  non-conforming spoke at `CreateCluster`, after its VPC and NAT gateway already existed.
+- **Teardown** is the remaining gap. Both providers now stamp
+  `platform.gitops.io/prefix` and `platform.gitops.io/cluster` on the cluster and VPC, but
+  the sweep invoked by `task destroy` (`scripts/sweep-spoke-vpcs.py`, step 6h) still selects
+  two literal VPC names, so a spoke named anything else is left behind. Selecting on those
+  tags instead is tracked separately.
+
+Two limits are real and are enforced at declaration time by a Helm `fail` in the chart that
+renders the cluster, so an invalid name creates nothing at all:
+
+| Limit | Why |
+| ----- | --- |
+| DNS-1123 label (lowercase alphanumeric and `-`, starting and ending alphanumeric) | The name is used verbatim as a Kubernetes namespace by the resource graphs. EKS itself would accept uppercase and `_`; the namespace will not. |
+| Length ≤ 34 (`kind-kro-ack`) or ≤ 44 (`kind-crossplane`) | Every IAM role is `<name><suffix>` and IAM caps role names at 64 characters. The longest suffix is `-cloudwatch-observability-role` (30) on the kro path and `-kro-capability-role` (20) on the crossplane path. |
+
+When adding a resource to a provider or resource graph, scope its authorization and its
+cleanup by tag or by service, never by a name pattern.
+
 ### Configuration
 
 Providers read shared configuration from `gitops/config.yaml`:
