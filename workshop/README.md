@@ -45,7 +45,7 @@ mid-install. See [docs/platform/cloudfront-exposure.md](../docs/platform/cloudfr
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FORCE` | `false` | Set to `true` to overwrite existing config |
-| `CLUSTER_PROVIDER` | from CFN / `kind-kro-ack` | `kind-kro-ack` or `kind-crossplane` |
+| `CLUSTER_PROVIDER` | from CFN / `kind-kro-ack` | `kind-kro-ack`, `kind-crossplane`, or `terraform` (native EKS Auto Mode hub, no Kind bootstrap) |
 | `RESOURCE_PREFIX` | `peeks` | Prefix for all AWS resources |
 | `REPO_URL` | appmod-blueprints GitHub URL | Platform repo to clone |
 | `REPO_REVISION` | `$WORKSHOP_GIT_BRANCH` | Branch/tag of the platform repo |

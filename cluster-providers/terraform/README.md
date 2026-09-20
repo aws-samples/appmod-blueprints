@@ -9,6 +9,7 @@ Direct Terraform provisioning of the hub cluster — no Kind bootstrap cluster, 
 | VPC | 2 public + 2 private subnets (/19), IGW, single NAT GW |
 | EKS | Auto Mode cluster (general-purpose + system node pools) |
 | IAM | Cluster role, node role, ArgoCD capability role, ESO pod identity role |
+| Crossplane provider identities | Pod-identity roles + associations for the crossplane AWS providers (iam, eks, ec2, rds, grafana, dynamodb, amp) — crossplane itself is installed by ArgoCD, terraform just supplies the identities |
 | ArgoCD | EKS ArgoCD Capability (via AWS CLI) |
 | Secrets Manager | `<cluster>/config` + `<cluster>/keycloak` |
 | ESO | External Secrets Operator via Helm |

@@ -79,6 +79,31 @@ locals {
       service_account = "provider-aws-eks"
       namespace       = "crossplane-system"
     }
+    ec2 = {
+      role_name       = "${var.cluster_name}-CrossplaneEC2ProviderRole"
+      service_account = "provider-aws-ec2"
+      namespace       = "crossplane-system"
+    }
+    rds = {
+      role_name       = "${var.cluster_name}-CrossplaneRDSProviderRole"
+      service_account = "provider-aws-rds"
+      namespace       = "crossplane-system"
+    }
+    grafana = {
+      role_name       = "${var.cluster_name}-CrossplaneGrafanaProviderRole"
+      service_account = "provider-aws-grafana"
+      namespace       = "crossplane-system"
+    }
+    dynamodb = {
+      role_name       = "${var.cluster_name}-CrossplaneDynamoDBProviderRole"
+      service_account = "provider-aws-dynamodb"
+      namespace       = "crossplane-system"
+    }
+    amp = {
+      role_name       = "${var.cluster_name}-CrossplaneAMPProviderRole"
+      service_account = "provider-aws-amp"
+      namespace       = "crossplane-system"
+    }
   }
 }
 
