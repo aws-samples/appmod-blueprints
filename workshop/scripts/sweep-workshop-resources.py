@@ -693,6 +693,68 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
+# 12b. Elastic Load Balancers provisioned by the AWS Load Balancer Controller
+#     ALB/NLB created for in-cluster Ingress/Service are named
+#     k8s-<namespace>-<name>-<hash> — they do NOT start with the resource prefix,
+#     so section 16b's name filter misses them. When the cluster/nodes are torn
+#     down before the controller deletes its LBs, they orphan: they hold
+#     ServiceManaged EIPs (which section 13 then skips because the EIP still looks
+#     "associated") and RequesterManaged amazon-elb ENIs that block the spoke/IDE
+#     VPC reap (sections 10/14). Deleting the LB auto-releases its ServiceManaged
+#     EIPs and frees those ENIs, so run this BEFORE the EIP and VPC-reaper sections.
+#     Match by the AWS LB Controller ownership tag elbv2.k8s.aws/cluster=<hub|spoke>
+#     (catches the k8s-* names) plus the #914 ownership tag and the legacy prefix
+#     name. Also reap the matching orphaned target groups.
+# ---------------------------------------------------------------------------
+try:
+    owned_clusters = {hub, *spokes}
+
+    def _lb_owned(arn, name):
+        if name.startswith(prefix + "-"):
+            return True
+        try:
+            td = {
+                t["Key"]: t["Value"]
+                for t in elbv2.describe_tags(ResourceArns=[arn])["TagDescriptions"][0]["Tags"]
+            }
+        except Exception:
+            return False
+        return td.get("elbv2.k8s.aws/cluster") in owned_clusters or td.get(OWNER_PREFIX_TAG) == prefix
+
+    reaped_lb = 0
+    lbs = []
+    for page in elbv2.get_paginator("describe_load_balancers").paginate():
+        lbs.extend(page.get("LoadBalancers", []))
+    for lb in lbs:
+        if not _lb_owned(lb["LoadBalancerArn"], lb["LoadBalancerName"]):
+            continue
+        try:
+            elbv2.delete_load_balancer(LoadBalancerArn=lb["LoadBalancerArn"])
+            reaped_lb += 1
+            log(f"  Deleted load balancer {lb['LoadBalancerName']}")
+        except Exception as e:
+            log(f"  LB {lb['LoadBalancerName']}: {e}")
+
+    # Orphaned target groups (LB controller tags them the same way)
+    for page in elbv2.get_paginator("describe_target_groups").paginate():
+        for tg in page.get("TargetGroups", []):
+            if not _lb_owned(tg["TargetGroupArn"], tg["TargetGroupName"]):
+                continue
+            try:
+                elbv2.delete_target_group(TargetGroupArn=tg["TargetGroupArn"])
+            except Exception:
+                pass
+
+    if reaped_lb:
+        log(f"Load balancers: deleted {reaped_lb}")
+        time.sleep(20)  # let ServiceManaged EIPs release + amazon-elb ENIs detach
+    else:
+        log("No orphaned load balancers to delete")
+except Exception as e:
+    log(f"Load balancers: {e}")
+
+
+# ---------------------------------------------------------------------------
 # 13. Orphaned Elastic IPs
 #     Spoke NAT-gateway EIPs (<prefix>-spoke-*-eip*) survive when the NAT is torn
 #     down out of order — they persist UNASSOCIATED and keep billing. Release only
@@ -843,6 +905,56 @@ try:
         log("IDE/hub VPC not found — skipping leftover SG cleanup")
 except Exception as e:
     log(f"IDE VPC SG cleanup: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 15b. GuardDuty-managed security groups
+#     GuardDuty Runtime Monitoring auto-creates a non-CFN security group tagged
+#     GuardDutyManaged=true (name GuardDutyManagedSecurityGroup-<vpc>) in every
+#     VPC it covers. In the IDE/hub (CloudFormation-owned) VPC it blocks CFN's own
+#     delete-vpc → stack DELETE_FAILED; in a spoke VPC it blocks the reaper.
+#     _delete_vpc_sgs already removes non-CFN SGs, but GuardDuty can RE-CREATE this
+#     one after that pass, so sweep it explicitly here (after the bulk SG clears),
+#     scoped to the IDE VPC and every workshop-owned VPC — never unrelated VPCs.
+#     Best-effort: if GuardDuty recreates it yet again before CFN's delete-vpc, the
+#     delete-stack retain-retry / FORCE_DELETE_STACK reaper is the backstop.
+# ---------------------------------------------------------------------------
+try:
+    _vpc_tags_cache = {}
+
+    def _vpc_is_target(vpc_of_sg):
+        if not vpc_of_sg:
+            return False
+        if vpc_of_sg not in _vpc_tags_cache:
+            try:
+                vt = ec2.describe_vpcs(VpcIds=[vpc_of_sg])["Vpcs"][0].get("Tags", [])
+                _vpc_tags_cache[vpc_of_sg] = {t["Key"]: t["Value"] for t in vt}
+            except Exception:
+                _vpc_tags_cache[vpc_of_sg] = {}
+        vtags = _vpc_tags_cache[vpc_of_sg]
+        is_cfn_vpc = any(k.startswith("aws:cloudformation:") for k in vtags.keys())
+        is_owned_vpc = (
+            vtags.get(OWNER_PREFIX_TAG) == prefix
+            or any(prefix in str(v) for v in vtags.values())
+        )
+        return is_cfn_vpc or is_owned_vpc
+
+    gd_deleted = 0
+    for sg in ec2.describe_security_groups(
+        Filters=[{"Name": "tag:GuardDutyManaged", "Values": ["true"]}]
+    ).get("SecurityGroups", []):
+        if not _vpc_is_target(sg.get("VpcId")):
+            continue  # only workshop-owned / IDE (CFN) VPCs — never unrelated ones
+        _revoke_sg_rules(sg)
+        try:
+            ec2.delete_security_group(GroupId=sg["GroupId"])
+            gd_deleted += 1
+            log(f"  Deleted GuardDuty-managed SG {sg['GroupId']} in {sg.get('VpcId')}")
+        except Exception as e:
+            log(f"  GuardDuty SG {sg['GroupId']}: {e}")
+    log(f"GuardDuty SGs: deleted {gd_deleted}" if gd_deleted else "No GuardDuty-managed SGs to delete")
+except Exception as e:
+    log(f"GuardDuty SGs: {e}")
 
 
 # ---------------------------------------------------------------------------
