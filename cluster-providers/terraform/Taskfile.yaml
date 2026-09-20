@@ -2,8 +2,22 @@ version: "3"
 set: [errexit, nounset, pipefail]
 silent: true
 
+includes:
+  # Ray ML infra (Module 40) — shared, hub-cluster-generic tasks used by the
+  # workshop install (task terraform:ray:setup / ray:wait-image / ray:prestage-models).
+  ray:
+    taskfile: ../common/Taskfile.ray.yaml
+    vars:
+      AWS_REGION: '{{.AWS_REGION}}'
+      AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
+      HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
+      RESOURCE_PREFIX: '{{.RESOURCE_PREFIX}}'
+      ROOT_DIR: '{{.ROOT_DIR}}'
+
 env:
   AWS_PAGER: ""
+  # Ray (and any other kubectl-based include) targets the terraform-provisioned hub.
+  KUBECONFIG: "{{.ROOT_DIR}}/private/hub-kubeconfig"
   AWS_PROFILE: "{{.AWS_PROFILE}}"
   # Keep AWS_PROFILE flowing to every aws/kubectl/helm call (local multi-account
   # users depend on it). On EC2 the profile name (e.g. "default") has no entry in
@@ -78,6 +92,23 @@ tasks:
       - yq '.repo.url' {{.CONFIG_FILE}} | grep -qv null || { echo "repo.url not set in config.local.yaml"; exit 1; }
       - printf '{{.C_STEP}}▸ Checking AWS credentials...{{.C_RESET}}\n'
       - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
+      # Enforce the crossplane-base provider-identity overlay for this cluster. Terraform owns
+      # the crossplane provider pod-identity associations (iam.tf), so crossplane-base must have
+      # createIdentity:false for ec2/rds/grafana/dynamodb/amp on THIS cluster — else duplicate
+      # PodIdentityAssociations wedge crossplane. The toggle lives in a per-cluster overlay.
+      - printf '{{.C_STEP}}▸ Checking crossplane-base provider-identity overlay...{{.C_RESET}}\n'
+      - |
+        CN=$(yq '.hub.clusterName' {{.CONFIG_FILE}})
+        OVERLAY="{{.ROOT_DIR}}/gitops/overlays/clusters/${CN}/crossplane-base/values.yaml"
+        if [ ! -f "$OVERLAY" ]; then
+          echo "Missing $OVERLAY"
+          echo "Terraform owns the crossplane provider pod identities, so crossplane-base must set"
+          echo "createIdentity:false for ec2/rds/grafana/dynamodb/amp on cluster '$CN'. Create it:"
+          echo "  mkdir -p gitops/overlays/clusters/${CN}/crossplane-base"
+          echo "  cp gitops/overlays/clusters/peeks-hub-tf/crossplane-base/values.yaml gitops/overlays/clusters/${CN}/crossplane-base/values.yaml"
+          echo "(or set hub.clusterName: peeks-hub-tf to use the committed overlay). See DEPLOY.md 'Enforcing'."
+          exit 1
+        fi
       - printf '{{.C_OK}}✓ All pre-flight checks passed.{{.C_RESET}}\n'
 
   generate-tfvars:
@@ -134,58 +165,15 @@ tasks:
       - printf '{{.C_STEP}}▸ Running terraform apply (infra + helm)...{{.C_RESET}}\n'
       - cmd: cd {{.TF_DIR}} && terraform apply -auto-approve
       - task: hub:kubeconfig
-      - task: hub:wait-for-providers
-      - task: hub:apply-provider-config
       - task: hub:apply-cluster-secret-store
       - task: hub:apply-seed-secret
+      - task: secrets-manager:seed-secrets
       - task: hub:apply-root-appset
       - task: hub:wait-for-sync
       - task: hub:restart-identity-pods
       - task: hub:wait-for-full-sync
       - task: secrets-manager:seed-observability
       - printf '{{.C_OK}}✓ Bootstrap complete. Run task status.{{.C_RESET}}\n'
-
-  hub:wait-for-providers:
-    desc: Wait for Crossplane providers to be healthy and CRDs registered
-    cmds:
-      - printf '{{.C_STEP}}▸ Waiting for Crossplane providers to become healthy...{{.C_RESET}}\n'
-      - |
-        TIMEOUT=600
-        ELAPSED=0
-        while [ $ELAPSED -lt $TIMEOUT ]; do
-          HEALTHY=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | grep -c "True" || echo 0)
-          TOTAL=$(KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
-          printf '{{.C_INFO}}  Providers: %s/%s healthy (%ss elapsed){{.C_RESET}}\n' "$HEALTHY" "$TOTAL" "$ELAPSED"
-          if [ "$TOTAL" -gt 0 ] && [ "$HEALTHY" -eq "$TOTAL" ]; then
-            break
-          fi
-          sleep 15
-          ELAPSED=$((ELAPSED + 15))
-        done
-        if [ $ELAPSED -ge $TIMEOUT ]; then
-          printf '{{.C_ERR}}⚠ Timed out waiting for providers{{.C_RESET}}\n'
-          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl get providers.pkg.crossplane.io
-          exit 1
-        fi
-      - printf '{{.C_STEP}}▸ Waiting for ProviderConfig CRD...{{.C_RESET}}\n'
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl wait --for=condition=Established crd/providerconfigs.aws.upbound.io --timeout=120s
-      - printf '{{.C_OK}}✓ Crossplane providers healthy, CRDs registered.{{.C_RESET}}\n'
-
-  hub:apply-provider-config:
-    desc: Apply Crossplane ProviderConfig (PodIdentity mode)
-    cmds:
-      - printf '{{.C_STEP}}▸ Applying ProviderConfig...{{.C_RESET}}\n'
-      - |
-        cat <<'EOF' | KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl apply -f -
-        apiVersion: aws.upbound.io/v1beta1
-        kind: ProviderConfig
-        metadata:
-          name: default
-        spec:
-          credentials:
-            source: PodIdentity
-        EOF
-      - printf '{{.C_OK}}✓ ProviderConfig applied.{{.C_RESET}}\n'
 
   hub:apply-cluster-secret-store:
     desc: Apply ClusterSecretStore for AWS Secrets Manager
@@ -422,6 +410,59 @@ tasks:
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
+  secrets-manager:seed-secrets:
+    desc: Seed platform user + app credentials into <cluster>/secrets for ExternalSecrets
+    # Mirrors kind-crossplane/kind-kro-ack secrets-manager:seed-secrets. Additive
+    # read-modify-write (generate only if absent) so re-runs never rotate values live
+    # consumers depend on, and so seed-observability can add amp_endpoint_url /
+    # grafana_api_key to the same secret without being clobbered. Runs before
+    # apply-root-appset so devlake/grafana/backstage ExternalSecrets resolve on first sync.
+    cmds:
+      - printf '{{.C_STEP}}▸ Seeding {{.HUB_CLUSTER_NAME}}/secrets...{{.C_RESET}}\n'
+      - |
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/secrets"
+        USER_PASS=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query SecretString --output text | jq -r .user_password)
+        EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} --query SecretString --output text 2>/dev/null || echo "{}")
+        # Reuse existing hash/key on re-runs (don't rotate them out from under consumers)
+        USER_PASS_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
+        if [ -z "$USER_PASS_HASH" ]; then
+          USER_PASS_HASH=$(echo -n "$USER_PASS" | python3 -c "import sys,bcrypt; print(bcrypt.hashpw(sys.stdin.buffer.read(), bcrypt.gensalt()).decode())" 2>/dev/null || echo "")
+        fi
+        USER_PASS_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
+        if [ -z "$USER_PASS_KEY" ]; then
+          USER_PASS_KEY=$(echo -n "$USER_PASS" | base64)
+        fi
+        UPDATED=$(echo "$EXISTING" | jq \
+          --arg user_password "$USER_PASS" \
+          --arg user_password_hash "$USER_PASS_HASH" \
+          --arg user_password_key "$USER_PASS_KEY" \
+          '. + {user_password: $user_password, user_password_hash: $user_password_hash, user_password_key: $user_password_key}')
+        # DevLake: encryption secret (128 uppercase chars) + mysql password. Generate
+        # only if absent so re-runs don't break existing encrypted connections.
+        if ! echo "$UPDATED" | jq -e 'has("devlake_encryption_secret")' >/dev/null; then
+          DEVLAKE_ENC=$(openssl rand -base64 2000 | tr -dc 'A-Z' | fold -w 128 | head -n 1)
+          UPDATED=$(echo "$UPDATED" | jq --arg p "$DEVLAKE_ENC" '. + {devlake_encryption_secret: $p}')
+        fi
+        if ! echo "$UPDATED" | jq -e 'has("devlake_mysql_password")' >/dev/null; then
+          DEVLAKE_MYSQL=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+          UPDATED=$(echo "$UPDATED" | jq --arg p "$DEVLAKE_MYSQL" '. + {devlake_mysql_password: $p}')
+        fi
+        # grafana_mysql_password: the devlake mysql-passwords ExternalSecret reads BOTH
+        # devlake_mysql_password AND grafana_mysql_password — ESO fails the whole secret
+        # if either is missing.
+        if ! echo "$UPDATED" | jq -e 'has("grafana_mysql_password")' >/dev/null; then
+          GRAFANA_MYSQL=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+          UPDATED=$(echo "$UPDATED" | jq --arg p "$GRAFANA_MYSQL" '. + {grafana_mysql_password: $p}')
+        fi
+        # backstage_postgres_password: backstage-postgres + git-credentials ExternalSecrets read this.
+        if ! echo "$UPDATED" | jq -e 'has("backstage_postgres_password")' >/dev/null; then
+          BS_PG_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+          UPDATED=$(echo "$UPDATED" | jq --arg p "$BS_PG_PASS" '. + {backstage_postgres_password: $p}')
+        fi
+        aws secretsmanager create-secret --name "$SECRET_KEY" --secret-string "$UPDATED" --region {{.AWS_REGION}} 2>/dev/null \
+        || aws secretsmanager put-secret-value --secret-id "$SECRET_KEY" --secret-string "$UPDATED" --region {{.AWS_REGION}}
+      - printf '{{.C_OK}}✓ Seeded {{.HUB_CLUSTER_NAME}}/secrets.{{.C_RESET}}\n'
+
   secrets-manager:seed-observability:
     desc: Seed observability credentials (AMP endpoint, AMG API key) into Secrets Manager
     cmds:
@@ -550,6 +591,19 @@ tasks:
       - printf '{{.C_STEP}}▸ Running terraform destroy...{{.C_RESET}}\n'
       - cmd: cd {{.TF_DIR}} && terraform destroy -auto-approve
       - printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'
+
+  # Kind-bootstrap-specific tasks that don't apply to the terraform provider (native
+  # EKS Auto Mode + Pod Identity — no Kind cluster, no static creds to rotate). Provided
+  # as no-ops so the generic `{{.PROVIDER}}:...` dispatch doesn't error on a terraform hub.
+  destroy-kind:
+    desc: No-op (terraform provider has no Kind bootstrap cluster)
+    cmds:
+      - printf '{{.C_INFO}}  terraform provider: no Kind cluster to destroy — use `destroy` for full teardown.{{.C_RESET}}\n'
+
+  credentials:refresh:
+    desc: No-op (terraform provider uses EKS Pod Identity — no bootstrap-cluster creds to refresh)
+    cmds:
+      - printf '{{.C_INFO}}  terraform provider: crossplane/ACK auth via Pod Identity — nothing to refresh.{{.C_RESET}}\n'
 
   hub:destroy-addons:
     desc: Remove all addons from the hub cluster before terraform destroy

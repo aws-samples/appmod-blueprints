@@ -1,0 +1,16 @@
+# On the terraform-provisioned hub (cluster_name: peeks-hub-tf), terraform owns all
+# crossplane provider pod-identity roles + associations (see
+# cluster-providers/terraform/iam.tf crossplane_providers). Disable crossplane-base
+# self-creation for these so it does not create a duplicate PodIdentityAssociation for
+# the same service account. iam/eks are already createIdentity:false in the registry.
+providers:
+  ec2:
+    createIdentity: false
+  rds:
+    createIdentity: false
+  grafana:
+    createIdentity: false
+  dynamodb:
+    createIdentity: false
+  amp:
+    createIdentity: false
