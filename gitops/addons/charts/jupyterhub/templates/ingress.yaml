@@ -1,20 +1,38 @@
+{{- /* insecure: HTTP-only ingress, no cert (consumer terminates TLS upstream, e.g. CloudFront). */ -}}
+{{- $insecure := .Values.global.insecure -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: jupyterhub
   namespace: jupyterhub
   annotations:
-    nginx.ingress.kubernetes.io/use-regex: "true"
+    # JupyterHub's proxy-public returns 302 on "/" (redirects to {baseUrl}/hub/),
+    # so the AWS LBC default health check (GET / expecting 200) marks the target
+    # unhealthy (Target.ResponseCodeMismatch [302]). Point the health check at the
+    # hub's dedicated health endpoint (200) under the configured baseUrl instead.
+    alb.ingress.kubernetes.io/healthcheck-path: /jupyterhub/hub/health
+{{- if $insecure }}
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+{{- else }}
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+{{- end }}
 spec:
-  ingressClassName: nginx
+  ingressClassName: platform
   rules:
-  - host: {{ .Values.global.ingress_domain_name | quote }}
-    http:
-      paths:
-      - path: /jupyterhub(/|$)(.*)
-        pathType: ImplementationSpecific
-        backend:
-          service:
-            name: proxy-public
-            port:
-              number: 80
+{{- if $insecure }}
+    - http:
+{{- else }}
+    - host: {{ .Values.global.ingress_domain_name }}
+      http:
+{{- end }}
+        paths:
+          - path: /jupyterhub
+            pathType: Prefix
+            backend:
+              service:
+                name: proxy-public
+                port:
+                  number: 80

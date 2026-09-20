@@ -1,0 +1,7 @@
+# Workshop: pin metrics-server to the tuned system-peeks pool.
+# In the workshop `configs` layer so it applies to ALL clusters (hub AND spokes).
+# The CriticalAddonsOnly toleration is already provided by the generic base config
+# (gitops/addons/configs/metrics-server/values.yaml, applied on every cluster), so only
+# the nodeSelector is needed here. The metrics-server chart honors the top-level key.
+nodeSelector:
+  karpenter.sh/nodepool: system-peeks

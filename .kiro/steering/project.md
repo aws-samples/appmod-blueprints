@@ -10,11 +10,16 @@ Companion repo: [platform-engineering-on-eks](../platform-engineering-on-eks/) h
 
 | Path | Purpose |
 |------|---------|
-| `platform/infra/terraform/cluster/` | Terraform — EKS clusters (hub, spoke-dev, spoke-prod) |
-| `platform/infra/terraform/common/` | Terraform — platform addons (ArgoCD, secrets, pod identity, observability) |
-| `platform/infra/terraform/identity-center/` | Terraform — IDC/SCIM integration |
-| `platform/infra/terraform/scripts/` | Init scripts (`0-init.sh`, `argocd-utils.sh`, IDC config) |
-| `platform/infra/terraform/hub-config.yaml` | Single source of truth for cluster addon enablement |
+| `Taskfile.yaml` | Entry point — `task install/status/destroy` delegate to the configured cluster provider |
+| `config.yaml` / `config.local.yaml` | Single config consumed by all providers (`clusterProvider`, repo, hub, aws, domain) |
+| `cluster-providers/kind-crossplane/` | Provider — Kind + Crossplane bootstrap of the hub EKS cluster (default) |
+| `cluster-providers/kind-kro-ack/` | Provider — Kind + KRO/ACK bootstrap of the hub EKS cluster |
+| `cluster-providers/terraform/` | Provider — direct Terraform provisioning of the hub EKS cluster |
+| `cluster-providers/byoc/` | Provider — Bring Your Own Cluster (existing cluster) |
+| `cluster-providers/common/` | Shared bootstrap logic reused by the providers |
+| `scripts/` | Workshop scripts: IDC config, ArgoCD token automation, setup validation |
+| `gitops/overlays/environments/<env>/enabled-addons.yaml` | Per-environment addon enablement (source of truth for cluster secret `enable_*` labels) |
+| `gitops/addons/registry/<domain>.yaml` | Addon registry (core, platform, security, observability, ml, gitops) |
 | `gitops/addons/` | ArgoCD addon definitions, charts, environments, tenants |
 | `gitops/apps/` | Application deployment manifests (backend, frontend, rollouts) |
 | `gitops/fleet/` | Fleet management (Kro values, bootstrap, members) |
@@ -30,7 +35,7 @@ Companion repo: [platform-engineering-on-eks](../platform-engineering-on-eks/) h
 
 ## Tech Stack
 
-- **IaC:** Terraform (cluster, common, identity-center modules)
+- **IaC:** Pluggable cluster providers under `cluster-providers/` (kind-crossplane, kind-kro-ack, terraform, byoc), selected via `clusterProvider` in `config.local.yaml`
 - **GitOps:** ArgoCD ApplicationSets with sync waves (-5 to 6)
 - **Kubernetes:** EKS Auto Mode + EKS Capabilities (ArgoCD, Kro, ACK)
 - **IDP:** Backstage with Keycloak SSO
@@ -41,10 +46,10 @@ Companion repo: [platform-engineering-on-eks](../platform-engineering-on-eks/) h
 
 ## Key Conventions
 
-- Resource prefix: `peeks` (flows from env var through Terraform to cluster secrets)
+- Resource prefix: `peeks` (flows from env var through the cluster provider to cluster secrets)
 - Cluster names: `peeks-hub`, `peeks-spoke-dev`, `peeks-spoke-prod`
-- Deployment scripts: always use `deploy.sh` / `destroy.sh`, never raw `terraform apply/destroy`
-- Addon enablement: `hub-config.yaml` → Terraform → cluster secret labels → ArgoCD ApplicationSets
+- Deployment: always use `task install` / `task destroy` (they delegate to the configured `clusterProvider`), never raw `terraform apply/destroy`
+- Addon enablement: `gitops/overlays/environments/<env>/enabled-addons.yaml` → cluster secret `enable_*` labels → ArgoCD ApplicationSets
 - Dynamic values (resource_prefix, domain, region) live in `addons.yaml` valuesObject only, never in `values.yaml`
 
 ## Two Usage Contexts
@@ -55,3 +60,95 @@ This repo is used in two ways:
 2. **Workshop IDE** (ec2-user, on the Code Editor instance) — workshop participants interact with the deployed platform. The `hack/` directory configures this environment, including `hack/.kiro/` for the IDE's Kiro agent.
 
 The root `.kiro/` is for local dev. `hack/.kiro/` is for the workshop IDE — they serve different audiences.
+
+## Working Agreement (how to operate in this repo)
+
+Binding behavioral expectations, learned from working sessions. Follow these.
+
+### Verify, do not speculate
+- Replace guesses and "I think / it should" with **actual evidence**: command output, test results, rendered manifests, file contents, live cluster state.
+- Before claiming a cause or a fix works, prove it (e.g. `helm template`, `kubectl get`, read the file, check the live resource).
+- If something cannot be verified, say so plainly. An honest "I haven't verified X / I don't know" is required over a confident-sounding guess.
+- When stating a root cause, cite the specific evidence that establishes it.
+
+### Do not waste time
+- **Never use `sleep` to wait for reconciliation.** Trigger the action (sync/patch/refresh) and check status directly. If a result isn't ready, re-check on the next action — do not block on timers.
+- Don't poll in loops. Take the direct action.
+
+### Don't go in circles — find the root cause
+- If an approach fails twice, stop repeating variations. Step back and diagnose the underlying cause with evidence, then fix that.
+- Trace problems to their source (e.g. which repo/branch/cache actually serves a value) rather than patching symptoms.
+
+### Solutions live in git
+- Fixes must be committed to git and applied via GitOps. **Do not use `kubectl patch`/`edit`/`apply` as a fix.**
+- `kubectl` is for diagnosis and for triggering ArgoCD syncs/refreshes only — never for mutating desired state as the solution.
+
+### Question necessity; remove redundancy
+- Before adding code, check whether it is actually needed (e.g. RBAC may already be granted by an existing ClusterRole).
+- Prefer **removing** redundant or workaround code over gating it behind flags. If a change isn't needed, drop it.
+
+### One consistent model, no per-case workarounds
+- Apply a single uniform pattern across the board rather than special-casing individual workloads.
+- If a workaround was introduced under pressure, revisit and replace it with the consistent approach.
+
+### Professional, customer-neutral output
+- No workshop/demo artifacts leaking into the solution (e.g. avoid `tenant: workshop`; use neutral defaults like `default`).
+- **Do not force platform conventions onto customers.** Cluster names are customer-supplied and arbitrary — never derive or enforce them from `resourcePrefix`. The prefix exists only to scope account/region-global AWS resource names (IAM roles, AMP/AMG workspaces, security groups, ECR) to avoid collisions across installs.
+
+
+## Operational Invariants (binding — do not re-investigate)
+
+These are facts about the deployed platform that have been confirmed multiple times. Treat as ground truth and avoid re-asking the user about them.
+
+### ArgoCD on the hub is the EKS managed ArgoCD Capability
+
+- ArgoCD on `peeks-hub` is **provisioned as an EKS managed Capability**, not as Helm-installed pods in the cluster.
+- The control-plane components (`argo-cd-argocd-server`, `argo-cd-argocd-application-controller`, `argo-cd-argocd-repo-server`, etc.) **run inside the AWS-managed control plane** and are **not visible** via `kubectl get pods -n argocd`. That namespace looks empty for pods even when ArgoCD is fully operational.
+- What IS visible in the `argocd` namespace: `Application`, `ApplicationSet`, `AppProject`, and cluster `Secret` objects — these are user-facing CRDs that ArgoCD reconciles from outside.
+- "ArgoCD is broken because the namespace is empty" is **always wrong**. Verify ArgoCD health by checking that `Application` resources are reconciling (sync/health status) rather than by looking for pods.
+- Self-managed ArgoCD values files (e.g. any `argocd-initial-values.yaml` under `gitops/addons/configs/argo-cd/` or a prior `platform/infra/terraform` install path) are **dead code** from a prior install path and have been removed. The Capability does not consume them.
+- Capability configuration lives with the active cluster provider under `cluster-providers/` (e.g. `cluster-providers/terraform/argocd-capability.tf` for the terraform provider; the Crossplane Composition / KRO RGD for the kind providers) — not in Helm values files.
+
+### Multi-cluster register pattern
+
+- Cluster secrets in the hub's `argocd` namespace use **EKS ARNs** as the cluster `server` value, not `kubernetes.default.svc`.
+- Duplicate cluster secrets with the same ARN are rejected by ArgoCD.
+- Spokes (`spoke-dev`, `spoke-prod`) run their own workloads but **do not run ArgoCD**. The hub's ArgoCD reconciles into them via the registered cluster secrets.
+
+### Pod Identity, not IRSA
+
+- The platform uses EKS Pod Identity (not IRSA) for pod-level AWS credentials on EKS Auto Mode.
+- When provisioning IAM access for a workload, use `aws eks create-pod-identity-association` (not OIDC trust policies).
+
+## Platform Manifests ApplicationSets (naming convention)
+
+| ApplicationSet Name | Label Selector | Deploys To | Contents |
+|---------------------|---------------|------------|----------|
+| `platform-manifests-bootstrap` | `enable_platform_manifests_bootstrap: "true"` | ALL clusters (hub + spokes) | NodePools (EKS Auto Mode), ClusterSecretStore |
+| `platform-manifests` | `enable_platform_manifests_hub: "true"` | Hub only | Ray IAMRoleSelectors, HuggingFace models |
+
+Note: The `-bootstrap` suffix is misleading — it's not hub-only bootstrap, it's the base infrastructure required on every cluster. Renaming is deferred to avoid disruption (deleting the ApplicationSet would temporarily remove NodePools, causing all pods to go Pending).
+
+## Workshop IDE Environment
+
+- User: `ec2-user`
+- Workshop repo: `/home/ec2-user/environment/platform-on-eks-workshop`
+- Clusters: `peeks-hub`, `peeks-spoke-dev`, `peeks-spoke-prod` (context aliases: `hub`, `dev`, `prod`)
+- EKS Auto Mode — no Karpenter pods in clusters
+- EKS Capabilities — ArgoCD, Kro, ACK run as managed services, not in-cluster
+
+## Key Rules
+
+- **Use `task install`/`task destroy`** — they delegate to the configured `clusterProvider`; never run raw `terraform apply` or `terraform destroy`
+- **GitOps first** — modify Git files and let ArgoCD sync, don't `kubectl apply` manually
+- **Dynamic values only in addons.yaml** — never put template expressions in values.yaml
+- **Check env vars with echo** — `echo $AWS_REGION` etc., don't dump full environment
+- **ArgoCD token refresh** — if `argocd` CLI auth fails, run `argocd-refresh-token` then `source ~/.bashrc.d/platform.sh`
+
+## ArgoCD Safety Rules
+
+- **Never delete an ApplicationSet** to fix sync errors — it orphans generated Applications, causing ClusterSecretStores and other critical resources to disappear from spoke clusters. Use `kubectl replace` or patch instead.
+- **Never delete a KRO instance** (`eksclusters.kro.run`, `vpcs.kro.run`, etc.) — deletion cascades to ACK resources which delete actual AWS infrastructure (EKS clusters, VPCs, IAM roles). To force reconciliation, patch an annotation instead.
+- **`client-side apply migration` errors** — fix by adding/updating `kubectl.kubernetes.io/last-applied-configuration` annotation on the resource, not by deleting it.
+- **Stale Degraded health** — when ArgoCD shows Degraded but 0 unhealthy resources, the health got stuck during a connectivity issue. Trigger a sync (not just refresh) to re-evaluate.
+- **ClusterSecretStore dependency** — `crossplane-aws` and `flux` apps depend on the ClusterSecretStore deployed by `platform-manifests-bootstrap`. If bootstrap is not synced, these apps fail with "ClusterSecretStore not found".

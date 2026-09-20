@@ -5,65 +5,113 @@ metadata:
   namespace: keycloak
 data:
   detector.sh: |
-    #!/bin/bash
-    set -euo pipefail
+    #!/bin/sh
+    set -eu
 
     NAMESPACE="keycloak"
-    
-    log() {
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"
+    # JGroups cluster name used by Keycloak's Infinispan channel (see logs: "channel `ISPN`").
+    CLUSTER_NAME="${JGROUPS_CLUSTER_NAME:-ISPN}"
+    # Database Keycloak actually connects to at RUNTIME. This must match `db-url` in
+    # keycloak.conf (currently .../<KC_DB_NAME>). NOTE: it is deliberately NOT the
+    # `POSTGRES_DB` secret value — that key is "keycloak" (an empty DB), while Keycloak
+    # runs against "postgres" where the realms AND the jgroups_ping table actually live.
+    KC_DB_NAME="${KC_DB_NAME:-postgres}"
+    APISERVER="https://kubernetes.default.svc"
+    SA=/var/run/secrets/kubernetes.io/serviceaccount
+    TOKEN="$(cat $SA/token)"
+    CACERT="$SA/ca.crt"
+
+    log() { echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"; }
+
+    # Query the live JGroups discovery table `jgroups_ping` — the authoritative, current
+    # record of cluster membership. (Previous log-grep approaches were unreliable: they
+    # ran kubectl inside the keycloak container which has no kubectl, and even fixed, the
+    # boot-time "cluster view" log line ages out of the buffer. The DB table does not.)
+    psql_q() {
+        PGPASSWORD="$KC_DB_PASSWORD" psql \
+            -h postgresql.keycloak.svc.cluster.local -p 5432 \
+            -U "$KC_DB_USERNAME" -d "$KC_DB_NAME" -tAc "$1"
     }
-    
-    get_cluster_members() {
-        local pod=$1
-        kubectl exec -n "$NAMESPACE" "$pod" -- bash -c '
-            kubectl logs -n "$NAMESPACE" "$pod" --tail=1000 | grep "Received new cluster view" 2>/dev/null | tail -1 | 
-            grep -oP "\(\K[0-9]+" || echo "0"
-        ' 2>/dev/null || echo "0"
+
+    k8s() { # $1=method $2=path
+        curl -s --cacert "$CACERT" -H "Authorization: Bearer $TOKEN" -X "$1" "${APISERVER}${2}"
     }
-    
+
+    # List keycloak pod name/IP/ready via the k8s API (no kubectl binary in this image).
+    # Output lines: "<name> <podIP> <Ready-status>"  (status is True/False from the API).
+    list_pods() {
+        k8s GET "/api/v1/namespaces/${NAMESPACE}/pods?labelSelector=app%3Dkeycloak" \
+        | jq -r '.items[] | .metadata.name + " " + (.status.podIP // "-") + " " + ([.status.conditions[]?|select(.type=="Ready")|.status]|join(""))'
+    }
+
+    delete_pod() {
+        log "🔧 Healing: deleting pod $1 (will rejoin cluster on restart)."
+        k8s DELETE "/api/v1/namespaces/${NAMESPACE}/pods/$1?gracePeriodSeconds=30" >/dev/null
+    }
+
     check_split_brain() {
-        log "Checking Keycloak cluster health..."
-        
-        local pods=($(kubectl get pods -n "$NAMESPACE" -l app=keycloak -o jsonpath='{.items[*].metadata.name}'))
-        
-        if [ ${#pods[@]} -lt 2 ]; then
-            log "Only ${#pods[@]} pod(s) found, skipping"
+        log "Checking Keycloak cluster health via jgroups_ping (cluster=${CLUSTER_NAME}, db=${KC_DB_NAME})..."
+
+        pods="$(list_pods)"
+        ready_count="$(printf '%s\n' "$pods" | awk '$3=="True"' | grep -c . || true)"
+
+        if [ "${ready_count:-0}" -lt 2 ]; then
+            log "Only ${ready_count:-0} Ready pod(s); nothing to check (need >=2 for a cluster)."
             return 0
         fi
-        
-        log "Found ${#pods[@]} pods: ${pods[*]}"
-        
-        declare -A cluster_sizes
-        for pod in "${pods[@]}"; do
-            local members=$(get_cluster_members "$pod")
-            cluster_sizes[$pod]=$members
-            log "Pod $pod: cluster size $members"
+
+        members="$(psql_q "SELECT count(*) FROM jgroups_ping WHERE cluster_name='${CLUSTER_NAME}';" 2>/dev/null || echo '')"
+        coordinators="$(psql_q "SELECT count(*) FILTER (WHERE coord) FROM jgroups_ping WHERE cluster_name='${CLUSTER_NAME}';" 2>/dev/null || echo '')"
+
+        if [ -z "$members" ] || [ -z "$coordinators" ]; then
+            log "Could not read jgroups_ping (DB unreachable?). Skipping this run."
+            return 0
+        fi
+
+        log "Ready pods: $ready_count | registered members: $members | coordinators: $coordinators"
+
+        # A healthy single cluster has exactly ONE coordinator. >1 coordinator == the
+        # members partitioned into separate views == split-brain.
+        if [ "$coordinators" -gt 1 ]; then
+            log "⚠️  SPLIT-BRAIN: $coordinators coordinators for cluster ${CLUSTER_NAME} (expected 1)."
+            heal
+            return 1
+        fi
+
+        # Stale/ghost rows: a member IP with no matching live pod => a partitioned/dead member.
+        live_ips="$(printf '%s\n' "$pods" | awk '{print $2}' | sort -u)"
+        reg_ips="$(psql_q "SELECT split_part(ip,':',1) FROM jgroups_ping WHERE cluster_name='${CLUSTER_NAME}';" | sort -u)"
+        stale=""
+        for rip in $reg_ips; do
+            printf '%s\n' "$live_ips" | grep -qx "$rip" || stale="$stale $rip"
         done
-        
-        local expected_size=${#pods[@]}
-        local isolated_pod=""
-        
-        for pod in "${pods[@]}"; do
-            local size=${cluster_sizes[$pod]}
-            if [ "$size" -eq 1 ] && [ "$expected_size" -gt 1 ]; then
-                log "⚠️  SPLIT-BRAIN: $pod isolated (size: 1, expected: $expected_size)"
-                isolated_pod=$pod
-                break
+        if [ -n "$stale" ]; then
+            log "⚠️  Stale jgroups_ping member IP(s):$stale (no matching live pod)."
+            heal
+            return 1
+        fi
+
+        log "✅ Cluster healthy (1 coordinator, all members map to live pods)."
+        return 0
+    }
+
+    # Conservative heal: restart the NON-coordinator pod(s) so they rejoin the
+    # coordinator's view, preserving the primary view instead of a full outage.
+    heal() {
+        coord_ip="$(psql_q "SELECT split_part(ip,':',1) FROM jgroups_ping WHERE cluster_name='${CLUSTER_NAME}' AND coord ORDER BY address LIMIT 1;" 2>/dev/null || echo '')"
+        log "Coordinator IP: ${coord_ip:-unknown}."
+        if [ -z "$coord_ip" ]; then
+            log "No coordinator identified; taking no action."
+            return
+        fi
+        printf '%s\n' "$pods" | while read -r name ip ready; do
+            [ -n "$name" ] || continue
+            if [ "$ip" != "$coord_ip" ]; then
+                delete_pod "$name"
             fi
         done
-        
-        if [ -n "$isolated_pod" ]; then
-            log "🔧 Healing: deleting $isolated_pod"
-            kubectl delete pod -n "$NAMESPACE" "$isolated_pod" --grace-period=30
-            log "✅ Pod deleted, will rejoin cluster on restart"
-            return 1
-        else
-            log "✅ Cluster healthy"
-            return 0
-        fi
     }
-    
+
     check_split_brain
 ---
 apiVersion: batch/v1
@@ -87,10 +135,29 @@ spec:
           restartPolicy: OnFailure
           containers:
           - name: detector
-            image: bitnami/kubectl:latest
+            # postgres image provides psql; curl is added at start for the k8s API calls.
+            # (Same postgres image already used by this chart, so no new image dependency.)
+            image: docker.io/library/postgres:17.4-alpine3.21
             command:
-            - /bin/bash
-            - /scripts/detector.sh
+            - /bin/sh
+            - -c
+            - |
+              command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || apk add --no-cache curl jq >/dev/null 2>&1
+              exec /bin/sh /scripts/detector.sh
+            env:
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-config
+                  key: KC_DB_USERNAME
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-config
+                  key: KC_DB_PASSWORD
+            # DB Keycloak actually uses at runtime (matches keycloak.conf db-url).
+            - name: KC_DB_NAME
+              value: "postgres"
             volumeMounts:
             - name: script
               mountPath: /scripts
@@ -115,9 +182,6 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["get", "list", "delete"]
-- apiGroups: [""]
-  resources: ["pods/exec"]
-  verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

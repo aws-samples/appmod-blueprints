@@ -1,0 +1,12 @@
+apiVersion: v2
+name: argocd-gitlab-repo-creds
+description: >-
+  ExternalSecrets that keep ArgoCD's GitLab repository / repo-creds credentials
+  (fleet-config-repo, gitlab-user-repo-creds) in sync with the canonical
+  peeks-hub/secrets.git_token PAT. Fixes the stale-PAT problem where the
+  imperatively-seeded ArgoCD repo secrets never refreshed after the PAT rotated
+  (#7). Deployed from the GitHub defaults path (public, no GitLab creds needed)
+  so ArgoCD can reconcile it without a chicken-and-egg on the very credentials
+  it provisions.
+type: application
+version: 0.1.0

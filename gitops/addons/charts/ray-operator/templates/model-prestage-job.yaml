@@ -14,8 +14,8 @@ metadata:
     app.kubernetes.io/managed-by: {{ $.Release.Service }}
     model: {{ $modelName }}
 spec:
-  backoffLimit: 3
-  activeDeadlineSeconds: 7200
+  backoffLimit: 5
+  activeDeadlineSeconds: 3600
   template:
     metadata:
       labels:
@@ -32,19 +32,20 @@ spec:
         - -c
         - |
           set -e
+          DOWNLOAD_TIMEOUT=${DOWNLOAD_TIMEOUT:-1800}
           echo "Installing dependencies..."
           yum install -y python3-pip tar gzip
           pip3 install huggingface_hub
           
-          echo "Downloading {{ $modelName }} from {{ $modelConfig.repoId }}..."
-          python3 << 'PYTHON'
+          echo "Downloading {{ $modelName }} from {{ $modelConfig.repoId }} (timeout: ${DOWNLOAD_TIMEOUT}s)..."
+          timeout $DOWNLOAD_TIMEOUT python3 -c "
           from huggingface_hub import snapshot_download
           snapshot_download(
-              repo_id="{{ $modelConfig.repoId }}",
-              local_dir="/tmp/{{ $modelName }}",
+              repo_id='{{ $modelConfig.repoId }}',
+              local_dir='/tmp/{{ $modelName }}',
               local_dir_use_symlinks=False
           )
-          PYTHON
+          "
           
           echo "Uploading to S3..."
           aws s3 sync /tmp/{{ $modelName }}/ s3://{{ $.Values.modelPrestage.s3Bucket | default "peeks-ray-models" }}/models/{{ $modelName }}/ --no-progress

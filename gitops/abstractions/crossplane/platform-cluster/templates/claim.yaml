@@ -1,0 +1,80 @@
+{{- range $name, $cluster := .Values.clusters }}
+{{- /*
+  Fail-fast on a cluster name this path cannot provision. Names are otherwise
+  ARBITRARY — there is deliberately no <resourcePrefix>-spoke-* requirement, since
+  authorization is by target service and ownership tag rather than by name.
+
+  Two limits remain:
+    1. clusterName becomes the claim's metadata.name and is used to derive
+       Kubernetes object names, so it must be a DNS-1123 label.
+    2. The Composition derives IAM role names as <clusterName><suffix> and IAM caps
+       role names at 64 characters. The longest suffix here is
+       '-kro-capability-role' (20), so the limit is 44.
+
+  Keep in sync with gitops/abstractions/kro/kro-clusters/templates/clusters.yaml,
+  which has a stricter length bound (34) because its resource graph uses a longer
+  role suffix.
+*/ -}}
+{{- $cn := $cluster.clusterName | toString }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $cn) }}
+{{-   fail (printf "cluster name %q is not a valid DNS-1123 label: it becomes the PlatformCluster claim's metadata.name, so it must contain only lowercase letters, digits and '-', and must start and end with a letter or digit. Rename the entry in fleet/spoke-values/.../crossplane-clusters." $cn) }}
+{{- end }}
+{{- if gt (len $cn) 44 }}
+{{-   fail (printf "cluster name %q is %d characters; the maximum is 44. IAM roles are named <cluster><suffix> and the longest suffix, '-kro-capability-role', is 20 characters, so a longer name would exceed the 64-character IAM role name limit." $cn (len $cn)) }}
+{{- end }}
+---
+apiVersion: platform.gitops.io/v1alpha1
+kind: PlatformCluster
+metadata:
+  name: {{ $cluster.clusterName }}
+  namespace: crossplane-system
+  annotations:
+    crossplane.io/external-name: {{ $cluster.clusterName }}
+spec:
+  region: {{ $cluster.region | default $.Values.global.defaultRegion | required "Either cluster.region or global.defaultRegion must be set" }}
+  clusterName: {{ $cluster.clusterName }}
+  vpcCidr: {{ $cluster.vpcCidr | default "10.0.0.0/16" | quote }}
+  kubernetesVersion: {{ $cluster.kubernetesVersion | default "1.32" | quote }}
+  autoMode: {{ $cluster.autoMode | default true }}
+  {{- if $cluster.resourcePrefix }}
+  resourcePrefix: {{ $cluster.resourcePrefix }}
+  {{- else if $.Values.global.resourcePrefix }}
+  resourcePrefix: {{ $.Values.global.resourcePrefix }}
+  {{- end }}
+  {{- if $cluster.argoCDRoleArn }}
+  argoCDRoleArn: {{ $cluster.argoCDRoleArn }}
+  {{- else if $.Values.global.argoCDRoleArn }}
+  argoCDRoleArn: {{ $.Values.global.argoCDRoleArn }}
+  {{- end }}
+  {{- if $cluster.adminRoleArn }}
+  adminRoleArn: {{ $cluster.adminRoleArn }}
+  {{- else if $.Values.global.adminRoleArn }}
+  adminRoleArn: {{ $.Values.global.adminRoleArn }}
+  {{- end }}
+  {{- if $cluster.adminInstanceRoleArn }}
+  adminInstanceRoleArn: {{ $cluster.adminInstanceRoleArn }}
+  {{- else if $.Values.global.adminInstanceRoleArn }}
+  adminInstanceRoleArn: {{ $.Values.global.adminInstanceRoleArn }}
+  {{- end }}
+  {{- if $cluster.accountId }}
+  accountId: {{ $cluster.accountId | quote }}
+  {{- else if $.Values.global.accountId }}
+  accountId: {{ $.Values.global.accountId | quote }}
+  {{- end }}
+  {{- if $cluster.capabilities }}
+  capabilities:
+    {{- toYaml $cluster.capabilities | nindent 4 }}
+  {{- end }}
+  {{- if and $cluster.managedNodeGroup $cluster.managedNodeGroup.enabled }}
+  managedNodeGroup:
+    enabled: true
+    instanceTypes: {{ $cluster.managedNodeGroup.instanceTypes | default (list "m5.large") | toJson }}
+    desiredSize: {{ $cluster.managedNodeGroup.desiredSize | default 2 }}
+    minSize: {{ $cluster.managedNodeGroup.minSize | default 1 }}
+    maxSize: {{ $cluster.managedNodeGroup.maxSize | default 5 }}
+    diskSize: {{ $cluster.managedNodeGroup.diskSize | default 50 }}
+    capacityType: {{ $cluster.managedNodeGroup.capacityType | default "ON_DEMAND" }}
+  {{- end }}
+  writeConnectionSecretToRef:
+    name: {{ $cluster.clusterName }}-kubeconfig
+{{- end }}

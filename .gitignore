@@ -161,8 +161,6 @@ workshop/cdk.out
 # Terraform build files
 .terraform.lock.hcl
 
-platform/infra/terraform/terraform-aws-observability-accelerator
-
 prodplan
 devplan
 devdbplan
@@ -175,3 +173,10 @@ private/
 
 # Local platform config (user-specific, not committed)
 config.local.yaml
+
+# Local scratch / chat session artifacts (never commit)
+.local/
+
+# Pinned platform artifact clone (OAP-style consumption)
+.platform/
+*.creds

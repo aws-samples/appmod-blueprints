@@ -162,17 +162,19 @@ The root Taskfile delegates to providers but each provider implements tasks diff
 
 ---
 
-### 10. Remove ArgoCD capability create/delete Job when Crossplane supports it
+### 10. Remove ArgoCD capability create/delete Job when Crossplane supports it ✅ DONE
 
 **Priority:** Low
 **Labels:** enhancement, tech-debt
 **Ref:** https://github.com/crossplane-contrib/provider-upjet-aws/pull/2015
 
-The `create-capability.yaml` and `delete-capability.yaml` Jobs use AWS CLI to manage the EKS ArgoCD Capability because Crossplane's EKS provider doesn't support it yet. Once `provider-upjet-aws` adds `EKSCapability` support:
-- Replace Jobs with Crossplane managed resources
-- Remove `manifests/argocd/create-capability.yaml` and `delete-capability.yaml`
-- Remove `argocd:capability` and `argocd:delete-capability` tasks
-- Add capability to the PlatformCluster composition or as a separate claim
+**Done** (provider-aws-eks v2.6.1 adds the `Capability` MR). The EKS Capabilities
+(KRO/ACK/ArgoCD) are now created declaratively:
+- Crossplane path: native `Capability` MRs in the `platform-cluster` Composition,
+  gated by `spec.capabilities.<type>.enabled` (hub + spokes).
+- The imperative `create-capability.yaml` / `delete-capability.yaml` Jobs and the
+  `argocd:capability` / `argocd:delete-capability` / `spokes:create-capabilities`
+  tasks were removed; `hub:seed` waits for the Capability MRs to be Ready.
 
 ---
 

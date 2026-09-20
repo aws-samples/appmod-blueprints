@@ -29,10 +29,23 @@ spec:
           sortKey: string | default="sort_key"
           sortKeyType: string | default="S"
       ingress:
-        host: string | default="*.elb.us-west-2.amazonaws.com"
+        host: string | default="*.us-west-2.elb.amazonaws.com"
         enabled: boolean | default=false
         path: string | default="/"
         rewrite: boolean | default=true
+        # ALB target-group health check path. Apps that do not serve 200 at "/"
+        # (e.g. the Rust sample only serves /collection/*) must set this to a
+        # path the app actually returns 200 for, otherwise all targets stay
+        # unhealthy and the ALB returns 404/503 for every request.
+        healthcheckPath: string | default="/"
+        # Defaults to true (HTTP:80, no cert) to match the pre-existing behavior for
+        # workshop/sample apps on the shared ALB, which never provide a real domain +
+        # ACM cert for their wildcard *.<region>.elb.amazonaws.com host. Set to false
+        # only when a real domain + certificate-arn is configured for this app.
+        insecure: boolean | default=true
+        # ALB scheme. Default is internet-facing so deployed apps are reachable from outside
+        # the VPC. Set to internal when placing an edge (e.g. CloudFront VPC origin) in front.
+        scheme: string | default="internet-facing"
       functionalGate:
         enabled: boolean | default=false
         image: string | default="httpd:alpine"
@@ -67,6 +80,9 @@ spec:
             - group: iam.services.k8s.aws
               kind: ""
               version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
     - id: eksroleselector
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == true}
@@ -86,6 +102,9 @@ spec:
             - group: eks.services.k8s.aws
               kind: ""
               version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
     - id: dynamodbroleselector
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == true}
@@ -105,6 +124,9 @@ spec:
             - group: dynamodb.services.k8s.aws
               kind: ""
               version: ""
+          resourceLabelSelector:
+            matchLabels:
+              kro.run/instance-name: ${schema.metadata.name}
     - id: dynamodbtable
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == true}
@@ -123,6 +145,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           tableName: ${schema.spec.components.dynamodb.tableName}
@@ -194,6 +217,7 @@ spec:
               blockOwnerDeletion: true
               controller: false
           annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
           clusterName: ${schema.spec.clusterName}
@@ -287,7 +311,7 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
     - id: rolloutWithoutDynamoDB
       includeWhen:
@@ -341,7 +365,7 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
     - id: rolloutWithGatesAndDynamoDB
       includeWhen:
@@ -399,6 +423,13 @@ spec:
                 app: ${schema.metadata.name}
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
+                # Gate args live in the pod-template annotations so that changing
+                # functionalGate/performanceGate.extraArgs alters the Rollout pod spec
+                # (new pod-template hash) -> Argo Rollouts creates a new revision and
+                # re-runs the analysis on `argocd app sync`, with no manual
+                # `kubectl argo rollouts retry/restart` (mirrors KubeVela publishVersion). See GitLab #36.
+                appmod.io/functional-gate-args: "${schema.spec.functionalGate.extraArgs}"
+                appmod.io/performance-gate-args: "${schema.spec.performanceGate.extraArgs}"
             spec:
               serviceAccountName: ${serviceaccountWithDynamoDB.metadata.name}
               containers:
@@ -407,7 +438,7 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
     - id: rolloutWithGatesWithoutDynamoDB
       includeWhen:
@@ -465,6 +496,13 @@ spec:
                 app: ${schema.metadata.name}
               annotations:
                 replicas: "${string(schema.spec.replicas)}"
+                # Gate args live in the pod-template annotations so that changing
+                # functionalGate/performanceGate.extraArgs alters the Rollout pod spec
+                # (new pod-template hash) -> Argo Rollouts creates a new revision and
+                # re-runs the analysis on `argocd app sync`, with no manual
+                # `kubectl argo rollouts retry/restart` (mirrors KubeVela publishVersion). See GitLab #36.
+                appmod.io/functional-gate-args: "${schema.spec.functionalGate.extraArgs}"
+                appmod.io/performance-gate-args: "${schema.spec.performanceGate.extraArgs}"
             spec:
               serviceAccountName: ${serviceaccountWithoutDynamoDB.metadata.name}
               containers:
@@ -473,7 +511,7 @@ spec:
                   imagePullPolicy: Always
                   ports:
                     - containerPort: ${schema.spec.targetPort}
-                  env: "${size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]}"
+                  env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
     # Services removed from Kro - Argo Rollouts will create and manage them automatically
     # - id: service
@@ -529,18 +567,17 @@ spec:
               uid: ${schema.metadata.uid}
               blockOwnerDeletion: true
               controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            nginx.ingress.kubernetes.io/rewrite-target: /$2
-            nginx.ingress.kubernetes.io/use-regex: "true"
+          annotations: '${{"argocd.argoproj.io/tracking-id": schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue(""), "alb.ingress.kubernetes.io/scheme": schema.spec.ingress.scheme, "alb.ingress.kubernetes.io/target-type": "ip", "alb.ingress.kubernetes.io/healthcheck-path": schema.spec.ingress.healthcheckPath, "alb.ingress.kubernetes.io/listen-ports": schema.spec.ingress.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]", "alb.ingress.kubernetes.io/transforms." + schema.metadata.name: "[{\"type\":\"url-rewrite\",\"urlRewriteConfig\":{\"rewrites\":[{\"regex\":\"^" + schema.spec.ingress.path + "/?(.*)$\",\"replace\":\"/$1\"}]}}]"}}'
         spec:
-          ingressClassName: nginx
+          ingressClassName: platform
           rules:
-            - host: ${schema.spec.ingress.host}
-              http:
+            # Region-agnostic: no host pinning. Path-based routing on the shared
+            # platform ALB, so the app is reachable via any hostname (the NLB DNS in
+            # any region, CloudFront, or a custom domain). See PR #812.
+            - http:
                 paths:
-                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
-                    pathType: ImplementationSpecific
+                  - path: ${schema.spec.ingress.path}
+                    pathType: Prefix
                     backend:
                       service:
                         name: ${schema.metadata.name}
@@ -565,15 +602,20 @@ spec:
               controller: false
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            nginx.ingress.kubernetes.io/use-regex: "true"
+            alb.ingress.kubernetes.io/scheme: '${schema.spec.ingress.scheme}'
+            alb.ingress.kubernetes.io/target-type: ip
+            alb.ingress.kubernetes.io/healthcheck-path: ${schema.spec.ingress.healthcheckPath}
+            alb.ingress.kubernetes.io/listen-ports: '${schema.spec.ingress.insecure ? "[{\"HTTP\": 80}]" : "[{\"HTTPS\": 443}]"}'
         spec:
-          ingressClassName: nginx
+          ingressClassName: platform
           rules:
-            - host: ${schema.spec.ingress.host}
-              http:
+            # Region-agnostic: no host pinning. Path-based routing on the shared
+            # platform ALB, so the app is reachable via any hostname (the NLB DNS in
+            # any region, CloudFront, or a custom domain). See PR #812.
+            - http:
                 paths:
-                  - path: "${schema.spec.ingress.path + \"(/|$)(.*)\"}"
-                    pathType: ImplementationSpecific
+                  - path: ${schema.spec.ingress.path}
+                    pathType: Prefix
                     backend:
                       service:
                         name: ${schema.metadata.name}
@@ -646,7 +688,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://{{args.service-name}}:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: ${schema.spec.functionalGate.extraArgs}'; if echo \"$RESPONSE\" | grep -q '${schema.spec.functionalGate.extraArgs}'; then echo 'PASS: Found ${schema.spec.functionalGate.extraArgs}'; exit 0; else echo 'FAIL: ${schema.spec.functionalGate.extraArgs} not found'; exit 1; fi"
+                              - "set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://${schema.metadata.name}-preview:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: ${schema.spec.functionalGate.extraArgs}'; if echo \"$RESPONSE\" | grep -q '${schema.spec.functionalGate.extraArgs}'; then echo 'PASS: Found ${schema.spec.functionalGate.extraArgs}'; exit 0; else echo 'FAIL: ${schema.spec.functionalGate.extraArgs} not found'; exit 1; fi"
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -683,7 +725,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "RESULT=$(ab -n 1000 -c 10 http://{{args.service-name}}:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt ${schema.spec.performanceGate.extraArgs} ] && exit 0 || exit 1"
+                              - "RESULT=$(ab -n 1000 -c 10 http://${schema.metadata.name}-preview:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); echo \"Time per request: $RESULT ms (threshold ${schema.spec.performanceGate.extraArgs} ms)\"; if [ \"$RESULT\" -lt ${schema.spec.performanceGate.extraArgs} ]; then echo PASS; exit 0; else echo FAIL; exit 1; fi"
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -725,7 +767,7 @@ spec:
               provider:
                 prometheus:
                   address: "{{args.amp-workspace-url}}"
-                  query: "up{k8s_container_name=\"${schema.spec.image_name}\", k8s_namespace_name=\"${schema.metadata.namespace}\"}"
+                  query: "up{container_name=\"${schema.spec.image_name}\", namespace=\"${schema.metadata.namespace}\"}"
                   authentication:
                     sigv4:
                       region: "{{args.amp-workspace-region}}"

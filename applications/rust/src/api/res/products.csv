@@ -1,59 +1,59 @@
 category,product,name,image_number,file,image_height,image_width
-baby,cap,Baby Cap,1,baby-cap-black.png,1200,1200
-baby,cap,Baby Cap,1,baby-cap-gray.png,1200,1200
-baby,cap,Baby Cap,1,baby-cap-white.png,1200,1200
-baby,onesie,Baby Onesie,1,baby-onesie-white-1.png,1200,1200
-baby,onesie,Baby Onesie,2,baby-onesie-white-2.png,514,514
-baby,onesie,Baby Onesie,1,baby-onesie-black-1.png,1200,1200
-baby,onesie,Baby Onesie,2,baby-onesie-black-2.png,514,514
-baby,onesie,Baby Onesie,1,baby-onesie-beige-1.png,1200,1200
-baby,onesie,Baby Onesie,2,baby-onesie-beige-2.png,514,514
-bags,bag,Bag,1,bag-black.png,3000,3037
-bags,bag,Bag,1,bag-white.png,3000,3037
-clothing,bomber-jacket,Bomber Jacket,1,bomber-jacket-black.png,1000,1000
-clothing,bomber-jacket,Bomber Jacket,1,bomber-jacket-army.png,1000,1000
-clothing,cowboy-hat,Cowboy Hat,1,cowboy-hat-black-1.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,2,cowboy-hat-black-2.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,3,cowboy-hat-black-3.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,4,cowboy-hat-black-4.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,5,cowboy-hat-black-5.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,6,cowboy-hat-black-6.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,1,cowboy-hat-tan-1.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,2,cowboy-hat-tan-2.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,3,cowboy-hat-tan-3.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,4,cowboy-hat-tan-4.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,5,cowboy-hat-tan-5.png,1080,1080
-clothing,cowboy-hat,Cowboy Hat,6,cowboy-hat-tan-6.png,1080,1080
-clothing,hat,Hat,1,hat-1.png,1200,1200
-clothing,hat,Hat,2,hat-2.png,1200,1200
-clothing,hat,Hat,3,hat-3.png,1200,1200
-clothing,hoodie,Hoodie,1,hoodie-1.png,2000,2000
-clothing,hoodie,Hoodie,2,hoodie-2.png,1920,1919
-clothing,t-shirt,T-Shirt,1,t-shirt-color-black.png,1000,1000
-clothing,t-shirt,T-Shirt,1,t-shirt-color-white.png,1000,1000
-clothing,t-shirt,T-Shirt,1,t-shirt-color-pink.png,1000,1000
-clothing,t-shirt,T-Shirt,1,t-shirt-color-blue.png,1000,1000
-clothing,t-shirt,T-Shirt,1,t-shirt-color-gray.png,1000,1000
-clothing,t-shirt,T-Shirt,1,t-shirt-circles-black.png,3000,3023
-clothing,t-shirt,T-Shirt,1,t-shirt-circles-blue.png,3000,3023
-clothing,t-shirt,T-Shirt,1,t-shirt-circles-white.png,3000,3023
-clothing,t-shirt,Spiral T-Shirt,1,t-shirt-spiral-1.png,1000,958
-clothing,t-shirt,Spiral T-Shirt,2,t-shirt-spiral-2.png,1000,1000
-clothing,t-shirt,Spiral T-Shirt,3,t-shirt-spiral-3.png,1000,1000
-clothing,t-shirt,Spiral T-Shirt,4,t-shirt-spiral-4.png,1000,1000
-home,cup,Cup,1,cup-black.png,1200,1200
-home,cup,Cup,1,cup-white.png,1200,1200
-home,mug,Mug,1,mug-1.png,1200,1200
-home,mug,Mug,2,mug-2.png,1200,1200
-pet,dog-sweater,Dog Sweater,1,dog-sweater-1.png,1500,1500
-pet,dog-sweater,Dog Sweater,2,dog-sweater-2.png,1029,1500
-technology,keyboard,Keyboard,1,keyboard.png,1080,1920
-clothing,shoes,Shoes,1,shoes-1.png,1024,1024
-clothing,shoes,Shoes,2,shoes-2.png,1024,1024
-clothing,shoes,Shoes,3,shoes-3.png,1024,1024
-clothing,shoes,Shoes,4,shoes-4.png,1024,1024
-technology,webcam-cover,Webcam Cover,1,webcam-cover.png,1000,1000
-baby,pacifier,Pacifier,1,pacifier-1.png,600,600
-baby,pacifier,Pacifier,2,pacifier-2.png,1200,1200
-other,sticker,Sticker,1,sticker.png,1200,1200
-other,sticker,Sticker Rainbow,1,sticker-rainbow.png,900,900
+baby,cap,Baby Cap,1,baby-cap-black.webp,1200,1200
+baby,cap,Baby Cap,1,baby-cap-gray.webp,1200,1200
+baby,cap,Baby Cap,1,baby-cap-white.webp,1200,1200
+baby,onesie,Baby Onesie,1,baby-onesie-white-1.webp,1200,1200
+baby,onesie,Baby Onesie,2,baby-onesie-white-2.webp,514,514
+baby,onesie,Baby Onesie,1,baby-onesie-black-1.webp,1200,1200
+baby,onesie,Baby Onesie,2,baby-onesie-black-2.webp,514,514
+baby,onesie,Baby Onesie,1,baby-onesie-beige-1.webp,1200,1200
+baby,onesie,Baby Onesie,2,baby-onesie-beige-2.webp,514,514
+bags,bag,Bag,1,bag-black.webp,3000,3037
+bags,bag,Bag,1,bag-white.webp,3000,3037
+clothing,bomber-jacket,Bomber Jacket,1,bomber-jacket-black.webp,1000,1000
+clothing,bomber-jacket,Bomber Jacket,1,bomber-jacket-army.webp,1000,1000
+clothing,cowboy-hat,Cowboy Hat,1,cowboy-hat-black-1.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,2,cowboy-hat-black-2.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,3,cowboy-hat-black-3.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,4,cowboy-hat-black-4.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,5,cowboy-hat-black-5.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,6,cowboy-hat-black-6.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,1,cowboy-hat-tan-1.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,2,cowboy-hat-tan-2.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,3,cowboy-hat-tan-3.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,4,cowboy-hat-tan-4.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,5,cowboy-hat-tan-5.webp,1080,1080
+clothing,cowboy-hat,Cowboy Hat,6,cowboy-hat-tan-6.webp,1080,1080
+clothing,hat,Hat,1,hat-1.webp,1200,1200
+clothing,hat,Hat,2,hat-2.webp,1200,1200
+clothing,hat,Hat,3,hat-3.webp,1200,1200
+clothing,hoodie,Hoodie,1,hoodie-1.webp,2000,2000
+clothing,hoodie,Hoodie,2,hoodie-2.webp,1920,1919
+clothing,t-shirt,T-Shirt,1,t-shirt-color-black.webp,1000,1000
+clothing,t-shirt,T-Shirt,1,t-shirt-color-white.webp,1000,1000
+clothing,t-shirt,T-Shirt,1,t-shirt-color-pink.webp,1000,1000
+clothing,t-shirt,T-Shirt,1,t-shirt-color-blue.webp,1000,1000
+clothing,t-shirt,T-Shirt,1,t-shirt-color-gray.webp,1000,1000
+clothing,t-shirt,T-Shirt,1,t-shirt-circles-black.webp,3000,3023
+clothing,t-shirt,T-Shirt,1,t-shirt-circles-blue.webp,3000,3023
+clothing,t-shirt,T-Shirt,1,t-shirt-circles-white.webp,3000,3023
+clothing,t-shirt,Spiral T-Shirt,1,t-shirt-spiral-1.webp,1000,958
+clothing,t-shirt,Spiral T-Shirt,2,t-shirt-spiral-2.webp,1000,1000
+clothing,t-shirt,Spiral T-Shirt,3,t-shirt-spiral-3.webp,1000,1000
+clothing,t-shirt,Spiral T-Shirt,4,t-shirt-spiral-4.webp,1000,1000
+home,cup,Cup,1,cup-black.webp,1200,1200
+home,cup,Cup,1,cup-white.webp,1200,1200
+home,mug,Mug,1,mug-1.webp,1200,1200
+home,mug,Mug,2,mug-2.webp,1200,1200
+pet,dog-sweater,Dog Sweater,1,dog-sweater-1.webp,1500,1500
+pet,dog-sweater,Dog Sweater,2,dog-sweater-2.webp,1029,1500
+technology,keyboard,Keyboard,1,keyboard.webp,1080,1920
+clothing,shoes,Shoes,1,shoes-1.webp,1024,1024
+clothing,shoes,Shoes,2,shoes-2.webp,1024,1024
+clothing,shoes,Shoes,3,shoes-3.webp,1024,1024
+clothing,shoes,Shoes,4,shoes-4.webp,1024,1024
+technology,webcam-cover,Webcam Cover,1,webcam-cover.webp,1000,1000
+baby,pacifier,Pacifier,1,pacifier-1.webp,600,600
+baby,pacifier,Pacifier,2,pacifier-2.webp,1200,1200
+other,sticker,Sticker,1,sticker.webp,1200,1200
+other,sticker,Sticker Rainbow,1,sticker-rainbow.webp,900,900

@@ -16,4 +16,4 @@ tolerations:
     effect: 'NoSchedule'
 
 nodeSelector:
-  karpenter.sh/nodepool: general-purpose-peeks
+  karpenter.sh/nodepool: general-purpose

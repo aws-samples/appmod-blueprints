@@ -21,3 +21,27 @@ spec:
     name: default
 {{- end }}
 {{- end }}
+{{- /* Attach AWS-managed policy ARNs (e.g. AdministratorAccess) for identities
+       that need broad permissions, such as the bootstrap Crossplane providers. */}}
+{{- range $name, $identity := .Values.identities }}
+{{- if not (eq (toString $identity.enabled) "false") }}
+{{- range $i, $arn := ($identity.managedPolicyArns | default list) }}
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: {{ $.Values.aws.clusterName }}-{{ $name }}-managed-attachment-{{ $i }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    policyArn: {{ $arn | quote }}
+    roleRef:
+      name: {{ $.Values.aws.clusterName }}-{{ $name }}-pod-identity-role
+  providerConfigRef:
+    name: default
+{{- end }}
+{{- end }}
+{{- end }}

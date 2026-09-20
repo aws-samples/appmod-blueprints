@@ -1,0 +1,42 @@
+# OPT-IN: OIDC client provisioning for a fleet member (hub or spoke).
+#
+# Copy this file to fleet/members/<cluster>/client-provisioner.yaml (in the
+# fleet-config overlay repo, or the base fleet repo) to have the platform
+# provision Keycloak clients for <cluster> and write their OIDC contracts to
+# AWS Secrets Manager.
+#
+# The client-provisioner ApplicationSet (gitops/bootstrap/client-provisioner.yaml)
+# discovers members by the PRESENCE of this file (generator-path filter). Members
+# without it get nothing — no spec.selector, no wasted Jobs.
+#
+# The provisioning Job runs on the HUB (where Keycloak lives). Each client becomes
+# a Keycloak client "<name>-<environment>" and a Secrets Manager entry at
+# <resource_prefix>/<environment>/oidc/<name>.
+
+# clusterName: used for the Application/release name. Must match the member dir.
+clusterName: peeks-spoke-dev
+
+# provisioner: which chart under platform-charts/<provisioner>-client-provisioner.
+# Optional — defaults to "keycloak".
+provisioner: keycloak
+
+# labels.environment: scopes the Keycloak clientId suffix and the Secrets Manager
+# path (<prefix>/<environment>/oidc/<name>). Required.
+labels:
+  environment: dev
+
+# oidc.realm: optional; defaults to the shared "platform" realm.
+# oidc:
+#   realm: platform
+
+# clients: the OIDC clients to provision for this member.
+clients:
+  - name: my-service          # clientId becomes "my-service-<environment>"
+    type: confidential         # "confidential" or "public"
+    flows:
+      - authorization_code     # standardFlowEnabled
+      # - client_credentials   # serviceAccountsEnabled
+      # - direct_access        # directAccessGrantsEnabled
+    redirectUris:
+      - "https://my-service.dev.example.com/callback"
+    audience: my-service-dev   # written into the OIDC contract

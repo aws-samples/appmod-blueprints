@@ -1,3 +1,8 @@
+# NOTE: This PromotionTask is kept for reference only. It is NOT referenced by
+# the Stage resources (stages.yaml uses inline steps instead). Kargo v1.7.5's
+# admission webhook incorrectly rejects Stages that only reference a task, and
+# the yaml-update step cannot address annotation keys with dots. See stages.yaml
+# for the working inline implementation.
 apiVersion: kargo.akuity.io/v1alpha1
 kind: PromotionTask
 metadata:
@@ -32,7 +37,7 @@ spec:
       updates:
       - key: spec.components.0.properties.image
         value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
-      - key: metadata.annotations.app\.oam\.dev/publishVersion
+      - key: metadata.annotations["app.oam.dev/publishVersion"]
         value: ${{ imageFrom(vars.image).Tag }}
   - uses: git-commit
     config:

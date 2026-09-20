@@ -73,13 +73,10 @@ huggingfaceModels:
 
 ### Enabling the Addon
 
-In `hub-config.yaml`:
+In the target environment's `gitops/overlays/environments/<env>/enabled-addons.yaml`:
 
 ```yaml
-clusters:
-  hub:
-    addons:
-      enable_platform_manifests: true
+platform_manifests: true
 ```
 
 ### Monitoring Downloads

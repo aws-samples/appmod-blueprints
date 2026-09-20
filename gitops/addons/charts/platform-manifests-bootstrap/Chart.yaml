@@ -1,0 +1,6 @@
+apiVersion: v2
+name: platform-manifests-bootstrap
+description: Bootstrap platform manifests (Karpenter NodePools created early, sync-wave -1)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

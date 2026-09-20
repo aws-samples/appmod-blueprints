@@ -42,7 +42,7 @@ For each fleet member, it renders the `fleet-secret` chart, which produces a Kub
 
 ## How clusters.yaml Works
 
-Uses a `clusters` generator matching `fleet_member: control-plane`. Deploys the `abstractions/resource-groups/platform-cluster` Helm chart with values from `fleet/kro-values/`. This creates `PlatformCluster` custom resources that Crossplane/KRO reconciles into VPC + EKS + IAM infrastructure.
+Uses a `clusters` generator matching `fleet_member: control-plane`. Deploys the `abstractions/crossplane/platform-cluster` Helm chart with values from `fleet/kro-values/`. This creates `PlatformCluster` custom resources that Crossplane reconciles into VPC + EKS + IAM infrastructure.
 
 Values are layered: default values, then per-tenant overrides.
 

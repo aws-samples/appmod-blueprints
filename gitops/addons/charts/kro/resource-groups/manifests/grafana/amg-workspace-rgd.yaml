@@ -1,0 +1,133 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: grafana-workspace-vpc.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: GrafanaWorkspaceWithVpc
+    spec:
+      resourcePrefix: string
+      region: string
+      vpcId: string
+      subnetIds: "[]string"
+      workspaceName: string
+      roleArnRefName: string
+      grafanaVersion: string | default="12.4"
+      dataSources: "[]string"
+      notificationDestinations: "[]string"
+  resources:
+    - id: securitygroup
+      readyWhen:
+        - ${securitygroup.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')}
+      template:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: SecurityGroup
+        metadata:
+          name: ${schema.spec.resourcePrefix}-amg-sg
+        spec:
+          forProvider:
+            region: ${schema.spec.region}
+            name: ${schema.spec.resourcePrefix}-amg-sg
+            description: "Security group for Amazon Managed Grafana"
+            vpcId: ${schema.spec.vpcId}
+            tags:
+              Name: ${schema.spec.resourcePrefix}-amg-sg
+              managed-by: kro
+          providerConfigRef:
+            name: default
+
+    - id: egresshttps
+      template:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: SecurityGroupRule
+        metadata:
+          name: ${schema.spec.resourcePrefix}-amg-egress-https
+        spec:
+          forProvider:
+            region: ${schema.spec.region}
+            type: egress
+            fromPort: 443
+            toPort: 443
+            protocol: tcp
+            cidrBlocks:
+              - "0.0.0.0/0"
+            description: "Allow HTTPS egress"
+            securityGroupIdRef:
+              name: ${schema.spec.resourcePrefix}-amg-sg
+          providerConfigRef:
+            name: default
+
+    - id: egresshttp
+      template:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: SecurityGroupRule
+        metadata:
+          name: ${schema.spec.resourcePrefix}-amg-egress-http
+        spec:
+          forProvider:
+            region: ${schema.spec.region}
+            type: egress
+            fromPort: 80
+            toPort: 80
+            protocol: tcp
+            cidrBlocks:
+              - "0.0.0.0/0"
+            description: "Allow HTTP egress"
+            securityGroupIdRef:
+              name: ${schema.spec.resourcePrefix}-amg-sg
+          providerConfigRef:
+            name: default
+
+    - id: egressmysql
+      template:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: SecurityGroupRule
+        metadata:
+          name: ${schema.spec.resourcePrefix}-amg-egress-mysql
+        spec:
+          forProvider:
+            region: ${schema.spec.region}
+            type: egress
+            fromPort: 3306
+            toPort: 3306
+            protocol: tcp
+            cidrBlocks:
+              - "10.0.0.0/8"
+            description: "Allow MySQL egress to in-VPC RDS"
+            securityGroupIdRef:
+              name: ${schema.spec.resourcePrefix}-amg-sg
+          providerConfigRef:
+            name: default
+
+    - id: workspace
+      readyWhen:
+        - ${workspace.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')}
+      template:
+        apiVersion: grafana.aws.upbound.io/v1beta2
+        kind: Workspace
+        metadata:
+          name: ${schema.spec.resourcePrefix}-amg
+        spec:
+          forProvider:
+            region: ${schema.spec.region}
+            name: ${schema.spec.workspaceName}
+            accountAccessType: CURRENT_ACCOUNT
+            authenticationProviders:
+              - SAML
+            permissionType: SERVICE_MANAGED
+            dataSources: ${schema.spec.dataSources}
+            notificationDestinations: ${schema.spec.notificationDestinations}
+            grafanaVersion: ${schema.spec.grafanaVersion}
+            configuration: '{"unifiedAlerting":{"enabled":true},"plugins":{"pluginAdminEnabled":false}}'
+            roleArnRef:
+              name: ${schema.spec.roleArnRefName}
+            vpcConfiguration:
+              securityGroupIds:
+                - ${securitygroup.status.atProvider.id}
+              subnetIds: ${schema.spec.subnetIds}
+            tags:
+              managed-by: kro
+              purpose: observability
+          providerConfigRef:
+            name: default

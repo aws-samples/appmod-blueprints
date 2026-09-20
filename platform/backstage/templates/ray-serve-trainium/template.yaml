@@ -64,7 +64,7 @@ spec:
         rayServeFile:
           title: Ray Serve Config (ZIP)
           type: string
-          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/main/gitops/workloads/ray/trainium-serve-neuron.zip"
+          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/release/v0.3.0-rc3/gitops/workloads/ray/trainium-serve-neuron.zip"
           ui:help: 'URL to the Ray Serve application zip file (Neuron SDK)'
       required:
         - name
@@ -190,6 +190,9 @@ spec:
               - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service.git
             sourceNamespaces:
               - argocd
+            clusterResourceWhitelist:
+              - group: ""
+                kind: PersistentVolume
             namespaceResourceWhitelist:
               - group: ""
                 kind: Namespace
@@ -199,10 +202,20 @@ spec:
                 kind: ConfigMap
               - group: ""
                 kind: Secret
+              - group: ""
+                kind: PersistentVolumeClaim
               - group: apps
                 kind: Deployment
               - group: kro.run
                 kind: RayService
+              - group: ray.io
+                kind: RayService
+              - group: ray.io
+                kind: RayCluster
+              - group: networking.k8s.io
+                kind: Ingress
+              - group: policy
+                kind: PodDisruptionBudget
 
     - id: create-argocd-app
       name: Create ArgoCD Application

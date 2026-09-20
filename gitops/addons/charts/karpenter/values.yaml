@@ -1,0 +1,94 @@
+# karpenter — self-managed Karpenter (alongside EKS Auto Mode) as one addon:
+# upstream controller (dependency, values under `karpenter:`) + its Crossplane IAM.
+# aws.* are injected by the addon registry entry's valuesObject from the cluster
+# secret annotations (aws_region / aws_cluster_name / aws_account_id).
+aws:
+  region: ""
+  clusterName: ""
+  accountId: ""
+
+# ── Upstream karpenter controller (subchart) ────────────────────────────────
+# Subchart values MUST nest under the dependency name `karpenter:`.
+karpenter:
+  settings:
+    # clusterName is injected by the registry valuesObject (karpenter.settings.clusterName).
+    clusterName: ""
+    # Endpoint discovered via eks:DescribeCluster (granted by the controller policy).
+    # No SQS interruption queue (on-demand pools); set to enable spot handling.
+    interruptionQueue: ""
+  # Pod Identity (NOT IRSA): the SA is bound to KarpenterControllerRole-<cluster>
+  # by the PodIdentityAssociation this chart creates. No IRSA role-arn annotation.
+  serviceAccount:
+    create: true
+    name: karpenter
+  # Pin the controller to the Auto Mode `system` nodepool. The upstream default
+  # REQUIRED rule is `karpenter.sh/nodepool DoesNotExist` — on Auto Mode EVERY node
+  # carries that label, so it matches nothing and the controller stays Pending.
+  # We can't null the required rule (Helm subchart coalesce won't overwrite a table
+  # with null), but we CAN replace its nodeSelectorTerms (table→table merge) with an
+  # `In [system]` match — binding the controller to Auto Mode's built-in system pool
+  # and keeping it off the self-managed kata pool.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: karpenter.sh/nodepool
+                operator: In
+                values: ["system"]
+
+# Crossplane ProviderConfig (provider-aws-iam / -eks).
+providerConfigName: default
+
+# ── Controller pod-identity IAM ─────────────────────────────────────────────
+# Role trusted by pods.eks.amazonaws.com + the official Karpenter v1.14 controller
+# policy + PodIdentityAssociation. Names match what the upstream chart + the policy
+# self-reference expect (KarpenterControllerRole-<cluster>).
+controller:
+  enabled: true
+  serviceAccountNamespace: kube-system
+  serviceAccountName: karpenter
+
+# ── Node IAM ────────────────────────────────────────────────────────────────
+# EC2-trusted role + the four managed policies a self-managed node needs (Auto
+# Mode's node role does NOT apply to self-managed nodes) + an EC2_LINUX AccessEntry
+# so launched nodes join. Role name KarpenterNodeRole-<cluster> (referenced by the
+# controller PassRole + the EC2NodeClass role field).
+node:
+  enabled: true
+  managedPolicyArns:
+    - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+    - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+    - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly
+    - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+  # A self-managed node needs vpc-cni + kube-proxy EKS addons (Auto Mode's built-in
+  # networking covers only its OWN Bottlerocket nodes). manageAddons provisions them
+  # as Crossplane Addon MRs that ADOPT-or-create in place (external-name <cluster>:<addon>,
+  # OVERWRITE). Leave FALSE unless nothing else owns them — on a managed-node-group
+  # cluster the platform-cluster Composition already owns these; enabling here would
+  # create a dual-owner conflict. Set true ONLY on a pure Auto Mode cluster.
+  #
+  # A CONSUMER repo can flip this per-cluster without editing this repo, via the
+  # external overlay repo ("layer 5"): set fleet-secret's overlay.repoURL, then add
+  #   node: {manageAddons: true}
+  # to <overlay-repo>/overlays/clusters/<cluster>/karpenter/values.yaml.
+  manageAddons: false
+  addons:
+    vpcCni:
+      # VPC-CNI NetworkPolicy enforcement, kept EXPLICIT rather than left to the
+      # addon default: manageAddons adopts with resolveConflictsOnUpdate=OVERWRITE,
+      # so adopting a cluster that already had enforcement on would otherwise
+      # silently strip it and render every NetworkPolicy inert.
+      # Serialized into the addon's configurationValues JSON as a STRING
+      # ("true"/"false") — the form EKS accepts in practice. The template builds
+      # that JSON with dict|toJson and reads this key with hasKey+get (not
+      # `| default`, which treats bool false as empty and would flip an explicit
+      # false back to true), so an overlay may write either `false` or "false".
+      # Omitting the key — including when an overlay replaces `node:` wholesale —
+      # yields "true", i.e. fail-secure.
+      enableNetworkPolicy: "true"
+
+# Common tags on managed IAM resources.
+tags:
+  managed-by: crossplane
+  purpose: karpenter

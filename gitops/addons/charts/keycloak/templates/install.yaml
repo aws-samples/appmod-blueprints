@@ -59,17 +59,43 @@ spec:
     metadata:
       labels:
         app: keycloak
+      annotations:
+        # Force a rolling restart whenever keycloak.conf content changes. Kubernetes does
+        # not hot-reload files from a mounted ConfigMap, so without this checksum the
+        # running Keycloak pods keep stale config (e.g. hostname/SAML settings) after
+        # `git pull` + ArgoCD sync updates the ConfigMap in place — only freshly created
+        # pods would otherwise pick up the new file.
+        checksum/config: {{ include "keycloak.conf" . | sha256sum }}
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system
+        karpenter.sh/nodepool: {{ (.Values.global | default dict).systemNodepool | default "system" }}
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
         effect: "NoSchedule"
+      # HA scheduling: force the two replicas onto SEPARATE nodes so a single node
+      # rollout / EKS Auto Mode consolidation / upgrade can never take both down at once.
+      # (Root cause of the intermittent Backstage OIDC 502: both replicas were co-located
+      # on one node in one AZ, so a node disruption caused a full Keycloak outage during
+      # which OIDC discovery failed.)
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: keycloak
+            topologyKey: kubernetes.io/hostname
+      # Force the two replicas across >=2 AZs (not just separate nodes). minDomains: 2
+      # makes the 2nd replica unschedulable until a node exists in a second AZ, so the
+      # provisioner (Karpenter / EKS Auto Mode) opens one — guaranteeing a full-AZ
+      # disruption always leaves a Keycloak pod running (issue #892). minDomains is GA
+      # since k8s 1.30 (cluster is on 1.35). Kept DoNotSchedule to match the other
+      # critical add-ons; the hostname anti-affinity above still guarantees separate nodes.
       topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: topology.kubernetes.io/zone
         whenUnsatisfiable: DoNotSchedule
+        minDomains: 2
         labelSelector:
           matchLabels:
             app: keycloak
@@ -143,31 +169,7 @@ spec:
 apiVersion: v1
 data:
   keycloak.conf: |
-    # Database
-    # The database vendor.
-    db=postgres
-
-    # The username of the database user.
-    db-url=jdbc:postgresql://postgresql.keycloak.svc.cluster.local:5432/postgres
-
-    # hostname settings
-    hostname=https://{{ .Values.global.ingress_domain_name }}/keycloak
-    hostname-admin=https://{{ .Values.global.ingress_domain_name }}/keycloak
-    hostname-strict=false
-    http-relative-path=keycloak
-    http-enabled=true
-    hostname-debug=true
-    # .../keycloak/realms/platform/hostname-debug
-    
-    # Proxy configuration for CloudFront/ALB - use xforwarded for AWS setup
-    proxy-headers=xforwarded
-    
-    # Enable account console and admin features
-    features=account,admin
-    
-    # Development mode settings for better debugging
-    log-level=INFO
-
+{{ include "keycloak.conf" . | indent 4 }}
 kind: ConfigMap
 metadata:
   name: keycloak-config
@@ -199,6 +201,15 @@ metadata:
     argocd.argoproj.io/sync-wave: "6"
 spec:
   replicas: 1
+  revisionHistoryLimit: 10
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   selector:
     matchLabels:
       app: postgresql
@@ -209,16 +220,22 @@ spec:
         app: postgresql
     spec:
       nodeSelector:
-        karpenter.sh/nodepool: system
+        karpenter.sh/nodepool: {{ (.Values.global | default dict).systemNodepool | default "system" }}
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"
         effect: "NoSchedule"
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
       containers:
         - envFrom:
             - secretRef:
                 name: keycloak-config
           image: docker.io/library/postgres:17.4-alpine3.21
+          imagePullPolicy: IfNotPresent
           name: postgres
           env:
             - name: PGDATA
@@ -226,12 +243,15 @@ spec:
           ports:
             - containerPort: 5432
               name: postgresdb
+              protocol: TCP
           resources:
             limits:
               memory: 500Mi
             requests:
               cpu: 100m
               memory: 300Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
@@ -254,6 +274,10 @@ metadata:
   name: keycloak-pdb
   namespace: keycloak
 spec:
+  # At replicas=2 this allows only one pod down at a time during voluntary disruptions
+  # (equivalent to minAvailable: 1). Combined with the hostname anti-affinity on the
+  # StatefulSet, a node rollout evicts one pod at a time across two nodes, so Keycloak
+  # is never fully unavailable.
   maxUnavailable: 1
   selector:
     matchLabels:

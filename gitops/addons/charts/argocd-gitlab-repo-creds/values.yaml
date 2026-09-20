@@ -1,0 +1,6 @@
+namespace: argocd
+secretStoreName: aws-secrets-manager
+# Populated from cluster-secret annotations via the addon registry valuesObject.
+aws_cluster_name: ""
+gitlab_domain_name: ""
+git_username: "user1"

@@ -17,7 +17,7 @@ metadata:
   finalizers:
   - resources-finalizer.argocd.argoproj.io
 spec:
-  project: default
+  project: spoke-workloads
   destination:
     namespace: ${{values.namespace}}
     name: peeks-spoke-dev

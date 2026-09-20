@@ -1,0 +1,31 @@
+# Cluster-scoped Crossplane EnvironmentConfig carrying this cluster's ambient
+# metadata. Values are injected by the addon ApplicationSet from the cluster's
+# ArgoCD-secret annotations: clusterName/region are set by the fleet-secret chart;
+# vpcId/subnet ids/clusterSecurityGroupId are published by the platform-cluster
+# Composition (which creates both hub and spokes). Pure declarative manifest —
+# no Job, no AWS API calls, no Pod Identity. ArgoCD keeps it in sync automatically.
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: env-config
+  labels:
+    # Also expose the cluster name as the 'env' label so label-selector consumers
+    # (e.g. function-environment-configs Selector) resolve it, matching spec.deploy.
+    env: {{ .Values.global.clusterName }}
+data:
+  clusterName: {{ .Values.global.clusterName | quote }}
+  region: {{ .Values.aws.region | quote }}
+  vpcId: {{ .Values.aws.vpcId | quote }}
+  clusterSecurityGroupId: {{ .Values.aws.clusterSecurityGroupId | quote }}
+  privateSubnetIds:
+  {{- range (splitList "," .Values.aws.privateSubnetIds) }}
+    {{- if . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  publicSubnetIds:
+  {{- range (splitList "," .Values.aws.publicSubnetIds) }}
+    {{- if . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}

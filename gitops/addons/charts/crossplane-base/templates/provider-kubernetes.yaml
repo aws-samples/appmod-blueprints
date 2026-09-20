@@ -22,9 +22,28 @@ spec:
   credentials:
     source: InjectedIdentity
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: provider-kubernetes-admin
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "4"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.providers.kubernetes.serviceAccount }}
+  namespace: {{ .Values.namespace }}
+{{- if eq .Values.aws.clusterName .Values.hubClusterName }}
+---
 # RBAC: provider-kubernetes patches ArgoCD cluster Secrets to publish
 # Composition-derived facts (e.g. aws_vpc_id) onto the spoke Secret used by
 # ApplicationSets. Scoped to argocd-namespace Secrets only.
+# Only rendered on the hub/control-plane cluster: spoke clusters have no
+# "argocd" namespace, so this would otherwise fail to sync.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -54,4 +73,5 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.providers.kubernetes.serviceAccount }}
     namespace: {{ .Values.namespace }}
+{{- end }}
 {{- end }}

@@ -1,0 +1,10 @@
+# Crossplane XRD + Composition for EKS Pod Identity.
+#
+# Cluster facts (clusterName, region) are resolved ambiently from the
+# `env-config` EnvironmentConfig present on every cluster — callers (the OAP
+# `aws-service-identity` trait) pass only serviceAccount + namespace.
+xrd:
+  enabled: true
+
+# Name of the EnvironmentConfig carrying cluster metadata (clusterName, region, ...).
+envConfigName: env-config

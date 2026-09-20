@@ -88,7 +88,7 @@ resources:
 
 ### 3. Build Trainium-Compatible Container Image
 
-**File:** `platform/infra/terraform/common/Dockerfile.ray-neuron` (new file)
+**File:** `cluster-providers/common/Dockerfile.ray-neuron` (already present — not yet wired into a build task)
 
 ```dockerfile
 # Use the official vLLM Neuron image as base

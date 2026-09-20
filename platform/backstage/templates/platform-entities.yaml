@@ -1,0 +1,139 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: guest
+  description: Default guest group
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: guest
+  namespace: development
+spec:
+  memberOf: [guest]
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: rust
+  description: Rust application system
+spec:
+  owner: guest
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: kubernetes-api
+  description: Kubernetes API
+spec:
+  type: openapi
+  lifecycle: production
+  owner: guest
+  definition: |
+    openapi: "3.0.0"
+    info:
+      title: Kubernetes API
+      version: "1.0"
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: aws-api
+  description: AWS API
+spec:
+  type: openapi
+  lifecycle: production
+  owner: guest
+  definition: |
+    openapi: "3.0.0"
+    info:
+      title: AWS API
+      version: "1.0"
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: gitlab-api
+  description: GitLab API
+spec:
+  type: openapi
+  lifecycle: production
+  owner: guest
+  definition: |
+    openapi: "3.0.0"
+    info:
+      title: GitLab API
+      version: "1.0"
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: cicd-pipeline-api
+  description: CI/CD Pipeline API provided by Kro CICDPipeline resources
+spec:
+  type: openapi
+  lifecycle: experimental
+  owner: guest
+  definition: |
+    openapi: "3.0.0"
+    info:
+      title: CI/CD Pipeline API
+      version: "1.0"
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: kro-controller
+  description: Kro ResourceGraphDefinition controller
+spec:
+  type: kubernetes-controller
+  owner: guest
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: ack-ecr-controller
+  description: AWS Controllers for Kubernetes - ECR
+spec:
+  type: kubernetes-controller
+  owner: guest
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: ack-iam-controller
+  description: AWS Controllers for Kubernetes - IAM
+spec:
+  type: kubernetes-controller
+  owner: guest
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: ack-eks-controller
+  description: AWS Controllers for Kubernetes - EKS
+spec:
+  type: kubernetes-controller
+  owner: guest
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: argo-workflows
+  description: Argo Workflows engine
+spec:
+  type: kubernetes-controller
+  owner: guest
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: argocd
+  description: ArgoCD GitOps controller
+spec:
+  type: kubernetes-controller
+  owner: guest

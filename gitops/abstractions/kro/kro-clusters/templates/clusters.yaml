@@ -1,0 +1,108 @@
+{{- range $name, $cluster := .Values.clusters }}
+{{- if or (not $.Values.global.targetCluster) (eq $name $.Values.global.targetCluster) }}
+{{- /*
+  Fail-fast on a cluster name this path cannot actually provision.
+
+  Names are otherwise ARBITRARY: there is deliberately no <resourcePrefix>-spoke-*
+  requirement. Authorization is by target service and ownership tag, not by name.
+  Only two real limits remain, and both used to surface as a confusing failure long
+  after a VPC and NAT gateway had been created:
+
+    1. The name is used verbatim as a Kubernetes namespace throughout the
+       EksCluster/Vpc resource graphs, so it must be a DNS-1123 label
+       (lowercase alphanumeric and '-', starting and ending alphanumeric).
+       EKS itself would accept uppercase and '_'; the namespace will not.
+
+    2. Every IAM role the graph creates is <name><suffix>, and IAM caps role names
+       at 64 characters. The longest suffix is '-cloudwatch-observability-role'
+       (30 chars), so the name must be at most 34.
+
+  Failing here means the Application does not render, so nothing is created. The
+  check is inside the targetCluster gate so one bad declaration fails only its own
+  Application rather than the whole fleet.
+*/ -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name) }}
+{{-   fail (printf "cluster name %q is not a valid DNS-1123 label: it is used as a Kubernetes namespace by the EksCluster/Vpc resource graphs, so it must contain only lowercase letters, digits and '-', and must start and end with a letter or digit. Rename the entry in fleet/spoke-values/.../kro-clusters." $name) }}
+{{- end }}
+{{- if gt (len $name) 34 }}
+{{-   fail (printf "cluster name %q is %d characters; the maximum is 34. Every IAM role is named <cluster><suffix> and the longest suffix, '-cloudwatch-observability-role', is 30 characters, so a longer name would exceed the 64-character IAM role name limit and fail at CreateCluster after the VPC already exists." $name (len $name)) }}
+{{- end }}
+---
+apiVersion: kro.run/v1alpha1
+kind: EksclusterWithVpc
+metadata:
+  name: {{ $name }}
+  namespace: {{ $name }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  name: {{ $name }}
+  tenant: {{ $cluster.tenant | default "tenant1" | quote }}
+  environment: {{ $cluster.environment | default "staging" | quote }}
+  # Owner prefix, stamped as platform.gitops.io/prefix on the cluster and VPC so
+  # teardown can find them without relying on the cluster name. Falls back to the
+  # RGD schema default only if the hub secret carries no resource_prefix.
+  {{- $rp := $cluster.resourcePrefix | default $.Values.global.resourcePrefix }}
+  {{- if $rp }}
+  resourcePrefix: {{ $rp | quote }}
+  {{- end }}
+  # delete (default) tears IAM roles/OIDC down with the cluster — safe for
+  # test/workshop events even on prod clusters. Set retain per-cluster only for
+  # genuinely-persistent deployments.
+  deletionPolicy: {{ $cluster.deletionPolicy | default "delete" | quote }}
+  provider: {{ $cluster.provider | default "" | quote }}
+  region: {{ $cluster.region | default "us-west-2" | quote }}
+  managementRegion: {{ $cluster.region | default "us-west-2" | quote }}
+  k8sVersion: {{ $cluster.k8sVersion | default "1.34" | quote }}
+  accountId: {{ $cluster.accountId | quote }}
+  managementAccountId: {{ $cluster.managementAccountId | quote }}
+  argoCdHubRoleArn: {{ $.Values.global.argoCdHubRoleArn | default "" | quote }}
+  argoCdCapabilityRoleArn: {{ $.Values.global.argoCdCapabilityRoleArn | default $.Values.global.argoCdHubRoleArn | default "" | quote }}
+  adminRoleName: {{ $cluster.adminRoleName | default "Admin" | quote }}
+  adminInstanceRoleName: {{ $cluster.adminInstanceRoleName | default "" | quote }}
+  fleetSecretManagerSecretNameSuffix: {{ $cluster.fleetSecretManagerSecretNameSuffix | default "argocd-secret" | quote }}
+  domainName: {{ $cluster.domainName | default "" | quote }}
+  workloads: {{ $cluster.workloads | default "false" | quote }}
+  {{- if $cluster.subHostedZone | quote }}
+  subHostedZone:
+    {{- toYaml $cluster.subHostedZone | nindent 4 }}
+  {{- end }}
+  {{- if $cluster.cidr }}
+  cidr:
+    {{- toYaml $cluster.cidr | nindent 4 }}
+  {{- else }}
+  cidr: {}
+  {{- end }}
+  gitops:
+    {{- $g := $cluster.gitops | default dict }}
+    {{- $global := $.Values.global | default dict }}
+    # Inherit the deploy branch from the control-plane (passed via global) so
+    # kro-provisioned clusters track the same Git revision as the rest of the
+    # fleet, instead of falling back to the RGD's "main" default. A per-cluster
+    # JSON gitops.* value still wins; final fallback is "main".
+    addonsRepoRevision: {{ $g.addonsRepoRevision | default $global.addonsRepoRevision | default "main" | quote }}
+    fleetRepoRevision: {{ $g.fleetRepoRevision | default $global.fleetRepoRevision | default "main" | quote }}
+    # Inherit the repo URL from the control-plane too (not just the revision). Guarded:
+    # only emit when a value is present, otherwise the EksclusterWithVpc RGD's own
+    # default applies. Without this the spoke tracks the control-plane revision against
+    # the RGD's aws-samples default repo, which breaks fork / PR-branch deployments.
+    {{- $addonsUrl := $g.addonsRepoUrl | default $global.addonsRepoUrl }}
+    {{- if $addonsUrl }}
+    addonsRepoUrl: {{ $addonsUrl | quote }}
+    {{- end }}
+    {{- $fleetUrl := $g.fleetRepoUrl | default $global.fleetRepoUrl }}
+    {{- if $fleetUrl }}
+    fleetRepoUrl: {{ $fleetUrl | quote }}
+    {{- end }}
+    {{- range $k, $v := (omit $g "addonsRepoRevision" "fleetRepoRevision" "addonsRepoUrl" "fleetRepoUrl") }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+  {{- if $cluster.addons }}
+  addons:
+    {{- toYaml $cluster.addons | nindent 4 }}
+  {{- else }}
+  addons: {}
+  {{- end }}
+{{- end }}
+{{- end }}

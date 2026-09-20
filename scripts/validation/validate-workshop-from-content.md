@@ -54,8 +54,7 @@ Download the content archive from S3 and extract it:
 ```bash
 CONTENT_FILE="content-$(echo $WORKSHOP_GIT_BRANCH | tr '/' '-').tgz"
 aws s3 cp "s3://$ASSETS_BUCKET_NAME/${ASSETS_BUCKET_PREFIX}${CONTENT_FILE}" /tmp/
-mkdir -p ~/environment/content
-tar xzf "/tmp/${CONTENT_FILE}" -C ~/environment/content/
+tar xzf "/tmp/${CONTENT_FILE}" -C ~/environment/
 ```
 
 Content will be in `~/environment/content/`. All content file paths below are relative to that directory.
@@ -79,10 +78,10 @@ reliable fallback.
 
 | Service   | Username | Password          |
 |-----------|----------|-------------------|
-| Backstage | `user1`  | `$USER1_PASSWORD` |
-| GitLab    | `user1`  | `$USER1_PASSWORD` |
-| ArgoCD    | `admin`  | `$IDE_PASSWORD`   |
-| Grafana   | `user1`  | `$USER1_PASSWORD` |
+| Backstage | `user1`  | `$USER_PASSWORD` (Keycloak OIDC) |
+| GitLab    | `user1`  | `$USER_PASSWORD` (web login) / `$GIT_TOKEN` (API PAT) |
+| ArgoCD    | via IDC SSO | N/A (EKS Capability) |
+| Grafana   | `user1`  | `$USER_PASSWORD` |
 
 ## Required Environment Variables
 
@@ -90,11 +89,133 @@ Env vars are defined in `~/.bashrc.d/platform.sh` and `~/.bashrc.d/aliases.sh`.
 
 ```bash
 echo "BACKSTAGE=$BACKSTAGE_URL ARGOCD=$ARGOCD_URL WORKFLOWS=$WORKFLOWS_URL"
+echo "GITLAB=$GITLAB_URL GIT_TOKEN=$GIT_TOKEN GIT_USERNAME=$GIT_USERNAME"
 echo "DNS_DEV=$DNS_DEV DNS_PROD=$DNS_PROD ACCOUNT=$AWS_ACCOUNT_ID REGION=$AWS_REGION"
-echo "GITLAB=$GITLAB_URL GRAFANA=$GRAFANA_URL"
 ```
 
-If any are empty, stop and report.
+> **Note:** `$GIT_TOKEN` is the GitLab Personal Access Token for API calls (PRIVATE-TOKEN header).
+> `$DNS_DEV`/`$DNS_PROD` are empty until an app with Ingress is deployed on spokes.
+
+If any required vars are empty, stop and report.
+
+---
+
+## Pre-Flight Architecture Check (Phase 0)
+
+**Run this BEFORE any module.** This phase is **diagnostic only** — it checks whether
+the platform bootstrap deployed everything correctly. **Do NOT fix issues manually**
+(no `helm install`, no `argocd cluster add`, no `kubectl apply` of addons). Instead:
+
+1. **Identify** what is missing or broken.
+2. **Trace the root cause** back to the bootstrap (the `task install` cluster-provider flow,
+   SSM documents, the workshop Taskfile, GitOps ApplicationSets) to understand *why* it wasn't deployed.
+3. **Log each issue** with the specific bootstrap script/step that should have handled it.
+4. **Stop and report** — the platform build scripts need fixing, not manual workarounds.
+
+Everything in the workshop is deployed via GitOps (ArgoCD ApplicationSets syncing from
+the platform Git repo). If something is missing on a spoke cluster, the fix belongs in
+the bootstrap pipeline — not in a manual `helm install` or `kubectl apply`.
+
+```bash
+echo "⏱️ Phase 0 (pre-flight) START: $(date +%H:%M)"
+source ~/.bashrc.d/platform.sh 2>/dev/null
+source ~/.bashrc.d/ssm-setup-ide-logs.sh 2>/dev/null
+```
+
+### 0.1 — ArgoCD cluster registrations
+
+The workshop deploys to `peeks-spoke-dev` and `peeks-spoke-prod` via ArgoCD CD apps.
+These apps set `destination.name` to the spoke cluster name, so **ArgoCD must have
+cluster secrets for both spoke clusters**.
+
+```bash
+argocd cluster list 2>/dev/null
+kubectl config use-context peeks-hub
+kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster \
+  -o custom-columns=NAME:.metadata.name --no-headers
+```
+
+**Expected**: Three clusters — `peeks-hub`, `peeks-spoke-dev`, `peeks-spoke-prod`.
+
+If spoke clusters are missing, trace the root cause:
+- Which bootstrap step registers spoke clusters with ArgoCD?
+- Check the SSM document / `task install` cluster-provider bootstrap that creates cluster secrets.
+- Check the `clusters` ApplicationSet and the GitOps fleet config.
+- Flag as 🔴 Blocker with the specific script that failed.
+
+### 0.2 — Spoke cluster addons (deployed via GitOps)
+
+Spoke clusters need addons deployed by ArgoCD ApplicationSets. Check what actually landed:
+
+```bash
+for CLUSTER in peeks-spoke-dev peeks-spoke-prod; do
+  echo "=== $CLUSTER ==="
+  kubectl config use-context $CLUSTER
+
+  echo "  NodePools (need a general pool without CriticalAddonsOnly taint):"
+  kubectl get nodepools.karpenter.sh --no-headers 2>/dev/null
+
+  echo "  Argo Rollouts CRD:"
+  kubectl get crd rollouts.argoproj.io --no-headers 2>/dev/null || echo "    MISSING"
+
+  echo "  External Secrets CRD:"
+  kubectl get crd externalsecrets.external-secrets.io --no-headers 2>/dev/null || echo "    MISSING"
+
+  echo "  Ingress NGINX pods:"
+  kubectl get pods -n ingress-nginx --no-headers 2>/dev/null || echo "    MISSING"
+
+  echo "  kro RGDs (need AppmodService in Active state):"
+  kubectl get resourcegraphdefinitions --no-headers -o wide 2>/dev/null || echo "    NONE"
+done
+```
+
+**Expected per spoke cluster**:
+- NodePool without `CriticalAddonsOnly` taint (for workload pods)
+- Argo Rollouts, External Secrets, Ingress NGINX — all deployed via ArgoCD
+- `AppmodService` RGD in Active/Ready state
+
+If any are missing, **do NOT install them manually**. Instead:
+- Check which ArgoCD ApplicationSet should deploy this addon to spoke clusters.
+- Check the cluster secret labels (`enable_argo_rollouts`, `enable_external_secrets`, etc.).
+- Check if the spoke cluster secrets exist at all (see 0.1).
+- The root cause is almost always: spoke clusters not registered → ApplicationSets
+  don't generate apps for them → addons never deployed.
+- Flag each missing addon as 🔴 Blocker with the bootstrap gap that caused it.
+
+### 0.3 — Backstage system-info entity
+
+```bash
+source ~/environment/platform-on-eks-workshop/scripts/validation/backstage-auth.sh 2>/dev/null
+curl -s -H "Authorization: Bearer $BS_TOKEN" \
+  "$BACKSTAGE_URL/api/catalog/entities/by-name/system/default/system-info" \
+  | jq '.spec.gitlab_hostname'
+```
+
+**Expected**: A real hostname (e.g., `d3asb3i2t94xpq.cloudfront.net`).
+
+If it shows `{{ values.gitlabDomain }}`, the `catalog-info.yaml` was never rendered
+by the bootstrap. Trace to the `backstage-catalog` bootstrap step (`task backstage-catalog`
+→ the cluster provider's `hub:backstage-catalog`), which performs the substitution and
+updates the `backstage-dynamic-catalog` ConfigMap.
+Flag as 🔴 Blocker — identify which deploy step should have called this.
+
+### 0.4 — DNS_DEV / DNS_PROD
+
+```bash
+echo "DNS_DEV=$DNS_DEV DNS_PROD=$DNS_PROD"
+```
+
+If empty, trace to the SSM setup script or `platform.sh` that should populate these
+from the spoke cluster ingress LB hostnames. Flag as 🟡 Wrong output.
+
+```bash
+echo "⏱️ Phase 0 (pre-flight) END: $(date +%H:%M)"
+```
+
+**If any 🔴 Blocker is found in Phase 0, STOP.** Do not proceed to Module 10.
+Report the blockers with root-cause analysis pointing to the specific bootstrap
+scripts that need fixing. The goal is to fix the platform build, not to paper over
+gaps with manual commands.
 
 ---
 
@@ -241,6 +362,28 @@ The workshop says "wait for workflow to finish" with a UI link. Use CLI polling:
 kubectl get workflows -n <namespace> --sort-by=.metadata.creationTimestamp --no-headers
 ```
 
+> **PREREQUISITE GATE — verify the Argo Workflows controller is actually Ready before Module 30.**
+> Do NOT trust `argocd app get argo-workflows-peeks-hub` showing `Healthy`. That app is a
+> manifest-type app at a late sync-wave (7), and ArgoCD marks it Healthy as soon as the
+> manifests are *applied* — before the `workflow-controller` Deployment is rolled out and the
+> CRDs are served. On a freshly (re)provisioned hub this produces a **phantom-healthy** window
+> where the `argo` namespace/pods/CRDs don't exist yet even though the app reports Healthy
+> (observed as a false "Argo Workflows missing" blocker). Gate on the controller itself:
+>
+> ```bash
+> kubectl config use-context peeks-hub
+> # Wait for the workflow-controller AND argo-server Deployments to be Available
+> kubectl rollout status deploy/workflow-controller -n argo --timeout=300s
+> kubectl rollout status deploy/argo-server         -n argo --timeout=300s
+> # Sanity: the Workflow CRD must be served, and templates present
+> kubectl get crd workflows.argoproj.io >/dev/null && echo "Workflow CRD OK"
+> kubectl get workflowtemplates -A --no-headers | wc -l   # expect >0
+> ```
+>
+> If the namespace doesn't exist yet, the controller hasn't reconciled — wait and re-check
+> rather than flagging Argo Workflows as missing. Only after this gate passes should you submit
+> CI workflows for phases 20.3 / 30.2.
+
 **IMPORTANT: Only wait for the workflow that matters.** Workflows prefixed with `dora-deploy`
 or `dora-setup` are DORA metrics side-effects — they are **never blocking** for workshop
 progress. When waiting for a CI build, poll only the specific `cicd-cicd-*` or
@@ -272,21 +415,47 @@ source ~/.bashrc.d/ssm-setup-ide-logs.sh
 
 ### ArgoCD Sync
 
-Prefer argocd CLI, fallback to kubectl if auth errors:
+Prefer argocd CLI, fallback to kubectl if auth errors.
+
+**IMPORTANT: Always use `timeout` to prevent hanging indefinitely.** The `argocd app sync`
+command can block forever if the app never reaches a healthy state. Wrap every sync call:
 
 ```bash
-# CLI
-argocd app sync <app-name>
+# CLI — with 120s timeout (adjust per phase if needed)
+timeout 120 argocd app sync <app-name> || echo "argocd sync timed out or failed"
+```
+
+If the sync times out, check the app status and events before retrying:
+
+```bash
+argocd app get <app-name> --refresh 2>/dev/null | head -20
 ```
 
 If CLI auth fails, run `argocd-refresh-token` then `source ~/.bashrc.d/platform.sh`.
 
 ```bash
-# kubectl fallback
+# kubectl fallback (non-blocking — patches and returns immediately)
 hub
 kubectl patch application <app-name> -n argocd --type merge \
   -p '{"operation": {"initiatedBy": {"username": "admin"}, "sync": {"revision": "HEAD"}}}'
 ```
+
+### General Timeout Rule
+
+**Every long-running CLI command must be wrapped with `timeout`** to prevent the agent from
+getting stuck. Apply these defaults:
+
+| Command type                        | Timeout |
+|-------------------------------------|---------|
+| `argocd app sync`                   | 120s    |
+| `kubectl rollout status`            | 180s    |
+| `kubectl wait --for=condition`      | 120s    |
+| `helm install/upgrade --wait`       | 300s    |
+| `curl` to external endpoints        | 30s     |
+| Any polling loop                    | max 20 iterations with `sleep 15–30` |
+
+If a command times out, log it as a potential issue, check the underlying resource state,
+and continue to the next step.
 
 ### Backstage Scaffolder Failures
 
@@ -514,9 +683,9 @@ trigger-devlake rust
 **Phase 70.3a — Change Failure Rate practice**: Create a GitLab issue via API:
 
 ```bash
-PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $GIT_TOKEN" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
 curl -s -X POST "$GITLAB_URL/api/v4/projects/$PROJECT_ID/issues" \
-  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "PRIVATE-TOKEN: $GIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title": "Bug: Testing Change Failure Rate", "description": "Testing for CFR Section of workshop"}'
 
@@ -527,10 +696,10 @@ hub && trigger-devlake rust
 **Phase 70.4a — Recovery Time practice**: Close the issue via API:
 
 ```bash
-PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $GIT_TOKEN" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
 # Close issue #1 (created in 70.3a)
 curl -s -X PUT "$GITLAB_URL/api/v4/projects/$PROJECT_ID/issues/1" \
-  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "PRIVATE-TOKEN: $GIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"state_event": "close"}'
 
@@ -547,9 +716,9 @@ echo "# Testing Lead Time for Changes" >> README.md
 git add . && git commit -m "test: LTFC metrics" && git push -u origin ltfc-branch
 
 # Create MR via GitLab API
-PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $USER1_PASSWORD" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
+PROJECT_ID=$(curl -s -H "PRIVATE-TOKEN: $GIT_TOKEN" "$GITLAB_URL/api/v4/projects?search=rust" | jq -r '.[0].id')
 curl -s -X POST "$GITLAB_URL/api/v4/projects/$PROJECT_ID/merge_requests" \
-  -H "PRIVATE-TOKEN: $USER1_PASSWORD" \
+  -H "PRIVATE-TOKEN: $GIT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"source_branch": "ltfc-branch", "target_branch": "main", "title": "Testing LTFC"}'
 ```

@@ -1,21 +1,23 @@
 #![allow(warnings)]
 mod services;
+mod setup;
 mod types;
 mod utils;
-mod setup;
 
 #[macro_use]
 extern crate tracing;
 
 use aws_config::default_provider::credentials::DefaultCredentialsChain;
 use aws_config::default_provider::region::DefaultRegionChain;
-use aws_sdk_dynamodb as ddb;
-use rocket_prometheus::{PrometheusMetrics};
-use rocket::{self, routes};
-use services::product::*;
 use aws_config::Region;
+use aws_sdk_dynamodb as ddb;
+use rocket::fs::FileServer;
+use rocket::{self, routes};
+use rocket_prometheus::PrometheusMetrics;
 use services::cart::*;
+use services::product::*;
 use services::ui::*;
+use setup::PRODUCT_IMAGES_DIR;
 
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
@@ -53,10 +55,17 @@ async fn main() -> Result<(), rocket::Error> {
 
     setup::setup(config.clone(), table_name.clone()).await;
 
+    // Serves product images directly from this microservice using Rocket's
+    // built-in FileServer (see src/api/setup.rs): real image files live in
+    // `static/`, checked into git and baked into the container; anything
+    // missing gets a generated placeholder so the catalog is never broken.
+    let _ = std::fs::create_dir_all(PRODUCT_IMAGES_DIR);
+
     let rocket = rocket::custom(rocket_config)
         .manage(ddb::Client::new(&config))
         .manage(table_name)
         .attach(prometheus.clone())
+        .mount("/product-images", FileServer::from(PRODUCT_IMAGES_DIR))
         .mount(
             "/",
             routes![

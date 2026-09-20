@@ -7,7 +7,7 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   syncPolicy:
-    preserveResourcesOnDeletion: false
+    preserveResourcesOnDeletion: true
   generators:
     - clusters:
         selector:

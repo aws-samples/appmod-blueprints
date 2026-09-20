@@ -1,0 +1,4 @@
+# Workshop: pin to general-purpose-peeks (amd64, tuned). Non-critical; the built-in
+# general-purpose is already amd64, this aligns it to the tuned pool. Generic keeps default.
+nodeSelector:
+  karpenter.sh/nodepool: general-purpose-peeks

@@ -55,6 +55,12 @@ spec:
           namespace: ${schema.spec.namespace}
           annotations:
             services.k8s.aws/adoption-policy: adopt-or-create
+            # Policies are identified by ARN, which ACK cannot derive from spec.name
+            # alone. Without adoption-fields, adopt-or-create falls back to CreatePolicy
+            # and fails with 409 EntityAlreadyExists when the policy already exists
+            # (e.g. left over from a prior install). Provide the ARN so ACK adopts it.
+            services.k8s.aws/adoption-fields: |
+              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.metadata.name}-s3-policy"}
         spec:
           name: ${schema.metadata.name}-s3-policy
           policyDocument: |
@@ -120,6 +126,8 @@ spec:
         metadata:
           name: ${schema.metadata.name}-podidentity
           namespace: ${schema.spec.namespace}
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
         spec:
           clusterName: ${schema.spec.clusterName}
           namespace: ${schema.spec.namespace}
@@ -166,6 +174,10 @@ spec:
                 args:
                   - |
                     set -e
+                    # gpt2 and other Xet-backed HF repos fail to download when the hf_xet
+                    # backend is used in this minimal pod (missing xet deps / restricted
+                    # egress). Force the classic HTTP transfer.
+                    export HF_HUB_DISABLE_XET=1
                     echo "Installing dependencies..."
                     pip install -q huggingface_hub
                     

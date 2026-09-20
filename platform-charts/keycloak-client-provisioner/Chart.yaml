@@ -1,0 +1,13 @@
+apiVersion: v2
+name: keycloak-client-provisioner
+description: >
+  Provisions OIDC clients in a Keycloak realm for a given environment and
+  writes the contract JSON to AWS Secrets Manager so consumer charts can
+  pull credentials via ExternalSecret.
+
+  Runs as an ArgoCD PostSync Job on the hub cluster, parameterised per
+  spoke environment. Replace this chart with your own IdP provisioner;
+  the Secrets Manager path and contract schema are the fixed contract.
+type: application
+version: 0.1.2
+appVersion: "24.0"

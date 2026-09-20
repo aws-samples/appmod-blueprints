@@ -21,7 +21,7 @@ spec:
               repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
               revision: '{{ .metadata.annotations.addonsRepoRevision }}'
               directories:
-                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/resource-groups/*'
+                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/*'
   template:
     metadata:
       name: '{{ .path.basename }}-{{ .name }}'

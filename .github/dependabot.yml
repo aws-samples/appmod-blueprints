@@ -1,5 +1,9 @@
 # Dependabot is disabled in favor of Renovate
 # See .github/workflows/renovate.yml and renovate.json for dependency management configuration
 version: 2
-enable-beta-ecosystems: false
-updates: []
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 0

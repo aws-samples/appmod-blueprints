@@ -1,0 +1,20 @@
+{{- /*
+Custom Karpenter NodePools, rendered from a caller-supplied list.
+
+The generic solution ships NO custom pools (default empty) and relies on the EKS
+Auto Mode built-in `system` / `general-purpose` NodePools. Consumers that need
+tuned pools — e.g. the workshop's stability-oriented pools with a daytime
+"do-not-disrupt" budget and a longer termination grace — supply the full pool
+definitions via their own overlay (see workshop/overlay/.../platform-manifests/values.yaml).
+
+Each entry: { name: <string>, spec: <karpenter.sh/v1 NodePool spec> }.
+*/ -}}
+{{- range .Values.customNodepools.pools }}
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: {{ .name }}
+spec:
+  {{- toYaml .spec | nindent 2 }}
+{{- end }}

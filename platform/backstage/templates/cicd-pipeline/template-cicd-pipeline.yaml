@@ -3,7 +3,7 @@ kind: Template
 metadata:
   description: Deploy a Kro-based CI/CD Pipeline using GitOps with ArgoCD
   name: cicd-pipeline-gitops
-  title: Deploy CI/CD Pipeline With kro (GitOps)
+  title: Deploy CI/CD Pipeline (GitOps)
 spec:
   owner: guest
   type: service
@@ -88,6 +88,7 @@ spec:
           aws_region: ${{ parameters.aws_region }}
           aws_account_id: ${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}
           gitlab_hostname: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
+          insecure: ${{ steps['fetchSystem'].output.entity.spec.insecure | default(true) }}
           argocd_hostname: ${{ steps['fetchSystem'].output.entity.spec.argocd_hostname }}
           ingress_hostname: ${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}
           git_username: ${{ steps['fetchSystem'].output.entity.spec.gituser }}

@@ -1,0 +1,104 @@
+{{- if .Values.xrd.enabled }}
+# XPodIdentity Composition
+# Creates an IAM Role (trusted by pods.eks.amazonaws.com) and an EKS
+# PodIdentityAssociation binding it to the caller's ServiceAccount. The
+# clusterName and region are pulled from the `env-config` EnvironmentConfig
+# via function-environment-configs, so callers never supply them.
+#
+# accessFor policy attachments are handled by the OAP aws-service-identity
+# trait (they reference OAM-app-scoped sibling policies), attaching to the IAM
+# role by its deterministic name "<serviceAccount>-role".
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xpodidentities.aws.platform.gitops.io
+  labels:
+    provider: aws
+spec:
+  compositeTypeRef:
+    apiVersion: platform.gitops.io/v1alpha1
+    kind: XPodIdentity
+  mode: Pipeline
+  pipeline:
+    # Load ambient cluster metadata (clusterName, region, ...) from env-config.
+    - step: load-environment
+      functionRef:
+        name: function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Reference
+              ref:
+                name: {{ .Values.envConfigName | quote }}
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          # IAM role trusted by EKS Pod Identity. Deterministic name
+          # "<serviceAccount>-role" so the aws-service-identity trait can attach
+          # accessFor policies to it without a managed-resource cross-reference.
+          - name: iam-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels:
+                  role: pod-identity
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {"Service": "pods.eks.amazonaws.com"},
+                        "Action": ["sts:AssumeRole", "sts:TagSession"]
+                      }]
+                    }
+                providerConfigRef:
+                  name: default
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.serviceAccount
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-role"
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.arn
+                toFieldPath: status.roleArn
+
+          # Bind the role to the ServiceAccount via EKS Pod Identity.
+          - name: pod-identity-association
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: PodIdentityAssociation
+              spec:
+                forProvider:
+                  roleArnSelector:
+                    matchControllerRef: true
+                    matchLabels:
+                      role: pod-identity
+                providerConfigRef:
+                  name: default
+            patches:
+              - type: FromEnvironmentFieldPath
+                fromFieldPath: clusterName
+                toFieldPath: spec.forProvider.clusterName
+              - type: FromEnvironmentFieldPath
+                fromFieldPath: region
+                toFieldPath: spec.forProvider.region
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.serviceAccount
+                toFieldPath: spec.forProvider.serviceAccount
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.namespace
+                toFieldPath: spec.forProvider.namespace
+{{- end }}

@@ -36,10 +36,10 @@ task install
      a. crossplane:helm           Install Crossplane (version from addons/registry/platform.yaml)
      b. crossplane:providers      Render crossplane-base chart (providers + functions only, no ProviderConfig)
      c. crossplane:provider-config Apply bootstrap ProviderConfig (aws-credentials secret)
-     d. crossplane:claims         Apply XRD/Composition, PlatformCluster claim, pod identities (see below)
+     d. crossplane:claims         Apply XRD/Composition (incl. KRO/ACK/ArgoCD Capability MRs), PlatformCluster claim, pod identities (see below)
   6. hub:seed
      a. Wait for EKS cluster, IAM roles, and pod identities to become Ready
-     b. argocd:capability         Create EKS ArgoCD Capability via Job
+     b. (wait capabilities)       Wait for the KRO/ACK/ArgoCD Capability MRs (created by the Composition) to be Ready
      c. secrets-manager:seed      Write hub config to AWS Secrets Manager
      d. secrets-manager:seed-keycloak Seed keycloak passwords into Secrets Manager
      e. hub:install-eso           Helm install External Secrets on the hub
@@ -102,7 +102,6 @@ Supporting manifests in `manifests/`:
 
 | Path | Purpose |
 |------|---------|
-| `argocd/create-capability.yaml` | Job that calls the EKS API to create the ArgoCD Capability |
 | `argocd/appproject.yaml` | ArgoCD AppProject definition |
 | `crossplane/provider-config-bootstrap.yaml` | ProviderConfig using the `aws-credentials` secret (Kind-only, not used on hub) |
 | `external-secrets/cluster-secret-store.yaml` | ClusterSecretStore for AWS Secrets Manager |
@@ -125,6 +124,26 @@ When using `oss` mode, the provider must also:
 2. Include `aws_vpc_id` and `alb_controller_mode: oss` in the Secrets Manager seed metadata
 4. Create the `aws-load-balancer-controller-sa` service account in `kube-system` on the hub
 5. Add `alb.ingress.kubernetes.io/target-type: ip` to ingresses using ClusterIP services
+
+## Exposure (domain + TLS)
+
+The platform never provisions a domain or a TLS edge — the **consumer** owns both.
+`config.local.yaml` provides:
+
+| Field | Meaning |
+|-------|---------|
+| `domain` | Ingress hostname (Route53 / CloudFront / anything the consumer provisions). Used for ingress host rules + printed URLs. The platform never creates it. |
+| `insecure` | `false` (default) → the platform ALB serves **HTTPS** with an ACM cert (auto-discovered by host, or `certificateArn`). `true` → the ALB serves plain **HTTP** and the consumer terminates TLS upstream (e.g. CloudFront in front of the ALB). |
+| `certificateArn` | Optional ACM ARN for the HTTPS listener when `insecure: false`. |
+
+The ingress templates render `HTTP:80` (insecure) or `HTTPS:443 + ssl-redirect + host`
+(secure) from `.Values.global.insecure`. The AWS Load Balancer Controller creates and owns
+the shared platform ALB normally (addon Ingresses join the `platform` group via
+`alb.ingress.kubernetes.io/group.name: platform`); the platform does **not** pre-create load
+balancers or CloudFront.
+
+Consumers that front the ALB with CloudFront (e.g. the workshop) set `insecure: true` and
+provision the CloudFront distribution + VPC origin themselves — see `workshop/`.
 
 ## Spoke Cluster Provisioning
 

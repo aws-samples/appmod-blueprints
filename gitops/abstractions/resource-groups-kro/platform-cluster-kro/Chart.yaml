@@ -1,0 +1,5 @@
+apiVersion: v2
+name: platform-cluster-kro
+description: KRO/ACK-based EKS cluster provisioning (alternative to Crossplane platform-cluster)
+type: application
+version: 0.1.0

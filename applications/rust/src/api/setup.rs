@@ -2,14 +2,41 @@ use crate::types::{Category, Image, Product, ProductOption, ProductVariant};
 use aws_config::default_provider::credentials::DefaultCredentialsChain;
 use aws_config::{Region, SdkConfig};
 use aws_sdk_dynamodb::Client;
-use image::GenericImageView;
+use image::{GenericImageView, ImageBuffer, Rgb};
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
+use rocket::fs::relative;
 use serde::Deserialize;
 use serde_dynamo::to_item;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
+use std::path::Path;
 use uuid::Uuid;
+
+/// Local directory the microservice serves product images from, mounted at
+/// /product-images by main.rs via Rocket's built-in FileServer. Real image
+/// files live here (matching the `file` column in products.csv), checked into
+/// git and baked into the container image; anything missing gets a generated
+/// placeholder instead so the catalog never has broken images.
+pub const PRODUCT_IMAGES_DIR: &str = relative!("static/images");
+
+fn image_url_for(file_name: &str) -> String {
+    // The pod itself only ever knows about the unprefixed /product-images route
+    // (nginx's path-based-ingress rewrite-target strips the app's mount path,
+    // e.g. /rust-app, before the request reaches this service -- see
+    // platform-meta/templates/traits/path-based-ingress.yaml). Consumers
+    // outside the cluster need that prefix included in the URL they're given,
+    // so it's configurable via APP_BASE_PATH and left empty by default for
+    // direct/local access where no ingress sits in front of this service.
+    let base_path = std::env::var("APP_BASE_PATH").unwrap_or_default();
+    format!(
+        "{}/product-images/{}",
+        base_path.trim_end_matches('/'),
+        file_name
+    )
+}
 
 #[derive(Deserialize, Debug, Clone)]
 struct CSVProduct {
@@ -19,7 +46,7 @@ struct CSVProduct {
     image_number: u32,
     file: String,
     image_height: u32,
-    image_width: u32
+    image_width: u32,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -46,6 +73,12 @@ pub async fn setup(config: SdkConfig, table_name: String) {
     }
 
     // purge_table(&client, &table_name).await;
+
+    let base_path = std::env::var("APP_BASE_PATH").unwrap_or_default();
+    println!(
+        "Serving product images inline from this service at {}/product-images",
+        base_path.trim_end_matches('/')
+    );
 
     let (products, categories) = csv_to_data();
 
@@ -106,7 +139,7 @@ pub async fn setup(config: SdkConfig, table_name: String) {
         title: "FRONT Page".to_string(),
         description: "Front Page".to_string(),
         products: front_page_products,
-        visible: false
+        visible: false,
     };
 
     let front_page_cat_item = match to_item(&front_page_category) {
@@ -214,11 +247,13 @@ fn csv_to_data() -> (Vec<Product>, HashMap<String, Category>) {
                 prod_imgs
                     .iter()
                     .map(|image| {
+                        ensure_placeholder_image(
+                            image,
+                            csv_product.image_width,
+                            csv_product.image_height,
+                        );
                         Image {
-                            url: format!(
-                                "https://d2pxm7bxcihgvo.cloudfront.net/{}",
-                                image.to_string()
-                            ),
+                            url: image_url_for(image),
                             alt_text: format!("{} image", csv_product.name),
                             width: csv_product.image_width as usize,
                             height: csv_product.image_height as usize,
@@ -244,7 +279,7 @@ fn csv_to_data() -> (Vec<Product>, HashMap<String, Category>) {
                         title: csv_product.category.clone(),
                         products: vec![product.clone()],
                         description: csv_product.category.clone(),
-                        visible: true
+                        visible: true,
                     },
                 );
             }
@@ -266,6 +301,48 @@ fn get_image_dimensions(file_name: &String) -> (usize, usize) {
     let (width, height) = img.dimensions();
 
     (width as usize, height as usize)
+}
+
+/// Generates a small placeholder image for `file_name` under `PRODUCT_IMAGES_DIR`
+/// so the catalog has something real to serve at `/product-images/<file_name>`
+/// even before a real image is checked in. A no-op if the file already exists.
+fn ensure_placeholder_image(file_name: &str, width: u32, height: u32) {
+    let dir = Path::new(PRODUCT_IMAGES_DIR);
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        println!("Unable to create product image directory: {}", e);
+        return;
+    }
+
+    let path = dir.join(file_name);
+    if path.exists() {
+        // A real image is already there (e.g. dropped in locally or baked into
+        // the container image) -- leave it alone.
+        return;
+    }
+
+    // Cap dimensions so placeholder generation stays fast for a full catalog.
+    let render_width = width.clamp(1, 600);
+    let render_height = height.clamp(1, 600);
+    let color = placeholder_color(file_name);
+    let buffer = ImageBuffer::from_fn(render_width, render_height, |_, _| color);
+
+    if let Err(e) = buffer.save(&path) {
+        println!("Unable to generate placeholder image {}: {}", file_name, e);
+    }
+}
+
+/// Derives a stable color from the file name so the same product always
+/// renders the same placeholder swatch.
+fn placeholder_color(file_name: &str) -> Rgb<u8> {
+    let mut hasher = DefaultHasher::new();
+    file_name.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    Rgb([
+        (hash & 0xFF) as u8,
+        ((hash >> 8) & 0xFF) as u8,
+        ((hash >> 16) & 0xFF) as u8,
+    ])
 }
 
 fn build_options(csv_options: &Vec<CSVOptions>) -> HashMap<String, Vec<ProductOption>> {

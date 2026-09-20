@@ -21,6 +21,7 @@ topologySpreadConstraints:
 - maxSkew: 1
   topologyKey: topology.kubernetes.io/zone
   whenUnsatisfiable: DoNotSchedule
+  minDomains: 2
   labelSelector:
     matchLabels:
       app.kubernetes.io/name: external-secrets
@@ -48,6 +49,7 @@ certController:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
     whenUnsatisfiable: DoNotSchedule
+    minDomains: 2
     labelSelector:
       matchLabels:
         app.kubernetes.io/name: external-secrets-cert-controller
@@ -74,6 +76,7 @@ webhook:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
     whenUnsatisfiable: DoNotSchedule
+    minDomains: 2
     labelSelector:
       matchLabels:
         app.kubernetes.io/name: external-secrets-webhook

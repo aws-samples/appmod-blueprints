@@ -1,0 +1,54 @@
+{{- /*
+Platform Ingress for the Kargo API.
+
+Rendered by this umbrella chart rather than the upstream kargo dependency so the
+ALB listener config can follow the platform `insecure` flag with a block
+conditional — the same mechanism used by argo-workflows/backstage/keycloak. The
+upstream chart's own ingress is disabled via kargo.api.ingress.enabled=false.
+
+  insecure=true  → HTTP-only (:80), host-less rule; consumer terminates TLS upstream
+                   (e.g. CloudFront in front of the ALB). No ACM cert is required.
+  insecure=false → HTTPS (:443) with an HTTP->HTTPS redirect and a host rule; the ALB
+                   auto-discovers the ACM cert by host.
+*/ -}}
+{{- $insecure := eq (toString (.Values.global.insecure | default "false")) "true" -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kargo-api
+  namespace: kargo
+  annotations:
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/success-codes: '200-399'
+{{- if $insecure }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+{{- else }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+{{- end }}
+    # Strip the /kargo prefix before forwarding to the API server (Kargo serves at
+    # root; basePath is cosmetic for URL generation only).
+    alb.ingress.kubernetes.io/transforms.kargo-rewrite: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^/kargo/?(.*)$","replace":"/$1"}]}}]'
+spec:
+  ingressClassName: platform
+  rules:
+{{- if $insecure }}
+    - http:
+{{- else }}
+    - host: {{ .Values.global.ingress_domain_name | quote }}
+      http:
+{{- end }}
+        paths:
+          # Must match kargo.api.basePath so the /kargo prefix is served (and stripped
+          # by the rewrite transform above) before reaching the kargo-api service.
+          - path: /kargo
+            pathType: Prefix
+            backend:
+              service:
+                # Service created by the upstream kargo chart; with kargo.api.tls.enabled
+                # =false it listens on port 80 (targetPort 8080).
+                name: kargo-api
+                port:
+                  number: 80

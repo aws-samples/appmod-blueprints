@@ -7,6 +7,9 @@
 {{- $repoURLGit := .Values.repoURLGit -}}
 {{- $repoURLGitRevision := .Values.repoURLGitRevision -}}
 {{- $repoURLGitBasePath := .Values.repoURLGitBasePath -}}
+{{- $overlayRepoURLGit := .Values.overlayRepoURLGit -}}
+{{- $overlayRepoURLGitRevision := .Values.overlayRepoURLGitRevision -}}
+{{- $overlayRepoURLGitBasePath := .Values.overlayRepoURLGitBasePath -}}
 {{- $valueFiles := .Values.valueFiles -}}
 {{- $valuesFilePrefix :=  .Values.valuesFilePrefix -}}
 {{- $useValuesFilePrefix := (default false .Values.useValuesFilePrefix )  -}}
@@ -129,7 +132,12 @@ spec:
       sources:
       - repoURL: {{ $repoURLGit | squote}}
         targetRevision: {{ $repoURLGitRevision | squote }}
-        ref: values
+        ref: defaults
+        {{- if $overlayRepoURLGit }}
+      - repoURL: {{ $overlayRepoURLGit | squote }}
+        targetRevision: {{ $overlayRepoURLGitRevision | squote }}
+        ref: overlay
+        {{- end }}
         {{- if eq (toString $chartConfig.enableAckPodIdentity) "true" }}
         {{ include "application-sets.pod-identity" (dict
           "chartName" ($chartConfig.chartName | default $nameNormalize)

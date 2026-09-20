@@ -1,0 +1,10 @@
+# Workshop: pin external-dns to the tuned system-peeks pool.
+# In the workshop `configs` layer so it applies to ALL clusters (hub AND spokes).
+# system-peeks carries the CriticalAddonsOnly:NoSchedule taint, so the toleration is
+# required alongside the nodeSelector. The external-dns chart honors both top-level keys.
+nodeSelector:
+  karpenter.sh/nodepool: system-peeks
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+    effect: NoSchedule

@@ -1,0 +1,92 @@
+{{- if and .Values.node.enabled .Values.node.manageAddons }}
+{{- /*
+vpc-cni + kube-proxy EKS addons for the self-managed Karpenter node.
+
+Auto Mode's built-in networking applies ONLY to its own Bottlerocket nodes; a
+self-managed AL2023 node has neither the CNI nor kube-proxy, so pods on it can't
+reach the API server (node NotReady "cni plugin not initialized" / kata-deploy
+crashloop). external-name "<cluster>:<addon>" ADOPTS-or-creates in place, and
+OVERWRITE takes field ownership from a self-managed install.
+
+GATED behind node.manageAddons (default false): EKS addons are per-cluster
+singletons, so this must be OFF on any cluster where something else owns them
+(e.g. the platform-cluster Composition on managed-node-group clusters) or the two
+owners fight. Enable ONLY on a pure Auto Mode cluster with no existing owner.
+
+Neither addon needs a tolerations override to reach the tainted self-managed node:
+both DaemonSets already ship `{operator: Exists}`. See the vpc-cni
+configurationValues below for what actually governs placement.
+*/ -}}
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: Addon
+metadata:
+  name: {{ .Values.aws.clusterName }}-karpenter-vpc-cni
+  annotations:
+    crossplane.io/external-name: {{ printf "%s:vpc-cni" .Values.aws.clusterName | quote }}
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    # REQUIRED on every eks.aws.upbound.io MR (the CRD lists region in
+    # forProvider.required); without it the MR fails admission with
+    # "spec.forProvider.region: Required value".
+    region: {{ .Values.aws.region }}
+    clusterName: {{ .Values.aws.clusterName }}
+    addonName: vpc-cni
+    resolveConflictsOnCreate: OVERWRITE
+    resolveConflictsOnUpdate: OVERWRITE
+    # configurationValues is a JSON *string*. Built with dict|toJson rather than
+    # hand-written JSON so quoting/escaping is always well-formed.
+    #
+    # No tolerations override: the aws-node DaemonSet already ships
+    # `{operator: Exists}` (tolerates every taint), so it needs no help reaching a
+    # tainted self-managed node. What actually governs its placement is
+    # nodeAffinity `eks.amazonaws.com/compute-type NotIn [fargate,hybrid,auto]` —
+    # Auto Mode nodes carry compute-type=auto and are excluded, a self-managed
+    # node leaves it unset and is included. Verified live: aws-node runs on the
+    # self-managed kata node and on none of the Auto Mode nodes.
+    #
+    # enableNetworkPolicy is set EXPLICITLY because resolveConflictsOnUpdate is
+    # OVERWRITE, which takes field ownership — adopting a cluster that already had
+    # enforcement on would otherwise silently turn it off and render every
+    # NetworkPolicy/ClusterNetworkPolicy inert. A sandbox node's egress
+    # containment depends on it.
+    #
+    # Emitted as the STRING "true"/"false" (printf %v), the form EKS accepts in
+    # practice. hasKey + get rather than `| default`, because Helm's default treats
+    # bool false as empty and would flip an explicit false back to true; this way
+    # an overlay may write either `false` or "false". Omitting the key entirely —
+    # including when an overlay replaces `node:` wholesale — yields "true", i.e.
+    # fail-secure.
+    {{- $vpcCni := get (.Values.node.addons | default dict) "vpcCni" | default dict }}
+    {{- $enableNetworkPolicy := "true" }}
+    {{- if hasKey $vpcCni "enableNetworkPolicy" }}
+    {{- $enableNetworkPolicy = printf "%v" (get $vpcCni "enableNetworkPolicy") }}
+    {{- end }}
+    configurationValues: {{ dict
+      "enableNetworkPolicy" $enableNetworkPolicy
+      | toJson | quote }}
+  providerConfigRef:
+    name: {{ .Values.providerConfigName | default "default" }}
+---
+apiVersion: eks.aws.upbound.io/v1beta1
+kind: Addon
+metadata:
+  name: {{ .Values.aws.clusterName }}-karpenter-kube-proxy
+  annotations:
+    crossplane.io/external-name: {{ printf "%s:kube-proxy" .Values.aws.clusterName | quote }}
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    # REQUIRED — see the vpc-cni Addon above.
+    region: {{ .Values.aws.region }}
+    clusterName: {{ .Values.aws.clusterName }}
+    addonName: kube-proxy
+    resolveConflictsOnCreate: OVERWRITE
+    resolveConflictsOnUpdate: OVERWRITE
+  providerConfigRef:
+    name: {{ .Values.providerConfigName | default "default" }}
+{{- end }}

@@ -31,6 +31,12 @@ export function GridTileImage({
       {props.src ? (
         // eslint-disable-next-line jsx-a11y/alt-text -- `alt` is inherited from `props`, which is being enforced with TypeScript
         <Image
+          // Product images are served by the rust microservice through the
+          // same shared ingress domain (see setup.rs's APP_BASE_PATH), not
+          // from this app's own server, so next/image's optimizer -- which
+          // would try to self-fetch them -- is skipped in favor of loading
+          // them directly.
+          unoptimized
           className={clsx("relative h-full w-full object-contain", {
             "transition duration-300 ease-in-out group-hover:scale-105":
               isInteractive,
