@@ -997,10 +997,37 @@ try:
     except Exception as e:
         log(f"  [re-sweep] AMP: {e}")
 
-    # 16b. ALBs (recreated by the AWS Load Balancer Controller)
+    # 16b. ALBs (recreated by the AWS Load Balancer Controller). Widened to match
+    #      the same way as section 12b — the <prefix>-* name OR the LB-controller
+    #      ownership tag elbv2.k8s.aws/cluster=<hub|spoke> (plus the #914 prefix
+    #      tag) — so recreated k8s-<ns>-<name>-<hash> LBs are re-swept too, not
+    #      only <prefix>-* ones. Reuses the _lb_owned predicate defined in 12b
+    #      (module scope), with a self-contained fallback if 12b didn't run.
     try:
+        try:
+            _resweep_lb_owned = _lb_owned  # defined in section 12b
+        except NameError:
+            _resweep_owned = {hub, *spokes}
+
+            def _resweep_lb_owned(arn, name):
+                if name.startswith(prefix + "-"):
+                    return True
+                try:
+                    td = {
+                        t["Key"]: t["Value"]
+                        for t in elbv2.describe_tags(
+                            ResourceArns=[arn]
+                        )["TagDescriptions"][0]["Tags"]
+                    }
+                except Exception:
+                    return False
+                return (
+                    td.get("elbv2.k8s.aws/cluster") in _resweep_owned
+                    or td.get(OWNER_PREFIX_TAG) == prefix
+                )
+
         for lb in elbv2.describe_load_balancers()["LoadBalancers"]:
-            if lb["LoadBalancerName"].startswith(prefix + "-"):
+            if _resweep_lb_owned(lb["LoadBalancerArn"], lb["LoadBalancerName"]):
                 elbv2.delete_load_balancer(LoadBalancerArn=lb["LoadBalancerArn"])
                 log(f"  [re-sweep] Deleted recreated ALB {lb['LoadBalancerName']}")
     except Exception as e:
