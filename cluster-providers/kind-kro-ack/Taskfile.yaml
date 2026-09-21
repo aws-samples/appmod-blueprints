@@ -1508,6 +1508,22 @@ tasks:
     vars:
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
     cmds:
+      # Preflight: the extended sweep (step 6) runs python helpers that import boto3.
+      # boto3 was an UNDECLARED prerequisite: when absent, the sweep died on
+      # ModuleNotFoundError and CloudFront, IAM, Secrets, AMP, OIDC and VPC cleanup
+      # were all skipped — while destroy still printed "✓ Destroy complete". Fail here
+      # instead, before anything is torn down, so the operator is not left with a
+      # half-destroyed account and a success message. Note boto3 does not install on
+      # the default Python 3.14 on current macOS; a 3.12 interpreter works.
+      - cmd: |
+          if ! python3 -c 'import boto3' 2>/dev/null; then
+            printf '{{.C_ERR}}✗ boto3 is required by the teardown sweep but is not importable by %s.{{.C_RESET}}\n' "$(command -v python3)"
+            printf '{{.C_INFO}}  Install it:   python3 -m pip install boto3{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  If that fails on Python 3.14, use a 3.12 interpreter (e.g. pyenv/uv) and re-run.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Refusing to start: without it the sweep silently skips CloudFront, IAM,{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Secrets, AMP, OIDC and VPC cleanup.{{.C_RESET}}\n'
+            exit 1
+          fi
       - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
       - task: credentials:refresh
       # Kill the Kind cluster FIRST — before hub:destroy-addons.
@@ -1552,7 +1568,12 @@ tasks:
           STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
             --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
           if [ "$STATUS" != "NOT_FOUND" ] && [ "$STATUS" != "DELETING" ]; then
-            aws eks delete-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} 2>/dev/null || true
+            # Keep stderr: this is where ResourceInUseException ("Cluster has
+            # capabilities attached") appears when the capability wait above timed
+            # out. Discarding it is why the cluster could survive a destroy that
+            # reported success. Still `|| true` so later cleanup steps run; the
+            # check at the end of destroy is what fails the task.
+            aws eks delete-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} || true
             echo "  Submitted hub EKS cluster deletion"
           fi
         ignore_error: true
@@ -1804,7 +1825,16 @@ tasks:
           else
             echo "Kind preserved. Run 'task destroy-kind' to remove."
           fi
-      - printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'
+      # Don't claim success without checking. Every step above is `|| true` +
+      # ignore_error, so destroy used to print "✓ Destroy complete." even when the
+      # hub cluster survived (capability deletion timed out and the DeleteCluster
+      # error was swallowed). One check on the one outcome that matters.
+      - cmd: |
+          if aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} >/dev/null 2>&1; then
+            printf '{{.C_ERR}}✗ Destroy incomplete: EKS cluster {{.HUB_CLUSTER_NAME}} still exists. Re-run task destroy.{{.C_RESET}}\n'
+            exit 1
+          fi
+          printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'
 
   # ---- from kind-crossplane ----
   urls:
