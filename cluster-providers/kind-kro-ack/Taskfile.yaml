@@ -390,11 +390,17 @@ tasks:
           --dry-run=client -o yaml | kubectl apply -f -
       - |
         # Also refresh eso-aws-credentials (ESO needs individual keys, not INI format)
+        # awk, not `grep X | awk`: for a plain IAM user there is no aws_session_token
+        # line, so grep exits 1, and under go-task's mvdan/sh (which implements pipefail
+        # strictly, unlike /bin/sh) the whole pipeline inherits that 1 and errexit aborts
+        # the task. awk matches internally, emits nothing when absent, and exits 0.
+        # Preferred over `|| true`, which would also swallow a real failure of the
+        # kubectl/base64 step feeding $CREDS.
         CREDS=$(kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials -o jsonpath='{.data.credentials}' | base64 -d)
         kubectl -n {{.ACK_NAMESPACE}} create secret generic eso-aws-credentials \
-          --from-literal=access-key-id="$(echo "$CREDS" | grep aws_access_key_id | awk '{print $3}')" \
-          --from-literal=secret-access-key="$(echo "$CREDS" | grep aws_secret_access_key | awk '{print $3}')" \
-          --from-literal=session-token="$(echo "$CREDS" | grep aws_session_token | awk '{print $3}')" \
+          --from-literal=access-key-id="$(echo "$CREDS" | awk '/aws_access_key_id/{print $3}')" \
+          --from-literal=secret-access-key="$(echo "$CREDS" | awk '/aws_secret_access_key/{print $3}')" \
+          --from-literal=session-token="$(echo "$CREDS" | awk '/aws_session_token/{print $3}')" \
           --dry-run=client -o yaml | kubectl apply -f -
       - rm -f {{.ROOT_DIR}}/private/aws-creds.ini
       - |
@@ -478,10 +484,14 @@ tasks:
       - |
         # Extract individual credential keys from the ACK credentials file and
         # create a separate secret for ESO (ESO needs individual keys, not INI format)
+        # awk, not `grep X | awk` — see the note in credentials:refresh. A plain IAM user
+        # has no aws_session_token line; grep exits 1, pipefail propagates it and errexit
+        # aborted this task with all output suppressed. This is what made the ESO
+        # ClusterSecretStore step fail for IAM-user credentials.
         CREDS=$(kubectl get secret aws-credentials -n ack-system -o jsonpath='{.data.credentials}' | base64 -d)
-        ACCESS_KEY=$(echo "$CREDS" | grep aws_access_key_id | awk '{print $3}')
-        SECRET_KEY=$(echo "$CREDS" | grep aws_secret_access_key | awk '{print $3}')
-        SESSION_TOKEN=$(echo "$CREDS" | grep aws_session_token | awk '{print $3}')
+        ACCESS_KEY=$(echo "$CREDS" | awk '/aws_access_key_id/{print $3}')
+        SECRET_KEY=$(echo "$CREDS" | awk '/aws_secret_access_key/{print $3}')
+        SESSION_TOKEN=$(echo "$CREDS" | awk '/aws_session_token/{print $3}')
         kubectl create secret generic eso-aws-credentials -n ack-system \
           --from-literal=access-key-id="$ACCESS_KEY" \
           --from-literal=secret-access-key="$SECRET_KEY" \
@@ -1027,7 +1037,11 @@ tasks:
         # devlake RDS composition consumes. `vpc` MUST be a JSON object (a bare VPC-id string makes
         # every jq lookup empty -> empty vpc-config -> RDS never provisions). Stored as a JSON
         # STRING (--arg), matching kind-crossplane, so ESO's property extraction round-trips.
-        PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | grep -v '^$' | jq -R . | jq -s .)
+        # awk 'NF', not `grep -v '^$'`: with an empty PRIVATE_SUBNET_IDS the grep matches
+        # nothing and exits 1, which pipefail propagates and errexit turns into a task
+        # abort (verified under go-task's mvdan/sh). awk drops blank lines and exits 0,
+        # yielding [] so the jq below still produces a well-formed vpc object.
+        PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | awk 'NF' | jq -R . | jq -s .)
         VPC_JSON=$(jq -n --arg id "{{.VPC_ID}}" --argjson subnet_ids "$PRIVATE_SUBNETS_JSON" \
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id:$id, subnet_ids:$subnet_ids, cluster_security_group_id:$cluster_security_group_id}' | jq -c .)
