@@ -7,5 +7,5 @@ spec:
   interval: 30s
   subscriptions:
   - image:
-      repoURL: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/peeks/java
+      repoURL: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${RESOURCE_PREFIX}/java
       imageSelectionStrategy: NewestBuild

@@ -13,7 +13,7 @@ spec:
   - name: gitURL
     value: ${GITLAB_URL}/${GIT_USERNAME}/java.git
   - name: image
-    value: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/peeks/java
+    value: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${RESOURCE_PREFIX}/java
   steps:
   - uses: git-clone
     config:

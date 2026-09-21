@@ -18,6 +18,10 @@ if [[ -z "$AWS_ACCOUNT_ID" || -z "$AWS_REGION" || -z "$GITLAB_URL" || -z "$GIT_U
     exit 1
 fi
 
+# Ensure RESOURCE_PREFIX is exported so envsubst resolves ${RESOURCE_PREFIX} in the
+# kargo manifests (warehouse/stages/promotiontask) to the correct ECR repo.
+export RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
+
 # Ensure the Kargo controller has ECR read access so the warehouse can discover images.
 # Creates the IAM role + pod identity association (idempotent).
 HUB_CLUSTER="${RESOURCE_PREFIX:-peeks}-hub"
@@ -66,7 +70,7 @@ envsubst < warehouse.yaml | kubectl apply -f -
 # The ECR token expires after 12 h; the secret is re-created here each
 # time deploy-kargo.sh is run, which covers re-runs and long events.
 KARGO_NS="java-app-kargo"
-ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/peeks/java"
+ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${RESOURCE_PREFIX:-peeks}/java"
 echo "Creating Kargo ECR image credential secret..."
 ECR_PWD=$(aws ecr get-login-password --region "$AWS_REGION")
 kubectl -n "$KARGO_NS" delete secret ecr-creds --ignore-not-found >/dev/null 2>&1
