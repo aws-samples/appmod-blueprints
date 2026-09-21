@@ -1785,7 +1785,7 @@ tasks:
           done
           # 6h. Orphaned spoke VPCs (ACK ec2 VPC resources that survived cluster delete).
           #     Scoped by the EKS ACK tag (eks:kubernetes-resource-name=<PREFIX>-spoke-*).
-          python3 "{{.ROOT_DIR}}/scripts/sweep-spoke-vpcs.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" 2>&1 || true
+          python3 "{{.ROOT_DIR}}/scripts/sweep-spoke-vpcs.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "{{.HUB_CLUSTER_NAME}}" 2>&1 || true
           # 6i. IDE VPC non-default security groups (created by workshop, not by CFN).
           #     These include ALB SGs, EKS cluster SGs, RDS SGs, AMG SGs, k8s-traffic SGs.
           #     If left, they block CFN's VPC deletion → DELETE_FAILED on VPC subnet.
