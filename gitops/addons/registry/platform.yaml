@@ -637,8 +637,8 @@ platform-manifests:
   valuesObject:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
-      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       region: '{{.metadata.annotations.aws_region}}'
 
 platform-manifests-post:

@@ -21,13 +21,15 @@ spec:
         parameter: {
         	policy?: string
         	service: string
+        	// +usage=Resource name prefix for account/region-level segregation
+        	resourcePrefix: *"peeks" | string
         }
         outputs: {
         	if parameter.policy == _|_ {
-        		"\(context.appName)-\(context.name)-iam-policy": {
+        		"\(parameter.resourcePrefix)-\(context.appName)-\(context.name)-iam-policy": {
         			apiVersion: "iam.aws.upbound.io/v1beta1"
         			kind:       "Policy"
-        			metadata: name: "\(context.appName)-\(context.name)-iam-policy"
+        			metadata: name: "\(parameter.resourcePrefix)-\(context.appName)-\(context.name)-iam-policy"
         			spec: {
         				providerConfigRef: name: "default"
         				forProvider: policy: {"""
@@ -49,10 +51,10 @@ spec:
         	}
 
         	if parameter.policy != _|_ {
-        		"\(context.appName)-\(context.name)-iam-policy": {
+        		"\(parameter.resourcePrefix)-\(context.appName)-\(context.name)-iam-policy": {
         			apiVersion: "iam.aws.upbound.io/v1beta1"
         			kind:       "Policy"
-        			metadata: name: "\(context.appName)-\(context.name)-iam-policy"
+        			metadata: name: "\(parameter.resourcePrefix)-\(context.appName)-\(context.name)-iam-policy"
         			spec: {
         				providerConfigRef: name: "default"
         				forProvider: policy: "\(parameter.policy)"

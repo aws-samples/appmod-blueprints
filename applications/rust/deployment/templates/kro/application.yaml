@@ -12,15 +12,16 @@ spec:
   serviceAccount: rust-service-account-<environment>
   clusterName: <cluster_name>
   accountId: "${AWS_ACCOUNT_ID}"
+  resourcePrefix: "${RESOURCE_PREFIX}"
   env:
     - name: TABLE_NAME
-      value: rust-app-table-<environment>
+      value: ${RESOURCE_PREFIX}-rust-app-table-<environment>
     - name: AWS_REGION
       value: "${AWS_REGION}"
   components:
     dynamodb:
       enabled: true
-      tableName: rust-app-table-<environment>
+      tableName: ${RESOURCE_PREFIX}-rust-app-table-<environment>
       partitionKey: partition_key
       partitionKeyType: S
       sortKey: sort_key

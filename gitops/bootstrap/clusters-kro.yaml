@@ -94,6 +94,15 @@ spec:
                 # from a fork / PR branch).
                 addonsRepoUrl: '{{ .metadata.annotations.addonsRepoURL }}'
                 fleetRepoUrl: '{{ .metadata.annotations.fleetRepoURL }}'
+                # Inherit the resource prefix from the control-plane so spoke
+                # EksclusterWithVpc instances (and the EksCluster they nest) build
+                # their cluster-secret annotations (resource_prefix, hub_cluster_name
+                # = <prefix>-hub) with the deployment's real prefix. Without this the
+                # spoke falls back to the RGD default "peeks" -> hub_cluster_name
+                # "peeks-hub", which is not a registered cluster under a custom
+                # prefix (e.g. peeks-031) -> destinationHub addon apps (ack_pod_identities)
+                # fail ApplicationValidationError -> cluster-addons Degraded.
+                resourcePrefix: '{{ .metadata.annotations.resource_prefix }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
               - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'

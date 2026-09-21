@@ -24,7 +24,7 @@ spec:
           - name: APP_ENV
             value: "DEV"
           - name: TABLE_NAME
-            value: rust-app-table-<environment>
+            value: ${RESOURCE_PREFIX}-rust-app-table-<environment>
           - name: AWS_REGION
             value: "${AWS_REGION}"
         readinessProbe:
@@ -59,11 +59,12 @@ spec:
           - rust-dynamodb-<environment>
         clusterName: <cluster_name>
         clusterRegion: us-west-2
+        resourcePrefix: "${RESOURCE_PREFIX}"
 
     - name: rust-dynamodb-<environment>
       type: dynamodb-table
       properties:
-        tableName: rust-app-table-<environment>
+        tableName: ${RESOURCE_PREFIX}-rust-app-table-<environment>
         partitionKeyName: partition_key
         sortKeyName: sort_key
         region: us-west-2
@@ -71,3 +72,4 @@ spec:
         - type: component-iam-policy
           properties:
             service: dynamodb
+            resourcePrefix: "${RESOURCE_PREFIX}"
