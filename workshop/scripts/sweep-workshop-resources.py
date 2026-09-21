@@ -785,6 +785,56 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
+# 13b. GuardDuty-managed VPC endpoints (guardduty-data)
+#     GuardDuty Runtime Monitoring auto-creates an interface VPC endpoint
+#     (com.amazonaws.<region>.guardduty-data) in every VPC it covers — IDE/hub AND
+#     spokes. Its Elastic Network Interfaces sit in the private subnets and are NOT
+#     part of the workshop IaC, so nothing else removes them: they block CFN's own
+#     subnet/VPC deletion in the IDE VPC (stack DELETE_FAILED on the subnets) AND
+#     the spoke VPC reaper below. This is the network twin of the GuardDuty SG
+#     reaper (15b) — the SG can't be deleted while the endpoint still uses it, and
+#     the subnets can't be deleted while the endpoint ENIs remain. Delete these
+#     endpoints FIRST (before the VPC reaper and before CFN reaches the IDE VPC),
+#     scoped to workshop-owned + CFN-owned VPCs only, then let ENIs detach.
+# ---------------------------------------------------------------------------
+try:
+    _epvpc_cache = {}
+
+    def _vpc_owned_or_cfn(vpc_of_ep):
+        if not vpc_of_ep:
+            return False
+        if vpc_of_ep not in _epvpc_cache:
+            try:
+                vt = ec2.describe_vpcs(VpcIds=[vpc_of_ep])["Vpcs"][0].get("Tags", [])
+                _epvpc_cache[vpc_of_ep] = {t["Key"]: t["Value"] for t in vt}
+            except Exception:
+                _epvpc_cache[vpc_of_ep] = {}
+        vtags = _epvpc_cache[vpc_of_ep]
+        is_cfn = any(k.startswith("aws:cloudformation:") for k in vtags.keys())
+        is_owned = (
+            vtags.get(OWNER_PREFIX_TAG) == prefix
+            or any(prefix in str(v) for v in vtags.values())
+        )
+        return is_cfn or is_owned
+
+    gd_eps = []
+    for ep in ec2.describe_vpc_endpoints().get("VpcEndpoints", []):
+        if "guardduty-data" not in ep.get("ServiceName", ""):
+            continue
+        if not _vpc_owned_or_cfn(ep.get("VpcId")):
+            continue  # only workshop-owned / IDE (CFN) VPCs — never unrelated ones
+        gd_eps.append(ep["VpcEndpointId"])
+    if gd_eps:
+        ec2.delete_vpc_endpoints(VpcEndpointIds=gd_eps)
+        log(f"  Deleted {len(gd_eps)} guardduty-data VPC endpoint(s): {', '.join(gd_eps)}")
+        time.sleep(30)  # let the endpoint ENIs detach before subnet/VPC deletion
+    else:
+        log("No guardduty-data VPC endpoints to delete")
+except Exception as e:
+    log(f"GuardDuty VPC endpoints: {e}")
+
+
+# ---------------------------------------------------------------------------
 # 14. Orphan VPC reaper (spoke + Crossplane) — backstop for section 10
 #     Section 10 can leave a spoke VPC behind because Auto Mode / KRO ENIs are
 #     still detaching right after cluster deletion (delete_vpc fails non-fatally).
