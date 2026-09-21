@@ -34,7 +34,19 @@ vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   AWS_PROFILE:
-    sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
+    # MUST never evaluate to an empty string. yq's `//` falls back only on null or
+    # false, NOT on an empty string, so `aws.profile: ""` in config produced an EMPTY
+    # value here — which the env block above then EXPORTED as AWS_PROFILE="", and every
+    # subsequent aws call failed with:
+    #     aws: [ERROR]: The config profile () could not be found
+    # Worse, go-task leaks an included Taskfile's top-level env: to the tasks of SIBLING
+    # included Taskfiles, and the root Taskfile includes all four providers — so this
+    # var broke `kind-kro-ack:*` runs even though that provider never sets AWS_PROFILE.
+    # The shell guard treats empty and unset identically.
+    sh: |
+      P=$(yq -r '.aws.profile // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+      [ -n "$P" ] && [ "$P" != "null" ] || P=default
+      echo "$P"
   # On EC2: generate a config that resolves the profile to the instance role and
   # return its path. Off-instance: fall back to the user's existing AWS_CONFIG_FILE
   # or ~/.aws/config, so local behavior is unchanged (zero regression).
