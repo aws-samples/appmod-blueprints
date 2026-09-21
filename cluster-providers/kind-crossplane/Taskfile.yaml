@@ -22,12 +22,20 @@ env:
   # than wrapping it.
   AWS_RETRY_MODE: "standard"
   AWS_MAX_ATTEMPTS: "10"
-  AWS_PROFILE: "{{.AWS_PROFILE}}"
+  # These env entries are BROADCAST by go-task to the tasks AND dynamic vars of every
+  # SIBLING included Taskfile (the root Taskfile includes all four providers). go-task
+  # resolves dynamic vars concurrently, so a sibling provider's var evaluation can render
+  # this template BEFORE {{.AWS_PROFILE}} has resolved — exporting AWS_PROFILE="" and
+  # making every aws call in that sibling fail with:
+  #     aws: [ERROR]: The config profile () could not be found
+  # Reproduced intermittently (2 of 8 identical `task kind-kro-ack:status` runs). The
+  # `| default` makes the render safe whether the var is unresolved, empty, or absent.
+  AWS_PROFILE: '{{.AWS_PROFILE | default "default"}}'
   # Keep AWS_PROFILE flowing to every aws/kubectl/helm call (local multi-account
   # users depend on it). On EC2 the profile name (e.g. "default") has no entry in
   # ~/.aws/config, so point AWS_CONFIG_FILE at a generated config whose profile
   # resolves to the instance role via the credential provider chain (IMDS).
-  AWS_CONFIG_FILE: "{{.AWS_CONFIG_FILE}}"
+  AWS_CONFIG_FILE: '{{.AWS_CONFIG_FILE | default (printf "%s/.aws/config" (env "HOME"))}}'
 
 vars:
   CONFIG_FILE: "{{.ROOT_DIR}}/config.local.yaml"
