@@ -251,7 +251,7 @@ spec:
         url: https://${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}/argo-workflows/workflows/team-${{ parameters.appname }}
         icon: web
       - title: ECR Main Repository (After Provisioning)
-        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/peeks/${{ parameters.appname }}?region=${{ parameters.aws_region }}
+        url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/${{ steps['fetchSystem'].output.entity.spec.resource_prefix }}/${{ parameters.appname }}?region=${{ parameters.aws_region }}
         icon: cloud
       - title: EKS Cluster
         url: https://console.aws.amazon.com/eks/home?region=${{ parameters.aws_region }}#/clusters/${{ parameters.cluster_name }}
