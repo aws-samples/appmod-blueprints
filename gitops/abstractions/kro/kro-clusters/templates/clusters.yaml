@@ -43,16 +43,12 @@ spec:
   # else the EksclusterWithVpc RGD default "peeks". The RGD already forwards this
   # to the nested EksCluster, which stamps resource_prefix / hub_cluster_name
   # (=<prefix>-hub) onto the spoke cluster secret used by destinationHub addons.
+  # It is ALSO stamped as platform.gitops.io/prefix on the cluster and VPC, which is
+  # how teardown discovers spoke resources without relying on the cluster name
+  # (names are arbitrary — see cluster-providers/README.md).
   resourcePrefix: {{ $cluster.resourcePrefix | default $.Values.global.resourcePrefix | default "peeks" | quote }}
   tenant: {{ $cluster.tenant | default "tenant1" | quote }}
   environment: {{ $cluster.environment | default "staging" | quote }}
-  # Owner prefix, stamped as platform.gitops.io/prefix on the cluster and VPC so
-  # teardown can find them without relying on the cluster name. Falls back to the
-  # RGD schema default only if the hub secret carries no resource_prefix.
-  {{- $rp := $cluster.resourcePrefix | default $.Values.global.resourcePrefix }}
-  {{- if $rp }}
-  resourcePrefix: {{ $rp | quote }}
-  {{- end }}
   # delete (default) tears IAM roles/OIDC down with the cluster — safe for
   # test/workshop events even on prod clusters. Set retain per-cluster only for
   # genuinely-persistent deployments.
