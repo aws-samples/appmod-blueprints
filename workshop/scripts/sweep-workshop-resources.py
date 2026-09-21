@@ -35,6 +35,7 @@ logs = boto3.client("logs", region_name=region)
 cf = boto3.client("cloudfront")
 grafana = boto3.client("grafana", region_name=region)
 ecr = boto3.client("ecr", region_name=region)
+s3 = boto3.client("s3")
 
 
 def log(msg):
@@ -42,7 +43,38 @@ def log(msg):
 
 
 hub_vpc_id = None
-spokes = [f"{prefix}-spoke-dev", f"{prefix}-spoke-prod"]
+
+# PR #914 makes spoke names arbitrary (no longer guaranteed to be
+# <prefix>-spoke-dev / <prefix>-spoke-prod) and stamps every workshop-owned EKS
+# cluster and VPC with the ownership tag platform.gitops.io/prefix=<prefix>.
+# Discover spokes by that tag so arbitrarily-named spokes (e.g. "oap-test") are
+# reaped too — unioned with the legacy name pattern so the sweep still works on
+# environments deployed before #914 (where the tag may be absent).
+OWNER_PREFIX_TAG = "platform.gitops.io/prefix"
+
+
+def _discover_spokes():
+    """Union of the legacy spoke name pattern and every non-hub EKS cluster
+    carrying platform.gitops.io/prefix=<prefix> (#914 ownership tag)."""
+    found = {f"{prefix}-spoke-dev", f"{prefix}-spoke-prod"}
+    try:
+        for page in eks.get_paginator("list_clusters").paginate():
+            for name in page.get("clusters", []):
+                if name == hub:
+                    continue
+                try:
+                    tags = eks.describe_cluster(name=name)["cluster"].get("tags", {})
+                except Exception:
+                    continue
+                if tags.get(OWNER_PREFIX_TAG) == prefix:
+                    found.add(name)
+                    log(f"  Discovered owned spoke by tag: {name}")
+    except Exception as e:
+        log(f"Spoke discovery: {e}")
+    return sorted(found)
+
+
+spokes = _discover_spokes()
 
 
 def _revoke_sg_rules(sg):
@@ -338,15 +370,25 @@ except Exception as e:
 #    task destroy removes most IAM resources via Terraform, but some roles
 #    created directly (peeks-cluster-mgmt-*, peeks-hub-cluster-*) may remain.
 #    Skip team-stack and SharedRole resources owned by CFN itself.
+#    #914: arbitrarily-named spokes get roles named after the CLUSTER (e.g.
+#    oap-test-cluster-role), which do NOT start with the resource prefix — so
+#    also reap names starting with any discovered spoke name.
 # ---------------------------------------------------------------------------
 try:
     _skip = ("-team-stack-", "SharedRole")
+    _owned_prefixes = [prefix] + [s for s in spokes if not s.startswith(prefix + "-")]
+
+    def _is_owned(name):
+        return any(name.startswith(p + "-") for p in _owned_prefixes) and not any(
+            x in name for x in _skip
+        )
+
     count = 0
     for role in sum(
         [p["Roles"] for p in iam.get_paginator("list_roles").paginate()], []
     ):
         n = role["RoleName"]
-        if not n.startswith(prefix + "-") or any(x in n for x in _skip):
+        if not _is_owned(n):
             continue
         try:
             for pol in iam.list_attached_role_policies(RoleName=n)["AttachedPolicies"]:
@@ -359,9 +401,12 @@ try:
             pass
     log(f"  Deleted {count} IAM roles")
 
-    for pol in iam.list_policies(Scope="Local")["Policies"]:
+    for pol in sum(
+        [p["Policies"] for p in iam.get_paginator("list_policies").paginate(Scope="Local")],
+        [],
+    ):
         n = pol["PolicyName"]
-        if not n.startswith(prefix + "-") or any(x in n for x in _skip):
+        if not _is_owned(n):
             continue
         try:
             for v in iam.list_policy_versions(PolicyArn=pol["Arn"])["Versions"]:
@@ -387,9 +432,10 @@ try:
     # scheduled for deletion"). Force-delete active AND scheduled ones so redeploys
     # on a reused account are not blocked.
     _reaped = 0
+    _secret_names = [prefix] + [s for s in spokes if not s.startswith(prefix + "-")]
     for _page in sm.get_paginator("list_secrets").paginate(
         IncludePlannedDeletion=True,
-        Filters=[{"Key": "name", "Values": [prefix]}],
+        Filters=[{"Key": "name", "Values": _secret_names}],
     ):
         for s in _page.get("SecretList", []):
             try:
@@ -430,21 +476,84 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
+# 8c. S3 buckets (imperatively-created, NOT part of the CFN stack)
+#     The Ray/vLLM module creates a model-cache bucket imperatively
+#     (Taskfile.ray.yaml: `<prefix>-ray-models-<accountId>`; the workshop
+#     Taskfile variant uses `<hub>-ray-models-<accountId>`), same unowned class
+#     as the ECR repo in 8b — `task destroy` never removes it, so it lingers
+#     (2+ GB of model artifacts, billing) on reused accounts. Reap every bucket
+#     whose name starts with the resource prefix (covers both ray-models shapes
+#     and the self-serve `<prefix>-workshop-*` deploy-staging bucket). This is
+#     prefix-scoped, so shared bootstrap buckets (cdk-hnb659fds-*, ws-assets-*)
+#     are never matched. Empties all object versions + delete markers first.
+# ---------------------------------------------------------------------------
+try:
+    def _empty_bucket(bkt):
+        paginator = s3.get_paginator("list_object_versions")
+        for page in paginator.paginate(Bucket=bkt):
+            batch = [
+                {"Key": o["Key"], "VersionId": o["VersionId"]}
+                for o in (page.get("Versions", []) + page.get("DeleteMarkers", []))
+            ]
+            for i in range(0, len(batch), 1000):
+                try:
+                    s3.delete_objects(Bucket=bkt, Delete={"Objects": batch[i:i + 1000], "Quiet": True})
+                except Exception:
+                    pass
+        # Fallback for non-versioned buckets
+        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bkt):
+            batch = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            for i in range(0, len(batch), 1000):
+                try:
+                    s3.delete_objects(Bucket=bkt, Delete={"Objects": batch[i:i + 1000], "Quiet": True})
+                except Exception:
+                    pass
+
+    _reaped = 0
+    for b in s3.list_buckets().get("Buckets", []):
+        name = b["Name"]
+        if not name.startswith(prefix + "-"):
+            continue
+        # Only touch buckets in this sweep's region (or us-east-1 global-style).
+        try:
+            loc = s3.get_bucket_location(Bucket=name).get("LocationConstraint") or "us-east-1"
+        except Exception:
+            loc = region
+        if loc != region:
+            continue
+        try:
+            _empty_bucket(name)
+            s3.delete_bucket(Bucket=name)
+            _reaped += 1
+            log(f"  Deleted S3 bucket {name}")
+        except Exception as e:
+            log(f"  S3 {name}: {e}")
+    log(f"S3: deleted {_reaped} orphaned bucket(s)" if _reaped else "No orphaned S3 buckets to delete")
+except Exception as e:
+    log(f"S3: {e}")
+
+
+# ---------------------------------------------------------------------------
 # 9. CloudWatch Log Groups
 #    EKS control-plane log groups survive cluster deletion and should be removed.
 # ---------------------------------------------------------------------------
 try:
-    for pfx in [
-        f"/aws/eks/{prefix}-hub",
-        f"/aws/eks/{prefix}-spoke-dev",
-        f"/aws/eks/{prefix}-spoke-prod",
-    ]:
+    clusters_for_logs = [hub] + spokes
+    lg_prefixes = (
+        [f"/aws/eks/{c}" for c in clusters_for_logs]
+        + [f"/aws/containerinsights/{c}" for c in clusters_for_logs]
+        + [f"/aws/lambda/{prefix}-"]
+    )
+    _lg_deleted = 0
+    for pfx in lg_prefixes:
         for page in logs.get_paginator("describe_log_groups").paginate(logGroupNamePrefix=pfx):
             for lg in page["logGroups"]:
                 try:
                     logs.delete_log_group(logGroupName=lg["logGroupName"])
+                    _lg_deleted += 1
                 except Exception:
                     pass
+    log(f"CloudWatch: deleted {_lg_deleted} log group(s)" if _lg_deleted else "No log groups to delete")
 except Exception as e:
     log(f"CloudWatch: {e}")
 
@@ -584,6 +693,68 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
+# 12b. Elastic Load Balancers provisioned by the AWS Load Balancer Controller
+#     ALB/NLB created for in-cluster Ingress/Service are named
+#     k8s-<namespace>-<name>-<hash> — they do NOT start with the resource prefix,
+#     so section 16b's name filter misses them. When the cluster/nodes are torn
+#     down before the controller deletes its LBs, they orphan: they hold
+#     ServiceManaged EIPs (which section 13 then skips because the EIP still looks
+#     "associated") and RequesterManaged amazon-elb ENIs that block the spoke/IDE
+#     VPC reap (sections 10/14). Deleting the LB auto-releases its ServiceManaged
+#     EIPs and frees those ENIs, so run this BEFORE the EIP and VPC-reaper sections.
+#     Match by the AWS LB Controller ownership tag elbv2.k8s.aws/cluster=<hub|spoke>
+#     (catches the k8s-* names) plus the #914 ownership tag and the legacy prefix
+#     name. Also reap the matching orphaned target groups.
+# ---------------------------------------------------------------------------
+try:
+    owned_clusters = {hub, *spokes}
+
+    def _lb_owned(arn, name):
+        if name.startswith(prefix + "-"):
+            return True
+        try:
+            td = {
+                t["Key"]: t["Value"]
+                for t in elbv2.describe_tags(ResourceArns=[arn])["TagDescriptions"][0]["Tags"]
+            }
+        except Exception:
+            return False
+        return td.get("elbv2.k8s.aws/cluster") in owned_clusters or td.get(OWNER_PREFIX_TAG) == prefix
+
+    reaped_lb = 0
+    lbs = []
+    for page in elbv2.get_paginator("describe_load_balancers").paginate():
+        lbs.extend(page.get("LoadBalancers", []))
+    for lb in lbs:
+        if not _lb_owned(lb["LoadBalancerArn"], lb["LoadBalancerName"]):
+            continue
+        try:
+            elbv2.delete_load_balancer(LoadBalancerArn=lb["LoadBalancerArn"])
+            reaped_lb += 1
+            log(f"  Deleted load balancer {lb['LoadBalancerName']}")
+        except Exception as e:
+            log(f"  LB {lb['LoadBalancerName']}: {e}")
+
+    # Orphaned target groups (LB controller tags them the same way)
+    for page in elbv2.get_paginator("describe_target_groups").paginate():
+        for tg in page.get("TargetGroups", []):
+            if not _lb_owned(tg["TargetGroupArn"], tg["TargetGroupName"]):
+                continue
+            try:
+                elbv2.delete_target_group(TargetGroupArn=tg["TargetGroupArn"])
+            except Exception:
+                pass
+
+    if reaped_lb:
+        log(f"Load balancers: deleted {reaped_lb}")
+        time.sleep(20)  # let ServiceManaged EIPs release + amazon-elb ENIs detach
+    else:
+        log("No orphaned load balancers to delete")
+except Exception as e:
+    log(f"Load balancers: {e}")
+
+
+# ---------------------------------------------------------------------------
 # 13. Orphaned Elastic IPs
 #     Spoke NAT-gateway EIPs (<prefix>-spoke-*-eip*) survive when the NAT is torn
 #     down out of order — they persist UNASSOCIATED and keep billing. Release only
@@ -595,7 +766,12 @@ try:
         if a.get("AssociationId"):
             continue  # still attached — never touch
         tags = {t["Key"]: t["Value"] for t in a.get("Tags", [])}
-        if any(prefix in str(v) for v in tags.values()):
+        owned = (
+            tags.get(OWNER_PREFIX_TAG) == prefix
+            or any(prefix in str(v) for v in tags.values())
+            or any(prefix in str(k) for k in tags.keys())
+        )
+        if owned:
             try:
                 ec2.release_address(AllocationId=a["AllocationId"])
                 log(f"  Released EIP {a.get('PublicIp')} ({tags.get('Name', '-')})")
@@ -606,6 +782,56 @@ try:
         log("No orphaned EIPs to release")
 except Exception as e:
     log(f"Elastic IPs: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 13b. GuardDuty-managed VPC endpoints (guardduty-data)
+#     GuardDuty Runtime Monitoring auto-creates an interface VPC endpoint
+#     (com.amazonaws.<region>.guardduty-data) in every VPC it covers — IDE/hub AND
+#     spokes. Its Elastic Network Interfaces sit in the private subnets and are NOT
+#     part of the workshop IaC, so nothing else removes them: they block CFN's own
+#     subnet/VPC deletion in the IDE VPC (stack DELETE_FAILED on the subnets) AND
+#     the spoke VPC reaper below. This is the network twin of the GuardDuty SG
+#     reaper (15b) — the SG can't be deleted while the endpoint still uses it, and
+#     the subnets can't be deleted while the endpoint ENIs remain. Delete these
+#     endpoints FIRST (before the VPC reaper and before CFN reaches the IDE VPC),
+#     scoped to workshop-owned + CFN-owned VPCs only, then let ENIs detach.
+# ---------------------------------------------------------------------------
+try:
+    _epvpc_cache = {}
+
+    def _vpc_owned_or_cfn(vpc_of_ep):
+        if not vpc_of_ep:
+            return False
+        if vpc_of_ep not in _epvpc_cache:
+            try:
+                vt = ec2.describe_vpcs(VpcIds=[vpc_of_ep])["Vpcs"][0].get("Tags", [])
+                _epvpc_cache[vpc_of_ep] = {t["Key"]: t["Value"] for t in vt}
+            except Exception:
+                _epvpc_cache[vpc_of_ep] = {}
+        vtags = _epvpc_cache[vpc_of_ep]
+        is_cfn = any(k.startswith("aws:cloudformation:") for k in vtags.keys())
+        is_owned = (
+            vtags.get(OWNER_PREFIX_TAG) == prefix
+            or any(prefix in str(v) for v in vtags.values())
+        )
+        return is_cfn or is_owned
+
+    gd_eps = []
+    for ep in ec2.describe_vpc_endpoints().get("VpcEndpoints", []):
+        if "guardduty-data" not in ep.get("ServiceName", ""):
+            continue
+        if not _vpc_owned_or_cfn(ep.get("VpcId")):
+            continue  # only workshop-owned / IDE (CFN) VPCs — never unrelated ones
+        gd_eps.append(ep["VpcEndpointId"])
+    if gd_eps:
+        ec2.delete_vpc_endpoints(VpcEndpointIds=gd_eps)
+        log(f"  Deleted {len(gd_eps)} guardduty-data VPC endpoint(s): {', '.join(gd_eps)}")
+        time.sleep(30)  # let the endpoint ENIs detach before subnet/VPC deletion
+    else:
+        log("No guardduty-data VPC endpoints to delete")
+except Exception as e:
+    log(f"GuardDuty VPC endpoints: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -665,13 +891,13 @@ try:
                 continue
             _revoke_sg_rules(sg)
         _delete_vpc_sgs(vpc_id)
-        for attempt in range(6):  # retry while ENIs finish detaching (~2 min)
+        for attempt in range(12):  # retry while ENIs finish detaching (~4 min)
             try:
                 ec2.delete_vpc(VpcId=vpc_id)
                 log(f"  Deleted orphan VPC {vpc_id}")
                 return
             except Exception as e:
-                if attempt == 5:
+                if attempt == 11:
                     log(f"  Orphan VPC {vpc_id}: {e}")
                 else:
                     time.sleep(20)
@@ -682,6 +908,8 @@ try:
          "Values": [f"{prefix}-spoke-dev-vpc", f"{prefix}-spoke-prod-vpc"]},
         {"Name": "tag:Name", "Values": [f"{prefix}-spoke-*-vpc"]},
         {"Name": "tag:platform.gitops.io/cluster", "Values": [hub, f"{prefix}-spoke-*"]},
+        # #914: catch any owned VPC by ownership tag, regardless of (arbitrary) name.
+        {"Name": f"tag:{OWNER_PREFIX_TAG}", "Values": [prefix]},
     ):
         for v in ec2.describe_vpcs(Filters=[flt]).get("Vpcs", []):
             if v["VpcId"] in seen:
@@ -730,6 +958,56 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
+# 15b. GuardDuty-managed security groups
+#     GuardDuty Runtime Monitoring auto-creates a non-CFN security group tagged
+#     GuardDutyManaged=true (name GuardDutyManagedSecurityGroup-<vpc>) in every
+#     VPC it covers. In the IDE/hub (CloudFormation-owned) VPC it blocks CFN's own
+#     delete-vpc → stack DELETE_FAILED; in a spoke VPC it blocks the reaper.
+#     _delete_vpc_sgs already removes non-CFN SGs, but GuardDuty can RE-CREATE this
+#     one after that pass, so sweep it explicitly here (after the bulk SG clears),
+#     scoped to the IDE VPC and every workshop-owned VPC — never unrelated VPCs.
+#     Best-effort: if GuardDuty recreates it yet again before CFN's delete-vpc, the
+#     delete-stack retain-retry / FORCE_DELETE_STACK reaper is the backstop.
+# ---------------------------------------------------------------------------
+try:
+    _vpc_tags_cache = {}
+
+    def _vpc_is_target(vpc_of_sg):
+        if not vpc_of_sg:
+            return False
+        if vpc_of_sg not in _vpc_tags_cache:
+            try:
+                vt = ec2.describe_vpcs(VpcIds=[vpc_of_sg])["Vpcs"][0].get("Tags", [])
+                _vpc_tags_cache[vpc_of_sg] = {t["Key"]: t["Value"] for t in vt}
+            except Exception:
+                _vpc_tags_cache[vpc_of_sg] = {}
+        vtags = _vpc_tags_cache[vpc_of_sg]
+        is_cfn_vpc = any(k.startswith("aws:cloudformation:") for k in vtags.keys())
+        is_owned_vpc = (
+            vtags.get(OWNER_PREFIX_TAG) == prefix
+            or any(prefix in str(v) for v in vtags.values())
+        )
+        return is_cfn_vpc or is_owned_vpc
+
+    gd_deleted = 0
+    for sg in ec2.describe_security_groups(
+        Filters=[{"Name": "tag:GuardDutyManaged", "Values": ["true"]}]
+    ).get("SecurityGroups", []):
+        if not _vpc_is_target(sg.get("VpcId")):
+            continue  # only workshop-owned / IDE (CFN) VPCs — never unrelated ones
+        _revoke_sg_rules(sg)
+        try:
+            ec2.delete_security_group(GroupId=sg["GroupId"])
+            gd_deleted += 1
+            log(f"  Deleted GuardDuty-managed SG {sg['GroupId']} in {sg.get('VpcId')}")
+        except Exception as e:
+            log(f"  GuardDuty SG {sg['GroupId']}: {e}")
+    log(f"GuardDuty SGs: deleted {gd_deleted}" if gd_deleted else "No GuardDuty-managed SGs to delete")
+except Exception as e:
+    log(f"GuardDuty SGs: {e}")
+
+
+# ---------------------------------------------------------------------------
 # 16. Final authoritative re-sweep of recreatable resources + ENI gate
 #     Sections 2-5 delete CloudFront / ALB / RDS / AMP scrapers BEFORE the hub
 #     cluster is deleted (section 6). While the hub is still alive its
@@ -769,10 +1047,37 @@ try:
     except Exception as e:
         log(f"  [re-sweep] AMP: {e}")
 
-    # 16b. ALBs (recreated by the AWS Load Balancer Controller)
+    # 16b. ALBs (recreated by the AWS Load Balancer Controller). Widened to match
+    #      the same way as section 12b — the <prefix>-* name OR the LB-controller
+    #      ownership tag elbv2.k8s.aws/cluster=<hub|spoke> (plus the #914 prefix
+    #      tag) — so recreated k8s-<ns>-<name>-<hash> LBs are re-swept too, not
+    #      only <prefix>-* ones. Reuses the _lb_owned predicate defined in 12b
+    #      (module scope), with a self-contained fallback if 12b didn't run.
     try:
+        try:
+            _resweep_lb_owned = _lb_owned  # defined in section 12b
+        except NameError:
+            _resweep_owned = {hub, *spokes}
+
+            def _resweep_lb_owned(arn, name):
+                if name.startswith(prefix + "-"):
+                    return True
+                try:
+                    td = {
+                        t["Key"]: t["Value"]
+                        for t in elbv2.describe_tags(
+                            ResourceArns=[arn]
+                        )["TagDescriptions"][0]["Tags"]
+                    }
+                except Exception:
+                    return False
+                return (
+                    td.get("elbv2.k8s.aws/cluster") in _resweep_owned
+                    or td.get(OWNER_PREFIX_TAG) == prefix
+                )
+
         for lb in elbv2.describe_load_balancers()["LoadBalancers"]:
-            if lb["LoadBalancerName"].startswith(prefix + "-"):
+            if _resweep_lb_owned(lb["LoadBalancerArn"], lb["LoadBalancerName"]):
                 elbv2.delete_load_balancer(LoadBalancerArn=lb["LoadBalancerArn"])
                 log(f"  [re-sweep] Deleted recreated ALB {lb['LoadBalancerName']}")
     except Exception as e:
