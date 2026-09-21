@@ -16,6 +16,12 @@ includes:
 env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
   AWS_PAGER: ""
+  # See cluster-providers/kind-kro-ack/Taskfile.yaml: raise the CLI's own retry
+  # budget so a transient AWS failure mid-install retries instead of aborting.
+  # The CLI already retries (v2 standard mode, 3 attempts); this widens it rather
+  # than wrapping it.
+  AWS_RETRY_MODE: "standard"
+  AWS_MAX_ATTEMPTS: "10"
   AWS_PROFILE: "{{.AWS_PROFILE}}"
   # Keep AWS_PROFILE flowing to every aws/kubectl/helm call (local multi-account
   # users depend on it). On EC2 the profile name (e.g. "default") has no entry in

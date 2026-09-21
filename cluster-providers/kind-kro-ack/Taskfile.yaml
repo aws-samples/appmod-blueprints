@@ -15,6 +15,15 @@ includes:
 env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
   AWS_PAGER: ""
+  # A 40-minute install makes many AWS calls; a single unretried transient failure
+  # used to discard all prior work (observed: one `describe-cluster` hit
+  # "Could not connect to the endpoint URL" after the hub was already ACTIVE and
+  # aborted the run). The CLI already retries — v2 defaults to standard mode, 3
+  # total attempts with exponential backoff — so the fix is a bigger budget, not a
+  # hand-rolled retry wrapper around a client that is already retrying. Set here so
+  # every aws call in install and destroy inherits it.
+  AWS_RETRY_MODE: "standard"
+  AWS_MAX_ATTEMPTS: "10"
 
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
@@ -87,7 +96,23 @@ vars:
   CALLER_ROLE_ARN:
     sh: |
       # Try STS first — works when AWS credentials are already configured.
-      ARN=$(aws sts get-caller-identity --query "Arn" --output text 2>/dev/null || true)
+      #
+      # Do NOT use `2>/dev/null || true` here. This value is REQUIRED: an empty
+      # result aborts the install with "cannot create hub:claim ... Ensure AWS
+      # credentials are configured", which sends the operator to check credentials
+      # that were never broken. A transient STS failure (throttle, DNS, reset) used
+      # to be swallowed into an empty ARN and misreported as a config error; the
+      # same command succeeded on the next three runs with no changes.
+      # Keep stderr so the real cause is visible, and only fall through to the
+      # fallbacks below when STS genuinely returned nothing.
+      STS_ERR=$(mktemp)
+      ARN=$(aws sts get-caller-identity --query "Arn" --output text 2>"$STS_ERR" || true)
+      if [ -z "$ARN" ] || [ "$ARN" = "None" ]; then
+        if [ -s "$STS_ERR" ]; then
+          echo "  sts get-caller-identity failed: $(tr '\n' ' ' < "$STS_ERR")" >&2
+        fi
+      fi
+      rm -f "$STS_ERR"
       if [ -n "$ARN" ] && [ "$ARN" != "None" ]; then
         if echo "$ARN" | grep -q ":assumed-role/"; then
           echo "$ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||'
@@ -462,6 +487,14 @@ tasks:
           --from-literal=secret-access-key="$SECRET_KEY" \
           --from-literal=session-token="$SESSION_TOKEN" \
           --dry-run=client -o yaml | kubectl apply -f -
+      # Gate on the CRD before applying. external-secrets was helm-installed
+      # immediately before this, and the API server does not serve
+      # clustersecretstores until the CRD is Established — so the apply below raced
+      # it and failed with no usable error (the task exited 1 straight after
+      # "✓ ESO installed", because the apply's stderr was not surfaced). An
+      # ordering problem needs an explicit readiness gate, not a re-run.
+      - kubectl wait --for=condition=established --timeout=120s
+          crd/clustersecretstores.external-secrets.io
       - |
         cat <<'EOF' | sed "s|AWS_REGION|{{.AWS_REGION}}|g" | kubectl apply -f -
         apiVersion: external-secrets.io/v1
