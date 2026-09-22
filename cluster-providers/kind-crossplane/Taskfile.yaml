@@ -1191,7 +1191,16 @@ tasks:
         # Reuse existing hash/key on re-runs (don't rotate them out from under Kargo etc.)
         USER_PASS_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
         if [ -z "$USER_PASS_HASH" ]; then
-          USER_PASS_HASH=$(echo -n "$USER_PASS" | python3 -c "import sys,bcrypt; print(bcrypt.hashpw(sys.stdin.buffer.read(), bcrypt.gensalt()).decode())" 2>/dev/null || echo "")
+          # htpasswd first — see the Kargo note below. This previously produced an EMPTY
+          # hash silently, which breaks Kargo admin login with no signal at all.
+          if command -v htpasswd >/dev/null 2>&1; then
+            USER_PASS_HASH=$(htpasswd -bnBC 10 "" "$USER_PASS" | tr -d ':\n' | sed 's/^\$2y\$/\$2a\$/')
+          elif python3 -c 'import bcrypt' >/dev/null 2>&1; then
+            USER_PASS_HASH=$(echo -n "$USER_PASS" | python3 -c "import sys,bcrypt; print(bcrypt.hashpw(sys.stdin.buffer.read(), bcrypt.gensalt()).decode())")
+          else
+            printf '⚠ No bcrypt available — user_password_hash left empty; Kargo admin login will not work.\n'
+            USER_PASS_HASH=""
+          fi
         fi
         USER_PASS_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
         if [ -z "$USER_PASS_KEY" ]; then
@@ -1356,8 +1365,19 @@ tasks:
         # Reuse existing values on re-runs so we don't rotate them out from under Kargo.
         KARGO_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
         if [ -z "$KARGO_HASH" ]; then
-          pip install bcrypt --quiet 2>/dev/null || true
-          KARGO_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(rounds=10)).decode())" "$USER_PASS" 2>/dev/null)
+          # htpasswd first: `pip` and `python3` are routinely different interpreters
+          # (Homebrew: pip -> 3.11, python3 -> 3.14), so `pip install bcrypt` then
+          # `python3 -c "import bcrypt"` fails with ModuleNotFoundError and aborted this
+          # task under errexit. $2y$ is rewritten to $2a$ for Go's bcrypt (Kargo).
+          if command -v htpasswd >/dev/null 2>&1; then
+            KARGO_HASH=$(htpasswd -bnBC 10 "" "$USER_PASS" | tr -d ':\n' | sed 's/^\$2y\$/\$2a\$/')
+          elif python3 -c 'import bcrypt' >/dev/null 2>&1; then
+            KARGO_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(rounds=10)).decode())" "$USER_PASS")
+          else
+            printf '⚠ No bcrypt available (htpasswd or python3 bcrypt) — Kargo admin login will not work until user_password_hash is set.\n'
+            printf '  Install either: brew install httpd | apt-get install apache2-utils | python3 -m pip install bcrypt\n'
+            KARGO_HASH=""
+          fi
         fi
         KARGO_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
         if [ -z "$KARGO_KEY" ]; then
