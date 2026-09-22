@@ -122,12 +122,19 @@ tasks:
       - task: spokes:enable-{{.PROVIDER_SPOKE}}
         vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-prod" }
       - 'printf "{{.C_INFO}}  [%ds] spokes declared (spoke-dev + spoke-prod via {{.PROVIDER_SPOKE}}){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Ray ML infrastructure (image builds in background)
-      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:setup'
-      - 'printf "{{.C_INFO}}  [%ds] ray:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # IDC/Keycloak federation (ArgoCD SSO)
+      # IDC/Keycloak federation (ArgoCD SSO).
+      # MUST run BEFORE ray:setup: ray:setup kicks off a multi-GB `docker build && docker
+      # push` of the vLLM image in the BACKGROUND (nohup &, see common/Taskfile.ray.yaml).
+      # idc:configure drives a headless Chromium (Playwright) through the AWS console; if the
+      # image push saturates/reconfigures the IDE network mid-navigation, Chromium aborts with
+      # `net::ERR_NETWORK_CHANGED` and IDC federation silently fails. Doing IDC first removes
+      # that concurrency entirely (the background build starts only after IDC completes).
       - task: post-install
       - 'printf "{{.C_INFO}}  [%ds] post-install done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Ray ML infrastructure (image builds in background) — started AFTER IDC so the push
+      # cannot race the Playwright navigation above.
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:setup'
+      - 'printf "{{.C_INFO}}  [%ds] ray:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Wait for Ray image to be ready
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:wait-image'
       # Download ML models to S3

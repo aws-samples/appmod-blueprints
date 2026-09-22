@@ -213,6 +213,54 @@ async def find_first_visible(page, selectors, timeout=5000):
     return None
 
 
+# Transient Chromium/network errors that are safe to retry. These are raised by
+# page.goto() when the IDE's network is reconfigured or saturated mid-navigation
+# (e.g. a concurrent multi-GB `docker push` of the vLLM image during install), and
+# are NOT deterministic failures of the automation itself.
+_TRANSIENT_NAV_ERRORS = (
+    "ERR_NETWORK_CHANGED",
+    "ERR_NETWORK_IO_SUSPENDED",
+    "ERR_INTERNET_DISCONNECTED",
+    "ERR_NAME_NOT_RESOLVED",
+    "ERR_CONNECTION_RESET",
+    "ERR_CONNECTION_CLOSED",
+    "ERR_CONNECTION_TIMED_OUT",
+    "ERR_TIMED_OUT",
+    "ERR_ABORTED",
+    "ERR_EMPTY_RESPONSE",
+    "Timeout",
+)
+
+
+async def goto_with_retry(page, url, *, wait_until="domcontentloaded", retries=5, base_delay=3):
+    """page.goto() with retry/backoff on transient network errors.
+
+    Chromium surfaces flaky IDE-network conditions (notably net::ERR_NETWORK_CHANGED
+    when the network is reconfigured/saturated mid-request) as goto() exceptions.
+    A single failure would previously abort the whole IDC federation. Retry those
+    transient errors with exponential backoff; re-raise anything else immediately.
+    """
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            return await page.goto(url, wait_until=wait_until)
+        except Exception as exc:  # playwright raises playwright._impl._errors.Error
+            msg = str(exc)
+            if not any(tok in msg for tok in _TRANSIENT_NAV_ERRORS):
+                raise
+            last_exc = exc
+            if attempt == retries:
+                break
+            delay = base_delay * (2 ** (attempt - 1))
+            print(
+                f"  Transient navigation error (attempt {attempt}/{retries}): "
+                f"{msg.splitlines()[0]} — retrying in {delay}s...",
+                file=sys.stderr,
+            )
+            await page.wait_for_timeout(delay * 1000)
+    raise last_exc
+
+
 async def wait_for_stable(page, timeout=10000):
     try:
         await page.wait_for_load_state("networkidle", timeout=timeout)
@@ -527,7 +575,7 @@ async def configure_identity_center(
             logged_in = False
             if storage_state:
                 print("Reusing existing session...", file=sys.stderr)
-                await page.goto(sso_url, wait_until="domcontentloaded")
+                await goto_with_retry(page, sso_url, wait_until="domcontentloaded")
                 await wait_for_stable(page)
                 # Check if we're actually logged in (look for account menu)
                 logged_in = (
@@ -537,7 +585,7 @@ async def configure_identity_center(
                 )
             if not logged_in:
                 print("Signing into AWS Console...", file=sys.stderr)
-                await page.goto(get_console_signin_url(sso_url), wait_until="domcontentloaded")
+                await goto_with_retry(page, get_console_signin_url(sso_url), wait_until="domcontentloaded")
                 await wait_for_stable(page)
                 await context.storage_state(path=STORAGE_STATE_FILE)
                 print(f"Session saved to {STORAGE_STATE_FILE}", file=sys.stderr)
@@ -546,7 +594,7 @@ async def configure_identity_center(
 
             # --- Step 2: Navigate to Settings → Identity source tab ---
             print("Navigating to Identity source settings...", file=sys.stderr)
-            await page.goto(settings_url, wait_until="domcontentloaded")
+            await goto_with_retry(page, settings_url, wait_until="domcontentloaded")
             await wait_for_stable(page)
             await dismiss_overlays(page)
             # Click the Identity source tab — try data-testid first, then text
@@ -726,7 +774,7 @@ async def configure_identity_center(
                     continue
             if not settings_clicked:
                 # Try direct URL navigation
-                await page.goto(f"{sso_url}#/instances/{instance_id}/settings", wait_until="domcontentloaded")
+                await goto_with_retry(page, f"{sso_url}#/instances/{instance_id}/settings", wait_until="domcontentloaded")
                 await wait_for_stable(page)
             await dismiss_overlays(page)
             await page.wait_for_timeout(2000)
