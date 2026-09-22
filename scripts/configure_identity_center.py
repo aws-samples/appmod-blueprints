@@ -534,6 +534,56 @@ def export_to_aws_scim(keycloak_dns, keycloak_password, scim_endpoint, scim_toke
 
 
 # ---------------------------------------------------------------------------
+# Post-configuration verification (defence in depth)
+# ---------------------------------------------------------------------------
+
+def verify_federation_active(region: str, expected_username: str = "user1"):
+    """Assert IDC is actually federated with an external IdP (SAML + SCIM).
+
+    The browser automation can report success while the identity source silently
+    reverted or SCIM never provisioned — the failure mode that let a broken
+    ArgoCD SSO ship "green". This is a hard, AWS-side gate: it confirms the
+    reference user was provisioned VIA SCIM (its ExternalIds carry a
+    provisioning-tenant Issuer), which is only true when IDC's identity source is
+    an external IdP with automatic provisioning enabled. A native IDC-directory
+    user has no such ExternalIds. Raises on failure so the caller exits non-zero.
+    """
+    sso = boto3.client("sso-admin", region_name=region)
+    ids = boto3.client("identitystore", region_name=region)
+
+    instance = sso.list_instances()["Instances"][0]
+    identity_store_id = instance["IdentityStoreId"]
+
+    users = ids.list_users(
+        IdentityStoreId=identity_store_id,
+        Filters=[{"AttributePath": "UserName", "AttributeValue": expected_username}],
+    ).get("Users", [])
+    if not users:
+        raise RuntimeError(
+            f"Federation verification FAILED: user '{expected_username}' not found in "
+            f"identity store {identity_store_id}. SCIM provisioning did not run — IDC is "
+            f"NOT federated with Keycloak."
+        )
+
+    external_ids = users[0].get("ExternalIds") or []
+    provisioned = any("provisioningtenant" in (e.get("Issuer") or "") for e in external_ids)
+    if not provisioned:
+        raise RuntimeError(
+            f"Federation verification FAILED: user '{expected_username}' exists but has no "
+            f"SCIM provisioning-tenant ExternalId (ExternalIds={external_ids}). The identity "
+            f"source is NOT an external IdP with automatic provisioning — IDC federation is "
+            f"not effective."
+        )
+
+    print(
+        f"✓ Federation verified: '{expected_username}' provisioned via SCIM "
+        f"(external IdP active).",
+        file=sys.stderr,
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Main automation — resilient AWS Console browser automation
 # ---------------------------------------------------------------------------
 
@@ -547,11 +597,13 @@ async def configure_identity_center(
     reuse_session: bool = True,
     scim_only: bool = False,
     keycloak_client_only: bool = False,
+    verify_username: str = "user1",
 ) -> dict:
 
     if scim_only:
         data = json.load(open(SCIM_DATA_FILE))
         export_to_aws_scim(keycloak_dns, keycloak_admin_password, data["endpoint"], data["token"])
+        verify_federation_active(region, expected_username=verify_username)
         return data
 
     if keycloak_client_only:
@@ -876,6 +928,12 @@ async def configure_identity_center(
             print("Exporting users and groups to AWS IAM Identity Center...", file=sys.stderr)
             export_to_aws_scim(keycloak_dns, keycloak_admin_password, scim_endpoint, scim_token)
 
+            # --- Step 13: Verify federation is actually active (defence in depth) ---
+            # The steps above can each "succeed" in the browser while IDC silently
+            # ends up unfederated (identity source reverted, SCIM not provisioning).
+            # Assert against AWS state so a broken SSO never ships as success.
+            verify_federation_active(region, expected_username=verify_username)
+
             return scim_data
 
         except Exception as e:
@@ -903,6 +961,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-reuse-session", action="store_true")
     parser.add_argument("--scim-only", action="store_true")
     parser.add_argument("--keycloak-client-only", action="store_true")
+    parser.add_argument("--verify-username", default="user1",
+                        help="Username expected to be SCIM-provisioned; used for the post-config federation assertion.")
     args = parser.parse_args()
 
     if not args.keycloak_dns or args.keycloak_dns in ("null", "None", ""):
@@ -920,6 +980,7 @@ if __name__ == "__main__":
         reuse_session=not args.no_reuse_session,
         scim_only=args.scim_only,
         keycloak_client_only=args.keycloak_client_only,
+        verify_username=args.verify_username,
     ))
 
     if result:
