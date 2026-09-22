@@ -42,7 +42,11 @@ keycloak:
   valuesObject:
     global:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
-      gitlab_domain_name: '{{ or (index .metadata.annotations "gitlab_domain_name") .metadata.annotations.ingress_domain_name }}'
+      # Empty when no remote git host is configured (do NOT fall back to the platform
+      # ingress domain — that is not a git host, and a non-empty value here would defeat
+      # the chart-internal gate that suppresses the repo-cred ExternalSecrets when there
+      # is no external git).
+      gitlab_domain_name: '{{ default "" (index .metadata.annotations "gitlab_domain_name") }}'
       insecure: '{{default "false" .metadata.annotations.insecure}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
