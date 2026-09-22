@@ -290,6 +290,37 @@ kubevela:
         values: ['true']
   valuesObject:
     systemDefinitionNamespace: vela-system
+    # ---------------------------------------------------------------------
+    # Admission-webhook bootstrap hardening (breaks the vela-core chicken-egg)
+    # ---------------------------------------------------------------------
+    # Symptom this addresses: on a fresh cluster the vela-core admission
+    # webhooks are registered before the vela-core Deployment is Ready. With the
+    # upstream default failurePolicy=Fail, the webhooks then REJECT every
+    # create/update they intercept (including the ones ArgoCD needs to finish the
+    # sync), so the ArgoCD op wedges on the cert/admission hooks and vela-system
+    # stays empty — a classic chicken-egg. (Retry is already handled by the
+    # syncPolicy.retry below, so a wedged op is retried; these two knobs remove
+    # the wedge at the source.)
+    #
+    # vela-core is the sub-chart, so its values are nested under `vela-core:`.
+    vela-core:
+      admissionWebhooks:
+        # (2) failurePolicy: Ignore — a not-yet-ready webhook can no longer block
+        # object creation, so the bootstrap can complete. Trade-off: OAM
+        # validation is best-effort while vela-core is briefly unavailable
+        # (acceptable — the alternative is a hard bootstrap deadlock). Kept in the
+        # Application's ignoreDifferences below so the apiserver/vela-core cannot
+        # flap it into permanent drift.
+        failurePolicy: Ignore
+        # (4) Issue the webhook serving cert via cert-manager instead of the
+        # PreSync `kube-webhook-certgen` Job. cert-manager is a managed addon on
+        # every cluster (registry core.yaml, sync-wave 2) and is therefore already
+        # Ready before kubevela (sync-wave 3) — so this removes the fragile PreSync
+        # hook Job (and its scheduling races) without adding a new ordering
+        # dependency. certManager.enabled implies the cert is provisioned
+        # declaratively and mutually excludes the `patch` Job.
+        certManager:
+          enabled: true
   # Replicates the inherited default syncPolicy and adds ServerSideApply so the
   # apiserver-defaulted fields on the vela-core admission webhooks
   # (matchPolicy/namespaceSelector/objectSelector/timeoutSeconds/rules.scope) are
