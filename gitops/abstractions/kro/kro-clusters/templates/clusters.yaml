@@ -65,6 +65,13 @@ spec:
   adminInstanceRoleName: {{ $cluster.adminInstanceRoleName | default "" | quote }}
   fleetSecretManagerSecretNameSuffix: {{ $cluster.fleetSecretManagerSecretNameSuffix | default "argocd-secret" | quote }}
   domainName: {{ $cluster.domainName | default "" | quote }}
+  # Per-cluster fleet-config value wins; else inherit the hub's insecure flag
+  # (threaded via global from the hub cluster secret's insecure annotation,
+  # itself set from config.local.yaml's top-level insecure); else default to
+  # secure ("false"). A spoke of an insecure hub install has no domain of its
+  # own to get a cert for, so it should inherit insecure=true from the hub
+  # rather than silently defaulting to secure/HTTPS.
+  insecure: {{ $cluster.insecure | default $.Values.global.insecure | default "false" | quote }}
   workloads: {{ $cluster.workloads | default "false" | quote }}
   {{- if $cluster.subHostedZone | quote }}
   subHostedZone:

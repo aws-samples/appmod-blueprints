@@ -99,6 +99,15 @@ spec:
                 # VPC, which is how teardown discovers spoke resources (names are
                 # arbitrary, so the tag is the only reliable handle).
                 resourcePrefix: '{{ .metadata.annotations.resource_prefix }}'
+                # Inherit the hub's insecure flag so a KRO spoke of an insecure
+                # (no-cert, plain-HTTP-behind-CloudFront) hub install is insecure
+                # too. Spokes get no domain of their own, so there is nothing to
+                # get an ACM cert for; without this, addon charts that special-case
+                # "insecure" default to secure/HTTPS on the spoke and request an
+                # HTTPS listener with no certificate, crashing the AWS Load
+                # Balancer Controller. Per-cluster kro-clusters/values.yaml can
+                # still override via `insecure:` on the cluster entry.
+                insecure: '{{ .metadata.annotations.insecure }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
               - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
