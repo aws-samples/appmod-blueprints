@@ -18,8 +18,13 @@ spec:
               selector:
                 matchLabels:
                   fleet_member: control-plane
-          # Inner: OPT-IN file. Only fleet members that WANT OIDC client
-          # provisioning create a fleet/members/<cluster>/client-provisioner.yaml.
+          # Inner: reads the SAME fleet/members/<cluster>/values.yaml that
+          # fleet-secrets.yaml already reads (see that file's git generator).
+          # OIDC client provisioning is OPT-IN via the `clients:` key in that one
+          # file — a spoke does not need a second, separate
+          # client-provisioner.yaml just to get a Keycloak client. Members that
+          # omit `clients:` resolve to an empty list, which the provisioner Job
+          # treats as a safe no-op (realm-ensure only, no client created).
           # This generator-path filter replaces the old top-level spec.selector
           # (matchExpressions on client_provisioner), which is not supported by the
           # EKS ArgoCD capability's ApplicationSet CRD (added in ArgoCD 2.9) and was
@@ -30,7 +35,7 @@ spec:
               repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.fleetRepoURL }}'
               revision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.fleetRepoRevision }}'
               files:
-                - path: '{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/members/*/client-provisioner.yaml'
+                - path: '{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/members/*/values.yaml'
   template:
     metadata:
       name: 'client-provisioner-{{ .clusterName }}'
@@ -43,7 +48,7 @@ spec:
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
           # Path selects the provisioner chart by type. Defaults to "keycloak"
           # (platform-charts/keycloak-client-provisioner). A member overrides it by
-          # setting `provisioner: <type>` in its client-provisioner.yaml.
+          # setting `provisioner: <type>` in its fleet/members/<cluster>/values.yaml.
           path: 'platform-charts/{{ index . "provisioner" | default "keycloak" }}-client-provisioner'
           helm:
             releaseName: 'client-provisioner-{{ .clusterName }}'
