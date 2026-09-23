@@ -1,0 +1,406 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: peeks-agent-hub
+  namespace: peeks-agent
+spec:
+  components:
+  - name: skills-mcp
+    properties:
+      description: PEEKS + APEX skills and steering as MCP tools
+      image: 290085271972.dkr.ecr.us-west-2.amazonaws.com/peeks-e2e/skills-mcp:latest
+      port: 8000
+      registerWithGateway: true
+      replicas: 1
+      resources:
+        limits:
+          memory: 256Mi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      sessionAffinity: false
+    type: mcp-server
+  - name: peeks-agent
+    properties:
+      description: PEEKS platform-engineering agent (hub brain, 2-mode)
+      mcpServers:
+      - name: skills-mcp
+      - name: eks-read-mcp
+      modelConfig:
+        llmGatewayUrl: http://bifrost.bifrost.svc.cluster.local:8080/v1
+        modelId: claude-sonnet
+      registerWithGateway: true
+      resources:
+        limits:
+          memory: 1Gi
+        requests:
+          cpu: 500m
+          memory: 512Mi
+      systemMessage: "You are **peeks-agent**, a platform-engineering agent for the Platform Engineering on EKS (PEEKS) platform. You embody AWS Solutions-Architect\u2013grade EKS expertise, delivered as an agent. You operate on a multi-cluster EKS fleet (a `peeks-hub` control cluster plus `peeks-spoke-*` workload clusters) provisioned GitOps-first through ArgoCD, KRO and ACK, on EKS Auto Mode with EKS Managed Capabilities.\n\n# Operating contract \u2014 TWO modes on ONE endpoint\nYou are a single A2A JSON-RPC agent. Behave according to the message you receive:\n\n1. **Autonomous incident mode** \u2014 when the message is a structured incident payload (e.g. an OOMKilled pod report delivered by an argo-events Sensor): produce a concise Root-Cause Analysis, then a **GitOps remediation** (the exact manifest field change, e.g. memory request/limit bump) and, if a `gitlab` tool is available, open a Merge Request on a NEW branch with that fix. **Never merge it. Never mutate the cluster directly.** End with the MR URL (or the proposed diff if no git tool) and an explicit \"awaiting human approval\" note.\n\n2. **Interactive chat mode** \u2014 when a human asks a question (e.g. \"run an eks-recon on spoke-dev\", \"why is this pod unhealthy?\", \"review this cluster for best practices\"): use your tools. Pull the relevant skill first (`skills.get_skill(<name>)`) to load its step-by-step method, then use the read-only EKS tools (`eks-read.*`) to gather live evidence, and answer with findings + recommended GitOps changes.\n\n# Hard boundaries (read-first)\n- Your cluster access is **READ-ONLY** (enforced by RBAC on your ServiceAccount). Do not attempt writes; if a task needs a change, express it as a GitOps PR/MR, never as a live `kubectl apply`/`delete`.\n- The only WRITE you may perform is opening a GitLab Merge Request via the `gitlab` tool (git write, scoped to `create_merge_request`/`create_branch` by gateway policy). Merging stays human.\n- Prefer tools over training data. When a skill exists for the task, load and follow it.\n\n# How to use your tools\n- `skills` MCP: `list_skills()`, `get_skill(name)`, `search_skills(query)`, `get_steering(name)` \u2014 your PEEKS/APEX knowledge base. Load the method on demand instead of guessing.\n- `eks-read` MCP: read-only EKS/Kubernetes/AWS inspection (describe/list/get, logs, events). Never write.\n- `gitlab` MCP: `create_merge_request` / `create_branch` only.\n\n\n# Skills index (pull the full method with skills.get_skill(<name>))\n- **eks-best-practices** \u2014 Advisory guidance for Amazon EKS architecture and configuration decisions \u2014 compute strategy, networking, security, reliability, cost, autoscaling, observability, multi-tenancy, and upgrade planning. \n- **eks-cost-intelligence** \u2014 Run a live EKS cluster cost efficiency assessment \u2014 analyze spending across 6 dimensions (compute efficiency, Spot/Graviton adoption, networking, storage, observability, idle resources), calculate a w\n- **eks-platform-engineering** \u2014 Use whenever someone is designing or building an Internal Developer Platform (IDP) or doing platform engineering on Amazon EKS \u2014 phrased as \"build a developer platform\", \"self-service for developers\",\n- **eks-recon** \u2014 EKS cluster reconnaissance and environment discovery. Detects compute strategy (Karpenter, MNG, Auto Mode, Fargate), IaC tooling (Terraform, CloudFormation, CDK, eksctl), CI/CD pipelines (GitHub Actio\n- **eks-security** \u2014 Use whenever someone needs security or compliance guidance for Amazon EKS \u2014 phrased as \"CIS Benchmark for EKS\", \"HIPAA / PCI-DSS / FedRAMP / SOC 2 / GDPR on EKS\", \"harden my EKS cluster\", \"Bottlerocke\n- **eks-upgrade-check** \u2014 Assess EKS cluster upgrade readiness \u2014 run automated checks across 8 areas (version, breaking changes, deprecated APIs, add-on compatibility, node readiness, workload risks, AWS Insights, upgrade plan\n- **manage-addons** \u2014 Add, configure, or modify GitOps addons on the PEEKS platform. Use when adding a new addon, enabling an addon on a cluster, configuring\
+        \ addon values, troubleshooting addon deployment, or editing addon\n- **troubleshoot-kro** \u2014 Troubleshoot Kro ResourceGraphDefinition (RGD) issues \u2014 stuck instances, ACK resource failures, IAM trust policy problems, resource conflicts. Use when a Kro instance is stuck IN_PROGRESS, ACK resourc\n- **troubleshoot-platform** \u2014 Systematic troubleshooting for the PEEKS workshop platform \u2014 EKS clusters, Terraform state, ingress, load balancers, MCP tool failures, YAML validation. Use when something is broken, not deploying, or\n\n# PEEKS platform knowledge (distilled \u2014 full text via skills.get_steering(<name>))\n- **Application Development Guidelines** (`application-development`): Each application in /applications follows a consistent structure:\n- **AWS Environment Variables** (`aws-env-best-practices`): Enforces environment variable usage for all AWS operations to prevent hardcoded values and ensure secure, portable configurations.\n- **Backstage Development Guidelines** (`backstage-development`): Backend Plugin (packages/backend/src/plugins/kro.ts): - Discovers ResourceGraphDefinitions (RGDs) from the cluster - Manages ResourceGroup instances - Integrates with Backstage catalog - Implements RBAC for resource access\n- **Spoke Cluster Lifecycle and Prune Safety** (`cluster-lifecycle`): How spoke clusters are created and deleted in the hub-and-spoke fleet, and the guardrails that prevent accidental deletion. Full details: docs/platform/cluster-lifecycle.md.\n- **Coding Standards and Best Practices** (`coding-standards`): Types: feat, fix, docs, style, refactor, test, chore\n- **Deployment Architecture & Pitfalls** (`deployment-architecture`): - Waves only order resources within the same phase (Sync or PostSync) - A regular resource at wave 11 runs BEFORE a PostSync hook at wave 10 - PostSync hooks only run if the Sync phase succeeds - ArgoCD can only \"wait\" for Jobs (polls until Complete/Failed) - Non-Job resources as PostSync hooks (PushSecret, ExternalSecret) are checked immediately \u2014 if not re\u2026\n- **EKS Operations** (`eks-best-practices`): Ensures all EKS and Kubernetes operations leverage the EKS MCP server capabilities appropriately.\n- **GitOps Patterns and Best Practices** (`gitops-patterns`)\n- **Helm Chart Dependencies** (`helm-dependencies`): Ensures Helm chart dependencies are properly built when charts have dependency definitions.\n- **Kro (Kubernetes Resource Orchestrator) Development Guidelines** (`kro-development`): Kro is a Kubernetes controller that enables composition of complex resources through ResourceGraphDefinitions (RGDs). It allows platform teams to create reusable, self-service resource templates that abstract complexity from end users.\n- **ML/AI Workloads Guidelines** (`ml-ai-workloads`): Use Cases: - Distributed training - Hyperparameter tuning - Batch inference - Data preprocessing\n- **Multi-Repo GitOps Architecture** (`multi-repo-architecture`): This workshop uses a multi-repo GitOps approach with clear separation of concerns:\n- **Progressive Delivery Guidelines** (`progressive-delivery`): Progressive delivery and advanced deployment strategies.\n- **Platform Engineering on EKS \u2014 appmod-blueprints** (`project`): Platform implementation repo for the Platform Engineering on EKS workshop. Provides GitOps configurations, Terraform infrastructure, Backstage templates, and sample applications for a multi-cluster EKS platform.\n- **Platform Engineering on Amazon EKS - Repository Overview** (`repository-overview`): Run task or task default to see all available tasks including: - Helm dependency management - Backstage validation - Kro testing suite - ApplicationSet testing\n- **Terraform Infrastructure Management** (`terraform-best-practices`): Ensures all Terraform operations follow Infrastructure as Code best practices and properly integrate with the workshop's pre-deployed infrastructure managed through Terraform MCP server.\n- **Terraform Infrastructure Guidelines** (`terraform-infrastructure`): Terraform is one of the pluggable cluster providers. Its\
+        \ code lives in: cluster-providers/terraform/ (the old platform/infra/terraform/ tree has been removed). It is selected by setting clusterProvider: terraform in config.local.yaml and driven via task install / task destroy.\n- **Troubleshooting Guide** (`troubleshooting`): Solutions: - Check for manual changes in cluster - Verify Git repository is accessible - Review sync waves and dependencies - Check for resource conflicts\n- **Infrastructure Context \u2014 feature/cloudfront-exposure** (`workshop-infrastructure-context`): Architecture and deployment context for the appmod-blueprints platform on the feature/cloudfront-exposure branch.\n\nWhen a question needs deeper detail than this digest, call `skills.get_steering(<name>)` for the full guide before answering.\n# THIS ENVIRONMENT \u2014 real fleet cluster names (use these EXACT names with eks-read)\nThe live EKS clusters in this account (region us-west-2) are:\n- Hub (control plane): `peeks-e2e-hub`\n- Spokes (workloads): `peeks-e2e-spoke-dev`, `peeks-e2e-spoke-prod`\n\nWhen the user says \"hub\", \"spoke-dev\" or \"spoke-prod\", map them to `peeks-e2e-hub`, `peeks-e2e-spoke-dev`, `peeks-e2e-spoke-prod` respectively, and pass the FULL name to every eks-read tool's `cluster_name` argument. There is NO list-clusters tool and no CloudFormation access \u2014 do NOT guess names or try `cloudformation:DescribeStacks`; use the three names above directly."
+    traits:
+    - type: gateway-identity
+    - type: aws-service-identity
+    type: agent-fixed
+  - name: eks-read-mcp
+    type: k8s-objects
+    properties:
+      objects:
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            app.kubernetes.io/name: eks-read-mcp
+          name: eks-read-mcp
+          namespace: peeks-agent
+        spec:
+          progressDeadlineSeconds: 600
+          replicas: 1
+          revisionHistoryLimit: 10
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: eks-read-mcp
+          strategy:
+            rollingUpdate:
+              maxSurge: 25%
+              maxUnavailable: 25%
+            type: RollingUpdate
+          template:
+            metadata:
+              annotations:
+                kubectl.kubernetes.io/restartedAt: '2026-09-23T14:03:24Z'
+              labels:
+                app.kubernetes.io/name: eks-read-mcp
+            spec:
+              containers:
+              - command:
+                - supergateway
+                - --stdio
+                - awslabs.eks-mcp-server --allow-sensitive-data-access --auth-mode iam
+                - --outputTransport
+                - streamableHttp
+                - --port
+                - '8000'
+                - --streamableHttpPath
+                - /mcp
+                - --healthEndpoint
+                - /health
+                - --stateful
+                - --logLevel
+                - info
+                env:
+                - name: AWS_REGION
+                  value: us-west-2
+                - name: AWS_DEFAULT_REGION
+                  value: us-west-2
+                image: 290085271972.dkr.ecr.us-west-2.amazonaws.com/peeks-e2e/eks-mcp:latest
+                imagePullPolicy: Always
+                name: eks-read-mcp
+                ports:
+                - containerPort: 8000
+                  name: mcp
+                  protocol: TCP
+                readinessProbe:
+                  failureThreshold: 3
+                  httpGet:
+                    path: /health
+                    port: 8000
+                    scheme: HTTP
+                  initialDelaySeconds: 8
+                  periodSeconds: 10
+                  successThreshold: 1
+                  timeoutSeconds: 1
+                resources:
+                  limits:
+                    memory: 512Mi
+                  requests:
+                    cpu: 100m
+                    memory: 256Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+                terminationMessagePath: /dev/termination-log
+                terminationMessagePolicy: File
+              dnsPolicy: ClusterFirst
+              restartPolicy: Always
+              schedulerName: default-scheduler
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              serviceAccount: eks-read-mcp
+              serviceAccountName: peeks-agent
+              terminationGracePeriodSeconds: 30
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          labels:
+            agentgateway.dev/target: eks-read-mcp
+            app.kubernetes.io/name: eks-read-mcp
+          name: eks-read-mcp-stable
+          namespace: peeks-agent
+        spec:
+          internalTrafficPolicy: Cluster
+          ipFamilies:
+          - IPv4
+          ipFamilyPolicy: SingleStack
+          ports:
+          - appProtocol: agentgateway.dev/mcp
+            name: mcp
+            port: 80
+            protocol: TCP
+            targetPort: 8000
+          selector:
+            app.kubernetes.io/name: eks-read-mcp
+          sessionAffinity: None
+          type: ClusterIP
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          labels:
+            app.kubernetes.io/name: eks-read-mcp
+          name: eks-read-mcp
+          namespace: peeks-agent
+        spec:
+          parentRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: agentgateway-proxy
+            namespace: agentgateway-system
+          rules:
+          - backendRefs:
+            - group: agentgateway.dev
+              kind: AgentgatewayBackend
+              name: eks-read-mcp-backend
+              weight: 1
+            matches:
+            - path:
+                type: PathPrefix
+                value: /mcp/eks-read-mcp
+      - apiVersion: agentgateway.dev/v1alpha1
+        kind: AgentgatewayBackend
+        metadata:
+          labels:
+            app.kubernetes.io/name: eks-read-mcp
+          name: eks-read-mcp-backend
+          namespace: peeks-agent
+        spec:
+          mcp:
+            sessionRouting: Stateful
+            targets:
+            - name: eks-read-mcp-target
+              selector:
+                services:
+                  matchLabels:
+                    agentgateway.dev/target: eks-read-mcp
+  - name: chat-ui
+    type: k8s-objects
+    properties:
+      objects:
+      - apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: chat-ui-web
+          namespace: peeks-agent
+        data:
+          app.py: "#!/usr/bin/env python3\n\"\"\"\npeeks-agent-chat \u2014 Keycloak-gated A2A chat front-end for the OAP Strands agent.\n\nFlow: the browser logs in with Keycloak username/password (user1/\u2026). The backend\ndoes an OIDC Resource-Owner-Password (direct grant) to Keycloak, validates the\ntoken, and sets a short signed session cookie. Only then may the browser chat.\nThe chat itself is proxied server-side to the agent's in-cluster A2A endpoint\n(no CORS, no token to the browser). Multi-turn via a stable contextId per tab.\n\nEnv:\n  AGENT_A2A_URL       agent A2A JSON-RPC URL (default: in-cluster stable svc)\n  KEYCLOAK_TOKEN_URL  Keycloak token endpoint (default: public CloudFront Keycloak)\n  KEYCLOAK_CLIENT_ID  public client with Direct Access Grants (default peeks-agent-chat)\n  KEYCLOAK_CLIENT_SECRET  optional (confidential client)\n  SESSION_SECRET      HMAC key for the session cookie (default: random per pod)\n  SESSION_TTL         seconds (default 3600)\n  PORT                listen port (default 8080)\n\"\"\"\nimport asyncio\nimport base64\nimport hashlib\nimport hmac\nimport json\nimport os\nimport secrets\nimport time\nimport uuid\n\nimport httpx\nfrom fastapi import FastAPI, Request, Response\nfrom fastapi.responses import HTMLResponse, JSONResponse\nfrom fastapi.staticfiles import StaticFiles\n\nAGENT_A2A_URL = os.getenv(\"AGENT_A2A_URL\", \"http://peeks-agent-stable.peeks-agent.svc.cluster.local:8083/\")\nKEYCLOAK_TOKEN_URL = os.getenv(\n    \"KEYCLOAK_TOKEN_URL\",\n    \"https://REPLACE_CLOUDFRONT_DOMAIN/keycloak/realms/platform/protocol/openid-connect/token\",\n)\nKEYCLOAK_CLIENT_ID = os.getenv(\"KEYCLOAK_CLIENT_ID\", \"peeks-agent-chat\")\nKEYCLOAK_CLIENT_SECRET = os.getenv(\"KEYCLOAK_CLIENT_SECRET\", \"\")\nSESSION_SECRET = os.getenv(\"SESSION_SECRET\", secrets.token_hex(32)).encode()\nSESSION_TTL = int(os.getenv(\"SESSION_TTL\", \"3600\"))\nPORT = int(os.getenv(\"PORT\", \"8080\"))\nCOOKIE = \"peeks_chat_session\"\n\napp = FastAPI(title=\"peeks-agent-chat\")\n\n\n# \u2500\u2500 signed session cookie (stdlib HMAC, no extra deps) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ndef _sign(payload: dict) -> str:\n    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip(\"=\")\n    sig = hmac.new(SESSION_SECRET, body.encode(), hashlib.sha256).hexdigest()[:32]\n    return f\"{body}.{sig}\"\n\n\ndef _verify(token: str) -> dict | None:\n    try:\n        body, sig = token.split(\".\", 1)\n        expect = hmac.new(SESSION_SECRET, body.encode(), hashlib.sha256).hexdigest()[:32]\n        if not hmac.compare_digest(sig, expect):\n            return None\n        pad = \"=\" * (-len(body) % 4)\n        payload = json.loads(base64.urlsafe_b64decode(body + pad))\n        if payload.get(\"exp\", 0) < time.time():\n            return None\n        return payload\n    except Exception:  # noqa: BLE001\n        return None\n\n\ndef _session(request: Request) -> dict | None:\n    tok = request.cookies.get(COOKIE)\n    return _verify(tok) if tok else None\n\n\n@app.get(\"/health\")\nasync def health():\n    return {\"status\": \"healthy\", \"agent_url\": AGENT_A2A_URL, \"keycloak\": KEYCLOAK_TOKEN_URL}\n\n\n@app.get(\"/me\")\nasync def me(request: Request):\n    s = _session(request)\n    return {\"authenticated\": bool(s), \"username\": s.get(\"user\") if s else None}\n\n\n@app.post(\"/login\")\nasync def login(request: Request, response: Response):\n    body = await request.json()\n    username = (body.get(\"username\") or \"\").strip()\n    password = body.get(\"password\") or \"\"\n    if not username or not password:\n        return JSONResponse({\"error\": \"username and password required\"}, status_code=400)\n\n    data = {\n        \"grant_type\": \"password\",\n        \"client_id\": KEYCLOAK_CLIENT_ID,\n        \"username\": username,\n        \"password\": password,\n        \"scope\": \"openid\",\n    }\n    if KEYCLOAK_CLIENT_SECRET:\n        data[\"client_secret\"] = KEYCLOAK_CLIENT_SECRET\n    try:\n\
+            \        async with httpx.AsyncClient(timeout=20) as client:\n            r = await client.post(KEYCLOAK_TOKEN_URL, data=data)\n    except Exception as exc:  # noqa: BLE001\n        return JSONResponse({\"error\": f\"keycloak unreachable: {exc}\"}, status_code=502)\n    if r.status_code != 200:\n        return JSONResponse({\"error\": \"invalid credentials\"}, status_code=401)\n\n    cookie = _sign({\"user\": username, \"exp\": int(time.time()) + SESSION_TTL})\n    resp = JSONResponse({\"authenticated\": True, \"username\": username})\n    secure = os.getenv(\"COOKIE_SECURE\", \"false\").lower() == \"true\"\n    resp.set_cookie(COOKIE, cookie, httponly=True, secure=secure, samesite=\"lax\", max_age=SESSION_TTL, path=\"/\")\n    return resp\n\n\n@app.post(\"/logout\")\nasync def logout():\n    resp = JSONResponse({\"ok\": True})\n    resp.delete_cookie(COOKIE, path=\"/\")\n    return resp\n\n\n# \u2500\u2500 async job store \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# A recon can take several minutes; a synchronous /api/send would be cut by the\n# CloudFront (~30s) / ALB (60s idle) edge timeout, returning an HTML 504 page\n# that the browser's res.json() cannot parse (\"Unexpected token '<'\"). Instead\n# /api/send spawns a background task and returns a jobId immediately; the\n# browser polls /api/result (fast GETs, never hit the edge timeout).\n_JOBS: dict = {}          # jobId -> {\"status\",\"response\"|\"error\",\"contextId\",\"ts\"}\n_JOB_TTL = 1800           # keep finished jobs 30 min\n_AGENT_TIMEOUT = 600      # allow long multi-tool recons server-side\n\n\nasync def _run_agent_job(job_id: str, text: str, context_id: str) -> None:\n    rpc = {\n        \"jsonrpc\": \"2.0\",\n        \"id\": str(uuid.uuid4()),\n        \"method\": \"message/send\",\n        \"params\": {\"message\": {\n            \"role\": \"user\",\n            \"parts\": [{\"kind\": \"text\", \"text\": text}],\n            \"messageId\": str(uuid.uuid4()),\n            \"contextId\": context_id,\n        }},\n    }\n    try:\n        async with httpx.AsyncClient(timeout=_AGENT_TIMEOUT) as client:\n            r = await client.post(AGENT_A2A_URL, json=rpc)\n            r.raise_for_status()\n            data = r.json()\n        _JOBS[job_id] = {\"status\": \"done\", \"response\": _extract_text(data),\n                         \"contextId\": context_id, \"ts\": time.time()}\n    except Exception as exc:  # noqa: BLE001\n        _JOBS[job_id] = {\"status\": \"error\", \"error\": str(exc),\n                         \"contextId\": context_id, \"ts\": time.time()}\n\n\ndef _prune_jobs() -> None:\n    now = time.time()\n    for k in [k for k, v in list(_JOBS.items()) if now - v.get(\"ts\", now) > _JOB_TTL]:\n        _JOBS.pop(k, None)\n\n\n@app.post(\"/api/send\")\nasync def send(request: Request):\n    if not _session(request):\n        return JSONResponse({\"error\": \"not authenticated\"}, status_code=401)\n    body = await request.json()\n    text = (body.get(\"message\") or \"\").strip()\n    context_id = body.get(\"contextId\") or str(uuid.uuid4())\n    if not text:\n        return JSONResponse({\"error\": \"empty message\"}, status_code=400)\n    _prune_jobs()\n    job_id = str(uuid.uuid4())\n    _JOBS[job_id] = {\"status\": \"pending\", \"contextId\": context_id, \"ts\": time.time()}\n    asyncio.create_task(_run_agent_job(job_id, text, context_id))\n    return {\"jobId\": job_id, \"contextId\": context_id, \"status\": \"pending\"}\n\n\n@app.get(\"/api/result\")\nasync def result(request: Request, jobId: str = \"\"):\n    if not _session(request):\n        return JSONResponse({\"error\": \"not authenticated\"}, status_code=401)\n    job = _JOBS.get(jobId)\n    if not job:\n        return {\"status\": \"unknown\"}\n    job[\"ts\"] = time.time()  # keep\
+            \ alive while the browser is polling\n    if job[\"status\"] == \"done\":\n        return {\"status\": \"done\", \"response\": job[\"response\"], \"contextId\": job[\"contextId\"]}\n    if job[\"status\"] == \"error\":\n        return {\"status\": \"error\", \"error\": job[\"error\"], \"contextId\": job[\"contextId\"]}\n    return {\"status\": \"pending\", \"contextId\": job[\"contextId\"]}\n\n\n@app.post(\"/api/suggest\")\nasync def suggest(request: Request):\n    \"\"\"Return 3 short, contextual follow-up prompts based on the last Q/A.\n    Uses a FRESH contextId so it never pollutes the visible conversation.\"\"\"\n    if not _session(request):\n        return JSONResponse({\"error\": \"not authenticated\"}, status_code=401)\n    import re\n    body = await request.json()\n    q = (body.get(\"question\") or \"\").strip()[:600]\n    a = (body.get(\"answer\") or \"\").strip()[:2000]\n    prompt = (\n        f'A user asked: \"{q}\"\\nYou answered:\\n{a}\\n\\n'\n        \"Propose exactly 3 concise follow-up prompts (each 3-7 words, imperative, \"\n        \"specific to what you just said) the user might send next to go deeper. \"\n        \"Return ONLY a JSON array of 3 strings, no prose, no numbering.\"\n    )\n    rpc = {\n        \"jsonrpc\": \"2.0\", \"id\": str(uuid.uuid4()), \"method\": \"message/send\",\n        \"params\": {\"message\": {\n            \"role\": \"user\",\n            \"parts\": [{\"kind\": \"text\", \"text\": prompt}],\n            \"messageId\": str(uuid.uuid4()),\n            \"contextId\": str(uuid.uuid4()),\n        }},\n    }\n    try:\n        async with httpx.AsyncClient(timeout=45) as client:\n            r = await client.post(AGENT_A2A_URL, json=rpc)\n            r.raise_for_status()\n            text = _extract_text(r.json())\n    except Exception:  # noqa: BLE001\n        return {\"suggestions\": []}\n    sug = []\n    m = re.search(r\"\\[.*\\]\", text, re.S)\n    if m:\n        try:\n            sug = [str(x).strip() for x in json.loads(m.group(0)) if str(x).strip()][:3]\n        except Exception:  # noqa: BLE001\n            sug = []\n    if not sug:  # fallback: bullet/line extraction\n        for line in text.splitlines():\n            c = line.strip().lstrip(\"-*0123456789.\\u2022 \").strip(' \"')\n            if 2 <= len(c.split()) <= 9:\n                sug.append(c)\n            if len(sug) == 3:\n                break\n    return {\"suggestions\": sug[:3]}\n\n\ndef _extract_text(data: dict) -> str:\n    result = data.get(\"result\", data)\n    parts = (result.get(\"message\") or {}).get(\"parts\") if isinstance(result, dict) else None\n    if not parts and isinstance(result, dict):\n        parts = result.get(\"parts\")\n    if not parts and isinstance(result, dict):\n        for a in result.get(\"artifacts\", []) or []:\n            if a.get(\"parts\"):\n                parts = a[\"parts\"]\n                break\n    if parts:\n        # A2A streams the answer as many token-fragment parts; concatenate them\n        # verbatim (the model's own newlines live inside individual parts).\n        texts = [p.get(\"text\", \"\") for p in parts if p.get(\"text\")]\n        return \"\".join(texts)\n    return str(result)\n\n\napp.mount(\"/\", StaticFiles(directory=\"static\", html=True), name=\"static\")\n"
+          index.html: "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n<title>PEEKS Agent \u2014 Chat</title>\n<style>\n  :root {\n    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d; --fg:#e6edf3;\n    --accent:#ff9900; --blue:#58a6ff; --green:#3fb950; --muted:#8b949e; --err:#f85149;\n    --code-bg:#0b0f16;\n  }\n  * { box-sizing: border-box; }\n  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--fg); height:100vh; display:flex; flex-direction:column; }\n  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; background:linear-gradient(180deg,#161b22,#0d1117); }\n  header h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.2px; }\n  header .dot { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }\n  header .who { color:var(--muted); font-size:12px; margin-left:auto; }\n  header .who a { color:var(--accent); cursor:pointer; margin-left:10px; }\n  #log { flex:1; overflow-y:auto; padding:22px 18px; display:flex; flex-direction:column; gap:16px; }\n  .row { display:flex; width:100%; }\n  .row.user { justify-content:flex-end; }\n  .row.agent, .row.sys { justify-content:flex-start; }\n  .msg { max-width:min(900px,92%); padding:13px 16px; border-radius:12px; line-height:1.55; font-size:14px; }\n  .msg.user { background:#1f6feb26; border:1px solid #1f6feb59; border-bottom-right-radius:4px; white-space:pre-wrap; }\n  .msg.agent { background:var(--panel); border:1px solid var(--line); border-bottom-left-radius:4px; }\n  .msg.sys { align-self:center; max-width:760px; color:var(--muted); font-size:12.5px; background:transparent; border:1px dashed var(--line); text-align:center; }\n  .msg.agent .avatar { color:var(--accent); font-weight:600; font-size:11px; letter-spacing:.6px; text-transform:uppercase; display:block; margin-bottom:6px; }\n\n  /* markdown */\n  .md > *:first-child { margin-top:0; }\n  .md > *:last-child { margin-bottom:0; }\n  .md h1,.md h2,.md h3,.md h4 { color:var(--accent); margin:14px 0 6px; line-height:1.3; font-weight:600; }\n  .md h1 { font-size:18px; } .md h2 { font-size:16px; } .md h3 { font-size:14.5px; } .md h4 { font-size:13.5px; }\n  .md p { margin:8px 0; }\n  .md ul,.md ol { margin:8px 0; padding-left:22px; }\n  .md li { margin:3px 0; }\n  .md a { color:var(--blue); text-decoration:none; } .md a:hover { text-decoration:underline; }\n  .md strong { color:#fff; font-weight:600; }\n  .md em { color:#d2a8ff; font-style:italic; }\n  .md code { background:var(--code-bg); color:var(--accent); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; }\n  .md pre.code { background:var(--code-bg); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:12px 14px; overflow-x:auto; margin:10px 0; }\n  .md pre.code code { background:none; border:0; padding:0; color:#c9d1d9; font-size:12.5px; line-height:1.5; }\n  .md blockquote { border-left:3px solid var(--muted); margin:8px 0; padding:2px 12px; color:var(--muted); }\n  .md hr { border:0; border-top:1px solid var(--line); margin:12px 0; }\n  .md table { border-collapse:collapse; margin:10px 0; font-size:13px; }\n  .md th,.md td { border:1px solid var(--line); padding:6px 10px; }\n  .md th { background:var(--panel2); color:var(--accent); }\n  .cursor::after { content:'\u258B'; color:var(--accent); animation:blink 1s steps(2) infinite; }\n  @keyframes blink { 50% { opacity:0; } }\n\n  form#f { display:flex; gap:10px; padding:14px 18px; border-top:1px solid var(--line); background:var(--panel); }\n  textarea { flex:1; resize:none; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:9px; padding:11px 13px; font-size:14px; font-family:inherit; height:46px; }\n  textarea:focus { outline:none; border-color:var(--accent);\
+            \ }\n  button { background:var(--accent); color:#111; border:0; border-radius:9px; padding:0 20px; font-weight:600; cursor:pointer; }\n  button:disabled { opacity:.5; cursor:default; }\n  .examples { display:flex; gap:10px; flex-wrap:wrap; align-items:center; padding:12px 18px 14px; background:var(--panel); border-top:1px solid var(--line); }\n  .examples .lbl { color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.6px; margin-right:4px; }\n  .examples button { background:var(--bg); color:var(--muted); border:1px solid var(--line); font-weight:400; padding:7px 13px; font-size:12px; border-radius:8px; transition:all .12s; }\n  .examples button:hover { color:var(--fg); border-color:var(--accent); background:var(--panel2); }\n  #app { display:none; flex:1; flex-direction:column; min-height:0; }\n  #app.on { display:flex; }\n  #login { position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; }\n  #login .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:28px 26px; width:340px; }\n  #login h2 { margin:0 0 4px; font-size:17px; }\n  #login p { margin:0 0 18px; color:var(--muted); font-size:12px; }\n  #login label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }\n  #login input { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:14px; }\n  #login input:focus { outline:none; border-color:var(--accent); }\n  #login button { width:100%; margin-top:18px; padding:10px; }\n  #login .err { color:var(--err); font-size:12px; margin-top:10px; min-height:14px; }\n  .kc { display:inline-block; margin-top:14px; color:var(--muted); font-size:11px; }\n</style>\n</head>\n<body>\n  <div id=\"login\">\n    <form class=\"card\" id=\"loginForm\">\n      <h2>PEEKS Agent</h2>\n      <p>Sign in with your Keycloak account to chat with the platform agent.</p>\n      <label>Username</label>\n      <input id=\"u\" autocomplete=\"username\" value=\"user1\" />\n      <label>Password</label>\n      <input id=\"p\" type=\"password\" autocomplete=\"current-password\" />\n      <button type=\"submit\" id=\"loginBtn\">Sign in</button>\n      <div class=\"err\" id=\"loginErr\"></div>\n      <span class=\"kc\">Keycloak realm: platform</span>\n    </form>\n  </div>\n\n  <div id=\"app\">\n    <header>\n      <span class=\"dot\"></span>\n      <h1>PEEKS Agent</h1>\n      <span class=\"who\" id=\"who\"></span>\n    </header>\n    <div id=\"log\">\n      <div class=\"row sys\"><div class=\"msg sys\">Ask about the EKS fleet. The agent reasons with PEEKS/APEX knowledge and read-only inspection, and proposes GitOps fixes.</div></div>\n    </div>\n    <div class=\"examples\" id=\"examples\">\n      <span class=\"lbl\">Suggestions</span>\n      <button data-q=\"In two sentences, what are you and what are your two operating modes?\">who are you?</button>\n      <button data-q=\"List the skills you can run and what each is for.\">list skills</button>\n      <button data-q=\"Outline how you would run an eks-recon on spoke-dev.\">eks-recon plan</button>\n    </div>\n    <form id=\"f\">\n      <textarea id=\"m\" placeholder=\"Ask the PEEKS agent\u2026\"></textarea>\n      <button id=\"send\" type=\"submit\">Send</button>\n    </form>\n  </div>\n\n<script>\n  const $ = (id) => document.getElementById(id);\n  // Works whether served at root or behind a path prefix (/peeks-agent-chat), slash or not.\n  const BASE = location.pathname.replace(/\\/+$/, '');\n  const CKEY = 'peeksCtx', HKEY = 'peeksHistory';\n  let contextId = localStorage.getItem(CKEY) || crypto.randomUUID();\n  localStorage.setItem(CKEY, contextId);\n  let history = [];\n  try { history = JSON.parse(localStorage.getItem(HKEY) || '[]'); } catch (e) { history = []; }\n  function saveHistory() { try { localStorage.setItem(HKEY, JSON.stringify(history.slice(-100))); } catch (e) {} }\n\n  // \u2500\u2500 minimal, safe markdown renderer (escape first, then format) \u2500\u2500\u2500\u2500\u2500\u2500\
+            \u2500\u2500\u2500\u2500\n  function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }\n  function mdInline(s){\n    return s\n      .replace(/`([^`]+)`/g,(m,c)=>'<code>'+c+'</code>')\n      .replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>')\n      .replace(/__([^_]+)__/g,'<strong>$1</strong>')\n      .replace(/(^|[^*])\\*(?!\\s)([^*]+?)\\*/g,'$1<em>$2</em>')\n      .replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)/g,'<a href=\"$2\" target=\"_blank\" rel=\"noopener\">$1</a>');\n  }\n  function md(src){\n    src = esc(String(src));\n    // fenced code blocks\n    const blocks=[];\n    src = src.replace(/```[^\\n]*\\n?([\\s\\S]*?)```/g,(m,code)=>{\n      blocks.push('<pre class=\"code\"><code>'+code.replace(/\\n+$/,'')+'</code></pre>');\n      return '\\u0000B'+(blocks.length-1)+'\\u0000';\n    });\n    const lines = src.split('\\n');\n    let html='', i=0;\n    const flushList=(tag,items)=>{ html+='<'+tag+'>'+items.map(x=>'<li>'+mdInline(x)+'</li>').join('')+'</'+tag+'>'; };\n    let para=[];\n    const flushPara=()=>{ if(para.length){ html+='<p>'+mdInline(para.join(' ').trim())+'</p>'; para=[]; } };\n    while(i<lines.length){\n      let ln = lines[i];\n      if(/^\\u0000B\\d+\\u0000$/.test(ln.trim())){ flushPara(); html+=ln.trim(); i++; continue; }\n      const h = ln.match(/^\\s*(#{1,4})\\s+(.*)$/);\n      if(h){ flushPara(); const lvl=h[1].length; html+='<h'+lvl+'>'+mdInline(h[2])+'</h'+lvl+'>'; i++; continue; }\n      if(/^\\s*(---|\\*\\*\\*)\\s*$/.test(ln)){ flushPara(); html+='<hr>'; i++; continue; }\n      if(/^\\s*>\\s?/.test(ln)){ flushPara(); let q=[]; while(i<lines.length&&/^\\s*>\\s?/.test(lines[i])){ q.push(lines[i].replace(/^\\s*>\\s?/,'')); i++; } html+='<blockquote>'+mdInline(q.join(' '))+'</blockquote>'; continue; }\n      if(/^\\s*[-*+]\\s+/.test(ln)){ flushPara(); let items=[]; while(i<lines.length&&/^\\s*[-*+]\\s+/.test(lines[i])){ items.push(lines[i].replace(/^\\s*[-*+]\\s+/,'')); i++; } flushList('ul',items); continue; }\n      if(/^\\s*\\d+\\.\\s+/.test(ln)){ flushPara(); let items=[]; while(i<lines.length&&/^\\s*\\d+\\.\\s+/.test(lines[i])){ items.push(lines[i].replace(/^\\s*\\d+\\.\\s+/,'')); i++; } flushList('ol',items); continue; }\n      if(ln.indexOf('|')>=0 && i+1<lines.length && /^\\s*\\|?\\s*:?-{1,}:?\\s*(\\|\\s*:?-{1,}:?\\s*)+\\|?\\s*$/.test(lines[i+1])){\n        flushPara();\n        const splitRow=(r)=>{ let s=r.trim().replace(/^\\|/,'').replace(/\\|\\s*$/,''); return s.split('|').map(c=>c.trim()); };\n        const headers=splitRow(ln); i+=2;\n        let rows=[];\n        while(i<lines.length && lines[i].indexOf('|')>=0 && lines[i].trim()!==''){ rows.push(splitRow(lines[i])); i++; }\n        let t='<table><thead><tr>'+headers.map(c=>'<th>'+mdInline(c)+'</th>').join('')+'</tr></thead><tbody>';\n        t+=rows.map(r=>'<tr>'+r.map(c=>'<td>'+mdInline(c)+'</td>').join('')+'</tr>').join('');\n        html+=t+'</tbody></table>'; continue;\n      }\n      if(ln.trim()===''){ flushPara(); i++; continue; }\n      para.push(ln); i++;\n    }\n    flushPara();\n    return html.replace(/\\u0000B(\\d+)\\u0000/g,(m,n)=>blocks[+n]);\n  }\n\n  async function checkAuth() {\n    try { const r = await fetch(BASE + '/me'); const d = await r.json();\n      if (d.authenticated) showApp(d.username); } catch (e) {}\n  }\n  function showApp(user) {\n    $('login').style.display = 'none';\n    $('app').classList.add('on');\n    $('who').innerHTML = 'signed in as <b>' + user + '</b> <a id=\"clr\">clear</a> <a id=\"lo\">logout</a>';\n    $('clr').onclick = () => { history = []; saveHistory(); document.querySelectorAll('#log .row.user,#log .row.agent').forEach(r => r.remove()); };\n    $('lo').onclick = async () => { history = []; saveHistory(); localStorage.removeItem(CKEY); await fetch(BASE + '/logout', {method:'POST'}); location.reload(); };\n    renderHistory();\n    $('m').focus();\n  }\n  function renderHistory() {\n    history.forEach(msg => {\n      if (msg.r === 'user') { const el = addRow('user'); el.textContent = msg.t; }\n      else { const el = addRow('agent');\
+            \ el.innerHTML = '<span class=\"avatar\">peeks-agent</span><span class=\"md\"></span>'; el.querySelector('.md').innerHTML = md(msg.t); }\n    });\n    $('log').scrollTop = $('log').scrollHeight;\n  }\n\n  $('loginForm').addEventListener('submit', async (e) => {\n    e.preventDefault();\n    $('loginBtn').disabled = true; $('loginErr').textContent = '';\n    try {\n      const r = await fetch(BASE + '/login', { method:'POST', headers:{'Content-Type':'application/json'},\n        body: JSON.stringify({ username: $('u').value.trim(), password: $('p').value }) });\n      const d = await r.json();\n      if (r.ok && d.authenticated) showApp(d.username);\n      else $('loginErr').textContent = d.error || 'login failed';\n    } catch (e) { $('loginErr').textContent = 'network error'; }\n    finally { $('loginBtn').disabled = false; }\n  });\n\n  function addRow(cls){\n    const row = document.createElement('div'); row.className = 'row ' + cls;\n    const el = document.createElement('div'); el.className = 'msg ' + cls;\n    row.appendChild(el); $('log').appendChild(row); $('log').scrollTop = $('log').scrollHeight;\n    return el;\n  }\n  function addUser(text){ const el = addRow('user'); el.textContent = text; }\n  function addAgent(){ const el = addRow('agent'); el.innerHTML = '<span class=\"avatar\">peeks-agent</span><span class=\"md cursor\">\u2026</span>'; return el.querySelector('.md'); }\n\n  async function ask(text) {\n    addUser(text); history.push({r:'user', t:text}); saveHistory();\n    $('m').value = ''; $('send').disabled = true;\n    const body = addAgent();\n    try {\n      const r = await fetch(BASE + '/api/send', { method:'POST', headers:{'Content-Type':'application/json'},\n        body: JSON.stringify({ message: text, contextId }) });\n      if (r.status === 401) { body.classList.remove('cursor'); body.textContent = 'session expired \u2014 reloading'; setTimeout(()=>location.reload(), 800); return; }\n      const start = await r.json();\n      if (start.contextId) { contextId = start.contextId; localStorage.setItem(CKEY, contextId); }\n      const jobId = start.jobId;\n      // Poll for the result: recon can take minutes; each poll is a fast GET so\n      // it never hits the CloudFront/ALB edge timeout.\n      let resp = null;\n      const MAX = 300; // 300 * 2s = 10 min ceiling\n      for (let n = 0; n < MAX; n++) {\n        await new Promise(res => setTimeout(res, 2000));\n        let d;\n        try {\n          const pr = await fetch(BASE + '/api/result?jobId=' + encodeURIComponent(jobId));\n          if (pr.status === 401) { body.classList.remove('cursor'); body.textContent = 'session expired \u2014 reloading'; setTimeout(()=>location.reload(), 800); return; }\n          d = await pr.json();\n        } catch (e) { continue; } // transient (edge hiccup) \u2014 keep polling\n        if (d.contextId) { contextId = d.contextId; localStorage.setItem(CKEY, contextId); }\n        if (d.status === 'done')  { resp = d.response || '(no response)'; break; }\n        if (d.status === 'error') { resp = 'error: ' + (d.error || 'agent failed'); break; }\n        if (d.status === 'unknown') { resp = 'error: job not found (backend may have restarted)'; break; }\n        // still pending \u2192 loop\n      }\n      if (resp === null) resp = 'error: timed out waiting for the agent (still running server-side)';\n      body.classList.remove('cursor');\n      body.innerHTML = md(resp);\n      history.push({r:'agent', t:resp}); saveHistory();\n      // contextual follow-up suggestions (async, non-blocking, like KiroCrew)\n      fetch(BASE + '/api/suggest', { method:'POST', headers:{'Content-Type':'application/json'},\n        body: JSON.stringify({ question: text, answer: resp }) })\n        .then(r => r.json())\n        .then(s => { if (s.suggestions && s.suggestions.length) setSuggestions(s.suggestions); })\n        .catch(() => {});\n    } catch (e) { body.classList.remove('cursor'); body.textContent = 'error: ' + e; }\n    finally { $('send').disabled = false; $('m').focus(); $('log').scrollTop = $('log').scrollHeight;\
+            \ }\n  }\n  function setSuggestions(items){\n    const box = $('examples');\n    box.querySelectorAll('button').forEach(b => b.remove());\n    items.slice(0,3).forEach(q => {\n      const b = document.createElement('button'); b.textContent = q; b.dataset.q = q;\n      b.addEventListener('click', () => ask(q)); box.appendChild(b);\n    });\n  }\n  $('f').addEventListener('submit', (e) => { e.preventDefault(); const t = $('m').value.trim(); if (t) ask(t); });\n  $('m').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('f').requestSubmit(); } });\n  document.querySelectorAll('.examples button').forEach(b => b.addEventListener('click', () => ask(b.dataset.q)));\n  checkAuth();\n</script>\n</body>\n</html>\n"
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            app.kubernetes.io/name: chat-ui
+          name: chat-ui
+          namespace: peeks-agent
+        spec:
+          progressDeadlineSeconds: 600
+          replicas: 1
+          revisionHistoryLimit: 10
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: chat-ui
+          strategy:
+            rollingUpdate:
+              maxSurge: 25%
+              maxUnavailable: 25%
+            type: RollingUpdate
+          template:
+            metadata:
+              annotations:
+                kubectl.kubernetes.io/restartedAt: '2026-09-23T16:33:30Z'
+              labels:
+                app.kubernetes.io/name: chat-ui
+            spec:
+              containers:
+              - env:
+                - name: AGENT_A2A_URL
+                  value: http://peeks-agent-stable.peeks-agent.svc.cluster.local:8083/
+                - name: KEYCLOAK_TOKEN_URL
+                  value: https://REPLACE_CLOUDFRONT_DOMAIN/keycloak/realms/platform/protocol/openid-connect/token
+                - name: KEYCLOAK_CLIENT_ID
+                  value: mcp-client
+                - name: COOKIE_SECURE
+                  value: 'true'
+                - name: SESSION_SECRET
+                  value: peeks-agent-chat-demo-6f2a9c14e0b74d3a8f1c
+                image: 290085271972.dkr.ecr.us-west-2.amazonaws.com/peeks-e2e/chat-ui:latest
+                imagePullPolicy: Always
+                name: chat-ui
+                ports:
+                - containerPort: 8080
+                  name: http
+                  protocol: TCP
+                readinessProbe:
+                  failureThreshold: 3
+                  httpGet:
+                    path: /health
+                    port: 8080
+                    scheme: HTTP
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                  successThreshold: 1
+                  timeoutSeconds: 1
+                resources: {}
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+                terminationMessagePath: /dev/termination-log
+                terminationMessagePolicy: File
+                volumeMounts:
+                - mountPath: /app/static/index.html
+                  name: web
+                  subPath: index.html
+                - mountPath: /app/app.py
+                  name: web
+                  subPath: app.py
+              dnsPolicy: ClusterFirst
+              restartPolicy: Always
+              schedulerName: default-scheduler
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              terminationGracePeriodSeconds: 30
+              volumes:
+              - configMap:
+                  defaultMode: 420
+                  name: chat-ui-web
+                name: web
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          labels:
+            app.kubernetes.io/name: chat-ui
+          name: peeks-agent-chat
+          namespace: peeks-agent
+        spec:
+          internalTrafficPolicy: Cluster
+          ipFamilies:
+          - IPv4
+          ipFamilyPolicy: SingleStack
+          ports:
+          - name: http
+            port: 80
+            protocol: TCP
+            targetPort: 8080
+          selector:
+            app.kubernetes.io/name: chat-ui
+          sessionAffinity: None
+          type: ClusterIP
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          annotations:
+            alb.ingress.kubernetes.io/healthcheck-path: /health
+            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+            alb.ingress.kubernetes.io/target-type: ip
+            alb.ingress.kubernetes.io/transforms.peeks-agent-chat: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/peeks-agent-chat\\/?(.*)$","replace":"/$1"}]}}]
+
+              '
+          finalizers:
+          - group.ingress.k8s.aws/platform
+          name: peeks-agent-chat
+          namespace: peeks-agent
+        spec:
+          ingressClassName: platform
+          rules:
+          - http:
+              paths:
+              - backend:
+                  service:
+                    name: peeks-agent-chat
+                    port:
+                      name: http
+                path: /peeks-agent-chat
+                pathType: Prefix
+  - name: agent-access
+    type: k8s-objects
+    properties:
+      objects:
+      - apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          name: peeks-agent-hub
+          namespace: peeks-agent
+        spec:
+          clusterName: REPLACE_CLUSTER_PREFIX-hub
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/peeks-agent-role
+          type: STANDARD
+          accessPolicies:
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy
+      - apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          name: peeks-agent-spoke-dev
+          namespace: peeks-agent
+        spec:
+          clusterName: REPLACE_CLUSTER_PREFIX-spoke-dev
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/peeks-agent-role
+          type: STANDARD
+          accessPolicies:
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy
+      - apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          name: peeks-agent-spoke-prod
+          namespace: peeks-agent
+        spec:
+          clusterName: REPLACE_CLUSTER_PREFIX-spoke-prod
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/peeks-agent-role
+          type: STANDARD
+          accessPolicies:
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy
