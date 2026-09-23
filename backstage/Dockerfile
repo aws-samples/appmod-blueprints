@@ -11,13 +11,28 @@ FROM node:22-bookworm-slim AS source
 RUN apt-get update && apt-get install -y --no-install-recommends git patch ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-RUN git clone --depth 1 https://github.com/cnoe-io/backstage-app.git .
+# Pin CNOE upstream to a specific commit for reproducible builds.
+# As of #58 ("Apply PEEKS patch and fix homepage links") upstream absorbed most of
+# our old patch (gitlab scaffolder module, kube:apply alias + in-cluster fallback).
+# cnoe-customizations.patch now only carries the deltas still not upstream:
+# /backstage sub-path baseUrls, auth environment=development (no guest), and the
+# Keycloak SSO SignInPage. Bump this ref to re-track main; re-verify the patch applies.
+ARG CNOE_BACKSTAGE_REF=6a5087c2fb6aeccdee5f2b5665f7d93cb89640b3
+RUN git init -q . \
+    && git remote add origin https://github.com/cnoe-io/backstage-app.git \
+    && git fetch -q --depth 1 origin "${CNOE_BACKSTAGE_REF}" \
+    && git checkout -q FETCH_HEAD
 
 COPY patches/cnoe-customizations.patch /tmp/
 RUN patch -p1 < /tmp/cnoe-customizations.patch
 
 # Stage 2: Install and build (mirrors CNOE Dockerfile)
 FROM node:22-bookworm-slim AS build
+
+# Native deps (e.g. isolated-vm) ship no arm64 prebuilt binary, so node-gyp must
+# compile them from source, which needs python3 + a C/C++ toolchain. amd64 uses
+# a prebuilt binary and doesn't hit this, but the multi-arch (arm64) leg does.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 USER node
 WORKDIR /app
