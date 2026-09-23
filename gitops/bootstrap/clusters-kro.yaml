@@ -73,6 +73,12 @@ spec:
                 # ACK IAM rejects it (MalformedPolicyDocument: Invalid principal).
                 argoCdHubRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}{{ if eq (index .metadata.labels "provider") "kro-ack" }}-argocd-capability-role{{ else }}-ArgoCDCapabilityRole{{ end }}'
                 argoCdCapabilityRoleArn: 'arn:aws:iam::{{ .metadata.annotations.aws_account_id }}:role/{{ .metadata.annotations.aws_cluster_name }}{{ if eq (index .metadata.labels "provider") "kro-ack" }}-argocd-capability-role{{ else }}-ArgoCDCapabilityRole{{ end }}'
+                # Propagate the hub's real AWS account ID so a spoke declaration never has
+                # to hardcode a real account number into a values file that may live in a
+                # public repo. Mirrors the Crossplane path (claim.yaml in
+                # resource-groups-kro/platform-cluster-kro), which already resolves
+                # accountId/managementAccountId via `default $.Values.global.accountId`.
+                accountId: '{{ .metadata.annotations.aws_account_id }}'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
                 targetCluster: '{{ .clusterName }}'
                 # Propagate the deploy branch from the control-plane so kro spokes
