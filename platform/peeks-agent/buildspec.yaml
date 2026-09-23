@@ -1,0 +1,36 @@
+# CodeBuild buildspec — build + push the 4 PEEKS agent images (pinned) to ECR.
+#
+# Env vars to set in the CodeBuild project:
+#   AWS_ACCOUNT_ID, AWS_REGION, ECR_PREFIX (e.g. peeks-e2e), IMAGE_TAG (e.g. git sha),
+#   OAP_REPO (default https://github.com/awslabs/open-agentic-platform),
+#   OAP_REF  (default main)
+# Requires: privileged mode (Docker), ECR push permissions on <prefix>/* repos.
+version: 0.2
+env:
+  variables:
+    OAP_REPO: "https://github.com/awslabs/open-agentic-platform"
+    OAP_REF: "main"
+phases:
+  pre_build:
+    commands:
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+      - REG="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+      - TAG="${IMAGE_TAG:-$CODEBUILD_RESOLVED_SOURCE_VERSION}"
+      - git clone --depth 1 --branch "$OAP_REF" "$OAP_REPO" /tmp/oap
+  build:
+    commands:
+      # 1) generic OAP images
+      - docker build -t "$REG/$ECR_PREFIX/chat-ui:$TAG"      /tmp/oap/applications/a2a-chat-ui
+      - docker build -t "$REG/$ECR_PREFIX/eks-mcp:$TAG"      /tmp/oap/applications/eks-mcp
+      - docker build -t "$REG/$ECR_PREFIX/skills-mcp-base:$TAG" /tmp/oap/applications/skills-mcp
+      # 2) PEEKS skills overlay (context = repo root, to access .kiro/skills)
+      - docker build -f platform/peeks-agent/skills-overlay/Dockerfile
+          --build-arg SKILLS_MCP_IMAGE="$REG/$ECR_PREFIX/skills-mcp-base:$TAG"
+          -t "$REG/$ECR_PREFIX/skills-mcp:$TAG" .
+  post_build:
+    commands:
+      - docker push "$REG/$ECR_PREFIX/chat-ui:$TAG"
+      - docker push "$REG/$ECR_PREFIX/eks-mcp:$TAG"
+      - docker push "$REG/$ECR_PREFIX/skills-mcp-base:$TAG"
+      - docker push "$REG/$ECR_PREFIX/skills-mcp:$TAG"
+      - echo "Pinned images pushed with tag $TAG — update deploy/peeks-agent-app.yaml image refs."
