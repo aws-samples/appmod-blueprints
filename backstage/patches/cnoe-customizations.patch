@@ -69,3 +69,77 @@ index baf17ac..652caa5 100644
      },
    },
    bindRoutes({ bind }) {
+diff --git a/packages/app/src/components/home/Homepage.tsx b/packages/app/src/components/home/Homepage.tsx
+index dc23f8f..6b161d2 100644
+--- a/packages/app/src/components/home/Homepage.tsx
++++ b/packages/app/src/components/home/Homepage.tsx
+@@ -7,22 +7,29 @@ import {
+   HomePageStarredEntities,
+ } from '@backstage/plugin-home';
+ 
+-const getBasePath = () => {
+-  if (typeof window !== 'undefined') {
+-    const baseTag = document.querySelector('base');
+-    if (baseTag?.href) {
+-      try {
+-        const base = new URL(baseTag.href);
+-        return base.pathname.replace(/\/$/, '');
+-      } catch {
+-        // fallback
+-      }
+-    }
+-  }
+-  return '';
++// Bundle the Quick Links icons through the bundler so they are emitted under
++// the app's hashed /static asset path with the correct publicPath. This is
++// sub-path safe (e.g. served under /backstage), unlike an absolute /img/*.png
++// URL which 404s because public/ assets are not served under the sub-path.
++import gitlabIcon from '../../../public/img/gitlab.png';
++import argocdIcon from '../../../public/img/argocd.png';
++import argoWorkflowsIcon from '../../../public/img/argo-workflows.png';
++import kargoIcon from '../../../public/img/kargo.png';
++import keycloakIcon from '../../../public/img/keycloak.png';
++
++// Map the icon paths used in app-config homepage.quickLinks to the bundled
++// assets, so config stays authorable (edit URLs/labels) while icons resolve
++// correctly under any base path. Unknown values fall through unchanged.
++const bundledIcons: Record<string, string> = {
++  '/img/gitlab.png': gitlabIcon,
++  '/img/argocd.png': argocdIcon,
++  '/img/argo-workflows.png': argoWorkflowsIcon,
++  '/img/kargo.png': kargoIcon,
++  '/img/keycloak.png': keycloakIcon,
+ };
+ 
+-const basePath = getBasePath();
++const resolveIcon = (url?: string): string | undefined =>
++  (url && bundledIcons[url]) || url;
+ 
+ const getDomainUrl = () => {
+   if (typeof window !== 'undefined') {
+@@ -252,7 +259,7 @@ export const Homepage = () => {
+         return links.map(link => ({
+           url: link.getString('url'),
+           label: link.getString('label'),
+-          iconSrc: link.getOptionalString('iconUrl'),
++          iconSrc: resolveIcon(link.getOptionalString('iconUrl')),
+           iconAlt: link.getOptionalString('label'),
+           isCatalog: link.getOptionalString('icon') === 'catalog',
+         }));
+@@ -274,11 +281,11 @@ export const Homepage = () => {
+ 
+     return [
+       { url: '/catalog', label: 'Catalog', isCatalog: true },
+-      { url: getGitLabUrl(), label: 'GitLab', iconSrc: `${basePath}/img/gitlab.png`, iconAlt: 'GitLab' },
+-      { url: `${domainUrl}/argocd`, label: 'ArgoCD', iconSrc: `${basePath}/img/argocd.png`, iconAlt: 'ArgoCD' },
+-      { url: `${domainUrl}/argo-workflows`, label: 'Argo Workflows', iconSrc: `${basePath}/img/argo-workflows.png`, iconAlt: 'Argo Workflows' },
+-      { url: domainUrl, label: 'Kargo', iconSrc: `${basePath}/img/kargo.png`, iconAlt: 'Kargo' },
+-      { url: `${domainUrl}/keycloak`, label: 'Keycloak', iconSrc: `${basePath}/img/keycloak.png`, iconAlt: 'Keycloak' },
++      { url: getGitLabUrl(), label: 'GitLab', iconSrc: gitlabIcon, iconAlt: 'GitLab' },
++      { url: `${domainUrl}/argocd`, label: 'ArgoCD', iconSrc: argocdIcon, iconAlt: 'ArgoCD' },
++      { url: `${domainUrl}/argo-workflows`, label: 'Argo Workflows', iconSrc: argoWorkflowsIcon, iconAlt: 'Argo Workflows' },
++      { url: domainUrl, label: 'Kargo', iconSrc: kargoIcon, iconAlt: 'Kargo' },
++      { url: `${domainUrl}/keycloak`, label: 'Keycloak', iconSrc: keycloakIcon, iconAlt: 'Keycloak' },
+     ];
+   })();
+ 
