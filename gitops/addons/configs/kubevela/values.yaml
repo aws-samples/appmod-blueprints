@@ -11,6 +11,41 @@ vela-core:
         failedState: 180
     step:
       errorRetryTimes: 15
+  # -----------------------------------------------------------------------
+  # Admission-webhook bootstrap hardening (breaks the vela-core chicken-egg)
+  # -----------------------------------------------------------------------
+  # On a fresh cluster the vela-core admission webhooks are registered before the
+  # vela-core Deployment is Ready. With the upstream default failurePolicy=Fail
+  # the webhooks then REJECT every create/update they intercept — including the
+  # objects ArgoCD needs to finish its own sync — so the op wedges on the
+  # cert/admission hooks and vela-system stays empty (classic chicken-egg;
+  # observed intermittently on spoke-dev while hub/prod won the race). Retry is
+  # already handled (the kubevela Application has syncPolicy.retry.limit=-1), so a
+  # wedged op is retried; these two knobs remove the wedge at the source.
+  #
+  # NOTE ON PLACEMENT: these values MUST live in this valueFile
+  # (addons/configs/kubevela/values.yaml), which the addon Application consumes
+  # via `$defaults/.../addons/configs/kubevela/values.yaml`. The addon registry's
+  # `valuesObject` is NOT a viable channel here: the kubevela ApplicationSet's
+  # valuesObject only carries `systemDefinitionNamespace`, so registry-side
+  # admissionWebhooks values never reach the rendered chart (verified on a live
+  # spoke-dev test — the values silently did nothing).
+  admissionWebhooks:
+    # (2) failurePolicy: Ignore — a not-yet-ready webhook can no longer block
+    # object creation, so the bootstrap completes. Trade-off: OAM validation is
+    # best-effort while vela-core is briefly unavailable (acceptable vs. a hard
+    # bootstrap deadlock). The kubevela Application already ignores
+    # .webhooks[].failurePolicy in ignoreDifferences, so the apiserver/vela-core
+    # cannot flap it into permanent drift.
+    failurePolicy: Ignore
+    # (4) Issue the webhook serving cert via cert-manager instead of the fragile
+    # PreSync kube-webhook-certgen Job. cert-manager is a managed addon on every
+    # cluster (registry core.yaml, sync-wave 2) and is Ready before kubevela
+    # (sync-wave 3), so no new ordering dependency is introduced. Verified with
+    # `helm template` (dependency built): renders the cert-manager
+    # Certificate+Issuer and drops the admission-webhooks/job-patch cert-gen Jobs.
+    certManager:
+      enabled: true
 
 cluster-gateway:
   nodeSelector:
