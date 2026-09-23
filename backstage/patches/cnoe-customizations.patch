@@ -48,18 +48,10 @@ index d8b8e47..86ce1c8 100644
        development:
          metadataUrl: https://cnoe.localtest.me:8443/keycloak/realms/cnoe/.well-known/openid-configuration
 diff --git a/packages/app/src/App.tsx b/packages/app/src/App.tsx
-index baf17ac..89021b8 100644
+index baf17ac..0daddef 100644
 --- a/packages/app/src/App.tsx
 +++ b/packages/app/src/App.tsx
-@@ -11,7 +11,6 @@ import {
-   catalogImportPlugin,
- } from '@backstage/plugin-catalog-import';
- import { ScaffolderPage, scaffolderPlugin } from '@backstage/plugin-scaffolder';
--import { CustomScaffolderPage } from './components/scaffolder/CustomScaffolderPage';
- import { orgPlugin } from '@backstage/plugin-org';
- import { SearchPage } from '@backstage/plugin-search';
- import { TechRadarPage } from '@backstage-community/plugin-tech-radar';
-@@ -23,7 +22,7 @@ import {
+@@ -23,7 +23,7 @@ import {
  import { TechDocsAddons } from '@backstage/plugin-techdocs-react';
  import { ReportIssue } from '@backstage/plugin-techdocs-module-addons-contrib';
  import { UserSettingsPage } from '@backstage/plugin-user-settings';
@@ -68,7 +60,7 @@ index baf17ac..89021b8 100644
  import { entityPage } from './components/catalog/EntityPage';
  import { searchPage } from './components/search/SearchPage';
  import { Root } from './components/Root';
-@@ -47,7 +46,7 @@ const app = createApp({
+@@ -47,7 +47,7 @@ const app = createApp({
    themes: [cnoeVibrantLightAppTheme, cnoeVibrantDarkAppTheme],
    components: {
      SignInPage: props => {
@@ -77,13 +69,22 @@ index baf17ac..89021b8 100644
      },
    },
    bindRoutes({ bind }) {
-@@ -89,8 +88,7 @@ const routes = (
+@@ -89,8 +89,16 @@ const routes = (
          <ReportIssue />
        </TechDocsAddons>
      </Route>
 -    <Route path="/create" element={<CustomScaffolderPage />} />
 -    <Route path="/create/templates" element={<ScaffolderPage />} />
-+    <Route path="/create" element={<ScaffolderPage />} />
++    <Route
++      path="/create"
++      element={
++        <ScaffolderPage
++          components={{
++            EXPERIMENTAL_TemplateListPageComponent: CustomScaffolderPage,
++          }}
++        />
++      }
++    />
      <Route path="/api-docs" element={<CustomApiExplorerPage />} />
      <Route
        path="/tech-radar"
