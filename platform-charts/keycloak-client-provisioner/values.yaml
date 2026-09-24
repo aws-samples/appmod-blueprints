@@ -17,11 +17,6 @@ realmName: "platform"
 # AWS region for Secrets Manager writes.
 region: ""
 
-# Hub cluster name — the cluster this Job runs on. Used to scope the
-# self-provisioned IAM Role + PodIdentityAssociation. Set by the
-# client-provisioner ApplicationSet from the hub cluster secret.
-clusterName: ""
-
 # Secrets Manager key prefix for OIDC contracts.
 # Final path: <secretPathPrefix>/<environment>/oidc/<client.name>
 # Default empty = "oidc/<environment>/oidc/<client.name>"
@@ -32,8 +27,14 @@ secretPathPrefix: ""
 adminSecretName: "keycloak-config"
 adminSecretNamespace: "keycloak"
 
-# Service account used by the Job (must have a Pod Identity association
-# granting secretsmanager:PutSecretValue on the target paths).
+# Service account used by the Job. It is NOT created by this chart: because this
+# chart is rendered once per fleet member while the ServiceAccount (and its IAM
+# Role + PodIdentityAssociation) are hub-scoped singletons, every member's
+# Application used to render byte-identical copies and ArgoCD reported a
+# permanent SharedResourceWarning. Ownership now sits in the hub-only keycloak
+# chart (gitops/addons/charts/keycloak/templates/client-provisioner-identity.yaml),
+# which also owns the keycloak-config Secret this Job mounts. This name must
+# match that chart's clientProvisioner.serviceAccountName.
 serviceAccountName: "keycloak-client-provisioner"
 
 # OIDC clients to provision.
