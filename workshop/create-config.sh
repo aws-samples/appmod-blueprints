@@ -331,6 +331,24 @@ fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 
+# --- Platform-wide AWS tags (Layer 3 of appmod-blueprints#773) -------------
+# Sourced from the PLATFORM_TAGS env var (compact JSON object string, forwarded
+# by the IDE bootstrap in platform-engineering-on-eks team-stack.ts). Written as
+# a nested `platformTags` YAML map that hub:seed reads (yq '.platformTags') and
+# stamps onto the hub cluster-secret `platform_tags` annotation -> awsTags on
+# every kro EksclusterWithVpc (spoke EKS/VPC/NAT/EIP), plus Layer 1 CDK tags the
+# hub/IDE CFN resources. Empty/unset/"{}" = no-op (no key written, awsTags stays
+# empty), so existing deployments are unaffected until a value is provided.
+if [ -n "${PLATFORM_TAGS:-}" ] && [ "${PLATFORM_TAGS}" != "{}" ]; then
+  echo "[$(date +%H:%M:%S)] ▸ Writing platformTags from PLATFORM_TAGS env..."
+  # JSON is valid YAML input; wrap under platformTags and append as a YAML map.
+  if printf '%s' "$PLATFORM_TAGS" | yq -p=json -o=yaml '{"platformTags": .}' >> "$OUTPUT_FILE" 2>/dev/null; then
+    echo "[$(date +%H:%M:%S)] ✓ platformTags written: $PLATFORM_TAGS"
+  else
+    echo "[$(date +%H:%M:%S)] ⚠ PLATFORM_TAGS is not valid JSON; skipping (awsTags will be empty): $PLATFORM_TAGS" >&2
+  fi
+fi
+
 # --- Validate --------------------------------------------------------------
 echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
 yq '.' "$OUTPUT_FILE" >/dev/null
