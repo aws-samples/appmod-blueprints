@@ -73,7 +73,13 @@ ACCT=290085271972                  # this env's AWS account ID (AccessEntry prin
 PREFIX=peeks-e2e                   # this env's cluster name prefix (<prefix>-hub / -spoke-dev / -spoke-prod)
 REG=$ACCT.dkr.ecr.us-west-2.amazonaws.com/$PREFIX   # ECR registry+repo prefix for the images
 TAG=<git-sha>                      # the pinned tag pushed by buildspec.yaml (NOT :latest)
-AMPWS=<ws-xxxxxxxx>                # AMP workspace ID (aws amp list-workspaces) — incident bridge only
+# incident bridge only — AMP workspace ID. NOT in the cluster-secret (which only carries
+# aws_grafana_url), but retrievable in-cluster from the Crossplane Workspace CR
+# (name is deterministic: <prefix>-amp). Fallback to the AMP API by alias.
+AMPWS=$(kubectl get workspace.amp.aws.upbound.io ${PREFIX}-amp \
+          -o jsonpath='{.metadata.annotations.crossplane\.io/external-name}' 2>/dev/null)
+AMPWS=${AMPWS:-$(aws amp list-workspaces --alias ${PREFIX}-observability-amp \
+          --query 'workspaces[0].workspaceId' --output text)}
 
 sed -i "s#REPLACE_IMAGE_REGISTRY#${REG}#g; s/REPLACE_IMAGE_TAG/${TAG}/g; \
         s/REPLACE_CLOUDFRONT_DOMAIN/${CF}/g; s/REPLACE_ACCOUNT_ID/${ACCT}/g; \
