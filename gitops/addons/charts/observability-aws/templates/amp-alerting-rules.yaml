@@ -1,0 +1,59 @@
+{{- if and .Values.amp.enabled .Values.amp.alerting.enabled }}
+# AMP alerting rules — evaluated centrally by Amazon Managed Prometheus across
+# ALL scraped clusters (hub + spokes) since every metric carries an external
+# `cluster` label. Fires `ALERTS{alertstate="firing"}` series (queryable via the
+# AMP query API) AND drives the AlertManagerDefinition (SNS) when one is defined.
+#
+# Consumers (either pattern):
+#   - pull: an in-cluster bridge on the hub queries ALERTS{...} and POSTs the agent
+#   - push: AlertManagerDefinition -> SNS -> Lambda -> agent
+apiVersion: amp.aws.upbound.io/v1beta1
+kind: RuleGroupNamespace
+metadata:
+  name: {{ .Values.resourcePrefix }}-alerting-rules
+  annotations:
+    crossplane.io/external-name: {{ .Values.resourcePrefix }}-alerting-rules
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  forProvider:
+    region: {{ .Values.aws.region }}
+    workspaceIdRef:
+      name: {{ .Values.resourcePrefix }}-amp
+    data: |
+      groups:
+        - name: peeks-workload-incidents
+          rules:
+            # A container whose LAST termination was an OOMKill. This gauge is 1
+            # while the last-terminated reason is OOMKilled and clears to 0 once the
+            # container runs healthy again — so it fires precisely during the incident.
+            - alert: PodOOMKilled
+              expr: |
+                max by (cluster, namespace, pod, container) (
+                  kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+                )
+              for: {{ .Values.amp.alerting.oomkill.for | default "1m" | quote }}
+              labels:
+                severity: warning
+                signal: oomkill
+                remediation: gitops-memory-bump
+              annotations:
+                summary: "OOMKilled: {{ "{{ $labels.container }}" }} in {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
+                description: "Container was terminated with reason=OOMKilled. Propose a GitOps memory-limit increase via a Merge Request; do not mutate the cluster."
+            # Fast-restart guard: a container restarting repeatedly in a short window
+            # (catches OOM crash-loops even before the reason gauge settles).
+            - alert: PodFrequentRestarts
+              expr: |
+                max by (cluster, namespace, pod, container) (
+                  increase(kube_pod_container_status_restarts_total[10m])
+                ) >= {{ .Values.amp.alerting.oomkill.restartThreshold | default 3 }}
+              for: {{ .Values.amp.alerting.oomkill.for | default "1m" | quote }}
+              labels:
+                severity: warning
+                signal: crashloop
+              annotations:
+                summary: "Frequent restarts: {{ "{{ $labels.container }}" }} in {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
+                description: "Container restarted repeatedly in the last 10m — likely an OOM or crash loop."
+  providerConfigRef:
+    name: default
+{{- end }}
