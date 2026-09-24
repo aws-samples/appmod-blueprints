@@ -38,8 +38,9 @@ externalSecret:
 
 overlay:                   # External overlay repo ("layer 5") -- OPTIONAL, default off
   repoURL: ""              # Consumer repo that may override platform addon values
-  revision: "main"         # MUST contain the overlay files
+  revision: ""             # MUST contain the overlay files (empty = inherit or "main")
   basepath: ""             # Root holding configs/ + overlays/ (e.g. "gitops/")
+  useFleetRepo: false      # Inherit hub.fleetRepoURL/Revision instead of repeating them
 
 enabledAddons: {}          # Populated from enabled-addons.yaml via valueFiles
 ```
@@ -59,6 +60,29 @@ selector:
 The appset-chart renders this into the ApplicationSet's cluster generator. ArgoCD matches it against the `enable_grafana: 'true'` label on the cluster secret. If the label exists and is `true`, an Application is created for that addon on that cluster.
 
 ## External Overlay Repo ("layer 5")
+
+### When the overlay repo IS your fleet repo
+
+A consumer whose fleet repo (spoke discovery: `gitops/fleet/spoke-values/...`) and
+overlay repo (addon value overrides) are the same repo does not need to write that
+repo's URL and revision twice. Set:
+
+```yaml
+overlay:
+  useFleetRepo: true
+  basepath: "gitops/"
+```
+
+and `overlay_repo_url`/`overlay_repo_revision` inherit `hub.fleetRepoURL`/
+`hub.fleetRepoRevision` (already resolved from the install config). An explicit
+`overlay.repoURL` (or `overlay.revision`) still wins, so a genuinely separate
+overlay repo is unaffected — only the fields you leave unset inherit.
+
+Without this, the two values had no mechanism keeping them in sync: a stale
+overlay URL/revision fails SILENTLY (bootstrap/clusters-kro.yaml's git generator
+resolves discovery as `or overlay_repo_url fleetRepoURL`, so a wrong-but-non-empty
+overlay URL globs a valid tree with no spoke JSON files in it, and zero spoke
+Applications are generated with no error anywhere).
 
 ### The problem it solves
 
