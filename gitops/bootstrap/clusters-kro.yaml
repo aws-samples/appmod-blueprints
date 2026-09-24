@@ -116,6 +116,18 @@ spec:
                 # the EksclusterWithVpc instance (rg-eks-vpc.yaml's insecure schema
                 # field) via kro-clusters/templates/clusters.yaml.
                 insecure: '{{ .metadata.annotations.insecure }}'
+                # Platform-wide AWS tags (SpringClean auto-delete=no, cost allocation,
+                # compliance) threaded from config.local.yaml -> hub cluster-secret
+                # `platform_tags` annotation (a compact JSON object string) so every
+                # kro-provisioned spoke's EKS cluster, VPC, NAT gateway and EIP inherit
+                # them via the EksclusterWithVpc `awsTags` schema field (rg-eks-vpc.yaml),
+                # merged per-form (Maps.merge for the cluster map; map->sorted-list for
+                # the VPC/NAT/EIP tag lists). Uses `index` (not direct .platform_tags
+                # field access) so a hub secret WITHOUT the annotation yields "" instead
+                # of a missingkey=error; kro-clusters/templates/clusters.yaml treats an
+                # empty value as "no platform tags" (awsTags: {}). Same pattern as the
+                # overlay_repo_* annotations read via `index` above.
+                platformTags: '{{ index .metadata.annotations "platform_tags" }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
               - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'

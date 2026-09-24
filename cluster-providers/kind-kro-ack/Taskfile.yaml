@@ -145,7 +145,7 @@ vars:
   ACK_EKS_VERSION: "1.13.0"
   ACK_EC2_VERSION: "1.12.0"
   ACK_SECRETSMANAGER_VERSION: "1.3.1"
-  KRO_VERSION: "0.9.2"
+  KRO_VERSION: "0.9.4"
   ARGOCD_VERSION:
     sh: yq '.argocd.defaultVersion' {{.ROOT_DIR}}/gitops/addons/registry/core.yaml
   C_INFO:
@@ -1009,6 +1009,15 @@ tasks:
           exit 1
         fi
         echo "[hub:seed] ingress_domain_name=$RUNTIME_DOMAIN"
+        # Platform-wide AWS tags (SpringClean auto-delete=no, cost, compliance) from
+        # config.local.yaml as a compact single-line JSON object. Stored as the string
+        # metadata key `platform_tags` below (ESO expands metadata keys 1:1 into cluster
+        # secret annotations), which clusters-kro.yaml threads into every kro spoke's
+        # EksclusterWithVpc awsTags. yq prints "null"/"{}" for a missing key -> normalise
+        # both to "{}" so the injection below is skipped when no tags are configured.
+        PLATFORM_TAGS_JSON=$(yq -o=json -I=0 '.platformTags // {}' {{.CONFIG_FILE}} 2>/dev/null || echo '{}')
+        if [ "$PLATFORM_TAGS_JSON" = "null" ] || [ -z "$PLATFORM_TAGS_JSON" ]; then PLATFORM_TAGS_JSON='{}'; fi
+        echo "[hub:seed] platform_tags=$PLATFORM_TAGS_JSON"
         # Preserve overlay + argocd wiring across re-seeds. This task rebuilds the entire
         # <hub>/config metadata from scratch and has no status: guard, so it runs on every
         # install. Without re-merging these, a second run WIPES:
@@ -1056,11 +1065,13 @@ tasks:
         # so a re-seed never drops the fleet-config overlay.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
+          --arg pt "$PLATFORM_TAGS_JSON" \
           '.metadata |= ( (fromjson) as $m
              | $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
              | (if $orv != "" then .overlay_repo_revision = $orv else . end)
              | (if $ob  != "" then .overlay_repo_basepath = $ob  else . end)
+             | (if $pt  != "" and $pt != "{}" then .platform_tags = $pt else . end)
              | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
