@@ -194,10 +194,50 @@ kro-manifests:
         operator: In
         values: ['true']
 
+# The always-applied hub RGD tree. EXCLUDES two subtrees that are handled by dedicated
+# apps below:
+#   - eks/**          : the cluster-provisioning RGDs (vpc, ekscluster, eksclusterwithvpc).
+#                       These MUST NOT share a sync-wave chain with feature RGDs — see
+#                       kro-clusters-rgds-hub for why.
+#   - ray-service/**  : references ray.io/v1 (the KubeRay CRD), which only exists when the
+#                       ray-operator addon is installed. KRO cannot build a graph over a
+#                       missing kind, so when Ray is disabled this RGD stays Ready=False.
+#                       Applied instead by kro-ray-rgd-hub, gated on enable_ray_operator.
 kro-manifests-hub:
   namespace: kro
   type: manifest
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests'
+  directory:
+    recurse: true
+    exclude: '{eks/**,ray-service/**}'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '-2'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests_hub
+        operator: In
+        values: ['true']
+
+# Cluster-provisioning RGDs, ISOLATED into their own Application.
+#
+# WHY THIS IS SEPARATE (do not fold back into kro-manifests-hub): ArgoCD advances a
+# manifest app's sync-waves only after EVERY KRO RGD in the current wave reports
+# Ready=True. The composite eksclusterwithvpc.kro.run is wave 1 (it nests the wave-0
+# Vpc and EksCluster kinds). In the combined tree it shared wave 0 with feature RGDs
+# (rayservice, appmodservice, huggingfacemodel, ...). ANY of those failing to become
+# active — ray.io/v1 absent when Ray is off, the appmodservice CEL type error, an
+# operator CRD not yet installed — stalls the wave chain, so wave 1 never applies, the
+# EksclusterWithVpc CRD is never registered, and every spoke claim fails with
+# "no matches for kind EksclusterWithVpc" → the spoke never provisions. An optional,
+# disabled capability silently took out the core cluster-provisioning path.
+#
+# Isolated here, this app contains ONLY vpc/ekscluster (wave 0) → eksclusterwithvpc
+# (wave 1). Nothing else can be in its wave set, so no feature RGD can ever block the
+# CRD the spoke claim needs. This is the structural guarantee, not a per-feature patch.
+kro-clusters-rgds-hub:
+  namespace: kro
+  type: manifest
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests/eks'
   directory:
     recurse: true
   annotationsAppSet:
@@ -205,6 +245,29 @@ kro-manifests-hub:
   selector:
     matchExpressions:
       - key: enable_kro_manifests_hub
+        operator: In
+        values: ['true']
+
+# The rayservice RGD, gated on the Ray operator being enabled. It references ray.io/v1,
+# so it can only build once ray-operator (appset wave 5) has installed the KubeRay CRD;
+# this app is wave 6 so it applies after. When ray_operator is false no enable_ray_operator
+# label is emitted, so this app is not generated at all — the RGD simply isn't shipped,
+# which is correct since it cannot exist without the operator. The three ray-serve
+# Backstage templates depend on rayservice.kro.run, so it must come up when Ray is on.
+kro-ray-rgd-hub:
+  namespace: kro
+  type: manifest
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests/ray-service'
+  directory:
+    recurse: true
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '6'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests_hub
+        operator: In
+        values: ['true']
+      - key: enable_ray_operator
         operator: In
         values: ['true']
 

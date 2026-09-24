@@ -77,6 +77,58 @@ def _discover_spokes():
 spokes = _discover_spokes()
 
 
+# ---------------------------------------------------------------------------
+# VPC ownership — POSITIVE identification only.
+#
+# SAFETY: a CloudFormation tag does NOT imply this workshop owns the VPC. Every
+# CDK-deployed stack in the account carries aws:cloudformation:* tags, so treating
+# "has a CFN tag" as ownership made the sweep reach into unrelated VPCs. Observed:
+# a VPC hosting unrelated production workloads was selected as the "IDE VPC" and
+# had security groups revoked/deleted in it. AWS refuses to delete an in-use SG,
+# but the REVOKE is not blocked, so live rules were stripped.
+#
+# A VPC is ours only if one of these holds:
+#   * platform.gitops.io/prefix == <prefix>            (we created it; see #914)
+#   * platform.gitops.io/cluster in {hub, spokes}      (we created it)
+#   * Name tag starts with "<prefix>-"                 (legacy, pre-tag installs)
+#   * it is the IDE VPC of THIS workshop's CFN stack   (stack name mentions us)
+# Anything else is left alone, even if it is CloudFormation-owned.
+# ---------------------------------------------------------------------------
+_vpc_tag_cache = {}
+
+
+def _vpc_tags(vpc_id):
+    if vpc_id not in _vpc_tag_cache:
+        try:
+            v = ec2.describe_vpcs(VpcIds=[vpc_id])["Vpcs"][0]
+            _vpc_tag_cache[vpc_id] = {t["Key"]: t["Value"] for t in v.get("Tags", [])}
+        except Exception:
+            _vpc_tag_cache[vpc_id] = {}
+    return _vpc_tag_cache[vpc_id]
+
+
+def _is_our_ide_vpc(tags):
+    """The IDE VPC belongs to THIS workshop's CloudFormation stack. Requires the
+    stack name to reference this deployment — never just 'any CFN stack'."""
+    stack = tags.get("aws:cloudformation:stack-name", "")
+    if not stack:
+        return False
+    return prefix in stack or "peeks" in stack.lower() or "workshop" in stack.lower()
+
+
+def _vpc_is_ours(vpc_id):
+    if not vpc_id:
+        return False
+    tags = _vpc_tags(vpc_id)
+    if tags.get(OWNER_PREFIX_TAG) == prefix:
+        return True
+    if tags.get("platform.gitops.io/cluster") in {hub, *spokes}:
+        return True
+    if tags.get("Name", "").startswith(prefix + "-"):
+        return True
+    return _is_our_ide_vpc(tags)
+
+
 def _revoke_sg_rules(sg):
     """Revoke a security group's ingress/egress rules so circular SG references
     (e.g. eks-cluster-sg ↔ k8s-traffic-*) don't block deletion."""
@@ -798,31 +850,12 @@ except Exception as e:
 #     scoped to workshop-owned + CFN-owned VPCs only, then let ENIs detach.
 # ---------------------------------------------------------------------------
 try:
-    _epvpc_cache = {}
-
-    def _vpc_owned_or_cfn(vpc_of_ep):
-        if not vpc_of_ep:
-            return False
-        if vpc_of_ep not in _epvpc_cache:
-            try:
-                vt = ec2.describe_vpcs(VpcIds=[vpc_of_ep])["Vpcs"][0].get("Tags", [])
-                _epvpc_cache[vpc_of_ep] = {t["Key"]: t["Value"] for t in vt}
-            except Exception:
-                _epvpc_cache[vpc_of_ep] = {}
-        vtags = _epvpc_cache[vpc_of_ep]
-        is_cfn = any(k.startswith("aws:cloudformation:") for k in vtags.keys())
-        is_owned = (
-            vtags.get(OWNER_PREFIX_TAG) == prefix
-            or any(prefix in str(v) for v in vtags.values())
-        )
-        return is_cfn or is_owned
-
     gd_eps = []
     for ep in ec2.describe_vpc_endpoints().get("VpcEndpoints", []):
         if "guardduty-data" not in ep.get("ServiceName", ""):
             continue
-        if not _vpc_owned_or_cfn(ep.get("VpcId")):
-            continue  # only workshop-owned / IDE (CFN) VPCs — never unrelated ones
+        if not _vpc_is_ours(ep.get("VpcId")):
+            continue  # only VPCs this workshop created / its own IDE VPC
         gd_eps.append(ep["VpcEndpointId"])
     if gd_eps:
         ec2.delete_vpc_endpoints(VpcEndpointIds=gd_eps)
@@ -970,31 +1003,15 @@ except Exception as e:
 #     delete-stack retain-retry / FORCE_DELETE_STACK reaper is the backstop.
 # ---------------------------------------------------------------------------
 try:
-    _vpc_tags_cache = {}
-
-    def _vpc_is_target(vpc_of_sg):
-        if not vpc_of_sg:
-            return False
-        if vpc_of_sg not in _vpc_tags_cache:
-            try:
-                vt = ec2.describe_vpcs(VpcIds=[vpc_of_sg])["Vpcs"][0].get("Tags", [])
-                _vpc_tags_cache[vpc_of_sg] = {t["Key"]: t["Value"] for t in vt}
-            except Exception:
-                _vpc_tags_cache[vpc_of_sg] = {}
-        vtags = _vpc_tags_cache[vpc_of_sg]
-        is_cfn_vpc = any(k.startswith("aws:cloudformation:") for k in vtags.keys())
-        is_owned_vpc = (
-            vtags.get(OWNER_PREFIX_TAG) == prefix
-            or any(prefix in str(v) for v in vtags.values())
-        )
-        return is_cfn_vpc or is_owned_vpc
-
     gd_deleted = 0
     for sg in ec2.describe_security_groups(
         Filters=[{"Name": "tag:GuardDutyManaged", "Values": ["true"]}]
     ).get("SecurityGroups", []):
-        if not _vpc_is_target(sg.get("VpcId")):
-            continue  # only workshop-owned / IDE (CFN) VPCs — never unrelated ones
+        if not _vpc_is_ours(sg.get("VpcId")):
+            continue  # only VPCs this workshop created / its own IDE VPC.
+            # NOTE: _revoke_sg_rules below strips rules BEFORE the delete, and the
+            # revoke is not blocked even when AWS refuses the delete. So this guard
+            # must be correct: a false positive mutates a live security group.
         _revoke_sg_rules(sg)
         try:
             ec2.delete_security_group(GroupId=sg["GroupId"])
@@ -1025,13 +1042,29 @@ except Exception as e:
 # ---------------------------------------------------------------------------
 try:
     def _find_ide_vpc():
-        """The IDE VPC is the only CloudFormation-owned VPC (aws:cloudformation:*
-        tags). Reliable even when the hub cluster was already gone at section 6."""
+        """The IDE VPC of THIS workshop.
+
+        SAFETY: previously this returned the first VPC carrying any
+        aws:cloudformation:* tag, on the assumption that the IDE VPC is "the only
+        CloudFormation-owned VPC". That is false in any account with other CDK/CFN
+        stacks — it selected a VPC hosting unrelated production workloads and
+        deleted security groups in it. Now it requires the CFN stack name to
+        reference this deployment, and refuses to guess when that is ambiguous.
+        """
         if hub_vpc_id:
             return hub_vpc_id
-        for v in ec2.describe_vpcs().get("Vpcs", []):
-            if any(t["Key"].startswith("aws:cloudformation:") for t in v.get("Tags", [])):
-                return v["VpcId"]
+        matches = [
+            v["VpcId"]
+            for v in ec2.describe_vpcs().get("Vpcs", [])
+            if _is_our_ide_vpc({t["Key"]: t["Value"] for t in v.get("Tags", [])})
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            log("  [re-sweep] No IDE VPC identified for this deployment — skipping IDE VPC steps")
+        else:
+            log(f"  [re-sweep] {len(matches)} candidate IDE VPCs ({', '.join(matches)}) — "
+                "ambiguous, refusing to guess; skipping IDE VPC steps")
         return None
 
     ide_vpc = _find_ide_vpc()

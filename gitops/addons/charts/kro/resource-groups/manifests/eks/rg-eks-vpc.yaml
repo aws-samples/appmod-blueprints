@@ -39,6 +39,15 @@ spec:
       # "true" => the RGD creates the Secret directly (legacy fallback).
       createArgocdClusterSecret: string | default="false"
       domainName: string | default="cluster.example.com"
+      # Whether this cluster's platform ALB serves plain HTTP (TLS terminated
+      # upstream, e.g. by the hub's CloudFront) instead of HTTPS with an ACM
+      # cert. Passed through to the nested EksCluster (which stamps it onto
+      # the spoke's fleet-secret metadata blob, see rg-eks.yaml). Spokes get
+      # no domain of their own, so there is no cert to request; the
+      # clusters-kro appset/chart normally inherits this from the hub's own
+      # insecure setting rather than requiring every spoke declaration to
+      # repeat it. See kro-clusters/templates/clusters.yaml.
+      insecure: string | default="false"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
       argocdCapability:
@@ -197,6 +206,7 @@ spec:
           fleetSecretManagerSecretNameSuffix: ${schema.spec.fleetSecretManagerSecretNameSuffix}
           createArgocdClusterSecret: ${schema.spec.createArgocdClusterSecret}
           domainName: ${schema.spec.domainName}
+          insecure: ${schema.spec.insecure}
           resourcePrefix: ${schema.spec.resourcePrefix}
           git_username: ${schema.spec.git_username}
           argocdCapability:

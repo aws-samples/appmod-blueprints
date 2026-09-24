@@ -44,11 +44,26 @@ hub:
 # Leave empty unless ArgoCD can already read the repo.
 overlay:
   repoURL: ""
-  # MUST be a revision that actually contains the overlay files.
-  revision: "main"
+  # MUST be a revision that actually contains the overlay files. Empty means "use
+  # useFleetRepo's inherited value if set, else main" — see useFleetRepo below.
+  revision: ""
   # Repo-relative root holding configs/ + overlays/ (e.g. "gitops/"). Falls back to
   # addonsRepoBasepath when empty.
   basepath: ""
+  # A consumer that passes its OWN repo as both the fleet repo (spoke discovery,
+  # gitops/fleet/spoke-values/...) and its overlay repo (addon value overrides)
+  # previously had to write that repo's URL and revision twice: once implicitly via
+  # hub.fleetRepoURL/hub.fleetRepoRevision (from its own install config), and again
+  # explicitly here. Nothing kept the two in sync, and a stale/wrong copy here fails
+  # SILENTLY: bootstrap/clusters-kro.yaml's git generator resolves discovery as
+  # `or overlay_repo_url fleetRepoURL`, so a wrong-but-non-empty overlay URL globs a
+  # valid tree that simply has no spoke JSON files in it, and zero spoke
+  # Applications are generated with no error anywhere.
+  #
+  # Set useFleetRepo: true to inherit hub.fleetRepoURL/hub.fleetRepoRevision instead
+  # of repeating them. An explicit repoURL/revision above still wins, so a genuinely
+  # separate overlay repo is unaffected.
+  useFleetRepo: false
 
 # Addon enablement map — populated from enabled-addons.yaml via valueFiles
 enabledAddons: {}

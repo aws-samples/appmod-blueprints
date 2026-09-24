@@ -18,7 +18,11 @@ argocd-gitlab-repo-creds:
   valuesObject:
     namespace: argocd
     aws_cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
-    gitlab_domain_name: '{{ or (index .metadata.annotations "gitlab_domain_name") .metadata.annotations.ingress_domain_name }}'
+    # Empty when no remote git host is configured (do NOT fall back to the platform
+    # ingress domain — that is not a git host, so a non-empty value here defeats the
+    # chart-internal gate and renders repo-cred ExternalSecrets that can never resolve
+    # <hub>/secrets.git_token, leaving the app permanently Degraded).
+    gitlab_domain_name: '{{ default "" (index .metadata.annotations "gitlab_domain_name") }}'
     git_username: '{{ default "user1" (index .metadata.annotations "git_username") }}'
   ignoreDifferences:
     - group: external-secrets.io

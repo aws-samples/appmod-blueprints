@@ -4,5 +4,15 @@ aws:
   region: "us-west-2"
   cluster_name: ""
   grafana_url: ""
+
+# Shared identity for the keycloak-client-provisioner Job(s).
+# The Job itself is rendered per fleet member by the client-provisioner
+# ApplicationSet (platform-charts/keycloak-client-provisioner), but its
+# ServiceAccount / IAM Role / PodIdentityAssociation are hub-scoped singletons
+# and are owned here so exactly one Application renders them. Must match the
+# provisioner chart's own `serviceAccountName` default.
+# See templates/client-provisioner-identity.yaml for the full rationale.
+clientProvisioner:
+  serviceAccountName: keycloak-client-provisioner
 keycloak:
   resources: {}

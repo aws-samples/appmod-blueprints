@@ -15,6 +15,15 @@ includes:
 env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
   AWS_PAGER: ""
+  # A 40-minute install makes many AWS calls; a single unretried transient failure
+  # used to discard all prior work (observed: one `describe-cluster` hit
+  # "Could not connect to the endpoint URL" after the hub was already ACTIVE and
+  # aborted the run). The CLI already retries — v2 defaults to standard mode, 3
+  # total attempts with exponential backoff — so the fix is a bigger budget, not a
+  # hand-rolled retry wrapper around a client that is already retrying. Set here so
+  # every aws call in install and destroy inherits it.
+  AWS_RETRY_MODE: "standard"
+  AWS_MAX_ATTEMPTS: "10"
 
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
@@ -87,7 +96,23 @@ vars:
   CALLER_ROLE_ARN:
     sh: |
       # Try STS first — works when AWS credentials are already configured.
-      ARN=$(aws sts get-caller-identity --query "Arn" --output text 2>/dev/null || true)
+      #
+      # Do NOT use `2>/dev/null || true` here. This value is REQUIRED: an empty
+      # result aborts the install with "cannot create hub:claim ... Ensure AWS
+      # credentials are configured", which sends the operator to check credentials
+      # that were never broken. A transient STS failure (throttle, DNS, reset) used
+      # to be swallowed into an empty ARN and misreported as a config error; the
+      # same command succeeded on the next three runs with no changes.
+      # Keep stderr so the real cause is visible, and only fall through to the
+      # fallbacks below when STS genuinely returned nothing.
+      STS_ERR=$(mktemp)
+      ARN=$(aws sts get-caller-identity --query "Arn" --output text 2>"$STS_ERR" || true)
+      if [ -z "$ARN" ] || [ "$ARN" = "None" ]; then
+        if [ -s "$STS_ERR" ]; then
+          echo "  sts get-caller-identity failed: $(tr '\n' ' ' < "$STS_ERR")" >&2
+        fi
+      fi
+      rm -f "$STS_ERR"
       if [ -n "$ARN" ] && [ "$ARN" != "None" ]; then
         if echo "$ARN" | grep -q ":assumed-role/"; then
           echo "$ARN" | sed 's|arn:aws:sts::|arn:aws:iam::|;s|:assumed-role/|:role/|;s|/[^/]*$||'
@@ -365,11 +390,17 @@ tasks:
           --dry-run=client -o yaml | kubectl apply -f -
       - |
         # Also refresh eso-aws-credentials (ESO needs individual keys, not INI format)
+        # awk, not `grep X | awk`: for a plain IAM user there is no aws_session_token
+        # line, so grep exits 1, and under go-task's mvdan/sh (which implements pipefail
+        # strictly, unlike /bin/sh) the whole pipeline inherits that 1 and errexit aborts
+        # the task. awk matches internally, emits nothing when absent, and exits 0.
+        # Preferred over `|| true`, which would also swallow a real failure of the
+        # kubectl/base64 step feeding $CREDS.
         CREDS=$(kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials -o jsonpath='{.data.credentials}' | base64 -d)
         kubectl -n {{.ACK_NAMESPACE}} create secret generic eso-aws-credentials \
-          --from-literal=access-key-id="$(echo "$CREDS" | grep aws_access_key_id | awk '{print $3}')" \
-          --from-literal=secret-access-key="$(echo "$CREDS" | grep aws_secret_access_key | awk '{print $3}')" \
-          --from-literal=session-token="$(echo "$CREDS" | grep aws_session_token | awk '{print $3}')" \
+          --from-literal=access-key-id="$(echo "$CREDS" | awk '/aws_access_key_id/{print $3}')" \
+          --from-literal=secret-access-key="$(echo "$CREDS" | awk '/aws_secret_access_key/{print $3}')" \
+          --from-literal=session-token="$(echo "$CREDS" | awk '/aws_session_token/{print $3}')" \
           --dry-run=client -o yaml | kubectl apply -f -
       - rm -f {{.ROOT_DIR}}/private/aws-creds.ini
       - |
@@ -453,15 +484,27 @@ tasks:
       - |
         # Extract individual credential keys from the ACK credentials file and
         # create a separate secret for ESO (ESO needs individual keys, not INI format)
+        # awk, not `grep X | awk` — see the note in credentials:refresh. A plain IAM user
+        # has no aws_session_token line; grep exits 1, pipefail propagates it and errexit
+        # aborted this task with all output suppressed. This is what made the ESO
+        # ClusterSecretStore step fail for IAM-user credentials.
         CREDS=$(kubectl get secret aws-credentials -n ack-system -o jsonpath='{.data.credentials}' | base64 -d)
-        ACCESS_KEY=$(echo "$CREDS" | grep aws_access_key_id | awk '{print $3}')
-        SECRET_KEY=$(echo "$CREDS" | grep aws_secret_access_key | awk '{print $3}')
-        SESSION_TOKEN=$(echo "$CREDS" | grep aws_session_token | awk '{print $3}')
+        ACCESS_KEY=$(echo "$CREDS" | awk '/aws_access_key_id/{print $3}')
+        SECRET_KEY=$(echo "$CREDS" | awk '/aws_secret_access_key/{print $3}')
+        SESSION_TOKEN=$(echo "$CREDS" | awk '/aws_session_token/{print $3}')
         kubectl create secret generic eso-aws-credentials -n ack-system \
           --from-literal=access-key-id="$ACCESS_KEY" \
           --from-literal=secret-access-key="$SECRET_KEY" \
           --from-literal=session-token="$SESSION_TOKEN" \
           --dry-run=client -o yaml | kubectl apply -f -
+      # Gate on the CRD before applying. external-secrets was helm-installed
+      # immediately before this, and the API server does not serve
+      # clustersecretstores until the CRD is Established — so the apply below raced
+      # it and failed with no usable error (the task exited 1 straight after
+      # "✓ ESO installed", because the apply's stderr was not surfaced). An
+      # ordering problem needs an explicit readiness gate, not a re-run.
+      - kubectl wait --for=condition=established --timeout=120s
+          crd/clustersecretstores.external-secrets.io
       - |
         cat <<'EOF' | sed "s|AWS_REGION|{{.AWS_REGION}}|g" | kubectl apply -f -
         apiVersion: external-secrets.io/v1
@@ -994,7 +1037,11 @@ tasks:
         # devlake RDS composition consumes. `vpc` MUST be a JSON object (a bare VPC-id string makes
         # every jq lookup empty -> empty vpc-config -> RDS never provisions). Stored as a JSON
         # STRING (--arg), matching kind-crossplane, so ESO's property extraction round-trips.
-        PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | grep -v '^$' | jq -R . | jq -s .)
+        # awk 'NF', not `grep -v '^$'`: with an empty PRIVATE_SUBNET_IDS the grep matches
+        # nothing and exits 1, which pipefail propagates and errexit turns into a task
+        # abort (verified under go-task's mvdan/sh). awk drops blank lines and exits 0,
+        # yielding [] so the jq below still produces a well-formed vpc object.
+        PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | awk 'NF' | jq -R . | jq -s .)
         VPC_JSON=$(jq -n --arg id "{{.VPC_ID}}" --argjson subnet_ids "$PRIVATE_SUBNETS_JSON" \
           --arg cluster_security_group_id "{{.CLUSTER_SG}}" \
           '{id:$id, subnet_ids:$subnet_ids, cluster_security_group_id:$cluster_security_group_id}' | jq -c .)
@@ -1475,6 +1522,22 @@ tasks:
     vars:
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
     cmds:
+      # Preflight: the extended sweep (step 6) runs python helpers that import boto3.
+      # boto3 was an UNDECLARED prerequisite: when absent, the sweep died on
+      # ModuleNotFoundError and CloudFront, IAM, Secrets, AMP, OIDC and VPC cleanup
+      # were all skipped — while destroy still printed "✓ Destroy complete". Fail here
+      # instead, before anything is torn down, so the operator is not left with a
+      # half-destroyed account and a success message. Note boto3 does not install on
+      # the default Python 3.14 on current macOS; a 3.12 interpreter works.
+      - cmd: |
+          if ! python3 -c 'import boto3' 2>/dev/null; then
+            printf '{{.C_ERR}}✗ boto3 is required by the teardown sweep but is not importable by %s.{{.C_RESET}}\n' "$(command -v python3)"
+            printf '{{.C_INFO}}  Install it:   python3 -m pip install boto3{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  If that fails on Python 3.14, use a 3.12 interpreter (e.g. pyenv/uv) and re-run.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Refusing to start: without it the sweep silently skips CloudFront, IAM,{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Secrets, AMP, OIDC and VPC cleanup.{{.C_RESET}}\n'
+            exit 1
+          fi
       - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
       - task: credentials:refresh
       # Kill the Kind cluster FIRST — before hub:destroy-addons.
@@ -1519,7 +1582,12 @@ tasks:
           STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
             --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
           if [ "$STATUS" != "NOT_FOUND" ] && [ "$STATUS" != "DELETING" ]; then
-            aws eks delete-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} 2>/dev/null || true
+            # Keep stderr: this is where ResourceInUseException ("Cluster has
+            # capabilities attached") appears when the capability wait above timed
+            # out. Discarding it is why the cluster could survive a destroy that
+            # reported success. Still `|| true` so later cleanup steps run; the
+            # check at the end of destroy is what fails the task.
+            aws eks delete-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} || true
             echo "  Submitted hub EKS cluster deletion"
           fi
         ignore_error: true
@@ -1731,7 +1799,7 @@ tasks:
           done
           # 6h. Orphaned spoke VPCs (ACK ec2 VPC resources that survived cluster delete).
           #     Scoped by the EKS ACK tag (eks:kubernetes-resource-name=<PREFIX>-spoke-*).
-          python3 "{{.ROOT_DIR}}/scripts/sweep-spoke-vpcs.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" 2>&1 || true
+          python3 "{{.ROOT_DIR}}/scripts/sweep-spoke-vpcs.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "{{.HUB_CLUSTER_NAME}}" 2>&1 || true
           # 6i. IDE VPC non-default security groups (created by workshop, not by CFN).
           #     These include ALB SGs, EKS cluster SGs, RDS SGs, AMG SGs, k8s-traffic SGs.
           #     If left, they block CFN's VPC deletion → DELETE_FAILED on VPC subnet.
@@ -1771,7 +1839,16 @@ tasks:
           else
             echo "Kind preserved. Run 'task destroy-kind' to remove."
           fi
-      - printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'
+      # Don't claim success without checking. Every step above is `|| true` +
+      # ignore_error, so destroy used to print "✓ Destroy complete." even when the
+      # hub cluster survived (capability deletion timed out and the DeleteCluster
+      # error was swallowed). One check on the one outcome that matters.
+      - cmd: |
+          if aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} >/dev/null 2>&1; then
+            printf '{{.C_ERR}}✗ Destroy incomplete: EKS cluster {{.HUB_CLUSTER_NAME}} still exists. Re-run task destroy.{{.C_RESET}}\n'
+            exit 1
+          fi
+          printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'
 
   # ---- from kind-crossplane ----
   urls:
@@ -1910,7 +1987,11 @@ tasks:
         # Reuse existing hash/key on re-runs (don't rotate them out from under Kargo etc.)
         USER_PASS_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
         if [ -z "$USER_PASS_HASH" ]; then
-          USER_PASS_HASH=$(echo -n "$USER_PASS" | python3 -c "import sys,bcrypt; print(bcrypt.hashpw(sys.stdin.buffer.read(), bcrypt.gensalt()).decode())" 2>/dev/null || echo "")
+          # One shared implementation for all four hash sites across both providers —
+          # see scripts/bcrypt-hash.sh for the fallback order and why an empty hash is
+          # never written. It exits non-zero rather than emitting an empty value, so
+          # errexit aborts here instead of silently breaking Kargo admin login.
+          USER_PASS_HASH=$(bash "{{.ROOT_DIR}}/scripts/bcrypt-hash.sh" "$USER_PASS")
         fi
         USER_PASS_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
         if [ -z "$USER_PASS_KEY" ]; then
@@ -2054,10 +2135,15 @@ tasks:
 
         # Install required Grafana plugins (X-Ray for trace visualization)
         printf '{{.C_STEP}}▸ Installing AMG plugins (X-Ray)...{{.C_RESET}}\n'
-        curl -s -X POST -H "Authorization: Bearer $AMG_API_KEY" \
+        XRAY_RESP=$(curl -s -X POST -H "Authorization: Bearer $AMG_API_KEY" \
           -H "Content-Type: application/json" \
-          "https://$AMG_ENDPOINT/api/plugins/grafana-x-ray-datasource/install" 2>/dev/null || true
-        echo "X-Ray plugin installed"
+          "https://$AMG_ENDPOINT/api/plugins/grafana-x-ray-datasource/install" 2>&1 | head -1)
+        case "$XRAY_RESP" in
+          *"Access denied"*|*accessErrorId*)
+            printf '{{.C_INFO}}  X-Ray plugin NOT installed: the AMG workspace identity lacks plugins:install.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}    X-Ray panels in Grafana will be empty. Grant grafana:UpdatePluginConfiguration to fix.{{.C_RESET}}\n' ;;
+          *) printf '{{.C_OK}}  X-Ray plugin install requested (optional).{{.C_RESET}}\n' ;;
+        esac
 
         # Merge into existing secret (preserves other keys). On first run
         # the secret doesn't exist yet — `get-secret-value` returns empty,
@@ -2077,8 +2163,14 @@ tasks:
         # Reuse existing values on re-runs so we don't rotate them out from under Kargo.
         KARGO_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
         if [ -z "$KARGO_HASH" ]; then
-          pip install bcrypt --quiet 2>/dev/null || true
-          KARGO_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(rounds=10)).decode())" "$USER_PASS" 2>/dev/null)
+          # One shared implementation for all four hash sites across both providers —
+          # see scripts/bcrypt-hash.sh for the fallback order (htpasswd, then an
+          # importable bcrypt, then `python3 -m pip install bcrypt`) and for why an
+          # empty hash is never written: Kargo authenticates admin logins against this
+          # value, ESO syncs an empty string faithfully, and the platform then looks
+          # healthy while admin login is broken. The script exits non-zero instead, so
+          # errexit aborts this task; re-run after installing a prerequisite.
+          KARGO_HASH=$(bash "{{.ROOT_DIR}}/scripts/bcrypt-hash.sh" "$USER_PASS")
         fi
         KARGO_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
         if [ -z "$KARGO_KEY" ]; then
