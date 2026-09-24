@@ -1,0 +1,8 @@
+# KRO-managed cluster provisioning values for the control-plane tenant.
+# Clusters defined here use the KRO ResourceGraphDefinition (EksclusterWithVpc)
+# instead of Crossplane. Both can coexist.
+#
+# This file is intentionally seeded empty (`clusters: {}`): the eks-cluster-template
+# scaffolder merges cluster entries into it via roadiehq:utils:merge, which requires
+# the target file to already exist. Entries are added by the template, not by hand.
+clusters: {}
