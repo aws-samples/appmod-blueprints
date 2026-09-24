@@ -1,29 +1,32 @@
 # CodeBuild buildspec — build + push the 4 PEEKS agent images (pinned) to ECR.
 #
+# Option 1A (self-contained): the 3 generic service sources live IN THIS REPO under
+# platform/peeks-agent/src/{a2a-chat-ui,eks-mcp,skills-mcp} — no cross-repo clone of
+# open-agentic-platform. The agent RUNTIME image (strands-agent) is still owned by OAP
+# and only referenced by the platform (bifrost/agentgateway/OAM CDs), not built here.
+#
 # Env vars to set in the CodeBuild project:
-#   AWS_ACCOUNT_ID, AWS_REGION, ECR_PREFIX (e.g. peeks-e2e), IMAGE_TAG (e.g. git sha),
-#   OAP_REPO (default https://github.com/awslabs/open-agentic-platform),
-#   OAP_REF  (default main)
+#   AWS_ACCOUNT_ID, AWS_REGION, ECR_PREFIX (e.g. peeks-e2e), IMAGE_TAG (e.g. git sha)
 # Requires: privileged mode (Docker), ECR push permissions on <prefix>/* repos.
 version: 0.2
 env:
   variables:
-    OAP_REPO: "https://github.com/awslabs/open-agentic-platform"
-    OAP_REF: "main"
+    ECR_PREFIX: "peeks-e2e"
 phases:
   pre_build:
     commands:
       - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
       - REG="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
       - TAG="${IMAGE_TAG:-$CODEBUILD_RESOLVED_SOURCE_VERSION}"
-      - git clone --depth 1 --branch "$OAP_REF" "$OAP_REPO" /tmp/oap
+      - SRC=platform/peeks-agent/src
   build:
     commands:
-      # 1) generic OAP images
-      - docker build -t "$REG/$ECR_PREFIX/chat-ui:$TAG"      /tmp/oap/applications/a2a-chat-ui
-      - docker build -t "$REG/$ECR_PREFIX/eks-mcp:$TAG"      /tmp/oap/applications/eks-mcp
-      - docker build -t "$REG/$ECR_PREFIX/skills-mcp-base:$TAG" /tmp/oap/applications/skills-mcp
-      # 2) PEEKS skills overlay (context = repo root, to access .kiro/skills)
+      # 1) the 3 generic services, built from local sources (no OAP clone)
+      - docker build -t "$REG/$ECR_PREFIX/chat-ui:$TAG"        "$SRC/a2a-chat-ui"
+      - docker build -t "$REG/$ECR_PREFIX/eks-mcp:$TAG"        "$SRC/eks-mcp"
+      - docker build -t "$REG/$ECR_PREFIX/skills-mcp-base:$TAG" "$SRC/skills-mcp"
+      - docker build -t "$REG/$ECR_PREFIX/incident-bridge:$TAG" "$SRC/incident-bridge"
+      # 2) PEEKS skills overlay (context = repo ROOT, to access .kiro/skills)
       - docker build -f platform/peeks-agent/skills-overlay/Dockerfile
           --build-arg SKILLS_MCP_IMAGE="$REG/$ECR_PREFIX/skills-mcp-base:$TAG"
           -t "$REG/$ECR_PREFIX/skills-mcp:$TAG" .
@@ -33,4 +36,7 @@ phases:
       - docker push "$REG/$ECR_PREFIX/eks-mcp:$TAG"
       - docker push "$REG/$ECR_PREFIX/skills-mcp-base:$TAG"
       - docker push "$REG/$ECR_PREFIX/skills-mcp:$TAG"
-      - echo "Pinned images pushed with tag $TAG — update deploy/peeks-agent-app.yaml image refs."
+      - docker push "$REG/$ECR_PREFIX/incident-bridge:$TAG"
+      - echo "Now set the two placeholders in deploy/peeks-agent-app.yaml:"
+      - echo "  REPLACE_IMAGE_REGISTRY -> $REG/$ECR_PREFIX"
+      - echo "  REPLACE_IMAGE_TAG      -> $TAG"

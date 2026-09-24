@@ -11,13 +11,13 @@ built live during the demo, so nothing depends on hand-authored objects anymore.
 | `skills-mcp` | `mcp-server` (OAM) | skills MCP rollout + svc + HTTPRoute + AgentgatewayBackend |
 | `peeks-agent` | `agent-fixed` (OAM) | agent rollout + svc + HTTPRoute + backend + agent-card + SA + **Pod Identity role** (trait `aws-service-identity`) |
 | `eks-read-mcp` | `k8s-objects` | SA-less Deployment (reuses agent SA) + Service + HTTPRoute + AgentgatewayBackend |
-| `chat-ui` | `k8s-objects` | **ConfigMap `chat-ui-web` (app.py + index.html)** + Deployment + Service + Ingress (class `platform`) |
+| `chat-ui` | `k8s-objects` | Deployment (image bakes `app.py` + `static/`) + Service + Ingress (class `platform`). Branding is env-driven (`APP_TITLE`/`AGENT_LABEL`/`APP_INTRO`) — **no ConfigMap** |
 | `agent-access` | `k8s-objects` | 3 ACK `AccessEntry` (hub + spoke-dev + spoke-prod) granting `peeks-agent-role` read-only RBAC (`AmazonEKSViewPolicy` + `AmazonEKSAdminViewPolicy`) |
 
-> The chat-ui **ConfigMap is embedded** in the Application (component `chat-ui`,
-> `properties.objects[]`). The exact working UI (markdown + GFM tables, colored
-> rendering, history persistence, async job/poll) is reproduced without an image
-> rebuild.
+> The chat-ui **image bakes** `app.py` + `static/index.html` (built from
+> `src/a2a-chat-ui`). The exact working UI (markdown + GFM tables, colored
+> rendering, history persistence, async job/poll) ships in the image — a single
+> source of truth, no ConfigMap override to drift from.
 
 ### Identity design (why it is self-contained)
 
@@ -71,9 +71,37 @@ Three placeholders must be substituted before applying:
 CF=d2pefdj59hxapj.cloudfront.net   # this env's CloudFront domain (Keycloak token URL)
 ACCT=290085271972                  # this env's AWS account ID (AccessEntry principalARN)
 PREFIX=peeks-e2e                   # this env's cluster name prefix (<prefix>-hub / -spoke-dev / -spoke-prod)
+REG=$ACCT.dkr.ecr.us-west-2.amazonaws.com/$PREFIX   # ECR registry+repo prefix for the images
+TAG=<git-sha>                      # the pinned tag pushed by buildspec.yaml (NOT :latest)
+AMPWS=<ws-xxxxxxxx>                # AMP workspace ID (aws amp list-workspaces) — incident bridge only
 
-sed -i "s/REPLACE_CLOUDFRONT_DOMAIN/${CF}/g;  s/REPLACE_ACCOUNT_ID/${ACCT}/g;  s/REPLACE_CLUSTER_PREFIX/${PREFIX}/g" peeks-agent-app.yaml
+sed -i "s#REPLACE_IMAGE_REGISTRY#${REG}#g; s/REPLACE_IMAGE_TAG/${TAG}/g; \
+        s/REPLACE_CLOUDFRONT_DOMAIN/${CF}/g; s/REPLACE_ACCOUNT_ID/${ACCT}/g; \
+        s/REPLACE_CLUSTER_PREFIX/${PREFIX}/g; s/REPLACE_AMP_WORKSPACE_ID/${AMPWS}/g" peeks-agent-app.yaml
 ```
+
+> Placeholders in the manifest: `REPLACE_IMAGE_REGISTRY` + `REPLACE_IMAGE_TAG` (4 image
+> refs incl. `incident-bridge`), `REPLACE_CLOUDFRONT_DOMAIN` (chat-ui Keycloak URL),
+> `REPLACE_ACCOUNT_ID` + `REPLACE_CLUSTER_PREFIX` (3 ACK AccessEntry + the incident-bridge
+> ARNs/PodIdentity), and `REPLACE_AMP_WORKSPACE_ID` (AMP AlertManager target workspace —
+> incident bridge only). Images are **pinned** to `$TAG`, never `:latest`.
+
+### Autonomous incident bridge (components `incident-bridge-aws` + `incident-bridge`)
+Optional. Wires the AMP-based autonomous-remediation loop, all in ACK (no Crossplane
+provider changes; sns/sqs/iam/eks/prometheusservice controllers are on the hub):
+
+```
+AMP OOMKill alerting rule (observability-aws chart, amp.alerting.enabled)
+  └─> AlertManagerDefinition (ACK) → SNS Topic (ACK)
+        └─> Subscription (ACK, raw) → SQS Queue (ACK)
+              └─> incident-bridge Deployment (SA incident-bridge, Pod Identity, SQS read)
+                    long-polls SQS → POST agent A2A in-cluster (nothing exposed)
+```
+
+Prereqs: (1) the `observability-aws` chart with `amp.alerting.enabled=true` (adds the
+`PodOOMKilled` rule); (2) the `incident-bridge` image built+pushed by `buildspec.yaml`;
+(3) `REPLACE_AMP_WORKSPACE_ID` substituted. To omit the bridge, delete the two
+`incident-bridge*` components before applying.
 
 ## Apply
 
