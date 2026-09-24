@@ -12,7 +12,7 @@ metadata:
 # Historical note: auto-promotion was previously enabled for prod too, to work around
 # a Kargo v1.7.5 admission-webhook bug that rejected manually-created Promotions on
 # stages using inline `uses:` steps ("Stage defines no promotion steps"). That bug is
-# NOT present in the Kargo version shipped here (v1.11.0) — verified: a server-side
+# NOT present in the Kargo version shipped here (v1.11.4) — verified: a server-side
 # dry-run of a manual Promotion on the prod stage is accepted — so prod is a manual gate.
 apiVersion: kargo.akuity.io/v1alpha1
 kind: ProjectConfig
