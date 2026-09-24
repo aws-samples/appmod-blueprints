@@ -19,13 +19,33 @@ names are customer-supplied and arbitrary. An explicit entry in .Values.clusters
 {{-   $_ := set $all $self $acct }}
 {{- end }}
 {{- range $key, $value := $all }}
+{{- /*
+  Per-entry account, with the SAME-ACCOUNT case inheriting global.accountId.
+
+  .Values.clusters is authored by a consumer (or by `spokes:enable-*`) and may live in a
+  PUBLIC repo, so requiring a literal AWS account number per spoke forces a real account ID
+  into version control. Same-account spokes are the common case and have no reason to repeat
+  the hub's own account, so an entry may be declared with no value:
+
+      clusters:
+        my-spoke:            # same account as the hub -> inherits global.accountId
+        other-spoke: "111122223333"   # cross-account -> explicit, still wins
+
+  Failing loudly when neither resolves is deliberate: an empty account renders
+  arn:aws:iam:::role/... and, per the self-coverage note above, ACK creates the CR and then
+  silently never reconciles it -- no error, no events. A broken ARN must not ship quietly.
+*/ -}}
+{{- $acctFor := $value | default $.Values.global.accountId }}
+{{- if not $acctFor }}
+{{-   fail (printf "multi-acct: cluster %q has no AWS account. Set clusters.%s to an account ID, or provide global.accountId so same-account spokes inherit it. Without one the IAMRoleSelector ARN renders as arn:aws:iam:::role/... which ACK silently never reconciles." $key $key) }}
+{{- end }}
 ---
 apiVersion: services.k8s.aws/v1alpha1
 kind: IAMRoleSelector
 metadata:
   name: ec2-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-ec2"
+  arn: "arn:aws:iam::{{ $acctFor }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-ec2"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -39,7 +59,7 @@ kind: IAMRoleSelector
 metadata:
   name: eks-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-eks"
+  arn: "arn:aws:iam::{{ $acctFor }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-eks"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -53,7 +73,7 @@ kind: IAMRoleSelector
 metadata:
   name: iam-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-iam"
+  arn: "arn:aws:iam::{{ $acctFor }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-iam"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -67,7 +87,7 @@ kind: IAMRoleSelector
 metadata:
   name: ecr-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-ecr"
+  arn: "arn:aws:iam::{{ $acctFor }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-ecr"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -81,7 +101,7 @@ kind: IAMRoleSelector
 metadata:
   name: s3-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-s3"
+  arn: "arn:aws:iam::{{ $acctFor }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-s3"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -95,7 +115,7 @@ kind: IAMRoleSelector
 metadata:
   name: dynamodb-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-dynamodb"
+  arn: "arn:aws:iam::{{ $acctFor }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-dynamodb"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -109,7 +129,7 @@ kind: IAMRoleSelector
 metadata:
   name: secretsmanager-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-secretsmanager"
+  arn: "arn:aws:iam::{{ $acctFor }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-secretsmanager"
   namespaceSelector:
     names:
       - {{ $key }}
@@ -123,7 +143,7 @@ kind: IAMRoleSelector
 metadata:
   name: rds-{{ $key }}
 spec:
-  arn: "arn:aws:iam::{{ $value }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-rds"
+  arn: "arn:aws:iam::{{ $acctFor }}:role/{{ $.Values.global.resourcePrefix }}-cluster-mgmt-rds"
   namespaceSelector:
     names:
       - {{ $key }}

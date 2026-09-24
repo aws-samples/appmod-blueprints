@@ -1,24 +1,62 @@
 #!/usr/bin/env python3
 """
-sweep-spoke-vpcs.py RESOURCE_PREFIX AWS_REGION
-Deletes orphaned spoke VPCs tagged with eks:kubernetes-resource-name=<prefix>-spoke-*-vpc.
+sweep-spoke-vpcs.py RESOURCE_PREFIX AWS_REGION [HUB_CLUSTER_NAME]
+Deletes orphaned spoke VPCs left behind after the spoke clusters are gone.
 Called by task kind-kro-ack:destroy step 6h.
+
+Selects by OWNERSHIP TAG, not by name. Spoke names are arbitrary, so the previous
+filter — the two literal values <prefix>-spoke-dev-vpc and <prefix>-spoke-prod-vpc —
+could not see a spoke called anything else (including a conforming third one such as
+<prefix>-spoke-staging). Destroy reported success while leaving that spoke's VPC, NAT
+gateway, EIP, subnets and route tables behind, and the orphaned route tables then
+blocked the VPC deletion.
+
+The legacy names are still included, so a pre-tag install sweeps exactly what it
+swept before.
+
+HUB_CLUSTER_NAME is optional but should be passed: the hub is provisioned through the
+same resource graphs and carries the same ownership tag, so without it a tag-based
+sweep would pull the hub's VPC into a spoke sweep. It cannot be derived as
+<prefix>-hub, because cluster names are arbitrary.
 """
 import boto3, sys, time
 
 prefix = sys.argv[1] if len(sys.argv) > 1 else 'peeks'
 region = sys.argv[2] if len(sys.argv) > 2 else 'us-west-2'
+hub = sys.argv[3] if len(sys.argv) > 3 else ''
 ec2 = boto3.client('ec2', region_name=region)
 
-spoke_vpcs = []
-try:
-    resp = ec2.describe_vpcs(Filters=[{
-        'Name': 'tag:eks:kubernetes-resource-name',
-        'Values': [f'{prefix}-spoke-dev-vpc', f'{prefix}-spoke-prod-vpc']
-    }])
-    spoke_vpcs = [v['VpcId'] for v in resp['Vpcs']]
-except Exception as e:
-    print(f'  describe-vpcs error: {e}', file=sys.stderr)
+
+def _tag(vpc, key):
+    return next((t['Value'] for t in vpc.get('Tags', []) if t['Key'] == key), '')
+
+
+def _discover():
+    found = {}
+    for desc, filters in (
+        ('legacy name', [{'Name': 'tag:eks:kubernetes-resource-name',
+                          'Values': [f'{prefix}-spoke-dev-vpc', f'{prefix}-spoke-prod-vpc']}]),
+        ('ownership tag', [{'Name': 'tag:platform.gitops.io/prefix', 'Values': [prefix]}]),
+    ):
+        try:
+            for v in ec2.describe_vpcs(Filters=filters)['Vpcs']:
+                found[v['VpcId']] = v
+        except Exception as e:
+            print(f'  describe-vpcs ({desc}): {e}', file=sys.stderr)
+
+    out = []
+    for vpc_id, v in found.items():
+        # Never sweep the hub here — this script handles spokes only; the hub has its
+        # own teardown path earlier in destroy.
+        if hub and (_tag(v, 'platform.gitops.io/cluster') == hub
+                    or _tag(v, 'Name') == f'{hub}-vpc'):
+            print(f'  Skipping hub VPC {vpc_id} ({hub})')
+            continue
+        out.append(vpc_id)
+    return sorted(out)
+
+
+spoke_vpcs = _discover()
 
 if not spoke_vpcs:
     print('  No orphaned spoke VPCs found.')

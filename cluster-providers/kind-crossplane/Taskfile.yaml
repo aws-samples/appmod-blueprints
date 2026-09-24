@@ -16,19 +16,45 @@ includes:
 env:
   KUBECONFIG: "{{.ROOT_DIR}}/private/kubeconfig"
   AWS_PAGER: ""
-  AWS_PROFILE: "{{.AWS_PROFILE}}"
+  # See cluster-providers/kind-kro-ack/Taskfile.yaml: raise the CLI's own retry
+  # budget so a transient AWS failure mid-install retries instead of aborting.
+  # The CLI already retries (v2 standard mode, 3 attempts); this widens it rather
+  # than wrapping it.
+  AWS_RETRY_MODE: "standard"
+  AWS_MAX_ATTEMPTS: "10"
+  # These env entries are BROADCAST by go-task to the tasks AND dynamic vars of every
+  # SIBLING included Taskfile (the root Taskfile includes all four providers). go-task
+  # resolves dynamic vars concurrently, so a sibling provider's var evaluation can render
+  # this template BEFORE {{.AWS_PROFILE}} has resolved — exporting AWS_PROFILE="" and
+  # making every aws call in that sibling fail with:
+  #     aws: [ERROR]: The config profile () could not be found
+  # Reproduced intermittently (2 of 8 identical `task kind-kro-ack:status` runs). The
+  # `| default` makes the render safe whether the var is unresolved, empty, or absent.
+  AWS_PROFILE: '{{.AWS_PROFILE | default "default"}}'
   # Keep AWS_PROFILE flowing to every aws/kubectl/helm call (local multi-account
   # users depend on it). On EC2 the profile name (e.g. "default") has no entry in
   # ~/.aws/config, so point AWS_CONFIG_FILE at a generated config whose profile
   # resolves to the instance role via the credential provider chain (IMDS).
-  AWS_CONFIG_FILE: "{{.AWS_CONFIG_FILE}}"
+  AWS_CONFIG_FILE: '{{.AWS_CONFIG_FILE | default (printf "%s/.aws/config" (env "HOME"))}}'
 
 vars:
   CONFIG_FILE: "{{.ROOT_DIR}}/config.local.yaml"
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   AWS_PROFILE:
-    sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
+    # MUST never evaluate to an empty string. yq's `//` falls back only on null or
+    # false, NOT on an empty string, so `aws.profile: ""` in config produced an EMPTY
+    # value here — which the env block above then EXPORTED as AWS_PROFILE="", and every
+    # subsequent aws call failed with:
+    #     aws: [ERROR]: The config profile () could not be found
+    # Worse, go-task leaks an included Taskfile's top-level env: to the tasks of SIBLING
+    # included Taskfiles, and the root Taskfile includes all four providers — so this
+    # var broke `kind-kro-ack:*` runs even though that provider never sets AWS_PROFILE.
+    # The shell guard treats empty and unset identically.
+    sh: |
+      P=$(yq -r '.aws.profile // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+      [ -n "$P" ] && [ "$P" != "null" ] || P=default
+      echo "$P"
   # On EC2: generate a config that resolves the profile to the instance role and
   # return its path. Off-instance: fall back to the user's existing AWS_CONFIG_FILE
   # or ~/.aws/config, so local behavior is unchanged (zero regression).
@@ -1165,7 +1191,10 @@ tasks:
         # Reuse existing hash/key on re-runs (don't rotate them out from under Kargo etc.)
         USER_PASS_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
         if [ -z "$USER_PASS_HASH" ]; then
-          USER_PASS_HASH=$(echo -n "$USER_PASS" | python3 -c "import sys,bcrypt; print(bcrypt.hashpw(sys.stdin.buffer.read(), bcrypt.gensalt()).decode())" 2>/dev/null || echo "")
+          # One shared implementation for all four hash sites across both providers —
+          # see scripts/bcrypt-hash.sh. It exits non-zero rather than emitting an empty
+          # value, so errexit aborts here instead of silently breaking Kargo admin login.
+          USER_PASS_HASH=$(bash "{{.ROOT_DIR}}/scripts/bcrypt-hash.sh" "$USER_PASS")
         fi
         USER_PASS_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
         if [ -z "$USER_PASS_KEY" ]; then
@@ -1330,8 +1359,12 @@ tasks:
         # Reuse existing values on re-runs so we don't rotate them out from under Kargo.
         KARGO_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
         if [ -z "$KARGO_HASH" ]; then
-          pip install bcrypt --quiet 2>/dev/null || true
-          KARGO_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(rounds=10)).decode())" "$USER_PASS" 2>/dev/null)
+          # One shared implementation for all four hash sites across both providers —
+          # see scripts/bcrypt-hash.sh for the fallback order and for why an empty hash
+          # is never written (Kargo authenticates admin logins against it; ESO syncs an
+          # empty string faithfully, so the platform looks healthy while login is
+          # broken). The script exits non-zero instead, so errexit aborts this task.
+          KARGO_HASH=$(bash "{{.ROOT_DIR}}/scripts/bcrypt-hash.sh" "$USER_PASS")
         fi
         KARGO_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
         if [ -z "$KARGO_KEY" ]; then

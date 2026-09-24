@@ -1,11 +1,36 @@
 {{/*
-  Self-provisioned IAM Role + PodIdentityAssociation for the provisioner Job.
-  Runs on the hub, reconciled by the hub's iam/eks Crossplane providers.
-  Grants secretsmanager write on the OIDC contract paths the Job populates.
-  Consistent with every other workload: the chart brings its own identity;
-  no central per-workload registration in the pod-identities overlay.
+  Shared identity for the keycloak-client-provisioner Job(s).
+
+  WHY IT LIVES HERE AND NOT IN platform-charts/keycloak-client-provisioner:
+  the provisioner chart is rendered ONCE PER FLEET MEMBER by the
+  client-provisioner ApplicationSet (gitops/bootstrap/client-provisioner.yaml),
+  but these three resources are hub-scoped SINGLETONS — their names derive from
+  the hub cluster (the Job always runs on the hub, where Keycloak lives), so
+  every member's Application rendered byte-identical copies and ArgoCD reported
+  a permanent SharedResourceWarning / OutOfSync on all of them once more than
+  one member existed. Ownership now sits in exactly one hub-only Application.
+
+  WHY THE KEYCLOAK CHART IS THE RIGHT OWNER: it is gated on enable_keycloak,
+  which is set only for the control-plane environment, so it renders exactly
+  once. It already owns the keycloak namespace and the `keycloak-config` Secret
+  that the provisioner Job mounts as a VOLUME — a pod cannot start until that
+  Secret exists, so the Job already hard-depends on this chart. Moving the
+  ServiceAccount here therefore introduces no new ordering constraint; the
+  existing dependency is strictly stronger.
+
+  The provisioner Job references the ServiceAccount by name via its own
+  `serviceAccountName` value, whose default matches the name rendered here.
 */}}
-{{- $clusterName := required "clusterName is required for pod identity" .Values.clusterName -}}
+{{- $clusterName := required "aws.cluster_name is required for the client-provisioner identity" .Values.aws.cluster_name -}}
+{{- $saName := .Values.clientProvisioner.serviceAccountName -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $saName }}
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+---
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: Role
 metadata:
@@ -60,11 +85,11 @@ spec:
   forProvider:
     clusterName: {{ $clusterName }}
     namespace: keycloak
-    serviceAccount: {{ .Values.serviceAccountName }}
+    serviceAccount: {{ $saName }}
     roleArnSelector:
       matchLabels:
         platform.gitops.io/role: keycloak-client-provisioner
         platform.gitops.io/cluster: {{ $clusterName }}
-    region: {{ required "region is required" .Values.region }}
+    region: {{ required "aws.region is required for the client-provisioner identity" .Values.aws.region }}
   providerConfigRef:
     name: default

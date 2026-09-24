@@ -4,12 +4,20 @@ silent: true
 
 env:
   AWS_PAGER: ""
-  AWS_PROFILE: "{{.AWS_PROFILE}}"
+  # These env entries are BROADCAST by go-task to the tasks AND dynamic vars of every
+  # SIBLING included Taskfile (the root Taskfile includes all four providers). go-task
+  # resolves dynamic vars concurrently, so a sibling provider's var evaluation can render
+  # this template BEFORE {{.AWS_PROFILE}} has resolved — exporting AWS_PROFILE="" and
+  # making every aws call in that sibling fail with:
+  #     aws: [ERROR]: The config profile () could not be found
+  # Reproduced intermittently (2 of 8 identical `task kind-kro-ack:status` runs). The
+  # `| default` makes the render safe whether the var is unresolved, empty, or absent.
+  AWS_PROFILE: '{{.AWS_PROFILE | default "default"}}'
   # Keep AWS_PROFILE flowing to every aws/kubectl/helm call (local multi-account
   # users depend on it). On EC2 the profile name (e.g. "default") has no entry in
   # ~/.aws/config, so point AWS_CONFIG_FILE at a generated config whose profile
   # resolves to the instance role via the credential provider chain (IMDS).
-  AWS_CONFIG_FILE: "{{.AWS_CONFIG_FILE}}"
+  AWS_CONFIG_FILE: '{{.AWS_CONFIG_FILE | default (printf "%s/.aws/config" (env "HOME"))}}'
 
 vars:
   TF_DIR: "{{.ROOT_DIR}}/cluster-providers/terraform"
@@ -18,7 +26,15 @@ vars:
     sh: echo "$(dirname {{.CONFIG_FILE}})/gitops"
   REQUIRED_CLIS: [terraform, kubectl, helm, yq, aws]
   AWS_PROFILE:
-    sh: yq '.aws.profile // "default"' {{.CONFIG_FILE}}
+    # Never allow an empty value — see the note in
+    # cluster-providers/kind-crossplane/Taskfile.yaml. yq's `//` does not fall back on
+    # an empty string, and this var is exported via env:, which go-task leaks to sibling
+    # included Taskfiles. An empty AWS_PROFILE makes every aws call fail with
+    # "The config profile () could not be found".
+    sh: |
+      P=$(yq -r '.aws.profile // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+      [ -n "$P" ] && [ "$P" != "null" ] || P=default
+      echo "$P"
   # On EC2: generate a config that resolves the profile to the instance role and
   # return its path. Off-instance: fall back to the user's existing AWS_CONFIG_FILE
   # or ~/.aws/config, so local behavior is unchanged (zero regression).
