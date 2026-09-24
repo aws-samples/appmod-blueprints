@@ -1987,17 +1987,11 @@ tasks:
         # Reuse existing hash/key on re-runs (don't rotate them out from under Kargo etc.)
         USER_PASS_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
         if [ -z "$USER_PASS_HASH" ]; then
-          # See the note in seed-observability: htpasswd first, because `pip` and `python3`
-          # are frequently different interpreters. Previously this silently produced an
-          # EMPTY hash (the `|| echo ""`), which breaks Kargo admin login with no signal.
-          if command -v htpasswd >/dev/null 2>&1; then
-            USER_PASS_HASH=$(htpasswd -bnBC 10 "" "$USER_PASS" | tr -d ':\n' | sed 's/^\$2y\$/\$2a\$/')
-          elif python3 -c 'import bcrypt' >/dev/null 2>&1; then
-            USER_PASS_HASH=$(echo -n "$USER_PASS" | python3 -c "import sys,bcrypt; print(bcrypt.hashpw(sys.stdin.buffer.read(), bcrypt.gensalt()).decode())")
-          else
-            printf '{{.C_ERR}}⚠ No bcrypt available (htpasswd or python3 bcrypt) — user_password_hash left empty; Kargo admin login will not work.{{.C_RESET}}\n'
-            USER_PASS_HASH=""
-          fi
+          # One shared implementation for all four hash sites across both providers —
+          # see scripts/bcrypt-hash.sh for the fallback order and why an empty hash is
+          # never written. It exits non-zero rather than emitting an empty value, so
+          # errexit aborts here instead of silently breaking Kargo admin login.
+          USER_PASS_HASH=$(bash "{{.ROOT_DIR}}/scripts/bcrypt-hash.sh" "$USER_PASS")
         fi
         USER_PASS_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
         if [ -z "$USER_PASS_KEY" ]; then
@@ -2169,25 +2163,14 @@ tasks:
         # Reuse existing values on re-runs so we don't rotate them out from under Kargo.
         KARGO_HASH=$(echo "$EXISTING" | jq -r '.user_password_hash // ""')
         if [ -z "$KARGO_HASH" ]; then
-          # bcrypt WITHOUT a Python dependency. `pip` and `python3` are routinely DIFFERENT
-          # interpreters (common Homebrew state: pip -> 3.11, python3 -> 3.14), so
-          # `pip install bcrypt` followed by `python3 -c "import bcrypt"` fails with
-          # ModuleNotFoundError. With 2>/dev/null on the substitution and errexit on, that
-          # aborted this task — the last step of a ~30 minute install — and the output named
-          # neither bcrypt nor python, so the preceding (harmless) X-Ray line looked guilty.
-          # htpasswd -B emits bcrypt with no interpreter or package management. Its $2y$
-          # prefix is rewritten to $2a$, which Go's bcrypt (used by Kargo) accepts.
-          if command -v htpasswd >/dev/null 2>&1; then
-            KARGO_HASH=$(htpasswd -bnBC 10 "" "$USER_PASS" | tr -d ':\n' | sed 's/^\$2y\$/\$2a\$/')
-          elif python3 -c 'import bcrypt' >/dev/null 2>&1; then
-            KARGO_HASH=$(python3 -c "import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(rounds=10)).decode())" "$USER_PASS")
-          else
-            printf '{{.C_ERR}}⚠ Cannot compute the Kargo admin password hash: neither htpasswd nor python3 bcrypt is available.{{.C_RESET}}\n'
-            printf '{{.C_INFO}}  Install either:  brew install httpd   (or apt-get install apache2-utils){{.C_RESET}}\n'
-            printf '{{.C_INFO}}                   python3 -m pip install bcrypt   (note: python3 -m pip, NOT pip){{.C_RESET}}\n'
-            printf '{{.C_INFO}}  Continuing — everything else is seeded; Kargo admin login will not work until this is set.{{.C_RESET}}\n'
-            KARGO_HASH=""
-          fi
+          # One shared implementation for all four hash sites across both providers —
+          # see scripts/bcrypt-hash.sh for the fallback order (htpasswd, then an
+          # importable bcrypt, then `python3 -m pip install bcrypt`) and for why an
+          # empty hash is never written: Kargo authenticates admin logins against this
+          # value, ESO syncs an empty string faithfully, and the platform then looks
+          # healthy while admin login is broken. The script exits non-zero instead, so
+          # errexit aborts this task; re-run after installing a prerequisite.
+          KARGO_HASH=$(bash "{{.ROOT_DIR}}/scripts/bcrypt-hash.sh" "$USER_PASS")
         fi
         KARGO_KEY=$(echo "$EXISTING" | jq -r '.user_password_key // ""')
         if [ -z "$KARGO_KEY" ]; then
