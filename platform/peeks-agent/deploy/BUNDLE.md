@@ -92,7 +92,7 @@ sed -i "s#REPLACE_IMAGE_REGISTRY#${REG}#g; s/REPLACE_IMAGE_TAG/${TAG}/g; \
 > ARNs/PodIdentity), and `REPLACE_AMP_WORKSPACE_ID` (AMP AlertManager target workspace —
 > incident bridge only). Images are **pinned** to `$TAG`, never `:latest`.
 
-### Autonomous incident bridge (components `incident-bridge-aws` + `incident-bridge`)
+### Autonomous incident bridge (components `incident-bridge-selectors` + `incident-bridge-aws` + `incident-bridge`)
 Optional. Wires the AMP-based autonomous-remediation loop, all in ACK (no Crossplane
 provider changes; sns/sqs/iam/eks/prometheusservice controllers are on the hub):
 
@@ -104,9 +104,31 @@ AMP OOMKill alerting rule (observability-aws chart, amp.alerting.enabled)
                     long-polls SQS → POST agent A2A in-cluster (nothing exposed)
 ```
 
+**CARM prerequisite (component `incident-bridge-selectors`, applied FIRST).**
+The **managed** ACK capability does not use the classic CARM ConfigMap — it routes a
+CR to a workload IAM role via a cluster-scoped **`IAMRoleSelector`** matching the CR's
+namespace. With no match it falls back to the capability role, which only holds
+`AssumeWorkloadRoles` + `ManageIRSARoles` and therefore **cannot** create SNS/SQS/AMP
+resources (→ `AuthorizationError: not authorized to perform SNS:CreateTopic`). The
+bundle ships two selectors for ns `peeks-agent`:
+  - **`incident-bridge-iam`** → `<prefix>-cluster-mgmt-iam` (has `IAMFullAccess`, already
+    trusted by the capability). Lets ACK create the two IAM roles declaratively —
+    **no direct `aws iam` call**.
+  - **`incident-bridge-aws`** → `<prefix>-cluster-mgmt-incident-bridge` (the provisioning
+    role, created by ACK, armed with scoped SNS/SQS/aps perms). Named `cluster-mgmt-*`
+    so the capability's `AssumeWorkloadRoles` (Resource `<prefix>-cluster-mgmt-*`) permits
+    `sts:AssumeRole` on it.
+
+> ⚠️ **Ordering matters (learned live).** The managed capability caches "no role selected"
+> for a CR and does **not** re-evaluate a selector added *after* the CR's first reconcile
+> (there is no controller pod to restart). Hence `incident-bridge-aws` **`dependsOn`
+> `incident-bridge-selectors`**, and `incident-bridge` **`dependsOn` `incident-bridge-aws`**.
+> On an existing cluster where the AWS CRs were applied before the selectors, force a fresh
+> selection with: `kubectl -n peeks-agent delete topic/queue/subscription/alertmanagerdefinition … && kubectl apply`.
+
 Prereqs: (1) the `observability-aws` chart with `amp.alerting.enabled=true` (adds the
 `PodOOMKilled` rule); (2) the `incident-bridge` image built+pushed by `buildspec.yaml`;
-(3) `REPLACE_AMP_WORKSPACE_ID` substituted. To omit the bridge, delete the two
+(3) `REPLACE_AMP_WORKSPACE_ID` substituted. To omit the bridge, delete the three
 `incident-bridge*` components before applying.
 
 ## Apply
