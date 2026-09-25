@@ -54,6 +54,65 @@ spec:
               annotations:
                 summary: "Frequent restarts: {{ "{{ $labels.container }}" }} in {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
                 description: "Container restarted repeatedly in the last 10m — likely an OOM or crash loop."
+            # Image cannot be pulled (bad tag/repo/registry auth). Fixable in GitOps
+            # by correcting the image reference or pull-secret wiring.
+            - alert: PodImagePullError
+              expr: |
+                max by (cluster, namespace, pod, container) (
+                  kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull|InvalidImageName"} == 1
+                )
+              for: "2m"
+              labels:
+                severity: warning
+                signal: imagepull
+                remediation: gitops-image-fix
+              annotations:
+                summary: "ImagePullError: {{ "{{ $labels.container }}" }} in {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
+                description: "Container cannot pull its image (reason waiting). Propose a GitOps fix to the image reference (tag/repo/registry) or the imagePullSecret via a Merge Request; do not mutate the cluster."
+            # Container stuck in CrashLoopBackOff (waiting reason set) — distinct from
+            # the restart-rate guard; catches persistent crash loops.
+            - alert: PodCrashLoopBackOff
+              expr: |
+                max by (cluster, namespace, pod, container) (
+                  kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} == 1
+                )
+              for: "3m"
+              labels:
+                severity: warning
+                signal: crashloop
+                remediation: gitops-config-or-probe-fix
+              annotations:
+                summary: "CrashLoopBackOff: {{ "{{ $labels.container }}" }} in {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
+                description: "Container is crash-looping. Perform RCA (logs, probes, config/env) and propose the appropriate GitOps fix (command/args, env/config, liveness-probe timing) via a Merge Request; do not mutate the cluster."
+            # Pod cannot be scheduled (insufficient resources / affinity / taints).
+            - alert: PodUnschedulable
+              expr: |
+                max by (cluster, namespace, pod) (
+                  kube_pod_status_unschedulable == 1
+                )
+              for: "5m"
+              labels:
+                severity: warning
+                signal: unschedulable
+                remediation: gitops-resources-or-nodepool
+              annotations:
+                summary: "Unschedulable: {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
+                description: "Pod cannot be scheduled for >5m. RCA the cause (requests too high, node affinity/taints, nodepool capacity) and propose a GitOps fix (right-size requests, tolerations/affinity, or a Karpenter NodePool change) via a Merge Request; do not mutate the cluster."
+            # PersistentVolumeClaim stuck Pending (missing/incorrect StorageClass, no
+            # provisioner, or capacity limits).
+            - alert: PVCPending
+              expr: |
+                max by (cluster, namespace, persistentvolumeclaim) (
+                  kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
+                )
+              for: "5m"
+              labels:
+                severity: warning
+                signal: storage
+                remediation: gitops-pvc-or-storageclass
+              annotations:
+                summary: "PVC Pending: {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.persistentvolumeclaim }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
+                description: "PVC has been Pending for >5m. RCA (StorageClass exists? provisioner healthy? capacity?) and propose a GitOps fix (correct storageClassName / requested size) via a Merge Request; do not mutate the cluster."
   providerConfigRef:
     name: default
 {{- end }}
