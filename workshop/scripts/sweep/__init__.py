@@ -16,3 +16,15 @@ from .resilience import (  # noqa: F401
     retry_aws,
     using_stdlib_fallback,
 )
+
+__all__ = [
+    "classify",
+    "error_code",
+    "is_access_denied",
+    "is_already_gone",
+    "is_transient",
+    "ensure_tenacity",
+    "poll_until",
+    "retry_aws",
+    "using_stdlib_fallback",
+]

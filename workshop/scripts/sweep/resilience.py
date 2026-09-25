@@ -25,7 +25,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
-from typing import Any, Callable, Iterable, Optional, Tuple
+from typing import Any, Callable, Optional
 
 # ── Transient / terminal AWS error classification (principle 3: ONE place) ──────
 #
