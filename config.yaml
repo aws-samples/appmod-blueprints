@@ -72,6 +72,19 @@ resourcePrefix: "<prefix>"                   # Used for KRO tenant-facing resour
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
 
+# Platform-wide AWS tags applied to every AWS resource the platform creates:
+#   - hub resources (EKS cluster, VPC, NAT, EIP) via CDK Tags.of(stack).add() in
+#     platform-engineering-on-eks (Layer 1);
+#   - spoke resources (EKS cluster, VPC, NAT, EIP) via the kro EksclusterWithVpc
+#     `awsTags` schema field (Layer 2/3), stamped through the hub cluster-secret
+#     `platform_tags` annotation.
+# Primary use: SpringClean retention (auto-delete=no) so cost/janitor sweepers do
+# not reap long-lived workshop infrastructure; also cost-allocation / compliance.
+# Values must be strings. Empty/omitted -> no extra tags are applied.
+platformTags: {}
+  # auto-delete: "no"
+  # cost-center: "peeks"
+
 # AWS Identity Center (required for EKS ArgoCD Capability)
 identityCenter:
   instanceArn: "<identity-center-instance-arn>"

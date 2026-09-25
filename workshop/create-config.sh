@@ -331,6 +331,50 @@ fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 
+# --- Platform-wide AWS tags (Layer 3 of appmod-blueprints#773) -------------
+# Sourced from the PLATFORM_TAGS env var (compact JSON object string, forwarded
+# by the IDE bootstrap in platform-engineering-on-eks team-stack.ts). Written as
+# a nested `platformTags` YAML map that hub:seed reads (yq '.platformTags') and
+# stamps onto the hub cluster-secret `platform_tags` annotation -> awsTags on
+# every kro EksclusterWithVpc (spoke EKS/VPC/NAT/EIP), plus Layer 1 CDK tags the
+# hub/IDE CFN resources. Empty/unset/"{}" = no-op (no key written, awsTags stays
+# empty), so existing deployments are unaffected until a value is provided.
+#
+# Transport: the IDE bootstrap forwards the tags base64-encoded (PLATFORM_TAGS_B64)
+# because the SSM bootstrap runs in a single-quoted `bash -lc '...'` block where a
+# raw JSON value (quotes + braces) would break the outer quoting. Decode it into
+# PLATFORM_TAGS here. A human running this script by hand can skip base64 entirely
+# and just export PLATFORM_TAGS='{"auto-delete":"no"}' as plain JSON — a directly
+# set PLATFORM_TAGS always wins over the encoded form.
+if [ -z "${PLATFORM_TAGS:-}" ] && [ -n "${PLATFORM_TAGS_B64:-}" ]; then
+  PLATFORM_TAGS="$(printf '%s' "$PLATFORM_TAGS_B64" | base64 -d 2>/dev/null || true)"
+fi
+# Normalise to a valid JSON object so the peeks.io merge below always has a base.
+if [ -z "${PLATFORM_TAGS:-}" ] || ! printf '%s' "$PLATFORM_TAGS" | yq -p=json -e 'tag == "!!map"' >/dev/null 2>&1; then
+  PLATFORM_TAGS='{}'
+fi
+# peeks.io=<stack name> (appmod-blueprints#924): a deployment-scoped ownership tag
+# stamped on EVERY AWS resource the platform creates — Layer 1 CDK (CFN resources),
+# and Layer 2/3 kro/ACK (spoke EKS/VPC/NAT/EIP + the hub via hub:claim). Complements
+# auto-delete=no (retention) with a precise teardown/sweep key: one tag value
+# enumerates every resource of THIS deployment regardless of name/prefix. Merged here
+# rather than baked into PLATFORM_TAGS_B64 because the REAL deployed CloudFormation
+# stack name is only known at deploy time; the IDE bootstrap forwards it as
+# PLATFORM_STACK_NAME (CFN ${AWS::StackName}). Reserved platform key -> it wins over
+# any user-supplied peeks.io. Absent (e.g. running this script by hand) -> skipped.
+if [ -n "${PLATFORM_STACK_NAME:-}" ]; then
+  PLATFORM_TAGS="$(printf '%s' "$PLATFORM_TAGS" | PLATFORM_STACK_NAME="$PLATFORM_STACK_NAME" yq -p=json -o=json -I=0 '. * {"peeks.io": strenv(PLATFORM_STACK_NAME)}')"
+fi
+if [ -n "${PLATFORM_TAGS:-}" ] && [ "${PLATFORM_TAGS}" != "{}" ]; then
+  echo "[$(date +%H:%M:%S)] ▸ Writing platformTags from PLATFORM_TAGS env..."
+  # JSON is valid YAML input; wrap under platformTags and append as a YAML map.
+  if printf '%s' "$PLATFORM_TAGS" | yq -p=json -o=yaml '{"platformTags": .}' >> "$OUTPUT_FILE" 2>/dev/null; then
+    echo "[$(date +%H:%M:%S)] ✓ platformTags written: $PLATFORM_TAGS"
+  else
+    echo "[$(date +%H:%M:%S)] ⚠ PLATFORM_TAGS is not valid JSON; skipping (awsTags will be empty): $PLATFORM_TAGS" >&2
+  fi
+fi
+
 # --- Validate --------------------------------------------------------------
 echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."
 yq '.' "$OUTPUT_FILE" >/dev/null

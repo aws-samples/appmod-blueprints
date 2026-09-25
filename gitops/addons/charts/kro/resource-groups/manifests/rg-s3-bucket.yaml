@@ -13,6 +13,9 @@ spec:
       region: string
       accountId: string
       resourcePrefix: string | default="peeks"
+      # Optional extra AWS tags applied to the bucket (SpringClean auto-delete=no,
+      # cost allocation, compliance). Optional: omitting it leaves the bucket untagged.
+      awsTags: "map[string]string"
     status:
       bucketStatus: ${s3bucket.status.conditions}
   resources:
@@ -64,3 +67,7 @@ spec:
           argocd.argoproj.io/sync-options: "Ignore=true,SkipDryRunOnMissingResource=true"
       spec:
         name: ${schema.spec.name}
+        # Optional user awsTags rendered as an S3 tagSet ({key,value}), keys sorted
+        # for reconcile stability. Absent awsTags -> empty tagSet (no tags).
+        tagging:
+          tagSet: '${schema.spec.?awsTags.orValue({}).map(k, k).sort().map(k, {"key": k, "value": schema.spec.awsTags[k]})}'

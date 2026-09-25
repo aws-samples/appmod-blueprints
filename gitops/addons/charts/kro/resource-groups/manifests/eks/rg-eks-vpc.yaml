@@ -50,6 +50,11 @@ spec:
       insecure: string | default="false"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
+      # Optional extra AWS tags, merged on top of the built-in tags of every AWS
+      # resource this RGD (and its nested Vpc/EksCluster) manages. Drives SpringClean
+      # retention (auto-delete=no), cost allocation and compliance tagging from a
+      # single source. Optional: existing instances that omit it are unaffected.
+      awsTags: "map[string]string"
       argocdCapability:
         enabled: string | default="false"
         idcInstanceArn: string | default=""
@@ -161,6 +166,7 @@ spec:
         name: ${schema.spec.name}
         region: ${schema.spec.region}
         resourcePrefix: ${schema.spec.resourcePrefix}
+        awsTags: ${schema.spec.?awsTags.orValue({})}
         cidr:
           vpcCidr: ${schema.spec.cidr.vpcCidr}
           publicSubnet1Cidr: ${schema.spec.cidr.publicSubnet1Cidr}
@@ -209,6 +215,7 @@ spec:
           insecure: ${schema.spec.insecure}
           resourcePrefix: ${schema.spec.resourcePrefix}
           git_username: ${schema.spec.git_username}
+          awsTags: ${schema.spec.?awsTags.orValue({})}
           argocdCapability:
             enabled: ${schema.spec.argocdCapability.enabled}
             idcInstanceArn: ${schema.spec.argocdCapability.idcInstanceArn}
