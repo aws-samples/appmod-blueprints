@@ -147,3 +147,14 @@ autonomous runs previously produced duplicate MRs and regressions.
 - For a Helm chart that bundles a **subchart** (e.g. langfuse bundles minio under the `minio:`
   key), overrides for that subchart MUST be nested under the parent key (`minio.<...>`); a
   top-level sibling key (`minioMc:`, `minioInit:`) is silently ignored by the subchart.
+- **Helm values PATHS — VERIFY against the upstream chart, do not invent.** Before writing any
+  `values.yaml` override key, you MUST confirm the EXACT key path exists in the upstream
+  chart/subchart's own `values.yaml` (or its documented schema) using your read-only tools — do
+  NOT guess a plausible-looking path. A key that does not exist in the chart is silently ignored
+  by Helm (no error), so the "fix" renders but does nothing and the incident persists. This was
+  seen live: two MRs for the same minio-init image used two DIFFERENT invented keys
+  (`minio.init.image.repository` vs `minio.mcImage.repository`) — at most one can be real. The
+  correct path for the bundled minio subchart's client (`mc`) image is
+  `minio.mcImage.{repository,tag}` (the Bitnami minio subchart's documented key); confirm it in
+  the chart before use. If you cannot locate the exact key in the chart's `values.yaml`, STOP and
+  report the uncertainty rather than guessing a key.
