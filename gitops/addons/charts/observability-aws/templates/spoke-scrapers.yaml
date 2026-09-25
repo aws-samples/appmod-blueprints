@@ -28,7 +28,7 @@ spec:
       - amp:
           - workspaceArnRef:
               name: {{ $.Values.resourcePrefix }}-amp
-    scrapeConfiguration: {{ $.Files.Get "files/scraper-config.yaml" | replace "{scrape_interval}" $.Values.scraper.scrapeInterval | replace "{scrape_timeout}" $.Values.scraper.scrapeTimeout | replace "{cluster}" $clusterName | replace "{region}" $.Values.aws.region | replace "{account_id}" ($.Values.aws.accountId | toString) | quote }}
+    scrapeConfiguration: {{ $.Files.Get "files/scraper-config.yaml" | replace "{scrape_interval}" $.Values.scraper.scrapeInterval | replace "{scrape_timeout}" $.Values.scraper.scrapeTimeout | replace "{cluster}" (printf "%s-%s" $.Values.resourcePrefix $clusterName) | replace "{region}" $.Values.aws.region | replace "{account_id}" ($.Values.aws.accountId | toString) | quote }}
   providerConfigRef:
     name: default
 {{- end }}
