@@ -60,6 +60,18 @@ def _subject(alert: dict) -> str:
         or alert.get("persistentvolumeclaim")
         or alert.get("pod", "")
     )
+    # For CONTAINER-scoped signals (image-pull / OOM of a named container), the
+    # `namespace` label is UNRELIABLE: the same failing pod can be reported under
+    # different namespace labels by different AMP rules (observed: the same
+    # `langfuse-minio-init` pod's `mc` container fired once as namespace
+    # `kube-prometheus-stack` and once as `langfuse`), which split into two
+    # subjects and produced two duplicate MRs. Since the GitOps fix
+    # (`configs/<addon>/values.yaml`) is namespace-agnostic, key ONLY on
+    # alertname + container so those collapse to ONE subject.
+    if alert.get("container"):
+        return "|".join([str(alert.get("alertname", "")), str(comp)])
+    # node/PVC-scoped signals have no container -> keep namespace as discriminator
+    # (a PVC name can legitimately repeat across namespaces).
     return "|".join(
         [str(alert.get("alertname", "")), str(alert.get("namespace", "")), str(comp)]
     )
