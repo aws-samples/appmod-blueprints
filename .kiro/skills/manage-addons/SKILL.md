@@ -73,3 +73,38 @@ If an addon is not deploying:
 **Constraints:**
 - You MUST distinguish between `enabled` (ApplicationSet creation) and `enable_<addon>` (cluster targeting) because they are different mechanisms
 - You MUST check sync wave dependencies if addon fails to deploy
+
+### 6. Autonomous incident remediation via the fleet-config overlay
+
+When you (an agent) fix an addon problem by opening a Merge Request, you write to the
+**fleet-config** repo — the `$overlay` source that addon ApplicationSets already reference
+in their Helm `valueFiles`, last-wins over the `$defaults` (GitHub) base values, with
+`ignoreMissingValueFiles: true` (so a file that does not exist yet can simply be **created**).
+
+**⚠️ These `$overlay` (fleet-config) paths are root-relative and DIFFER from the `$defaults`
+paths in the table above (which are prefixed `gitops/...`). In the fleet-config repo use:**
+
+| Scope | Path in fleet-config (`$overlay`) |
+|-------|-----------------------------------|
+| All clusters (cluster-agnostic) | `configs/<addon>/values.yaml` |
+| Per environment | `overlays/environments/<env>/<addon>/values.yaml` |
+| Per cluster | `overlays/clusters/<exact-deployed-cluster-name>/<addon>/values.yaml` |
+
+**Constraints:**
+- You MUST create or edit **EXACTLY ONE** file — the narrowest that fixes the incident.
+  You MUST NOT create multiple variants of the same file or guess alternate paths.
+- You SHOULD **prefer the cluster-agnostic `configs/<addon>/values.yaml`** because it needs no
+  cluster name (no short/full ambiguity) and covers all clusters — usually what you want when a
+  controller fails on several clusters. Use a per-cluster overlay ONLY to deliberately scope to
+  one cluster.
+- **Cluster names are DYNAMIC** (they depend on the deployment's resource prefix; they are NOT
+  always `peeks-e2e-*`). You MUST NOT hardcode, shorten, or guess a cluster name. An alert's
+  `cluster` label may be a SHORT form (e.g. `spoke-dev`) that does NOT match the fleet-config
+  path segment (e.g. `peeks-e2e-spoke-dev`); reconcile it to the REAL deployed cluster name
+  (via your read-only tools / the environment's known names) before using it in a path.
+- You MUST confirm the addon's real current value (e.g. the memory limit in the base values)
+  with read-only tools before writing, so the change is a meaningful delta and the comment is
+  accurate.
+- You MUST NOT mutate the cluster directly — the fix ships as a Merge Request for human review.
+- App workloads (not addons) already have their own manifest in fleet-config (e.g.
+  `demo-oomkill/deployment.yaml`); edit that existing file, do NOT invent an overlay for them.
