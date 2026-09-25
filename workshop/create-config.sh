@@ -349,6 +349,22 @@ printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 if [ -z "${PLATFORM_TAGS:-}" ] && [ -n "${PLATFORM_TAGS_B64:-}" ]; then
   PLATFORM_TAGS="$(printf '%s' "$PLATFORM_TAGS_B64" | base64 -d 2>/dev/null || true)"
 fi
+# Normalise to a valid JSON object so the peeks.io merge below always has a base.
+if [ -z "${PLATFORM_TAGS:-}" ] || ! printf '%s' "$PLATFORM_TAGS" | yq -p=json -e 'tag == "!!map"' >/dev/null 2>&1; then
+  PLATFORM_TAGS='{}'
+fi
+# peeks.io=<stack name> (appmod-blueprints#924): a deployment-scoped ownership tag
+# stamped on EVERY AWS resource the platform creates — Layer 1 CDK (CFN resources),
+# and Layer 2/3 kro/ACK (spoke EKS/VPC/NAT/EIP + the hub via hub:claim). Complements
+# auto-delete=no (retention) with a precise teardown/sweep key: one tag value
+# enumerates every resource of THIS deployment regardless of name/prefix. Merged here
+# rather than baked into PLATFORM_TAGS_B64 because the REAL deployed CloudFormation
+# stack name is only known at deploy time; the IDE bootstrap forwards it as
+# PLATFORM_STACK_NAME (CFN ${AWS::StackName}). Reserved platform key -> it wins over
+# any user-supplied peeks.io. Absent (e.g. running this script by hand) -> skipped.
+if [ -n "${PLATFORM_STACK_NAME:-}" ]; then
+  PLATFORM_TAGS="$(printf '%s' "$PLATFORM_TAGS" | PLATFORM_STACK_NAME="$PLATFORM_STACK_NAME" yq -p=json -o=json -I=0 '. * {"peeks.io": strenv(PLATFORM_STACK_NAME)}')"
+fi
 if [ -n "${PLATFORM_TAGS:-}" ] && [ "${PLATFORM_TAGS}" != "{}" ]; then
   echo "[$(date +%H:%M:%S)] ▸ Writing platformTags from PLATFORM_TAGS env..."
   # JSON is valid YAML input; wrap under platformTags and append as a YAML map.

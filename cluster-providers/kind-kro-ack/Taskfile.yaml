@@ -715,7 +715,21 @@ tasks:
         NETEOF
           )
         fi
-        cat <<EOF | kubectl apply -f -
+        # Platform-wide AWS tags (SpringClean auto-delete=no, peeks.io=<stack>, cost,
+        # compliance) from config.local.yaml. The hub cluster is claimed DIRECTLY here by
+        # the bootstrap kind cluster — it does NOT flow through the clusters-kro
+        # ApplicationSet that threads platformTags into spoke EksclusterWithVpc claims
+        # (clusters-kro.yaml -> rg-eks-vpc.yaml awsTags), so without this the hub EKS
+        # cluster (EksCluster path) and, on the EksclusterWithVpc path, its VPC/NAT/EIP
+        # would be the ONLY platform resources left untagged. Injected as spec.awsTags via
+        # yq (indentation-safe, unlike splicing a block into the heredoc): rg-eks.yaml
+        # merges it into the cluster tag map (Maps.merge) and rg-eks-vpc.yaml propagates it
+        # to the VPC children. yq prints "null" for a missing key -> normalise to {} so
+        # awsTags becomes {} (RGD no-op) when no platformTags are configured.
+        PLATFORM_TAGS_JSON=$(yq -o=json -I=0 '.platformTags // {}' {{.CONFIG_FILE}} 2>/dev/null || echo '{}')
+        if [ "$PLATFORM_TAGS_JSON" = "null" ] || [ -z "$PLATFORM_TAGS_JSON" ]; then PLATFORM_TAGS_JSON='{}'; fi
+        echo "[hub:claim] injecting spec.awsTags=$PLATFORM_TAGS_JSON"
+        cat <<EOF | PLATFORM_TAGS_JSON="$PLATFORM_TAGS_JSON" yq '.spec.awsTags = (strenv(PLATFORM_TAGS_JSON) | from_json)' - | kubectl apply -f -
         apiVersion: kro.run/v1alpha1
         kind: $KIND
         metadata:
