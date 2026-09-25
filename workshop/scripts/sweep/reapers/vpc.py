@@ -6,6 +6,84 @@ import time
 from ..resilience import poll_until, retry_aws
 
 
+def clear_vpc_deps(ctx, vpc_id):
+    """One pass of dependency clearing for a VPC. Safe to call repeatedly — subnet
+    and VPC deletion only succeed once NAT gateways finish deleting and release
+    their service-managed ENIs, so reap_single_vpc re-drives this each retry."""
+    ec2 = ctx.ec2
+    for eni in ec2.describe_network_interfaces(
+        Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+    )["NetworkInterfaces"]:
+        try:
+            ec2.delete_network_interface(NetworkInterfaceId=eni["NetworkInterfaceId"])
+        except Exception:
+            pass
+    for nat in ec2.describe_nat_gateways(
+        Filter=[{"Name": "vpc-id", "Values": [vpc_id]}]
+    ).get("NatGateways", []):
+        if nat["State"] not in ("deleted", "deleting"):
+            try:
+                ec2.delete_nat_gateway(NatGatewayId=nat["NatGatewayId"])
+            except Exception:
+                pass
+    for igw in ec2.describe_internet_gateways(
+        Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
+    )["InternetGateways"]:
+        try:
+            ec2.detach_internet_gateway(InternetGatewayId=igw["InternetGatewayId"], VpcId=vpc_id)
+            ec2.delete_internet_gateway(InternetGatewayId=igw["InternetGatewayId"])
+        except Exception:
+            pass
+    for sn in ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["Subnets"]:
+        try:
+            ec2.delete_subnet(SubnetId=sn["SubnetId"])
+        except Exception:
+            pass
+    for rt in ec2.describe_route_tables(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["RouteTables"]:
+        if any(a.get("Main", False) for a in rt.get("Associations", [])):
+            continue
+        for a in rt.get("Associations", []):
+            if a.get("RouteTableAssociationId") and not a.get("Main", False):
+                try:
+                    ec2.disassociate_route_table(AssociationId=a["RouteTableAssociationId"])
+                except Exception:
+                    pass
+        try:
+            ec2.delete_route_table(RouteTableId=rt["RouteTableId"])
+        except Exception:
+            pass
+    for sg in ec2.describe_security_groups(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["SecurityGroups"]:
+        if sg["GroupName"] == "default":
+            continue
+        ctx.revoke_sg_rules(sg)
+    ctx.delete_vpc_sgs(vpc_id)
+
+
+def reap_single_vpc(ctx, vpc_id):
+    """Delete a VPC, re-driving the full dependency clear on EVERY attempt.
+    poll_until drives the ~6 min re-drive cadence; retry_aws absorbs the
+    transient DependencyViolation within an attempt and treats an already-gone
+    VPC as success. Returns True on deletion. Shared by §14 (orphan VPC reaper)
+    and the final-net reaper (§16b) so both get identical dependency-aware behavior."""
+    log, ec2 = ctx.log, ctx.ec2
+    _rv = {"deleted": False, "last": None}
+
+    def _try_reap():
+        clear_vpc_deps(ctx, vpc_id)
+        try:
+            retry_aws(ec2.delete_vpc, VpcId=vpc_id, attempts=1)
+            log(f"  Deleted orphan VPC {vpc_id}")
+            _rv["deleted"] = True
+            return True
+        except Exception as e:
+            _rv["last"] = e
+            return False
+
+    if not poll_until(_try_reap, attempts=18, delay=20):
+        log(f"  Orphan VPC {vpc_id}: still blocked after ~6 min — {_rv['last']}")
+    return _rv["deleted"]
+
+
 def reap_spoke_vpcs(ctx):
     """§10. ACK/Crossplane spoke VPCs (tag eks:kubernetes-resource-name), not part
     of the IDE CFN stack — deleted separately."""
@@ -90,81 +168,7 @@ def reap_orphan_vpcs(ctx):
     Crossplane VPCs. NEVER touches a CFN-owned VPC (that is the IDE VPC)."""
     log, ec2, prefix, hub = ctx.log, ctx.ec2, ctx.prefix, ctx.hub
     OWNER_PREFIX_TAG = ctx.OWNER_PREFIX_TAG
-    _revoke_sg_rules, _delete_vpc_sgs = ctx.revoke_sg_rules, ctx.delete_vpc_sgs
     try:
-        def _clear_vpc_deps(vpc_id):
-            """One pass of dependency clearing. Safe to call repeatedly — subnet and
-            VPC deletion only succeed once NAT gateways finish deleting and release
-            their service-managed ENIs, so _reap_vpc re-drives this each retry."""
-            for eni in ec2.describe_network_interfaces(
-                Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
-            )["NetworkInterfaces"]:
-                try:
-                    ec2.delete_network_interface(NetworkInterfaceId=eni["NetworkInterfaceId"])
-                except Exception:
-                    pass
-            for nat in ec2.describe_nat_gateways(
-                Filter=[{"Name": "vpc-id", "Values": [vpc_id]}]
-            ).get("NatGateways", []):
-                if nat["State"] not in ("deleted", "deleting"):
-                    try:
-                        ec2.delete_nat_gateway(NatGatewayId=nat["NatGatewayId"])
-                    except Exception:
-                        pass
-            for igw in ec2.describe_internet_gateways(
-                Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
-            )["InternetGateways"]:
-                try:
-                    ec2.detach_internet_gateway(InternetGatewayId=igw["InternetGatewayId"], VpcId=vpc_id)
-                    ec2.delete_internet_gateway(InternetGatewayId=igw["InternetGatewayId"])
-                except Exception:
-                    pass
-            for sn in ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["Subnets"]:
-                try:
-                    ec2.delete_subnet(SubnetId=sn["SubnetId"])
-                except Exception:
-                    pass
-            for rt in ec2.describe_route_tables(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["RouteTables"]:
-                if any(a.get("Main", False) for a in rt.get("Associations", [])):
-                    continue
-                for a in rt.get("Associations", []):
-                    if a.get("RouteTableAssociationId") and not a.get("Main", False):
-                        try:
-                            ec2.disassociate_route_table(AssociationId=a["RouteTableAssociationId"])
-                        except Exception:
-                            pass
-                try:
-                    ec2.delete_route_table(RouteTableId=rt["RouteTableId"])
-                except Exception:
-                    pass
-            for sg in ec2.describe_security_groups(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["SecurityGroups"]:
-                if sg["GroupName"] == "default":
-                    continue
-                _revoke_sg_rules(sg)
-            _delete_vpc_sgs(vpc_id)
-
-        def _reap_vpc(vpc_id):
-            """Delete a VPC, re-driving the full dependency clear on EVERY attempt.
-            poll_until drives the ~6 min re-drive cadence; retry_aws absorbs the
-            transient DependencyViolation within an attempt and treats an
-            already-gone VPC as success. Returns True on deletion."""
-            _rv = {"deleted": False, "last": None}
-
-            def _try_reap():
-                _clear_vpc_deps(vpc_id)
-                try:
-                    retry_aws(ec2.delete_vpc, VpcId=vpc_id, attempts=1)
-                    log(f"  Deleted orphan VPC {vpc_id}")
-                    _rv["deleted"] = True
-                    return True
-                except Exception as e:
-                    _rv["last"] = e
-                    return False
-
-            if not poll_until(_try_reap, attempts=18, delay=20):
-                log(f"  Orphan VPC {vpc_id}: still blocked after ~6 min — {_rv['last']}")
-            return _rv["deleted"]
-
         seen, targets = set(), []
         for flt in (
             {"Name": "tag:eks:kubernetes-resource-name",
@@ -182,7 +186,7 @@ def reap_orphan_vpcs(ctx):
                 seen.add(v["VpcId"])
                 targets.append(v["VpcId"])
         for vpc_id in targets:
-            _reap_vpc(vpc_id)
+            reap_single_vpc(ctx, vpc_id)
         if not targets:
             log("No orphan spoke/Crossplane VPCs to reap")
     except Exception as e:

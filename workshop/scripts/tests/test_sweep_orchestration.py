@@ -174,6 +174,7 @@ class SweepOrchestrationTest(unittest.TestCase):
             "skipping leftover SG cleanup",            # §15
             "No GuardDuty-managed SGs to delete",      # §15b
             "skipping final re-sweep",                 # §16
+            "no peeks.io stack tag",                   # §16b (final net inert w/o stack)
         ):
             self.assertIn(marker, out, msg=f"missing section marker: {marker!r}\n{out}")
 
@@ -248,6 +249,175 @@ class PeeksIoTagGateTest(unittest.TestCase):
         )
         self.assertEqual(rc, 0, msg=out)
         self.assertNotIn("tagged:", out)
+
+
+class _AccessDenied(Exception):
+    """botocore-shaped AccessDenied so resilience.classify() → 'access_denied'."""
+
+    def __init__(self, msg="not authorized"):
+        super().__init__(msg)
+        self.response = {"Error": {"Code": "AccessDenied", "Message": msg}}
+
+
+class RecordingClient(FakeClient):
+    """FakeClient that RECORDS every method call into a shared list and can raise
+    AccessDenied for named methods. When `live` is provided, a successful delete-ish
+    call removes any tagged mapping whose ARN contains one of the call's string args
+    (models deletion reflecting in the tagging API for the end-to-end pipeline test)."""
+
+    def __init__(self, service, calls, deny=None, live=None):
+        super().__init__(service)
+        self._calls = calls
+        self._deny = deny or set()
+        self._live = live
+
+    def __getattr__(self, name):
+        service = self.__dict__.get("_service")
+
+        def _call(*a, **k):
+            self.__dict__["_calls"].append((service, name, k))
+            if name in self.__dict__.get("_deny", set()):
+                raise _AccessDenied(f"{service}.{name} not authorized")
+            # Existence checks must raise not-found so the reapers short-circuit
+            # (no real poll_until sleeps) and verify §17c does not false-positive.
+            if name == "describe_repositories":
+                raise _RepoNotFound(f"{service}.{name}: not found (fake)")
+            if name == "describe_cluster":
+                raise _ResourceNotFound(f"{service}.{name}: not found (fake)")
+            live = self.__dict__.get("_live")
+            if live is not None and (name.startswith("delete") or name == "release_address"):
+                for v in k.values():
+                    if isinstance(v, str):
+                        live[:] = [m for m in live if v not in m["ResourceARN"]]
+            return _EMPTY_RESP
+
+        return _call
+
+
+def _recording_factory(mappings, calls, deny=None, live=None):
+    def factory(service, **kwargs):
+        if service == "resourcegroupstaggingapi":
+            return _StatefulTaggingClient(live) if live is not None else FakeTaggingClient(mappings)
+        return RecordingClient(service, calls, deny, live)
+
+    return factory
+
+
+class _StatefulTaggingClient(FakeTaggingClient):
+    """Tagging client whose get_resources reflects the CURRENT `live` list, so a
+    resource the final net deletes disappears from the §17 gate's re-query."""
+
+    def __init__(self, live):
+        super().__init__(live)
+        self._live = live
+
+    def get_paginator(self, name):
+        if name == "get_resources":
+            return _TagPaginator(self._live)
+        return _Paginator()
+
+
+class FinalNetReaperTest(unittest.TestCase):
+    """§16b tag-driven final net: deletes out-of-CFN peeks.io orphans, skips Layer 1,
+    leaves unhandled/denied for the §17 gate (appmod-blueprints#924)."""
+
+    def _ctx(self, mappings, deny=None, live=None):
+        calls = []
+        with mock.patch("sweep.context.boto3.client",
+                        side_effect=_recording_factory(mappings, calls, deny, live)):
+            from sweep.context import SweepContext
+            ctx = SweepContext("us-west-2", "peeks", "peeks-workshop-test")
+        return ctx, calls
+
+    def _run(self, ctx):
+        import io
+        import contextlib
+        from sweep.reapers import finalnet
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            summary = finalnet.run(ctx)
+        return summary, buf.getvalue()
+
+    def test_deletes_orphans_skips_layer1_leaves_unhandled(self):
+        mappings = [
+            {"ResourceARN": "arn:aws:s3:::peeks-ray-models-123",
+             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+            {"ResourceARN": "arn:aws:ecr:us-west-2:111122223333:repository/peeks-ray-vllm-custom",
+             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+            {"ResourceARN": "arn:aws:eks:us-west-2:111122223333:cluster/oap-test",
+             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+            # Layer 1 CFN-managed → MUST be skipped (CloudFormation reaps it)
+            {"ResourceARN": "arn:aws:ec2:us-west-2:111122223333:vpc/vpc-ide",
+             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"},
+                      {"Key": "aws:cloudformation:stack-name", "Value": "peeks-workshop-test"}]},
+            # unhandled service type → left for the §17 gate, never blind-deleted
+            {"ResourceARN": "arn:aws:dynamodb:us-west-2:111122223333:table/oap-state",
+             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+        ]
+        ctx, calls = self._ctx(mappings)
+        summary, out = self._run(ctx)
+
+        self.assertEqual(summary["deleted"], 3, msg=out)      # s3 + ecr + eks
+        self.assertEqual(summary["skipped_cfn"], 1, msg=out)  # vpc-ide (Layer 1)
+        self.assertEqual(summary["unhandled"], 1, msg=out)    # dynamodb table
+        self.assertEqual(summary["access_denied"], 0, msg=out)
+        methods = {(s, m) for s, m, _k in calls}
+        self.assertIn(("s3", "delete_bucket"), methods)
+        self.assertIn(("ecr", "delete_repository"), methods)
+        self.assertIn(("eks", "delete_cluster"), methods)
+        # The CFN-managed IDE VPC must NEVER be touched by the net.
+        self.assertNotIn(("ec2", "delete_vpc"), methods)
+        self.assertIn("unhandled tagged resource", out)
+
+    def test_access_denied_surfaced_not_counted_deleted(self):
+        mappings = [
+            {"ResourceARN": "arn:aws:ecr:us-west-2:111122223333:repository/peeks-ray-vllm-custom",
+             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+        ]
+        ctx, _calls = self._ctx(mappings, deny={"delete_repository"})
+        summary, out = self._run(ctx)
+        self.assertEqual(summary["access_denied"], 1, msg=out)
+        self.assertEqual(summary["deleted"], 0, msg=out)
+        self.assertIn("ACCESS DENIED", out)
+
+    def test_inert_without_stack_name(self):
+        calls = []
+        with mock.patch("sweep.context.boto3.client",
+                        side_effect=_recording_factory([], calls)):
+            from sweep.context import SweepContext
+            ctx = SweepContext("us-west-2", "peeks", None)
+        summary, out = self._run(ctx)
+        self.assertEqual(summary, {"deleted": 0, "skipped_cfn": 0, "access_denied": 0,
+                                   "unhandled": 0, "failed": 0})
+        self.assertIn("no peeks.io stack tag", out)
+
+    def test_end_to_end_net_deletes_then_gate_is_clean(self):
+        """Pipeline: net deletes the tagged orphans → §17 gate re-queries live → 0
+        residue → main() exits 0. Uses a stateful tagging fake so a deleted resource
+        disappears from the gate's enumeration."""
+        live = [
+            {"ResourceARN": "arn:aws:s3:::peeks-ray-models-123",
+             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+            {"ResourceARN": "arn:aws:ecr:us-west-2:111122223333:repository/peeks-ray-vllm-custom",
+             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+        ]
+        calls = []
+        with mock.patch("sweep.context.boto3.client",
+                        side_effect=_recording_factory(None, calls, live=live)):
+            from sweep.orchestrator import main
+            import io
+            import contextlib
+
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main("us-west-2", "peeks", "peeks-workshop-test")
+            out = buf.getvalue()
+
+        self.assertEqual(rc, 0, msg=out)               # net cleared the orphans
+        self.assertIn("DESTROY COMPLETE", out)
+        self.assertNotIn("tagged:arn:aws:s3", out)     # gate saw them gone
+        self.assertEqual(live, [], msg=f"live not emptied: {live}")
 
 
 if __name__ == "__main__":

@@ -142,6 +142,12 @@ class SweepContext:
         self._tagged_cache = results
         return results
 
+    def invalidate_tag_cache(self):
+        """Drop the cached peeks.io enumeration so the next discover_by_tag() re-queries
+        live. Used by the final-net reaper: after it deletes tagged orphans, the §17 gate
+        must see the *post-deletion* state, not the stale set captured at spoke discovery."""
+        self._tagged_cache = None
+
     # ── VPC ownership (positive identification only) ─────────────────────────────
     def _vpc_tags(self, vpc_id):
         if vpc_id not in self._vpc_tag_cache:

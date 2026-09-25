@@ -124,8 +124,11 @@ def run(ctx):
         # 17d. Authoritative peeks.io gate (appmod-blueprints#924). Enumerate everything
         #      still carrying peeks.io=<stack> via the Resource Groups Tagging API — the
         #      one deployment-scoped key stamped on Layer 1 (CDK) AND Layer 2/3 (kro/ACK)
-        #      resources. This catches out-of-CFN residue the prefix/cluster scans above
-        #      may miss (arbitrarily-named resources). CAVEATS (why it SUPPLEMENTS, not
+        #      resources. The §16b final-net reaper already DELETED the out-of-CFN orphans
+        #      it found, so this gate now CONFIRMS that work: anything still returned here
+        #      is genuine residue (undeletable, access-denied, or an unhandled type the net
+        #      left behind). It also catches out-of-CFN residue the prefix/cluster scans
+        #      above may miss (arbitrarily-named resources). CAVEATS (why it SUPPLEMENTS, not
         #      replaces, the per-service scans): (1) the tagging API is regional, so global
         #      resources (CloudFront) never appear here; (2) AWS-created resources (Auto
         #      Mode ENIs, RDS-managed SGs) don't carry our tag. EXCLUSION: resources that

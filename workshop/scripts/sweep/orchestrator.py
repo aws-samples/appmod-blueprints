@@ -18,6 +18,7 @@ from .reapers import (
     eip,
     eks,
     elb,
+    finalnet,
     grafana,
     iam,
     logs,
@@ -55,6 +56,7 @@ def main(region="us-west-2", prefix="peeks", stack_name=None):
     vpc.reap_ide_sgs(ctx)             # 15.  Leftover SGs in the IDE VPC
     vpc.reap_guardduty_sgs(ctx)       # 15b. GuardDuty-managed SGs
     resweep.run(ctx)                  # 16.  Final re-sweep of recreatable resources + ENI gate
+    finalnet.run(ctx)                 # 16b. Tag-driven final net: delete out-of-CFN peeks.io orphans
     residue = verify.run(ctx)         # 17.  Completeness verification + re-drive
 
     ctx.log("Extended sweep complete.")
