@@ -87,7 +87,7 @@ def _fake_client(service, **kwargs):
     return FakeClient(service)
 
 
-# ── Fake Resource Groups Tagging API (peeks.io=<stack> gate) ──────────────────────
+# ── Fake Resource Groups Tagging API (platform.gitops.io/prefix gate) ─────────────
 class _TagPaginator:
     def __init__(self, mappings):
         self._mappings = mappings
@@ -174,7 +174,7 @@ class SweepOrchestrationTest(unittest.TestCase):
             "skipping leftover SG cleanup",            # §15
             "No GuardDuty-managed SGs to delete",      # §15b
             "skipping final re-sweep",                 # §16
-            "no peeks.io stack tag",                   # §16b (final net inert w/o stack)
+            "no platform.gitops.io/prefix-tagged resources remain",  # §16b (final net, empty account)
         ):
             self.assertIn(marker, out, msg=f"missing section marker: {marker!r}\n{out}")
 
@@ -201,10 +201,10 @@ class SweepOrchestrationTest(unittest.TestCase):
                 del os.environ["SWEEP_ALLOW_RESIDUE"]
 
 
-class PeeksIoTagGateTest(unittest.TestCase):
-    """Authoritative peeks.io=<stack> completeness gate (appmod-blueprints#924, §17d)."""
+class PrefixTagGateTest(unittest.TestCase):
+    """Authoritative platform.gitops.io/prefix=<prefix> completeness gate (§17d, #924)."""
 
-    def _run(self, mappings, stack_name="peeks-workshop-test"):
+    def _run(self, mappings):
         with mock.patch("sweep.context.boto3.client", side_effect=_fake_client_with_tags(mappings)):
             from sweep.orchestrator import main
             import io
@@ -212,26 +212,26 @@ class PeeksIoTagGateTest(unittest.TestCase):
 
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                rc = main("us-west-2", "peeks", stack_name)
+                rc = main("us-west-2", "peeks")
             return rc, buf.getvalue()
 
     def test_out_of_cfn_tagged_resource_is_residue(self):
-        """A resource tagged peeks.io=<stack> WITHOUT aws:cloudformation:* tags is
-        out-of-CFN (kro/ACK) residue -> non-zero exit."""
+        """A resource tagged platform.gitops.io/prefix=<prefix> WITHOUT aws:cloudformation:*
+        tags is out-of-CFN (kro/ACK) residue -> non-zero exit."""
         arn = "arn:aws:eks:us-west-2:111122223333:cluster/oap-test"
         rc, out = self._run(
-            [{"ResourceARN": arn, "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]}]
+            [{"ResourceARN": arn, "Tags": [{"Key": "platform.gitops.io/prefix", "Value": "peeks"}]}]
         )
         self.assertEqual(rc, 1, msg=out)
         self.assertIn(f"tagged:{arn}", out)
 
     def test_layer1_cfn_tagged_resource_is_excluded(self):
-        """The IDE VPC (Layer 1) carries peeks.io AND aws:cloudformation:* -> excluded
+        """The IDE VPC (Layer 1) carries the prefix tag AND aws:cloudformation:* -> excluded
         from the gate (CloudFormation deletes it after the sweep), so no false residue."""
         arn = "arn:aws:ec2:us-west-2:111122223333:vpc/vpc-ide"
         rc, out = self._run(
             [{"ResourceARN": arn, "Tags": [
-                {"Key": "peeks.io", "Value": "peeks-workshop-test"},
+                {"Key": "platform.gitops.io/prefix", "Value": "peeks"},
                 {"Key": "aws:cloudformation:stack-name", "Value": "peeks-workshop-test"},
             ]}]
         )
@@ -239,15 +239,11 @@ class PeeksIoTagGateTest(unittest.TestCase):
         self.assertIn("DESTROY COMPLETE", out)
         self.assertNotIn("tagged:", out)
 
-    def test_no_stack_name_skips_tag_gate(self):
-        """Without a stack name, the tag gate is skipped even if the tagging API would
-        return matches -> unchanged pre-tag behaviour."""
-        arn = "arn:aws:eks:us-west-2:111122223333:cluster/oap-test"
-        rc, out = self._run(
-            [{"ResourceARN": arn, "Tags": [{"Key": "peeks.io", "Value": "x"}]}],
-            stack_name=None,
-        )
+    def test_no_tagged_resources_is_clean(self):
+        """When the tagging API returns nothing, the always-on gate is clean -> exit 0."""
+        rc, out = self._run([])
         self.assertEqual(rc, 0, msg=out)
+        self.assertIn("DESTROY COMPLETE", out)
         self.assertNotIn("tagged:", out)
 
 
@@ -318,7 +314,7 @@ class _StatefulTaggingClient(FakeTaggingClient):
 
 
 class FinalNetReaperTest(unittest.TestCase):
-    """§16b tag-driven final net: deletes out-of-CFN peeks.io orphans, skips Layer 1,
+    """§16b tag-driven final net: deletes out-of-CFN prefix-tagged orphans, skips Layer 1,
     leaves unhandled/denied for the §17 gate (appmod-blueprints#924)."""
 
     def _ctx(self, mappings, deny=None, live=None):
@@ -326,7 +322,7 @@ class FinalNetReaperTest(unittest.TestCase):
         with mock.patch("sweep.context.boto3.client",
                         side_effect=_recording_factory(mappings, calls, deny, live)):
             from sweep.context import SweepContext
-            ctx = SweepContext("us-west-2", "peeks", "peeks-workshop-test")
+            ctx = SweepContext("us-west-2", "peeks")
         return ctx, calls
 
     def _run(self, ctx):
@@ -342,18 +338,18 @@ class FinalNetReaperTest(unittest.TestCase):
     def test_deletes_orphans_skips_layer1_leaves_unhandled(self):
         mappings = [
             {"ResourceARN": "arn:aws:s3:::peeks-ray-models-123",
-             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+             "Tags": [{"Key": "platform.gitops.io/prefix", "Value": "peeks"}]},
             {"ResourceARN": "arn:aws:ecr:us-west-2:111122223333:repository/peeks-ray-vllm-custom",
-             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+             "Tags": [{"Key": "platform.gitops.io/prefix", "Value": "peeks"}]},
             {"ResourceARN": "arn:aws:eks:us-west-2:111122223333:cluster/oap-test",
-             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+             "Tags": [{"Key": "platform.gitops.io/prefix", "Value": "peeks"}]},
             # Layer 1 CFN-managed → MUST be skipped (CloudFormation reaps it)
             {"ResourceARN": "arn:aws:ec2:us-west-2:111122223333:vpc/vpc-ide",
-             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"},
+             "Tags": [{"Key": "platform.gitops.io/prefix", "Value": "peeks"},
                       {"Key": "aws:cloudformation:stack-name", "Value": "peeks-workshop-test"}]},
             # unhandled service type → left for the §17 gate, never blind-deleted
             {"ResourceARN": "arn:aws:dynamodb:us-west-2:111122223333:table/oap-state",
-             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+             "Tags": [{"Key": "platform.gitops.io/prefix", "Value": "peeks"}]},
         ]
         ctx, calls = self._ctx(mappings)
         summary, out = self._run(ctx)
@@ -373,7 +369,7 @@ class FinalNetReaperTest(unittest.TestCase):
     def test_access_denied_surfaced_not_counted_deleted(self):
         mappings = [
             {"ResourceARN": "arn:aws:ecr:us-west-2:111122223333:repository/peeks-ray-vllm-custom",
-             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+             "Tags": [{"Key": "platform.gitops.io/prefix", "Value": "peeks"}]},
         ]
         ctx, _calls = self._ctx(mappings, deny={"delete_repository"})
         summary, out = self._run(ctx)
@@ -381,26 +377,15 @@ class FinalNetReaperTest(unittest.TestCase):
         self.assertEqual(summary["deleted"], 0, msg=out)
         self.assertIn("ACCESS DENIED", out)
 
-    def test_inert_without_stack_name(self):
-        calls = []
-        with mock.patch("sweep.context.boto3.client",
-                        side_effect=_recording_factory([], calls)):
-            from sweep.context import SweepContext
-            ctx = SweepContext("us-west-2", "peeks", None)
-        summary, out = self._run(ctx)
-        self.assertEqual(summary, {"deleted": 0, "skipped_cfn": 0, "access_denied": 0,
-                                   "unhandled": 0, "failed": 0})
-        self.assertIn("no peeks.io stack tag", out)
-
     def test_end_to_end_net_deletes_then_gate_is_clean(self):
         """Pipeline: net deletes the tagged orphans → §17 gate re-queries live → 0
         residue → main() exits 0. Uses a stateful tagging fake so a deleted resource
         disappears from the gate's enumeration."""
         live = [
             {"ResourceARN": "arn:aws:s3:::peeks-ray-models-123",
-             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+             "Tags": [{"Key": "platform.gitops.io/prefix", "Value": "peeks"}]},
             {"ResourceARN": "arn:aws:ecr:us-west-2:111122223333:repository/peeks-ray-vllm-custom",
-             "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]},
+             "Tags": [{"Key": "platform.gitops.io/prefix", "Value": "peeks"}]},
         ]
         calls = []
         with mock.patch("sweep.context.boto3.client",
@@ -411,7 +396,7 @@ class FinalNetReaperTest(unittest.TestCase):
 
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                rc = main("us-west-2", "peeks", "peeks-workshop-test")
+                rc = main("us-west-2", "peeks")
             out = buf.getvalue()
 
         self.assertEqual(rc, 0, msg=out)               # net cleared the orphans

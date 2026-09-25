@@ -1,8 +1,8 @@
 """Final safety-net reaper (§16b) — tag-driven orphan deletion (appmod-blueprints#924).
 
 Runs AFTER the ordered per-service reapers (§1–§16) and BEFORE the completeness
-gate (§17). Enumerates everything still carrying ``peeks.io=<stack>`` via the
-Resource Groups Tagging API and DELETES the out-of-CFN orphans the name/prefix/
+gate (§17). Enumerates everything still carrying ``platform.gitops.io/prefix=<prefix>``
+via the Resource Groups Tagging API and DELETES the out-of-CFN orphans the name/prefix/
 cluster scans missed (arbitrarily-named kro/ACK resources). This is a BACKSTOP,
 not a replacement for the ordered reapers:
 
@@ -17,8 +17,8 @@ not a replacement for the ordered reapers:
     gate to report as residue — the net never blind-deletes an unknown ARN.
 
 Idempotent (an already-gone resource is success) and honest (access-denied is
-counted and surfaced, never swallowed). Inert when ``ctx.stack_name`` is None
-(no tag → nothing enumerated), so untagged deployments behave exactly as before.
+counted and surfaced, never swallowed). The prefix is always set (argv[2]), so the
+tag enumeration is always active.
 """
 
 from ..resilience import classify, retry_aws
@@ -153,14 +153,10 @@ _HANDLERS = {
 
 
 def run(ctx):
-    """Delete out-of-CFN orphans still carrying peeks.io=<stack>. Returns a summary
-    dict {deleted, skipped_cfn, access_denied, unhandled, failed}."""
+    """Delete out-of-CFN orphans still carrying platform.gitops.io/prefix=<prefix>. Returns
+    a summary dict {deleted, skipped_cfn, access_denied, unhandled, failed}."""
     log = ctx.log
     summary = {"deleted": 0, "skipped_cfn": 0, "access_denied": 0, "unhandled": 0, "failed": 0}
-
-    if not getattr(ctx, "stack_name", None):
-        log("Final net: no peeks.io stack tag — skipping tag-based orphan sweep")
-        return summary
 
     # The ordered reapers just deleted most owned resources; re-query live so we
     # act on the CURRENT set, not the cache captured during spoke discovery.
@@ -172,7 +168,7 @@ def run(ctx):
         return summary
 
     if not tagged:
-        log("Final net: no peeks.io-tagged resources remain")
+        log("Final net: no platform.gitops.io/prefix-tagged resources remain")
         return summary
 
     for arn, tags in tagged:

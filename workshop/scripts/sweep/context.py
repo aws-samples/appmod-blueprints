@@ -15,22 +15,17 @@ VPC). This preserves the exact behavior of the pre-split script.
 
 from __future__ import annotations
 
-import os
-
 import boto3
 
 # PR #914 stamps every workshop-owned EKS cluster and VPC with this ownership tag,
-# so arbitrarily-named spokes (e.g. "oap-test") are still discovered/reaped.
+# and platform-engineering-on-eks configurable-platform-tags extends the SAME key to
+# Layer 1 CDK/CFN resources (via cdk.Tags.of) — so platform.gitops.io/prefix=<prefix> is
+# the ONE ownership key carried across every layer of a deployment (Layer 1 CFN AND
+# Layer 2/3 kro/ACK hub+spoke resources). The sweep uses it two ways: per-service
+# describe+filter (below/reapers) AND a cross-service Resource Groups Tagging API
+# enumeration (discover_by_tag) that catches arbitrarily-named resources the name/prefix
+# scans miss. Value = the resource prefix (argv[2]), always present — no extra parameter.
 OWNER_PREFIX_TAG = "platform.gitops.io/prefix"
-
-# appmod-blueprints#924 / platform-engineering-on-eks configurable-platform-tags:
-# every AWS resource of a deployment (Layer 1 CDK CFN resources AND Layer 2/3 kro/ACK
-# hub+spoke resources) is stamped peeks.io=<CloudFormation stack name>. This is the one
-# deployment-scoped key that lets the sweep enumerate everything of THIS deployment via
-# the Resource Groups Tagging API — regardless of resource name/prefix — as a supplement
-# to the prefix/cluster-tag discovery below. The value is the CFN stack name, forwarded
-# to the ClustersStackDeploy build as PLATFORM_STACK_NAME.
-OWNER_STACK_TAG = "peeks.io"
 
 
 def _log(msg):
@@ -40,17 +35,11 @@ def _log(msg):
 class SweepContext:
     """Boto3 clients + resolved identifiers + shared helpers, passed to every reaper."""
 
-    def __init__(self, region, prefix, stack_name=None):
+    def __init__(self, region, prefix):
         self.region = region
         self.prefix = prefix
         self.hub = f"{prefix}-hub"
         self.OWNER_PREFIX_TAG = OWNER_PREFIX_TAG
-        self.OWNER_STACK_TAG = OWNER_STACK_TAG
-        # peeks.io tag value for THIS deployment. Explicit arg wins; otherwise the
-        # ClustersStackDeploy build exports PLATFORM_STACK_NAME (= CFN ${AWS::StackName}).
-        # None -> tag-based discovery/gate is skipped (prefix/cluster discovery only),
-        # so the sweep behaves exactly as before on deployments without the tag.
-        self.stack_name = stack_name or os.environ.get("PLATFORM_STACK_NAME") or None
 
         self.eks = boto3.client("eks", region_name=region)
         self.iam = boto3.client("iam")
@@ -64,9 +53,9 @@ class SweepContext:
         self.grafana = boto3.client("grafana", region_name=region)
         self.ecr = boto3.client("ecr", region_name=region)
         self.s3 = boto3.client("s3")
-        # Cross-service enumeration by tag (peeks.io=<stack>). Regional client: the
-        # tagging API is per-region (global resources like CloudFront won't appear —
-        # those stay with their dedicated ordered reaper).
+        # Cross-service enumeration by the ownership tag (platform.gitops.io/prefix).
+        # Regional client: the tagging API is per-region (global resources like CloudFront
+        # won't appear — those stay with their dedicated ordered reaper).
         self.tagging = boto3.client("resourcegroupstaggingapi", region_name=region)
 
         # Mutable shared state: set by the hub EKS reaper (§6), read by the VPC
@@ -74,8 +63,6 @@ class SweepContext:
         self.hub_vpc_id = None
 
         self._vpc_tag_cache = {}
-        if self.stack_name:
-            self.log(f"Deployment tag: {OWNER_STACK_TAG}={self.stack_name}")
         self.spokes = self.discover_spokes()
 
     # ── logging ────────────────────────────────────────────────────────────────
@@ -102,34 +89,32 @@ class SweepContext:
                         self.log(f"  Discovered owned spoke by tag: {name}")
         except Exception as e:
             self.log(f"Spoke discovery: {e}")
-        # Augment with clusters carrying peeks.io=<stack> (catches arbitrarily-named
-        # spokes that lack the platform.gitops.io/prefix tag). Cluster ARNs look like
-        # arn:aws:eks:<region>:<acct>:cluster/<name>.
+        # Augment with any resource carrying platform.gitops.io/prefix=<prefix> (catches
+        # arbitrarily-named spokes the list-clusters + describe path above may miss).
+        # Cluster ARNs look like arn:aws:eks:<region>:<acct>:cluster/<name>.
         for arn, _tags in self.discover_by_tag():
             if ":cluster/" not in arn:
                 continue
             name = arn.rsplit("/", 1)[-1]
             if name and name != hub and name not in found:
                 found.add(name)
-                self.log(f"  Discovered owned spoke by {OWNER_STACK_TAG}: {name}")
+                self.log(f"  Discovered owned spoke by {OWNER_PREFIX_TAG}: {name}")
         return sorted(found)
 
-    # ── tag-based enumeration (peeks.io=<stack>) ─────────────────────────────────
+    # ── tag-based enumeration (platform.gitops.io/prefix=<prefix>) ───────────────
     def discover_by_tag(self):
-        """Every resource carrying peeks.io=<stack_name> in this region, as a list of
-        (ResourceARN, {tagKey: tagValue}) tuples. Empty when stack_name is unset or the
-        tagging API is unavailable — callers treat that as "no tag data" and fall back
-        to prefix/cluster discovery. Cached per instance (queried once)."""
+        """Every resource carrying platform.gitops.io/prefix=<prefix> in this region, as a
+        list of (ResourceARN, {tagKey: tagValue}) tuples. Empty when the tagging API is
+        unavailable — callers treat that as "no tag data" and fall back to prefix/cluster
+        discovery. Cached per instance (queried once). The prefix is always set (argv[2]),
+        so this enumeration is always active."""
         if getattr(self, "_tagged_cache", None) is not None:
             return self._tagged_cache
         results = []
-        if not self.stack_name:
-            self._tagged_cache = results
-            return results
         try:
             paginator = self.tagging.get_paginator("get_resources")
             for page in paginator.paginate(
-                TagFilters=[{"Key": OWNER_STACK_TAG, "Values": [self.stack_name]}]
+                TagFilters=[{"Key": OWNER_PREFIX_TAG, "Values": [self.prefix]}]
             ):
                 for m in page.get("ResourceTagMappingList", []):
                     arn = m.get("ResourceARN")
@@ -138,14 +123,14 @@ class SweepContext:
                     tagdict = {t["Key"]: t["Value"] for t in m.get("Tags", [])}
                     results.append((arn, tagdict))
         except Exception as e:
-            self.log(f"Tag discovery ({OWNER_STACK_TAG}={self.stack_name}): {e}")
+            self.log(f"Tag discovery ({OWNER_PREFIX_TAG}={self.prefix}): {e}")
         self._tagged_cache = results
         return results
 
     def invalidate_tag_cache(self):
-        """Drop the cached peeks.io enumeration so the next discover_by_tag() re-queries
-        live. Used by the final-net reaper: after it deletes tagged orphans, the §17 gate
-        must see the *post-deletion* state, not the stale set captured at spoke discovery."""
+        """Drop the cached tag enumeration so the next discover_by_tag() re-queries live.
+        Used by the final-net reaper: after it deletes tagged orphans, the §17 gate must
+        see the *post-deletion* state, not the stale set captured at spoke discovery."""
         self._tagged_cache = None
 
     # ── VPC ownership (positive identification only) ─────────────────────────────
