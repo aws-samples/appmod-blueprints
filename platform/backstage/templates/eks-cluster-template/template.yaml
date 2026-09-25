@@ -206,11 +206,15 @@ spec:
         content: "\n  ${{ parameters.clusterName }}: \"${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\""
     - id: addKroClusterConfig
       name: Update kro Clusters Configuration
-      # Use roadiehq:utils:merge (not fs:append): merge creates the file (and parent
-      # dirs) if missing and deep-merges into an existing one, so this works for any
-      # tenant whether or not tenants/<tenant>/kro-clusters/values.yaml already exists.
-      # fs:append required the file to pre-exist and raised ENOENT for tenants that
-      # were never seeded with a kro-clusters/values.yaml (e.g. control-plane).
+      # roadiehq:utils:merge deep-merges into an EXISTING YAML file (preserving
+      # comments) — it does NOT create the file if missing: @roadiehq/scaffolder-
+      # backend-module-utils v4.1.2 throws "The file ... does not exist." (only
+      # roadiehq:utils:json:merge creates, but it reads/writes JSON and would
+      # corrupt this YAML). Every tenant that this template can target must
+      # therefore ship a base kro-clusters/values.yaml (`clusters: {}`) — see
+      # gitops/fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml. The
+      # template default tenant is `control-plane`, which previously lacked this
+      # file and caused an ENOENT at this step.
       action: roadiehq:utils:merge
       input:
         path: ./repo/gitops/fleet/spoke-values/tenants/${{ parameters.tenant }}/kro-clusters/values.yaml
