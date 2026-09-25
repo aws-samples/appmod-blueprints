@@ -6,7 +6,8 @@ ALERTS (SNS->SQS), a read-only agent does RCA and PROPOSES a fix as a GitLab MR,
 a human MERGES, and GitOps (ArgoCD) HEALS the fleet. The agent never mutates the
 cluster directly.
 
-Run:  python3 peeks-agent-architecture.py   (writes peeks-agent-architecture.png)
+Run (from this dir, so icons/ resolves):
+    python3 peeks-agent-architecture.py   # writes peeks-agent-architecture.png
 """
 from diagrams import Diagram, Cluster, Edge
 from diagrams.aws.compute import EKS
@@ -16,12 +17,13 @@ from diagrams.aws.network import CloudFront
 from diagrams.aws.management import Cloudwatch
 from diagrams.aws.security import IdentityAndAccessManagementIam as IAM
 from diagrams.aws.ml import Bedrock
+from diagrams.aws.general import User
 from diagrams.k8s.compute import Pod, Deploy
 from diagrams.k8s.network import SVC
 from diagrams.onprem.vcs import Gitlab
 from diagrams.onprem.gitops import ArgoCD
 from diagrams.onprem.monitoring import Prometheus
-from diagrams.generic.blank import Blank
+from diagrams.custom import Custom
 
 graph_attr = {
     "fontsize": "22",
@@ -42,8 +44,9 @@ with Diagram(
 ):
     # ── User access edge ──
     with Cluster("User access (Keycloak-gated)"):
+        user = User("Platform user")
         cf = CloudFront("CloudFront")
-        kc = Blank("Keycloak\n(OIDC / SSO)")
+        kc = Custom("Keycloak\n(OIDC / SSO)", "icons/keycloak.png")
 
     # ── EKS fleet (workloads run here; ArgoCD heals here) ──
     with Cluster("Amazon EKS fleet"):
@@ -61,13 +64,13 @@ with Diagram(
 
     # ── Agent plane (ns peeks-agent, on the hub) ──
     with Cluster("peeks-agent namespace (hub)"):
-        bridge = Deploy("incident-bridge\n(SQS->A2A, subject dedup)")
-        agent = Pod("peeks-agent\nStrands agent (READ-ONLY)")
+        bridge = Deploy("incident-bridge")
+        agent = Pod("peeks-agent\nStrands (READ-ONLY)")
         gw = SVC("AgentGateway\n(MCP router)")
-        with Cluster("MCP tools"):
-            skills = Pod("skills-mcp\n(manage-addons,\ntroubleshoot-*)")
+        with Cluster("MCP tool servers (separate pods)"):
+            skills = Pod("skills-mcp\n(no AWS)")
             eksread = Pod("eks-read-mcp\n(read-only)")
-            glmcp = Pod("gitlab-mcp\n(write)")
+            glmcp = Pod("gitlab-mcp\n(GitLab token)")
         bifrost = Pod("Bifrost\n(LLM gateway)")
         chat = Pod("a2a-chat-ui")
 
@@ -77,11 +80,11 @@ with Diagram(
     # ── GitOps action / heal ──
     with Cluster("GitOps remediation (human-in-the-loop)"):
         gitlab = Gitlab("GitLab\nuser1/fleet-config")
-        human = Blank("Human\nreview + merge")
+        human = User("Human\nreview + merge")
         argo = ArgoCD("ArgoCD\n(EKS capability)")
 
     # ── IAM / Pod Identity ──
-    iam = IAM("EKS Pod Identity / IAM\n(read-only + SQS)")
+    iam = IAM("EKS Pod Identity / IAM")
     cw = Cloudwatch("CloudWatch\n(metrics / logs)")
 
     # ===== Flows =====
@@ -93,11 +96,15 @@ with Diagram(
     # agent reasoning
     agent >> Edge(color="darkgreen") >> gw
     gw >> Edge(color="darkgreen") >> [skills, eksread, glmcp]
-    eksread >> Edge(label="read-only", style="dashed", color="gray") >> hub
-    eksread >> Edge(style="dashed", color="gray") >> cw
+    eksread >> Edge(label="list/describe k8s\n(read-only)", style="dashed", color="gray") >> hub
+    eksread >> Edge(label="get_cloudwatch_metrics/logs\n(RCA)", style="dashed", color="gray") >> cw
     agent >> Edge(label="inference") >> bifrost >> bedrock
-    iam >> Edge(style="dotted", color="orange") >> agent
+
+    # Pod Identity — ONLY the 3 pods that call AWS (agent, incident-bridge, eks-read-mcp).
+    # skills-mcp (local skills) and gitlab-mcp (GitLab token) need no AWS identity.
+    iam >> Edge(label="assume role\n(read-only EKS+CW / SQS)", style="dotted", color="orange") >> agent
     iam >> Edge(style="dotted", color="orange") >> bridge
+    iam >> Edge(style="dotted", color="orange") >> eksread
 
     # action + heal
     glmcp >> Edge(label="open Merge Request\n(GitOps fix, additive)", color="blue") >> gitlab
@@ -106,4 +113,4 @@ with Diagram(
     argo >> Edge(label="apply fix (HEAL)", color="blue") >> fleet
 
     # user access
-    cf >> kc >> chat >> Edge(color="darkgreen") >> agent
+    user >> cf >> Edge(label="login") >> kc >> chat >> Edge(color="darkgreen") >> agent
