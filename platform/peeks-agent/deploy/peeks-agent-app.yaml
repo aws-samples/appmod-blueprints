@@ -433,10 +433,99 @@ spec:
   # Placeholders substituted at deploy time (see deploy/BUNDLE.md):
   #   REPLACE_ACCOUNT_ID, REPLACE_CLUSTER_PREFIX, REPLACE_IMAGE_REGISTRY,
   #   REPLACE_IMAGE_TAG, REPLACE_AMP_WORKSPACE_ID (from `aws amp list-workspaces`).
-  - name: incident-bridge-aws
+  # ── CARM wiring (managed ACK IAMRoleSelector) — applied FIRST ──
+  # The managed ACK capability routes a resource to a workload role via a
+  # cluster-scoped IAMRoleSelector matching the CR's namespace; with no match it
+  # falls back to the capability role (which only has AssumeWorkloadRoles +
+  # ManageIRSARoles → cannot create SNS/SQS/AMP or a cluster-mgmt-* role).
+  # These selectors MUST exist before any incident-bridge ACK CR's first reconcile:
+  # the managed capability caches "no role selected" and does NOT re-evaluate a
+  # selector added later (it would need a delete/recreate). incident-bridge-aws
+  # therefore dependsOn this component. Once the selector is matched, a missing
+  # target role is a normal Recoverable error that ACK retries — so role-creation
+  # ordering inside incident-bridge-aws self-heals.
+  - name: incident-bridge-selectors
     type: k8s-objects
     properties:
       objects:
+      # iam CRs (both roles in incident-bridge-aws) -> cluster-mgmt-iam (IAMFullAccess),
+      # which the capability role is already trusted to assume. Lets ACK create the
+      # roles declaratively — no direct `aws iam` call.
+      - apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: incident-bridge-iam
+        spec:
+          arn: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-cluster-mgmt-iam
+          namespaceSelector:
+            names: [peeks-agent]
+          resourceTypeSelector:
+          - group: iam.services.k8s.aws
+            kind: ""
+            version: ""
+      # sns/sqs/aps CRs -> the dedicated provisioning role (created below). It is
+      # named <prefix>-cluster-mgmt-* so the capability's AssumeWorkloadRoles
+      # (Resource: <prefix>-cluster-mgmt-*) permits sts:AssumeRole on it.
+      - apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: incident-bridge-aws
+        spec:
+          arn: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-cluster-mgmt-incident-bridge
+          namespaceSelector:
+            names: [peeks-agent]
+          resourceTypeSelector:
+          - group: sns.services.k8s.aws
+            kind: ""
+            version: ""
+          - group: sqs.services.k8s.aws
+            kind: ""
+            version: ""
+          - group: prometheusservice.services.k8s.aws
+            kind: ""
+            version: ""
+      # eks CRs (the consumer's PodIdentityAssociation, and the agent-access
+      # AccessEntries) -> cluster-mgmt-eks (has eks:*). The agent's OWN Pod Identity
+      # comes from the aws-service-identity trait (Crossplane), so there was no prior
+      # eks selector for this ns; without this the capability role lacks
+      # eks:CreatePodIdentityAssociation -> AccessDenied.
+      - apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: incident-bridge-eks
+        spec:
+          arn: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-cluster-mgmt-eks
+          namespaceSelector:
+            names: [peeks-agent]
+          resourceTypeSelector:
+          - group: eks.services.k8s.aws
+            kind: ""
+            version: ""
+  - name: incident-bridge-aws
+    type: k8s-objects
+    dependsOn:
+    - incident-bridge-selectors
+    properties:
+      objects:
+      # Dedicated provisioning role, armed with scoped SNS/SQS/AMP-AlertManager perms.
+      # MUST be named <prefix>-cluster-mgmt-* (capability AssumeWorkloadRoles pattern).
+      # Created by ACK via cluster-mgmt-iam (IAMFullAccess), routed by the iam selector
+      # above — so it is provisioned declaratively with no direct `aws iam` call.
+      - apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          name: REPLACE_CLUSTER_PREFIX-cluster-mgmt-incident-bridge
+          namespace: peeks-agent
+        spec:
+          name: REPLACE_CLUSTER_PREFIX-cluster-mgmt-incident-bridge
+          description: "ACK provisioning role for peeks-agent incident-bridge (SNS/SQS/AMP AlertManager)"
+          # Trust mirrors the other cluster-mgmt roles: the hub/spoke capability roles
+          # may assume it (sts:AssumeRole + sts:TagSession).
+          assumeRolePolicyDocument: |
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::REPLACE_ACCOUNT_ID:root"},"Action":["sts:AssumeRole","sts:TagSession"],"Condition":{"ArnLike":{"aws:PrincipalArn":["arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-hub-ack-capability-role","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-ack-*","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-spoke-*-ack-capability-role"]}}}]}
+          inlinePolicies:
+            incident-bridge-provisioning: |
+              {"Version":"2012-10-17","Statement":[{"Sid":"SNS","Effect":"Allow","Action":["sns:CreateTopic","sns:DeleteTopic","sns:GetTopicAttributes","sns:SetTopicAttributes","sns:ListTagsForResource","sns:TagResource","sns:UntagResource","sns:Subscribe","sns:Unsubscribe","sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:ListSubscriptionsByTopic"],"Resource":"arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"SQS","Effect":"Allow","Action":["sqs:CreateQueue","sqs:DeleteQueue","sqs:GetQueueAttributes","sqs:SetQueueAttributes","sqs:ListQueueTags","sqs:TagQueue","sqs:UntagQueue","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"APS","Effect":"Allow","Action":["aps:CreateAlertManagerDefinition","aps:DescribeAlertManagerDefinition","aps:PutAlertManagerDefinition","aps:DeleteAlertManagerDefinition"],"Resource":"arn:aws:aps:us-west-2:REPLACE_ACCOUNT_ID:workspace/REPLACE_AMP_WORKSPACE_ID"}]}
       - apiVersion: sns.services.k8s.aws/v1alpha1
         kind: Topic
         metadata:
@@ -535,6 +624,8 @@ spec:
           namespace: peeks-agent
   - name: incident-bridge
     type: k8s-objects
+    dependsOn:
+    - incident-bridge-aws
     properties:
       objects:
       - apiVersion: apps/v1
