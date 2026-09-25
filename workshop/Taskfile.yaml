@@ -722,7 +722,7 @@ tasks:
           ;;
         esac
       - printf '{{.C_STEP}}▸ Installing Playwright...{{.C_RESET}}\n'
-      - pip install playwright boto3 requests --quiet 2>/dev/null
+      - pip install playwright boto3 requests tenacity --quiet 2>/dev/null
       - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
       - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
       - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
