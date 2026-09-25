@@ -21,6 +21,16 @@ import os
 import sys
 import time
 
+# Resilience socle (issue #924, Mikhail's principles #1 + #3): tenacity-backed
+# retry/poll helpers + centralized AWS error classification, replacing the
+# hand-rolled `for i in range(N): ... time.sleep(S)` retry loops. The script runs
+# from workshop/scripts/, where the sweep/ package lives; add that dir to sys.path
+# defensively so the import resolves regardless of the caller's CWD. The socle is
+# pure-stdlib at import time (it only reaches for tenacity lazily, with a stdlib
+# fallback), so this import never hard-fails on the destruction-critical path.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sweep.resilience import poll_until, retry_aws  # noqa: E402
+
 region = sys.argv[1] if len(sys.argv) > 1 else "us-west-2"
 prefix = sys.argv[2] if len(sys.argv) > 2 else "peeks"
 hub = f"{prefix}-hub"
@@ -187,12 +197,11 @@ try:
                 eks.delete_capability(clusterName=hub, capabilityName=cap["capabilityName"])
             except Exception:
                 pass
-        for i in range(20):
-            remaining = eks.list_capabilities(clusterName=hub).get("capabilities", [])
-            if not remaining:
-                log("  Capabilities cleared")
-                break
-            time.sleep(15)
+        if poll_until(
+            lambda: not eks.list_capabilities(clusterName=hub).get("capabilities", []),
+            attempts=20, delay=15,
+        ):
+            log("  Capabilities cleared")
     else:
         log("No EKS capabilities to delete")
 except Exception as e:
@@ -225,10 +234,10 @@ try:
             cfg["Enabled"] = False
             cf.update_distribution(Id=dist_id, DistributionConfig=cfg, IfMatch=etag)
             log(f"  Disabling CF distribution {dist_id} (waiting for Deployed)...")
-            for _ in range(20):
-                if cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed":
-                    break
-                time.sleep(15)
+            poll_until(
+                lambda: cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed",
+                attempts=20, delay=15,
+            )
         etag2 = cf.get_distribution(Id=dist_id)["ETag"]
         cf.delete_distribution(Id=dist_id, IfMatch=etag2)
         log(f"  Deleted CF distribution {dist_id}")
@@ -328,18 +337,23 @@ try:
         log("  Hub EKS cluster deletion submitted")
     else:
         log("  Hub EKS cluster already DELETING")
-    # Wait up to 15 min (30 × 30 s)
-    final_status = "DELETING"
-    for i in range(30):
+    # Wait up to 15 min (30 × 30 s). poll_until drives the retry cadence; the
+    # closure captures the last observed status + emits the periodic progress log.
+    _hub = {"status": "DELETING", "i": 0}
+
+    def _hub_gone():
         try:
-            final_status = eks.describe_cluster(name=hub)["cluster"]["status"]
+            _hub["status"] = eks.describe_cluster(name=hub)["cluster"]["status"]
         except eks.exceptions.ResourceNotFoundException:
-            final_status = "NOT_FOUND"
-            break
-        if i % 5 == 0:
-            log(f"  [{i + 1}/30] Hub EKS: {final_status}")
-        time.sleep(30)
-    log(f"  Hub EKS: {'deleted' if final_status == 'NOT_FOUND' else final_status}")
+            _hub["status"] = "NOT_FOUND"
+            return True
+        if _hub["i"] % 5 == 0:
+            log(f"  [{_hub['i'] + 1}/30] Hub EKS: {_hub['status']}")
+        _hub["i"] += 1
+        return False
+
+    poll_until(_hub_gone, attempts=30, delay=30)
+    log(f"  Hub EKS: {'deleted' if _hub['status'] == 'NOT_FOUND' else _hub['status']}")
 except eks.exceptions.ResourceNotFoundException:
     log("  Hub EKS cluster already gone")
 except Exception as e:
@@ -374,44 +388,47 @@ try:
         # ACK capabilities can take ~15-20 min to finish DELETING; delete_cluster fails
         # with ResourceInUseException ("Cluster has capabilities attached") until they
         # clear. A single attempt after a fixed short wait (the old 5 min) races ACK and
-        # leaves the spoke orphaned. Retry delete_cluster (up to ~25 min) instead: as soon
-        # as the capabilities clear the call succeeds.
-        submitted = False
-        for i in range(100):  # ~25 min (100 × 15s)
+        # leaves the spoke orphaned. poll_until re-drives the describe/delete predicate
+        # (up to ~25 min): it returns True as soon as the delete is submitted or the
+        # cluster is already gone.
+        _sp = {"i": 0}
+
+        def _submit_spoke_delete():
             try:
                 if eks.describe_cluster(name=spoke)["cluster"]["status"] == "DELETING":
-                    submitted = True
-                    break
+                    return True
             except eks.exceptions.ResourceNotFoundException:
-                submitted = True
-                break
+                return True
             except Exception:
                 pass
             try:
                 eks.delete_cluster(name=spoke)
                 log(f"  Spoke {spoke} deletion submitted")
-                submitted = True
-                break
+                return True
             except eks.exceptions.ResourceNotFoundException:
-                submitted = True
-                break
+                return True
             except Exception as e:
                 # Typically ResourceInUseException while capabilities are still DELETING.
-                if i % 8 == 0:
+                if _sp["i"] % 8 == 0:
                     log(f"  Spoke {spoke}: waiting for capabilities to clear before delete ({e.__class__.__name__})")
-                time.sleep(15)
+                _sp["i"] += 1
+                return False
+
+        submitted = poll_until(_submit_spoke_delete, attempts=100, delay=15)  # ~25 min
         if not submitted:
             log(f"  Spoke {spoke}: delete still blocked after ~25 min — leaving for the next sweep")
     for spoke in pending:  # wait up to ~15 min per spoke for full deletion
-        for _ in range(30):
+        def _spoke_gone(spoke=spoke):
             try:
                 eks.describe_cluster(name=spoke)
+                return False
             except eks.exceptions.ResourceNotFoundException:
                 log(f"  Spoke {spoke}: deleted")
-                break
+                return True
             except Exception:
-                break
-            time.sleep(30)
+                return True  # give up waiting on any other error (matches prior break)
+
+        poll_until(_spoke_gone, attempts=30, delay=30)
     if not pending:
         log("No orphaned spoke clusters to delete")
 except Exception as e:
@@ -961,18 +978,25 @@ try:
         Returns True on deletion, False if still blocked after the budget."""
         # NAT-gateway deletion + service-managed ENI release is the long pole
         # (~2-4 min); budget ~6 min (18 × 20 s) but return as soon as delete_vpc works.
-        for attempt in range(18):
+        # poll_until drives the re-drive cadence; each attempt re-clears deps then
+        # tries the delete. retry_aws absorbs the transient DependencyViolation within
+        # a single attempt and treats an already-gone VPC as success.
+        _rv = {"deleted": False, "last": None}
+
+        def _try_reap():
             _clear_vpc_deps(vpc_id)
             try:
-                ec2.delete_vpc(VpcId=vpc_id)
+                retry_aws(ec2.delete_vpc, VpcId=vpc_id, attempts=1)
                 log(f"  Deleted orphan VPC {vpc_id}")
+                _rv["deleted"] = True
                 return True
             except Exception as e:
-                if attempt == 17:
-                    log(f"  Orphan VPC {vpc_id}: still blocked after ~6 min — {e}")
-                    return False
-                time.sleep(20)
-        return False
+                _rv["last"] = e
+                return False
+
+        if not poll_until(_try_reap, attempts=18, delay=20):
+            log(f"  Orphan VPC {vpc_id}: still blocked after ~6 min — {_rv['last']}")
+        return _rv["deleted"]
 
     seen, targets = set(), []
     for flt in (
@@ -1188,10 +1212,10 @@ try:
                 cfg["Enabled"] = False
                 cf.update_distribution(Id=dist_id, DistributionConfig=cfg, IfMatch=etag)
                 log(f"  [re-sweep] Disabling recreated CF distribution {dist_id}...")
-                for _ in range(30):
-                    if cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed":
-                        break
-                    time.sleep(15)
+                poll_until(
+                    lambda dist_id=dist_id: cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed",
+                    attempts=30, delay=15,
+                )
             etag2 = cf.get_distribution(Id=dist_id)["ETag"]
             cf.delete_distribution(Id=dist_id, IfMatch=etag2)
             log(f"  [re-sweep] Deleted recreated CF distribution {dist_id}")
@@ -1228,14 +1252,21 @@ try:
             except Exception:
                 pass
             return out
-        for i in range(36):  # up to ~12 min (36 × 20 s) — RDS ENI release is the long pole
+        # up to ~12 min (36 × 20 s) — RDS ENI release is the long pole. poll_until
+        # drives the cadence; the closure emits the periodic progress log.
+        _eg = {"i": 0}
+
+        def _enis_cleared():
             b = _blocking_enis()
             if not b:
                 log(f"  [re-sweep] No blocking ENIs left in IDE VPC {ide_vpc}")
-                break
-            if i % 3 == 0:
+                return True
+            if _eg["i"] % 3 == 0:
                 log(f"  [re-sweep] Waiting for {len(b)} blocking ENI(s) to detach from IDE VPC {ide_vpc}...")
-            time.sleep(20)
+            _eg["i"] += 1
+            return False
+
+        poll_until(_enis_cleared, attempts=36, delay=20)
     else:
         log("  [re-sweep] IDE VPC not found — skipping final re-sweep")
 except Exception as e:
