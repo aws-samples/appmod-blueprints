@@ -13,7 +13,7 @@ as a GitLab MR → a human merges → GitOps heals.** The agent never mutates th
 - Terminal with peeks-e2e creds + `kubectl --context peeks-e2e-hub` / `peeks-e2e-spoke-dev`
 
 Key resources: agent `peeks-agent2` (ns `peeks-agent`, hub) · consumer `incident-bridge`
-(`:carm-v2`) · SQS `peeks-agent-incidents` · AMP `ws-b9903556-cf70-4aec-9023-c2baf00f0b53`
+(`:idempotent-v1`) · SQS `peeks-agent-incidents` · AMP `ws-b9903556-cf70-4aec-9023-c2baf00f0b53`
 · victim `memory-hog` (ns `demo-oomkill`, spoke-dev, GitOps app `oomkill-demo` ←
 `user1/fleet-config` path `demo-oomkill/deployment.yaml`).
 
@@ -61,6 +61,13 @@ fleet-config, and **opens a GitLab MR** raising the memory.
    - Show: the **diff** (limits/requests raised), body = RCA + "awaiting human approval",
      new branch, **no cluster mutation**.
 
+> **Idempotency (built in).** The same component failing on several clusters is ONE issue: the
+> consumer dedups on a **component subject** (`alertname|namespace|container`, ignoring
+> cluster/pod), so N same-subject alerts collapse to **one** dispatch; and the agent **lists open
+> MRs first** and skips creating a new one if an open MR already targets that file/component. Fixes
+> are **additive** (it reads the existing values file and merges keys, never rewriting it) and it
+> **verifies referenced artifacts exist** (e.g. ECR repos) and nests subchart keys correctly.
+
 ## Part E — Human approves → GitOps heals
 1. **Merge** the MR in GitLab.
 2. ArgoCD reconciles `oomkill-demo`:
@@ -79,13 +86,15 @@ CrashLoopBackOff / Unschedulable / PVC Pending.)
 # restore healthy: re-commit demo-oomkill/deployment.yaml to 512Mi/256Mi (or merge the agent MR)
 aws sqs purge-queue --region us-west-2 \
   --queue-url https://sqs.us-west-2.amazonaws.com/290085271972/peeks-agent-incidents
-kubectl --context peeks-e2e-hub -n peeks-agent rollout restart deploy/incident-bridge  # re-arm 1h dedup
+kubectl --context peeks-e2e-hub -n peeks-agent rollout restart deploy/incident-bridge  # clears the in-memory subject dedup (1h)
 ```
 
 ## Gotchas for recording
 - **external-secrets noise**: `external-secrets-cert-controller` genuinely OOM-kills on all 3
-  clusters → real incidents. Dedup (1h) + AMP `repeat_interval` (4h) limit it; **purge the queue
-  right before filming**. If you see "external-secrets" MRs, that's this (a real finding).
+  clusters → real incidents. With idempotency this now yields **at most ONE** MR (the three
+  clusters share the subject `PodOOMKilled|external-secrets|cert-controller`), plus AMP
+  `repeat_interval` (4h). Still **purge the queue right before filming**. If you see an
+  "external-secrets" MR, that's this (a real finding) — one, not a storm.
 - **Latency**: don't cut early — allow ~2–4 min from the buggy commit to `forwarded incident`,
   plus ArgoCD reconcile on merge.
 - **Bifrost**: inference is keyless (`disableAuthOnInference: true`) → chat works. Don't touch
