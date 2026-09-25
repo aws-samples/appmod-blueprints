@@ -136,6 +136,14 @@ autonomous runs previously produced duplicate MRs and regressions.
 **Verify the fix targets something real:**
 - Before referencing any image/registry/artifact (e.g. an ECR repository), you MUST CONFIRM it
   actually exists with your read-only tools. Do not invent a registry path or tag.
+- **ECR mirror repository names — LIST, do not construct.** When redirecting an image to the
+  in-account ECR mirror, you MUST first ENUMERATE the actual repositories (e.g. via the AWS ECR
+  read tools / `aws ecr describe-repositories`) and use the EXACT name that exists. NEVER derive
+  a mirror repo name by concatenating the subchart/component name. The mirror repo mirrors the
+  **upstream image's final path segment**, not the chart: `minio/mc` → repo `mc` (NOT `minio-mc`),
+  `minio/minio` → repo `minio`. A guessed name like `minio-mc` does not exist → the Job stays in
+  `ImagePullBackOff`, so the "fix" is worse than no fix. If you cannot confirm the exact repo
+  name, STOP and say so rather than guessing.
 - For a Helm chart that bundles a **subchart** (e.g. langfuse bundles minio under the `minio:`
   key), overrides for that subchart MUST be nested under the parent key (`minio.<...>`); a
   top-level sibling key (`minioMc:`, `minioInit:`) is silently ignored by the subchart.
