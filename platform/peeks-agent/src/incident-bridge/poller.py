@@ -61,21 +61,33 @@ def _dedup(fp: str) -> bool:
 
 
 def _incident_prompt(alert: dict) -> str:
-    """Build the autonomous-incident message the agent expects (mode 1)."""
-    return (
-        "AUTONOMOUS INCIDENT (delivered by AMP alerting via SNS->SQS).\n"
-        f"alertname: {alert.get('alertname')}\n"
-        f"cluster: {alert.get('cluster')}\n"
-        f"namespace: {alert.get('namespace')}\n"
-        f"pod: {alert.get('pod')}\n"
-        f"container: {alert.get('container')}\n"
-        f"status: {alert.get('status')}\n"
-        f"summary: {alert.get('summary')}\n\n"
-        "Perform a Root-Cause Analysis using your read-only tools, then open a "
-        "GitLab Merge Request on a NEW branch with the GitOps remediation "
-        "(e.g. a memory request/limit bump). Never merge, never mutate the "
-        "cluster. End with the MR URL and an 'awaiting human approval' note."
+    """Build the autonomous-incident message the agent expects (mode 1).
+
+    Signal-agnostic: we forward the alert's signal type, remediation hint and
+    description, and let the AGENT decide the appropriate GitOps fix (memory
+    bump, image ref, probe/config, requests/affinity/nodepool, storageClass, …)
+    based on its skills. The bridge never assumes a specific remedy.
+    """
+    lines = ["AUTONOMOUS INCIDENT (delivered by AMP alerting via SNS->SQS)."]
+    for k in (
+        "alertname", "signal", "severity", "remediation", "cluster",
+        "namespace", "pod", "container", "persistentvolumeclaim",
+        "status", "summary", "description",
+    ):
+        v = alert.get(k)
+        if v:  # skip empty labels (e.g. pod/container on node/PVC-scoped signals)
+            lines.append(f"{k}: {v}")
+    lines.append(
+        "\nPerform a Root-Cause Analysis using your read-only tools (load the "
+        "matching skill first — e.g. troubleshoot-platform / troubleshoot-kro / "
+        "eks-*). Then open a GitLab Merge Request on a NEW branch with the "
+        "appropriate GitOps remediation for THIS signal — identify the owning "
+        "repo/manifest (read the resource's owning ArgoCD Application source if "
+        "needed); the `remediation` hint above is a starting point, not a "
+        "prescription. Never merge, never mutate the cluster. End with the MR "
+        "URL and an 'awaiting human approval' note."
     )
+    return "\n".join(lines)
 
 
 def _forward(alert: dict) -> bool:

@@ -42,10 +42,10 @@ spec:
         \ workload clusters) provisioned GitOps-first through ArgoCD, KRO and ACK, on EKS Auto Mode with\
         \ EKS Managed Capabilities.\n\n# Operating contract — TWO modes on ONE endpoint\nYou are a single\
         \ A2A JSON-RPC agent. Behave according to the message you receive:\n\n1. **Autonomous incident\
-        \ mode** — when the message is a structured incident payload (e.g. an OOMKilled pod report delivered\
+        \ mode** — when the message is a structured incident payload (e.g. an OOMKilled pod, an ImagePullBackOff, a CrashLoopBackOff, an unschedulable pod or a Pending PVC, delivered\
         \ by an argo-events Sensor): produce a concise Root-Cause Analysis, then a **GitOps remediation**\
-        \ (the exact manifest field change, e.g. memory request/limit bump) and, if a `gitlab` tool is\
-        \ available, open a Merge Request on a NEW branch with that fix. **Never merge it. Never mutate\
+        \ (the exact manifest field change appropriate to the signal — e.g. a memory request/limit bump, an image ref/tag or pull-secret fix, a probe/command/env change, right-sized requests or affinity/NodePool, or a storageClass/size fix) and, if a `gitlab` tool is\
+        \ available, open a Merge Request on a NEW branch — against the repo/path that OWNS the resource (read its ArgoCD Application source if unsure) — with that fix. **Never merge it. Never mutate\
         \ the cluster directly.** End with the MR URL (or the proposed diff if no git tool) and an explicit\
         \ \"awaiting human approval\" note.\n\n2. **Interactive chat mode** — when a human asks a question\
         \ (e.g. \"run an eks-recon on spoke-dev\", \"why is this pod unhealthy?\", \"review this cluster\
@@ -575,9 +575,13 @@ spec:
                 receiver: null-receiver
                 group_by: ['alertname','cluster','namespace','pod']
                 routes:
+                  # Route ANY actionable workload incident to the agent, not just OOM.
+                  # Every alerting rule carries severity + a `signal` label; matching on
+                  # severity keeps this generic as new signals are added (imagepull,
+                  # crashloop, unschedulable, storage, …). null-receiver drops the rest.
                   - receiver: peeks-agent-sns
                     matchers:
-                      - signal="oomkill"
+                      - severity=~"warning|critical"
                     group_wait: 30s
                     group_interval: 5m
                     repeat_interval: 4h
@@ -589,8 +593,12 @@ spec:
                       sigv4:
                         region: us-west-2
                       subject: 'PEEKS incident {{ .CommonLabels.alertname }} {{ .CommonLabels.namespace }}/{{ .CommonLabels.pod }}'
+                      # Emit ALL fields the agent needs to generalise beyond OOM: the
+                      # signal type, the remediation hint, and the rule's description
+                      # (which tells the agent what GitOps fix to craft). pod/container
+                      # may be empty for node/PVC-scoped signals — that's fine.
                       message: |
-                        {{ range .Alerts }}{"status":"{{ .Status }}","alertname":"{{ .Labels.alertname }}","cluster":"{{ .Labels.cluster }}","namespace":"{{ .Labels.namespace }}","pod":"{{ .Labels.pod }}","container":"{{ .Labels.container }}","summary":"{{ .Annotations.summary }}"}{{ end }}
+                        {{ range .Alerts }}{"status":"{{ .Status }}","alertname":"{{ .Labels.alertname }}","signal":"{{ .Labels.signal }}","remediation":"{{ .Labels.remediation }}","severity":"{{ .Labels.severity }}","cluster":"{{ .Labels.cluster }}","namespace":"{{ .Labels.namespace }}","pod":"{{ .Labels.pod }}","container":"{{ .Labels.container }}","persistentvolumeclaim":"{{ .Labels.persistentvolumeclaim }}","summary":"{{ .Annotations.summary }}","description":"{{ .Annotations.description }}"}{{ end }}
       # Dedicated least-privilege identity for the consumer (SQS read only),
       # secretless via EKS Pod Identity.
       - apiVersion: iam.services.k8s.aws/v1alpha1
