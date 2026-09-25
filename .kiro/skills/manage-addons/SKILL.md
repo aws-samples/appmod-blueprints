@@ -108,3 +108,34 @@ paths in the table above (which are prefixed `gitops/...`). In the fleet-config 
 - You MUST NOT mutate the cluster directly — the fix ships as a Merge Request for human review.
 - App workloads (not addons) already have their own manifest in fleet-config (e.g.
   `demo-oomkill/deployment.yaml`); edit that existing file, do NOT invent an overlay for them.
+
+### 7. Idempotency and safe edits (CRITICAL — avoids duplicate/broken MRs)
+
+Before you open an MR, and while you write the fix, follow these hard rules. They exist because
+autonomous runs previously produced duplicate MRs and regressions.
+
+**Idempotency — never open a duplicate MR:**
+- You MUST, before creating ANY branch or MR, **list the OPEN merge requests** in the target
+  repo (`state=opened`) and inspect their titles and changed files.
+- An incident is ALREADY handled if an open MR edits the **same file** you would edit
+  (e.g. `configs/<addon>/values.yaml`) or targets the **same addon/component**. Multiple alerts
+  for the same component across different clusters are **ONE issue**, because
+  `configs/<addon>/values.yaml` is cluster-agnostic.
+- When a matching open MR exists you MUST NOT create another MR or branch. Instead, add a short
+  comment on the EXISTING MR noting the extra affected cluster/pod, then STOP.
+- Only open a new MR when NO open MR already addresses that file/component.
+
+**Preserve existing files — never rewrite (anti-regression):**
+- When the target values file ALREADY EXISTS, you MUST first READ its current content, then
+  **ADD or MERGE only the keys you need**, keeping ALL existing content intact (existing
+  `nodeSelector` pins, existing image redirects, etc.).
+- You MUST NOT replace or rewrite the whole file. Dropping existing keys (e.g. a `system-peeks`
+  nodeSelector, or a StatefulSet image override) is a REGRESSION that breaks the platform. Your
+  diff MUST be minimal and purely additive to the relevant block.
+
+**Verify the fix targets something real:**
+- Before referencing any image/registry/artifact (e.g. an ECR repository), you MUST CONFIRM it
+  actually exists with your read-only tools. Do not invent a registry path or tag.
+- For a Helm chart that bundles a **subchart** (e.g. langfuse bundles minio under the `minio:`
+  key), overrides for that subchart MUST be nested under the parent key (`minio.<...>`); a
+  top-level sibling key (`minioMc:`, `minioInit:`) is silently ignored by the subchart.

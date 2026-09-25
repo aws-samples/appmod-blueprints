@@ -48,6 +48,23 @@ def _fingerprint(alert: dict) -> str:
     )
 
 
+def _subject(alert: dict) -> str:
+    """Coarse idempotency key: the COMPONENT that is failing, independent of
+    which cluster or pod-instance fired. The same addon failing on several
+    clusters (or a pod recreated with a new name) collapses to ONE subject, so
+    the bridge does not dispatch duplicate remediations for what is a single
+    GitOps fix (e.g. the cluster-agnostic `configs/<addon>/values.yaml`). The
+    durable backstop is the agent listing open MRs before creating one."""
+    comp = (
+        alert.get("container")
+        or alert.get("persistentvolumeclaim")
+        or alert.get("pod", "")
+    )
+    return "|".join(
+        [str(alert.get("alertname", "")), str(alert.get("namespace", "")), str(comp)]
+    )
+
+
 def _dedup(fp: str) -> bool:
     """Return True if this fingerprint was handled within DEDUP_TTL."""
     now = time.time()
@@ -78,13 +95,17 @@ def _incident_prompt(alert: dict) -> str:
         if v:  # skip empty labels (e.g. pod/container on node/PVC-scoped signals)
             lines.append(f"{k}: {v}")
     lines.append(
-        "\nPerform a Root-Cause Analysis using your read-only tools (load the "
-        "matching skill first — e.g. troubleshoot-platform / troubleshoot-kro / "
-        "eks-*). Then open a GitLab Merge Request on a NEW branch with the "
-        "appropriate GitOps remediation for THIS signal — identify the owning "
-        "repo/manifest (read the resource's owning ArgoCD Application source if "
-        "needed); the `remediation` hint above is a starting point, not a "
-        "prescription. Never merge, never mutate the cluster. End with the MR "
+        "\nFIRST: list the OPEN merge requests in the target repo and check none "
+        "already fixes this component/file — if one does, comment on it and STOP "
+        "(do NOT open a duplicate). Otherwise perform a Root-Cause Analysis using "
+        "your read-only tools (load the matching skill first — e.g. "
+        "troubleshoot-platform / troubleshoot-kro / eks-*). Then open a GitLab "
+        "Merge Request on a NEW branch with the appropriate GitOps remediation for "
+        "THIS signal — identify the owning repo/manifest (read the resource's "
+        "owning ArgoCD Application source if needed); the `remediation` hint above "
+        "is a starting point, not a prescription. If the target file already "
+        "exists, READ it and ADD only the keys you need (never rewrite/drop "
+        "existing content). Never merge, never mutate the cluster. End with the MR "
         "URL and an 'awaiting human approval' note."
     )
     return "\n".join(lines)
@@ -160,15 +181,16 @@ def main() -> int:
             handled = True
             for alert in firing:
                 fp = _fingerprint(alert)
-                if _dedup(fp):
-                    log(f"dedup skip {fp}")
+                subj = _subject(alert)
+                if _dedup(subj):
+                    log(f"dedup skip (subject={subj}) fp={fp}")
                     continue
                 try:
                     _forward(alert)
-                    log(f"forwarded incident {fp}")
+                    log(f"forwarded incident {fp} (subject={subj})")
                 except Exception as exc:  # noqa: BLE001
                     log(f"forward FAILED {fp}: {exc}")
-                    _seen.pop(fp, None)  # allow retry
+                    _seen.pop(subj, None)  # allow retry
                     handled = False
             # delete only if every firing alert was handled (or none firing)
             if handled:
