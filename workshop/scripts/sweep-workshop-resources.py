@@ -17,6 +17,7 @@ deletion must continue regardless.
 """
 
 import boto3
+import os
 import sys
 import time
 
@@ -591,21 +592,39 @@ except Exception as e:
 # ---------------------------------------------------------------------------
 try:
     clusters_for_logs = [hub] + spokes
-    lg_prefixes = (
-        [f"/aws/eks/{c}" for c in clusters_for_logs]
+    # Broad `/aws/eks/<prefix>` + `/aws/containerinsights/<prefix>` prefixes catch
+    # EVERY owned cluster's control-plane / container-insights log groups
+    # (`/aws/eks/<cluster>/cluster` starts with `/aws/eks/<prefix>`), including
+    # arbitrarily-named #914 spokes not in `spokes` — the per-cluster prefixes alone
+    # missed those. `sorted(set(...))` + a seen-set dedupes the overlap.
+    lg_prefixes = sorted(set(
+        [f"/aws/eks/{prefix}", f"/aws/containerinsights/{prefix}"]
+        + [f"/aws/eks/{c}" for c in clusters_for_logs]
         + [f"/aws/containerinsights/{c}" for c in clusters_for_logs]
         + [f"/aws/lambda/{prefix}-"]
-    )
-    _lg_deleted = 0
+    ))
+    _seen, _lg_deleted, _lg_errs = set(), 0, []
     for pfx in lg_prefixes:
         for page in logs.get_paginator("describe_log_groups").paginate(logGroupNamePrefix=pfx):
             for lg in page["logGroups"]:
+                name = lg["logGroupName"]
+                if name in _seen:
+                    continue
+                _seen.add(name)
                 try:
-                    logs.delete_log_group(logGroupName=lg["logGroupName"])
+                    logs.delete_log_group(logGroupName=name)
                     _lg_deleted += 1
-                except Exception:
-                    pass
-    log(f"CloudWatch: deleted {_lg_deleted} log group(s)" if _lg_deleted else "No log groups to delete")
+                except Exception as e:
+                    _lg_errs.append(f"{name}: {e.__class__.__name__}")
+    # Report matched/deleted/failed explicitly. A prior version logged only
+    # "No log groups to delete" whenever _lg_deleted == 0, which HID an AccessDenied
+    # on logs:DeleteLogGroup (missing IAM perm) as if nothing had matched (#932).
+    if not _seen:
+        log("CloudWatch: no matching log groups found")
+    else:
+        log(f"CloudWatch: deleted {_lg_deleted}/{len(_seen)} log group(s)")
+        for m in _lg_errs[:8]:
+            log(f"  log-group delete failed — {m}")
 except Exception as e:
     log(f"CloudWatch: {e}")
 
@@ -877,7 +896,10 @@ except Exception as e:
 #     VPC, which CloudFormation deletes itself.
 # ---------------------------------------------------------------------------
 try:
-    def _reap_vpc(vpc_id):
+    def _clear_vpc_deps(vpc_id):
+        """One pass of dependency clearing. Safe to call repeatedly — subnet and
+        VPC deletion only succeed once NAT gateways finish deleting and their
+        service-managed ENIs are released, so _reap_vpc re-drives this each retry."""
         for eni in ec2.describe_network_interfaces(
             Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
         )["NetworkInterfaces"]:
@@ -885,6 +907,9 @@ try:
                 ec2.delete_network_interface(NetworkInterfaceId=eni["NetworkInterfaceId"])
             except Exception:
                 pass
+        # NAT-gateway deletion is asynchronous (~1-2 min to reach 'deleted'); the NAT
+        # holds an ENI and pins its subnet until then. Submitting the delete here and
+        # re-driving on the next iteration lets the subnet delete once it clears.
         for nat in ec2.describe_nat_gateways(
             Filter=[{"Name": "vpc-id", "Values": [vpc_id]}]
         ).get("NatGateways", []):
@@ -924,16 +949,30 @@ try:
                 continue
             _revoke_sg_rules(sg)
         _delete_vpc_sgs(vpc_id)
-        for attempt in range(12):  # retry while ENIs finish detaching (~4 min)
+
+    def _reap_vpc(vpc_id):
+        """Delete a VPC, re-driving the full dependency clear on EVERY attempt.
+        The previous version cleared dependencies ONCE and then only retried
+        delete_vpc — so a subnet that still held a NAT gateway's ENI on the first
+        pass was never re-deleted, delete_vpc failed forever on DependencyViolation,
+        and the spoke VPC (+ its now-orphaned NAT EIP) was abandoned on every
+        teardown (#932). Re-running _clear_vpc_deps each iteration lets the subnets
+        delete as soon as the NAT gateways finish deleting and release their ENIs.
+        Returns True on deletion, False if still blocked after the budget."""
+        # NAT-gateway deletion + service-managed ENI release is the long pole
+        # (~2-4 min); budget ~6 min (18 × 20 s) but return as soon as delete_vpc works.
+        for attempt in range(18):
+            _clear_vpc_deps(vpc_id)
             try:
                 ec2.delete_vpc(VpcId=vpc_id)
                 log(f"  Deleted orphan VPC {vpc_id}")
-                return
+                return True
             except Exception as e:
-                if attempt == 11:
-                    log(f"  Orphan VPC {vpc_id}: {e}")
-                else:
-                    time.sleep(20)
+                if attempt == 17:
+                    log(f"  Orphan VPC {vpc_id}: still blocked after ~6 min — {e}")
+                    return False
+                time.sleep(20)
+        return False
 
     seen, targets = set(), []
     for flt in (
@@ -1203,4 +1242,145 @@ except Exception as e:
     log(f"Final re-sweep: {e}")
 
 
+# ---------------------------------------------------------------------------
+# 17. Completeness verification + re-drive (#932)
+#     Sections above are best-effort and swallow individual errors, so an
+#     incomplete teardown previously passed silently (CodeBuild SUCCESS + orphans:
+#     spoke VPCs, NAT EIPs, ECR repo, S3 bucket, log groups). This pass
+#     (a) re-drives the resource classes that depend on an earlier ASYNC deletion —
+#     NAT-EIP release after the VPC reaper, and idempotent ECR / log-group deletes —
+#     then (b) enumerates everything still carrying the workshop ownership tag
+#     (platform.gitops.io/prefix=<prefix>) or the resource prefix and reports
+#     DESTROY COMPLETE / DESTROY INCOMPLETE. On residue the script exits non-zero
+#     (unless SWEEP_ALLOW_RESIDUE=true) so a strict caller can surface an incomplete
+#     teardown as a build failure. The CFN Delete path invokes the sweep with
+#     `|| true`, so the IDE-VPC deletion is NEVER blocked by leftover
+#     spoke/ECR/S3/log residue — this only adds a failure signal for strict runs.
+# ---------------------------------------------------------------------------
+residue = []
+try:
+    # 17a. Re-release NAT EIPs freed by the VPC reaper. Section 13 releases only
+    #      UNASSOCIATED prefixed EIPs, but it runs BEFORE section 14 deletes the NAT
+    #      gateways — so the spoke NAT EIPs were still "associated" then and were
+    #      skipped, orphaning on every teardown. They are unassociated now.
+    try:
+        for a in ec2.describe_addresses().get("Addresses", []):
+            if a.get("AssociationId"):
+                continue
+            tags = {t["Key"]: t["Value"] for t in a.get("Tags", [])}
+            if tags.get(OWNER_PREFIX_TAG) == prefix or any(prefix in str(v) for v in tags.values()):
+                try:
+                    ec2.release_address(AllocationId=a["AllocationId"])
+                    log(f"  [verify] Released freed EIP {a.get('PublicIp')}")
+                except Exception as e:
+                    log(f"  [verify] EIP {a.get('PublicIp')}: {e.__class__.__name__}")
+    except Exception as e:
+        log(f"  [verify] EIP re-release: {e}")
+
+    # 17b. Idempotent re-drive of the imperatively-created ECR repo + owned log
+    #      groups (cheap; catches an earlier race or a now-granted permission).
+    try:
+        ecr.delete_repository(repositoryName=f"{prefix}-ray-vllm-custom", force=True)
+        log(f"  [verify] Deleted lingering ECR repo {prefix}-ray-vllm-custom")
+    except Exception:
+        pass
+    try:
+        for page in logs.get_paginator("describe_log_groups").paginate(logGroupNamePrefix=f"/aws/eks/{prefix}"):
+            for lg in page["logGroups"]:
+                try:
+                    logs.delete_log_group(logGroupName=lg["logGroupName"])
+                    log(f"  [verify] Deleted lingering log group {lg['logGroupName']}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # 17c. Enumerate remaining owned resources (never the CFN-owned IDE VPC).
+    def _add(tok):
+        if tok not in residue:
+            residue.append(tok)
+
+    try:  # EKS clusters (hub + tagged spokes)
+        for name in sum([p.get("clusters", []) for p in eks.get_paginator("list_clusters").paginate()], []):
+            if name == hub:
+                _add(f"eks-cluster:{name}")
+            else:
+                try:
+                    if eks.describe_cluster(name=name)["cluster"].get("tags", {}).get(OWNER_PREFIX_TAG) == prefix:
+                        _add(f"eks-cluster:{name}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    try:  # spoke / owned VPCs
+        for flt in (
+            {"Name": "tag:eks:kubernetes-resource-name",
+             "Values": [f"{prefix}-spoke-dev-vpc", f"{prefix}-spoke-prod-vpc"]},
+            {"Name": "tag:Name", "Values": [f"{prefix}-spoke-*-vpc"]},
+            {"Name": f"tag:{OWNER_PREFIX_TAG}", "Values": [prefix]},
+        ):
+            for v in ec2.describe_vpcs(Filters=[flt]).get("Vpcs", []):
+                if any(t["Key"].startswith("aws:cloudformation:") for t in v.get("Tags", [])):
+                    continue
+                _add(f"vpc:{v['VpcId']}")
+    except Exception:
+        pass
+    try:  # unassociated prefixed EIPs
+        for a in ec2.describe_addresses().get("Addresses", []):
+            if a.get("AssociationId"):
+                continue
+            tags = {t["Key"]: t["Value"] for t in a.get("Tags", [])}
+            if tags.get(OWNER_PREFIX_TAG) == prefix or any(prefix in str(v) for v in tags.values()):
+                _add(f"eip:{a.get('PublicIp')}")
+    except Exception:
+        pass
+    try:  # imperatively-created ECR repo
+        ecr.describe_repositories(repositoryNames=[f"{prefix}-ray-vllm-custom"])
+        _add(f"ecr:{prefix}-ray-vllm-custom")
+    except Exception:
+        pass
+    try:  # prefixed S3 buckets in this region
+        for b in s3.list_buckets().get("Buckets", []):
+            if not b["Name"].startswith(prefix + "-"):
+                continue
+            try:
+                loc = s3.get_bucket_location(Bucket=b["Name"]).get("LocationConstraint") or "us-east-1"
+            except Exception:
+                loc = region
+            if loc == region:
+                _add(f"s3:{b['Name']}")
+    except Exception:
+        pass
+    try:  # owned control-plane log groups
+        for page in logs.get_paginator("describe_log_groups").paginate(logGroupNamePrefix=f"/aws/eks/{prefix}"):
+            for lg in page["logGroups"]:
+                _add(f"log-group:{lg['logGroupName']}")
+    except Exception:
+        pass
+    try:  # active + scheduled-for-deletion prefixed secrets
+        for _p in sm.get_paginator("list_secrets").paginate(
+            IncludePlannedDeletion=True, Filters=[{"Key": "name", "Values": [prefix]}]
+        ):
+            for s in _p.get("SecretList", []):
+                _add(f"secret:{s['Name']}")
+    except Exception:
+        pass
+
+    if residue:
+        log(f"DESTROY INCOMPLETE — {len(residue)} owned resource(s) still present:")
+        for r in residue:
+            log(f"  ✗ {r}")
+    else:
+        log("DESTROY COMPLETE — no owned (tagged/prefixed) resources remain")
+except Exception as e:
+    log(f"Completeness verification: {e}")
+
+
 log("Extended sweep complete.")
+
+# Exit non-zero when owned resources remain, so a strict caller can surface an
+# incomplete teardown as a build failure (#932). The CFN Delete path runs the sweep
+# with `|| true` (see cdk/resources/buildspec-clusters.yaml), so the IDE-VPC
+# deletion is never blocked by this. Set SWEEP_ALLOW_RESIDUE=true to force exit 0.
+if residue and os.environ.get("SWEEP_ALLOW_RESIDUE", "").lower() not in ("1", "true", "yes"):
+    sys.exit(1)
