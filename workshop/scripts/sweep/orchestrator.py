@@ -30,8 +30,8 @@ from .reapers import (
 )
 
 
-def main(region="us-west-2", prefix="peeks"):
-    ctx = SweepContext(region, prefix)
+def main(region="us-west-2", prefix="peeks", stack_name=None):
+    ctx = SweepContext(region, prefix, stack_name)
 
     eks.reap_capabilities(ctx)        # 1.   EKS capabilities
     cloudfront.reap(ctx)              # 2.   CloudFront VPC origin + distribution

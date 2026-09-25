@@ -87,6 +87,38 @@ def _fake_client(service, **kwargs):
     return FakeClient(service)
 
 
+# ── Fake Resource Groups Tagging API (peeks.io=<stack> gate) ──────────────────────
+class _TagPaginator:
+    def __init__(self, mappings):
+        self._mappings = mappings
+
+    def paginate(self, *a, **k):
+        return iter([{"ResourceTagMappingList": self._mappings}])
+
+
+class FakeTaggingClient(FakeClient):
+    """resourcegroupstaggingapi whose get_resources paginator yields the given
+    ResourceTagMappingList; every other call behaves like the empty FakeClient."""
+
+    def __init__(self, mappings):
+        super().__init__("resourcegroupstaggingapi")
+        self._mappings = mappings
+
+    def get_paginator(self, name):
+        if name == "get_resources":
+            return _TagPaginator(self._mappings)
+        return _Paginator()
+
+
+def _fake_client_with_tags(mappings):
+    def factory(service, **kwargs):
+        if service == "resourcegroupstaggingapi":
+            return FakeTaggingClient(mappings)
+        return FakeClient(service)
+
+    return factory
+
+
 class SweepOrchestrationTest(unittest.TestCase):
     def test_full_run_reaches_destroy_complete(self):
         # Patch the ONLY boto3.client call site (context.py) before importing main.
@@ -166,6 +198,56 @@ class SweepOrchestrationTest(unittest.TestCase):
                 self.assertEqual(rc2, 0)
             finally:
                 del os.environ["SWEEP_ALLOW_RESIDUE"]
+
+
+class PeeksIoTagGateTest(unittest.TestCase):
+    """Authoritative peeks.io=<stack> completeness gate (appmod-blueprints#924, §17d)."""
+
+    def _run(self, mappings, stack_name="peeks-workshop-test"):
+        with mock.patch("sweep.context.boto3.client", side_effect=_fake_client_with_tags(mappings)):
+            from sweep.orchestrator import main
+            import io
+            import contextlib
+
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main("us-west-2", "peeks", stack_name)
+            return rc, buf.getvalue()
+
+    def test_out_of_cfn_tagged_resource_is_residue(self):
+        """A resource tagged peeks.io=<stack> WITHOUT aws:cloudformation:* tags is
+        out-of-CFN (kro/ACK) residue -> non-zero exit."""
+        arn = "arn:aws:eks:us-west-2:111122223333:cluster/oap-test"
+        rc, out = self._run(
+            [{"ResourceARN": arn, "Tags": [{"Key": "peeks.io", "Value": "peeks-workshop-test"}]}]
+        )
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn(f"tagged:{arn}", out)
+
+    def test_layer1_cfn_tagged_resource_is_excluded(self):
+        """The IDE VPC (Layer 1) carries peeks.io AND aws:cloudformation:* -> excluded
+        from the gate (CloudFormation deletes it after the sweep), so no false residue."""
+        arn = "arn:aws:ec2:us-west-2:111122223333:vpc/vpc-ide"
+        rc, out = self._run(
+            [{"ResourceARN": arn, "Tags": [
+                {"Key": "peeks.io", "Value": "peeks-workshop-test"},
+                {"Key": "aws:cloudformation:stack-name", "Value": "peeks-workshop-test"},
+            ]}]
+        )
+        self.assertEqual(rc, 0, msg=out)
+        self.assertIn("DESTROY COMPLETE", out)
+        self.assertNotIn("tagged:", out)
+
+    def test_no_stack_name_skips_tag_gate(self):
+        """Without a stack name, the tag gate is skipped even if the tagging API would
+        return matches -> unchanged pre-tag behaviour."""
+        arn = "arn:aws:eks:us-west-2:111122223333:cluster/oap-test"
+        rc, out = self._run(
+            [{"ResourceARN": arn, "Tags": [{"Key": "peeks.io", "Value": "x"}]}],
+            stack_name=None,
+        )
+        self.assertEqual(rc, 0, msg=out)
+        self.assertNotIn("tagged:", out)
 
 
 if __name__ == "__main__":
