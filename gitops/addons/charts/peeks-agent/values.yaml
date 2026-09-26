@@ -1,0 +1,18 @@
+# peeks-agent addon — workshop-generic values.
+# Images default to the public workshop registry (public.ecr.aws/seb-demo), pinned by
+# tag; override imageRegistry/imageTag per-cluster in the fleet-config overlay
+# (overlays/clusters/<cluster>/peeks-agent/values.yaml) to point at your own registry.
+imageRegistry: "public.ecr.aws/seb-demo"
+imageTag: "v1"
+
+# Per-deployment values — injected from cluster-secret annotations by the registry entry.
+accountId: ""                 # aws_account_id
+clusterPrefix: "peeks"        # resource_prefix
+cloudfrontDomain: ""          # ingress_domain_name (chat-ui ingress host)
+
+# AMP workspace id — REQUIRED only for the AMP incident-bridge path (AlertManagerDefinition
+# + aps->SNS->SQS + incident-bridge). The CORE agent (chat-ui / skills-mcp / eks-read-mcp /
+# AgentCore memory) works with this empty. Set a real workspace id (e.g. ws-xxxx) via the
+# overlay to enable the autonomous-incident demo; until then the AlertManagerDefinition and
+# incident IAM policy are inert (the workspaceID renders as "").
+ampWorkspaceId: ""

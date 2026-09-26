@@ -70,6 +70,12 @@ crossplane-base:
       grafana:
         version: "v2.6.1"
         createIdentity: true
+      # AgentCore memory provider for OAP agents. Always-on in the base; remove or
+      # override to "" via the fleet-config overlay (configs/crossplane-base/values.yaml
+      # → providers.bedrockagentcore.version: "") to disable on a given cluster.
+      bedrockagentcore:
+        version: "v2.6.1"
+        createIdentity: true
       kubernetes:
         version: "v1.2.1"
   ignoreDifferences:
@@ -728,3 +734,33 @@ platform-manifests-post:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
       region: '{{.metadata.annotations.aws_region}}'
+
+# peeks-agent — the PEEKS read-only platform-engineering agent (OAP Strands agent +
+# skills-mcp + eks-read-mcp + chat-ui + AgentCore memory + incident bridge) as ONE
+# KubeVela Application. Gated by enable_peeks_agent (default OFF); values overridable
+# per-cluster via the fleet-config overlay (overlays/clusters/<cluster>/peeks-agent/values.yaml).
+# Depends on KubeVela + the OAP agent-platform-addons (bifrost/agentgateway/oam-components),
+# hence a late sync-wave.
+peeks-agent:
+  namespace: peeks-agent
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/peeks-agent'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '9'
+  selector:
+    matchExpressions:
+      - key: enable_peeks_agent
+        operator: In
+        values: ['true']
+  valuesObject:
+    imageRegistry: '{{default "public.ecr.aws/seb-demo" (index .metadata.annotations "peeks_agent_image_registry")}}'
+    imageTag: '{{default "v1" (index .metadata.annotations "peeks_agent_image_tag")}}'
+    accountId: '{{.metadata.annotations.aws_account_id}}'
+    clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
+    cloudfrontDomain: '{{default "" .metadata.annotations.ingress_domain_name}}'
+    # AMP incident-bridge path only — set aws_amp_workspace_id to a real ws-xxxx to enable.
+    ampWorkspaceId: '{{default "" (index .metadata.annotations "aws_amp_workspace_id")}}'
+  ignoreDifferences:
+    - group: core.oam.dev
+      kind: Application
+      jsonPointers:
+        - /status

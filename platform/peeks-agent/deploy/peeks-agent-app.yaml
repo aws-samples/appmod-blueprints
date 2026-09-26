@@ -1,0 +1,737 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: peeks-agent-hub
+  namespace: peeks-agent
+spec:
+  components:
+  - name: skills-mcp
+    properties:
+      description: PEEKS + APEX skills and steering as MCP tools
+      image: REPLACE_IMAGE_REGISTRY/skills-mcp:REPLACE_IMAGE_TAG
+      port: 8000
+      registerWithGateway: true
+      replicas: 1
+      resources:
+        limits:
+          memory: 256Mi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      sessionAffinity: false
+    type: mcp-server
+  # ▶MEMORY ── AgentCore persistent memory (always-on; requires the bedrockagentcore
+  # Crossplane provider enabled in crossplane-base → registry platform.yaml).
+  # Provisions an AWS Bedrock AgentCore Memory via the Upbound provider and emits an
+  # IAM policy (<app>-<component>-iam-policy). Its memoryId output is injected into the
+  # peeks-agent component below (properties.memory.config.memoryId) and the policy is
+  # attached to the agent's Pod Identity role via the aws-service-identity accessFor.
+  # region is set EXPLICITLY — the ComponentDefinition default is a Helm string that
+  # does NOT resolve inside a plain OAM Application.
+  # To DISABLE memory: delete this component AND the three ▶MEMORY blocks on the
+  # peeks-agent component (dependsOn+inputs, properties.memory, trait accessFor).
+  # A hub without the bedrockagentcore provider would otherwise wedge on a missing CRD.
+  - name: peeks-agent-memory
+    type: agentcore-memory
+    outputs:
+    - name: memory-id
+      valueFrom: output.status.atProvider.id
+    properties:
+      region: us-west-2
+      description: "PEEKS agent persistent session memory"
+      eventExpiryDuration: 30
+  - name: peeks-agent
+    # ▶MEMORY: consume the agentcore-memory output (memoryId → properties.memory.config)
+    dependsOn:
+    - peeks-agent-memory
+    inputs:
+    - from: memory-id
+      parameterKey: properties.memory.config.memoryId
+    properties:
+      description: PEEKS platform-engineering agent (hub brain, 2-mode)
+      mcpServers:
+      - name: skills-mcp
+      - name: eks-read-mcp
+      modelConfig:
+        llmGatewayUrl: http://bifrost.bifrost.svc.cluster.local:8080/v1
+        modelId: claude-sonnet
+      # ▶MEMORY: AgentCore session memory. provider=agentcore attaches the Strands
+      # session manager (cross-session recall); memoryId is injected from the
+      # peeks-agent-memory component output (see inputs above). region explicit.
+      memory:
+        provider: agentcore
+        config:
+          memoryId: "injected-from-agentcore-memory-output"
+          region: us-west-2
+      # Raise the model output-token budget so a long RCA + tool call is not
+      # truncated. The agent image hardcoded max_tokens=1000, which raised
+      # MaxTokensReachedException before the gitlab MR tool ever fired. This env
+      # takes effect once the agent image carries the configurable-max_tokens
+      # fix (OAP issue awslabs/open-agentic-platform#34); peeks-e2e overrides the
+      # image to a locally-built patched image until OAP republishes.
+      env:
+      - name: MAX_TOKENS
+        value: "4096"
+      registerWithGateway: true
+      resources:
+        limits:
+          memory: 1Gi
+        requests:
+          cpu: 500m
+          memory: 512Mi
+      systemMessage: "You are **peeks-agent**, a platform-engineering agent for the Platform Engineering\
+        \ on EKS (PEEKS) platform. You embody AWS Solutions-Architect–grade EKS expertise, delivered as\
+        \ an agent. You operate on a multi-cluster EKS fleet (a `peeks-hub` control cluster plus `peeks-spoke-*`\
+        \ workload clusters) provisioned GitOps-first through ArgoCD, KRO and ACK, on EKS Auto Mode with\
+        \ EKS Managed Capabilities.\n\n# Operating contract — TWO modes on ONE endpoint\nYou are a single\
+        \ A2A JSON-RPC agent. Behave according to the message you receive:\n\n1. **Autonomous incident\
+        \ mode** — when the message is a structured incident payload (e.g. an OOMKilled pod, an ImagePullBackOff, a CrashLoopBackOff, an unschedulable pod or a Pending PVC, delivered\
+        \ by an argo-events Sensor): produce a concise Root-Cause Analysis, then a **GitOps remediation**\
+        \ (the exact manifest field change appropriate to the signal — e.g. a memory request/limit bump, an image ref/tag or pull-secret fix, a probe/command/env change, right-sized requests or affinity/NodePool, or a storageClass/size fix) and, if a `gitlab` tool is\
+        \ available, open a Merge Request on a NEW branch — against the repo/path that OWNS the resource (read its ArgoCD Application source if unsure) — with that fix. **Never merge it. Never mutate\
+        \ the cluster directly.** End with the MR URL (or the proposed diff if no git tool) and an explicit\
+        \ \"awaiting human approval\" note.\n\n2. **Interactive chat mode** — when a human asks a question\
+        \ (e.g. \"run an eks-recon on spoke-dev\", \"why is this pod unhealthy?\", \"review this cluster\
+        \ for best practices\"): use your tools. Pull the relevant skill first (`skills.get_skill(<name>)`)\
+        \ to load its step-by-step method, then use the read-only EKS tools (`eks-read.*`) to gather live\
+        \ evidence, and answer with findings + recommended GitOps changes.\n\n# Hard boundaries (read-first)\n\
+        - Your cluster access is **READ-ONLY** (enforced by RBAC on your ServiceAccount). Do not attempt\
+        \ writes; if a task needs a change, express it as a GitOps PR/MR, never as a live `kubectl apply`/`delete`.\n\
+        - The only WRITE you may perform is opening a GitLab Merge Request via the `gitlab` tool (git\
+        \ write, scoped to `create_merge_request`/`create_branch` by gateway policy). Merging stays human.\n\
+        - Prefer tools over training data. When a skill exists for the task, load and follow it.\n\n#\
+        \ How to use your tools\n- `skills` MCP: `list_skills()`, `get_skill(name)`, `search_skills(query)`,\
+        \ `get_steering(name)` — your PEEKS/APEX knowledge base. Load the method on demand instead of\
+        \ guessing.\n- `eks-read` MCP: read-only EKS/Kubernetes/AWS inspection (describe/list/get, logs,\
+        \ events). Never write.\n- `gitlab` MCP: `create_merge_request` / `create_branch` only. The gitlab write path is create_or_update_file, which UPSERTS (create if the file is absent, update if it already exists) — use it to edit an EXISTING overlay; if a write is rejected with commit_id Required, first READ the file on your branch to get its last-commit id and retry as an update; and NEVER call a create action on a file that already exists (GitLab returns 400 Bad Request) — read the file first: found means update, not-found means create. Do not thrash between create and update.\n\n\n\
+        # Skills index (pull the full method with skills.get_skill(<name>))\n- **eks-best-practices**\
+        \ — Advisory guidance for Amazon EKS architecture and configuration decisions — compute strategy,\
+        \ networking, security, reliability, cost, autoscaling, observability, multi-tenancy, and upgrade\
+        \ planning. \n- **eks-cost-intelligence** — Run a live EKS cluster cost efficiency assessment\
+        \ — analyze spending across 6 dimensions (compute efficiency, Spot/Graviton adoption, networking,\
+        \ storage, observability, idle resources), calculate a w\n- **eks-platform-engineering** — Use\
+        \ whenever someone is designing or building an Internal Developer Platform (IDP) or doing platform\
+        \ engineering on Amazon EKS — phrased as \"build a developer platform\", \"self-service for developers\"\
+        ,\n- **eks-recon** — EKS cluster reconnaissance and environment discovery. Detects compute strategy\
+        \ (Karpenter, MNG, Auto Mode, Fargate), IaC tooling (Terraform, CloudFormation, CDK, eksctl),\
+        \ CI/CD pipelines (GitHub Actio\n- **eks-security** — Use whenever someone needs security or compliance\
+        \ guidance for Amazon EKS — phrased as \"CIS Benchmark for EKS\", \"HIPAA / PCI-DSS / FedRAMP\
+        \ / SOC 2 / GDPR on EKS\", \"harden my EKS cluster\", \"Bottlerocke\n- **eks-upgrade-check** —\
+        \ Assess EKS cluster upgrade readiness — run automated checks across 8 areas (version, breaking\
+        \ changes, deprecated APIs, add-on compatibility, node readiness, workload risks, AWS Insights,\
+        \ upgrade plan\n- **manage-addons** — Add, configure, or modify GitOps addons on the PEEKS platform.\
+        \ Use when adding a new addon, enabling an addon on a cluster, configuring addon values, troubleshooting\
+        \ addon deployment, or editing addon\n- **troubleshoot-kro** — Troubleshoot Kro ResourceGraphDefinition\
+        \ (RGD) issues — stuck instances, ACK resource failures, IAM trust policy problems, resource conflicts.\
+        \ Use when a Kro instance is stuck IN_PROGRESS, ACK resourc\n- **troubleshoot-platform** — Systematic\
+        \ troubleshooting for the PEEKS workshop platform — EKS clusters, Terraform state, ingress, load\
+        \ balancers, MCP tool failures, YAML validation. Use when something is broken, not deploying,\
+        \ or\n\n# PEEKS platform knowledge (distilled — full text via skills.get_steering(<name>))\n-\
+        \ **Application Development Guidelines** (`application-development`): Each application in /applications\
+        \ follows a consistent structure:\n- **AWS Environment Variables** (`aws-env-best-practices`):\
+        \ Enforces environment variable usage for all AWS operations to prevent hardcoded values and ensure\
+        \ secure, portable configurations.\n- **Backstage Development Guidelines** (`backstage-development`):\
+        \ Backend Plugin (packages/backend/src/plugins/kro.ts): - Discovers ResourceGraphDefinitions (RGDs)\
+        \ from the cluster - Manages ResourceGroup instances - Integrates with Backstage catalog - Implements\
+        \ RBAC for resource access\n- **Spoke Cluster Lifecycle and Prune Safety** (`cluster-lifecycle`):\
+        \ How spoke clusters are created and deleted in the hub-and-spoke fleet, and the guardrails that\
+        \ prevent accidental deletion. Full details: docs/platform/cluster-lifecycle.md.\n- **Coding Standards\
+        \ and Best Practices** (`coding-standards`): Types: feat, fix, docs, style, refactor, test, chore\n\
+        - **Deployment Architecture & Pitfalls** (`deployment-architecture`): - Waves only order resources\
+        \ within the same phase (Sync or PostSync) - A regular resource at wave 11 runs BEFORE a PostSync\
+        \ hook at wave 10 - PostSync hooks only run if the Sync phase succeeds - ArgoCD can only \"wait\"\
+        \ for Jobs (polls until Complete/Failed) - Non-Job resources as PostSync hooks (PushSecret, ExternalSecret)\
+        \ are checked immediately — if not re…\n- **EKS Operations** (`eks-best-practices`): Ensures all\
+        \ EKS and Kubernetes operations leverage the EKS MCP server capabilities appropriately.\n- **GitOps\
+        \ Patterns and Best Practices** (`gitops-patterns`)\n- **Helm Chart Dependencies** (`helm-dependencies`):\
+        \ Ensures Helm chart dependencies are properly built when charts have dependency definitions.\n\
+        - **Kro (Kubernetes Resource Orchestrator) Development Guidelines** (`kro-development`): Kro is\
+        \ a Kubernetes controller that enables composition of complex resources through ResourceGraphDefinitions\
+        \ (RGDs). It allows platform teams to create reusable, self-service resource templates that abstract\
+        \ complexity from end users.\n- **ML/AI Workloads Guidelines** (`ml-ai-workloads`): Use Cases:\
+        \ - Distributed training - Hyperparameter tuning - Batch inference - Data preprocessing\n- **Multi-Repo\
+        \ GitOps Architecture** (`multi-repo-architecture`): This workshop uses a multi-repo GitOps approach\
+        \ with clear separation of concerns:\n- **Progressive Delivery Guidelines** (`progressive-delivery`):\
+        \ Progressive delivery and advanced deployment strategies.\n- **Platform Engineering on EKS —\
+        \ appmod-blueprints** (`project`): Platform implementation repo for the Platform Engineering on\
+        \ EKS workshop. Provides GitOps configurations, Terraform infrastructure, Backstage templates,\
+        \ and sample applications for a multi-cluster EKS platform.\n- **Platform Engineering on Amazon\
+        \ EKS - Repository Overview** (`repository-overview`): Run task or task default to see all available\
+        \ tasks including: - Helm dependency management - Backstage validation - Kro testing suite - ApplicationSet\
+        \ testing\n- **Terraform Infrastructure Management** (`terraform-best-practices`): Ensures all\
+        \ Terraform operations follow Infrastructure as Code best practices and properly integrate with\
+        \ the workshop's pre-deployed infrastructure managed through Terraform MCP server.\n- **Terraform\
+        \ Infrastructure Guidelines** (`terraform-infrastructure`): Terraform is one of the pluggable\
+        \ cluster providers. Its code lives in: cluster-providers/terraform/ (the old platform/infra/terraform/\
+        \ tree has been removed). It is selected by setting clusterProvider: terraform in config.local.yaml\
+        \ and driven via task install / task destroy.\n- **Troubleshooting Guide** (`troubleshooting`):\
+        \ Solutions: - Check for manual changes in cluster - Verify Git repository is accessible - Review\
+        \ sync waves and dependencies - Check for resource conflicts\n- **Infrastructure Context — feature/cloudfront-exposure**\
+        \ (`workshop-infrastructure-context`): Architecture and deployment context for the appmod-blueprints\
+        \ platform on the feature/cloudfront-exposure branch.\n\nWhen a question needs deeper detail than\
+        \ this digest, call `skills.get_steering(<name>)` for the full guide before answering.\n# THIS\
+        \ ENVIRONMENT — real fleet cluster names (use these EXACT names with eks-read)\nThe live EKS clusters\
+        \ in this account (region us-west-2) are:\n- Hub (control plane): `peeks-e2e-hub`\n- Spokes (workloads):\
+        \ `peeks-e2e-spoke-dev`, `peeks-e2e-spoke-prod`\n\nWhen the user says \"hub\", \"spoke-dev\" or\
+        \ \"spoke-prod\", map them to `peeks-e2e-hub`, `peeks-e2e-spoke-dev`, `peeks-e2e-spoke-prod` respectively,\
+        \ and pass the FULL name to every eks-read tool's `cluster_name` argument. There is NO list-clusters\
+        \ tool and no CloudFormation access — do NOT guess names or try `cloudformation:DescribeStacks`;\
+        \ use the three names above directly.\n\n# GitOps remediation — overlay file rules (CRITICAL: get these exact or the MR is wrong)\nWhen you remediate by editing/creating GitOps values, follow these EXACTLY:\n- **Cluster names are DYNAMIC** — they depend on the actual deployment's resource prefix (this environment's real names are listed in the section above; other deployments differ). NEVER hardcode, shorten, or guess a cluster name. Note an alert's `cluster` label may be a SHORT form (e.g. `spoke-dev`) that does NOT match the fleet-config path — reconcile it to the REAL deployed cluster name (from the environment section / your read-only tools) before putting it in any path.\n- Platform ADDONS (external-secrets, external-dns, …) read overlay values from the fleet-config repo at these paths (last wins over the GitHub base values; a missing file is ignored): shared/all-clusters `configs/<addon>/values.yaml`; per-env `overlays/environments/<env>/<addon>/values.yaml`; per-cluster `overlays/clusters/<FULL-cluster-name>/<addon>/values.yaml`.\n- Create or edit EXACTLY ONE file — the narrowest that fixes the incident. NEVER create multiple variants or guess alternate paths. If a container OOMKills or misbehaves, **prefer the cluster-agnostic `configs/<addon>/values.yaml`** — it needs NO cluster name (so no short/full ambiguity) and covers ALL clusters, which is usually what you want (e.g. a controller failing on several clusters). Use a per-cluster overlay `overlays/clusters/<exact-deployed-cluster-name>/<addon>/values.yaml` ONLY when you deliberately scope to a single cluster, and then use its EXACT deployed name (never a short/guessed form, never two variants).\n- Before writing, confirm the addon's real current value (e.g. the memory limit) with your read-only tools so the bump is meaningful and the comment is accurate.\n- App workloads (not addons) already have a manifest in fleet-config (e.g. `demo-oomkill/deployment.yaml`) — edit that existing file, do NOT invent an overlay for them.\n\n# Idempotency — NEVER open a duplicate MR (CRITICAL)\nBefore creating ANY branch or merge request, FIRST call the gitlab tool to LIST OPEN merge requests in the target repo (state=opened) and inspect their titles and changed files. Treat the incident as ALREADY handled if an open MR edits the SAME file you would edit (e.g. `configs/<addon>/values.yaml`) or targets the same addon/component. Multiple alerts for the same component across different clusters are ONE issue, because `configs/<addon>/values.yaml` is cluster-agnostic. When a matching open MR exists: do NOT create another MR or branch — add a short comment on that EXISTING MR noting the extra affected cluster/pod, then STOP. Only open a new MR when NO open MR already addresses that file/component.\n\n# Editing an EXISTING file — PRESERVE it, never rewrite (CRITICAL)\nWhen the values file you target ALREADY EXISTS, first READ its current content, then ADD or MERGE only the keys you need while keeping ALL existing content intact (existing `nodeSelector` pins, existing image redirects, etc.). NEVER replace or rewrite the whole file: dropping existing keys (e.g. a `system-peeks` nodeSelector, or a StatefulSet image override) is a REGRESSION that breaks the platform. Your diff must be minimal and purely additive to the relevant block. This preserve-and-append rule is GENERIC to EVERY addon and every key, not just one component: never drop, rename, reorder, or blank ANY pre-existing key, comment, or sibling under the same parent while adding yours (if the base file redirects BOTH a server image and a client image, keep BOTH and add only the one that is missing). Before opening the MR, compare your proposed file against the CURRENT content on the target branch and confirm the ONLY changes are your intended additions (or a value change on the ONE key you meant to change) — if your diff removes any line you did not intend to change, STOP and redo it as a purely additive edit.\n\n# Verify the fix targets something real\nBefore referencing any image/registry/artifact in a fix (e.g. an ECR repository), CONFIRM it actually exists with your read-only tools — do not invent a registry path or tag. When you redirect an image to the in-account ECR mirror, ENUMERATE the actual repositories with your read-only tools and use the EXACT name that EXISTS — NEVER build a mirror repo name by concatenating the subchart/component name. The mirror repo mirrors the upstream image's FINAL path segment: `minio/mc` maps to repo `mc` (NOT `minio-mc`), `minio/minio` maps to repo `minio`. A guessed name that does not exist leaves the Job in ImagePullBackOff (worse than no fix); if you cannot confirm the exact repo name, STOP and say so instead of guessing. For Helm charts that bundle a subchart (e.g. langfuse bundles minio under the `minio:` key), overrides for that subchart MUST be nested under the parent key (`minio.<...>`); a top-level sibling key is silently ignored. Also VERIFY every Helm values key path against the upstream chart/subchart values.yaml before using it (do NOT invent a key): a nonexistent key is silently ignored by Helm so the fix does nothing; the bundled minio subchart client image is minio.mcImage.repository/tag -- confirm in the chart, and STOP if you cannot locate the exact key.\n\n# Output budget & tool-first execution\nKeep every response tight. As soon as you have identified the remediation, CALL THE TOOL that performs it (the gitlab create_branch / create_merge_request tools) BEFORE writing any long narrative -- act first, then give a brief summary. Never spend your output budget on a lengthy reasoning or plan write-up before acting: a verbose preamble can exhaust the token budget and abort the task before the tool is ever called. Prefer concise, structured output and omit restating context you already have."
+    traits:
+    - type: gateway-identity
+    # ▶MEMORY: attach the agentcore-memory IAM policy to the agent's Pod Identity role
+    - type: aws-service-identity
+      properties:
+        accessFor:
+        - peeks-agent-memory
+    type: agent-fixed
+  - name: eks-read-mcp
+    type: k8s-objects
+    properties:
+      objects:
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            app.kubernetes.io/name: eks-read-mcp
+          name: eks-read-mcp
+          namespace: peeks-agent
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: eks-read-mcp
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: eks-read-mcp
+            spec:
+              containers:
+              - env:
+                - name: AWS_REGION
+                  value: us-west-2
+                - name: AWS_DEFAULT_REGION
+                  value: us-west-2
+                image: REPLACE_IMAGE_REGISTRY/eks-mcp:REPLACE_IMAGE_TAG
+                imagePullPolicy: Always
+                name: eks-read-mcp
+                ports:
+                - containerPort: 8000
+                  name: mcp
+                  protocol: TCP
+                readinessProbe:
+                  failureThreshold: 3
+                  httpGet:
+                    path: /health
+                    port: 8000
+                    scheme: HTTP
+                  initialDelaySeconds: 8
+                  periodSeconds: 10
+                  successThreshold: 1
+                  timeoutSeconds: 1
+                resources:
+                  limits:
+                    memory: 512Mi
+                  requests:
+                    cpu: 100m
+                    memory: 256Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+              restartPolicy: Always
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              serviceAccountName: peeks-agent
+              terminationGracePeriodSeconds: 30
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          labels:
+            agentgateway.dev/target: eks-read-mcp
+            app.kubernetes.io/name: eks-read-mcp
+          name: eks-read-mcp-stable
+          namespace: peeks-agent
+        spec:
+          ports:
+          - appProtocol: agentgateway.dev/mcp
+            name: mcp
+            port: 80
+            protocol: TCP
+            targetPort: 8000
+          selector:
+            app.kubernetes.io/name: eks-read-mcp
+          type: ClusterIP
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          labels:
+            app.kubernetes.io/name: eks-read-mcp
+          name: eks-read-mcp
+          namespace: peeks-agent
+        spec:
+          parentRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: agentgateway-proxy
+            namespace: agentgateway-system
+          rules:
+          - backendRefs:
+            - group: agentgateway.dev
+              kind: AgentgatewayBackend
+              name: eks-read-mcp-backend
+              weight: 1
+            matches:
+            - path:
+                type: PathPrefix
+                value: /mcp/eks-read-mcp
+      - apiVersion: agentgateway.dev/v1alpha1
+        kind: AgentgatewayBackend
+        metadata:
+          labels:
+            app.kubernetes.io/name: eks-read-mcp
+          name: eks-read-mcp-backend
+          namespace: peeks-agent
+        spec:
+          mcp:
+            sessionRouting: Stateful
+            targets:
+            - name: eks-read-mcp-target
+              selector:
+                services:
+                  matchLabels:
+                    agentgateway.dev/target: eks-read-mcp
+  - name: chat-ui
+    type: k8s-objects
+    properties:
+      objects:
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            app.kubernetes.io/name: chat-ui
+          name: chat-ui
+          namespace: peeks-agent
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: chat-ui
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: chat-ui
+            spec:
+              containers:
+              - env:
+                - name: AGENT_A2A_URL
+                  value: http://peeks-agent-stable.peeks-agent.svc.cluster.local:8083/
+                - name: KEYCLOAK_TOKEN_URL
+                  value: https://REPLACE_CLOUDFRONT_DOMAIN/keycloak/realms/platform/protocol/openid-connect/token
+                - name: KEYCLOAK_CLIENT_ID
+                  value: mcp-client
+                - name: COOKIE_SECURE
+                  value: 'true'
+                - name: APP_TITLE
+                  value: PEEKS Agent
+                - name: AGENT_LABEL
+                  value: peeks-agent
+                - name: APP_INTRO
+                  value: Ask about the EKS fleet. The agent reasons with PEEKS/APEX knowledge and read-only
+                    inspection, then proposes GitOps fixes.
+                image: REPLACE_IMAGE_REGISTRY/chat-ui:REPLACE_IMAGE_TAG
+                imagePullPolicy: Always
+                name: chat-ui
+                ports:
+                - containerPort: 8080
+                  name: http
+                  protocol: TCP
+                readinessProbe:
+                  failureThreshold: 3
+                  httpGet:
+                    path: /health
+                    port: 8080
+                    scheme: HTTP
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                  successThreshold: 1
+                  timeoutSeconds: 1
+                resources: {}
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+              restartPolicy: Always
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              terminationGracePeriodSeconds: 30
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          labels:
+            app.kubernetes.io/name: chat-ui
+          name: peeks-agent-chat
+          namespace: peeks-agent
+        spec:
+          ports:
+          - name: http
+            port: 80
+            protocol: TCP
+            targetPort: 8080
+          selector:
+            app.kubernetes.io/name: chat-ui
+          type: ClusterIP
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          annotations:
+            alb.ingress.kubernetes.io/healthcheck-path: /health
+            alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+            alb.ingress.kubernetes.io/target-type: ip
+            alb.ingress.kubernetes.io/transforms.peeks-agent-chat: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/peeks-agent-chat\\/?(.*)$","replace":"/$1"}]}}]
+
+              '
+          name: peeks-agent-chat
+          namespace: peeks-agent
+        spec:
+          ingressClassName: platform
+          rules:
+          - http:
+              paths:
+              - backend:
+                  service:
+                    name: peeks-agent-chat
+                    port:
+                      name: http
+                path: /peeks-agent-chat
+                pathType: Prefix
+  - name: agent-access
+    type: k8s-objects
+    properties:
+      objects:
+      - apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          name: peeks-agent-hub
+          namespace: peeks-agent
+        spec:
+          clusterName: REPLACE_CLUSTER_PREFIX-hub
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/peeks-agent-role
+          type: STANDARD
+          accessPolicies:
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy
+      - apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          name: peeks-agent-spoke-dev
+          namespace: peeks-agent
+        spec:
+          clusterName: REPLACE_CLUSTER_PREFIX-spoke-dev
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/peeks-agent-role
+          type: STANDARD
+          accessPolicies:
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy
+      - apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          name: peeks-agent-spoke-prod
+          namespace: peeks-agent
+        spec:
+          clusterName: REPLACE_CLUSTER_PREFIX-spoke-prod
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/peeks-agent-role
+          type: STANDARD
+          accessPolicies:
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy
+          - accessScope:
+              type: cluster
+            policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy
+  # ── Autonomous incident bridge: AMP alerting → SNS → SQS → in-cluster consumer ──
+  # AMP evaluates the OOMKill rule (observability-aws chart) and its AlertManager
+  # pushes firing alerts to SNS; SNS fans out to SQS; the consumer (below) long-polls
+  # SQS in-cluster and forwards each incident to the agent A2A. Nothing is exposed
+  # publicly. All AWS resources are ACK CRs (sns/sqs/iam/eks/prometheusservice
+  # controllers are present on the hub) — no Crossplane provider changes.
+  # Placeholders substituted at deploy time (see deploy/BUNDLE.md):
+  #   REPLACE_ACCOUNT_ID, REPLACE_CLUSTER_PREFIX, REPLACE_IMAGE_REGISTRY,
+  #   REPLACE_IMAGE_TAG, REPLACE_AMP_WORKSPACE_ID (from `aws amp list-workspaces`).
+  # ── CARM wiring (managed ACK IAMRoleSelector) — applied FIRST ──
+  # The managed ACK capability routes a resource to a workload role via a
+  # cluster-scoped IAMRoleSelector matching the CR's namespace; with no match it
+  # falls back to the capability role (which only has AssumeWorkloadRoles +
+  # ManageIRSARoles → cannot create SNS/SQS/AMP or a cluster-mgmt-* role).
+  # These selectors MUST exist before any incident-bridge ACK CR's first reconcile:
+  # the managed capability caches "no role selected" and does NOT re-evaluate a
+  # selector added later (it would need a delete/recreate). incident-bridge-aws
+  # therefore dependsOn this component. Once the selector is matched, a missing
+  # target role is a normal Recoverable error that ACK retries — so role-creation
+  # ordering inside incident-bridge-aws self-heals.
+  - name: incident-bridge-selectors
+    type: k8s-objects
+    properties:
+      objects:
+      # iam CRs (both roles in incident-bridge-aws) -> cluster-mgmt-iam (IAMFullAccess),
+      # which the capability role is already trusted to assume. Lets ACK create the
+      # roles declaratively — no direct `aws iam` call.
+      - apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: incident-bridge-iam
+        spec:
+          arn: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-cluster-mgmt-iam
+          namespaceSelector:
+            names: [peeks-agent]
+          resourceTypeSelector:
+          - group: iam.services.k8s.aws
+            kind: ""
+            version: ""
+      # sns/sqs/aps CRs -> the dedicated provisioning role (created below). It is
+      # named <prefix>-cluster-mgmt-* so the capability's AssumeWorkloadRoles
+      # (Resource: <prefix>-cluster-mgmt-*) permits sts:AssumeRole on it.
+      - apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: incident-bridge-aws
+        spec:
+          arn: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-cluster-mgmt-incident-bridge
+          namespaceSelector:
+            names: [peeks-agent]
+          resourceTypeSelector:
+          - group: sns.services.k8s.aws
+            kind: ""
+            version: ""
+          - group: sqs.services.k8s.aws
+            kind: ""
+            version: ""
+          - group: prometheusservice.services.k8s.aws
+            kind: ""
+            version: ""
+      # eks CRs (the consumer's PodIdentityAssociation, and the agent-access
+      # AccessEntries) -> cluster-mgmt-eks (has eks:*). The agent's OWN Pod Identity
+      # comes from the aws-service-identity trait (Crossplane), so there was no prior
+      # eks selector for this ns; without this the capability role lacks
+      # eks:CreatePodIdentityAssociation -> AccessDenied.
+      - apiVersion: services.k8s.aws/v1alpha1
+        kind: IAMRoleSelector
+        metadata:
+          name: incident-bridge-eks
+        spec:
+          arn: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-cluster-mgmt-eks
+          namespaceSelector:
+            names: [peeks-agent]
+          resourceTypeSelector:
+          - group: eks.services.k8s.aws
+            kind: ""
+            version: ""
+  - name: incident-bridge-aws
+    type: k8s-objects
+    dependsOn:
+    - incident-bridge-selectors
+    properties:
+      objects:
+      # Dedicated provisioning role, armed with scoped SNS/SQS/AMP-AlertManager perms.
+      # MUST be named <prefix>-cluster-mgmt-* (capability AssumeWorkloadRoles pattern).
+      # Created by ACK via cluster-mgmt-iam (IAMFullAccess), routed by the iam selector
+      # above — so it is provisioned declaratively with no direct `aws iam` call.
+      - apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          name: REPLACE_CLUSTER_PREFIX-cluster-mgmt-incident-bridge
+          namespace: peeks-agent
+        spec:
+          name: REPLACE_CLUSTER_PREFIX-cluster-mgmt-incident-bridge
+          description: "ACK provisioning role for peeks-agent incident-bridge (SNS/SQS/AMP AlertManager)"
+          # Trust mirrors the other cluster-mgmt roles: the hub/spoke capability roles
+          # may assume it (sts:AssumeRole + sts:TagSession).
+          assumeRolePolicyDocument: |
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::REPLACE_ACCOUNT_ID:root"},"Action":["sts:AssumeRole","sts:TagSession"],"Condition":{"ArnLike":{"aws:PrincipalArn":["arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-hub-ack-capability-role","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-ack-*","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-spoke-*-ack-capability-role"]}}}]}
+          inlinePolicies:
+            incident-bridge-provisioning: |
+              {"Version":"2012-10-17","Statement":[{"Sid":"SNS","Effect":"Allow","Action":["sns:CreateTopic","sns:DeleteTopic","sns:GetTopicAttributes","sns:SetTopicAttributes","sns:ListTagsForResource","sns:TagResource","sns:UntagResource","sns:Subscribe","sns:Unsubscribe","sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:ListSubscriptionsByTopic"],"Resource":"arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"SQS","Effect":"Allow","Action":["sqs:CreateQueue","sqs:DeleteQueue","sqs:GetQueueAttributes","sqs:SetQueueAttributes","sqs:ListQueueTags","sqs:TagQueue","sqs:UntagQueue","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"APS","Effect":"Allow","Action":["aps:CreateAlertManagerDefinition","aps:DescribeAlertManagerDefinition","aps:PutAlertManagerDefinition","aps:DeleteAlertManagerDefinition"],"Resource":"arn:aws:aps:us-west-2:REPLACE_ACCOUNT_ID:workspace/REPLACE_AMP_WORKSPACE_ID"}]}
+      - apiVersion: sns.services.k8s.aws/v1alpha1
+        kind: Topic
+        metadata:
+          name: peeks-agent-incidents
+          namespace: peeks-agent
+        spec:
+          name: peeks-agent-incidents
+          # Allow the AMP AlertManager (service principal aps.amazonaws.com) to
+          # publish, scoped to THIS workspace.
+          policy: |
+            {"Version":"2012-10-17","Statement":[{"Sid":"AllowAMPPublish","Effect":"Allow","Principal":{"Service":"aps.amazonaws.com"},"Action":"sns:Publish","Resource":"arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents","Condition":{"ArnEquals":{"aws:SourceArn":"arn:aws:aps:us-west-2:REPLACE_ACCOUNT_ID:workspace/REPLACE_AMP_WORKSPACE_ID"},"StringEquals":{"aws:SourceAccount":"REPLACE_ACCOUNT_ID"}}}]}
+      - apiVersion: sqs.services.k8s.aws/v1alpha1
+        kind: Queue
+        metadata:
+          name: peeks-agent-incidents
+          namespace: peeks-agent
+        spec:
+          queueName: peeks-agent-incidents
+          messageRetentionPeriod: "3600"
+          receiveMessageWaitTimeSeconds: "20"
+          visibilityTimeout: "120"
+          # Allow the SNS topic to deliver to this queue.
+          policy: |
+            {"Version":"2012-10-17","Statement":[{"Sid":"AllowSNSDelivery","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"sqs:SendMessage","Resource":"arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents","Condition":{"ArnEquals":{"aws:SourceArn":"arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"}}}]}
+      - apiVersion: sns.services.k8s.aws/v1alpha1
+        kind: Subscription
+        metadata:
+          name: peeks-agent-incidents-sqs
+          namespace: peeks-agent
+        spec:
+          protocol: sqs
+          topicARN: arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents
+          endpoint: arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents
+          rawMessageDelivery: "true"
+      # AMP AlertManager routing: OOMKill alerts -> SNS. workspaceID is env-specific
+      # (the workspace is Crossplane-managed, so referenced by ID, not workspaceRef).
+      - apiVersion: prometheusservice.services.k8s.aws/v1alpha1
+        kind: AlertManagerDefinition
+        metadata:
+          name: peeks-agent-alertmanager
+          namespace: peeks-agent
+        spec:
+          workspaceID: REPLACE_AMP_WORKSPACE_ID
+          configuration: |
+            alertmanager_config: |
+              route:
+                receiver: null-receiver
+                group_by: ['alertname','cluster','namespace','pod']
+                routes:
+                  # Route ANY actionable workload incident to the agent, not just OOM.
+                  # Every alerting rule carries severity + a `signal` label; matching on
+                  # severity keeps this generic as new signals are added (imagepull,
+                  # crashloop, unschedulable, storage, …). null-receiver drops the rest.
+                  - receiver: peeks-agent-sns
+                    matchers:
+                      - severity=~"warning|critical"
+                    group_wait: 30s
+                    group_interval: 5m
+                    repeat_interval: 4h
+              receivers:
+                - name: null-receiver
+                - name: peeks-agent-sns
+                  sns_configs:
+                    - topic_arn: arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents
+                      sigv4:
+                        region: us-west-2
+                      subject: 'PEEKS incident {{ .CommonLabels.alertname }} {{ .CommonLabels.namespace }}/{{ .CommonLabels.pod }}'
+                      # Emit ALL fields the agent needs to generalise beyond OOM: the
+                      # signal type, the remediation hint, and the rule's description
+                      # (which tells the agent what GitOps fix to craft). pod/container
+                      # may be empty for node/PVC-scoped signals — that's fine.
+                      message: |
+                        {{ range .Alerts }}{"status":"{{ .Status }}","alertname":"{{ .Labels.alertname }}","signal":"{{ .Labels.signal }}","remediation":"{{ .Labels.remediation }}","severity":"{{ .Labels.severity }}","cluster":"{{ .Labels.cluster }}","namespace":"{{ .Labels.namespace }}","pod":"{{ .Labels.pod }}","container":"{{ .Labels.container }}","persistentvolumeclaim":"{{ .Labels.persistentvolumeclaim }}","summary":"{{ .Annotations.summary }}","description":"{{ .Annotations.description }}"}{{ end }}
+      # Dedicated least-privilege identity for the consumer (SQS read only),
+      # secretless via EKS Pod Identity.
+      - apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          name: peeks-incident-bridge-role
+          namespace: peeks-agent
+        spec:
+          name: peeks-incident-bridge-role
+          assumeRolePolicyDocument: |
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}
+          inlinePolicies:
+            sqs-consume: |
+              {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"}]}
+      - apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: PodIdentityAssociation
+        metadata:
+          name: peeks-incident-bridge
+          namespace: peeks-agent
+        spec:
+          clusterName: REPLACE_CLUSTER_PREFIX-hub
+          namespace: peeks-agent
+          serviceAccount: incident-bridge
+          roleRef:
+            from:
+              name: peeks-incident-bridge-role
+      - apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: incident-bridge
+          namespace: peeks-agent
+  - name: incident-bridge
+    type: k8s-objects
+    dependsOn:
+    - incident-bridge-aws
+    properties:
+      objects:
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            app.kubernetes.io/name: incident-bridge
+          name: incident-bridge
+          namespace: peeks-agent
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: incident-bridge
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: incident-bridge
+            spec:
+              serviceAccountName: incident-bridge
+              containers:
+              - name: incident-bridge
+                image: REPLACE_IMAGE_REGISTRY/incident-bridge:REPLACE_IMAGE_TAG
+                imagePullPolicy: Always
+                env:
+                - name: AWS_REGION
+                  value: us-west-2
+                - name: SQS_QUEUE_URL
+                  value: https://sqs.us-west-2.amazonaws.com/REPLACE_ACCOUNT_ID/peeks-agent-incidents
+                - name: AGENT_A2A_URL
+                  value: http://peeks-agent-stable.peeks-agent.svc.cluster.local:8083/
+                - name: DEDUP_TTL
+                  value: "3600"
+                resources:
+                  limits:
+                    memory: 256Mi
+                  requests:
+                    cpu: 50m
+                    memory: 128Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+              restartPolicy: Always
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              terminationGracePeriodSeconds: 30
