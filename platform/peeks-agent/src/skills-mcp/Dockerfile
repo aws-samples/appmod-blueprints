@@ -1,5 +1,6 @@
 # skills-mcp — FastMCP server exposing get_skill / list_skills over a skills dir
-FROM python:3.12-slim
+# Base pulled from the ECR-public Docker mirror (not Docker Hub) to avoid throttling.
+FROM public.ecr.aws/docker/library/python:3.12-slim
 WORKDIR /app
 RUN groupadd -r app && useradd -r -g app app
 COPY requirements.txt .
