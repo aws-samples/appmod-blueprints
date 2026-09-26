@@ -36,16 +36,27 @@ fleet-config overlay to use your own registry.
 
 ## Enable / disable (default OFF)
 
-Gated by the `enable_peeks_agent` cluster-secret label (registry `platform.yaml`). A cluster
-without the label does **not** get the addon (safe default). To enable on the hub:
+Gated by the `enable_peeks_agent` cluster-secret label (registry `platform.yaml` selector
+`enable_peeks_agent In ['true']`). That label is **not** written by hand — it is emitted by
+the `platform-charts/fleet-secret` chart from the `enabledAddons` map and projected onto the
+ArgoCD cluster secret by the on-cluster ExternalSecret (`creationPolicy: Merge`), exactly like
+`backstage`/`keycloak`/`devlake`. So peeks-agent is toggled the same way as every other
+platform addon: via `enabled-addons.yaml`, not via the RGD or a manual `kubectl label`.
 
-```bash
-kubectl -n argocd label secret <hub-cluster-secret> enable_peeks_agent=true --overwrite
+Default is **OFF** — `peeks_agent: false` in the base
+`gitops/overlays/environments/control-plane/enabled-addons.yaml`. To enable on the hub for a
+deployment, flip it to `true` in the **fleet-config overlay** (no platform-repo edit):
+
+```yaml
+# <fleet-config>/overlays/environments/control-plane/enabled-addons.yaml
+enabledAddons:
+  peeks_agent: true
 ```
 
-(or add `enable_peeks_agent: "true"` to the hub label set in the deployment bootstrap).
-To remove: set the label to `false` / delete it — ArgoCD prunes the Application
-(`preserveResourcesOnDeletion` applies at the ApplicationSet level).
+The fleet-secret ESO re-projects `enable_peeks_agent: 'true'` onto the hub cluster secret, the
+addons ApplicationSet generates the `peeks-agent` Application, and ArgoCD syncs it. To remove:
+set it back to `false` (or drop the key) — the label disappears and the Application is pruned.
+
 
 ## Per-cluster overrides (fleet-config overlay)
 
