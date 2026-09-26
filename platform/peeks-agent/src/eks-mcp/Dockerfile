@@ -1,6 +1,7 @@
 # eks-mcp — the upstream awslabs EKS MCP server (stdio) wrapped by supergateway
 # so it can be fronted by an AgentGateway over streamable-HTTP.
-FROM node:22-bookworm-slim
+# Base pulled from the ECR-public Docker mirror (not Docker Hub) to avoid throttling.
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 RUN npm install -g supergateway@4.0.0

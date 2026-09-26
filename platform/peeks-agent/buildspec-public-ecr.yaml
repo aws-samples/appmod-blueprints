@@ -1,0 +1,59 @@
+# CodeBuild buildspec — build + push the PEEKS agent images to the PUBLIC ECR registry
+# public.ecr.aws/seb-demo (the same workshop-generic registry that hosts backstage:cnoe).
+#
+# Unlike buildspec.yaml (private per-env ECR), this publishes WORKSHOP-GENERIC images once
+# per release so any deployment pulls them anonymously — participants never build their own.
+#
+# Images published (tag = $IMAGE_TAG, pinned; never overwrite a mutable tag in place):
+#   chat-ui, eks-mcp, incident-bridge, skills-mcp (PEEKS .kiro/skills baked in), strands-agent
+# NOT gitlab-mcp: it is not a component of deploy/peeks-agent-app.yaml (separate AgentGateway
+# target, no in-repo source) — out of scope for this addon.
+#
+# Run in the demo3 account (382076407153, owner of the seb-demo public ECR alias), us-east-1
+# region for the ecr-public control plane. Requires privilegedMode (Docker) + a service role
+# with ecr-public:* and sts:GetServiceBearerToken.
+#
+# Env vars (CodeBuild project or override):
+#   IMAGE_TAG    (default v1)        — pinned release tag
+#   APPMOD_REF   (default feat/peeks-agent-instance)  — appmod-blueprints branch/tag
+#   OAP_REF      (default fix/configurable-max-tokens) — OAP fork branch/tag (max_tokens env fix)
+version: 0.2
+env:
+  variables:
+    PUBLIC_REGISTRY: "public.ecr.aws/seb-demo"
+    IMAGE_TAG: "v1"
+    APPMOD_REPO: "https://github.com/allamand/appmod-blueprints.git"
+    APPMOD_REF: "feat/peeks-agent-instance"
+    OAP_REPO: "https://github.com/allamand/open-agentic-platform.git"
+    OAP_REF: "fix/configurable-max-tokens"
+phases:
+  pre_build:
+    commands:
+      - aws --version && docker --version
+      - git clone --depth 1 -b "$APPMOD_REF" "$APPMOD_REPO" /src
+      - git clone --depth 1 -b "$OAP_REF" "$OAP_REPO" /oap
+      # public ECR login (control plane is always us-east-1); also raises anonymous pull limits
+      - aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
+      - REG="$PUBLIC_REGISTRY"; TAG="${IMAGE_TAG:-v1}"; SRC=/src/platform/peeks-agent/src
+      - echo "Publishing generic PEEKS agent images to $REG @ $TAG"
+  build:
+    commands:
+      # 1) generic services, built from in-repo sources
+      - docker build -t "$REG/chat-ui:$TAG"        "$SRC/a2a-chat-ui"
+      - docker build -t "$REG/eks-mcp:$TAG"        "$SRC/eks-mcp"
+      - docker build -t "$REG/incident-bridge:$TAG" "$SRC/incident-bridge"
+      # 2) skills-mcp: base + PEEKS overlay (context = appmod repo ROOT for .kiro/skills)
+      - docker build -t "skills-mcp-base:$TAG" "$SRC/skills-mcp"
+      - docker build -f /src/platform/peeks-agent/skills-overlay/Dockerfile
+          --build-arg SKILLS_MCP_IMAGE="skills-mcp-base:$TAG"
+          -t "$REG/skills-mcp:$TAG" /src
+      # 3) agent runtime from the OAP fork (configurable max_tokens — issue #34 / PR #35)
+      - docker build -t "$REG/strands-agent:$TAG" /oap/applications/strands-agent-base
+  post_build:
+    commands:
+      - docker push "$REG/chat-ui:$TAG"
+      - docker push "$REG/eks-mcp:$TAG"
+      - docker push "$REG/incident-bridge:$TAG"
+      - docker push "$REG/skills-mcp:$TAG"
+      - docker push "$REG/strands-agent:$TAG"
+      - echo "Published chat-ui eks-mcp incident-bridge skills-mcp strands-agent @ $TAG to $REG"
