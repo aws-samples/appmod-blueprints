@@ -5,9 +5,8 @@
 # per release so any deployment pulls them anonymously — participants never build their own.
 #
 # Images published (tag = $IMAGE_TAG, pinned; never overwrite a mutable tag in place):
-#   chat-ui, eks-mcp, incident-bridge, skills-mcp (PEEKS .kiro/skills baked in), strands-agent
-# NOT gitlab-mcp: it is not a component of deploy/peeks-agent-app.yaml (separate AgentGateway
-# target, no in-repo source) — out of scope for this addon.
+#   chat-ui, eks-mcp, gitlab-mcp, incident-bridge, skills-mcp (PEEKS .kiro/skills baked in),
+#   strands-agent
 #
 # Run in the demo3 account (382076407153, owner of the seb-demo public ECR alias), us-east-1
 # region for the ecr-public control plane. Requires privilegedMode (Docker) + a service role
@@ -41,6 +40,7 @@ phases:
       # 1) generic services, built from in-repo sources
       - docker build -t "$REG/chat-ui:$TAG"        "$SRC/a2a-chat-ui"
       - docker build -t "$REG/eks-mcp:$TAG"        "$SRC/eks-mcp"
+      - docker build -t "$REG/gitlab-mcp:$TAG"     "$SRC/gitlab-mcp"
       - docker build -t "$REG/incident-bridge:$TAG" "$SRC/incident-bridge"
       # 2) skills-mcp: base + PEEKS overlay (context = appmod repo ROOT for .kiro/skills)
       - docker build -t "skills-mcp-base:$TAG" "$SRC/skills-mcp"
@@ -53,7 +53,8 @@ phases:
     commands:
       - docker push "$REG/chat-ui:$TAG"
       - docker push "$REG/eks-mcp:$TAG"
+      - docker push "$REG/gitlab-mcp:$TAG"
       - docker push "$REG/incident-bridge:$TAG"
       - docker push "$REG/skills-mcp:$TAG"
       - docker push "$REG/strands-agent:$TAG"
-      - echo "Published chat-ui eks-mcp incident-bridge skills-mcp strands-agent @ $TAG to $REG"
+      - echo "Published chat-ui eks-mcp gitlab-mcp incident-bridge skills-mcp strands-agent @ $TAG to $REG"

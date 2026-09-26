@@ -12,7 +12,8 @@ cloudfrontDomain: ""          # ingress_domain_name (chat-ui ingress host)
 gitlabDomain: ""              # gitlab_domain_name (gitlab-mcp GITLAB_API_URL host)
 
 # NOTE: no ampWorkspaceId. The AMP incident path (AlertManagerDefinition + SNS/SQS) is
-# provisioned by the AmpIncident kro RGD, which reads the workspace id LIVE from the
-# Crossplane AMP Workspace CR via externalRef — no literal id, no cluster-secret stamp.
-# The RGD's workspaceName defaults to "<clusterPrefix>-amp"; override in the RGD instance
-# (files/amp-incident-rgd.yaml) if your AMP Workspace CR is named differently.
+# provisioned by the AmpIncident kro RGD (ampincident.kro.run — shipped via kro-manifests /
+# kro-peeks-agent-rgd-hub), which reads the workspace id LIVE from the Crossplane AMP
+# Workspace CR via externalRef — no literal id, no cluster-secret stamp. The AmpIncident
+# INSTANCE is the `amp-incident` component in files/peeks-agent-app.yaml; its workspaceName
+# defaults to "<clusterPrefix>-amp" — edit that component if your AMP Workspace CR differs.

@@ -1,16 +1,22 @@
-# AmpIncident — native kro RGD for the PEEKS agent's autonomous-incident bridge.
+# ampincident.kro.run — RGD DEFINITION for the PEEKS agent autonomous-incident bridge.
 #
-# ▶MEMORY/▶AMP-NATIVE: replaces the literal REPLACE_AMP_WORKSPACE_ID substitution.
-# Instead of stamping the workspace id onto a cluster-secret annotation, this RGD
-# reads it DIRECTLY from the Crossplane-managed AMP Workspace CR via `externalRef`
-# and CEL (${ampworkspace.status.atProvider.id}) — mirroring how the agentcore-memory
-# component consumes its Crossplane output. Proven live on peeks-e2e: externalRef +
-# CEL resolve the real ws-id with no annotation.
+# Placement: this lives in kro-manifests (like every other RGD) but is EXCLUDED from the
+# always-applied kro-manifests / kro-manifests-hub apps and shipped instead by the dedicated
+# `kro-peeks-agent-rgd-hub` registry app, gated on enable_peeks_agent. WHY (ray-service
+# precedent): the graph references sns/sqs/prometheusservice (managed ACK capability) and
+# amp.aws.upbound.io/Workspace (Crossplane). If those kinds are ever absent, KRO cannot build
+# the graph and the RGD stays Ready=False; in the shared kro-manifests-hub wave chain that
+# would stall eksclusterwithvpc and break spoke provisioning. Gating on enable_peeks_agent
+# ties the RGD's lifecycle to the agent that already depends on those CRDs.
 #
-# PREREQUISITE (shipped alongside, see amp-incident-rbac): the kro capability
-# controller (<prefix>-hub-kro-capability-role/KRO) must be granted get/list/watch on
-# amp.aws.upbound.io/workspaces, otherwise externalRef is forbidden (RBAC), the CR
-# never resolves, and the instance stays ERROR "cannot get resource workspaces".
+# Cluster-agnostic by design: accountId/region/workspaceName/topicName are schema spec fields
+# supplied by the AmpIncident INSTANCE (an OAM component in the peeks-agent Application), so
+# no REPLACE_ token substitution is needed here.
+#
+# RBAC PREREQUISITE (now in the eks-capabilities-rbac chart, NOT here): the kro capability
+# controller (<cluster>-kro-capability-role/KRO) is granted get/list/watch on
+# amp.aws.upbound.io/workspaces via the shared `eks-capabilities-kro` ClusterRole, so the
+# externalRef below can read the Crossplane Workspace CR.
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
@@ -119,43 +125,3 @@ spec:
                       subject: 'PEEKS incident {{ .CommonLabels.alertname }} {{ .CommonLabels.namespace }}/{{ .CommonLabels.pod }}'
                       message: |
                         {{ range .Alerts }}{"status":"{{ .Status }}","alertname":"{{ .Labels.alertname }}","signal":"{{ .Labels.signal }}","remediation":"{{ .Labels.remediation }}","severity":"{{ .Labels.severity }}","cluster":"{{ .Labels.cluster }}","namespace":"{{ .Labels.namespace }}","pod":"{{ .Labels.pod }}","container":"{{ .Labels.container }}","persistentvolumeclaim":"{{ .Labels.persistentvolumeclaim }}","summary":"{{ .Annotations.summary }}","description":"{{ .Annotations.description }}"}{{ end }}
----
-# RBAC PREREQUISITE — grant the kro EKS-capability controller read access to the
-# Crossplane AMP Workspace so the RGD's externalRef can GET it. Without this the
-# instance stays ERROR: "...kro-capability-role/KRO cannot get resource workspaces
-# in API group amp.aws.upbound.io". Additive + reversible; mirrors backstage-kro-reader.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kro-amp-workspace-reader
-rules:
-  - apiGroups: ["amp.aws.upbound.io"]
-    resources: ["workspaces"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kro-amp-workspace-reader
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kro-amp-workspace-reader
-subjects:
-  - kind: User
-    name: arn:aws:sts::REPLACE_ACCOUNT_ID:assumed-role/REPLACE_CLUSTER_PREFIX-hub-kro-capability-role/KRO
-    apiGroup: rbac.authorization.k8s.io
----
-# Instance — expands into the AMP AlertManagerDefinition + SNS/SQS incident sub-graph,
-# reading the workspace id LIVE from the Crossplane Workspace CR (no ampWorkspaceId).
-apiVersion: kro.run/v1alpha1
-kind: AmpIncident
-metadata:
-  name: peeks-agent-incidents
-  namespace: peeks-agent
-spec:
-  workspaceName: REPLACE_CLUSTER_PREFIX-amp
-  accountId: "REPLACE_ACCOUNT_ID"
-  region: us-west-2
-  topicName: peeks-agent-incidents
-

@@ -734,11 +734,12 @@ spec:
             incident-bridge-provisioning: |
               {"Version":"2012-10-17","Statement":[{"Sid":"SNS","Effect":"Allow","Action":["sns:CreateTopic","sns:DeleteTopic","sns:GetTopicAttributes","sns:SetTopicAttributes","sns:ListTagsForResource","sns:TagResource","sns:UntagResource","sns:Subscribe","sns:Unsubscribe","sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:ListSubscriptionsByTopic"],"Resource":"arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"SQS","Effect":"Allow","Action":["sqs:CreateQueue","sqs:DeleteQueue","sqs:GetQueueAttributes","sqs:SetQueueAttributes","sqs:ListQueueTags","sqs:TagQueue","sqs:UntagQueue","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"APS","Effect":"Allow","Action":["aps:CreateAlertManagerDefinition","aps:DescribeAlertManagerDefinition","aps:PutAlertManagerDefinition","aps:DeleteAlertManagerDefinition"],"Resource":"arn:aws:aps:us-west-2:REPLACE_ACCOUNT_ID:workspace/*"}]}
       # ── AMP AlertManagerDefinition + SNS Topic + SQS Queue + SNS→SQS Subscription
-      # are provisioned by the AmpIncident kro RGD (files/amp-incident-rgd.yaml),
-      # rendered as a second document by this chart. The RGD reads the AMP workspace id
-      # LIVE from the Crossplane Workspace CR via externalRef + CEL — so there is no
-      # REPLACE_AMP_WORKSPACE_ID literal and no cluster-secret stamp. The IAM roles / SA /
-      # PodIdentity below stay here (not workspace-id dependent). ──
+      # are provisioned by the AmpIncident kro RGD (ampincident.kro.run, shipped via
+      # kro-manifests / kro-peeks-agent-rgd-hub) and INSTANTIATED by the `amp-incident`
+      # component below. The RGD reads the AMP workspace id LIVE from the Crossplane
+      # Workspace CR via externalRef + CEL — so there is no REPLACE_AMP_WORKSPACE_ID
+      # literal and no cluster-secret stamp. The IAM roles / SA / PodIdentity below stay
+      # here (not workspace-id dependent). ──
       # Dedicated least-privilege identity for the consumer (SQS read only),
       # secretless via EKS Pod Identity.
       - apiVersion: iam.services.k8s.aws/v1alpha1
@@ -770,6 +771,30 @@ spec:
         metadata:
           name: incident-bridge
           namespace: peeks-agent
+  # ▶AMP-NATIVE: the AMP incident sub-graph (AlertManagerDefinition + SNS Topic + SQS Queue
+  # + SNS→SQS Subscription) is INSTANTIATED here as an AmpIncident CR — so KubeVela owns it
+  # as a component of this Application. The ampincident.kro.run RGD (shipped separately by
+  # kro-peeks-agent-rgd-hub in kro-manifests) reads the AMP workspace id LIVE from the
+  # Crossplane Workspace CR via externalRef + CEL, so there is no REPLACE_AMP_WORKSPACE_ID
+  # literal and no cluster-secret stamp. dependsOn incident-bridge-aws/-selectors so the
+  # provisioning role + IAMRoleSelector routing exist before ACK reconciles the sub-graph.
+  - name: amp-incident
+    type: k8s-objects
+    dependsOn:
+    - incident-bridge-selectors
+    - incident-bridge-aws
+    properties:
+      objects:
+      - apiVersion: kro.run/v1alpha1
+        kind: AmpIncident
+        metadata:
+          name: peeks-agent-incidents
+          namespace: peeks-agent
+        spec:
+          workspaceName: REPLACE_CLUSTER_PREFIX-amp
+          accountId: "REPLACE_ACCOUNT_ID"
+          region: us-west-2
+          topicName: peeks-agent-incidents
   - name: incident-bridge
     type: k8s-objects
     dependsOn:
