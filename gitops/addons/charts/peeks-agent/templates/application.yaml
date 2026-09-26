@@ -1,0 +1,13 @@
+{{- /*
+Render the PEEKS agent OAM Application from the canonical manifest in files/.
+We use .Files.Get so Helm does NOT evaluate the embedded Go/AlertManager templates
+(e.g. {{ "{{" }} .CommonLabels.alertname {{ "}}" }} in the AlertManager receiver) —
+the file content is a plain string, and only the REPLACE_ tokens are substituted.
+*/ -}}
+{{- .Files.Get "files/peeks-agent-app.yaml"
+      | replace "REPLACE_IMAGE_REGISTRY" .Values.imageRegistry
+      | replace "REPLACE_IMAGE_TAG"      (.Values.imageTag      | toString)
+      | replace "REPLACE_ACCOUNT_ID"     (.Values.accountId     | toString)
+      | replace "REPLACE_CLUSTER_PREFIX" .Values.clusterPrefix
+      | replace "REPLACE_CLOUDFRONT_DOMAIN" .Values.cloudfrontDomain
+      | replace "REPLACE_AMP_WORKSPACE_ID"  .Values.ampWorkspaceId }}
