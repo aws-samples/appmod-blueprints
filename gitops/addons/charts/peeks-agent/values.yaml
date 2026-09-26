@@ -9,10 +9,10 @@ imageTag: "v1"
 accountId: ""                 # aws_account_id
 clusterPrefix: "peeks"        # resource_prefix
 cloudfrontDomain: ""          # ingress_domain_name (chat-ui ingress host)
+gitlabDomain: ""              # gitlab_domain_name (gitlab-mcp GITLAB_API_URL host)
 
-# AMP workspace id — REQUIRED only for the AMP incident-bridge path (AlertManagerDefinition
-# + aps->SNS->SQS + incident-bridge). The CORE agent (chat-ui / skills-mcp / eks-read-mcp /
-# AgentCore memory) works with this empty. Set a real workspace id (e.g. ws-xxxx) via the
-# overlay to enable the autonomous-incident demo; until then the AlertManagerDefinition and
-# incident IAM policy are inert (the workspaceID renders as "").
-ampWorkspaceId: ""
+# NOTE: no ampWorkspaceId. The AMP incident path (AlertManagerDefinition + SNS/SQS) is
+# provisioned by the AmpIncident kro RGD, which reads the workspace id LIVE from the
+# Crossplane AMP Workspace CR via externalRef — no literal id, no cluster-secret stamp.
+# The RGD's workspaceName defaults to "<clusterPrefix>-amp"; override in the RGD instance
+# (files/amp-incident-rgd.yaml) if your AMP Workspace CR is named differently.

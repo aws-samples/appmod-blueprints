@@ -10,4 +10,14 @@ the file content is a plain string, and only the REPLACE_ tokens are substituted
       | replace "REPLACE_ACCOUNT_ID"     (.Values.accountId     | toString)
       | replace "REPLACE_CLUSTER_PREFIX" .Values.clusterPrefix
       | replace "REPLACE_CLOUDFRONT_DOMAIN" .Values.cloudfrontDomain
-      | replace "REPLACE_AMP_WORKSPACE_ID"  .Values.ampWorkspaceId }}
+      | replace "REPLACE_GITLAB_DOMAIN"  .Values.gitlabDomain }}
+---
+{{- /*
+AmpIncident kro RGD + RBAC + instance (native AMP incident path). The RGD reads the
+AMP workspace id from the Crossplane Workspace CR via externalRef, so no workspace-id
+literal/stamp is needed. Rendered from files/ so the embedded AlertManager Go-templates
+are NOT evaluated by Helm — only REPLACE_ tokens are substituted.
+*/ -}}
+{{- .Files.Get "files/amp-incident-rgd.yaml"
+      | replace "REPLACE_ACCOUNT_ID"     (.Values.accountId | toString)
+      | replace "REPLACE_CLUSTER_PREFIX" .Values.clusterPrefix }}

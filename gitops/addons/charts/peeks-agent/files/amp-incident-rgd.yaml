@@ -1,0 +1,161 @@
+# AmpIncident — native kro RGD for the PEEKS agent's autonomous-incident bridge.
+#
+# ▶MEMORY/▶AMP-NATIVE: replaces the literal REPLACE_AMP_WORKSPACE_ID substitution.
+# Instead of stamping the workspace id onto a cluster-secret annotation, this RGD
+# reads it DIRECTLY from the Crossplane-managed AMP Workspace CR via `externalRef`
+# and CEL (${ampworkspace.status.atProvider.id}) — mirroring how the agentcore-memory
+# component consumes its Crossplane output. Proven live on peeks-e2e: externalRef +
+# CEL resolve the real ws-id with no annotation.
+#
+# PREREQUISITE (shipped alongside, see amp-incident-rbac): the kro capability
+# controller (<prefix>-hub-kro-capability-role/KRO) must be granted get/list/watch on
+# amp.aws.upbound.io/workspaces, otherwise externalRef is forbidden (RBAC), the CR
+# never resolves, and the instance stays ERROR "cannot get resource workspaces".
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: ampincident.kro.run
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: AmpIncident
+    spec:
+      # AMP Workspace CR name (Crossplane amp.aws.upbound.io/Workspace). Default
+      # matches the PEEKS naming (<prefix>-amp); override per deployment.
+      workspaceName: string | default="peeks-amp"
+      accountId: string
+      region: string | default="us-west-2"
+      # SNS/SQS resource base name (topic == queue == this).
+      topicName: string | default="peeks-agent-incidents"
+    status:
+      # Surface the resolved id so `kubectl get ampincident` shows what was read.
+      workspaceId: ${ampworkspace.status.atProvider.id}
+      workspaceArn: ${ampworkspace.status.atProvider.arn}
+  resources:
+    # 1) READ-ONLY reference to the existing Crossplane AMP Workspace (not created here).
+    - id: ampworkspace
+      externalRef:
+        apiVersion: amp.aws.upbound.io/v1beta2
+        kind: Workspace
+        metadata:
+          name: ${schema.spec.workspaceName}
+
+    # 2) SNS topic — AMP AlertManager (aps.amazonaws.com) publishes here, scoped to
+    #    THIS workspace ARN (read from the external Workspace CR).
+    - id: topic
+      template:
+        apiVersion: sns.services.k8s.aws/v1alpha1
+        kind: Topic
+        metadata:
+          name: ${schema.spec.topicName}
+          namespace: peeks-agent
+        spec:
+          name: ${schema.spec.topicName}
+          policy: >-
+            {"Version":"2012-10-17","Statement":[{"Sid":"AllowAMPPublish","Effect":"Allow","Principal":{"Service":"aps.amazonaws.com"},"Action":"sns:Publish","Resource":"arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}","Condition":{"ArnEquals":{"aws:SourceArn":"${ampworkspace.status.atProvider.arn}"},"StringEquals":{"aws:SourceAccount":"${schema.spec.accountId}"}}}]}
+
+    # 3) SQS queue — SNS delivers here; the in-cluster consumer reads it.
+    - id: queue
+      template:
+        apiVersion: sqs.services.k8s.aws/v1alpha1
+        kind: Queue
+        metadata:
+          name: ${schema.spec.topicName}
+          namespace: peeks-agent
+        spec:
+          queueName: ${schema.spec.topicName}
+          messageRetentionPeriod: "3600"
+          receiveMessageWaitTimeSeconds: "20"
+          visibilityTimeout: "120"
+          policy: >-
+            {"Version":"2012-10-17","Statement":[{"Sid":"AllowSNSDelivery","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"sqs:SendMessage","Resource":"arn:aws:sqs:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}","Condition":{"ArnEquals":{"aws:SourceArn":"arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}"}}}]}
+
+    # 4) SNS→SQS subscription.
+    - id: subscription
+      template:
+        apiVersion: sns.services.k8s.aws/v1alpha1
+        kind: Subscription
+        metadata:
+          name: ${schema.spec.topicName}-sqs
+          namespace: peeks-agent
+        spec:
+          protocol: sqs
+          topicARN: arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}
+          endpoint: arn:aws:sqs:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}
+          rawMessageDelivery: "true"
+
+    # 5) AMP AlertManager routing (actionable workload alerts -> SNS). workspaceID is
+    #    the id READ from the external Crossplane Workspace CR — no literal, no stamp.
+    - id: alertmanager
+      template:
+        apiVersion: prometheusservice.services.k8s.aws/v1alpha1
+        kind: AlertManagerDefinition
+        metadata:
+          name: peeks-agent-alertmanager
+          namespace: peeks-agent
+        spec:
+          workspaceID: ${ampworkspace.status.atProvider.id}
+          configuration: |
+            alertmanager_config: |
+              route:
+                receiver: null-receiver
+                group_by: ['alertname','cluster','namespace','pod']
+                routes:
+                  - receiver: peeks-agent-sns
+                    matchers:
+                      - severity=~"warning|critical"
+                    group_wait: 30s
+                    group_interval: 5m
+                    repeat_interval: 4h
+              receivers:
+                - name: null-receiver
+                - name: peeks-agent-sns
+                  sns_configs:
+                    - topic_arn: arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}
+                      sigv4:
+                        region: ${schema.spec.region}
+                      subject: 'PEEKS incident {{ .CommonLabels.alertname }} {{ .CommonLabels.namespace }}/{{ .CommonLabels.pod }}'
+                      message: |
+                        {{ range .Alerts }}{"status":"{{ .Status }}","alertname":"{{ .Labels.alertname }}","signal":"{{ .Labels.signal }}","remediation":"{{ .Labels.remediation }}","severity":"{{ .Labels.severity }}","cluster":"{{ .Labels.cluster }}","namespace":"{{ .Labels.namespace }}","pod":"{{ .Labels.pod }}","container":"{{ .Labels.container }}","persistentvolumeclaim":"{{ .Labels.persistentvolumeclaim }}","summary":"{{ .Annotations.summary }}","description":"{{ .Annotations.description }}"}{{ end }}
+---
+# RBAC PREREQUISITE — grant the kro EKS-capability controller read access to the
+# Crossplane AMP Workspace so the RGD's externalRef can GET it. Without this the
+# instance stays ERROR: "...kro-capability-role/KRO cannot get resource workspaces
+# in API group amp.aws.upbound.io". Additive + reversible; mirrors backstage-kro-reader.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kro-amp-workspace-reader
+rules:
+  - apiGroups: ["amp.aws.upbound.io"]
+    resources: ["workspaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kro-amp-workspace-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kro-amp-workspace-reader
+subjects:
+  - kind: User
+    name: arn:aws:sts::REPLACE_ACCOUNT_ID:assumed-role/REPLACE_CLUSTER_PREFIX-hub-kro-capability-role/KRO
+    apiGroup: rbac.authorization.k8s.io
+---
+# Instance — expands into the AMP AlertManagerDefinition + SNS/SQS incident sub-graph,
+# reading the workspace id LIVE from the Crossplane Workspace CR (no ampWorkspaceId).
+apiVersion: kro.run/v1alpha1
+kind: AmpIncident
+metadata:
+  name: peeks-agent-incidents
+  namespace: peeks-agent
+spec:
+  workspaceName: REPLACE_CLUSTER_PREFIX-amp
+  accountId: "REPLACE_ACCOUNT_ID"
+  region: us-west-2
+  topicName: peeks-agent-incidents
+

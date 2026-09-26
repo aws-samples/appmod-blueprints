@@ -56,6 +56,9 @@ spec:
       mcpServers:
       - name: skills-mcp
       - name: eks-read-mcp
+      # ▶GITLAB: write path (branches/MRs). Backed by the gitlab-mcp component below
+      # (supergateway wrapping @zereight/gitlab-mcp), PAT injected via ExternalSecret.
+      - name: gitlab-mcp
       modelConfig:
         llmGatewayUrl: http://bifrost.bifrost.svc.cluster.local:8080/v1
         modelId: claude-sonnet
@@ -312,6 +315,158 @@ spec:
                 services:
                   matchLabels:
                     agentgateway.dev/target: eks-read-mcp
+  # ▶GITLAB: gitlab-mcp — the agent's write path (create branches / MRs on the
+  # fleet-config + app repos). supergateway wrapping the upstream @zereight/gitlab-mcp
+  # server (stateful, port 8000, path /mcp), exposed to the agent via AgentGateway
+  # exactly like eks-read-mcp. The GitLab PAT is NEVER baked into the image — it is
+  # pulled from Secrets Manager (<prefix>-hub/secrets:git_token, the same canonical PAT
+  # the ArgoCD repo-creds use) by an ExternalSecret and injected as an env var.
+  - name: gitlab-mcp
+    type: k8s-objects
+    properties:
+      objects:
+      # PAT -> k8s Secret via ESO (self-heals on rotation). aws-secrets-manager is the
+      # cluster-wide ClusterSecretStore already used by fleet-config-repo / app creds.
+      - apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: gitlab-mcp-token
+          namespace: peeks-agent
+        spec:
+          secretStoreRef:
+            name: aws-secrets-manager
+            kind: ClusterSecretStore
+          refreshInterval: "5m"
+          target:
+            name: gitlab-mcp-token
+            creationPolicy: Owner
+            deletionPolicy: Retain
+          data:
+            - secretKey: GITLAB_PERSONAL_ACCESS_TOKEN
+              remoteRef:
+                key: REPLACE_CLUSTER_PREFIX-hub/secrets
+                property: git_token
+                conversionStrategy: Default
+                decodingStrategy: None
+                metadataPolicy: None
+                nullBytePolicy: Ignore
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            app.kubernetes.io/name: gitlab-mcp
+          name: gitlab-mcp
+          namespace: peeks-agent
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: gitlab-mcp
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: gitlab-mcp
+            spec:
+              containers:
+              - image: REPLACE_IMAGE_REGISTRY/gitlab-mcp:REPLACE_IMAGE_TAG
+                imagePullPolicy: Always
+                name: gitlab-mcp
+                env:
+                - name: GITLAB_API_URL
+                  value: https://REPLACE_GITLAB_DOMAIN/api/v4
+                # Write path (branches/MRs) — read-only would block the agent's fix flow.
+                - name: GITLAB_READ_ONLY_MODE
+                  value: "false"
+                - name: GITLAB_PERSONAL_ACCESS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: gitlab-mcp-token
+                      key: GITLAB_PERSONAL_ACCESS_TOKEN
+                ports:
+                - containerPort: 8000
+                  name: mcp
+                  protocol: TCP
+                resources:
+                  limits:
+                    memory: 512Mi
+                  requests:
+                    cpu: 100m
+                    memory: 256Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+              restartPolicy: Always
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              serviceAccountName: peeks-agent
+              terminationGracePeriodSeconds: 30
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          labels:
+            agentgateway.dev/target: gitlab-mcp
+            app.kubernetes.io/name: gitlab-mcp
+          name: gitlab-mcp-stable
+          namespace: peeks-agent
+        spec:
+          ports:
+          - appProtocol: agentgateway.dev/mcp
+            name: mcp
+            port: 80
+            protocol: TCP
+            targetPort: 8000
+          selector:
+            app.kubernetes.io/name: gitlab-mcp
+          type: ClusterIP
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          labels:
+            app.kubernetes.io/name: gitlab-mcp
+          name: gitlab-mcp
+          namespace: peeks-agent
+        spec:
+          parentRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: agentgateway-proxy
+            namespace: agentgateway-system
+          rules:
+          - backendRefs:
+            - group: agentgateway.dev
+              kind: AgentgatewayBackend
+              name: gitlab-mcp-backend
+              weight: 1
+            matches:
+            - path:
+                type: PathPrefix
+                value: /mcp/gitlab-mcp
+      - apiVersion: agentgateway.dev/v1alpha1
+        kind: AgentgatewayBackend
+        metadata:
+          labels:
+            app.kubernetes.io/name: gitlab-mcp
+          name: gitlab-mcp-backend
+          namespace: peeks-agent
+        spec:
+          mcp:
+            # Stateful: supergateway keeps one warm upstream process per session; a
+            # stateless config would re-spawn per request and break tools/list.
+            sessionRouting: Stateful
+            targets:
+            - name: gitlab-mcp-target
+              selector:
+                services:
+                  matchLabels:
+                    agentgateway.dev/target: gitlab-mcp
   - name: chat-ui
     type: k8s-objects
     properties:
@@ -483,7 +638,8 @@ spec:
   # controllers are present on the hub) — no Crossplane provider changes.
   # Placeholders substituted at deploy time (see deploy/BUNDLE.md):
   #   REPLACE_ACCOUNT_ID, REPLACE_CLUSTER_PREFIX, REPLACE_IMAGE_REGISTRY,
-  #   REPLACE_IMAGE_TAG, REPLACE_AMP_WORKSPACE_ID (from `aws amp list-workspaces`).
+  #   REPLACE_IMAGE_TAG, REPLACE_GITLAB_DOMAIN. (The AMP workspace id is NOT a
+  #   placeholder anymore — the AmpIncident kro RGD reads it from the Workspace CR.)
   # ── CARM wiring (managed ACK IAMRoleSelector) — applied FIRST ──
   # The managed ACK capability routes a resource to a workload role via a
   # cluster-scoped IAMRoleSelector matching the CR's namespace; with no match it
@@ -576,80 +732,13 @@ spec:
             {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::REPLACE_ACCOUNT_ID:root"},"Action":["sts:AssumeRole","sts:TagSession"],"Condition":{"ArnLike":{"aws:PrincipalArn":["arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-hub-ack-capability-role","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-ack-*","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-spoke-*-ack-capability-role"]}}}]}
           inlinePolicies:
             incident-bridge-provisioning: |
-              {"Version":"2012-10-17","Statement":[{"Sid":"SNS","Effect":"Allow","Action":["sns:CreateTopic","sns:DeleteTopic","sns:GetTopicAttributes","sns:SetTopicAttributes","sns:ListTagsForResource","sns:TagResource","sns:UntagResource","sns:Subscribe","sns:Unsubscribe","sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:ListSubscriptionsByTopic"],"Resource":"arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"SQS","Effect":"Allow","Action":["sqs:CreateQueue","sqs:DeleteQueue","sqs:GetQueueAttributes","sqs:SetQueueAttributes","sqs:ListQueueTags","sqs:TagQueue","sqs:UntagQueue","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"APS","Effect":"Allow","Action":["aps:CreateAlertManagerDefinition","aps:DescribeAlertManagerDefinition","aps:PutAlertManagerDefinition","aps:DeleteAlertManagerDefinition"],"Resource":"arn:aws:aps:us-west-2:REPLACE_ACCOUNT_ID:workspace/REPLACE_AMP_WORKSPACE_ID"}]}
-      - apiVersion: sns.services.k8s.aws/v1alpha1
-        kind: Topic
-        metadata:
-          name: peeks-agent-incidents
-          namespace: peeks-agent
-        spec:
-          name: peeks-agent-incidents
-          # Allow the AMP AlertManager (service principal aps.amazonaws.com) to
-          # publish, scoped to THIS workspace.
-          policy: |
-            {"Version":"2012-10-17","Statement":[{"Sid":"AllowAMPPublish","Effect":"Allow","Principal":{"Service":"aps.amazonaws.com"},"Action":"sns:Publish","Resource":"arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents","Condition":{"ArnEquals":{"aws:SourceArn":"arn:aws:aps:us-west-2:REPLACE_ACCOUNT_ID:workspace/REPLACE_AMP_WORKSPACE_ID"},"StringEquals":{"aws:SourceAccount":"REPLACE_ACCOUNT_ID"}}}]}
-      - apiVersion: sqs.services.k8s.aws/v1alpha1
-        kind: Queue
-        metadata:
-          name: peeks-agent-incidents
-          namespace: peeks-agent
-        spec:
-          queueName: peeks-agent-incidents
-          messageRetentionPeriod: "3600"
-          receiveMessageWaitTimeSeconds: "20"
-          visibilityTimeout: "120"
-          # Allow the SNS topic to deliver to this queue.
-          policy: |
-            {"Version":"2012-10-17","Statement":[{"Sid":"AllowSNSDelivery","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"sqs:SendMessage","Resource":"arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents","Condition":{"ArnEquals":{"aws:SourceArn":"arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"}}}]}
-      - apiVersion: sns.services.k8s.aws/v1alpha1
-        kind: Subscription
-        metadata:
-          name: peeks-agent-incidents-sqs
-          namespace: peeks-agent
-        spec:
-          protocol: sqs
-          topicARN: arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents
-          endpoint: arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents
-          rawMessageDelivery: "true"
-      # AMP AlertManager routing: OOMKill alerts -> SNS. workspaceID is env-specific
-      # (the workspace is Crossplane-managed, so referenced by ID, not workspaceRef).
-      - apiVersion: prometheusservice.services.k8s.aws/v1alpha1
-        kind: AlertManagerDefinition
-        metadata:
-          name: peeks-agent-alertmanager
-          namespace: peeks-agent
-        spec:
-          workspaceID: "REPLACE_AMP_WORKSPACE_ID"
-          configuration: |
-            alertmanager_config: |
-              route:
-                receiver: null-receiver
-                group_by: ['alertname','cluster','namespace','pod']
-                routes:
-                  # Route ANY actionable workload incident to the agent, not just OOM.
-                  # Every alerting rule carries severity + a `signal` label; matching on
-                  # severity keeps this generic as new signals are added (imagepull,
-                  # crashloop, unschedulable, storage, …). null-receiver drops the rest.
-                  - receiver: peeks-agent-sns
-                    matchers:
-                      - severity=~"warning|critical"
-                    group_wait: 30s
-                    group_interval: 5m
-                    repeat_interval: 4h
-              receivers:
-                - name: null-receiver
-                - name: peeks-agent-sns
-                  sns_configs:
-                    - topic_arn: arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents
-                      sigv4:
-                        region: us-west-2
-                      subject: 'PEEKS incident {{ .CommonLabels.alertname }} {{ .CommonLabels.namespace }}/{{ .CommonLabels.pod }}'
-                      # Emit ALL fields the agent needs to generalise beyond OOM: the
-                      # signal type, the remediation hint, and the rule's description
-                      # (which tells the agent what GitOps fix to craft). pod/container
-                      # may be empty for node/PVC-scoped signals — that's fine.
-                      message: |
-                        {{ range .Alerts }}{"status":"{{ .Status }}","alertname":"{{ .Labels.alertname }}","signal":"{{ .Labels.signal }}","remediation":"{{ .Labels.remediation }}","severity":"{{ .Labels.severity }}","cluster":"{{ .Labels.cluster }}","namespace":"{{ .Labels.namespace }}","pod":"{{ .Labels.pod }}","container":"{{ .Labels.container }}","persistentvolumeclaim":"{{ .Labels.persistentvolumeclaim }}","summary":"{{ .Annotations.summary }}","description":"{{ .Annotations.description }}"}{{ end }}
+              {"Version":"2012-10-17","Statement":[{"Sid":"SNS","Effect":"Allow","Action":["sns:CreateTopic","sns:DeleteTopic","sns:GetTopicAttributes","sns:SetTopicAttributes","sns:ListTagsForResource","sns:TagResource","sns:UntagResource","sns:Subscribe","sns:Unsubscribe","sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:ListSubscriptionsByTopic"],"Resource":"arn:aws:sns:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"SQS","Effect":"Allow","Action":["sqs:CreateQueue","sqs:DeleteQueue","sqs:GetQueueAttributes","sqs:SetQueueAttributes","sqs:ListQueueTags","sqs:TagQueue","sqs:UntagQueue","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:us-west-2:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"APS","Effect":"Allow","Action":["aps:CreateAlertManagerDefinition","aps:DescribeAlertManagerDefinition","aps:PutAlertManagerDefinition","aps:DeleteAlertManagerDefinition"],"Resource":"arn:aws:aps:us-west-2:REPLACE_ACCOUNT_ID:workspace/*"}]}
+      # ── AMP AlertManagerDefinition + SNS Topic + SQS Queue + SNS→SQS Subscription
+      # are provisioned by the AmpIncident kro RGD (files/amp-incident-rgd.yaml),
+      # rendered as a second document by this chart. The RGD reads the AMP workspace id
+      # LIVE from the Crossplane Workspace CR via externalRef + CEL — so there is no
+      # REPLACE_AMP_WORKSPACE_ID literal and no cluster-secret stamp. The IAM roles / SA /
+      # PodIdentity below stay here (not workspace-id dependent). ──
       # Dedicated least-privilege identity for the consumer (SQS read only),
       # secretless via EKS Pod Identity.
       - apiVersion: iam.services.k8s.aws/v1alpha1

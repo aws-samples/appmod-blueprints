@@ -65,8 +65,36 @@ The appset auto-adds `overlays/clusters/<cluster>/peeks-agent/values.yaml` (last
 ```yaml
 imageRegistry: "<your-account>.dkr.ecr.<region>.amazonaws.com/peeks-e2e"
 imageTag: "prod-2026-09"
-ampWorkspaceId: "ws-0123456789abcdef"   # enables the AMP incident-bridge path
+gitlabDomain: "gitlab.mycorp.internal"   # gitlab-mcp GITLAB_API_URL host
 ```
+
+## gitlab-mcp (agent write path)
+
+The `gitlab-mcp` component (supergateway wrapping upstream `@zereight/gitlab-mcp`,
+stateful, exposed via AgentGateway at `/mcp/gitlab-mcp`) gives the agent its
+branch/MR write path. The GitLab PAT is **never baked into the image** — an
+ExternalSecret pulls it from Secrets Manager (`<clusterPrefix>-hub/secrets:git_token`,
+the same canonical PAT the ArgoCD repo-creds use) via the `aws-secrets-manager`
+ClusterSecretStore and injects it as `GITLAB_PERSONAL_ACCESS_TOKEN`. Set `gitlabDomain`
+(from the `gitlab_domain_name` cluster-secret annotation) so `GITLAB_API_URL` resolves.
+
+## AMP incident path (native — reads the Workspace CR, no id literal)
+
+The AMP AlertManagerDefinition + SNS/SQS incident sub-graph is provisioned by the
+**`AmpIncident` kro RGD** (`files/amp-incident-rgd.yaml`), which reads the AMP workspace
+id **live from the Crossplane `Workspace` CR** via `externalRef` +
+`${ampworkspace.status.atProvider.id}` — so there is **no `ampWorkspaceId` value and no
+cluster-secret stamp**. Requirements (both shipped in the chart):
+
+- the `AmpIncident` instance's `workspaceName` must match your AMP `Workspace` CR name
+  (default `<clusterPrefix>-amp`);
+- the bundled `kro-amp-workspace-reader` ClusterRole/Binding grants the kro
+  capability controller (`<clusterPrefix>-hub-kro-capability-role/KRO`) read on
+  `amp.aws.upbound.io/workspaces` — **without it `externalRef` is forbidden (RBAC)** and
+  the instance stays `ERROR: cannot get resource workspaces`.
+
+Validated live on peeks-e2e: `externalRef` + CEL resolve the real `ws-…` id, and the
+RGD compiles to `Active`/`GraphAccepted`.
 
 ## Values
 
@@ -77,4 +105,4 @@ ampWorkspaceId: "ws-0123456789abcdef"   # enables the AMP incident-bridge path
 | `accountId` | `aws_account_id` | required |
 | `clusterPrefix` | `resource_prefix` | required |
 | `cloudfrontDomain` | `ingress_domain_name` | chat-ui ingress host |
-| `ampWorkspaceId` | `aws_amp_workspace_id` | **incident path only** — empty leaves the AlertManagerDefinition + incident IAM inert; the core agent works without it |
+| `gitlabDomain` | `gitlab_domain_name` | gitlab-mcp `GITLAB_API_URL` host (PAT via ESO) |

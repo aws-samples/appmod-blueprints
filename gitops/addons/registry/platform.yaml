@@ -757,8 +757,8 @@ peeks-agent:
     accountId: '{{.metadata.annotations.aws_account_id}}'
     clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
     cloudfrontDomain: '{{default "" .metadata.annotations.ingress_domain_name}}'
-    # AMP incident-bridge path only — set aws_amp_workspace_id to a real ws-xxxx to enable.
-    ampWorkspaceId: '{{default "" (index .metadata.annotations "aws_amp_workspace_id")}}'
+    # gitlab-mcp GITLAB_API_URL host (PAT itself comes from Secrets Manager via ESO).
+    gitlabDomain: '{{default "" (index .metadata.annotations "gitlab_domain_name")}}'
   ignoreDifferences:
     - group: core.oam.dev
       kind: Application
