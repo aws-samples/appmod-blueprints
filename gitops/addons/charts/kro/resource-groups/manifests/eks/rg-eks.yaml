@@ -123,6 +123,7 @@ spec:
         enable_kro_manifests: string | default="true"
         enable_platform_manifests_bootstrap: string | default="true"
         enable_kubevela: string
+        enable_peeks_agent: string | default="false"
 
         adot_collector_namespace: string
         adot_collector_service_account: string
@@ -549,6 +550,7 @@ spec:
             enable_platform_manifests_bootstrap: "${schema.spec.addons.enable_platform_manifests_bootstrap}"
             enable_aws_for_fluentbit: "${schema.spec.addons.enable_aws_for_fluentbit}"
             enable_kubevela: "${schema.spec.addons.enable_kubevela}"
+            enable_peeks_agent: "${schema.spec.addons.enable_peeks_agent}"
 
           # Note: Cannot use ownerReferences here as it would be cross-namespace
           # (EksCluster is in ${schema.spec.name} namespace, Secret is in argocd namespace)

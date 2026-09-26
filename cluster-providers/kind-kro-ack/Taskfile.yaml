@@ -807,6 +807,7 @@ tasks:
             enable_ingress_nginx: "false"
             enable_platform_manifests: "true"
             enable_kubevela: "false"
+            enable_peeks_agent: "false"
             adot_collector_namespace: adot-collector-kubeprometheus
             adot_collector_service_account: adot-collector-kubeprometheus
             external_dns_namespace: external-dns

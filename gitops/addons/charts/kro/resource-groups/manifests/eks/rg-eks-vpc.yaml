@@ -122,6 +122,7 @@ spec:
         enable_platform_manifests: string | default="true"
         enable_platform_manifests_bootstrap: string | default="true"
         enable_kubevela: string | default="true"
+        enable_peeks_agent: string | default="false"
 
         adot_collector_namespace: string | default="adot-collector-kubeprometheus"
         adot_collector_service_account: string | default="adot-collector-kubeprometheus"
@@ -274,6 +275,7 @@ spec:
             enable_platform_manifests: ${schema.spec.addons.enable_platform_manifests}
             enable_platform_manifests_bootstrap: ${schema.spec.addons.enable_platform_manifests_bootstrap}
             enable_kubevela: ${schema.spec.addons.enable_kubevela}
+            enable_peeks_agent: ${schema.spec.addons.enable_peeks_agent}
 
             adot_collector_namespace: ${schema.spec.addons.adot_collector_namespace}
             adot_collector_service_account: ${schema.spec.addons.adot_collector_service_account}
