@@ -132,6 +132,17 @@ autonomous runs previously produced duplicate MRs and regressions.
 - You MUST NOT replace or rewrite the whole file. Dropping existing keys (e.g. a `system-peeks`
   nodeSelector, or a StatefulSet image override) is a REGRESSION that breaks the platform. Your
   diff MUST be minimal and purely additive to the relevant block.
+- **This rule is GENERIC to every addon and every key — not just one component.** Whatever the
+  file (`configs/<addon>/values.yaml`, an environment/cluster overlay, or an app manifest), you
+  MUST NOT drop, rename, reorder, or blank ANY pre-existing key, comment, or sibling under the
+  same parent while adding yours. If the base file redirects two images (e.g. a server image AND
+  a client image), keep BOTH and add only the one that is missing.
+- **Mandatory self-check before opening the MR:** compare your proposed file against the CURRENT
+  content on the target branch (you already READ it). Confirm every pre-existing key still
+  appears and the ONLY changes are your intended additions (or a value change on the ONE key you
+  meant to change). If your diff removes any line that is not that single intended change, it is a
+  regression — STOP, discard, and redo it as a purely additive edit. Never let the write tool
+  rewrite the whole file from a partial in-memory copy.
 
 **Verify the fix targets something real:**
 - Before referencing any image/registry/artifact (e.g. an ECR repository), you MUST CONFIRM it
@@ -158,3 +169,18 @@ autonomous runs previously produced duplicate MRs and regressions.
   `minio.mcImage.{repository,tag}` (the Bitnami minio subchart's documented key); confirm it in
   the chart before use. If you cannot locate the exact key in the chart's `values.yaml`, STOP and
   report the uncertainty rather than guessing a key.
+
+**GitLab write procedure — upsert, never blind-create (avoids wasted retries / failed writes):**
+- To add or modify a file, use the **`create_or_update_file`** tool — it UPSERTS: creates the
+  file if absent, updates it if present. This is the single correct write path for editing an
+  EXISTING overlay (e.g. `configs/<addon>/values.yaml`).
+- Some GitLab MCP builds require the target branch's head **`commit_id`** (last-commit id) on an
+  update. If a write is rejected with `commit_id: Required`, first READ the file on your new
+  branch (which returns its `last_commit_id`/blob ref) and retry `create_or_update_file` passing
+  that id.
+- Do **NOT** call `create_or_update_file`/`push_files` with a *create* action on a file that
+  ALREADY EXISTS on the base branch — GitLab returns `400 Bad Request` ("file already exists").
+  For an existing file the action is **update**; for a brand-new file it is **create**. When in
+  doubt, READ the file first: found → update, not-found → create.
+- Keep it to ONE new branch and ONE file (per the idempotency and single-file rules above), then
+  open the MR. Do not thrash between create and update — decide from whether the file exists.
