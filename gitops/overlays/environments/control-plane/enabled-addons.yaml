@@ -37,6 +37,12 @@ enabledAddons:
   # default so fresh deployments capture agent traces even if an older OAP
   # bootstrap.sh (which also stamps this label imperatively) is in play.
   otel_collector: true
+  # Langfuse (OAP chart): trace backend the OTel collector exports to
+  # (endpoint https://<ingress>/api/public/otel). enable_langfuse label is
+  # consumed by the OAP `observability` appset. Enabled alongside otel_collector
+  # so a fresh deploy has a working Agent -> collector -> Langfuse pipeline
+  # instead of a Degraded collector with no backend.
+  langfuse: true
   cw_prometheus: false
   aws_for_fluentbit: false
   cni_metrics_helper: false
