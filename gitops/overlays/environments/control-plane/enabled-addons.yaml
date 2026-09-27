@@ -31,6 +31,12 @@ enabledAddons:
   kube_state_metrics: true
   prometheus_node_exporter: true
   opentelemetry_operator: false
+  # OTel Collector (chart lives in the OAP repo; the enable_otel_collector label
+  # emitted here is consumed by the OAP `observability` appset). Enables the
+  # Agent -> collector -> Langfuse trace pipeline out of the box. GitOps-native
+  # default so fresh deployments capture agent traces even if an older OAP
+  # bootstrap.sh (which also stamps this label imperatively) is in play.
+  otel_collector: true
   cw_prometheus: false
   aws_for_fluentbit: false
   cni_metrics_helper: false
