@@ -22,6 +22,9 @@ spec:
         privateSubnet1Cidr: string | default="10.0.11.0/24"
         privateSubnet2Cidr: string | default="10.0.12.0/24"
       natGateways: integer | default=1 # Reserved for future HA (currently always 1 NAT Gateway)
+      # Optional extra AWS tags merged into every EC2 resource below (SpringClean
+      # auto-delete=no, cost allocation, compliance). Passed down from EksclusterWithVpc.
+      awsTags: "map[string]string"
     status:
       vpcID: ${vpc.status.vpcID}
       publicSubnet1ID: ${publicSubnet1.status.subnetID}
@@ -51,18 +54,12 @@ spec:
         - ${schema.spec.cidr.vpcCidr}
         enableDNSSupport: true
         enableDNSHostnames: true
-        tags:
-          - key: "Name"
-            value: ${schema.spec.name}-vpc
-          # Name-independent ownership tags, matching the crossplane platform-cluster
-          # Composition. The VPC is the anchor for teardown: when a spoke is torn down
-          # the EKS cluster usually goes first, so by sweep time the cluster is gone and
-          # the VPC, NAT gateway, EIP and subnets are what remain. Tagging the VPC lets
-          # the sweeper find them for a cluster of any name.
-          - key: "platform.gitops.io/prefix"
-            value: ${schema.spec.resourcePrefix}
-          - key: "platform.gitops.io/cluster"
-            value: ${schema.spec.name}
+        # Base ownership tags + optional user awsTags (SpringClean/cost/compliance).
+        # awsTags (map[string]string) is rendered as {key,value} entries and appended;
+        # keys are sorted so the list is stable across reconciles (kro CEL guidance:
+        # a list built from a map has non-deterministic order otherwise, causing a
+        # perpetual ArgoCD/ACK diff). Empty/absent awsTags -> base list unchanged.
+        tags: '${[{"key": "Name", "value": schema.spec.name + "-vpc"}, {"key": "platform.gitops.io/prefix", "value": schema.spec.resourcePrefix}, {"key": "platform.gitops.io/cluster", "value": schema.spec.name}] + schema.spec.?awsTags.orValue({}).map(k, k).sort().map(k, {"key": k, "value": schema.spec.awsTags[k]})}'
   - id: internetGateway
     template:
       apiVersion: ec2.services.k8s.aws/v1alpha1
@@ -106,9 +103,7 @@ spec:
         subnetID: ${publicSubnet1.status.subnetID}
         allocationID: ${eip1.status.allocationID}
         connectivityType: public
-        tags:
-          - key: "Name"
-            value: ${schema.spec.name}-nat-gateway1
+        tags: '${[{"key": "Name", "value": schema.spec.name + "-nat-gateway1"}] + schema.spec.?awsTags.orValue({}).map(k, k).sort().map(k, {"key": k, "value": schema.spec.awsTags[k]})}'
   - id: eip1
     template:
       apiVersion: ec2.services.k8s.aws/v1alpha1
@@ -127,9 +122,7 @@ spec:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
       spec:
-        tags:
-          - key: "Name"
-            value: ${schema.spec.name}-eip1
+        tags: '${[{"key": "Name", "value": schema.spec.name + "-eip1"}] + schema.spec.?awsTags.orValue({}).map(k, k).sort().map(k, {"key": k, "value": schema.spec.awsTags[k]})}'
   - id: publicRoutetable
     template:
       apiVersion: ec2.services.k8s.aws/v1alpha1

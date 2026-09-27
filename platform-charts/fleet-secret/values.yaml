@@ -25,6 +25,10 @@ hub:
   fleetRepoBasepath: ""
   domain: ""
   resourcePrefix: ""
+  # Platform-wide AWS tags as a compact JSON object STRING (e.g. '{"auto-delete":"no"}'),
+  # populated from the hub cluster-secret `platform_tags` annotation. Rendered verbatim
+  # as the spoke's own `platform_tags` annotation. Empty -> annotation omitted.
+  platformTags: ""
   # platform IngressClass controller mode: "oss" (AWS LBC, ingress.k8s.aws/alb) or
   # "auto" (EKS Auto Mode, eks.amazonaws.com/alb). Spokes default to "oss" so the
   # platform class is always the OSS LBC (required for transforms/URL-rewrite).

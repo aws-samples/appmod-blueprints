@@ -73,3 +73,114 @@ If an addon is not deploying:
 **Constraints:**
 - You MUST distinguish between `enabled` (ApplicationSet creation) and `enable_<addon>` (cluster targeting) because they are different mechanisms
 - You MUST check sync wave dependencies if addon fails to deploy
+
+### 6. Autonomous incident remediation via the fleet-config overlay
+
+When you (an agent) fix an addon problem by opening a Merge Request, you write to the
+**fleet-config** repo — the `$overlay` source that addon ApplicationSets already reference
+in their Helm `valueFiles`, last-wins over the `$defaults` (GitHub) base values, with
+`ignoreMissingValueFiles: true` (so a file that does not exist yet can simply be **created**).
+
+**⚠️ These `$overlay` (fleet-config) paths are root-relative and DIFFER from the `$defaults`
+paths in the table above (which are prefixed `gitops/...`). In the fleet-config repo use:**
+
+| Scope | Path in fleet-config (`$overlay`) |
+|-------|-----------------------------------|
+| All clusters (cluster-agnostic) | `configs/<addon>/values.yaml` |
+| Per environment | `overlays/environments/<env>/<addon>/values.yaml` |
+| Per cluster | `overlays/clusters/<exact-deployed-cluster-name>/<addon>/values.yaml` |
+
+**Constraints:**
+- You MUST create or edit **EXACTLY ONE** file — the narrowest that fixes the incident.
+  You MUST NOT create multiple variants of the same file or guess alternate paths.
+- You SHOULD **prefer the cluster-agnostic `configs/<addon>/values.yaml`** because it needs no
+  cluster name (no short/full ambiguity) and covers all clusters — usually what you want when a
+  controller fails on several clusters. Use a per-cluster overlay ONLY to deliberately scope to
+  one cluster.
+- **Cluster names are DYNAMIC** (they depend on the deployment's resource prefix; they are NOT
+  always `peeks-e2e-*`). You MUST NOT hardcode, shorten, or guess a cluster name. An alert's
+  `cluster` label may be a SHORT form (e.g. `spoke-dev`) that does NOT match the fleet-config
+  path segment (e.g. `peeks-e2e-spoke-dev`); reconcile it to the REAL deployed cluster name
+  (via your read-only tools / the environment's known names) before using it in a path.
+- You MUST confirm the addon's real current value (e.g. the memory limit in the base values)
+  with read-only tools before writing, so the change is a meaningful delta and the comment is
+  accurate.
+- You MUST NOT mutate the cluster directly — the fix ships as a Merge Request for human review.
+- App workloads (not addons) already have their own manifest in fleet-config (e.g.
+  `demo-oomkill/deployment.yaml`); edit that existing file, do NOT invent an overlay for them.
+
+### 7. Idempotency and safe edits (CRITICAL — avoids duplicate/broken MRs)
+
+Before you open an MR, and while you write the fix, follow these hard rules. They exist because
+autonomous runs previously produced duplicate MRs and regressions.
+
+**Idempotency — never open a duplicate MR:**
+- You MUST, before creating ANY branch or MR, **list the OPEN merge requests** in the target
+  repo (`state=opened`) and inspect their titles and changed files.
+- An incident is ALREADY handled if an open MR edits the **same file** you would edit
+  (e.g. `configs/<addon>/values.yaml`) or targets the **same addon/component**. Multiple alerts
+  for the same component across different clusters are **ONE issue**, because
+  `configs/<addon>/values.yaml` is cluster-agnostic.
+- When a matching open MR exists you MUST NOT create another MR or branch. Instead, add a short
+  comment on the EXISTING MR noting the extra affected cluster/pod, then STOP.
+- Only open a new MR when NO open MR already addresses that file/component.
+
+**Preserve existing files — never rewrite (anti-regression):**
+- When the target values file ALREADY EXISTS, you MUST first READ its current content, then
+  **ADD or MERGE only the keys you need**, keeping ALL existing content intact (existing
+  `nodeSelector` pins, existing image redirects, etc.).
+- You MUST NOT replace or rewrite the whole file. Dropping existing keys (e.g. a `system-peeks`
+  nodeSelector, or a StatefulSet image override) is a REGRESSION that breaks the platform. Your
+  diff MUST be minimal and purely additive to the relevant block.
+- **This rule is GENERIC to every addon and every key — not just one component.** Whatever the
+  file (`configs/<addon>/values.yaml`, an environment/cluster overlay, or an app manifest), you
+  MUST NOT drop, rename, reorder, or blank ANY pre-existing key, comment, or sibling under the
+  same parent while adding yours. If the base file redirects two images (e.g. a server image AND
+  a client image), keep BOTH and add only the one that is missing.
+- **Mandatory self-check before opening the MR:** compare your proposed file against the CURRENT
+  content on the target branch (you already READ it). Confirm every pre-existing key still
+  appears and the ONLY changes are your intended additions (or a value change on the ONE key you
+  meant to change). If your diff removes any line that is not that single intended change, it is a
+  regression — STOP, discard, and redo it as a purely additive edit. Never let the write tool
+  rewrite the whole file from a partial in-memory copy.
+
+**Verify the fix targets something real:**
+- Before referencing any image/registry/artifact (e.g. an ECR repository), you MUST CONFIRM it
+  actually exists with your read-only tools. Do not invent a registry path or tag.
+- **ECR mirror repository names — LIST, do not construct.** When redirecting an image to the
+  in-account ECR mirror, you MUST first ENUMERATE the actual repositories (e.g. via the AWS ECR
+  read tools / `aws ecr describe-repositories`) and use the EXACT name that exists. NEVER derive
+  a mirror repo name by concatenating the subchart/component name. The mirror repo mirrors the
+  **upstream image's final path segment**, not the chart: `minio/mc` → repo `mc` (NOT `minio-mc`),
+  `minio/minio` → repo `minio`. A guessed name like `minio-mc` does not exist → the Job stays in
+  `ImagePullBackOff`, so the "fix" is worse than no fix. If you cannot confirm the exact repo
+  name, STOP and say so rather than guessing.
+- For a Helm chart that bundles a **subchart** (e.g. langfuse bundles minio under the `minio:`
+  key), overrides for that subchart MUST be nested under the parent key (`minio.<...>`); a
+  top-level sibling key (`minioMc:`, `minioInit:`) is silently ignored by the subchart.
+- **Helm values PATHS — VERIFY against the upstream chart, do not invent.** Before writing any
+  `values.yaml` override key, you MUST confirm the EXACT key path exists in the upstream
+  chart/subchart's own `values.yaml` (or its documented schema) using your read-only tools — do
+  NOT guess a plausible-looking path. A key that does not exist in the chart is silently ignored
+  by Helm (no error), so the "fix" renders but does nothing and the incident persists. This was
+  seen live: two MRs for the same minio-init image used two DIFFERENT invented keys
+  (`minio.init.image.repository` vs `minio.mcImage.repository`) — at most one can be real. The
+  correct path for the bundled minio subchart's client (`mc`) image is
+  `minio.mcImage.{repository,tag}` (the Bitnami minio subchart's documented key); confirm it in
+  the chart before use. If you cannot locate the exact key in the chart's `values.yaml`, STOP and
+  report the uncertainty rather than guessing a key.
+
+**GitLab write procedure — upsert, never blind-create (avoids wasted retries / failed writes):**
+- To add or modify a file, use the **`create_or_update_file`** tool — it UPSERTS: creates the
+  file if absent, updates it if present. This is the single correct write path for editing an
+  EXISTING overlay (e.g. `configs/<addon>/values.yaml`).
+- Some GitLab MCP builds require the target branch's head **`commit_id`** (last-commit id) on an
+  update. If a write is rejected with `commit_id: Required`, first READ the file on your new
+  branch (which returns its `last_commit_id`/blob ref) and retry `create_or_update_file` passing
+  that id.
+- Do **NOT** call `create_or_update_file`/`push_files` with a *create* action on a file that
+  ALREADY EXISTS on the base branch — GitLab returns `400 Bad Request` ("file already exists").
+  For an existing file the action is **update**; for a brand-new file it is **create**. When in
+  doubt, READ the file first: found → update, not-found → create.
+- Keep it to ONE new branch and ONE file (per the idempotency and single-file rules above), then
+  open the MR. Do not thrash between create and update — decide from whether the file exists.

@@ -81,6 +81,12 @@ rules:
 - apiGroups: ["grafana.aws.upbound.io"]
   resources: ["*"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# AMP workspace (Crossplane) — READ-ONLY. The ampincident.kro.run RGD reads the AMP
+# Workspace id via externalRef; without this grant the kro capability's externalRef GET
+# is forbidden. Read-only (get/list/watch) — kro never creates/mutates the Workspace.
+- apiGroups: ["amp.aws.upbound.io"]
+  resources: ["workspaces"]
+  verbs: ["get", "list", "watch"]
 # Kro custom resources
 - apiGroups: ["kro.run"]
   resources: ["*"]

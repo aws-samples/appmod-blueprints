@@ -64,6 +64,9 @@ spec:
       insecure: string | default="false"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
+      # Optional extra AWS tags merged into the EKS Cluster tags (SpringClean
+      # auto-delete=no, cost allocation, compliance). Passed down from EksclusterWithVpc.
+      awsTags: "map[string]string"
       aws_partition: string | default="aws"
       aws_dns_suffix: string | default="amazonaws.com"
       network:
@@ -388,16 +391,10 @@ spec:
               - ${schema.spec.network.subnets.controlplane.subnet2ID}
           zonalShiftConfig: 
             enabled: true
-          tags: 
-            kro-management: ${schema.spec.name}
-            tenant: ${schema.spec.tenant}
-            environment: ${schema.spec.environment}
-            # Name-independent ownership tags, matching what the crossplane
-            # platform-cluster Composition patches. Cluster names are arbitrary, so
-            # teardown cannot enumerate resources by a <prefix>-spoke-* name pattern;
-            # it discovers them by these tags instead.
-            platform.gitops.io/prefix: ${schema.spec.resourcePrefix}
-            platform.gitops.io/cluster: ${schema.spec.name}
+          # Built-in tags + optional user awsTags (SpringClean/cost/compliance).
+          # EKS Cluster tags are a map, so awsTags is layered with kro's Maps.merge
+          # (user keys win on collision). Absent awsTags -> merge({}) -> unchanged.
+          tags: '${{"kro-management": schema.spec.name, "tenant": schema.spec.tenant, "environment": schema.spec.environment, "platform.gitops.io/prefix": schema.spec.resourcePrefix, "platform.gitops.io/cluster": schema.spec.name}.merge(schema.spec.?awsTags.orValue({}))}'
 
     # NOTE: The eks-pod-identity-agent Addon node was intentionally removed.
     # Every cluster provisioned by this RGD runs in EKS Auto Mode

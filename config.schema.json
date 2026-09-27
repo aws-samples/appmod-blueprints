@@ -208,6 +208,14 @@
       "pattern": "^[a-z][a-z0-9-]*$",
       "description": "Prefix for KRO tenant-facing resources (ECR repos, S3 buckets). Infrastructure resources use clusterName instead."
     },
+    "platformTags": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "Platform-wide AWS tags applied to every AWS resource the platform creates: hub resources (EKS cluster, VPC, NAT, EIP) via CDK Tags.of(stack).add() in platform-engineering-on-eks, and spoke resources via the kro EksclusterWithVpc `awsTags` schema field (threaded through the hub cluster-secret `platform_tags` annotation). Primary use: SpringClean retention (auto-delete=no) so cost/janitor sweepers do not reap long-lived workshop infrastructure; also cost allocation and compliance. Values must be strings."
+    },
     "ingressName": {
       "type": "string",
       "default": "",

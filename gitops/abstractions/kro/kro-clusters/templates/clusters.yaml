@@ -79,6 +79,28 @@ spec:
   # rather than silently defaulting to secure/HTTPS. Requires the insecure
   # schema field on EksclusterWithVpc (rg-eks-vpc.yaml) to accept this value.
   insecure: {{ $cluster.insecure | default $.Values.global.insecure | default "false" | quote }}
+  # Platform-wide AWS tags applied to every AWS resource this graph creates (EKS
+  # cluster, VPC, NAT gateway, EIP) through the EksclusterWithVpc `awsTags` schema
+  # field (rg-eks-vpc.yaml). Threaded from config.local.yaml's `platformTags` ->
+  # hub cluster-secret `platform_tags` annotation (compact JSON) -> clusters-kro
+  # appset global.platformTags. Primary use: SpringClean retention (auto-delete=no)
+  # so janitor/cost sweepers do not reap workshop infra. A per-cluster fleet-config
+  # `awsTags:` map is layered ON TOP of (and wins over) the inherited platform tags,
+  # so a spoke can add tags without being able to silently drop auto-delete=no.
+  # Empty/absent on both -> awsTags: {} -> the RGD leaves its built-in tags unchanged.
+  {{- $platformTags := dict }}
+  {{- with $.Values.global.platformTags }}
+  {{-   $platformTags = (. | fromJson) }}
+  {{- end }}
+  {{- $awsTags := merge (deepCopy ($cluster.awsTags | default dict)) $platformTags }}
+  {{- if $awsTags }}
+  awsTags:
+    {{- range $k, $v := $awsTags }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+  {{- else }}
+  awsTags: {}
+  {{- end }}
   workloads: {{ $cluster.workloads | default "false" | quote }}
   {{- if $cluster.subHostedZone | quote }}
   subHostedZone:

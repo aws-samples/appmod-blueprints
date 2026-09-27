@@ -45,6 +45,12 @@ enabledAddons:
   backstage: true
   kubevela: true
   devlake: true
+  # PEEKS read-only platform-engineering agent (OAP Strands agent + skills-mcp +
+  # eks-read-mcp + chat-ui + AgentCore memory + incident bridge). Default OFF; enable
+  # per-deployment by setting peeks_agent: true in the fleet-config overlay
+  # (overlays/environments/control-plane/enabled-addons.yaml) — no platform-repo edit.
+  # Requires KubeVela + OAP agent-platform-addons on the hub.
+  peeks_agent: false
   gitlab: false  # GitLab runs on EC2 (docker-compose), not EKS
   # ACK controllers
   ack_iam: false
