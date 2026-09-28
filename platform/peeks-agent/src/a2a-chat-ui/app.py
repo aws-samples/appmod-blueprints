@@ -22,7 +22,9 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
+import re
 import secrets
 import time
 import uuid
@@ -102,6 +104,11 @@ async def login(request: Request, response: Response):
     password = body.get("password") or ""
     if not username or not password:
         return JSONResponse({"error": "username and password required"}, status_code=400)
+    # Restrict the username to a safe charset before it flows into the signed
+    # session cookie, preventing cookie/header injection via control characters
+    # (CodeQL py/cookie-injection).
+    if not re.fullmatch(r"[A-Za-z0-9._@+-]{1,128}", username):
+        return JSONResponse({"error": "invalid username"}, status_code=400)
 
     data = {
         "grant_type": "password",
@@ -116,7 +123,10 @@ async def login(request: Request, response: Response):
         async with httpx.AsyncClient(timeout=20) as client:
             r = await client.post(KEYCLOAK_TOKEN_URL, data=data)
     except Exception as exc:  # noqa: BLE001
-        return JSONResponse({"error": f"keycloak unreachable: {exc}"}, status_code=502)
+        # Log the detail server-side; do not leak the exception/stack trace to the
+        # client (CodeQL py/stack-trace-exposure).
+        logging.warning("keycloak token request failed: %s", exc)
+        return JSONResponse({"error": "keycloak unreachable"}, status_code=502)
     if r.status_code != 200:
         return JSONResponse({"error": "invalid credentials"}, status_code=401)
 
