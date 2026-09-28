@@ -37,3 +37,5 @@ gitlabDomain: ""              # gitlab_domain_name   (gitlab-mcp GITLAB_API_URL 
 # Workspace CR via externalRef — no literal id, no cluster-secret stamp. The AmpIncident
 # INSTANCE is the `amp-incident` component in files/peeks-agent-app.yaml; its workspaceName
 # defaults to "<clusterPrefix>-amp" — edit that component if your AMP Workspace CR differs.
+
+# cache-bust 20260928T145834Z: force ArgoCD repo-server re-render for chat-ui v1.2
