@@ -205,3 +205,46 @@ def test_ensure_tenacity_is_cached_and_safe():
     first = r.ensure_tenacity()
     second = r.ensure_tenacity()
     assert first is second
+
+
+# ── run_delete / swallow_gone ─────────────────────────────────────────────────
+
+def test_run_delete_success():
+    assert r.run_delete(lambda: "ok", sleep=noop_sleep) == ("deleted", "", "")
+
+
+def test_run_delete_gone_not_conflated_with_deleted():
+    def thunk():
+        raise FakeClientError("ResourceNotFoundException", "already gone")
+    kind, code, _msg = r.run_delete(thunk, sleep=noop_sleep)
+    assert kind == "gone"
+    assert code == "ResourceNotFoundException"
+
+
+def test_run_delete_access_denied_surfaced():
+    def thunk():
+        raise FakeClientError("AccessDenied", "User is not authorized; role not found")
+    kind, code, _msg = r.run_delete(thunk, sleep=noop_sleep)
+    # #932: access-denied must NOT be classified gone even with a "not found" message.
+    assert kind == "access_denied"
+    assert code == "AccessDenied"
+
+
+def test_run_delete_permanent():
+    def thunk():
+        raise FakeClientError("ValidationException", "nope")
+    kind, _code, _msg = r.run_delete(thunk, sleep=noop_sleep)
+    assert kind == "permanent"
+
+
+@pytest.mark.parametrize("force_fallback", [False, True])
+def test_retry_aws_swallow_gone_false_reraises(monkeypatch, force_fallback):
+    if force_fallback:
+        monkeypatch.setattr(r, "ensure_tenacity", lambda: None)
+
+    def fn():
+        raise FakeClientError("ResourceNotFoundException", "already gone")
+    # default swallow_gone=True → None; swallow_gone=False → the caller sees it.
+    assert r.retry_aws(fn, attempts=3, wait=0.0, sleep=noop_sleep) is None
+    with pytest.raises(FakeClientError):
+        r.retry_aws(fn, attempts=3, wait=0.0, sleep=noop_sleep, swallow_gone=False)
