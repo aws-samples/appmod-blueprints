@@ -17,6 +17,7 @@ Env:
 """
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -123,6 +124,16 @@ def _incident_prompt(alert: dict) -> str:
     return "\n".join(lines)
 
 
+def _context_id(alert: dict) -> str:
+    """A2A contextId used by the agent as its AgentCore Memory sessionId, which
+    must match ``[a-zA-Z0-9][a-zA-Z0-9-_]*``. The fingerprint joins labels with
+    ``|`` (an invalid sessionId char), so sanitize every non-``[A-Za-z0-9_-]``
+    char to ``-`` — otherwise the agent fails every autonomous incident with
+    ``ValidationException ... sessionId failed to satisfy constraint`` on the
+    memory ListEvents call and never runs the RCA."""
+    return "incident-" + re.sub(r"[^A-Za-z0-9_-]", "-", _fingerprint(alert))
+
+
 def _forward(alert: dict) -> bool:
     rpc = {
         "jsonrpc": "2.0",
@@ -132,7 +143,7 @@ def _forward(alert: dict) -> bool:
             "role": "user",
             "parts": [{"kind": "text", "text": _incident_prompt(alert)}],
             "messageId": str(uuid.uuid4()),
-            "contextId": f"incident-{_fingerprint(alert)}",
+            "contextId": _context_id(alert),
         }},
     }
     r = requests.post(AGENT_A2A_URL, json=rpc, timeout=AGENT_TIMEOUT)
