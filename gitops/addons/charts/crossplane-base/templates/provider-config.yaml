@@ -47,11 +47,14 @@ spec:
             # the writes out. Override per-provider via providers.<name>.maxReconcileRate.
             args:
               - --max-reconcile-rate={{ $provider.maxReconcileRate | default ($.Values.providerDefaults).maxReconcileRate | default 6 }}
+            # Pod resources come from providerResources in values.yaml, which documents how
+            # the defaults were measured. The limit was previously hardcoded at 2Gi with no
+            # override, so a consumer could lower the request but never the cap.
             resources:
               requests:
-                cpu: {{ if $.Values.providerResources }}{{ $.Values.providerResources.cpuRequest | default "250m" }}{{ else }}250m{{ end }}
-                memory: {{ if $.Values.providerResources }}{{ $.Values.providerResources.memoryRequest | default "1Gi" }}{{ else }}1Gi{{ end }}
+                cpu: {{ ($.Values.providerResources).cpuRequest | default "250m" }}
+                memory: {{ ($.Values.providerResources).memoryRequest | default "512Mi" }}
               limits:
-                memory: 2Gi
+                memory: {{ ($.Values.providerResources).memoryLimit | default "1Gi" }}
 {{- end }}
 {{- end }}

@@ -88,6 +88,39 @@ namespace: crossplane-system
 providerDefaults:
   maxReconcileRate: 6
 
+# Per-provider pod resources, applied to every provider's DeploymentRuntimeConfig.
+#
+# Sized from measurement, not guesswork. Observed steady-state memory on a hub running
+# ten providers (`kubectl top pods -n crossplane-system`):
+#
+#   provider-aws-ec2                384Mi   <- high-water mark
+#   provider-aws-amp                344Mi
+#   provider-aws-iam                317Mi
+#   provider-aws-rds                311Mi
+#   provider-aws-eks                310Mi
+#   provider-aws-grafana            306Mi
+#   upbound-provider-family-aws     293Mi
+#   provider-aws-dynamodb           289Mi
+#   provider-kubernetes             153Mi   <- small schema, same runtime
+#
+# The previous defaults requested 1Gi each and capped at 2Gi, so nine providers reserved
+# 9Gi to use ~2.6Gi: over-requested ~3.4x, leaving ~6.4Gi of a nodepool held and idle.
+# 512Mi keeps ~33% headroom over the observed high-water mark and halves the reservation.
+#
+# Why these providers are not ~100Mi: Upjet providers do not exec the Terraform CLI. They
+# embed the Terraform provider plugin and load its resource schema into memory, plus
+# controller-runtime informer caches for every CRD they own. The AWS schema size is the
+# cost, which is why the monolithic provider was split into family providers.
+# provider-kubernetes is the control: same Go runtime, tiny schema, 153Mi.
+#
+# Do not lower memoryRequest to the observed figure. Informer caches grow with the number
+# of managed resources, so a cluster managing many resources needs the headroom. Raise
+# these if providers are OOMKilled or evicted under memory pressure.
+providerResources:
+  cpuRequest: 250m
+  memoryRequest: 512Mi
+  memoryLimit: 1Gi
+
 # PostSync hook that restarts credential-less Crossplane provider pods so they
 # pick up their EKS Pod Identity token once the PIA is active (spoke-side
 # equivalent of `task hub:restart-identity-pods`). Set false to disable.
