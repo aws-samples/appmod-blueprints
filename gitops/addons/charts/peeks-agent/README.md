@@ -3,7 +3,7 @@
 GitOps-managed form of the PEEKS read-only platform-engineering agent — the whole OAP
 Strands agent stack as **one** KubeVela `Application`:
 
-- `peeks-agent` (agent-fixed) — the agent brain (Bedrock via bifrost, 2-mode)
+- `peeks-agent` (agent) — the agent brain (Bedrock via bifrost, 2-mode)
 - `skills-mcp` — PEEKS `.kiro/skills` served to the agent
 - `eks-read-mcp` — read-only EKS MCP (supergateway → awslabs eks-mcp-server)
 - `chat-ui` — Keycloak-gated A2A chat front-end
@@ -25,7 +25,7 @@ participants never build their own:
 | `imageTag` | `v1` |
 
 Published repos: `chat-ui`, `eks-mcp`, `skills-mcp`, `incident-bridge`, `strands-agent`,
-`gitlab-mcp`. The `agent-fixed` component pins `imageRegistry/strands-agent:imageTag`
+`gitlab-mcp`. The `agent` component pins `imageRegistry/strands-agent:imageTag`
 (carries the configurable-`max_tokens` fix — OAP [#34](https://github.com/awslabs/open-agentic-platform/issues/34)/[#35](https://github.com/awslabs/open-agentic-platform/pull/35)),
 so `MAX_TOKENS` takes effect on a fresh deploy. Override `imageRegistry`/`imageTag` in the
 fleet-config overlay to use your own registry.

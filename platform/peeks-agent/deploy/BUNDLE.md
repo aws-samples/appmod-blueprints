@@ -9,7 +9,7 @@ built live during the demo, so nothing depends on hand-authored objects anymore.
 | Component | Type | Renders |
 |---|---|---|
 | `skills-mcp` | `mcp-server` (OAM) | skills MCP rollout + svc + HTTPRoute + AgentgatewayBackend |
-| `peeks-agent` | `agent-fixed` (OAM) | agent rollout + svc + HTTPRoute + backend + agent-card + SA + **Pod Identity role** (trait `aws-service-identity`) |
+| `peeks-agent` | `agent` (OAM) | agent rollout + svc + HTTPRoute + backend + agent-card + SA + **Pod Identity role** (trait `aws-service-identity`) |
 | `eks-read-mcp` | `k8s-objects` | SA-less Deployment (reuses agent SA) + Service + HTTPRoute + AgentgatewayBackend |
 | `chat-ui` | `k8s-objects` | Deployment (image bakes `app.py` + `static/`) + Service + Ingress (class `platform`). Branding is env-driven (`APP_TITLE`/`AGENT_LABEL`/`APP_INTRO`) — **no ConfigMap** |
 | `agent-access` | `k8s-objects` | 3 ACK `AccessEntry` (hub + spoke-dev + spoke-prod) granting `peeks-agent-role` read-only RBAC (`AmazonEKSViewPolicy` + `AmazonEKSAdminViewPolicy`) |
@@ -34,7 +34,7 @@ built live during the demo, so nothing depends on hand-authored objects anymore.
 1. **OAP platform addons on the hub** — the hub cluster secret must carry the
    labels `enable_bifrost=true`, `enable_agent_gateway=true`,
    `enable_oam_components=true`. These install Bifrost, the AgentGateway, and the
-   OAM ComponentDefinitions this bundle needs (`agent-fixed`, `mcp-server`,
+   OAM ComponentDefinitions this bundle needs (`agent`, `mcp-server`,
    `k8s-objects`).
 2. **AgentGateway addon on the PR #21 fork branch** — `agent-platform-addons`
    `valuesObject.repoURLGit` / `repoURLGitRevision` must point at the fork branch
@@ -164,7 +164,7 @@ kubectl -n peeks-agent rollout restart rollout/peeks-agent
 
 ## Notes / next hardening
 
-- Component `peeks-agent` uses the **`agent-fixed`** ComponentDefinition (the test
+- Component `peeks-agent` uses the **`agent`** ComponentDefinition (the
   CD carrying the CUE `list.Concat` fix). Switch to the stock `agent` CD once
   OAP PR #19 is merged and available on the platform.
 - Access entries are now **in the bundle** as ACK `AccessEntry` resources

@@ -184,11 +184,6 @@ spec:
       properties:
         accessFor:
         - peeks-agent-memory
-    # Uses the upstream OAP `agent` ComponentDefinition. This requires the CUE
-    # v0.11 `list.Concat` fix in the agent CD env block (shipped by the OAP
-    # oam-agent-components chart): the pre-fix `agent` fails KubeVela admission
-    # with "Addition of lists is superseded by list.Concat". The old ad-hoc
-    # `agent-fixed` manual copy is no longer needed now that `agent` is fixed.
     type: agent
   - name: eks-read-mcp
     type: k8s-objects

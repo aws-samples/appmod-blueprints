@@ -201,7 +201,7 @@ spec:
         accessFor:
         - peeks-agent-memory
         - eks-read-access
-    type: agent-fixed
+    type: agent
   # ▶EKS-READ: least-privilege AWS policy so the agent's Pod Identity role (peeks-agent-role,
   # shared by eks-read-mcp) can DISCOVER and read the fleet clusters. Emitted as a Crossplane
   # iam.aws.upbound.io Policy named <appName>-<component>-iam-policy so the agent's
