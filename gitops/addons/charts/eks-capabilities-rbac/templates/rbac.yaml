@@ -107,6 +107,20 @@ rules:
 - apiGroups: ["services.k8s.aws"]
   resources: ["*"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK SNS / SQS / AMP-AlertManager — needed for the ampincident.kro.run RGD
+# (peeks-agent autonomous incident bridge: AlertManagerDefinition -> SNS -> SQS).
+# Without these the kro capability controller cannot get/create the Topic/Queue/
+# Subscription/AlertManagerDefinition and the AmpIncident instance stays
+# ResourcesReady=False ("cannot get resource topics in API group sns.services.k8s.aws").
+- apiGroups: ["sns.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["sqs.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["prometheusservice.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Ray Serve — needed for kro RayService RGD (Module 40 AI/ML)
 - apiGroups: ["ray.io"]
   resources: ["*"]

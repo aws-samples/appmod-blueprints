@@ -70,7 +70,7 @@ Three placeholders must be substituted before applying:
 ```bash
 CF=d2pefdj59hxapj.cloudfront.net   # this env's CloudFront domain (Keycloak token URL)
 ACCT=290085271972                  # this env's AWS account ID (AccessEntry principalARN)
-PREFIX=peeks-e2e                   # this env's cluster name prefix (<prefix>-hub / -spoke-dev / -spoke-prod)
+PREFIX=<prefix>                   # this env's cluster name prefix (<prefix>-hub / -spoke-dev / -spoke-prod)
 REG=$ACCT.dkr.ecr.us-west-2.amazonaws.com/$PREFIX   # ECR registry+repo prefix for the images
 TAG=<git-sha>                      # the pinned tag pushed by buildspec.yaml (NOT :latest)
 # incident bridge only — AMP workspace ID. NOT in the cluster-secret (which only carries

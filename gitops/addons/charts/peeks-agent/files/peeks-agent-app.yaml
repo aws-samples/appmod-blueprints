@@ -193,16 +193,37 @@ spec:
     traits:
     - type: gateway-identity
     # ▶MEMORY: attach the agentcore-memory IAM policy to the agent's Pod Identity role
+    # ▶EKS-READ: attach the eks:ListClusters/DescribeCluster/AccessKubernetesApi policy so
+    # the eks-read MCP (same `peeks-agent` SA / Pod Identity role) can discover and read the
+    # fleet clusters live (get-token needs eks:DescribeCluster; discovery needs ListClusters).
     - type: aws-service-identity
       properties:
         accessFor:
         - peeks-agent-memory
-    # Uses the upstream OAP `agent` ComponentDefinition. This requires the CUE
-    # v0.11 `list.Concat` fix in the agent CD env block (shipped by the OAP
-    # oam-agent-components chart): the pre-fix `agent` fails KubeVela admission
-    # with "Addition of lists is superseded by list.Concat". The old ad-hoc
-    # `agent-fixed` manual copy is no longer needed now that `agent` is fixed.
-    type: agent
+        - eks-read-access
+    type: agent-fixed
+  # ▶EKS-READ: least-privilege AWS policy so the agent's Pod Identity role (peeks-agent-role,
+  # shared by eks-read-mcp) can DISCOVER and read the fleet clusters. Emitted as a Crossplane
+  # iam.aws.upbound.io Policy named <appName>-<component>-iam-policy so the agent's
+  # aws-service-identity trait (accessFor: eks-read-access) attaches it to the role.
+  # Cluster/k8s object reads are still gated by the per-cluster EKS AccessEntries
+  # (agent-access component, AmazonEKSViewPolicy) — this only grants the AWS control-plane
+  # calls (ListClusters/DescribeCluster) + the AccessKubernetesApi entry point.
+  - name: eks-read-access
+    type: k8s-objects
+    properties:
+      objects:
+      - apiVersion: iam.aws.upbound.io/v1beta1
+        kind: Policy
+        metadata:
+          name: peeks-agent-hub-eks-read-access-iam-policy
+        spec:
+          forProvider:
+            name: peeks-agent-hub-eks-read-access-iam-policy
+            policy: |
+              {"Version":"2012-10-17","Statement":[{"Sid":"EksReadDiscover","Effect":"Allow","Action":["eks:ListClusters","eks:DescribeCluster","eks:AccessKubernetesApi"],"Resource":"*"}]}
+          providerConfigRef:
+            name: default
   - name: eks-read-mcp
     type: k8s-objects
     properties:
