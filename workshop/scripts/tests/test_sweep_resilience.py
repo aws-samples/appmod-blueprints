@@ -70,6 +70,38 @@ def test_permanent_default():
     assert r.classify(exc) == "permanent"
 
 
+# ── item 1 regression: a message substring must NOT reclassify a recognised code ──
+
+def test_access_denied_with_gone_message_stays_access_denied():
+    # #932 mode: AccessDenied whose message happens to contain "not found".
+    exc = FakeClientError("AccessDenied", "User is not authorized; role not found")
+    assert r.is_already_gone(exc) is False
+    assert r.classify(exc) == "access_denied"
+
+
+def test_transient_with_gone_message_stays_transient():
+    # DependencyViolation "... not found in attachment cache" must be retried, not
+    # abandoned as 'gone'.
+    exc = FakeClientError("DependencyViolation", "Network interface not found in attachment cache")
+    assert r.is_already_gone(exc) is False
+    assert r.classify(exc) == "transient"
+
+
+def test_invalid_parameter_value_in_use_not_gone():
+    # Generic InvalidParameterValue for a still-in-use resource: not a success.
+    exc = FakeClientError("InvalidParameterValue", "The subnet 'subnet-x' is currently in use")
+    assert r.is_already_gone(exc) is False
+    assert r.classify(exc) == "permanent"
+
+
+def test_invalid_parameter_value_does_not_exist_still_gone_by_message():
+    # The honest already-gone case still resolves to gone via the substring fallback
+    # (InvalidParameterValue is unrecognised by code now, so the message decides).
+    exc = FakeClientError("InvalidParameterValue", "The subnet ID 'subnet-x' does not exist")
+    assert r.is_already_gone(exc) is True
+    assert r.classify(exc) == "gone"
+
+
 def test_error_code_degrades_on_non_client_error():
     assert r.error_code(ValueError("boom")) == "ValueError"
 
@@ -153,6 +185,19 @@ def test_poll_until_false_on_timeout(monkeypatch, force_fallback):
     if force_fallback:
         monkeypatch.setattr(r, "ensure_tenacity", lambda: None)
     assert r.poll_until(lambda: False, attempts=3, delay=0.0, sleep=noop_sleep) is False
+
+
+@pytest.mark.parametrize("force_fallback", [False, True])
+def test_poll_until_raising_predicate_returns_false(monkeypatch, force_fallback):
+    # item 2: a predicate that RAISES must yield a timeout (False), identically in
+    # the tenacity branch AND the stdlib fallback that runs in the teardown
+    # CodeBuild — never propagate and silently skip the whole section.
+    if force_fallback:
+        monkeypatch.setattr(r, "ensure_tenacity", lambda: None)
+
+    def boom():
+        raise RuntimeError("predicate blew up")
+    assert r.poll_until(boom, attempts=3, delay=0.0, sleep=noop_sleep) is False
 
 
 def test_ensure_tenacity_is_cached_and_safe():

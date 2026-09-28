@@ -71,7 +71,12 @@ def reap_single_vpc(ctx, vpc_id):
     def _try_reap():
         clear_vpc_deps(ctx, vpc_id)
         try:
-            retry_aws(ec2.delete_vpc, VpcId=vpc_id, attempts=1)
+            # attempts>1: absorb the transient DependencyViolation that lingers for a
+            # few seconds after clear_vpc_deps() detaches ENIs/NAT, WITHIN this poll
+            # iteration, instead of waiting a full ~20s poll_until cycle to re-drive.
+            # is_transient (default retryable) covers DependencyViolation; an
+            # already-gone VPC is swallowed as success by retry_aws.
+            retry_aws(ec2.delete_vpc, VpcId=vpc_id, attempts=3, wait=5)
             log(f"  Deleted orphan VPC {vpc_id}")
             _rv["deleted"] = True
             return True

@@ -58,12 +58,17 @@ GONE_CODES = frozenset({
     "ResourceNotFound",
     "NoSuchEntity",
     "NotFoundException",
-    "InvalidParameterValue",        # e.g. "does not exist" on some EC2 deletes
     "NoSuchBucket",
     "NoSuchDistribution",
     "DBInstanceNotFound",
     "WorkspaceNotFound",
 })
+# NOTE: the generic "InvalidParameterValue" is deliberately NOT in GONE_CODES.
+# EC2 uses it both for genuine already-gone deletes ("... does not exist") AND for
+# real, retryable conditions ("Subnet is currently in use"). Classifying it as
+# 'gone' by code would (a) count a failed delete as a success and (b) skip the
+# retry a "currently in use" resource needs. The message-substring fallback below
+# still catches the honest "does not exist" case without blanket-trusting the code.
 
 GONE_SUBSTRINGS = (
     "not found",
@@ -81,6 +86,12 @@ ACCESS_DENIED_CODES = frozenset({
     "AuthFailure",
     "Forbidden",
 })
+
+# Codes that are DEFINITIVELY not "already gone". A message substring must never
+# reclassify one of these as gone: an `AccessDenied` "role not found" is a real
+# permission failure (the #932 mode), and a transient `DependencyViolation`
+# "... not found in attachment cache" must still be retried, not abandoned.
+_NON_GONE_CODES = TRANSIENT_CODES | ACCESS_DENIED_CODES
 
 
 def error_code(exc: BaseException) -> str:
@@ -114,9 +125,18 @@ def is_transient(exc: BaseException) -> bool:
 
 
 def is_already_gone(exc: BaseException) -> bool:
-    """True if the target resource is already absent (idempotent-delete success)."""
-    if error_code(exc) in GONE_CODES:
+    """True if the target resource is already absent (idempotent-delete success).
+
+    A known error code decides on its own: GONE_CODES → gone; a recognised
+    transient/permission code → NOT gone (never overridden by its message). The
+    message-substring heuristic is applied ONLY when the code is otherwise
+    unrecognised, so a broad message like "not found" cannot mask an
+    ``AccessDenied`` or downgrade a retryable ``DependencyViolation``."""
+    code = error_code(exc)
+    if code in GONE_CODES:
         return True
+    if code in _NON_GONE_CODES:
+        return False
     msg = _message(exc).lower()
     return any(s in msg for s in GONE_SUBSTRINGS)
 
@@ -129,11 +149,15 @@ def is_access_denied(exc: BaseException) -> bool:
 
 def classify(exc: BaseException) -> str:
     """Single classification entry point → one of:
-    'gone' | 'access_denied' | 'transient' | 'permanent'."""
-    if is_already_gone(exc):
-        return "gone"
+    'gone' | 'access_denied' | 'transient' | 'permanent'.
+
+    access_denied is checked BEFORE gone: a permission error must be surfaced and
+    counted (the #932 completeness gate), never short-circuited to 'gone' and thus
+    reported as a successful delete."""
     if is_access_denied(exc):
         return "access_denied"
+    if is_already_gone(exc):
+        return "gone"
     if is_transient(exc):
         return "transient"
     return "permanent"
@@ -282,9 +306,17 @@ def poll_until(predicate: Callable[[], bool], *,
     if ten is None:
         def _p():
             return bool(predicate())
-        got = _StdlibRetrying(attempts=attempts, wait=delay, backoff=backoff,
-                              retry_on_result=lambda r: not r, sleep=sleep)(_p)
-        return bool(got)
+        # Mirror the tenacity branch below: a predicate that RAISES must yield a
+        # timeout (False), not propagate. The fallback runs in the teardown
+        # CodeBuild (no pip → no tenacity); without this a raising predicate would
+        # escape poll_until, hit the section's outer `except`, and silently skip
+        # that section in prod while completing on a dev machine that has tenacity.
+        try:
+            got = _StdlibRetrying(attempts=attempts, wait=delay, backoff=backoff,
+                                  retry_on_result=lambda r: not r, sleep=sleep)(_p)
+            return bool(got)
+        except Exception:
+            return False
 
     retrying = ten.Retrying(
         stop=ten.stop_after_attempt(attempts),

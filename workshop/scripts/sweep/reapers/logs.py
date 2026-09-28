@@ -1,6 +1,8 @@
 """CloudWatch Logs reapers: control-plane log groups (§9) and capability log
 delivery objects (§12)."""
 
+from ..resilience import error_code
+
 
 def reap_log_groups(ctx):
     """§9. EKS control-plane / container-insights log groups survive cluster deletion."""
@@ -27,7 +29,10 @@ def reap_log_groups(ctx):
                         logs.delete_log_group(logGroupName=name)
                         _lg_deleted += 1
                     except Exception as e:
-                        _lg_errs.append(f"{name}: {e.__class__.__name__}")
+                        # error_code() surfaces the real AWS code (AccessDenied,
+                        # DependencyViolation, …); e.__class__.__name__ would be
+                        # "ClientError" for every AWS error and hide the #932 mode.
+                        _lg_errs.append(f"{name}: {error_code(e)}")
         # Report matched/deleted/failed explicitly — a prior version logged only
         # "No log groups to delete" when _lg_deleted == 0, hiding an AccessDenied (#932).
         if not _seen:
