@@ -50,11 +50,35 @@ spec:
             # Pod resources come from providerResources in values.yaml, which documents how
             # the defaults were measured. The limit was previously hardcoded at 2Gi with no
             # override, so a consumer could lower the request but never the cap.
+            #
+            # GOMEMLIMIT makes the memory limit enforceable BY THE GO RUNTIME instead of only
+            # by the kernel. These providers are Go programs, and without GOMEMLIMIT the Go
+            # GC has no knowledge of the cgroup limit at all: it paces the heap purely off
+            # GOGC (default 100, so the heap grows to roughly twice the live heap before a
+            # collection) and a pod that crosses the limit is OOMKilled rather than collected.
+            # With it set just under the limit, approaching the ceiling triggers GC instead,
+            # so the failure mode degrades from "killed" to "spends more CPU on GC".
+            #
+            # Resolved with hasKey, not `| default`, so the three cases stay distinct:
+            #   key absent       -> the default below (a nil providerResources must NOT get a
+            #                       lowered limit with the runtime unaware of it)
+            #   key set to ""    -> deliberately disabled (pre-change behaviour)
+            #   key set to a size-> that value
+            {{- $pr := $.Values.providerResources | default dict }}
+            {{- $goMemLimit := "460MiB" }}
+            {{- if hasKey $pr "goMemLimit" }}
+            {{-   $goMemLimit = $pr.goMemLimit }}
+            {{- end }}
+            {{- if $goMemLimit }}
+            env:
+              - name: GOMEMLIMIT
+                value: {{ $goMemLimit | quote }}
+            {{- end }}
             resources:
               requests:
                 cpu: {{ ($.Values.providerResources).cpuRequest | default "250m" }}
-                memory: {{ ($.Values.providerResources).memoryRequest | default "512Mi" }}
+                memory: {{ ($.Values.providerResources).memoryRequest | default "384Mi" }}
               limits:
-                memory: {{ ($.Values.providerResources).memoryLimit | default "1Gi" }}
+                memory: {{ ($.Values.providerResources).memoryLimit | default "512Mi" }}
 {{- end }}
 {{- end }}
