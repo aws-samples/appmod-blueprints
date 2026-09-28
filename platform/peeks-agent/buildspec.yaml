@@ -6,12 +6,12 @@
 # and only referenced by the platform (bifrost/agentgateway/OAM CDs), not built here.
 #
 # Env vars to set in the CodeBuild project:
-#   AWS_ACCOUNT_ID, AWS_REGION, ECR_PREFIX (e.g. peeks-e2e), IMAGE_TAG (e.g. git sha)
+#   AWS_ACCOUNT_ID, AWS_REGION, ECR_PREFIX (e.g. your ECR namespace), IMAGE_TAG (e.g. git sha)
 # Requires: privileged mode (Docker), ECR push permissions on <prefix>/* repos.
 version: 0.2
 env:
   variables:
-    ECR_PREFIX: "peeks-e2e"
+    ECR_PREFIX: "peeks-agent"
 phases:
   pre_build:
     commands:

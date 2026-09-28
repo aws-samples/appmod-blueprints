@@ -9,5 +9,6 @@ the file content is a plain string, and only the REPLACE_ tokens are substituted
       | replace "REPLACE_IMAGE_TAG"      (.Values.imageTag      | toString)
       | replace "REPLACE_ACCOUNT_ID"     (.Values.accountId     | toString)
       | replace "REPLACE_CLUSTER_PREFIX" .Values.clusterPrefix
+      | replace "REPLACE_REGION"         .Values.region
       | replace "REPLACE_CLOUDFRONT_DOMAIN" .Values.cloudfrontDomain
       | replace "REPLACE_GITLAB_DOMAIN"  .Values.gitlabDomain }}

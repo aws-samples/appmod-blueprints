@@ -50,7 +50,7 @@ with Diagram(
 
     # ── EKS fleet (workloads run here; ArgoCD heals here) ──
     with Cluster("Amazon EKS fleet"):
-        hub = EKS("peeks-e2e-hub")
+        hub = EKS("<prefix>-hub")
         sdev = EKS("spoke-dev")
         sprod = EKS("spoke-prod")
         fleet = [hub, sdev, sprod]

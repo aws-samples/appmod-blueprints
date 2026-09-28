@@ -63,7 +63,7 @@ set it back to `false` (or drop the key) — the label disappears and the Applic
 The appset auto-adds `overlays/clusters/<cluster>/peeks-agent/values.yaml` (last wins). Example:
 
 ```yaml
-imageRegistry: "<your-account>.dkr.ecr.<region>.amazonaws.com/peeks-e2e"
+imageRegistry: "<your-account>.dkr.ecr.<region>.amazonaws.com/<your-ecr-namespace>"
 imageTag: "prod-2026-09"
 gitlabDomain: "gitlab.mycorp.internal"   # gitlab-mcp GITLAB_API_URL host
 ```
@@ -93,7 +93,7 @@ cluster-secret stamp**. Requirements (both shipped in the chart):
   `amp.aws.upbound.io/workspaces` — **without it `externalRef` is forbidden (RBAC)** and
   the instance stays `ERROR: cannot get resource workspaces`.
 
-Validated live on peeks-e2e: `externalRef` + CEL resolve the real `ws-…` id, and the
+Validated live: `externalRef` + CEL resolve the real `ws-…` id, and the
 RGD compiles to `Active`/`GraphAccepted`.
 
 ## Values

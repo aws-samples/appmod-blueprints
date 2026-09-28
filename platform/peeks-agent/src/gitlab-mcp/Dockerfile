@@ -3,7 +3,7 @@
 # like eks-mcp. Gives the PEEKS agent its GitLab write path (branches / MRs).
 #
 # NOTE ON PROVENANCE: the authoritative published image is public.ecr.aws/seb-demo/gitlab-mcp
-# (registry-to-registry copy of the validated-live peeks-e2e image). This Dockerfile is the
+# (registry-to-registry copy of the validated-live upstream image). This Dockerfile is the
 # reproducible SOURCE so the image can be rebuilt in a permissioned account from scratch;
 # re-verify the tools/list handshake against the live image on the next rebuild.
 #

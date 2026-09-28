@@ -6,7 +6,7 @@
 #   docker build \
 #     -f platform/peeks-agent/skills-overlay/Dockerfile \
 #     --build-arg SKILLS_MCP_IMAGE=<registry>/skills-mcp:<tag> \
-#     -t <registry>/peeks-e2e/skills-mcp:<tag> .
+#     -t <registry>/<your-ecr-namespace>/skills-mcp:<tag> .
 ARG SKILLS_MCP_IMAGE=public.ecr.aws/oap/skills-mcp:latest
 FROM ${SKILLS_MCP_IMAGE}
 # Replace the base image's placeholder skills with the PEEKS skills.

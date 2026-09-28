@@ -5,11 +5,15 @@
 imageRegistry: "public.ecr.aws/seb-demo"
 imageTag: "v1"
 
-# Per-deployment values — injected from cluster-secret annotations by the registry entry.
-accountId: ""                 # aws_account_id
-clusterPrefix: "peeks"        # resource_prefix
-cloudfrontDomain: ""          # ingress_domain_name (chat-ui ingress host)
-gitlabDomain: ""              # gitlab_domain_name (gitlab-mcp GITLAB_API_URL host)
+# Per-deployment values — NOT hardcoded: injected from cluster-secret annotations by the
+# registry entry (the fleet-secret/ESO stamps resource_prefix, aws_account_id, aws_region,
+# ingress_domain_name, gitlab_domain_name). The literals below are only fallback defaults for
+# a standalone `helm template`; a real deploy overrides every one from the cluster annotations.
+accountId: ""                 # aws_account_id       (per-account, injected)
+clusterPrefix: "peeks"        # resource_prefix      (platform default "peeks"; injected per env, e.g. a different prefix)
+region: "us-west-2"           # aws_region           (platform default; injected/overridable per env)
+cloudfrontDomain: ""          # ingress_domain_name  (chat-ui ingress host, injected)
+gitlabDomain: ""              # gitlab_domain_name   (gitlab-mcp GITLAB_API_URL host, injected)
 
 # NOTE: no ampWorkspaceId. The AMP incident path (AlertManagerDefinition + SNS/SQS) is
 # provisioned by the AmpIncident kro RGD (ampincident.kro.run — shipped via kro-manifests /

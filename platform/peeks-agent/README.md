@@ -23,7 +23,7 @@ image — via `skills-overlay/Dockerfile` (`FROM oap/skills-mcp` + `COPY .kiro/s
 /payload/skills`) — **not** into the agent image. The agent is wired to it purely
 by config (`mcpServers: [skills-mcp, eks-read-mcp]` in the Application).
 
-## Images (built to the env's ECR, e.g. `…/peeks-e2e/*`)
+## Images (built to the env's ECR, e.g. `…/<your-ecr-namespace>/*`)
 
 | Image | Source |
 |---|---|

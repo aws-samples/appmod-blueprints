@@ -785,6 +785,7 @@ peeks-agent:
     imageTag: '{{default "v1" (index .metadata.annotations "peeks_agent_image_tag")}}'
     accountId: '{{.metadata.annotations.aws_account_id}}'
     clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
+    region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'
     cloudfrontDomain: '{{default "" .metadata.annotations.ingress_domain_name}}'
     # gitlab-mcp GITLAB_API_URL host (PAT itself comes from Secrets Manager via ESO).
     gitlabDomain: '{{default "" (index .metadata.annotations "gitlab_domain_name")}}'

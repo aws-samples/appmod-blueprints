@@ -1,31 +1,31 @@
-# Demo Runbook — Autonomous Incident Remediation (peeks-e2e)
+# Demo Runbook — Autonomous Incident Remediation (example env)
 
 Narrative: **the platform observes → alerts → a read-only agent does RCA → proposes the fix
 as a GitLab MR → a human merges → GitOps heals.** The agent never mutates the cluster.
 
-> Demo/live values below are for the `peeks-e2e` environment (account `290085271972`,
+> Demo/live values below are for an example environment (account `<account-id>`,
 > `us-west-2`). Substitute for another env.
 
 ## Access (prep before filming)
-- **Agent chat**: https://d2pefdj59hxapj.cloudfront.net/peeks-agent-chat
-- **GitLab**: https://d25d2ree2k4r35.cloudfront.net → "Sign in with Keycloak"
-- **Login**: `user1` / `9ATAX3NLU1jefg5bOUVTcgot0RKaL2fP` (shared demo cred, not prod)
-- Terminal with peeks-e2e creds + `kubectl --context peeks-e2e-hub` / `peeks-e2e-spoke-dev`
+- **Agent chat**: https://<cloudfront-domain>/peeks-agent-chat
+- **GitLab**: https://<gitlab-domain> → "Sign in with Keycloak"
+- **Login**: `user1` / `<password: retrieve from Keycloak / Secrets Manager - not committed>` (shared demo cred, not prod)
+- Terminal with your env creds + `kubectl --context <prefix>-hub` / `<prefix>-spoke-dev`
 
 Key resources: agent `peeks-agent2` (ns `peeks-agent`, hub) · consumer `incident-bridge`
-(`:idempotent-v1`) · SQS `peeks-agent-incidents` · AMP `ws-b9903556-cf70-4aec-9023-c2baf00f0b53`
+(`:idempotent-v1`) · SQS `peeks-agent-incidents` · AMP `<amp-workspace-id>`
 · victim `memory-hog` (ns `demo-oomkill`, spoke-dev, GitOps app `oomkill-demo` ←
 `user1/fleet-config` path `demo-oomkill/deployment.yaml`).
 
 ## 0. Pre-flight (before recording — everything green)
 ```bash
-curl -sik https://d2pefdj59hxapj.cloudfront.net/peeks-agent-chat | head -1        # 200
-kubectl --context peeks-e2e-hub -n peeks-agent get deploy incident-bridge          # 1/1
+curl -sik https://<cloudfront-domain>/peeks-agent-chat | head -1        # 200
+kubectl --context <prefix>-hub -n peeks-agent get deploy incident-bridge          # 1/1
 aws sqs get-queue-attributes --region us-west-2 \
-  --queue-url https://sqs.us-west-2.amazonaws.com/290085271972/peeks-agent-incidents \
+  --queue-url https://sqs.us-west-2.amazonaws.com/<account-id>/peeks-agent-incidents \
   --attribute-names ApproximateNumberOfMessages                                    # 0
 aws amp describe-rule-groups-namespace --region us-west-2 \
-  --workspace-id ws-b9903556-cf70-4aec-9023-c2baf00f0b53 --name peeks-e2e-alerting-rules \
+  --workspace-id <amp-workspace-id> --name <prefix>-alerting-rules \
   --query 'ruleGroupsNamespace.data' --output text | base64 -d | grep -c 'alert:' # 6
 ```
 
@@ -42,12 +42,12 @@ The victim is ArgoCD-managed, so the buggy change must go through Git to stick.
    Commit to `main`. (You introduce the bug via Git; the agent only reacts.)
 3. ArgoCD reconciles (~1–2 min) → `memory-hog` crash-loops OOMKilled:
 ```bash
-kubectl --context peeks-e2e-spoke-dev -n demo-oomkill get pods -w   # Restarts ↑, lastState=OOMKilled
+kubectl --context <prefix>-spoke-dev -n demo-oomkill get pods -w   # Restarts ↑, lastState=OOMKilled
 ```
 
 ## Part C — Automatic detection (the platform observes)
 ```bash
-kubectl --context peeks-e2e-hub -n peeks-agent logs -f deploy/incident-bridge
+kubectl --context <prefix>-hub -n peeks-agent logs -f deploy/incident-bridge
 # expected (~1–3 min after the OOMKill):
 #   [incident-bridge] forwarded incident PodOOMKilled|spoke-dev|demo-oomkill|memory-hog-...|...
 ```
@@ -72,7 +72,7 @@ fleet-config, and **opens a GitLab MR** raising the memory.
 1. **Merge** the MR in GitLab.
 2. ArgoCD reconciles `oomkill-demo`:
 ```bash
-kubectl --context peeks-e2e-spoke-dev -n demo-oomkill get pods -w   # memory-hog Running, 0 restarts
+kubectl --context <prefix>-spoke-dev -n demo-oomkill get pods -w   # memory-hog Running, 0 restarts
 ```
 The loop closes — the fix ships through Git, not a live agent action.
 
@@ -85,8 +85,8 @@ CrashLoopBackOff / Unschedulable / PVC Pending.)
 ```bash
 # restore healthy: re-commit demo-oomkill/deployment.yaml to 512Mi/256Mi (or merge the agent MR)
 aws sqs purge-queue --region us-west-2 \
-  --queue-url https://sqs.us-west-2.amazonaws.com/290085271972/peeks-agent-incidents
-kubectl --context peeks-e2e-hub -n peeks-agent rollout restart deploy/incident-bridge  # clears the in-memory subject dedup (1h)
+  --queue-url https://sqs.us-west-2.amazonaws.com/<account-id>/peeks-agent-incidents
+kubectl --context <prefix>-hub -n peeks-agent rollout restart deploy/incident-bridge  # clears the in-memory subject dedup (1h)
 ```
 
 ## Gotchas for recording

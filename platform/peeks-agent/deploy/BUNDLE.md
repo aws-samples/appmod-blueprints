@@ -48,8 +48,8 @@ built live during the demo, so nothing depends on hand-authored objects anymore.
    Present on the hub by default; required so the agent's MCP calls through the
    gateway are not 401'd.
 4. **Container images in ECR** (pin real tags, not `:latest`, for a stable demo):
-   - `…/peeks-e2e/chat-ui`
-   - `…/peeks-e2e/eks-mcp` (awslabs eks-mcp-server, started **read-only**:
+   - `…/<your-ecr-namespace>/chat-ui`
+   - `…/<your-ecr-namespace>/eks-mcp` (awslabs eks-mcp-server, started **read-only**:
      `--allow-sensitive-data-access --auth-mode iam`, **no** `--allow-write`)
    - the skills-mcp image (must be the **stateless** FastMCP build)
 5. **ACK EKS controller must manage the target clusters** — the `agent-access`
