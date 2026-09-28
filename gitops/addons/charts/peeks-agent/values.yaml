@@ -18,7 +18,7 @@ images:
   agent:          { registry: "", tag: "" }   # strands-agent
   eksMcp:         { registry: "", tag: "" }   # eks-read-mcp
   gitlabMcp:      { registry: "", tag: "" }
-  chatUi:         { registry: "", tag: "" }
+  chatUi:         { registry: "", tag: "v1.2" }   # markdown-rendering UI + next-step suggestions (built from integration/peeks-e2e-unified)
   incidentBridge: { registry: "", tag: "" }
 
 # Per-deployment values — NOT hardcoded: injected from cluster-secret annotations by the
