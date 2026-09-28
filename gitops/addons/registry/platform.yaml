@@ -799,9 +799,14 @@ peeks-agent:
       gitlabMcp:
         registry: '{{default "" (index .metadata.annotations "peeks_agent_img_gitlabmcp_registry")}}'
         tag: '{{default "" (index .metadata.annotations "peeks_agent_img_gitlabmcp_tag")}}'
+      # chat-ui is PINNED to v1.2 by default on this integration branch: the public
+      # seb-demo :v1 image predates the chat UI overhaul (server-side markdown rendering
+      # + next-step suggestions), so a fresh deploy on :v1 would serve the old raw-text UI.
+      # v1.2 carries the new UI; override per-cluster with the peeks_agent_img_chatui_tag
+      # annotation if you build your own chat-ui image.
       chatUi:
         registry: '{{default "" (index .metadata.annotations "peeks_agent_img_chatui_registry")}}'
-        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_chatui_tag")}}'
+        tag: '{{default "v1.2" (index .metadata.annotations "peeks_agent_img_chatui_tag")}}'
       # incident-bridge is PINNED to v1.1 by default on this integration branch: the
       # public seb-demo :v1 image predates the contextId-sanitize fix (poller.py bakes
       # the fix into the image), so a fresh deploy on :v1 would still hit the AgentCore
