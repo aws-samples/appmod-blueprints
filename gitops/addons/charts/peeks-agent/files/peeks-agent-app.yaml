@@ -8,7 +8,7 @@ spec:
   - name: skills-mcp
     properties:
       description: PEEKS + APEX skills and steering as MCP tools
-      image: REPLACE_IMAGE_REGISTRY/skills-mcp:REPLACE_IMAGE_TAG
+      image: REPLACE_REG_SKILLS_MCP/skills-mcp:REPLACE_TAG_SKILLS_MCP
       port: 8000
       registerWithGateway: true
       replicas: 1
@@ -57,7 +57,7 @@ spec:
       # ▶CHART: pin the published strands-agent image (carries the configurable
       # max_tokens fix — OAP #34/#35) so the MAX_TOKENS env below takes effect on a
       # fresh GitOps deploy. Overridable via imageRegistry/imageTag in the overlay.
-      image: REPLACE_IMAGE_REGISTRY/strands-agent:REPLACE_IMAGE_TAG
+      image: REPLACE_REG_AGENT/strands-agent:REPLACE_TAG_AGENT
       description: PEEKS platform-engineering agent (hub brain, 2-mode)
       mcpServers:
       - name: skills-mcp
@@ -251,7 +251,7 @@ spec:
                   value: REPLACE_REGION
                 - name: AWS_DEFAULT_REGION
                   value: REPLACE_REGION
-                image: REPLACE_IMAGE_REGISTRY/eks-mcp:REPLACE_IMAGE_TAG
+                image: REPLACE_REG_EKS_MCP/eks-mcp:REPLACE_TAG_EKS_MCP
                 imagePullPolicy: Always
                 name: eks-read-mcp
                 ports:
@@ -400,7 +400,7 @@ spec:
                 app.kubernetes.io/name: gitlab-mcp
             spec:
               containers:
-              - image: REPLACE_IMAGE_REGISTRY/gitlab-mcp:REPLACE_IMAGE_TAG
+              - image: REPLACE_REG_GITLAB_MCP/gitlab-mcp:REPLACE_TAG_GITLAB_MCP
                 imagePullPolicy: Always
                 name: gitlab-mcp
                 env:
@@ -537,7 +537,7 @@ spec:
                 - name: APP_INTRO
                   value: Ask about the EKS fleet. The agent reasons with PEEKS/APEX knowledge and read-only
                     inspection, then proposes GitOps fixes.
-                image: REPLACE_IMAGE_REGISTRY/chat-ui:REPLACE_IMAGE_TAG
+                image: REPLACE_REG_CHAT_UI/chat-ui:REPLACE_TAG_CHAT_UI
                 imagePullPolicy: Always
                 name: chat-ui
                 ports:
@@ -669,8 +669,11 @@ spec:
   # publicly. All AWS resources are ACK CRs (sns/sqs/iam/eks/prometheusservice
   # controllers are present on the hub) — no Crossplane provider changes.
   # Placeholders substituted at deploy time (see deploy/BUNDLE.md):
-  #   REPLACE_ACCOUNT_ID, REPLACE_CLUSTER_PREFIX, REPLACE_IMAGE_REGISTRY,
-  #   REPLACE_IMAGE_TAG, REPLACE_GITLAB_DOMAIN. (The AMP workspace id is NOT a
+  #   REPLACE_ACCOUNT_ID, REPLACE_CLUSTER_PREFIX, REPLACE_REGION,
+  #   REPLACE_GITLAB_DOMAIN, and the per-component image tokens
+  #   REPLACE_REG_<COMPONENT>/REPLACE_TAG_<COMPONENT> (SKILLS_MCP, AGENT, EKS_MCP,
+  #   GITLAB_MCP, CHAT_UI, INCIDENT_BRIDGE) — each defaults to imageRegistry/imageTag
+  #   unless overridden via .Values.images.<component>. (The AMP workspace id is NOT a
   #   placeholder anymore — the AmpIncident kro RGD reads it from the Workspace CR.)
   # ── CARM wiring (managed ACK IAMRoleSelector) — applied FIRST ──
   # The managed ACK capability routes a resource to a workload role via a
@@ -853,7 +856,7 @@ spec:
               serviceAccountName: incident-bridge
               containers:
               - name: incident-bridge
-                image: REPLACE_IMAGE_REGISTRY/incident-bridge:REPLACE_IMAGE_TAG
+                image: REPLACE_REG_INCIDENT_BRIDGE/incident-bridge:REPLACE_TAG_INCIDENT_BRIDGE
                 imagePullPolicy: Always
                 env:
                 - name: AWS_REGION

@@ -5,6 +5,22 @@
 imageRegistry: "public.ecr.aws/seb-demo"
 imageTag: "v1"
 
+# Per-component image overrides (optional). Empty string => inherit imageRegistry/imageTag
+# above. This lets you pin a SINGLE component to a different registry and/or tag without
+# moving all images — e.g. publish only the corrected incident-bridge under a new tag on
+# the public demo registry and pin just that component:
+#   images:
+#     incidentBridge:
+#       tag: "v1.1"          # registry inherits imageRegistry (public.ecr.aws/seb-demo)
+# Component keys: skillsMcp, agent (strands-agent), eksMcp, gitlabMcp, chatUi, incidentBridge.
+images:
+  skillsMcp:      { registry: "", tag: "" }
+  agent:          { registry: "", tag: "" }   # strands-agent
+  eksMcp:         { registry: "", tag: "" }   # eks-read-mcp
+  gitlabMcp:      { registry: "", tag: "" }
+  chatUi:         { registry: "", tag: "" }
+  incidentBridge: { registry: "", tag: "" }
+
 # Per-deployment values — NOT hardcoded: injected from cluster-secret annotations by the
 # registry entry (the fleet-secret/ESO stamps resource_prefix, aws_account_id, aws_region,
 # ingress_domain_name, gitlab_domain_name). The literals below are only fallback defaults for
