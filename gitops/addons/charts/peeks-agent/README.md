@@ -30,6 +30,24 @@ Published repos: `chat-ui`, `eks-mcp`, `skills-mcp`, `incident-bridge`, `strands
 so `MAX_TOKENS` takes effect on a fresh deploy. Override `imageRegistry`/`imageTag` in the
 fleet-config overlay to use your own registry.
 
+### Per-component overrides + incident-bridge pin (deploy consigne)
+
+`imageRegistry`/`imageTag` are the **global** default for all 6 components. You can also pin a
+**single** component to a different registry/tag without moving the others, via
+`.Values.images.<component>.{registry,tag}` (empty ⇒ inherit the global). Components:
+`skillsMcp, agent, eksMcp, gitlabMcp, chatUi, incidentBridge`. Through the appset each is driven
+by a cluster-secret annotation `peeks_agent_img_<component>_{registry,tag}`.
+
+> **⚠ incident-bridge MUST run v1.1, not v1.** The contextId-sanitize fix (`poller.py`, avoids
+> the AgentCore `sessionId` `ValidationException` that makes **every** autonomous incident fail)
+> is **baked into the image** — the branch source alone is not enough at runtime. The public
+> `seb-demo/incident-bridge:v1` tag predates the fix; **`v1.1` carries it**. On this integration
+> branch the appset therefore **defaults `incidentBridge.tag` to `v1.1`** (the other 5 stay on the
+> global `:v1`), so a fresh deploy is correct with no manual step. If you publish your own
+> incident-bridge image, override it with the `peeks_agent_img_incidentbridge_tag` annotation (or
+> `images.incidentBridge` in the overlay). Alternatively pin the **whole** set with global
+> `imageTag: v1.1` (all 6 are published at `v1.1` on `seb-demo`).
+
 > The imperative `platform/peeks-agent/deploy/peeks-agent-app.yaml` (single `kubectl apply`,
 > private-ECR `buildspec.yaml`) is the legacy self-contained path and does **not** pin the
 > strands-agent image. This chart is the GitOps source of truth; keep the two in sync.
@@ -102,6 +120,7 @@ RGD compiles to `Active`/`GraphAccepted`.
 |---|---|---|
 | `imageRegistry` | `peeks_agent_image_registry` | default `public.ecr.aws/seb-demo` |
 | `imageTag` | `peeks_agent_image_tag` | default `v1` |
+| `images.<component>.{registry,tag}` | `peeks_agent_img_<component>_{registry,tag}` | per-component override; empty ⇒ inherit global. `incidentBridge.tag` defaults to `v1.1` (see Images) |
 | `accountId` | `aws_account_id` | required |
 | `clusterPrefix` | `resource_prefix` | required |
 | `cloudfrontDomain` | `ingress_domain_name` | chat-ui ingress host |
