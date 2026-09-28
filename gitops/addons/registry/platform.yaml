@@ -783,6 +783,28 @@ peeks-agent:
   valuesObject:
     imageRegistry: '{{default "public.ecr.aws/seb-demo" (index .metadata.annotations "peeks_agent_image_registry")}}'
     imageTag: '{{default "v1" (index .metadata.annotations "peeks_agent_image_tag")}}'
+    # Per-component image overrides (optional): pin a SINGLE component to a different
+    # registry/tag without moving the others. Empty annotation => inherit imageRegistry/imageTag.
+    # Annotation naming: peeks_agent_img_<component>_{registry,tag} (component = chart key below).
+    images:
+      skillsMcp:
+        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_skillsmcp_registry")}}'
+        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_skillsmcp_tag")}}'
+      agent:
+        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_agent_registry")}}'
+        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_agent_tag")}}'
+      eksMcp:
+        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_eksmcp_registry")}}'
+        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_eksmcp_tag")}}'
+      gitlabMcp:
+        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_gitlabmcp_registry")}}'
+        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_gitlabmcp_tag")}}'
+      chatUi:
+        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_chatui_registry")}}'
+        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_chatui_tag")}}'
+      incidentBridge:
+        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_incidentbridge_registry")}}'
+        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_incidentbridge_tag")}}'
     accountId: '{{.metadata.annotations.aws_account_id}}'
     clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
     region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'
