@@ -175,7 +175,10 @@ async def _run_agent_job(job_id: str, text: str, context_id: str) -> None:
         _JOBS[job_id] = {"status": "done", "response": _extract_text(data),
                          "contextId": context_id, "ts": time.time()}
     except Exception as exc:  # noqa: BLE001
-        _JOBS[job_id] = {"status": "error", "error": str(exc),
+        # Log the detail server-side; return a generic message to the client
+        # (CodeQL py/stack-trace-exposure — job status is polled by the browser).
+        logging.warning("agent job %s failed: %s", job_id, exc)
+        _JOBS[job_id] = {"status": "error", "error": "agent request failed",
                          "contextId": context_id, "ts": time.time()}
 
 
