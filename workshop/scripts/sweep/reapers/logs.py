@@ -1,7 +1,7 @@
 """CloudWatch Logs reapers: control-plane log groups (§9) and capability log
 delivery objects (§12)."""
 
-from ..resilience import error_code
+from ..resilience import run_delete
 
 
 def reap_log_groups(ctx):
@@ -17,7 +17,9 @@ def reap_log_groups(ctx):
             + [f"/aws/containerinsights/{c}" for c in clusters_for_logs]
             + [f"/aws/lambda/{prefix}-"]
         ))
-        _seen, _lg_deleted, _lg_errs = set(), 0, []
+        _seen = set()
+        _deleted = _gone = _access_denied = _failed = 0
+        _errs = []
         for pfx in lg_prefixes:
             for page in logs.get_paginator("describe_log_groups").paginate(logGroupNamePrefix=pfx):
                 for lg in page["logGroups"]:
@@ -25,21 +27,31 @@ def reap_log_groups(ctx):
                     if name in _seen:
                         continue
                     _seen.add(name)
-                    try:
-                        logs.delete_log_group(logGroupName=name)
-                        _lg_deleted += 1
-                    except Exception as e:
-                        # error_code() surfaces the real AWS code (AccessDenied,
-                        # DependencyViolation, …); e.__class__.__name__ would be
-                        # "ClientError" for every AWS error and hide the #932 mode.
-                        _lg_errs.append(f"{name}: {error_code(e)}")
+                    # run_delete: transient-retry + honest classification. The real
+                    # AWS error code (AccessDenied vs DependencyViolation) is surfaced,
+                    # instead of the old e.__class__.__name__ which was "ClientError"
+                    # for every AWS error and hid the #932 mode.
+                    kind, code, _msg = run_delete(lambda n=name: logs.delete_log_group(logGroupName=n))
+                    if kind == "deleted":
+                        _deleted += 1
+                    elif kind == "gone":
+                        _gone += 1
+                    elif kind == "access_denied":
+                        _access_denied += 1
+                        _errs.append(f"{name}: AccessDenied")
+                    else:
+                        _failed += 1
+                        _errs.append(f"{name}: {code}")
         # Report matched/deleted/failed explicitly — a prior version logged only
-        # "No log groups to delete" when _lg_deleted == 0, hiding an AccessDenied (#932).
+        # "No log groups to delete" when _deleted == 0, hiding an AccessDenied (#932).
         if not _seen:
             log("CloudWatch: no matching log groups found")
         else:
-            log(f"CloudWatch: deleted {_lg_deleted}/{len(_seen)} log group(s)")
-            for m in _lg_errs[:8]:
+            log(
+                f"CloudWatch: deleted {_deleted}/{len(_seen)} log group(s)"
+                f"; {_access_denied} access-denied, {_failed} failed"
+            )
+            for m in _errs[:8]:
                 log(f"  log-group delete failed — {m}")
     except Exception as e:
         log(f"CloudWatch: {e}")
@@ -51,32 +63,44 @@ def reap_deliveries(ctx):
     delivery references it."""
     log, logs, prefix = ctx.log, ctx.logs, ctx.prefix
     try:
-        reaped = 0
+        considered = reaped = access_denied = failed = 0
+
+        def _reap(thunk, what):
+            nonlocal considered, reaped, access_denied, failed
+            considered += 1
+            kind, code, msg = run_delete(thunk)
+            if kind in ("deleted", "gone"):
+                reaped += 1
+            elif kind == "access_denied":
+                access_denied += 1
+                log(f"  {what}: ACCESS DENIED ({code})")
+            else:
+                failed += 1
+                log(f"  {what}: failed ({kind}) {code}: {msg}")
+
         srcs = [
             s["name"]
             for s in logs.describe_delivery_sources().get("deliverySources", [])
             if s["name"].startswith(prefix)
         ]
+        # deliveries first (a source can't be deleted while a delivery references it)
         for d in logs.describe_deliveries().get("deliveries", []):
             if d.get("deliverySourceName", "") in srcs:
-                try:
-                    logs.delete_delivery(id=d["id"])
-                    reaped += 1
-                except Exception:
-                    pass
+                _reap(lambda i=d["id"]: logs.delete_delivery(id=i), f"delivery {d['id']}")
         for name in srcs:
-            try:
-                logs.delete_delivery_source(name=name)
-                reaped += 1
-            except Exception as e:
-                log(f"  delivery-source {name}: {e}")
+            _reap(lambda n=name: logs.delete_delivery_source(name=n), f"delivery-source {name}")
         for dd in logs.describe_delivery_destinations().get("deliveryDestinations", []):
             if dd["name"].startswith(prefix):
-                try:
-                    logs.delete_delivery_destination(name=dd["name"])
-                    reaped += 1
-                except Exception:
-                    pass
-        log(f"Reaped {reaped} CloudWatch Logs delivery object(s)" if reaped else "No CW Logs deliveries to delete")
+                _reap(lambda n=dd["name"]: logs.delete_delivery_destination(name=n),
+                      f"delivery-destination {dd['name']}")
+        # Marker gated on "nothing considered", NOT on "0 reaped", so an all-denied run
+        # is not mis-reported as "nothing to delete" (#932).
+        if considered == 0:
+            log("No CW Logs deliveries to delete")
+        else:
+            log(
+                f"Reaped {reaped} CloudWatch Logs delivery object(s)"
+                f"; {access_denied} access-denied, {failed} failed"
+            )
     except Exception as e:
         log(f"CW Logs deliveries: {e}")

@@ -264,17 +264,21 @@ def using_stdlib_fallback() -> bool:
 def retry_aws(fn: Callable[..., Any], *args,
               attempts: int = 5, wait: float = 5.0, backoff: float = 2.0,
               retryable: Callable[[BaseException], bool] = is_transient,
+              swallow_gone: bool = True,
               sleep: Callable[[float], None] = time.sleep, **kwargs) -> Any:
     """Call a boto3 operation, retrying transient AWS errors with exponential backoff.
 
-    A delete that hits an already-gone resource is treated as success (returns
-    None) — the sweep is idempotent by design.
+    By default (``swallow_gone=True``) a delete that hits an already-gone resource
+    is treated as success (returns None) — the sweep is idempotent by design.
+    Callers that need to DISTINGUISH an actual delete from an already-absent
+    resource (e.g. to report honest per-section counts) pass ``swallow_gone=False``
+    and classify the re-raised exception with ``classify()``.
     """
     def _wrapped():
         try:
             return fn(*args, **kwargs)
         except BaseException as exc:  # noqa: BLE001
-            if is_already_gone(exc):
+            if swallow_gone and is_already_gone(exc):
                 return None
             raise
 
@@ -290,6 +294,25 @@ def retry_aws(fn: Callable[..., Any], *args,
         sleep=sleep,
     )
     return retrying(_wrapped)
+
+
+def run_delete(thunk: Callable[[], Any], *,
+               sleep: Callable[[float], None] = time.sleep) -> tuple:
+    """Run an idempotent AWS delete ``thunk`` (already bound with its args) with
+    transient-retry, and report the outcome WITHOUT raising.
+
+    Returns ``(kind, code, message)`` where ``kind`` is one of
+    ``'deleted' | 'gone' | 'access_denied' | 'transient' | 'permanent'`` and
+    ``code`` is the real AWS error code (empty on success). This is the single
+    place the per-service reapers use to classify a delete honestly — 'gone' is
+    NOT conflated with 'deleted' (an absent resource was not deleted by us), and
+    'access_denied' is surfaced (never swallowed) for the #932 completeness gate.
+    """
+    try:
+        retry_aws(thunk, swallow_gone=False, sleep=sleep)
+        return ("deleted", "", "")
+    except Exception as exc:  # noqa: BLE001 — classified, never propagated
+        return (classify(exc), error_code(exc), str(exc))
 
 
 def poll_until(predicate: Callable[[], bool], *,
