@@ -242,6 +242,7 @@ spec:
               controller: false
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            peeks/depends-on: ${podidentity.metadata.name}
     - id: serviceaccountWithoutDynamoDB
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == false}
