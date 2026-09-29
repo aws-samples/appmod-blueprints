@@ -2327,7 +2327,7 @@ spec:
           annotations:
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Explicit dependency - reference setup workflow to create implicit dependency
-             kro.run/depends-on: ${setupworkflow.metadata.name}
+             peeks/depends-on: ${setupworkflow.metadata.name}
           labels:
              app.kubernetes.io/name: ${schema.spec.application.name}
              app.kubernetes.io/component: cicd-initial-build
