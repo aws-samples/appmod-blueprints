@@ -788,7 +788,8 @@ peeks-agent:
     imageTag: v1
     # Per-component pins carry fixes the public seb-demo :v1 images predate:
     #   agent  v1.2 -> agent.py _sanitize_agentcore_id (AgentCore sessionId fix)
-    #   chatUi v1.2 -> chat UI overhaul (server-side markdown + next-step suggestions)
+    #   chatUi v1.3 -> copy buttons (message + code blocks), scrollable suggestions,
+    #                  elapsed timer, textarea auto-grow, scroll-to-bottom (v1.2 predates these)
     #   incidentBridge v1.1 -> poller.py contextId-sanitize fix
     # The other components inherit the global tag (:v1).
     images:
@@ -796,7 +797,7 @@ peeks-agent:
       agent:          { registry: "", tag: "v1.2" }
       eksMcp:         { registry: "", tag: "" }
       gitlabMcp:      { registry: "", tag: "" }
-      chatUi:         { registry: "", tag: "v1.2" }
+      chatUi:         { registry: "", tag: "v1.3" }
       incidentBridge: { registry: "", tag: "v1.1" }
     accountId: '{{.metadata.annotations.aws_account_id}}'
     clusterPrefix: '{{.metadata.annotations.resource_prefix}}'

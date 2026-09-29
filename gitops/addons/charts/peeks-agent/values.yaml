@@ -18,7 +18,7 @@ images:
   agent:          { registry: "", tag: "" }   # strands-agent
   eksMcp:         { registry: "", tag: "" }   # eks-read-mcp
   gitlabMcp:      { registry: "", tag: "" }
-  chatUi:         { registry: "", tag: "v1.2" }   # new UI: markdown rendering + next-step suggestions (v1 predates it)
+  chatUi:         { registry: "", tag: "v1.3" }   # copy buttons + scrollable suggestions + auto-grow (v1.2 = markdown/suggestions overhaul)
   incidentBridge: { registry: "", tag: "v1.1" }   # contextId-sanitize fix (v1 predates it)
 
 # Per-deployment values — NOT hardcoded: injected from cluster-secret annotations by the
