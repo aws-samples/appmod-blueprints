@@ -83,5 +83,19 @@ enabledAddons:
   aws_resources: true
   # Observability AWS (AMP + AMG via Crossplane)
   observability_aws: true
-  # Agent Platform (deploys from sample-agent-platform-on-eks repo)
-  agent_platform: false
+  # Agent Platform (OAP) — GitOps enablement of the open-agentic-platform layer.
+  # These keys make the hub fleet-secret ExternalSecret emit
+  # enable_agent_platform / enable_bifrost / enable_agent_gateway /
+  # enable_oam_components on the hub cluster secret, which the OAP
+  # `agent-platform-addons` appsets (useSelectors) select on to deploy the agent
+  # ComponentDefinitions (mcp-server / agent / agentcore-memory), bifrost,
+  # agent-gateway and OAM components. This REPLACES the imperative `kubectl label`
+  # in the CDK SETUP_SCRIPT: the hub is a GitOps-managed member of this
+  # control-plane overlay and its fleet-secret ExternalSecret is ESO-owned
+  # (creationPolicy Owner) — a live label is reconciled away within ~1 min, so
+  # enablement MUST be declared here. Required by peeks_agent: true (the agent
+  # references these ComponentDefinitions).
+  agent_platform: true
+  bifrost: true
+  agent_gateway: true
+  oam_components: true
