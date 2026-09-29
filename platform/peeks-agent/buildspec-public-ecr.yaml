@@ -14,15 +14,18 @@
 #
 # Env vars (CodeBuild project or override):
 #   IMAGE_TAG    (default v1)        — pinned release tag
-#   APPMOD_REF   (default feat/peeks-agent-instance)  — appmod-blueprints branch/tag
-#   OAP_REF      (default fix/configurable-max-tokens) — OAP fork branch/tag (max_tokens env fix)
+#   APPMOD_REF   (default integration/peeks-e2e-unified)  — appmod-blueprints branch/tag (aws-samples)
+#   OAP_REF      (default fix/configurable-max-tokens) — OAP branch/tag with the configurable
+#                max_tokens env fix. NOTE: this fix is NOT yet on awslabs/open-agentic-platform
+#                main (main hardcodes max_tokens=1000), so OAP_REPO still points at the fork
+#                until the fix is upstreamed to awslabs. Repoint OAP_REPO once merged upstream.
 version: 0.2
 env:
   variables:
     PUBLIC_REGISTRY: "public.ecr.aws/seb-demo"
     IMAGE_TAG: "v1"
-    APPMOD_REPO: "https://github.com/allamand/appmod-blueprints.git"
-    APPMOD_REF: "feat/peeks-agent-instance"
+    APPMOD_REPO: "https://github.com/aws-samples/appmod-blueprints.git"
+    APPMOD_REF: "integration/peeks-e2e-unified"
     OAP_REPO: "https://github.com/allamand/open-agentic-platform.git"
     OAP_REF: "fix/configurable-max-tokens"
 phases:
