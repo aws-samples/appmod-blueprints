@@ -77,6 +77,12 @@ with Diagram(
     # ── LLM inference ──
     bedrock = Bedrock("Amazon Bedrock")
 
+    # ── Agent memory (managed, short-term) ──
+    # AgentCore Memory is a Bedrock AgentCore service; provisioned via Crossplane
+    # (bedrockagentcore.aws.upbound.io) and reached by the agent through its
+    # read/write Pod Identity role (aws-service-identity trait attaches the memory policy).
+    memory = Bedrock("Bedrock AgentCore\nMemory (short-term)")
+
     # ── GitOps action / heal ──
     with Cluster("GitOps remediation (human-in-the-loop)"):
         gitlab = Gitlab("GitLab\nuser1/fleet-config")
@@ -99,6 +105,9 @@ with Diagram(
     eksread >> Edge(label="list/describe k8s\n(read-only)", style="dashed", color="gray") >> hub
     eksread >> Edge(label="get_cloudwatch_metrics/logs\n(RCA)", style="dashed", color="gray") >> cw
     agent >> Edge(label="inference") >> bifrost >> bedrock
+
+    # session memory — the agent reads/writes AgentCore Memory via its Pod Identity role
+    agent >> Edge(label="session memory (read/write)\nmemoryId · via Pod Identity", color="purple") >> memory
 
     # Pod Identity — ONLY the 3 pods that call AWS (agent, incident-bridge, eks-read-mcp).
     # skills-mcp (local skills) and gitlab-mcp (GitLab token) need no AWS identity.
