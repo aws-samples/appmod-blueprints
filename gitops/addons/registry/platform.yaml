@@ -793,7 +793,7 @@ peeks-agent:
     #   incidentBridge v1.2 -> deterministic open-MR dup-check (v1.1 = poller.py contextId sanitize)
     # The other components inherit the global tag (:v1).
     images:
-      skillsMcp:      { registry: "", tag: "" }
+      skillsMcp:      { registry: "", tag: "v2" }
       agent:          { registry: "", tag: "v1.3" }
       eksMcp:         { registry: "", tag: "" }
       gitlabMcp:      { registry: "", tag: "" }
@@ -805,11 +805,12 @@ peeks-agent:
     cloudfrontDomain: '{{default "" .metadata.annotations.ingress_domain_name}}'
     # gitlab-mcp GITLAB_API_URL host (PAT itself comes from Secrets Manager via ESO).
     gitlabDomain: '{{default "" (index .metadata.annotations "gitlab_domain_name")}}'
-    # Project the agent opens remediation MRs on (overlay/fleet-config repo path or id).
-    # When stamped, the incident-bridge does a deterministic, restart-proof duplicate
-    # check against OPEN MRs; empty = check disabled (fail-open). Generic: read from an
-    # annotation, nothing hardcoded per cluster/setup.
-    gitlabMrProject: '{{default "" (index .metadata.annotations "fleet_config_project")}}'
+    # Project the agent opens remediation MRs on = the overlay/fleet-config repo.
+    # DERIVED from the already-stamped `overlay_repo_url` annotation (strip scheme+host
+    # and .git) so it needs NO new stamp and works for any setup; empty when there is
+    # no overlay repo (then the bridge dup-check is disabled, fail-open). NOTE: use
+    # overlay_repo_url, NOT fleetRepoURL (the latter is the GitHub base repo).
+    gitlabMrProject: '{{ trimSuffix ".git" (regexReplaceAll "^https?://[^/]+/" ((index .metadata.annotations "overlay_repo_url") | default "") "") }}'
   ignoreDifferences:
     - group: core.oam.dev
       kind: Application

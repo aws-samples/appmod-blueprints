@@ -14,7 +14,7 @@ imageTag: "v1"
 #       tag: "v1.1"          # registry inherits imageRegistry (public.ecr.aws/seb-demo)
 # Component keys: skillsMcp, agent (strands-agent), eksMcp, gitlabMcp, chatUi, incidentBridge.
 images:
-  skillsMcp:      { registry: "", tag: "" }
+  skillsMcp:      { registry: "", tag: "v2" }
   agent:          { registry: "", tag: "v1.3" }   # strands-agent — MCP pool rebuild on token recycle (v1.2 = contextId sanitize)
   eksMcp:         { registry: "", tag: "" }   # eks-read-mcp
   gitlabMcp:      { registry: "", tag: "" }
