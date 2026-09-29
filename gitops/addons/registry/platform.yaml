@@ -790,7 +790,7 @@ peeks-agent:
     #   agent  v1.2 -> agent.py _sanitize_agentcore_id (AgentCore sessionId fix)
     #   chatUi v1.3 -> copy buttons (message + code blocks), scrollable suggestions,
     #                  elapsed timer, textarea auto-grow, scroll-to-bottom (v1.2 predates these)
-    #   incidentBridge v1.1 -> poller.py contextId-sanitize fix
+    #   incidentBridge v1.2 -> deterministic open-MR dup-check (v1.1 = poller.py contextId sanitize)
     # The other components inherit the global tag (:v1).
     images:
       skillsMcp:      { registry: "", tag: "" }
@@ -798,13 +798,18 @@ peeks-agent:
       eksMcp:         { registry: "", tag: "" }
       gitlabMcp:      { registry: "", tag: "" }
       chatUi:         { registry: "", tag: "v1.3" }
-      incidentBridge: { registry: "", tag: "v1.1" }
+      incidentBridge: { registry: "", tag: "v1.2" }
     accountId: '{{.metadata.annotations.aws_account_id}}'
     clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
     region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'
     cloudfrontDomain: '{{default "" .metadata.annotations.ingress_domain_name}}'
     # gitlab-mcp GITLAB_API_URL host (PAT itself comes from Secrets Manager via ESO).
     gitlabDomain: '{{default "" (index .metadata.annotations "gitlab_domain_name")}}'
+    # Project the agent opens remediation MRs on (overlay/fleet-config repo path or id).
+    # When stamped, the incident-bridge does a deterministic, restart-proof duplicate
+    # check against OPEN MRs; empty = check disabled (fail-open). Generic: read from an
+    # annotation, nothing hardcoded per cluster/setup.
+    gitlabMrProject: '{{default "" (index .metadata.annotations "fleet_config_project")}}'
   ignoreDifferences:
     - group: core.oam.dev
       kind: Application

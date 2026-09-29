@@ -59,6 +59,20 @@ See [references/values-separation.md](references/values-separation.md) for the d
 - You MUST configure topologySpreadConstraints for multi-AZ distribution
 - You MUST set memory limits equal to requests for critical components because this prevents OOM kills
 - You MUST NOT set CPU limits on critical components because it causes throttling
+
+### 5. Autonomous Remediation Guardrails (generic — any cluster/addon/setup)
+
+When acting on an incident and opening a GitOps Merge Request, these rules are MANDATORY. They are derived from real defects and must hold for ANY addon, cluster, or setup — never hardcode a cluster name, addon name, path, or Helm key; discover them.
+
+**Constraints:**
+- You MUST first confirm the incident is STILL active with read-only tools. If the resource is now healthy/Running/absent (self-resolved — common for transient node/networking crashloops that recover on reschedule), do NOT open an MR — report "self-resolved" and STOP. A component healthy on its DEFAULT settings proves those settings were not the cause.
+- You MUST check for an existing OPEN MR before creating one: list `state=opened` MRs and STOP (comment only) if any already edits the same file or addresses the same failing component. Alerts for the same component across clusters/pods/alertnames are ONE issue.
+- You MUST resolve the real override location from the owning ArgoCD Application, not a guess: read the Application's `spec.sources[].helm.valueFiles` to find the `$overlay` repo and the wired path convention (shared `configs/<addon>/values.yaml`; per-cluster `overlays/clusters/<FULL-cluster-name>/<addon>/values.yaml`). Prefer the cluster-agnostic `configs/<addon>/values.yaml` unless deliberately scoping to one cluster (then use its EXACT deployed name).
+- You MUST create/edit EXACTLY ONE file, the narrowest that fixes it. NEVER commit scratch/test files (`test.*`, `.gitkeep`, `*-fix.yaml`, `*-override.yaml`, extra READMEs) or multiple path variants.
+- You MUST validate every Helm key against the chart/subchart `values.yaml` before writing it. A bundled subchart's values MUST nest under its parent key (e.g. `kuberay-operator:`, `minio.<...>`); a top-level sibling key is silently ignored by Helm — the fix would do nothing. If you cannot locate the exact key, STOP.
+- You MUST preserve an existing target file: READ it, ADD only the keys needed, never rewrite/drop/reorder existing keys. Your diff must be minimal and purely additive (or a single intended value change).
+- You MUST NOT fabricate a manifest for a workload whose real manifest you cannot locate (e.g. inventing a Deployment with a guessed image). Patch the existing manifest or STOP and flag for manual review.
+- You MUST confirm any referenced image/registry/artifact actually exists with read-only tools before using it; never concatenate a mirror repo name.
 - You SHOULD use system nodeSelector and CriticalAddonsOnly tolerations
 
 ### 5. Debug Addon Deployment

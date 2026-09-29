@@ -35,4 +35,5 @@ different registry/tag (e.g. incidentBridge.tag) without moving the other images
       | replace "REPLACE_CLUSTER_PREFIX" .Values.clusterPrefix
       | replace "REPLACE_REGION"         .Values.region
       | replace "REPLACE_CLOUDFRONT_DOMAIN" .Values.cloudfrontDomain
-      | replace "REPLACE_GITLAB_DOMAIN"  .Values.gitlabDomain }}
+      | replace "REPLACE_GITLAB_DOMAIN"  .Values.gitlabDomain
+      | replace "REPLACE_GITLAB_MR_PROJECT" (.Values.gitlabMrProject | default "") }}

@@ -19,7 +19,7 @@ images:
   eksMcp:         { registry: "", tag: "" }   # eks-read-mcp
   gitlabMcp:      { registry: "", tag: "" }
   chatUi:         { registry: "", tag: "v1.3" }   # copy buttons + scrollable suggestions + auto-grow (v1.2 = markdown/suggestions overhaul)
-  incidentBridge: { registry: "", tag: "v1.1" }   # contextId-sanitize fix (v1 predates it)
+  incidentBridge: { registry: "", tag: "v1.2" }   # v1.2 = deterministic open-MR dup-check (v1.1 = contextId sanitize)
 
 # Per-deployment values — NOT hardcoded: injected from cluster-secret annotations by the
 # registry entry (the fleet-secret/ESO stamps resource_prefix, aws_account_id, aws_region,
@@ -30,6 +30,11 @@ clusterPrefix: "peeks"        # resource_prefix      (platform default "peeks"; 
 region: "us-west-2"           # aws_region           (platform default; injected/overridable per env)
 cloudfrontDomain: ""          # ingress_domain_name  (chat-ui ingress host, injected)
 gitlabDomain: ""              # gitlab_domain_name   (gitlab-mcp GITLAB_API_URL host, injected)
+# Project (path or numeric id) the agent opens remediation MRs on — the overlay/
+# fleet-config repo. When set, the incident-bridge does a deterministic, restart-
+# proof duplicate check (skip forwarding if an OPEN MR already addresses the failing
+# component). Leave "" to disable the check (bridge still forwards; fail-open).
+gitlabMrProject: ""
 
 # NOTE: no ampWorkspaceId. The AMP incident path (AlertManagerDefinition + SNS/SQS) is
 # provisioned by the AmpIncident kro RGD (ampincident.kro.run — shipped via kro-manifests /

@@ -35,6 +35,15 @@ DEDUP_TTL = int(os.getenv("DEDUP_TTL", "3600"))
 POLL_WAIT = int(os.getenv("POLL_WAIT", "20"))
 AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", "300"))
 
+# Durable, restart-proof anti-duplicate: before forwarding, check the target repo
+# for an OPEN MR that already addresses this failing component. Generic and
+# fail-open — if any of these are unset or GitLab is unreachable, the check is
+# skipped (we still forward; the in-memory _seen dedup and the agent's own
+# open-MR listing remain). No cluster/addon/repo names are hardcoded.
+GITLAB_API_URL = os.getenv("GITLAB_API_URL", "")            # e.g. https://<domain>/api/v4
+GITLAB_TOKEN = os.getenv("GITLAB_PERSONAL_ACCESS_TOKEN", "")  # reused read-only from gitlab-mcp secret
+GITLAB_MR_PROJECT = os.getenv("GITLAB_MR_PROJECT", "")       # project path or numeric id the agent opens MRs on
+
 _seen: dict[str, float] = {}  # fingerprint -> last-sent epoch
 
 
@@ -90,6 +99,63 @@ def _dedup(fp: str) -> bool:
     return False
 
 
+def _component(alert: dict) -> str:
+    """The failing COMPONENT, independent of alertname/cluster/pod-instance.
+
+    AMP typically fires SEVERAL alertnames for one broken pod (CrashLoopBackOff,
+    PodNotReady, ContainerWaiting, …); keying dedup on the component (container,
+    else PVC, else pod) collapses those variants to ONE remediation, which is what
+    a single GitOps fix addresses. Generic: derived from labels, nothing hardcoded."""
+    return str(
+        alert.get("container")
+        or alert.get("persistentvolumeclaim")
+        or alert.get("pod", "")
+    )
+
+
+def _open_mr_exists(alert: dict) -> bool:
+    """Deterministic, restart-proof duplicate guard: True if the target repo
+    already has an OPEN MR addressing this component. Fail-open (returns False)
+    when GitLab is not configured or unreachable, so it never blocks a real
+    incident. Matches on an explicit machine marker (`Incident-Component: <c>`)
+    the agent embeds, and falls back to a component substring in title/branch."""
+    if not (GITLAB_API_URL and GITLAB_TOKEN and GITLAB_MR_PROJECT):
+        return False
+    comp = _component(alert)
+    if not comp:
+        return False
+    try:
+        from urllib.parse import quote
+        url = f"{GITLAB_API_URL}/projects/{quote(GITLAB_MR_PROJECT, safe='')}/merge_requests"
+        page = 1
+        marker = f"incident-component: {comp}".lower()
+        comp_l = comp.lower()
+        while True:
+            r = requests.get(
+                url,
+                headers={"PRIVATE-TOKEN": GITLAB_TOKEN},
+                params={"state": "opened", "per_page": 100, "page": page},
+                timeout=15,
+            )
+            r.raise_for_status()
+            mrs = r.json()
+            if not mrs:
+                return False
+            for mr in mrs:
+                desc = (mr.get("description") or "").lower()
+                if marker in desc:
+                    return True
+                hay = (mr.get("title", "") + " " + mr.get("source_branch", "")).lower()
+                if comp_l and comp_l in hay:
+                    return True
+            if len(mrs) < 100:
+                return False
+            page += 1
+    except Exception as exc:  # noqa: BLE001
+        log(f"gitlab dup-check failed ({exc}); fail-open (forwarding)")
+        return False
+
+
 def _incident_prompt(alert: dict) -> str:
     """Build the autonomous-incident message the agent expects (mode 1).
 
@@ -121,6 +187,11 @@ def _incident_prompt(alert: dict) -> str:
         "existing content). Never merge, never mutate the cluster. End with the MR "
         "URL and an 'awaiting human approval' note."
     )
+    comp = _component(alert)
+    if comp:
+        # Machine-readable marker: the bridge greps OPEN MRs for this exact line
+        # to deterministically suppress duplicates across restarts. Keep it verbatim.
+        lines.append(f"\nInclude this EXACT line verbatim in the MR description:\nIncident-Component: {comp}")
     return "\n".join(lines)
 
 
@@ -207,6 +278,9 @@ def main() -> int:
                 subj = _subject(alert)
                 if _dedup(subj):
                     log(f"dedup skip (subject={subj}) fp={fp}")
+                    continue
+                if _open_mr_exists(alert):
+                    log(f"open-MR skip (component={_component(alert)}) fp={fp} — MR already open in {GITLAB_MR_PROJECT}")
                     continue
                 try:
                     _forward(alert)
