@@ -790,9 +790,15 @@ peeks-agent:
       skillsMcp:
         registry: '{{default "" (index .metadata.annotations "peeks_agent_img_skillsmcp_registry")}}'
         tag: '{{default "" (index .metadata.annotations "peeks_agent_img_skillsmcp_tag")}}'
+      # agent (strands-agent) is PINNED to v1.2 by default on this integration branch: the
+      # public seb-demo :v1 image predates the AgentCore sessionId/contextId sanitize fix
+      # (agent.py _sanitize_agentcore_id, commit ecbe3a2), so a fresh deploy on :v1 would
+      # crash the incident RCA with a ValidationException on the sessionId derived from the
+      # incident subject. v1.2 carries the fix; override per-cluster with the
+      # peeks_agent_img_agent_tag annotation if you build your own agent image.
       agent:
         registry: '{{default "" (index .metadata.annotations "peeks_agent_img_agent_registry")}}'
-        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_agent_tag")}}'
+        tag: '{{default "v1.2" (index .metadata.annotations "peeks_agent_img_agent_tag")}}'
       eksMcp:
         registry: '{{default "" (index .metadata.annotations "peeks_agent_img_eksmcp_registry")}}'
         tag: '{{default "" (index .metadata.annotations "peeks_agent_img_eksmcp_tag")}}'
