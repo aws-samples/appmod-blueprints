@@ -781,47 +781,23 @@ peeks-agent:
         operator: In
         values: ['true']
   valuesObject:
-    imageRegistry: '{{default "public.ecr.aws/seb-demo" (index .metadata.annotations "peeks_agent_image_registry")}}'
-    imageTag: '{{default "v1" (index .metadata.annotations "peeks_agent_image_tag")}}'
-    # Per-component image overrides (optional): pin a SINGLE component to a different
-    # registry/tag without moving the others. Empty annotation => inherit imageRegistry/imageTag.
-    # Annotation naming: peeks_agent_img_<component>_{registry,tag} (component = chart key below).
+    # Image coordinates live in git only (GitOps single source of truth). No per-cluster
+    # cluster-secret annotation overrides — to change an image, edit this file and let
+    # ArgoCD reconcile. Empty component registry/tag inherits imageRegistry/imageTag below.
+    imageRegistry: public.ecr.aws/seb-demo
+    imageTag: v1
+    # Per-component pins carry fixes the public seb-demo :v1 images predate:
+    #   agent  v1.2 -> agent.py _sanitize_agentcore_id (AgentCore sessionId fix)
+    #   chatUi v1.2 -> chat UI overhaul (server-side markdown + next-step suggestions)
+    #   incidentBridge v1.1 -> poller.py contextId-sanitize fix
+    # The other components inherit the global tag (:v1).
     images:
-      skillsMcp:
-        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_skillsmcp_registry")}}'
-        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_skillsmcp_tag")}}'
-      # agent (strands-agent) is PINNED to v1.2 by default on this integration branch: the
-      # public seb-demo :v1 image predates the AgentCore sessionId/contextId sanitize fix
-      # (agent.py _sanitize_agentcore_id, commit ecbe3a2), so a fresh deploy on :v1 would
-      # crash the incident RCA with a ValidationException on the sessionId derived from the
-      # incident subject. v1.2 carries the fix; override per-cluster with the
-      # peeks_agent_img_agent_tag annotation if you build your own agent image.
-      agent:
-        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_agent_registry")}}'
-        tag: '{{default "v1.2" (index .metadata.annotations "peeks_agent_img_agent_tag")}}'
-      eksMcp:
-        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_eksmcp_registry")}}'
-        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_eksmcp_tag")}}'
-      gitlabMcp:
-        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_gitlabmcp_registry")}}'
-        tag: '{{default "" (index .metadata.annotations "peeks_agent_img_gitlabmcp_tag")}}'
-      # chat-ui is PINNED to v1.2 by default on this integration branch: the public
-      # seb-demo :v1 image predates the chat UI overhaul (server-side markdown rendering
-      # + next-step suggestions), so a fresh deploy on :v1 would serve the old raw-text UI.
-      # v1.2 carries the new UI; override per-cluster with the peeks_agent_img_chatui_tag
-      # annotation if you build your own chat-ui image.
-      chatUi:
-        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_chatui_registry")}}'
-        tag: '{{default "v1.2" (index .metadata.annotations "peeks_agent_img_chatui_tag")}}'
-      # incident-bridge is PINNED to v1.1 by default on this integration branch: the
-      # public seb-demo :v1 image predates the contextId-sanitize fix (poller.py bakes
-      # the fix into the image), so a fresh deploy on :v1 would still hit the AgentCore
-      # sessionId ValidationException. v1.1 carries the fix; the 5 other components stay
-      # on the global tag (:v1). Override per-cluster with the peeks_agent_img_incidentbridge_tag
-      # annotation if you build your own incident-bridge image.
-      incidentBridge:
-        registry: '{{default "" (index .metadata.annotations "peeks_agent_img_incidentbridge_registry")}}'
-        tag: '{{default "v1.1" (index .metadata.annotations "peeks_agent_img_incidentbridge_tag")}}'
+      skillsMcp:      { registry: "", tag: "" }
+      agent:          { registry: "", tag: "v1.2" }
+      eksMcp:         { registry: "", tag: "" }
+      gitlabMcp:      { registry: "", tag: "" }
+      chatUi:         { registry: "", tag: "v1.2" }
+      incidentBridge: { registry: "", tag: "v1.1" }
     accountId: '{{.metadata.annotations.aws_account_id}}'
     clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
     region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'
