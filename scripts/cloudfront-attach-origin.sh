@@ -57,13 +57,26 @@ command -v aws >/dev/null 2>&1 || die "aws CLI not found"
 command -v jq  >/dev/null 2>&1 || die "jq not found"
 
 # ── 1. the ALB the platform created ─────────────────────────────────────────────────────
-ALB=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --region "$REGION" \
-  --query 'LoadBalancers[0].[LoadBalancerArn,DNSName,Scheme,State.Code]' --output text 2>/dev/null)
-case "$ALB" in ''|*None*)
-  die "load balancer '$ALB_NAME' not found in $REGION.
+# The AWS Load Balancer Controller provisions the ALB asynchronously after the platform
+# ingress is reconciled — it typically takes 1–3 min to appear. A fresh install therefore
+# races the controller: querying once and failing on the first miss aborts `task install`
+# (and everything after it: spokes, overlay, IDC) even though the ALB materialises moments
+# later. Poll for it up to ALB_WAIT_SECONDS (default 600) before giving up.
+ALB_WAIT="${ALB_WAIT_SECONDS:-600}"
+ALB=""
+WAITED=0
+while :; do
+  ALB=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --region "$REGION" \
+    --query 'LoadBalancers[0].[LoadBalancerArn,DNSName,Scheme,State.Code]' --output text 2>/dev/null)
+  case "$ALB" in ''|*None*) : ;; *) break ;; esac
+  if [ "$WAITED" -ge "$ALB_WAIT" ]; then
+    die "load balancer '$ALB_NAME' not found in $REGION after ${ALB_WAIT}s.
      Run this AFTER 'task install' has finished and the platform ingresses have an address.
-     Check:  kubectl get ingress -A" ;;
-esac
+     Check:  kubectl get ingress -A"
+  fi
+  [ "$((WAITED % 60))" -eq 0 ] && log "waiting for ALB '$ALB_NAME' (created by the load balancer controller): ${WAITED}s/${ALB_WAIT}s"
+  sleep 15; WAITED=$((WAITED + 15))
+done
 ALB_ARN=$(printf '%s' "$ALB" | awk '{print $1}')
 ALB_DNS=$(printf '%s' "$ALB" | awk '{print $2}')
 ALB_SCHEME=$(printf '%s' "$ALB" | awk '{print $3}')
