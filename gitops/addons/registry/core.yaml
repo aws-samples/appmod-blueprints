@@ -343,12 +343,20 @@ ingress-class-alb:
   valuesObject:
     controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
     loadBalancerName: '{{if eq (default "false" .metadata.annotations.insecure) "true"}}{{.metadata.annotations.aws_cluster_name}}-platform{{end}}'
-    # In insecure mode the platform ALB is created internal (the consumer fronts it
-    # with its own edge — e.g. CloudFront — over a VPC-origin/private backend). The
-    # IngressClassParams scheme MUST match the adopted ALB's scheme — ALB scheme is
-    # immutable, so a mismatch makes the LBC refuse to attach listener rules, leaving
-    # every ingress with no address and the ALB's default 404 action.
-    scheme: '{{if eq (default "false" .metadata.annotations.insecure) "true"}}internal{{else}}internet-facing{{end}}'
+    # Scheme is internal ONLY when this cluster is fronted by an edge (CloudFront),
+    # signalled by a non-empty ingress_domain_name annotation: a CloudFront VPC-origin
+    # requires an internal ALB, and the IngressClassParams scheme MUST match the adopted
+    # ALB's scheme (ALB scheme is immutable — a mismatch makes the LBC refuse to attach
+    # listener rules, leaving every ingress with no address and the ALB's default 404).
+    #
+    # `insecure` alone must NOT force internal. A spoke of an insecure (CloudFront-
+    # terminated) hub inherits insecure=true for HTTP-only listeners (no ACM cert, which
+    # avoids the LBC CreateListener crashloop) but has NO edge of its own (empty
+    # ingress_domain_name), so it must stay internet-facing to remain reachable — its
+    # participant apps are addressed directly via the spoke ALB hostname. Gating internal
+    # on insecure alone regressed spoke reachability (DNS_DEV/DNS_PROD resolved to an
+    # internal ALB, unreachable from the IDE/Internet).
+    scheme: '{{if and (eq (default "false" .metadata.annotations.insecure) "true") (ne (default "" .metadata.annotations.ingress_domain_name) "")}}internal{{else}}internet-facing{{end}}'
 
 aws-load-balancer-controller:
   namespace: kube-system
