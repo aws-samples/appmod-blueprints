@@ -799,10 +799,10 @@ peeks-agent:
     # The other components inherit the global tag (:v1).
     images:
       skillsMcp:      { registry: "", tag: "v3" }
-      agent:          { registry: "", tag: "v1.6" }
+      agent:          { registry: "", tag: "v1.7" }
       eksMcp:         { registry: "", tag: "" }
       gitlabMcp:      { registry: "", tag: "" }
-      chatUi:         { registry: "", tag: "v1.3" }
+      chatUi:         { registry: "", tag: "v1.4" }
       incidentBridge: { registry: "", tag: "v1.4" }
     accountId: '{{.metadata.annotations.aws_account_id}}'
     clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
