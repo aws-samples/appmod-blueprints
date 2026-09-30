@@ -1,29 +1,75 @@
 # OAP ↔ Platform Engineering on EKS — Integration Design (peeks-agent)
 
-> **Status:** Draft · **Version:** 1.0.0 · **Supersedes:** the historical
+> **Status:** Draft · **Version:** 1.1.0 · **Supersedes:** the historical
 > [`DESIGN.md`](./DESIGN.md) (Kagent/LiteLLM + `sample-agent-platform-on-eks`
 > bridge-chart design, kept for reference).
-> This document describes the **current** integration: the
+> This document is the durable design reference for two related deliverables:
+> **(A)** deploying the
 > [Open Agentic Platform (OAP)](https://github.com/awslabs/open-agentic-platform)
-> deployed as an opt-in, GitOps-native extension of Platform Engineering on EKS
-> (PEEKS / `appmod-blueprints`), plus the **`peeks-agent`** — a self-remediating
-> platform agent built on top of it.
+> as an opt-in, GitOps-native extension of Platform Engineering on EKS
+> (PEEKS / `appmod-blueprints`), and **(B)** the **`peeks-agent`** — a reference
+> AIOps agent built on OAP that validates and showcases (A) end-to-end.
+> Implementation PRs reference this document; this document does not track
+> individual PRs.
 
 ---
 
-## 1. Executive Summary
+## 1. Background & Motivation
 
-PEEKS is a GitOps-native platform on EKS (hub + spokes, Argo CD, KubeVela,
-kro + ACK/Crossplane, Backstage, Keycloak, observability). **OAP** is a modular
-agentic layer — an LLM gateway, an agent gateway with identity/token exchange,
-OAM ComponentDefinitions for agents and MCP servers, agent memory (Bedrock
+Platform Engineering on EKS (PEEKS) gives teams a GitOps-native internal
+developer platform: a hub + spoke EKS topology reconciled by Argo CD, with
+KubeVela, kro + ACK/Crossplane, Backstage, Keycloak and a managed observability
+stack. It answers *"how do I build and run a golden-path platform on EKS?"*.
+
+Two industry shifts motivate this work:
+
+1. **Agentic workloads are becoming first-class on Kubernetes.** Teams want a
+   supported, opinionated way to run LLM gateways, agents, MCP tool servers,
+   agent memory and agent observability on the same platform they already
+   operate — rather than bolting on a parallel, ungoverned stack. The **Open
+   Agentic Platform (OAP)** provides exactly these building blocks as modular,
+   composable components.
+
+2. **Operating a platform is itself becoming an agent use case.** Beyond hosting
+   agents, operators increasingly want agents that can *help run the platform* —
+   triage an incident, do read-only root-cause analysis, and propose a
+   GitOps-native fix for a human to approve.
+
+This design brings OAP into PEEKS through the **same** GitOps machinery that
+already drives every PEEKS addon (so it is opt-in and governed, not a bolt-on),
+and adds one concrete, end-to-end agent — `peeks-agent` — as the reference
+example that proves the integration works and demonstrates the OAP feature set
+on a real platform-operations task.
+
+---
+
+## 2. Executive Summary
+
+This document covers two **distinct but related** deliverables. Keeping them
+separate is deliberate — they have different scopes and lifecycles.
+
+**(A) OAP-in-PEEKS integration.** Deploy OAP into PEEKS as an **opt-in addon
+bundle**, wired through the same Argo CD ApplicationSet machinery that drives
+every other PEEKS addon. OAP contributes a modular agentic layer — an LLM
+gateway (bifrost), an agent gateway with identity/token exchange, OAM
+ComponentDefinitions for agents and MCP servers, agent memory (Bedrock
 AgentCore), sandboxes, and an observability pipeline (OpenTelemetry → Langfuse).
+This is the continuation of the "bring OAP functionality into PEEKS" initiative.
 
-This design integrates OAP into PEEKS as an **opt-in addon bundle** wired through
-the same Argo CD ApplicationSet machinery that drives every other PEEKS addon,
-and adds **`peeks-agent`**: a concrete agent that watches the platform, performs
-root-cause analysis on incidents, and opens **GitOps remediation merge requests**
-— closing the loop "alert → agent → pull request → Argo CD → fix".
+**(B) `peeks-agent` — a reference AIOps agent.** A concrete agent, built
+entirely from OAP building blocks, that watches the platform, performs
+root-cause analysis on incidents, and opens **GitOps remediation merge
+requests** — closing the loop *"alert → agent → pull request → Argo CD → fix"*.
+Its purpose is twofold: (1) a **worked example** of "how to build an agent on
+OAP", and (2) an **end-to-end integration test** that OAP runs correctly
+alongside PEEKS. It is intentionally small and human-gated.
+
+**Relationship & scope boundary.** `peeks-agent` *seeds* the broader idea of
+"agents that help operate the platform" (AIOps), but this deliverable does **not**
+claim to deliver a general AIOps product. Full agent-driven platform operations
+is a **separate, larger initiative**; here, `peeks-agent` is scoped as the
+reference/showcase agent for deliverable (A). See §3 for the explicit scope
+boundary.
 
 ### Design principles
 
@@ -44,17 +90,66 @@ root-cause analysis on incidents, and opens **GitOps remediation merge requests*
 
 ---
 
-## 2. Repository Roles
+## 3. Scope, Non-Goals & Acceptance Criteria
+
+**In scope**
+
+- Deploy OAP into PEEKS as an **opt-in, GitOps-native addon bundle** (deliverable A).
+- `peeks-agent` as the **reference agent** exercising OAP end-to-end (deliverable B):
+  interactive chat mode and autonomous incident→RCA→MR mode.
+- The **Bedrock model-access pre-activation** needed for the agent's LLM calls
+  to work on a fresh account (see §9.1).
+
+**Non-goals (explicitly out of scope for this deliverable)**
+
+- A general-purpose **"agents-operate-the-platform" / AIOps** product. `peeks-agent`
+  seeds this direction but the broader AIOps track is a **separate initiative**.
+- Replacing or re-architecting existing platform addons or the app-delivery
+  modules.
+- Multi-tenant agent authorization / **On-Behalf-Of identity** — see the *Planned*
+  status below and §15.
+
+**Status legend.** ✅ Implemented & live-validated · 🟡 Implemented, partial /
+rough edges · ⏳ Planned, not yet implemented.
+
+| Capability | Status |
+|---|---|
+| OAP bundle deploys via opt-in flags; platform byte-unchanged when off | ✅ |
+| `peeks-agent` chat mode (Keycloak-authenticated) | ✅ |
+| Autonomous incident → RCA → remediation MR | ✅ |
+| Tracing pipeline (OTLP → Langfuse → ClickHouse) | 🟡 (fresh-env auto-heal; see §8.3) |
+| Bedrock model-access pre-activation (account-wide) | ✅ |
+| **On-Behalf-Of (OBO)** identity propagation in chat mode | ⏳ Planned (see §7.0, §15) |
+| Convergence of OAP OAM components with `AppmodService` | ⏳ Planned (see §7.4, §15) |
+
+**Acceptance criteria (testable)**
+
+1. With all agentic flags **off**, a platform deployment is **byte-unchanged**.
+2. Enabling the flags renders the OAP ApplicationSets **and** `peeks-agent`, all
+   `Healthy/Synced` on a **fresh** environment.
+3. A synthetic incident (e.g. OOMKill) on the incidents queue results in an MR
+   opened on the fleet-config repo (deduplicated, human-gated).
+4. Agent traces land in ClickHouse (row count > 0).
+5. The Bedrock model-access resource reports `ENABLED`; the agent does not 403 at
+   the LLM step.
+
+> Deliverable (A)+(B) have been validated end-to-end on a fresh environment
+> (self-managed account and workshop provisioning). OBO (⏳) is **not** part of
+> this validation — it is a planned follow-up.
+
+---
+
+## 4. Repository Roles
 
 | Repository | Role | Contents (relevant to this design) |
 |---|---|---|
 | **`appmod-blueprints`** (this repo) | Platform + generator + the agent | `platform-charts/appset-chart` (the ApplicationSet generator, Source B); `gitops/addons/charts/peeks-agent` (the PEEKS agent chart + OAM app); `gitops/addons/registry/platform.yaml` (peeks-agent registry entry); `gitops/overlays/environments/<env>/enabled-addons.yaml` (feature flags) |
 | **`open-agentic-platform`** (OAP) | Agentic components (Source A) | `gitops/addons/charts/{bifrost,agent-gateway,oam-agent-components,langfuse,otel-collector,agent-sandbox*,litellm,crossplane-agentcore,gateway-api-crds,kata-nodepool}`; `gitops/addons/registry/{_defaults,gateway,observability,agentcore,sandbox}.yaml`; `gitops/bootstrap/agent-platform-app.yaml` (the two-source Application) |
-| **`platform-engineering-on-eks`** (internal, GitLab) | Workshop content + IDE/CFN provisioning | Bakes the OAP git coordinates into the CFN, clones OAP on the IDE at runtime, runs `task install` → `agentic:install`. Also carries the **Bedrock model-access pre-activation** CFN custom resource (see §7). |
+| **`platform-engineering-on-eks`** (internal, GitLab) | Workshop content + IDE/CFN provisioning | Bakes the OAP git coordinates into the CFN, clones OAP on the IDE at runtime, runs `task install` → `agentic:install`. Also carries the **Bedrock model-access pre-activation** CFN custom resource (see §9). |
 
 ---
 
-## 3. Architecture Overview
+## 5. Architecture Overview
 
 ```
                         ┌──────────────────────── Hub cluster (peeks-hub) ────────────────────────┐
@@ -93,9 +188,9 @@ root-cause analysis on incidents, and opens **GitOps remediation merge requests*
 
 ---
 
-## 4. OAP Integration Wiring
+## 6. OAP Integration Wiring
 
-### 4.1 Two-source Argo CD Application
+### 6.1 Two-source Argo CD Application
 
 OAP is deployed by a single Application, `agent-platform-addons`
 (`open-agentic-platform/gitops/bootstrap/agent-platform-app.yaml`), that combines
@@ -120,7 +215,7 @@ $values/${BASEPATH}registry/agentcore.yaml        # agentcore-memory / crossplan
 $values/${BASEPATH}registry/sandbox.yaml          # agent-sandbox (+ operator / lambda)
 ```
 
-### 4.2 Gating model (two levels)
+### 6.2 Gating model (two levels)
 
 - **Umbrella gate** — `valuesObject.globalSelectors.enable_agent_platform: "true"`.
   If the hub cluster-secret does not carry `enable_agent_platform`, the **entire**
@@ -130,7 +225,7 @@ $values/${BASEPATH}registry/sandbox.yaml          # agent-sandbox (+ operator / 
   (`enable_bifrost`, `enable_agent_gateway`, `enable_oam_components`,
   `enable_langfuse`, `enable_otel_collector`, …).
 
-### 4.3 In-cluster overlay layer (`$overlay`)
+### 6.3 In-cluster overlay layer (`$overlay`)
 
 **Goal.** Let users track the **upstream** `appmod-blueprints` and OAP GitHub repos
 as the **main source** (so they keep receiving upstream fixes and features without
@@ -199,7 +294,7 @@ $overlay/overlays/clusters/<cluster>/<addon>/values.yaml      # per-cluster
 > Always confirm the exact key/schema from the **ApplicationSet definition that
 > consumes the file**, never by copying another file's casing.
 
-### 4.4 Enablement flags → labels
+### 6.4 Enablement flags → labels
 
 `enabled-addons.yaml` (per environment, e.g. `overlays/environments/control-plane/`)
 holds `snake_case` booleans (`agent_platform: true`, `bifrost: true`,
@@ -217,7 +312,7 @@ the ApplicationSet selectors and the peeks-agent registry entry read.
 
 ---
 
-## 5. The `peeks-agent`
+## 7. The `peeks-agent`
 
 `peeks-agent` is the PEEKS-specific agent. Its **chart lives in this repo**
 (`gitops/addons/charts/peeks-agent`), gated by `enable_peeks_agent` in the
@@ -225,15 +320,20 @@ registry (`gitops/addons/registry/platform.yaml`, wave ~8, `dependsOn` KubeVela 
 the OAP `agent-platform-addons` bundle). The chart's Argo CD Application renders a
 single **KubeVela OAM Application** (`files/peeks-agent-app.yaml`).
 
-### 5.0 Purpose & operating modes
+### 7.0 Purpose & operating modes
 
-`peeks-agent` is an **AIOps agent** for the platform: it observes the fleet,
-reasons about incidents, and proposes/opens GitOps remediations. It is also the
-**reference showcase for the OAP feature set** — it is composed entirely from OAP
-building blocks (the `agent`/`mcp-server`/`agentcore-memory` OAM
+`peeks-agent` is an **AIOps-style reference agent** for the platform: it observes
+the fleet, reasons about incidents, and proposes/opens GitOps remediations. It is
+also the **reference showcase for the OAP feature set** — it is composed entirely
+from OAP building blocks (the `agent`/`mcp-server`/`agentcore-memory` OAM
 ComponentDefinitions, the bifrost LLM gateway, the agent-gateway identity/token
 exchange, AgentCore memory, and the OTLP→Langfuse tracing), so it doubles as a
 worked example of "how to build an agent on OAP".
+
+> **Scope note.** `peeks-agent` is intentionally a *reference/example* agent, not
+> a general AIOps product. It is the smallest end-to-end thing that proves the
+> OAP-in-PEEKS integration works and demonstrates the components together. Broader
+> agent-driven platform operations is a separate, larger track (see §3).
 
 It operates in **two complementary modes**:
 
@@ -241,22 +341,23 @@ It operates in **two complementary modes**:
    (`chat-ui`, exposed via CloudFront/ALB) lets an operator ask the agent to
    investigate the platform and draft/open remediation MRs. Access is
    **authenticated via Keycloak** (the platform IdP).
-   > **Planned improvement — On-Behalf-Of (OBO).** Today the agent acts with its
-   > own Pod-Identity role regardless of who is chatting. The goal is to add an
-   > **on-behalf-of token exchange** (via the OAP **agent-gateway** identity layer)
-   > so the agent **inherits the authenticated user's permissions** and can do
-   > **only what that user is allowed to do** — least privilege scoped to the human,
-   > not a broad shared agent role. This aligns the chat path with the platform's
-   > Keycloak identity and closes the "agent can do more than the caller" gap.
+   > **⏳ Planned improvement — On-Behalf-Of (OBO). Not yet implemented.** Today
+   > the agent acts with its own Pod-Identity role regardless of who is chatting.
+   > The goal is to add an **on-behalf-of token exchange** (via the OAP
+   > **agent-gateway** identity layer) so the agent **inherits the authenticated
+   > user's permissions** and can do **only what that user is allowed to do** —
+   > least privilege scoped to the human, not a broad shared agent role. This
+   > aligns the chat path with the platform's Keycloak identity and closes the
+   > "agent can do more than the caller" gap. Tracked in §15.
 
 2. **Autonomous — RCA (event-driven).** The agent runs **root-cause analysis
    automatically**, triggered by **observability events** on the platform (AMP
    alerts such as `PodOOMKilled` → SNS/SQS → `incident-bridge` → the agent). It
    performs read-only investigation and opens a **GitOps remediation merge
-   request** for a human to review and merge (see §6.1). No human prompt is needed
+   request** for a human to review and merge (see §8.1). No human prompt is needed
    to start; a human still approves the fix.
 
-### 5.1 Components (OAM)
+### 7.1 Components (OAM)
 
 | Component | OAM type | Role |
 |---|---|---|
@@ -270,7 +371,7 @@ It operates in **two complementary modes**:
 | `incident-bridge` | (deploy) | Polls the incidents SQS queue, forwards each alert to the agent via A2A `message/send`. Deterministic, restart-proof open-MR dedup. |
 | `amp-incident` | `AmpIncident` (kro RGD) | Provisions the AMP `AlertManagerDefinition` + SNS/SQS; reads the AMP workspace id **live** from the Crossplane AMP Workspace CR via `externalRef` (no literal id). |
 
-### 5.2 Images & overrides
+### 7.2 Images & overrides
 
 Images default to the public workshop registry (`public.ecr.aws/seb-demo`), pinned
 by tag. Per-component overrides are supported (`images.<comp>.{registry,tag}`);
@@ -280,14 +381,14 @@ source of truth** (chart `values.yaml` + registry `valuesObject` in
 annotation overrides for image tags are **not** read on the current integration
 branch — bump the git default in both places instead.
 
-### 5.3 Per-deployment values
+### 7.3 Per-deployment values
 
 Not hardcoded — injected from cluster-secret annotations by the registry entry
 (the fleet-secret/ESO stamps `resource_prefix`, `aws_account_id`, `aws_region`,
 `ingress_domain_name`, `gitlab_domain_name`). The literals in `values.yaml` are
 fallbacks for a standalone `helm template` only.
 
-### 5.4 Convergence with the `AppmodService` component (design intent)
+### 7.4 Convergence with the `AppmodService` component (design intent)
 
 **We want the KubeVela/OAM ComponentDefinitions that evolve in OAP
 (`agent`, `mcp-server`, `agentcore-memory`, …) to converge with the
@@ -315,16 +416,16 @@ Rationale and direction:
   workshop presents a single, coherent "define your service (or agent) as an OAM
   component" story.
 
-> This is a **forward-looking alignment goal**, tracked as an open item (see §11).
+> This is a **forward-looking alignment goal**, tracked as an open item (see §15).
 > It does not block the current integration — today the agentic ComponentDefinitions
 > ship from OAP (`oam-agent-components`) and `AppmodService` ships from appmod
 > independently; convergence is incremental.
 
 ---
 
-## 6. Key Data Flows
+## 8. Key Data Flows
 
-### 6.1 Autonomous incident → remediation MR
+### 8.1 Autonomous incident → remediation MR
 
 ```
 AMP alert (e.g. PodOOMKilled)  ──▶ SNS ──▶ SQS (<prefix>-incidents)
@@ -342,12 +443,12 @@ it skips forwarding when an OPEN MR already addresses the failing component
 and is **fail-open** (never blocks a real incident). `gitlabMrProject` is derived
 from the overlay repo URL.
 
-### 6.2 Chat (A2A)
+### 8.2 Chat (A2A)
 
 `chat-ui` (CloudFront/ALB) → `peeks-agent` A2A endpoint → same RCA/tool loop, for
 interactive queries.
 
-### 6.3 Tracing pipeline
+### 8.3 Tracing pipeline
 
 ```
 peeks-agent ──(OTLP)──▶ otel-collector ──▶ Langfuse ──▶ ClickHouse (traces/observations)
@@ -372,7 +473,7 @@ happy path):
 
 ---
 
-## 7. Provisioning & Bootstrap (PEEKS side)
+## 9. Provisioning & Bootstrap (PEEKS side)
 
 - The PEEKS CloudFormation template **bakes the OAP git coordinates** as synth-time
   literals (`AGENTIC_REPO_URL` / `AGENTIC_REPO_REVISION`). The IDE clones OAP at
@@ -384,7 +485,7 @@ happy path):
   **not** leak into and override the OAP source. A CDK guard also unsets
   `REPO_URL`/`REPO_REVISION` before the OAP block.
 
-### 7.1 Bedrock model access prerequisite (LLM enablement)
+### 9.1 Bedrock model access prerequisite (LLM enablement)
 
 The agent's LLM calls reach Bedrock (Claude Sonnet 5) via bifrost. Because
 Anthropic models are **AWS Marketplace–gated**, a principal **with Marketplace
@@ -408,7 +509,52 @@ useful trace).
 
 ---
 
-## 8. Security
+## 10. Impacted Components & Change Map
+
+High-level → low-level view of what each deliverable touches, so the change
+surface is legible at a glance. This is the durable map; implementation PRs
+reference this document and are consolidated **one PR per repo per feature**
+(see §11).
+
+| Repo | Component / path | Change | Why |
+|---|---|---|---|
+| `appmod-blueprints` | `platform-charts/appset-chart` | Reused (unchanged generator) as the generator for the agentic plane | One generator drives platform **and** agentic addons — no second machinery |
+| `appmod-blueprints` | `gitops/addons/charts/peeks-agent` (+ OAM app) | **New** chart + KubeVela OAM Application | The reference agent (chat + autonomous RCA→MR) |
+| `appmod-blueprints` | `gitops/addons/registry/platform.yaml` | **New** `peeks-agent` registry entry, gated `enable_peeks_agent` | Opt-in placement, wave + `dependsOn` ordering |
+| `appmod-blueprints` | `gitops/overlays/environments/*/enabled-addons.yaml` | **New** agentic flags (`agent_platform`, `bifrost`, …, `peeks_agent`) | Per-env enablement, off by default |
+| `open-agentic-platform` | `gitops/bootstrap/agent-platform-app.yaml` | **New** two-source Application | Deploy OAP via the appmod generator (no vendoring) |
+| `open-agentic-platform` | `gitops/addons/registry/*` (`_defaults`, `gateway`, `observability`, `agentcore`, `sandbox`) | Registry files with per-addon selectors | Per-addon gating on `enable_<addon>` |
+| `open-agentic-platform` | `charts/configs` (`bifrost`, `agent-gateway`, `oam-agent-components`, `langfuse`, `otel-collector`, …) | Agentic component charts/configs | The OAP feature set consumed by `peeks-agent` |
+| `open-agentic-platform` | `eks-read-access` ComponentDefinition; otel-auth self-heal | Least-privilege discovery + tracing-auth robustness | Security + fresh-env reliability |
+| `platform-engineering-on-eks` (GitLab) | `cdk/lib/team-stack.ts` | Bake OAP coordinates + **Bedrock model-access** CFN custom resource | Provisioning wires OAP; LLM works on a fresh account |
+| `platform-engineering-on-eks` (GitLab) | workshop content / `task` targets | Enablement + guidance (as applicable) | Participant-facing enablement path |
+
+---
+
+## 11. Delivery & Review Plan
+
+This document is the single design reference; the process around it:
+
+- **Design review first.** Circulate this document and hold a design-review with
+  the PEEKS/OAP core maintainers; capture agreement (or changes) before merging
+  implementation. PRs stay in **draft** until the design is agreed.
+- **One PR per repo per feature.** Consolidate the changes into a single PR per
+  repository for this feature (one in `appmod-blueprints`, one in
+  `open-agentic-platform`, one in the internal provisioning repo), rather than many
+  small PRs, to keep the review coherent. Each PR **references this design
+  document**; the document itself does not enumerate PR numbers.
+- **Task tracking.** Track the deliverable as discrete tasks (design doc,
+  OAP integration, `peeks-agent`, provisioning/Bedrock, content, dry-run) with the
+  acceptance criteria from §3 as the definition of done.
+- **Validation gate.** A PR is ready to leave draft when the §3 acceptance
+  criteria pass on a **fresh** environment (see §14).
+- **Presentation assets** related to this work are kept under version control
+  (a decks repository), so the material is not lost and evolves from a single
+  source of truth.
+
+---
+
+## 12. Security
 
 - **Pod Identity per workload.** `peeks-agent`/`eks-read-mcp` share one role with a
   least-privilege read policy (`AmazonEKSViewPolicy`-style + the emitted
@@ -422,10 +568,13 @@ useful trace).
 - **Blast radius of remediation** is bounded to opening MRs on the fleet-config
   repo; a human still merges (Argo CD then applies). The agent's prompt enforces
   single-file, additive, dedup-checked edits.
+- **Identity scoping (planned).** Until OBO (§7.0/§15) lands, the agent acts under
+  its own Pod-Identity role, not the chat user's identity — a known limitation to
+  close before any multi-user, higher-privilege use.
 
 ---
 
-## 9. Enable / Disable
+## 13. Enable / Disable
 
 **Enable** (per environment) in `enabled-addons.yaml`:
 
@@ -448,7 +597,7 @@ removes the whole bundle). Core platform is unaffected.
 
 ---
 
-## 10. Testing / Validation
+## 14. Testing / Validation
 
 - `helm template` the peeks-agent chart and the appset-chart with the OAP registry
   files (selectors on) — assert the expected ApplicationSets render only when
@@ -465,16 +614,16 @@ removes the whole bundle). Core platform is unaffected.
 
 ---
 
-## 11. Open Items / Known Gaps
+## 15. Open Items / Known Gaps
 
-- **On-Behalf-Of (OBO) for the chat path** — add agent-gateway token exchange so the
-  chat-authenticated (Keycloak) user's identity/permissions are propagated to the
-  agent, which then acts scoped to that user (least privilege) instead of its own
-  shared Pod-Identity role. See §5.0.
-- **Converge OAP OAM components with `AppmodService`** — align the agentic
-  ComponentDefinitions (`agent`, `mcp-server`, `agentcore-memory`) with the
+- **On-Behalf-Of (OBO) for the chat path — ⏳ planned, not implemented.** Add
+  agent-gateway token exchange so the chat-authenticated (Keycloak) user's
+  identity/permissions are propagated to the agent, which then acts scoped to that
+  user (least privilege) instead of its own shared Pod-Identity role. See §7.0.
+- **Converge OAP OAM components with `AppmodService` — ⏳ planned.** Align the
+  agentic ComponentDefinitions (`agent`, `mcp-server`, `agentcore-memory`) with the
   `AppmodService` component of `appmod-blueprints` toward a single KubeVela
-  component model (shared traits/ingress/health/kro-RGD conventions). See §5.4.
+  component model (shared traits/ingress/health/kro-RGD conventions). See §7.4.
 - **kro annotation-key templating** — the ALB `url-rewrite` transforms annotation
   needs a dynamic key; kro does not substitute CEL in annotation **keys** (only
   values), so path-prefix rewrite for agent/app ingress is limited pending kro
@@ -488,7 +637,7 @@ removes the whole bundle). Core platform is unaffected.
 
 ---
 
-## 12. Glossary
+## 16. Glossary
 
 - **OAP** — Open Agentic Platform (`awslabs/open-agentic-platform`).
 - **bifrost** — OpenAI-compatible LLM proxy fronting Bedrock.
@@ -500,6 +649,9 @@ removes the whole bundle). Core platform is unaffected.
 - **A2A** — agent-to-agent messaging protocol (`message/send`) used by the chat-ui
   and incident-bridge to reach the agent.
 - **AMP** — Amazon Managed Service for Prometheus (alert source).
+- **AIOps** — using agents/automation to help operate the platform (incident
+  triage, RCA, remediation). `peeks-agent` is a reference example, not a full
+  AIOps product (see §3).
 
 ---
 
