@@ -245,6 +245,39 @@ Not hardcoded — injected from cluster-secret annotations by the registry entry
 `ingress_domain_name`, `gitlab_domain_name`). The literals in `values.yaml` are
 fallbacks for a standalone `helm template` only.
 
+### 5.4 Convergence with the `AppmodService` component (design intent)
+
+**We want the KubeVela/OAM ComponentDefinitions that evolve in OAP
+(`agent`, `mcp-server`, `agentcore-memory`, …) to converge with the
+`AppmodService` ComponentDefinition of `appmod-blueprints`** — the component that
+already backs the polyglot app-delivery modules (rust, java, golang, dotnet,
+next-js) and the `RayService`. The goal is **one consistent KubeVela component
+model** across the platform, not two divergent lineages (an "app-delivery" family
+in appmod and an "agentic" family in OAP).
+
+Rationale and direction:
+
+- **Shared conventions.** `agent`/`mcp-server` and `AppmodService` should share the
+  same trait/exposure conventions (ingress + ALB annotations, `healthcheckPath`,
+  the kro RGD wiring, `peeks/depends-on` ordering, IRSA/Pod-Identity
+  `aws-service-identity` accessFor) so that a fix or capability added on one side
+  (e.g. path-prefix `url-rewrite`, health-check overrides, publishVersion-driven
+  rollout triggers) is portable to the other rather than re-implemented.
+- **Single source for the OAM building blocks.** Where a definition is generic
+  (ingress, service identity, kro-backed AWS resources), it should live once and be
+  consumed by both the agentic components and `AppmodService`, avoiding drift in CUE
+  schemas and admission behaviour (e.g. the CUE `list.Concat` / v0.11 breakage, the
+  annotation-key templating limits) being fixed twice.
+- **Migration path.** As OAP's agentic ComponentDefinitions stabilise, fold their
+  improvements back into the appmod `AppmodService` line (and vice-versa), so the
+  workshop presents a single, coherent "define your service (or agent) as an OAM
+  component" story.
+
+> This is a **forward-looking alignment goal**, tracked as an open item (see §11).
+> It does not block the current integration — today the agentic ComponentDefinitions
+> ship from OAP (`oam-agent-components`) and `AppmodService` ships from appmod
+> independently; convergence is incremental.
+
 ---
 
 ## 6. Key Data Flows
@@ -392,6 +425,10 @@ removes the whole bundle). Core platform is unaffected.
 
 ## 11. Open Items / Known Gaps
 
+- **Converge OAP OAM components with `AppmodService`** — align the agentic
+  ComponentDefinitions (`agent`, `mcp-server`, `agentcore-memory`) with the
+  `AppmodService` component of `appmod-blueprints` toward a single KubeVela
+  component model (shared traits/ingress/health/kro-RGD conventions). See §5.4.
 - **kro annotation-key templating** — the ALB `url-rewrite` transforms annotation
   needs a dynamic key; kro does not substitute CEL in annotation **keys** (only
   values), so path-prefix rewrite for agent/app ingress is limited pending kro
