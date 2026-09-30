@@ -132,6 +132,17 @@ $values/${BASEPATH}registry/sandbox.yaml          # agent-sandbox (+ operator / 
 
 ### 4.3 In-cluster overlay layer (`$overlay`)
 
+**Goal.** Let users track the **upstream** `appmod-blueprints` and OAP GitHub repos
+as the **main source** (so they keep receiving upstream fixes and features without
+forking), while still keeping **full control** over their own deployment through a
+**fleet-config git repo they own**. Value files committed to that fleet-config repo
+are layered at **highest precedence**, so they **override** the upstream defaults
+without ever committing to (or forking) the upstream repos. In short: *upstream for
+the code and defaults, your fleet-config for the last word.* This is the GitOps
+equivalent of a private override layer — pin an image mirror, point an endpoint at
+your own service, set your hostnames/Secrets-Manager keys, or disable/replace a
+value — all in a repo you control, reconciled by Argo CD.
+
 The generator renders a second `$overlay` source (highest precedence,
 `ignoreMissingValueFiles: true`) fed by `${OVERLAY_REPO_URL}` /
 `${OVERLAY_REVISION}` / `${OVERLAY_BASEPATH}` — normally the **fleet-config** repo.
