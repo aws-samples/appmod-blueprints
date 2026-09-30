@@ -19,7 +19,7 @@ images:
   eksMcp:         { registry: "", tag: "" }   # eks-read-mcp
   gitlabMcp:      { registry: "", tag: "" }
   chatUi:         { registry: "", tag: "v1.3" }   # copy buttons + scrollable suggestions + auto-grow (v1.2 = markdown/suggestions overhaul)
-  incidentBridge: { registry: "", tag: "v1.2" }   # v1.2 = deterministic open-MR dup-check (v1.1 = contextId sanitize)
+  incidentBridge: { registry: "", tag: "v1.3" }   # v1.3 = _subject dedup keyed on component only (v1.2 = deterministic open-MR dup-check, v1.1 = contextId sanitize)
 
 # Per-deployment values — NOT hardcoded: injected from cluster-secret annotations by the
 # registry entry (the fleet-secret/ESO stamps resource_prefix, aws_account_id, aws_region,

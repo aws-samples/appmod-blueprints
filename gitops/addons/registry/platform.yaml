@@ -790,7 +790,9 @@ peeks-agent:
     #   agent  v1.2 -> agent.py _sanitize_agentcore_id (AgentCore sessionId fix)
     #   chatUi v1.3 -> copy buttons (message + code blocks), scrollable suggestions,
     #                  elapsed timer, textarea auto-grow, scroll-to-bottom (v1.2 predates these)
-    #   incidentBridge v1.2 -> deterministic open-MR dup-check (v1.1 = poller.py contextId sanitize)
+    #   incidentBridge v1.3 -> _subject dedup keyed on COMPONENT only (drop alertname: PodOOMKilled/
+    #                  CrashLoopBackOff/FrequentRestarts of one pod collapse to ONE remediation)
+    #                  (v1.2 = deterministic open-MR dup-check, v1.1 = poller.py contextId sanitize)
     # The other components inherit the global tag (:v1).
     images:
       skillsMcp:      { registry: "", tag: "v2" }
@@ -798,7 +800,7 @@ peeks-agent:
       eksMcp:         { registry: "", tag: "" }
       gitlabMcp:      { registry: "", tag: "" }
       chatUi:         { registry: "", tag: "v1.3" }
-      incidentBridge: { registry: "", tag: "v1.2" }
+      incidentBridge: { registry: "", tag: "v1.3" }
     accountId: '{{.metadata.annotations.aws_account_id}}'
     clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
     region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'

@@ -60,31 +60,28 @@ def _fingerprint(alert: dict) -> str:
 
 def _subject(alert: dict) -> str:
     """Coarse idempotency key: the COMPONENT that is failing, independent of
-    which cluster or pod-instance fired. The same addon failing on several
-    clusters (or a pod recreated with a new name) collapses to ONE subject, so
-    the bridge does not dispatch duplicate remediations for what is a single
-    GitOps fix (e.g. the cluster-agnostic `configs/<addon>/values.yaml`). The
-    durable backstop is the agent listing open MRs before creating one."""
-    comp = (
-        alert.get("container")
-        or alert.get("persistentvolumeclaim")
-        or alert.get("pod", "")
-    )
-    # For CONTAINER-scoped signals (image-pull / OOM of a named container), the
-    # `namespace` label is UNRELIABLE: the same failing pod can be reported under
-    # different namespace labels by different AMP rules (observed: the same
-    # `langfuse-minio-init` pod's `mc` container fired once as namespace
-    # `kube-prometheus-stack` and once as `langfuse`), which split into two
-    # subjects and produced two duplicate MRs. Since the GitOps fix
-    # (`configs/<addon>/values.yaml`) is namespace-agnostic, key ONLY on
-    # alertname + container so those collapse to ONE subject.
+    alertname, cluster, or pod-instance.
+
+    AMP fires SEVERAL alertnames for one broken pod (PodOOMKilled,
+    PodFrequentRestarts, PodCrashLoopBackOff, …); a SINGLE GitOps fix addresses
+    all of them, so they MUST collapse to ONE subject. Keying on the component
+    (container, else PVC, else pod) WITHOUT the alertname removes the race where
+    a second alertname arrived before the first remediation's MR was open and
+    produced a duplicate forward (observed: PodOOMKilled|hog forwarded, then
+    PodCrashLoopBackOff|hog forwarded again for the same pod).
+
+    The `namespace` label is deliberately EXCLUDED for container-scoped signals:
+    the same failing pod is reported under different namespace labels by
+    different AMP rules (observed: `kube-prometheus-stack` vs the real
+    namespace), and the GitOps fix (`configs/<addon>/values.yaml`) is
+    namespace-agnostic anyway. It is kept ONLY for PVC/node-scoped signals (no
+    container), where a name can legitimately repeat across namespaces."""
+    comp = _component(alert)
     if alert.get("container"):
-        return "|".join([str(alert.get("alertname", "")), str(comp)])
+        return comp
     # node/PVC-scoped signals have no container -> keep namespace as discriminator
     # (a PVC name can legitimately repeat across namespaces).
-    return "|".join(
-        [str(alert.get("alertname", "")), str(alert.get("namespace", "")), str(comp)]
-    )
+    return "|".join([str(alert.get("namespace", "")), str(comp)])
 
 
 def _dedup(fp: str) -> bool:
