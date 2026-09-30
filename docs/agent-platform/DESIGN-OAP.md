@@ -225,6 +225,37 @@ registry (`gitops/addons/registry/platform.yaml`, wave ~8, `dependsOn` KubeVela 
 the OAP `agent-platform-addons` bundle). The chart's Argo CD Application renders a
 single **KubeVela OAM Application** (`files/peeks-agent-app.yaml`).
 
+### 5.0 Purpose & operating modes
+
+`peeks-agent` is an **AIOps agent** for the platform: it observes the fleet,
+reasons about incidents, and proposes/opens GitOps remediations. It is also the
+**reference showcase for the OAP feature set** — it is composed entirely from OAP
+building blocks (the `agent`/`mcp-server`/`agentcore-memory` OAM
+ComponentDefinitions, the bifrost LLM gateway, the agent-gateway identity/token
+exchange, AgentCore memory, and the OTLP→Langfuse tracing), so it doubles as a
+worked example of "how to build an agent on OAP".
+
+It operates in **two complementary modes**:
+
+1. **Interactive — Chat UI (human-in-the-loop).** A conversational front-end
+   (`chat-ui`, exposed via CloudFront/ALB) lets an operator ask the agent to
+   investigate the platform and draft/open remediation MRs. Access is
+   **authenticated via Keycloak** (the platform IdP).
+   > **Planned improvement — On-Behalf-Of (OBO).** Today the agent acts with its
+   > own Pod-Identity role regardless of who is chatting. The goal is to add an
+   > **on-behalf-of token exchange** (via the OAP **agent-gateway** identity layer)
+   > so the agent **inherits the authenticated user's permissions** and can do
+   > **only what that user is allowed to do** — least privilege scoped to the human,
+   > not a broad shared agent role. This aligns the chat path with the platform's
+   > Keycloak identity and closes the "agent can do more than the caller" gap.
+
+2. **Autonomous — RCA (event-driven).** The agent runs **root-cause analysis
+   automatically**, triggered by **observability events** on the platform (AMP
+   alerts such as `PodOOMKilled` → SNS/SQS → `incident-bridge` → the agent). It
+   performs read-only investigation and opens a **GitOps remediation merge
+   request** for a human to review and merge (see §6.1). No human prompt is needed
+   to start; a human still approves the fix.
+
 ### 5.1 Components (OAM)
 
 | Component | OAM type | Role |
@@ -436,6 +467,10 @@ removes the whole bundle). Core platform is unaffected.
 
 ## 11. Open Items / Known Gaps
 
+- **On-Behalf-Of (OBO) for the chat path** — add agent-gateway token exchange so the
+  chat-authenticated (Keycloak) user's identity/permissions are propagated to the
+  agent, which then acts scoped to that user (least privilege) instead of its own
+  shared Pod-Identity role. See §5.0.
 - **Converge OAP OAM components with `AppmodService`** — align the agentic
   ComponentDefinitions (`agent`, `mcp-server`, `agentcore-memory`) with the
   `AppmodService` component of `appmod-blueprints` toward a single KubeVela
