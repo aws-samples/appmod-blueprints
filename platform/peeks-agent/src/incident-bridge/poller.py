@@ -48,7 +48,11 @@ _seen: dict[str, float] = {}  # fingerprint -> last-sent epoch
 
 
 def log(msg: str) -> None:
-    print(f"[incident-bridge] {msg}", flush=True)
+    # ISO-8601 UTC timestamp prefix so the incident chronology is followable in
+    # `kubectl logs` (SQS receive -> dedup/open-MR skip -> forward), independent
+    # of any log-collector timestamps.
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    print(f"{ts} [incident-bridge] {msg}", flush=True)
 
 
 def _fingerprint(alert: dict) -> str:
