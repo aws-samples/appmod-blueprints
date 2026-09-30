@@ -144,6 +144,36 @@ $overlay/overlays/environments/<env>/<addon>/values.yaml      # per-env
 $overlay/overlays/clusters/<cluster>/<addon>/values.yaml      # per-cluster
 ```
 
+> **Same overlay mechanism for BOTH planes — appmod & OAP.** This is not an
+> OAP-specific invention: OAP reuses, verbatim, the overlay pattern that the
+> **platform (appmod) addons** already use. Both are instances of the *same*
+> `platform-charts/appset-chart` generator, each a two-source Application with an
+> identical layered value-file precedence (defaults → env → cluster → `$overlay`,
+> `ignoreMissingValueFiles: true`), differing only in **which registry files and
+> git base path** they load:
+>
+> | | Platform addons (appmod) | Agentic addons (OAP) |
+> |---|---|---|
+> | Argo CD Application | `cluster-addons` | `agent-platform-addons` |
+> | Source A (`$values`) | appmod `gitops/addons/registry/*` (base `gitops/addons`) | OAP `gitops/addons/registry/*` (`${BASEPATH}`) |
+> | Source B (generator) | `platform-charts/appset-chart` | `platform-charts/appset-chart` (same chart) |
+> | `$overlay` repo | fleet-config (`overlayRepoURLGit…`) | fleet-config (`overlayRepoURLGit…`, same repo) |
+> | Umbrella gate | — (core, always on) | `globalSelectors.enable_agent_platform` |
+>
+> Because the `$overlay` repo is the **same fleet-config** for both, an operator
+> overrides a **platform** addon and an **agentic** addon through the *same* paths
+> and the *same* precedence rules — just under that addon's own key. The layered
+> value files resolved by the generator for either plane are:
+>
+> ```
+> $values/<base>/configs/<addon>/values.yaml                              # repo defaults (all clusters)
+> $values/<base>/overlays/environments/<env>/<addon>/values.yaml          # repo per-env
+> $values/<base>/overlays/clusters/<cluster>/<addon>/values.yaml          # repo per-cluster
+> $overlay/configs/<addon>/values.yaml                                    # fleet-config, all clusters
+> $overlay/overlays/environments/<env>/<addon>/values.yaml                # fleet-config, per-env
+> $overlay/overlays/clusters/<cluster>/<addon>/values.yaml                # fleet-config, per-cluster (highest)
+> ```
+
 > **Override-key convention (important).** Two planes with **different** key
 > conventions coexist and are not interchangeable:
 > 1. **per-addon Helm value files** (`configs/<addon>/values.yaml`,
@@ -281,7 +311,7 @@ happy path):
 
 ### 7.1 Bedrock model access prerequisite (LLM enablement)
 
-The agent's LLM calls reach Bedrock (Claude Sonnet 4.5) via bifrost. Because
+The agent's LLM calls reach Bedrock (Claude Sonnet 5) via bifrost. Because
 Anthropic models are **AWS Marketplace–gated**, a principal **with Marketplace
 permissions** must invoke the model once to subscribe it **account-wide** (the
 "Model access" console page is retired; activation is now automatic on first
@@ -293,7 +323,7 @@ custom resource (in the `platform-engineering-on-eks` repo, `team-stack.ts`):
 - a Lambda whose role has `aws-marketplace:Subscribe/Unsubscribe/ViewSubscriptions`
   + `bedrock:InvokeModel*` (and the agreement/FTU actions), which submits the FTU
   and invokes `Converse` once (with retry) on
-  `us.anthropic.claude-sonnet-4-5-20250929-v1:0` → subscribes account-wide;
+  `us.anthropic.claude-sonnet-5` → subscribes account-wide;
 - non-fatal (always signals SUCCESS; result exposed as a stack output).
 
 After activation, every role in the account (including the bifrost Pod Identity
