@@ -1,0 +1,39 @@
+{{- /*
+Render the PEEKS agent OAM Application from the canonical manifest in files/.
+We use .Files.Get so Helm does NOT evaluate the embedded Go/AlertManager templates
+(e.g. {{ "{{" }} .CommonLabels.alertname {{ "}}" }} in the AlertManager receiver) —
+the file content is a plain string, and only the REPLACE_ tokens are substituted.
+
+Image tokens are per-component: REPLACE_REG_<C>/REPLACE_TAG_<C>. Each resolves to the
+per-component override in .Values.images.<c> when set, else falls back to the global
+.Values.imageRegistry / .Values.imageTag. This lets a single component be pinned to a
+different registry/tag (e.g. incidentBridge.tag) without moving the other images.
+*/ -}}
+{{- $reg := .Values.imageRegistry -}}
+{{- $tag := .Values.imageTag | toString -}}
+{{- $im  := .Values.images | default dict -}}
+{{- $skills := (index $im "skillsMcp")      | default dict -}}
+{{- $agent  := (index $im "agent")          | default dict -}}
+{{- $eks    := (index $im "eksMcp")         | default dict -}}
+{{- $gitlab := (index $im "gitlabMcp")      | default dict -}}
+{{- $chat   := (index $im "chatUi")         | default dict -}}
+{{- $ib     := (index $im "incidentBridge") | default dict -}}
+{{- .Files.Get "files/peeks-agent-app.yaml"
+      | replace "REPLACE_REG_SKILLS_MCP"      (default $reg (index $skills "registry"))
+      | replace "REPLACE_TAG_SKILLS_MCP"      (default $tag (index $skills "tag" | toString))
+      | replace "REPLACE_REG_AGENT"           (default $reg (index $agent  "registry"))
+      | replace "REPLACE_TAG_AGENT"           (default $tag (index $agent  "tag" | toString))
+      | replace "REPLACE_REG_EKS_MCP"         (default $reg (index $eks    "registry"))
+      | replace "REPLACE_TAG_EKS_MCP"         (default $tag (index $eks    "tag" | toString))
+      | replace "REPLACE_REG_GITLAB_MCP"      (default $reg (index $gitlab "registry"))
+      | replace "REPLACE_TAG_GITLAB_MCP"      (default $tag (index $gitlab "tag" | toString))
+      | replace "REPLACE_REG_CHAT_UI"         (default $reg (index $chat   "registry"))
+      | replace "REPLACE_TAG_CHAT_UI"         (default $tag (index $chat   "tag" | toString))
+      | replace "REPLACE_REG_INCIDENT_BRIDGE" (default $reg (index $ib     "registry"))
+      | replace "REPLACE_TAG_INCIDENT_BRIDGE" (default $tag (index $ib     "tag" | toString))
+      | replace "REPLACE_ACCOUNT_ID"     (.Values.accountId     | toString)
+      | replace "REPLACE_CLUSTER_PREFIX" .Values.clusterPrefix
+      | replace "REPLACE_REGION"         .Values.region
+      | replace "REPLACE_CLOUDFRONT_DOMAIN" .Values.cloudfrontDomain
+      | replace "REPLACE_GITLAB_DOMAIN"  .Values.gitlabDomain
+      | replace "REPLACE_GITLAB_MR_PROJECT" (.Values.gitlabMrProject | default "") }}
