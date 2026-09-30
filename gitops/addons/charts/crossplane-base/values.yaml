@@ -88,6 +88,74 @@ namespace: crossplane-system
 providerDefaults:
   maxReconcileRate: 6
 
+# Per-provider pod resources, applied to every provider's DeploymentRuntimeConfig.
+#
+# Observed steady-state memory on a hub running nine providers
+# (`kubectl top pods -n crossplane-system`):
+#
+#   provider-aws-ec2                384Mi   <- high-water mark
+#   provider-aws-amp                344Mi
+#   provider-aws-iam                317Mi
+#   provider-aws-rds                311Mi
+#   provider-aws-eks                310Mi
+#   provider-aws-grafana            306Mi
+#   upbound-provider-family-aws     293Mi
+#   provider-aws-dynamodb           289Mi
+#   provider-kubernetes             153Mi   <- small schema, same runtime
+#
+# The previous defaults requested 1Gi each and capped at 2Gi, so nine providers reserved
+# 9Gi to use ~2.6Gi. On EKS Auto Mode the REQUEST drives instance selection, so that
+# reservation is the part that costs money; the limit costs nothing until it is hit.
+#
+# WHAT THE MEASUREMENT DOES AND DOES NOT ESTABLISH. These are Go programs, and RSS is
+# not the working set: with GOGC at its default of 100 the heap is allowed to grow to
+# roughly twice the live heap before a collection runs, and freed pages are returned to
+# the OS lazily. So the figures above are an UPPER BOUND on what each provider needs,
+# not a requirement. The live-heap floor underneath them has not been measured, which is
+# why the numbers below are not pushed to the edge.
+#
+# WHAT THE NUMBERS SAY ABOUT WHERE THE MEMORY GOES. Not per-service schema size: AMP and
+# Grafana expose roughly four Terraform resources each yet sit at 344Mi and 306Mi, while
+# EC2 exposes hundreds and sits at 384Mi. A ~40Mi spread between the smallest and largest
+# service means the dominant term is a cost paid by EVERY aws family provider regardless
+# of how much it serves, plus the ~153Mi floor visible in provider-kubernetes (same Go
+# runtime and controller-runtime, no AWS schema). Candidate explanations for that fixed
+# cost -- every family provider constructing the full terraform-provider-aws schema at
+# startup even though it registers CRDs for one service, versus controller-runtime cache
+# and GOGC slack -- have NOT been distinguished here, so do not repeat any of them as
+# fact. What is established is only that it is near-constant per provider, so splitting
+# or trimming services will not move it.
+#
+# Whatever that fixed cost is made of, GC slack is part of what is being observed, which
+# is why the figures are an upper bound rather than a floor.
+#
+# HOW THE NUMBERS BELOW WERE CHOSEN:
+#   memoryRequest 384Mi — the observed high-water mark. Deliberately NOT lower: a pod
+#     using more than its request is Burstable and becomes an eviction candidate under
+#     node memory pressure, ranked by how far it exceeds. Sitting at/above real usage
+#     buys eviction safety for free, since the request is a reservation and not a cap.
+#   memoryLimit 512Mi — headroom over the request without reserving it. Safe to lower
+#     from the old 1Gi only because GOMEMLIMIT (below) now makes the runtime collect as
+#     it approaches the ceiling instead of being killed at it.
+#   goMemLimit 460MiB — just under the limit, leaving room for the non-heap part of RSS
+#     (goroutine stacks, runtime structures, mmap'd regions) that GOMEMLIMIT does not
+#     govern. Note the Go suffix is MiB, not Mi.
+#
+# TO GO LOWER, which is possible but needs measurement: GOMEMLIMIT is a CEILING, not a
+# target. At 460MiB it is above the GOGC-paced steady state, so it protects without
+# changing consumption. Lowering it BELOW that steady state makes it binding and does
+# reduce memory, trading CPU for it, until the live-heap floor is reached; past that
+# point the runtime GCs continuously and throughput collapses. So find the floor first
+# (the providers' own go_memstats_heap_inuse_bytes, or pprof) rather than guessing.
+# Raise these if providers are OOMKilled or evicted.
+providerResources:
+  cpuRequest: 250m
+  memoryRequest: 384Mi
+  memoryLimit: 512Mi
+  # Empty disables the env var entirely (runtime unaware of the limit, pre-change
+  # behaviour). Go accepts B/KiB/MiB/GiB suffixes.
+  goMemLimit: "460MiB"
+
 # PostSync hook that restarts credential-less Crossplane provider pods so they
 # pick up their EKS Pod Identity token once the PIA is active (spoke-side
 # equivalent of `task hub:restart-identity-pods`). Set false to disable.
