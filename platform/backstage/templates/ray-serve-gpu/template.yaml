@@ -181,7 +181,7 @@ spec:
               backstage.io/created-by: ${{ user.entity.metadata.name | default("unknown") }}
           spec:
             destinations:
-              - name: peeks-hub
+              - name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
                 namespace: ${{ parameters.namespace }}
             sourceRepos:
               - https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{parameters.name}}-ray-service.git

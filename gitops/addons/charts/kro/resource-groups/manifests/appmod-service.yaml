@@ -649,11 +649,11 @@ spec:
           data:
             - secretKey: amp-workspace-url
               remoteRef:
-                key: peeks/platform/amp
+                key: ${schema.spec.resourcePrefix}/platform/amp
                 property: amp-workspace
             - secretKey: amp-workspace-region
               remoteRef:
-                key: peeks/platform/amp
+                key: ${schema.spec.resourcePrefix}/platform/amp
                 property: amp-region
 
     - id: functionalanalysis
