@@ -3,7 +3,7 @@
 	"annotations": {}
 	"attributes": {
 		"workload": {
-			"type": "autodetects"
+			"type": "autodetects.core.oam.dev"
 		}
 	}
 	"description": "External secret for RDS or standalone relational database instance"
