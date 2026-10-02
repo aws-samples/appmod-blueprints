@@ -1,0 +1,115 @@
+"path-based-ingress": {
+	"annotations": {}
+	"attributes": {
+		"appliesToWorkloads": []
+		"conflictsWith": []
+		"podDisruptive":   false
+		"workloadRefPath": ""
+	}
+	"description": "Ingress route trait."
+	"labels": {}
+	"type": "trait"
+}
+
+template: {
+	context: {
+		name: string
+		outputs: {...}
+	}
+	parameter: {
+		domain: string
+		http: [string]: int
+		class:         *"platform" | string
+		rewritePath:   *true | bool
+		createService: *false | bool
+		// ALB target-group health check path. Default "/" is fine for apps that
+		// serve a 2xx at root, but apps that only serve sub-paths (e.g. the Rust
+		// app on /collection/*) MUST override this to a served path, otherwise the
+		// OSS LBC marks all targets unhealthy (Target.ResponseCodeMismatch: 404).
+		healthcheckPath: *"/" | string
+	}
+
+	// trait template can have multiple outputs in one trait
+	outputs: {
+		if parameter.createService {
+			service: {
+				apiVersion: "v1"
+				kind:       "Service"
+				metadata: name: context.name
+				spec: {
+					selector: "app.oam.dev/component": context.name
+					ports: [
+						for k, v in parameter.http {
+							port:       v
+							targetPort: v
+						},
+					]
+				}
+			}
+		}
+	}
+
+	outputs: ingress: {
+		apiVersion: "networking.k8s.io/v1"
+		kind:       "Ingress"
+		metadata: {
+			name: context.name
+			annotations: {
+				"alb.ingress.kubernetes.io/scheme":           "internet-facing"
+				"alb.ingress.kubernetes.io/target-type":      "ip"
+				"alb.ingress.kubernetes.io/healthcheck-path": parameter.healthcheckPath
+				// URL rewrite: strip the ingress path prefix before forwarding to
+				// the pod. The transforms annotation key MUST include the backend
+				// service name as suffix (ALB controller requirement). CUE's native
+				// key interpolation ("\(expr)") makes this straightforward — unlike
+				// kro which cannot template annotation keys.
+				if parameter.rewritePath {
+					for k, _ in parameter.http {
+						"alb.ingress.kubernetes.io/transforms.\(context.name)": "[{\"type\":\"url-rewrite\",\"urlRewriteConfig\":{\"rewrites\":[{\"regex\":\"^\(k)/?(.*)$\",\"replace\":\"/$1\"}]}}]"
+					}
+				}
+			}
+		}
+		spec: {
+			ingressClassName: parameter.class
+			rules: [{
+				host: parameter.domain
+				http: paths: [
+					for k, v in parameter.http {
+						path:     k
+						pathType: "Prefix"
+						backend: service: {
+							name: context.name
+							port: number: v
+						}
+					},
+				]
+			}]
+		}
+	}
+
+	patch: metadata: annotations: {
+		"argocd.argoproj.io/compare-options": "IgnoreExtraneous"
+		"argocd.argoproj.io/sync-options":    "Prune=false"
+	}
+
+	patchOutputs: {
+		for k, v in context.outputs {
+			"\(k)": metadata: annotations: {
+				"argocd.argoproj.io/compare-options": "IgnoreExtraneous"
+				"argocd.argoproj.io/sync-options":    "Prune=false"
+			}
+		}
+		if parameter.createService {
+			service: metadata: annotations: {
+				"argocd.argoproj.io/compare-options": "IgnoreExtraneous"
+				"argocd.argoproj.io/sync-options":    "Prune=false"
+			}
+		}
+		ingress: metadata: annotations: {
+			"argocd.argoproj.io/compare-options": "IgnoreExtraneous"
+			"argocd.argoproj.io/sync-options":    "Prune=false"
+		}
+
+	}
+}
