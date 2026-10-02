@@ -9,10 +9,9 @@ spec:
       properties:
         secret_name: peeks-sqlserver
     - name: northwind-ux 
-      type: appmod-service
+      type: service-rollout
       properties:
         image: <image>
-        image_name: northwind
         port: 80
         targetPort: 80
         replicas: 1

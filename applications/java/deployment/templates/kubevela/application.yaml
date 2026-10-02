@@ -7,10 +7,9 @@ metadata:
 spec:
   components:
     - name: java-webservice
-      type: appmod-service
+      type: service-rollout
       properties:
         image: <image>
-        image_name: java-app
         port: 8080
         targetPort: 8080
         replicas: 2

@@ -26,7 +26,7 @@ fn image_url_for(file_name: &str) -> String {
     // The pod itself only ever knows about the unprefixed /product-images route
     // (nginx's path-based-ingress rewrite-target strips the app's mount path,
     // e.g. /rust-app, before the request reaches this service -- see
-    // platform-meta/templates/traits/path-based-ingress.yaml). Consumers
+    // gitops/addons/charts/kubevela/templates/traits/path-based-ingress.yaml). Consumers
     // outside the cluster need that prefix included in the URL they're given,
     // so it's configurable via APP_BASE_PATH and left empty by default for
     // direct/local access where no ingress sits in front of this service.

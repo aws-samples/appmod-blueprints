@@ -1,3 +1,11 @@
+# Example: granting a workload scoped access to a DynamoDB table.
+#
+# Previously this needed a separate `dp-service-account` COMPONENT that took the
+# cluster name, the region and a resource prefix. Access is now a TRAIT on the
+# workload itself, with none of those inputs: `aws-service-identity` emits a
+# PodIdentity claim for the component's own ServiceAccount, and the platform's
+# XPodIdentity Composition resolves cluster and region from the cluster's
+# env-config.
 apiVersion: core.oam.dev/v1beta1
 kind: Application
 metadata:
@@ -12,16 +20,19 @@ spec:
         sortKeyName: sort_key
         region: us-west-2
       traits:
+        # Emits <appName>-<component>-iam-policy, which accessFor attaches.
         - type: component-iam-policy
           properties:
             service: dynamodb
-    - name: some-service-account
-      type: dp-service-account
+
+    - name: some-service
+      type: service-rollout
       properties:
-        componentNamesForAccess:
-          - dynamodb-table
-        clusterName: my-cluster-name
-        clusterRegion: us-west-2
-        dependsOn:
-          - dynamodb-table
-  
+        image: <image>
+        port: 8080
+        targetPort: 8080
+      traits:
+        - type: aws-service-identity
+          properties:
+            accessFor:
+              - dynamodb-table

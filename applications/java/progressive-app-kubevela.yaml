@@ -6,10 +6,9 @@ metadata:
 spec:
   components:
     - name: progressive-demo
-      type: appmod-service
+      type: service-rollout
       properties:
         image: argoproj/rollouts-demo:blue
-        image_name: rollout-demo  
         port: 8080
       traits:
         - type: path-based-ingress

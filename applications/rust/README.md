@@ -51,7 +51,7 @@ access), so that consumers going through this app's ingress get a correctly-rout
 workshop's deployment, `APP_BASE_PATH` is set to `/rust-app` to match the ingress path in
 `deployment/templates/kubevela/application.yaml` and `deployment/templates/kro/application.yaml` --
 nginx's `rewrite-target` strips that prefix before the request reaches this service, exactly like
-every other route here (see `platform-meta/templates/traits/path-based-ingress.yaml`).
+every other route here (see `gitops/addons/charts/kubevela/templates/traits/path-based-ingress.yaml`).
 
 ### To Do for Workshop
 Wishlist service: Write a wishlist service that maintains wishlists for each individual user with name, Products, and

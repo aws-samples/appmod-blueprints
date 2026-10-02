@@ -112,24 +112,13 @@ spec:
         - type: component-iam-policy
           properties:
             service: dynamodb
-    - name: rust-service-account
-      type: dp-service-account
-      properties:
-        componentNamesForAccess:
-          - dynamodb-table
-        clusterName: peeks-spoke-dev
-        clusterRegion: us-west-2
-        dependsOn:
-          - dynamodb-table
     - name: rust-backend
-      type: appmod-service
+      type: service-rollout
       properties:
         image:  <image> # Target image for workload
-        image_name: rust-microservice
         port: 80
         targetPort: 8080
         replicas: 5
-        serviceAccount: "rust-service-account"
         functionalGate:
           pause: "10s" 
           image: "<image>"
@@ -183,9 +172,11 @@ spec:
             }
 
           ]
-      dependsOn:
-        - rust-service-account
       traits: 
+        - type: aws-service-identity
+          properties:
+            accessFor:
+              - dynamodb-table
         - type: path-based-ingress
           properties:
             domain: "*.elb.us-west-2.amazonaws.com"
@@ -194,19 +185,17 @@ spec:
               /rust-app: 80
 ```
 ## Sample Application Breakdown
-The following configuration specifies an application that includes a Rust-based backend. It requires a DynamoDB table and a service account, with `ComponentDefinitions` provided separately.
+The following configuration specifies an application that includes a Rust-based backend. It requires a DynamoDB table, with `ComponentDefinitions` provided separately. The component owns its ServiceAccount (named after the component), and the `aws-service-identity` trait grants that ServiceAccount scoped AWS access -- so there is no separate service-account component and no cluster/region in the manifest.
 
-The main focus here is on configuring the `appmod-service` component, which leverages the solution setup when the application is ready. Below are the necessary fields to complete for a successful setup:
+The main focus here is on configuring the `service-rollout` component, which leverages the solution setup when the application is ready. Below are the necessary fields to complete for a successful setup:
 
 - **name**: `rust-backend` - Assign a name to your application.
-- **type**: `appmod-service` - Designate this as the appmod solution.
+- **type**: `service-rollout` - Designate this as the platform's rollout-managed service.
 - **properties**: Contains values required to set up Argo Rollouts properly.
   - `image`: `<image>` - Path to the container image running the application.
-  - `image_name`: `rust-microservice` - Names the container it runs on.
   - `port`: `80` - The port for the application.
   - `targetPort`: `8080` - The application's target port.
   - `replicas`: `5` - The number of replicas for the rollout.
-  - `serviceAccount`: `"rust-service-account"` - Service account name for the specified workload.
   - **metrics** (Optional): 
     - **evaluationCriteria**: Define an array of metrics to be tested. Each metric in the array specify the following values:
       - `interval`: `"1s"` - Specify interval with suffix `s`, `m`, or `h`.

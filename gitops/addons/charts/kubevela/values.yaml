@@ -1,3 +1,16 @@
+# Ambient, platform-supplied environment config consumed by the OAM definitions in
+# templates/. It is NOT developer-facing: a developer's OAM Application must deploy
+# unchanged to any region, so the region can never appear in their manifest.
+#
+# awsRegion is read by templates/traits/aws-service-identity.yaml, which injects it
+# as AWS_REGION / AWS_DEFAULT_REGION into the workload (SDKs differ on which they
+# read). It is supplied per-cluster by the addon ApplicationSet from the cluster
+# secret's aws_region annotation — see the kubevela entry in
+# gitops/addons/registry/platform.yaml. Left empty here so a bare `helm template`
+# still renders; on a real cluster the registry always sets it.
+global:
+  awsRegion: ""
+
 vela-core:
   multicluster:
     enabled: false
