@@ -7,26 +7,24 @@ metadata:
 spec:
   components:
     - name: rust-microservice
-      type: appmod-service
-      dependsOn:
-        - rust-service-account-<environment>
+      type: service-rollout
       properties:
         image: <image>
-        image_name: rust-app
         port: 8080
         targetPort: 8080
         replicas: 2
         # appPath drives APP_BASE_PATH (image URL prefix); keep it EQUAL to the
         # path-based-ingress trait path below, else prefixed assets 404.
         appPath: "/rust-app"
-        serviceAccount: rust-service-account-<environment>
         env:
           - name: APP_ENV
             value: "DEV"
           - name: TABLE_NAME
             value: ${RESOURCE_PREFIX}-rust-app-table-<environment>
-          - name: AWS_REGION
-            value: "${AWS_REGION}"
+          # NOTE: AWS_REGION is deliberately NOT set here. The aws-service-identity
+          # trait injects it (and AWS_DEFAULT_REGION) from platform config, so the
+          # same manifest deploys unchanged to any region. Setting it here would
+          # also collide with the trait's container patch.
         readinessProbe:
           httpGet:
             path: /collection/FRONT_PAGE
@@ -41,6 +39,14 @@ spec:
           limits:
             memory: "512Mi"
       traits:
+        # Grants this workload an AWS IAM identity via EKS Pod Identity and attaches
+        # the DynamoDB component's policy to it. Zero parameters beyond accessFor:
+        # the ServiceAccount is the component's own (same name), and cluster/region
+        # are resolved by the platform, not declared here.
+        - type: aws-service-identity
+          properties:
+            accessFor:
+              - rust-dynamodb-<environment>
         - type: path-based-ingress
           properties:
             domain: ""
@@ -51,15 +57,6 @@ spec:
             healthcheckPath: /collection/FRONT_PAGE
             http:
               /rust-app: 8080  # keep in sync with appPath above
-
-    - name: rust-service-account-<environment>
-      type: dp-service-account
-      properties:
-        componentNamesForAccess:
-          - rust-dynamodb-<environment>
-        clusterName: <cluster_name>
-        clusterRegion: us-west-2
-        resourcePrefix: "${RESOURCE_PREFIX}"
 
     - name: rust-dynamodb-<environment>
       type: dynamodb-table
@@ -72,4 +69,3 @@ spec:
         - type: component-iam-policy
           properties:
             service: dynamodb
-            resourcePrefix: "${RESOURCE_PREFIX}"

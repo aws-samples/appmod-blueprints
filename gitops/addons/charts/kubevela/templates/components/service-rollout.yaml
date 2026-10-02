@@ -1,30 +1,46 @@
-# DEPRECATED — superseded by `service-rollout`
-# (templates/components/service-rollout.yaml). Kept only so Applications that still
-# say `type: appmod-service` keep rendering during the migration window; it will be
-# removed once nothing references it.
+# service-rollout ComponentDefinition
 #
-# `service-rollout` is this component with the same canary strategy and the same
-# functional/performance/metric gates, differing in identity only: it owns a
-# ServiceAccount named after the component, drops the `serviceAccount` and
-# `image_name` parameters, and delegates all EKS Pod Identity wiring to the
-# `aws-service-identity` trait. See that file's header for the full rationale.
+# Generic long-running service (micro or monolith) managed by an Argo Rollout with
+# canary delivery and optional quality gates. Successor to `appmod-service`, which
+# remains in place (deprecated) until consumers have migrated.
 #
-# Migration: rename `type: appmod-service` to `type: service-rollout`, delete the
-# `serviceAccount` and `image_name` properties, and attach `aws-service-identity`
-# if the workload needs AWS credentials.
+# WHAT CHANGED FROM appmod-service, and why:
 #
-# NOTE: The original CUE source (platform/components/appmod-service.cue) is NOT
-# present on this branch, so this YAML is the source of truth here and is safe to
-# edit directly. If the CUE source is ever reintroduced, port changes back to it
-# (and re-run generation) to avoid regressions like the pod-identity wiring that
-# was previously lost when this file was regenerated from CUE.
+#  1. It OWNS a ServiceAccount named `context.name`. appmod-service only
+#     REFERENCED one (`parameter.serviceAccount`, default "default"), so nothing
+#     created it and most workloads silently ran as `default`. A dedicated SA per
+#     component is the workload's single identity anchor.
+#
+#  2. The `serviceAccount` parameter is GONE. The SA name is now a convention
+#     (== component name), not an input. This is what lets `aws-service-identity`
+#     attach with no parameters at all: that trait emits a PodIdentity claim for
+#     `serviceAccount: context.name`, so an arbitrary SA name would never match.
+#
+#  3. The `image_name` parameter is GONE. It only ever fed the container name and
+#     the Prometheus container filter; both now derive from `context.name`, so the
+#     parameter had no remaining purpose. One name, one place.
+#
+#  4. The inline EKS Pod Identity wiring is GONE (the token volume, its mount, and
+#     AWS_CONTAINER_CREDENTIALS_FULL_URI / AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE,
+#     previously gated on `serviceAccount != "default"`). That is now the sole job
+#     of the `aws-service-identity` trait, which additionally creates the IAM role
+#     via the XPodIdentity Composition, sets AWS_REGION, and gates startup on the
+#     identity actually existing. Keeping both would double-declare the volume and
+#     the env. A workload that needs AWS credentials attaches the trait.
+#
+# The canary strategy, the functional/performance/metric gates and their
+# AnalysisTemplates, the preview Service, the PDB and the AMP wiring are carried
+# over unchanged — this is not a behaviour change to delivery, only to identity.
+#
+# This YAML is the source of truth (there is no CUE source for it in this repo, as
+# with appmod-service). Edit it directly.
 apiVersion: core.oam.dev/v1beta1
 kind: ComponentDefinition
 metadata:
   annotations:
     definition.oam.dev/alias: ""
-    definition.oam.dev/description: "DEPRECATED (use service-rollout): Appmod deployment with canary support"
-  name: appmod-service
+    definition.oam.dev/description: Generic service managed by an Argo Rollout (canary) with quality gates and a dedicated ServiceAccount
+  name: service-rollout
 spec:
   schematic:
     cue:
@@ -39,7 +55,9 @@ spec:
         // RGD from the amp-workspace secret.
         let ampWorkspaceUrl = "{{ "{{" }}args.amp-workspace-url{{ "}}" }}"
         let ampWorkspaceRegion = "{{ "{{" }}args.amp-workspace-region{{ "}}" }}"
-        let prometheusTargetQuery = "k8s_container_name=\"\(parameter.image_name)\", k8s_namespace_name=\"\(context.namespace)\""
+        // Container name is context.name (see note 3 in the file header), so the
+        // Prometheus container filter derives from it too.
+        let prometheusTargetQuery = "k8s_container_name=\"\(context.name)\", k8s_namespace_name=\"\(context.namespace)\""
 
         output: {
         	apiVersion: "argoproj.io/v1alpha1"
@@ -151,39 +169,23 @@ spec:
                 }
               }
         			spec: {
-        				// EKS Pod Identity: explicitly project the pod-identity token and point
-        				// the AWS SDK at the Pod Identity Agent. This makes credential resolution
-        				// deterministic instead of relying on webhook mutation / init-container waits
-        				// (see git history: this wiring was lost during an OAM regeneration).
-        				if parameter.serviceAccount != "default" {
-        					volumes: [{
-        						name: "eks-pod-identity-token"
-        						projected: {
-        							defaultMode: 420
-        							sources: [{
-        								serviceAccountToken: {
-        									audience:          "pods.eks.amazonaws.com"
-        									expirationSeconds: 86400
-        									path:              "eks-pod-identity-token"
-        								}
-        							}]
-        						}
-        					}]
-        				}
+        				// NOTE: no EKS Pod Identity wiring here by design. Attach the
+        				// `aws-service-identity` trait to grant this workload an AWS
+        				// identity — it projects the pod-identity token, injects the
+        				// credential env (including AWS_REGION), creates the IAM role via
+        				// the XPodIdentity Composition, and blocks startup until that
+        				// identity exists. See note 4 in the file header.
         				containers: [{
         					image:           parameter.image
         					imagePullPolicy: "Always"
-        					name:            parameter.image_name
+        					// Container name == component name, by convention, so traits
+        					// that patch "the app container" (e.g. aws-service-identity,
+        					// whose containerName defaults to context.name) match with no
+        					// parameters. See note 3 in the file header.
+        					name:            context.name
         					ports: [{
         						containerPort: parameter.targetPort
         					}]
-        					if parameter.serviceAccount != "default" {
-        						volumeMounts: [{
-        							name:      "eks-pod-identity-token"
-        							mountPath: "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/"
-        							readOnly:  true
-        						}]
-        					}
         					env: [
         						if parameter.env != _|_ for _, e in parameter.env if e.name != "APP_BASE_PATH" {e},
         						// APP_BASE_PATH is derived from appPath so prefixed asset/image URLs follow the app path.
@@ -194,18 +196,6 @@ spec:
         							name:  "APP_BASE_PATH"
         							value: parameter.appPath
         						},
-        						if parameter.serviceAccount != "default" {
-        							{
-        								name:  "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"
-        								value: "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token"
-        							}
-        						},
-        						if parameter.serviceAccount != "default" {
-        							{
-        								name:  "AWS_CONTAINER_CREDENTIALS_FULL_URI"
-        								value: "http://169.254.170.23/v1/credentials"
-        							}
-        						},
         					]
         					if parameter.readinessProbe != _|_ {
         						readinessProbe: parameter.readinessProbe
@@ -214,7 +204,10 @@ spec:
         						resources: parameter.resources
         					}
         				}]
-        				serviceAccountName: parameter.serviceAccount
+        				// Convention, not configuration: the ServiceAccount this component
+        				// owns (emitted below) carries the same name as the component, which
+        				// is what aws-service-identity's PodIdentity claim targets.
+        				serviceAccountName: context.name
         				topologySpreadConstraints: [{
         					maxSkew:           1
         					topologyKey:       "topology.kubernetes.io/zone"
@@ -226,7 +219,18 @@ spec:
         	}
         }
         outputs: {
-        	"appmod-service-service": {
+        	// Dedicated ServiceAccount — the workload's single identity anchor, and the
+        	// subject that aws-service-identity binds an IAM role to.
+        	"service-rollout-serviceaccount": {
+        		apiVersion: "v1"
+        		kind:       "ServiceAccount"
+        		metadata: {
+        			name:      context.name
+        			namespace: context.namespace
+        			labels: app: context.name
+        		}
+        	}
+        	"service-rollout-service": {
         		apiVersion: "v1"
         		kind:       "Service"
         		metadata: name: context.name
@@ -238,7 +242,7 @@ spec:
         			}]
         		}
         	}
-        	"appmod-service-preview": {
+        	"service-rollout-preview": {
         		apiVersion: "v1"
         		kind:       "Service"
         		metadata: name: previewService
@@ -472,7 +476,7 @@ spec:
         			}
         		}
         	}
-        	"appmod-service-pdb": {
+        	"service-rollout-pdb": {
         		apiVersion: "policy/v1"
         		kind:       "PodDisruptionBudget"
         		metadata: name: context.name
@@ -505,12 +509,10 @@ spec:
         }
 
         parameter: {
-        	image_name:       string
         	image:            string
         	replicas:         *3 | int
         	port:             *80 | int
         	targetPort:       *8080 | int
-        	serviceAccount:   *"default" | string
         	appPath:          *"/" | string
         	env?:             [...{name: string, value: string}]
         	readinessProbe?:  {...}
@@ -530,4 +532,3 @@ spec:
         }
   workload:
     type: autodetects.core.oam.dev
-

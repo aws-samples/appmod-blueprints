@@ -1,3 +1,13 @@
+# Example: a service that reads/writes its own DynamoDB table.
+#
+# The identity pattern: the workload component owns a ServiceAccount named after
+# itself, and the `aws-service-identity` TRAIT grants that ServiceAccount an AWS
+# IAM identity via EKS Pod Identity. `accessFor` names sibling components whose
+# IAM policies should be attached to the workload's role.
+#
+# Note what is NOT here: no cluster name, no region, no resource prefix, no
+# ServiceAccount name. Those are platform concerns resolved ambiently, so this
+# manifest deploys unchanged to any cluster in any region.
 apiVersion: core.oam.dev/v1beta1
 kind: Application
 metadata:
@@ -12,24 +22,23 @@ spec:
         sortKeyName: sort_key
         region: us-west-2
       traits:
+        # Emits the IAM policy that `accessFor` below attaches.
         - type: component-iam-policy
           properties:
             service: dynamodb
 
-    - name: my-app-sa
-      type: dp-service-account
-      properties:
-        name: my-app-service-account
-
     - name: my-app
-      type: appmod-service
+      type: service-rollout
       properties:
         image: <image>
-        image_name: my-app
         port: 8080
         targetPort: 8080
         replicas: 1
       traits:
+        - type: aws-service-identity
+          properties:
+            accessFor:
+              - my-app-table
         - type: path-based-ingress
           properties:
             domain: ""
