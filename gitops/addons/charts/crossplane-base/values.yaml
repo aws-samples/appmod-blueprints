@@ -72,6 +72,13 @@ providers:
     serviceAccount: provider-aws-grafana
     roleName: CrossplaneGrafanaProviderRole
     createIdentity: true
+  # AWS Bedrock AgentCore (memory store for OAP agents). Off by default at the
+  # chart level (version ""); enabled via the registry / fleet-config overlay.
+  bedrockagentcore:
+    version: ""
+    serviceAccount: provider-aws-bedrockagentcore
+    roleName: CrossplaneBedrockAgentCoreProviderRole
+    createIdentity: true
   kubernetes:
     version: ""
     serviceAccount: provider-kubernetes

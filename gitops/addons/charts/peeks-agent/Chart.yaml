@@ -1,0 +1,5 @@
+apiVersion: v2
+name: peeks-agent
+description: PEEKS read-only platform-engineering agent (OAP Strands agent + skills-mcp + eks-read-mcp + chat-ui + AgentCore memory + incident bridge) as one KubeVela Application.
+type: application
+version: 0.1.0
