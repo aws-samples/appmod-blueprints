@@ -1,5 +1,12 @@
 # Agent Platform Components
 
+> **⚠️ HISTORICAL — superseded.** This document specifies the **archived**
+> Kagent/LiteLLM/Jaeger/Tofu-Controller components (the
+> `sample-agent-platform-on-eks` bridge-chart approach). It is kept for reference
+> only. The current component model is described in
+> [`AGENTS-MANAGING-PLATFORM-ON-EKS.md`](./AGENTS-MANAGING-PLATFORM-ON-EKS.md)
+> (OAP-based `aiops-agent`). Do not follow this document for new deployments.
+
 This document provides detailed specifications for each component in the agent platform.
 
 ## Table of Contents
