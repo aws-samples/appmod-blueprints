@@ -593,18 +593,22 @@ the chain **self-heals** — better than a one-shot hook.
 > [OAP #53](https://github.com/awslabs/open-agentic-platform/issues/53) (see also
 > [#45](https://github.com/awslabs/open-agentic-platform/issues/45)).
 
-**2. The Langfuse minio object-store bucket.** The chart currently ships
-`quay.io/minio/minio` and `quay.io/minio/mc` on **`tag: "latest"`**
-(`gitops/addons/charts/langfuse/values.yaml:114-121`) — **not** an ECR mirror, and
-**not** pinned. quay has been observed returning **401 for `latest` and
-`RELEASE.*`**, giving `ImagePullBackOff` on fresh installs, which blocks sync
+**2. The Langfuse minio object-store bucket.** The upstream chart default still
+ships `quay.io/minio/minio` and `quay.io/minio/mc` on **`tag: "latest"`**
+(`gitops/addons/charts/langfuse/values.yaml`) — **not** an ECR mirror, and **not**
+pinned. quay has been observed returning **401 for `latest` and `RELEASE.*`** (and
+docker.io 404), giving `ImagePullBackOff` on fresh installs, which blocks sync
 wave 0 → the `push-otel-secret` hook at a later wave never runs → the 🟡 tracing
-row does **not** self-heal. Repointing minio/mc to a pullable mirror is **OAP
-[#43](https://github.com/awslabs/open-agentic-platform/pull/43)** (uses the
-`seb-demo` ECR mirror as an interim default); the durable-registry follow-up is
-**OAP [#42](https://github.com/awslabs/open-agentic-platform/issues/42)** /
-**appmod [#945](https://github.com/aws-samples/appmod-blueprints/issues/945)**.
-Until #43 lands, describe the image source as quay/`latest` as-shipped (see §15).
+row does **not** self-heal. **Interim fix: repoint minio/mc to the `seb-demo`
+public ECR mirror with an immutable pinned tag** (`public.ecr.aws/seb-demo/minio`
+and `.../mc` at `mirror-20260921`) — **OAP
+[#43](https://github.com/awslabs/open-agentic-platform/pull/43)**. The mirror is a
+**personal namespace and explicitly interim**; moving to a durable, non-personal
+registry is tracked in **OAP
+[#42](https://github.com/awslabs/open-agentic-platform/issues/42)** / **appmod
+[#945](https://github.com/aws-samples/appmod-blueprints/issues/945)**. (Until #43
+merges, the upstream default is quay/`latest` as-shipped — this doc describes it
+as-is rather than claiming a pin that isn't on `main`.)
 
 ---
 
@@ -651,6 +655,13 @@ repo, `cdk/lib/team-stack.ts`):
 > independently-edited literals across the OAP bifrost config and the provisioning
 > Lambda (open item, §15). *(Historical note: an earlier draft named
 > `claude-sonnet-5`, which bifrost never routes — corrected.)*
+>
+> **⏳ Newer model (e.g. Sonnet 5) — handle later.** Workshop Studio guidance is to
+> move to the newest Claude models. That upgrade is deferred and must be done
+> **in lockstep**: bump the **bifrost route** (`configs/bifrost/values.yaml`) **and**
+> the provisioning Lambda id **together** (ideally the single shared constant above),
+> and re-confirm Marketplace subscription for the new id. Changing one without the
+> other reintroduces the silent-403 mismatch. Tracked in §15.
 
 After activation, every role in the account (including the bifrost Pod Identity
 role, which already has `bedrock:InvokeModel`) can invoke without Marketplace
@@ -825,6 +836,10 @@ tracking issue so this doc is the index.
 - **Bedrock model id drift-prevention.** The subscribed id and the bifrost route
   are aligned (Sonnet 4.5); keep them in **one place** (shared/baked constant) so
   they cannot diverge again. §9.1.
+- **Upgrade to a newer Claude model (e.g. Sonnet 5) — ⏳ deferred.** Per Workshop
+  Studio guidance to adopt the newest models; do it **in lockstep** (bifrost route
+  + provisioning Lambda id + Marketplace subscription for the new id), via the
+  single shared constant, to avoid the silent-403 mismatch. §9.1.
 - **Rename `peeks-agent` → `aiops-agent` in the implementation.** Chart dir,
   registry key, `enable_peeks_agent`, OAM app/component. Cheaper before #926 lands.
   [appmod #954](https://github.com/aws-samples/appmod-blueprints/issues/954).
