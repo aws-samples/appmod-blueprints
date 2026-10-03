@@ -2,15 +2,15 @@
 #
 # Placement: this lives in kro-manifests (like every other RGD) but is EXCLUDED from the
 # always-applied kro-manifests / kro-manifests-hub apps and shipped instead by the dedicated
-# `kro-peeks-agent-rgd-hub` registry app, gated on enable_peeks_agent. WHY (ray-service
+# `kro-aiops-agent-rgd-hub` registry app, gated on enable_aiops_agent. WHY (ray-service
 # precedent): the graph references sns/sqs/prometheusservice (managed ACK capability) and
 # amp.aws.upbound.io/Workspace (Crossplane). If those kinds are ever absent, KRO cannot build
 # the graph and the RGD stays Ready=False; in the shared kro-manifests-hub wave chain that
-# would stall eksclusterwithvpc and break spoke provisioning. Gating on enable_peeks_agent
+# would stall eksclusterwithvpc and break spoke provisioning. Gating on enable_aiops_agent
 # ties the RGD's lifecycle to the agent that already depends on those CRDs.
 #
 # Cluster-agnostic by design: accountId/region/workspaceName/topicName are schema spec fields
-# supplied by the AmpIncident INSTANCE (an OAM component in the peeks-agent Application), so
+# supplied by the AmpIncident INSTANCE (an OAM component in the aiops-agent Application), so
 # no REPLACE_ token substitution is needed here.
 #
 # RBAC PREREQUISITE (now in the eks-capabilities-rbac chart, NOT here): the kro capability
@@ -34,7 +34,7 @@ spec:
       accountId: string
       region: string | default="us-west-2"
       # SNS/SQS resource base name (topic == queue == this).
-      topicName: string | default="peeks-agent-incidents"
+      topicName: string | default="aiops-agent-incidents"
     status:
       # Surface the resolved id so `kubectl get ampincident` shows what was read.
       workspaceId: ${ampworkspace.status.atProvider.id}
@@ -56,7 +56,7 @@ spec:
         kind: Topic
         metadata:
           name: ${schema.spec.topicName}
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           name: ${schema.spec.topicName}
           policy: >-
@@ -69,7 +69,7 @@ spec:
         kind: Queue
         metadata:
           name: ${schema.spec.topicName}
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           queueName: ${schema.spec.topicName}
           messageRetentionPeriod: "3600"
@@ -85,7 +85,7 @@ spec:
         kind: Subscription
         metadata:
           name: ${schema.spec.topicName}-sqs
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           protocol: sqs
           topicARN: arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}
@@ -99,8 +99,8 @@ spec:
         apiVersion: prometheusservice.services.k8s.aws/v1alpha1
         kind: AlertManagerDefinition
         metadata:
-          name: peeks-agent-alertmanager
-          namespace: peeks-agent
+          name: aiops-agent-alertmanager
+          namespace: aiops-agent
         spec:
           workspaceID: ${ampworkspace.status.atProvider.id}
           configuration: |
@@ -109,7 +109,7 @@ spec:
                 receiver: null-receiver
                 group_by: ['alertname','cluster','namespace','pod']
                 routes:
-                  - receiver: peeks-agent-sns
+                  - receiver: aiops-agent-sns
                     matchers:
                       - severity=~"warning|critical"
                     group_wait: 30s
@@ -117,7 +117,7 @@ spec:
                     repeat_interval: 4h
               receivers:
                 - name: null-receiver
-                - name: peeks-agent-sns
+                - name: aiops-agent-sns
                   sns_configs:
                     - topic_arn: arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}
                       sigv4:
