@@ -18,7 +18,7 @@ different registry/tag (e.g. incidentBridge.tag) without moving the other images
 {{- $gitlab := (index $im "gitlabMcp")      | default dict -}}
 {{- $chat   := (index $im "chatUi")         | default dict -}}
 {{- $ib     := (index $im "incidentBridge") | default dict -}}
-{{- .Files.Get "files/peeks-agent-app.yaml"
+{{- .Files.Get "files/aiops-agent-app.yaml"
       | replace "REPLACE_REG_SKILLS_MCP"      (default $reg (index $skills "registry"))
       | replace "REPLACE_TAG_SKILLS_MCP"      (default $tag (index $skills "tag" | toString))
       | replace "REPLACE_REG_AGENT"           (default $reg (index $agent  "registry"))

@@ -62,7 +62,7 @@ enabledAddons:
   # OAP agent-platform-addons on the hub. Default ON in this unified integration branch
   # (config-unique 2b + #926); flip to false in the fleet-config overlay to disable
   # per-deployment (overlays/environments/control-plane/enabled-addons.yaml).
-  peeks_agent: true
+  aiops_agent: true
   gitlab: false  # GitLab runs on EC2 (docker-compose), not EKS
   # ACK controllers
   ack_iam: false
@@ -93,7 +93,7 @@ enabledAddons:
   # in the CDK SETUP_SCRIPT: the hub is a GitOps-managed member of this
   # control-plane overlay and its fleet-secret ExternalSecret is ESO-owned
   # (creationPolicy Owner) — a live label is reconciled away within ~1 min, so
-  # enablement MUST be declared here. Required by peeks_agent: true (the agent
+  # enablement MUST be declared here. Required by aiops_agent: true (the agent
   # references these ComponentDefinitions).
   agent_platform: true
   bifrost: true

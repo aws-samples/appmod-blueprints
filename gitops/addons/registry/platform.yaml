@@ -219,7 +219,7 @@ kro-manifests-hub:
     # is ALSO excluded because its graph references sns/sqs/prometheusservice (managed ACK
     # capability) + amp.aws.upbound.io (Crossplane) — if a referenced kind is absent the RGD stays
     # Ready=False and would stall this shared wave chain. It is shipped instead by
-    # kro-peeks-agent-rgd-hub, gated on enable_peeks_agent (ray-service precedent).
+    # kro-aiops-agent-rgd-hub, gated on enable_aiops_agent (ray-service precedent).
     exclude: '{eks/**,ray-service/**,amp-incident/**}'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-2'
@@ -286,10 +286,10 @@ kro-ray-rgd-hub:
 # sns/sqs/prometheusservice (managed ACK capability) + amp.aws.upbound.io/Workspace
 # (Crossplane), so — like kro-ray-rgd-hub for ray.io — it must NOT sit in the always-applied
 # kro-manifests-hub wave chain (a missing kind there would stall eksclusterwithvpc). It ships
-# only when enable_peeks_agent is set; wave 8 places it just before the peeks-agent app
+# only when enable_aiops_agent is set; wave 8 places it just before the aiops-agent app
 # (wave 9) that instantiates the AmpIncident CR, and after the ACK/Crossplane capabilities
 # that provide the referenced kinds.
-kro-peeks-agent-rgd-hub:
+kro-aiops-agent-rgd-hub:
   namespace: kro
   type: manifest
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests/amp-incident'
@@ -302,7 +302,7 @@ kro-peeks-agent-rgd-hub:
       - key: enable_kro_manifests_hub
         operator: In
         values: ['true']
-      - key: enable_peeks_agent
+      - key: enable_aiops_agent
         operator: In
         values: ['true']
 
@@ -764,20 +764,20 @@ platform-manifests-post:
       accountId: '{{.metadata.annotations.aws_account_id}}'
       region: '{{.metadata.annotations.aws_region}}'
 
-# peeks-agent — the PEEKS read-only platform-engineering agent (OAP Strands agent +
+# aiops-agent — the PEEKS read-only platform-engineering agent (OAP Strands agent +
 # skills-mcp + eks-read-mcp + chat-ui + AgentCore memory + incident bridge) as ONE
-# KubeVela Application. Gated by enable_peeks_agent (default OFF); values overridable
-# per-cluster via the fleet-config overlay (overlays/clusters/<cluster>/peeks-agent/values.yaml).
+# KubeVela Application. Gated by enable_aiops_agent (default OFF); values overridable
+# per-cluster via the fleet-config overlay (overlays/clusters/<cluster>/aiops-agent/values.yaml).
 # Depends on KubeVela + the OAP agent-platform-addons (bifrost/agentgateway/oam-components),
 # hence a late sync-wave.
-peeks-agent:
-  namespace: peeks-agent
-  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/peeks-agent'
+aiops-agent:
+  namespace: aiops-agent
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/aiops-agent'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '9'
   selector:
     matchExpressions:
-      - key: enable_peeks_agent
+      - key: enable_aiops_agent
         operator: In
         values: ['true']
   valuesObject:

@@ -1,16 +1,16 @@
-# peeks-agent (addon chart)
+# aiops-agent (addon chart)
 
 GitOps-managed form of the PEEKS read-only platform-engineering agent — the whole OAP
 Strands agent stack as **one** KubeVela `Application`:
 
-- `peeks-agent` (agent) — the agent brain (Bedrock via bifrost, 2-mode)
+- `aiops-agent` (agent) — the agent brain (Bedrock via bifrost, 2-mode)
 - `skills-mcp` — PEEKS `.kiro/skills` served to the agent
 - `eks-read-mcp` — read-only EKS MCP (supergateway → awslabs eks-mcp-server)
 - `chat-ui` — Keycloak-gated A2A chat front-end
-- `peeks-agent-memory` — AgentCore session memory (Crossplane `bedrockagentcore` provider)
+- `aiops-agent-memory` — AgentCore session memory (Crossplane `bedrockagentcore` provider)
 - incident bridge (SNS/SQS + AMP `AlertManagerDefinition` + `incident-bridge`) — autonomous-remediation demo
 
-It renders `files/peeks-agent-app.yaml` via `.Files.Get | replace` so the embedded
+It renders `files/aiops-agent-app.yaml` via `.Files.Get | replace` so the embedded
 AlertManager Go-templates (`{{ .CommonLabels.alertname }}` …) are preserved verbatim and
 never evaluated by Helm — only the `REPLACE_*` tokens are substituted.
 
@@ -36,7 +36,7 @@ fleet-config overlay to use your own registry.
 **single** component to a different registry/tag without moving the others, via
 `.Values.images.<component>.{registry,tag}` (empty ⇒ inherit the global). Components:
 `skillsMcp, agent, eksMcp, gitlabMcp, chatUi, incidentBridge`. Through the appset each is driven
-by a cluster-secret annotation `peeks_agent_img_<component>_{registry,tag}`.
+by a cluster-secret annotation `aiops_agent_img_<component>_{registry,tag}`.
 
 > **⚠ incident-bridge MUST run v1.1, not v1.** The contextId-sanitize fix (`poller.py`, avoids
 > the AgentCore `sessionId` `ValidationException` that makes **every** autonomous incident fail)
@@ -44,41 +44,41 @@ by a cluster-secret annotation `peeks_agent_img_<component>_{registry,tag}`.
 > `seb-demo/incident-bridge:v1` tag predates the fix; **`v1.1` carries it**. On this integration
 > branch the appset therefore **defaults `incidentBridge.tag` to `v1.1`** (the other 5 stay on the
 > global `:v1`), so a fresh deploy is correct with no manual step. If you publish your own
-> incident-bridge image, override it with the `peeks_agent_img_incidentbridge_tag` annotation (or
+> incident-bridge image, override it with the `aiops_agent_img_incidentbridge_tag` annotation (or
 > `images.incidentBridge` in the overlay). Alternatively pin the **whole** set with global
 > `imageTag: v1.1` (all 6 are published at `v1.1` on `seb-demo`).
 
-> The imperative `platform/peeks-agent/deploy/peeks-agent-app.yaml` (single `kubectl apply`,
+> The imperative `platform/aiops-agent/deploy/aiops-agent-app.yaml` (single `kubectl apply`,
 > private-ECR `buildspec.yaml`) is the legacy self-contained path and does **not** pin the
 > strands-agent image. This chart is the GitOps source of truth; keep the two in sync.
 
 ## Enable / disable (default OFF)
 
-Gated by the `enable_peeks_agent` cluster-secret label (registry `platform.yaml` selector
-`enable_peeks_agent In ['true']`). That label is **not** written by hand — it is emitted by
+Gated by the `enable_aiops_agent` cluster-secret label (registry `platform.yaml` selector
+`enable_aiops_agent In ['true']`). That label is **not** written by hand — it is emitted by
 the `platform-charts/fleet-secret` chart from the `enabledAddons` map and projected onto the
 ArgoCD cluster secret by the on-cluster ExternalSecret (`creationPolicy: Merge`), exactly like
-`backstage`/`keycloak`/`devlake`. So peeks-agent is toggled the same way as every other
+`backstage`/`keycloak`/`devlake`. So aiops-agent is toggled the same way as every other
 platform addon: via `enabled-addons.yaml`, not via the RGD or a manual `kubectl label`.
 
-Default is **OFF** — `peeks_agent: false` in the base
+Default is **OFF** — `aiops_agent: false` in the base
 `gitops/overlays/environments/control-plane/enabled-addons.yaml`. To enable on the hub for a
 deployment, flip it to `true` in the **fleet-config overlay** (no platform-repo edit):
 
 ```yaml
 # <fleet-config>/overlays/environments/control-plane/enabled-addons.yaml
 enabledAddons:
-  peeks_agent: true
+  aiops_agent: true
 ```
 
-The fleet-secret ESO re-projects `enable_peeks_agent: 'true'` onto the hub cluster secret, the
-addons ApplicationSet generates the `peeks-agent` Application, and ArgoCD syncs it. To remove:
+The fleet-secret ESO re-projects `enable_aiops_agent: 'true'` onto the hub cluster secret, the
+addons ApplicationSet generates the `aiops-agent` Application, and ArgoCD syncs it. To remove:
 set it back to `false` (or drop the key) — the label disappears and the Application is pruned.
 
 
 ## Per-cluster overrides (fleet-config overlay)
 
-The appset auto-adds `overlays/clusters/<cluster>/peeks-agent/values.yaml` (last wins). Example:
+The appset auto-adds `overlays/clusters/<cluster>/aiops-agent/values.yaml` (last wins). Example:
 
 ```yaml
 imageRegistry: "<your-account>.dkr.ecr.<region>.amazonaws.com/<your-ecr-namespace>"
@@ -118,9 +118,9 @@ RGD compiles to `Active`/`GraphAccepted`.
 
 | key | source annotation | notes |
 |---|---|---|
-| `imageRegistry` | `peeks_agent_image_registry` | default `public.ecr.aws/seb-demo` |
-| `imageTag` | `peeks_agent_image_tag` | default `v1` |
-| `images.<component>.{registry,tag}` | `peeks_agent_img_<component>_{registry,tag}` | per-component override; empty ⇒ inherit global. `incidentBridge.tag` defaults to `v1.1` (see Images) |
+| `imageRegistry` | `aiops_agent_image_registry` | default `public.ecr.aws/seb-demo` |
+| `imageTag` | `aiops_agent_image_tag` | default `v1` |
+| `images.<component>.{registry,tag}` | `aiops_agent_img_<component>_{registry,tag}` | per-component override; empty ⇒ inherit global. `incidentBridge.tag` defaults to `v1.1` (see Images) |
 | `accountId` | `aws_account_id` | required |
 | `clusterPrefix` | `resource_prefix` | required |
 | `cloudfrontDomain` | `ingress_domain_name` | chat-ui ingress host |

@@ -1,8 +1,8 @@
 apiVersion: core.oam.dev/v1beta1
 kind: Application
 metadata:
-  name: peeks-agent-hub
-  namespace: peeks-agent
+  name: aiops-agent-hub
+  namespace: aiops-agent
 spec:
   components:
   - name: skills-mcp
@@ -24,14 +24,14 @@ spec:
   # Crossplane provider enabled in crossplane-base → registry platform.yaml).
   # Provisions an AWS Bedrock AgentCore Memory via the Upbound provider and emits an
   # IAM policy (<app>-<component>-iam-policy). Its memoryId output is injected into the
-  # peeks-agent component below (properties.memory.config.memoryId) and the policy is
+  # aiops-agent component below (properties.memory.config.memoryId) and the policy is
   # attached to the agent's Pod Identity role via the aws-service-identity accessFor.
   # region is set EXPLICITLY — the ComponentDefinition default is a Helm string that
   # does NOT resolve inside a plain OAM Application.
   # To DISABLE memory: delete this component AND the three ▶MEMORY blocks on the
-  # peeks-agent component (dependsOn+inputs, properties.memory, trait accessFor).
+  # aiops-agent component (dependsOn+inputs, properties.memory, trait accessFor).
   # A hub without the bedrockagentcore provider would otherwise wedge on a missing CRD.
-  - name: peeks-agent-memory
+  - name: aiops-agent-memory
     type: agentcore-memory
     outputs:
     - name: memory-id
@@ -40,13 +40,13 @@ spec:
       region: REPLACE_REGION
       description: "PEEKS agent persistent session memory"
       eventExpiryDuration: 30
-  - name: peeks-agent
+  - name: aiops-agent
     # ▶MEMORY: consume the agentcore-memory output (memoryId → properties.memory.config)
     # ▶BOOT-ORDER: also wait for the MCP servers to be Ready before the agent starts. The
     # Strands agent discovers its MCP tools ONCE at boot; if eks-read-mcp/gitlab-mcp are not
     # yet healthy it abandons the tool for the pod's lifetime (and may hallucinate results).
     dependsOn:
-    - peeks-agent-memory
+    - aiops-agent-memory
     - skills-mcp
     - eks-read-mcp
     - gitlab-mcp
@@ -70,7 +70,7 @@ spec:
         modelId: claude-sonnet
       # ▶MEMORY: AgentCore session memory. provider=agentcore attaches the Strands
       # session manager (cross-session recall); memoryId is injected from the
-      # peeks-agent-memory component output (see inputs above). region explicit.
+      # aiops-agent-memory component output (see inputs above). region explicit.
       memory:
         provider: agentcore
         config:
@@ -92,7 +92,7 @@ spec:
         requests:
           cpu: 500m
           memory: 512Mi
-      systemMessage: "You are **peeks-agent**, a platform-engineering agent for the Platform Engineering\
+      systemMessage: "You are **aiops-agent**, a platform-engineering agent for the Platform Engineering\
         \ on EKS (PEEKS) platform. You embody AWS Solutions-Architect–grade EKS expertise, delivered as\
         \ an agent. You operate on a multi-cluster EKS fleet (a `REPLACE_CLUSTER_PREFIX-hub` control cluster plus `REPLACE_CLUSTER_PREFIX-spoke-*`\
         \ workload clusters) provisioned GitOps-first through ArgoCD, KRO and ACK, on EKS Auto Mode with\
@@ -194,15 +194,15 @@ spec:
     - type: gateway-identity
     # ▶MEMORY: attach the agentcore-memory IAM policy to the agent's Pod Identity role
     # ▶EKS-READ: attach the eks:ListClusters/DescribeCluster/AccessKubernetesApi policy so
-    # the eks-read MCP (same `peeks-agent` SA / Pod Identity role) can discover and read the
+    # the eks-read MCP (same `aiops-agent` SA / Pod Identity role) can discover and read the
     # fleet clusters live (get-token needs eks:DescribeCluster; discovery needs ListClusters).
     - type: aws-service-identity
       properties:
         accessFor:
-        - peeks-agent-memory
+        - aiops-agent-memory
         - eks-read-access
     type: agent
-  # ▶EKS-READ: least-privilege AWS policy so the agent's Pod Identity role (peeks-agent-role,
+  # ▶EKS-READ: least-privilege AWS policy so the agent's Pod Identity role (aiops-agent-role,
   # shared by eks-read-mcp) can DISCOVER and read the fleet clusters. Emitted as a Crossplane
   # iam.aws.upbound.io Policy named <appName>-<component>-iam-policy so the agent's
   # aws-service-identity trait (accessFor: eks-read-access) attaches it to the role.
@@ -216,10 +216,10 @@ spec:
       - apiVersion: iam.aws.upbound.io/v1beta1
         kind: Policy
         metadata:
-          name: peeks-agent-hub-eks-read-access-iam-policy
+          name: aiops-agent-hub-eks-read-access-iam-policy
         spec:
           forProvider:
-            name: peeks-agent-hub-eks-read-access-iam-policy
+            name: aiops-agent-hub-eks-read-access-iam-policy
             policy: |
               {"Version":"2012-10-17","Statement":[{"Sid":"EksReadDiscover","Effect":"Allow","Action":["eks:ListClusters","eks:DescribeCluster","eks:AccessKubernetesApi"],"Resource":"*"}]}
           providerConfigRef:
@@ -234,7 +234,7 @@ spec:
           labels:
             app.kubernetes.io/name: eks-read-mcp
           name: eks-read-mcp
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           replicas: 1
           selector:
@@ -288,7 +288,7 @@ spec:
                 runAsUser: 1000
                 seccompProfile:
                   type: RuntimeDefault
-              serviceAccountName: peeks-agent
+              serviceAccountName: aiops-agent
               terminationGracePeriodSeconds: 30
       - apiVersion: v1
         kind: Service
@@ -297,7 +297,7 @@ spec:
             agentgateway.dev/target: eks-read-mcp
             app.kubernetes.io/name: eks-read-mcp
           name: eks-read-mcp-stable
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           ports:
           - appProtocol: agentgateway.dev/mcp
@@ -314,7 +314,7 @@ spec:
           labels:
             app.kubernetes.io/name: eks-read-mcp
           name: eks-read-mcp
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           parentRefs:
           - group: gateway.networking.k8s.io
@@ -337,7 +337,7 @@ spec:
           labels:
             app.kubernetes.io/name: eks-read-mcp
           name: eks-read-mcp-backend
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           mcp:
             sessionRouting: Stateful
@@ -363,7 +363,7 @@ spec:
         kind: ExternalSecret
         metadata:
           name: gitlab-mcp-token
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           secretStoreRef:
             name: aws-secrets-manager
@@ -388,7 +388,7 @@ spec:
           labels:
             app.kubernetes.io/name: gitlab-mcp
           name: gitlab-mcp
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           replicas: 1
           selector:
@@ -438,7 +438,7 @@ spec:
                 runAsUser: 1000
                 seccompProfile:
                   type: RuntimeDefault
-              serviceAccountName: peeks-agent
+              serviceAccountName: aiops-agent
               terminationGracePeriodSeconds: 30
       - apiVersion: v1
         kind: Service
@@ -447,7 +447,7 @@ spec:
             agentgateway.dev/target: gitlab-mcp
             app.kubernetes.io/name: gitlab-mcp
           name: gitlab-mcp-stable
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           ports:
           - appProtocol: agentgateway.dev/mcp
@@ -464,7 +464,7 @@ spec:
           labels:
             app.kubernetes.io/name: gitlab-mcp
           name: gitlab-mcp
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           parentRefs:
           - group: gateway.networking.k8s.io
@@ -487,7 +487,7 @@ spec:
           labels:
             app.kubernetes.io/name: gitlab-mcp
           name: gitlab-mcp-backend
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           mcp:
             # Stateful: supergateway keeps one warm upstream process per session; a
@@ -509,7 +509,7 @@ spec:
           labels:
             app.kubernetes.io/name: chat-ui
           name: chat-ui
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           replicas: 1
           selector:
@@ -523,7 +523,7 @@ spec:
               containers:
               - env:
                 - name: AGENT_A2A_URL
-                  value: http://peeks-agent-stable.peeks-agent.svc.cluster.local:8083/
+                  value: http://aiops-agent-stable.aiops-agent.svc.cluster.local:8083/
                 - name: KEYCLOAK_TOKEN_URL
                   value: https://REPLACE_CLOUDFRONT_DOMAIN/keycloak/realms/platform/protocol/openid-connect/token
                 - name: KEYCLOAK_CLIENT_ID
@@ -533,7 +533,7 @@ spec:
                 - name: APP_TITLE
                   value: PEEKS Agent
                 - name: AGENT_LABEL
-                  value: peeks-agent
+                  value: aiops-agent
                 - name: APP_INTRO
                   value: Ask about the EKS fleet. The agent reasons with PEEKS/APEX knowledge and read-only
                     inspection, then proposes GitOps fixes.
@@ -575,8 +575,8 @@ spec:
         metadata:
           labels:
             app.kubernetes.io/name: chat-ui
-          name: peeks-agent-chat
-          namespace: peeks-agent
+          name: aiops-agent-chat
+          namespace: aiops-agent
         spec:
           ports:
           - name: http
@@ -593,11 +593,11 @@ spec:
             alb.ingress.kubernetes.io/healthcheck-path: /health
             alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
             alb.ingress.kubernetes.io/target-type: ip
-            alb.ingress.kubernetes.io/transforms.peeks-agent-chat: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/peeks-agent-chat\\/?(.*)$","replace":"/$1"}]}}]
+            alb.ingress.kubernetes.io/transforms.aiops-agent-chat: '[{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/aiops-agent-chat\\/?(.*)$","replace":"/$1"}]}}]
 
               '
-          name: peeks-agent-chat
-          namespace: peeks-agent
+          name: aiops-agent-chat
+          namespace: aiops-agent
         spec:
           ingressClassName: platform
           rules:
@@ -605,10 +605,10 @@ spec:
               paths:
               - backend:
                   service:
-                    name: peeks-agent-chat
+                    name: aiops-agent-chat
                     port:
                       name: http
-                path: /peeks-agent-chat
+                path: /aiops-agent-chat
                 pathType: Prefix
   - name: agent-access
     type: k8s-objects
@@ -617,11 +617,11 @@ spec:
       - apiVersion: eks.services.k8s.aws/v1alpha1
         kind: AccessEntry
         metadata:
-          name: peeks-agent-hub
-          namespace: peeks-agent
+          name: aiops-agent-hub
+          namespace: aiops-agent
         spec:
           clusterName: REPLACE_CLUSTER_PREFIX-hub
-          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/peeks-agent-role
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/aiops-agent-role
           type: STANDARD
           accessPolicies:
           - accessScope:
@@ -633,11 +633,11 @@ spec:
       - apiVersion: eks.services.k8s.aws/v1alpha1
         kind: AccessEntry
         metadata:
-          name: peeks-agent-spoke-dev
-          namespace: peeks-agent
+          name: aiops-agent-spoke-dev
+          namespace: aiops-agent
         spec:
           clusterName: REPLACE_CLUSTER_PREFIX-spoke-dev
-          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/peeks-agent-role
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/aiops-agent-role
           type: STANDARD
           accessPolicies:
           - accessScope:
@@ -649,11 +649,11 @@ spec:
       - apiVersion: eks.services.k8s.aws/v1alpha1
         kind: AccessEntry
         metadata:
-          name: peeks-agent-spoke-prod
-          namespace: peeks-agent
+          name: aiops-agent-spoke-prod
+          namespace: aiops-agent
         spec:
           clusterName: REPLACE_CLUSTER_PREFIX-spoke-prod
-          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/peeks-agent-role
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/aiops-agent-role
           type: STANDARD
           accessPolicies:
           - accessScope:
@@ -700,7 +700,7 @@ spec:
         spec:
           arn: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-cluster-mgmt-iam
           namespaceSelector:
-            names: [peeks-agent]
+            names: [aiops-agent]
           resourceTypeSelector:
           - group: iam.services.k8s.aws
             kind: ""
@@ -715,7 +715,7 @@ spec:
         spec:
           arn: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-cluster-mgmt-incident-bridge
           namespaceSelector:
-            names: [peeks-agent]
+            names: [aiops-agent]
           resourceTypeSelector:
           - group: sns.services.k8s.aws
             kind: ""
@@ -738,7 +738,7 @@ spec:
         spec:
           arn: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-cluster-mgmt-eks
           namespaceSelector:
-            names: [peeks-agent]
+            names: [aiops-agent]
           resourceTypeSelector:
           - group: eks.services.k8s.aws
             kind: ""
@@ -757,20 +757,20 @@ spec:
         kind: Role
         metadata:
           name: REPLACE_CLUSTER_PREFIX-cluster-mgmt-incident-bridge
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           name: REPLACE_CLUSTER_PREFIX-cluster-mgmt-incident-bridge
-          description: "ACK provisioning role for peeks-agent incident-bridge (SNS/SQS/AMP AlertManager)"
+          description: "ACK provisioning role for aiops-agent incident-bridge (SNS/SQS/AMP AlertManager)"
           # Trust mirrors the other cluster-mgmt roles: the hub/spoke capability roles
           # may assume it (sts:AssumeRole + sts:TagSession).
           assumeRolePolicyDocument: |
             {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::REPLACE_ACCOUNT_ID:root"},"Action":["sts:AssumeRole","sts:TagSession"],"Condition":{"ArnLike":{"aws:PrincipalArn":["arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-hub-ack-capability-role","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-ack-*","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-spoke-*-ack-capability-role"]}}}]}
           inlinePolicies:
             incident-bridge-provisioning: |
-              {"Version":"2012-10-17","Statement":[{"Sid":"SNS","Effect":"Allow","Action":["sns:CreateTopic","sns:DeleteTopic","sns:GetTopicAttributes","sns:SetTopicAttributes","sns:ListTagsForResource","sns:TagResource","sns:UntagResource","sns:Subscribe","sns:Unsubscribe","sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:ListSubscriptionsByTopic"],"Resource":"arn:aws:sns:REPLACE_REGION:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"SQS","Effect":"Allow","Action":["sqs:CreateQueue","sqs:DeleteQueue","sqs:GetQueueAttributes","sqs:SetQueueAttributes","sqs:ListQueueTags","sqs:TagQueue","sqs:UntagQueue","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:REPLACE_REGION:REPLACE_ACCOUNT_ID:peeks-agent-incidents"},{"Sid":"APS","Effect":"Allow","Action":["aps:CreateAlertManagerDefinition","aps:DescribeAlertManagerDefinition","aps:PutAlertManagerDefinition","aps:DeleteAlertManagerDefinition"],"Resource":"arn:aws:aps:REPLACE_REGION:REPLACE_ACCOUNT_ID:workspace/*"}]}
+              {"Version":"2012-10-17","Statement":[{"Sid":"SNS","Effect":"Allow","Action":["sns:CreateTopic","sns:DeleteTopic","sns:GetTopicAttributes","sns:SetTopicAttributes","sns:ListTagsForResource","sns:TagResource","sns:UntagResource","sns:Subscribe","sns:Unsubscribe","sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:ListSubscriptionsByTopic"],"Resource":"arn:aws:sns:REPLACE_REGION:REPLACE_ACCOUNT_ID:aiops-agent-incidents"},{"Sid":"SQS","Effect":"Allow","Action":["sqs:CreateQueue","sqs:DeleteQueue","sqs:GetQueueAttributes","sqs:SetQueueAttributes","sqs:ListQueueTags","sqs:TagQueue","sqs:UntagQueue","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:REPLACE_REGION:REPLACE_ACCOUNT_ID:aiops-agent-incidents"},{"Sid":"APS","Effect":"Allow","Action":["aps:CreateAlertManagerDefinition","aps:DescribeAlertManagerDefinition","aps:PutAlertManagerDefinition","aps:DeleteAlertManagerDefinition"],"Resource":"arn:aws:aps:REPLACE_REGION:REPLACE_ACCOUNT_ID:workspace/*"}]}
       # ── AMP AlertManagerDefinition + SNS Topic + SQS Queue + SNS→SQS Subscription
       # are provisioned by the AmpIncident kro RGD (ampincident.kro.run, shipped via
-      # kro-manifests / kro-peeks-agent-rgd-hub) and INSTANTIATED by the `amp-incident`
+      # kro-manifests / kro-aiops-agent-rgd-hub) and INSTANTIATED by the `amp-incident`
       # component below. The RGD reads the AMP workspace id LIVE from the Crossplane
       # Workspace CR via externalRef + CEL — so there is no REPLACE_AMP_WORKSPACE_ID
       # literal and no cluster-secret stamp. The IAM roles / SA / PodIdentity below stay
@@ -781,22 +781,22 @@ spec:
         kind: Role
         metadata:
           name: peeks-incident-bridge-role
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           name: peeks-incident-bridge-role
           assumeRolePolicyDocument: |
             {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}
           inlinePolicies:
             sqs-consume: |
-              {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:REPLACE_REGION:REPLACE_ACCOUNT_ID:peeks-agent-incidents"}]}
+              {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:REPLACE_REGION:REPLACE_ACCOUNT_ID:aiops-agent-incidents"}]}
       - apiVersion: eks.services.k8s.aws/v1alpha1
         kind: PodIdentityAssociation
         metadata:
           name: peeks-incident-bridge
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           clusterName: REPLACE_CLUSTER_PREFIX-hub
-          namespace: peeks-agent
+          namespace: aiops-agent
           serviceAccount: incident-bridge
           roleRef:
             from:
@@ -805,11 +805,11 @@ spec:
         kind: ServiceAccount
         metadata:
           name: incident-bridge
-          namespace: peeks-agent
+          namespace: aiops-agent
   # ▶AMP-NATIVE: the AMP incident sub-graph (AlertManagerDefinition + SNS Topic + SQS Queue
   # + SNS→SQS Subscription) is INSTANTIATED here as an AmpIncident CR — so KubeVela owns it
   # as a component of this Application. The ampincident.kro.run RGD (shipped separately by
-  # kro-peeks-agent-rgd-hub in kro-manifests) reads the AMP workspace id LIVE from the
+  # kro-aiops-agent-rgd-hub in kro-manifests) reads the AMP workspace id LIVE from the
   # Crossplane Workspace CR via externalRef + CEL, so there is no REPLACE_AMP_WORKSPACE_ID
   # literal and no cluster-secret stamp. dependsOn incident-bridge-aws/-selectors so the
   # provisioning role + IAMRoleSelector routing exist before ACK reconciles the sub-graph.
@@ -823,13 +823,13 @@ spec:
       - apiVersion: kro.run/v1alpha1
         kind: AmpIncident
         metadata:
-          name: peeks-agent-incidents
-          namespace: peeks-agent
+          name: aiops-agent-incidents
+          namespace: aiops-agent
         spec:
           workspaceName: REPLACE_CLUSTER_PREFIX-amp
           accountId: "REPLACE_ACCOUNT_ID"
           region: REPLACE_REGION
-          topicName: peeks-agent-incidents
+          topicName: aiops-agent-incidents
   - name: incident-bridge
     type: k8s-objects
     dependsOn:
@@ -842,7 +842,7 @@ spec:
           labels:
             app.kubernetes.io/name: incident-bridge
           name: incident-bridge
-          namespace: peeks-agent
+          namespace: aiops-agent
         spec:
           replicas: 1
           selector:
@@ -862,9 +862,9 @@ spec:
                 - name: AWS_REGION
                   value: REPLACE_REGION
                 - name: SQS_QUEUE_URL
-                  value: https://sqs.REPLACE_REGION.amazonaws.com/REPLACE_ACCOUNT_ID/peeks-agent-incidents
+                  value: https://sqs.REPLACE_REGION.amazonaws.com/REPLACE_ACCOUNT_ID/aiops-agent-incidents
                 - name: AGENT_A2A_URL
-                  value: http://peeks-agent-stable.peeks-agent.svc.cluster.local:8083/
+                  value: http://aiops-agent-stable.aiops-agent.svc.cluster.local:8083/
                 - name: DEDUP_TTL
                   value: "3600"
                 # ▶GITLAB dup-check (read-only): lets the bridge suppress a
