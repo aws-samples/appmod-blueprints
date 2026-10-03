@@ -70,6 +70,12 @@ crossplane-base:
       grafana:
         version: "v2.6.1"
         createIdentity: true
+      # AgentCore memory provider for OAP agents. Always-on in the base; remove or
+      # override to "" via the fleet-config overlay (configs/crossplane-base/values.yaml
+      # → providers.bedrockagentcore.version: "") to disable on a given cluster.
+      bedrockagentcore:
+        version: "v2.6.1"
+        createIdentity: true
       kubernetes:
         version: "v1.2.1"
   ignoreDifferences:
@@ -185,7 +191,7 @@ kro-manifests:
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests'
   directory:
     recurse: true
-    exclude: '{cicd-pipeline/**,huggingface/**,ray-service/**}'
+    exclude: '{cicd-pipeline/**,huggingface/**,ray-service/**,amp-incident/**}'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-2'
   selector:
@@ -209,7 +215,12 @@ kro-manifests-hub:
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests'
   directory:
     recurse: true
-    exclude: '{eks/**,ray-service/**}'
+    # eks/** and ray-service/** are excluded (handled by the dedicated apps below); amp-incident/**
+    # is ALSO excluded because its graph references sns/sqs/prometheusservice (managed ACK
+    # capability) + amp.aws.upbound.io (Crossplane) — if a referenced kind is absent the RGD stays
+    # Ready=False and would stall this shared wave chain. It is shipped instead by
+    # kro-aiops-agent-rgd-hub, gated on enable_aiops_agent (ray-service precedent).
+    exclude: '{eks/**,ray-service/**,amp-incident/**}'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-2'
   selector:
@@ -268,6 +279,30 @@ kro-ray-rgd-hub:
         operator: In
         values: ['true']
       - key: enable_ray_operator
+        operator: In
+        values: ['true']
+
+# The ampincident.kro.run RGD, gated on the PEEKS agent being enabled. Its graph references
+# sns/sqs/prometheusservice (managed ACK capability) + amp.aws.upbound.io/Workspace
+# (Crossplane), so — like kro-ray-rgd-hub for ray.io — it must NOT sit in the always-applied
+# kro-manifests-hub wave chain (a missing kind there would stall eksclusterwithvpc). It ships
+# only when enable_aiops_agent is set; wave 8 places it just before the aiops-agent app
+# (wave 9) that instantiates the AmpIncident CR, and after the ACK/Crossplane capabilities
+# that provide the referenced kinds.
+kro-aiops-agent-rgd-hub:
+  namespace: kro
+  type: manifest
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests/amp-incident'
+  directory:
+    recurse: true
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '8'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests_hub
+        operator: In
+        values: ['true']
+      - key: enable_aiops_agent
         operator: In
         values: ['true']
 
@@ -735,3 +770,61 @@ platform-manifests-post:
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
       region: '{{.metadata.annotations.aws_region}}'
+
+# aiops-agent — the PEEKS read-only platform-engineering agent (OAP Strands agent +
+# skills-mcp + eks-read-mcp + chat-ui + AgentCore memory + incident bridge) as ONE
+# KubeVela Application. Gated by enable_aiops_agent (default OFF); values overridable
+# per-cluster via the fleet-config overlay (overlays/clusters/<cluster>/aiops-agent/values.yaml).
+# Depends on KubeVela + the OAP agent-platform-addons (bifrost/agentgateway/oam-components),
+# hence a late sync-wave.
+aiops-agent:
+  namespace: aiops-agent
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/aiops-agent'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '9'
+  selector:
+    matchExpressions:
+      - key: enable_aiops_agent
+        operator: In
+        values: ['true']
+  valuesObject:
+    # Image coordinates live in git only (GitOps single source of truth). No per-cluster
+    # cluster-secret annotation overrides — to change an image, edit this file and let
+    # ArgoCD reconcile. Empty component registry/tag inherits imageRegistry/imageTag below.
+    imageRegistry: public.ecr.aws/seb-demo
+    imageTag: v1
+    # Per-component pins carry fixes the public seb-demo :v1 images predate:
+    #   agent  v1.2 -> agent.py _sanitize_agentcore_id (AgentCore sessionId fix)
+    #   chatUi v1.3 -> copy buttons (message + code blocks), scrollable suggestions,
+    #                  elapsed timer, textarea auto-grow, scroll-to-bottom (v1.2 predates these)
+    #   incidentBridge v1.4 -> ISO-8601 UTC timestamp log prefix (follow the incident chronology)
+    #                  (v1.3 = _subject dedup keyed on COMPONENT only: PodOOMKilled/CrashLoopBackOff/
+    #                  FrequentRestarts of one pod collapse to ONE remediation;
+    #                  v1.2 = deterministic open-MR dup-check, v1.1 = poller.py contextId sanitize)
+    #   skillsMcp v3 -> manage-addons: override-key convention (kebab registry key vs snake
+    #                  enable_<addon>) + read-the-ApplicationSet-first guardrail (v2 = remediation guardrails)
+    # The other components inherit the global tag (:v1).
+    images:
+      skillsMcp:      { registry: "", tag: "v3" }
+      agent:          { registry: "", tag: "v1.7" }
+      eksMcp:         { registry: "", tag: "" }
+      gitlabMcp:      { registry: "", tag: "" }
+      chatUi:         { registry: "", tag: "v1.4" }
+      incidentBridge: { registry: "", tag: "v1.4" }
+    accountId: '{{.metadata.annotations.aws_account_id}}'
+    clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
+    region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'
+    cloudfrontDomain: '{{default "" .metadata.annotations.ingress_domain_name}}'
+    # gitlab-mcp GITLAB_API_URL host (PAT itself comes from Secrets Manager via ESO).
+    gitlabDomain: '{{default "" (index .metadata.annotations "gitlab_domain_name")}}'
+    # Project the agent opens remediation MRs on = the overlay/fleet-config repo.
+    # DERIVED from the already-stamped `overlay_repo_url` annotation (strip scheme+host
+    # and .git) so it needs NO new stamp and works for any setup; empty when there is
+    # no overlay repo (then the bridge dup-check is disabled, fail-open). NOTE: use
+    # overlay_repo_url, NOT fleetRepoURL (the latter is the GitHub base repo).
+    gitlabMrProject: '{{ trimSuffix ".git" (regexReplaceAll "^https?://[^/]+/" ((index .metadata.annotations "overlay_repo_url") | default "") "") }}'
+  ignoreDifferences:
+    - group: core.oam.dev
+      kind: Application
+      jsonPointers:
+        - /status
