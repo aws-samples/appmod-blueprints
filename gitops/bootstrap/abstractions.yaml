@@ -5,28 +5,93 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "4"
+    # Per-cluster selection (same rule as addons): appmod defines each abstraction and
+    # its enable label; the consumer decides which clusters get it, by adding the key to
+    # that environment's enabled-addons.yaml. The fleet-secret chart turns
+    # `abstraction_<name>: true` into the cluster-secret label
+    # `enable_abstraction_<name>: 'true'`.
+    #
+    #   directory (abstractions/crossplane/) | enabled-addons.yaml key   | hub | spokes
+    #   aws-resources                        | abstraction_aws_resources | on  | off
+    #   platform-cluster                     | abstraction_platform_cluster | on | off
+    #   pod-identity                         | abstraction_pod_identity  | on  | off
+    #
+    # Hub defaults come from defaultEnabledAddons in bootstrap/hub-fleet-secret.yaml, so
+    # the hub keeps all three with no consumer change. Spokes get none unless opted in.
+    # Keep platform-cluster off spokes: it provisions clusters and belongs on the hub.
+    #
+    # Adding an abstraction directory: also add a generator below and a default in
+    # hub-fleet-secret.yaml. There is deliberately no wildcard, so every abstraction has
+    # an explicit label.
+    #
+    # Deletion-safety posture (TWO-WAY DOOR), same as clusters-kro/fleet-secrets:
+    #   * applicationsSync: create-update -> the appset NEVER deletes an Application, so a
+    #     label flip, a missing label or a failed generation cannot remove one.
+    #   * the template carries NO resources-finalizer -> deleting an Application orphans
+    #     the XRD and Composition instead of cascade-deleting them. Deleting an XRD
+    #     deletes every claim of that kind (for platform-cluster: the spoke clusters;
+    #     for pod-identity: the workloads' IAM roles).
+    # preserveResourcesOnDeletion alone is not enough: with an explicit finalizer in the
+    # template, App deletion still cascades. That is how a live spoke was lost once
+    # (recorded in .kiro/steering/cluster-lifecycle.md, "Why these guardrails exist").
+    #
+    # To remove an abstraction from a cluster: set its key to false, then delete the
+    # Application `<directory>-<cluster>` explicitly. The XRD/Composition stay on the
+    # cluster; remove them by hand only after confirming no claims of that kind remain.
+    platform.gitops.io/deletion-safety: protected
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   syncPolicy:
     preserveResourcesOnDeletion: true
+    # create-update: may create/update Applications but NEVER delete them. TWO-WAY
+    # DOOR: set to `sync` (and re-add the finalizer) to restore delete-on-deselect.
+    applicationsSync: create-update
+  # One matrix per abstraction: clusters labelled for it x that one directory. The
+  # cluster generator must come first because the git generator's repo/revision are
+  # read from the cluster's annotations, which is also why the label cannot be derived
+  # from the directory name inside a single matrix.
   generators:
     - matrix:
         generators:
           - clusters:
               selector:
                 matchLabels:
-                  fleet_member: control-plane
+                  enable_abstraction_aws_resources: 'true'
           - git:
               repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
               revision: '{{ .metadata.annotations.addonsRepoRevision }}'
               directories:
-                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/*'
+                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/aws-resources'
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  enable_abstraction_platform_cluster: 'true'
+          - git:
+              repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+              revision: '{{ .metadata.annotations.addonsRepoRevision }}'
+              directories:
+                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/platform-cluster'
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  enable_abstraction_pod_identity: 'true'
+          - git:
+              repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+              revision: '{{ .metadata.annotations.addonsRepoRevision }}'
+              directories:
+                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/pod-identity'
   template:
     metadata:
+      # Name unchanged ('<directory>-<cluster>') so existing Applications are adopted
+      # in place, not recreated.
       name: '{{ .path.basename }}-{{ .name }}'
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
+      # resources-finalizer intentionally OMITTED (deletion safety, see top of file).
+      # TWO-WAY DOOR: re-add finalizers: [resources-finalizer.argocd.argoproj.io].
     spec:
       project: default
       sources:

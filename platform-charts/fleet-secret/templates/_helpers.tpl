@@ -60,3 +60,30 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Effective addon enablement map: .Values.defaultEnabledAddons overlaid by
+.Values.enabledAddons, key by key.
+
+defaultEnabledAddons is set by the platform (appmod) for the clusters where it
+wants a capability on unless the consumer says otherwise. Today only the hub
+ApplicationSet (gitops/bootstrap/hub-fleet-secret.yaml) sets it, to turn the
+Crossplane abstractions on for the hub. enabledAddons comes from the consumer's
+enabled-addons.yaml and always wins, including an explicit `false`.
+
+A plain loop with `set` is used instead of mergeOverwrite on purpose:
+mergeOverwrite treats `false` as an empty value and would NOT let a consumer
+switch a default off.
+
+Returns YAML; callers use `include ... | fromYaml`.
+*/}}
+{{- define "fleet-secret.enabledAddons" -}}
+{{- $eff := dict -}}
+{{- range $addon, $enabled := (.Values.defaultEnabledAddons | default dict) }}
+{{- $_ := set $eff $addon $enabled -}}
+{{- end }}
+{{- range $addon, $enabled := (.Values.enabledAddons | default dict) }}
+{{- $_ := set $eff $addon $enabled -}}
+{{- end }}
+{{- toYaml $eff -}}
+{{- end }}

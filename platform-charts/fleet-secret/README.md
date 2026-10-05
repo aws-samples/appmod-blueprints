@@ -7,7 +7,7 @@ Generates ArgoCD cluster secrets via ExternalSecret, with `enable_*` labels deri
 1. Each fleet member has a Helm release of this chart, parameterized with the cluster's `enabled-addons.yaml` as a value file.
 2. The chart creates an ExternalSecret in the `argocd` namespace that pulls cluster connection details (server URL, auth config) from AWS Secrets Manager.
 3. The ExternalSecret's `target.template` section generates labels and annotations on the resulting Kubernetes Secret.
-4. For each entry in `enabledAddons` that is `true`, a label `enable_<addon>: 'true'` is added to the secret.
+4. For each entry in `enabledAddons` that is `true`, a label `enable_<addon>: 'true'` is added to the secret. Entries in `defaultEnabledAddons` are applied first and `enabledAddons` overrides them key by key, including an explicit `false`. The platform uses this for hub-only defaults (`gitops/bootstrap/hub-fleet-secret.yaml`); it is empty for spokes.
 5. The appset-chart's ApplicationSets use cluster generator selectors that match these `enable_*` labels, so addons are deployed only to clusters that have them enabled.
 
 ## Label and Annotation Structure

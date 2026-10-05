@@ -9,6 +9,7 @@ This directory makes the hub cluster self-managing. Once ArgoCD is running on th
 | `root-appset.yaml` | -- | Entry point. Applied once by the cluster provider. Syncs the rest of this directory to the hub. |
 | `addons.yaml` | -1 | Renders the appset-chart on the hub, producing one ApplicationSet per enabled addon. |
 | `fleet-secrets.yaml` | 1 | Creates a fleet-secret Application per member cluster, generating cluster secrets with `enable_*` labels. |
+| `abstractions.yaml` | 4 | Installs each Crossplane abstraction (XRD + Composition) on the clusters labelled `enable_abstraction_<name>`. Hub on by default, spokes opt in. See `../abstractions/README.md`. |
 | `clusters.yaml` | 5 | Deploys the `platform-cluster` Helm chart to provision fleet member clusters via Crossplane/KRO. |
 
 ## Bootstrap Sequence
@@ -48,7 +49,7 @@ Values are layered: default values, then per-tenant overrides.
 
 ## The control-plane Label
 
-Every ApplicationSet in this directory uses the same generator selector:
+Most ApplicationSets in this directory use the same generator selector:
 
 ```yaml
 selector:
@@ -57,3 +58,8 @@ selector:
 ```
 
 This label exists on the hub cluster's ArgoCD secret. It ensures these ApplicationSets only target the hub -- they read the hub's repo annotations and deploy to the hub's ArgoCD namespace. Fleet member clusters get their addons through the addon pipeline, not through these bootstrap ApplicationSets directly.
+
+The exception is `abstractions.yaml`. It deploys to every cluster that has a given
+abstraction's `enable_abstraction_<name>` label, so a consumer can put, for example, the
+PodIdentity API on a spoke from its own `enabled-addons.yaml`. The hub gets all of them by
+default through `defaultEnabledAddons` in `hub-fleet-secret.yaml`.
