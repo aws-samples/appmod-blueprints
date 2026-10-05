@@ -57,7 +57,7 @@ spec:
           annotations:
             services.k8s.aws/region: ${schema.spec.region}
         spec:
-          name: rds-mysql-sg-${schema.metadata.uid}
+          name: ${schema.spec.resourcePrefix}-${schema.metadata.name}-sg-${schema.metadata.uid}
           description: rds-mysql-sg
           vpcID: ${schema.spec.vpcId}
           ingressRules: 
