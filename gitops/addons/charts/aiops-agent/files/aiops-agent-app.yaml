@@ -270,10 +270,14 @@ spec:
                   timeoutSeconds: 1
                 resources:
                   limits:
-                    memory: 512Mi
+                    # Bumped 512Mi -> 1Gi: eks-read-mcp (awslabs eks-mcp-server)
+                    # OOMKilled (exitCode 137) while listing deployments/pods across a
+                    # loaded hub (116 ArgoCD apps) during an autonomous RCA, surfacing to
+                    # the agent as "no healthy backends". 512Mi is too tight under load.
+                    memory: 1Gi
                   requests:
                     cpu: 100m
-                    memory: 256Mi
+                    memory: 512Mi
                 securityContext:
                   allowPrivilegeEscalation: false
                   capabilities:

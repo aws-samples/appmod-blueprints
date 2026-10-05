@@ -9,7 +9,13 @@
 #
 # Base pulled from the ECR-public Docker mirror (not Docker Hub) to avoid throttling.
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim
-RUN npm install -g supergateway@4.0.0 @zereight/mcp-gitlab
+# Pinned versions (reproducible builds). @zereight/mcp-gitlab 2.1.69 makes
+# `commit_id` OPTIONAL on create_or_update_file (schemas.js: z.string().optional())
+# and takes the POST path for a new file ("no need for commit IDs for new files").
+# Older/unpinned `latest` baked a build where `commit_id` was REQUIRED, so the agent
+# could not commit a brand-new file (MCPError "Invalid arguments: commit_id: Required"
+# -> GitLab API 400) and could never open its own remediation MR.
+RUN npm install -g supergateway@4.0.0 @zereight/mcp-gitlab@2.1.69
 EXPOSE 8000
 # The k8s Deployment sets securityContext.runAsNonRoot=true with no runAsUser, so the
 # image MUST define a non-root user or kubelet refuses to start it. The node base image
