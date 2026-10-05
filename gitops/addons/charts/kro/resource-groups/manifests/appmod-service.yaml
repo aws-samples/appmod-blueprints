@@ -762,9 +762,17 @@ spec:
                   key: amp-workspace-region
           metrics:
             - name: metric0-${schema.metadata.name}
-              interval: 1s
-              count: 1
-              successCondition: "result[0] > 0"
+              # Wait for AMP to scrape + remote-write the fresh canary pod before the
+              # first measurement (scrape interval + remote-write lag), then poll a few
+              # times so the initial empty-ingestion window self-heals instead of
+              # aborting the rollout. successCondition uses a short-circuiting len()
+              # guard so an empty result vector is a bounded Failure (not an
+              # index-out-of-range Error / value=None). See appmod issue #957.
+              initialDelay: 60s
+              interval: 15s
+              count: 5
+              failureLimit: 3
+              successCondition: "len(result) > 0 && result[0] >= 1"
               provider:
                 prometheus:
                   address: "{{args.amp-workspace-url}}"
