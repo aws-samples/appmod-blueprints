@@ -14,6 +14,7 @@ spec:
       privateSubnetIds: "[]string"
       vpcId: string
       createService: boolean | default=false
+      resourcePrefix: string | default="peeks"
   resources:
     - id: subnetgroup
       readyWhen:
@@ -32,8 +33,9 @@ spec:
               controller: false
           annotations:
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/adoption-policy: adopt-or-create
         spec:
-          name: ${schema.metadata.name}-subnet-group
+          name: ${schema.spec.resourcePrefix}-${schema.metadata.name}-subnet-group
           description: rds-mysql
           subnetIDs: ${schema.spec.privateSubnetIds}
 
@@ -83,8 +85,9 @@ spec:
               controller: false
           annotations:
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/adoption-policy: adopt-or-create
         spec:
-          dbClusterIdentifier: ${schema.metadata.name}-cluster
+          dbClusterIdentifier: ${schema.spec.resourcePrefix}-${schema.metadata.name}-cluster
           databaseName: ${schema.spec.databaseName}
           engine: aurora-mysql
           engineVersion: ${schema.spec.engineVersion}
@@ -115,8 +118,9 @@ spec:
               controller: false
           annotations:
             services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/adoption-policy: adopt-or-create
         spec:
-          dbInstanceIdentifier: ${schema.metadata.name}-instance
+          dbInstanceIdentifier: ${schema.spec.resourcePrefix}-${schema.metadata.name}-instance
           dbInstanceClass: ${schema.spec.instanceClass}
           engine: aurora-mysql
           dbClusterIdentifier: ${cluster.spec.dbClusterIdentifier}

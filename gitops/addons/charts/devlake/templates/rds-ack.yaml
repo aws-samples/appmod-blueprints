@@ -7,6 +7,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "-3"
 spec:
   databaseName: devlake
+  resourcePrefix: {{ .Values.resourcePrefix | default "peeks" }}
   engineVersion: {{ .Values.rds.engineVersion | default "8.0.mysql_aurora.3.10.0" }}
   instanceClass: {{ .Values.rds.instanceClass | default "db.r5.large" }}
   region: {{ .Values.clusterRegion }}
