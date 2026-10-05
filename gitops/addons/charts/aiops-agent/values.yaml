@@ -15,7 +15,7 @@ imageTag: "v1"
 # Component keys: skillsMcp, agent (strands-agent), eksMcp, gitlabMcp, chatUi, incidentBridge.
 images:
   skillsMcp:      { registry: "", tag: "v3" }
-  agent:          { registry: "", tag: "v1.9" }   # strands-agent — v1.9 = configurable max_tokens/temperature via env (MAX_TOKENS default 4096, MODEL_TEMPERATURE 0.7) = cherry-pick of upstream PR #35 (supersedes v1.8's MODEL_MAX_TOKENS); v1.7 = drop a2a.utils.* helper spans; v1.6 = Langfuse tags via langfuse.trace.tags (v1.5 = session.id + source:{rca,chat} tags & drop noisy a2a event-queue spans, v1.4 = OTEL context isolation for pooled MCP conns, v1.3 = MCP pool rebuild on token recycle, v1.2 = contextId sanitize)
+  agent:          { registry: "", tag: "v1.10" }   # strands-agent — v1.10 = retry MCP connect through first-boot warm-up race so the agent loads all tools on the first boot without a manual pod restart (OAP #50); v1.9 = configurable max_tokens/temperature via env (MAX_TOKENS default 4096, MODEL_TEMPERATURE 0.7) = cherry-pick of upstream PR #35 (supersedes v1.8's MODEL_MAX_TOKENS); v1.7 = drop a2a.utils.* helper spans; v1.6 = Langfuse tags via langfuse.trace.tags (v1.5 = session.id + source:{rca,chat} tags & drop noisy a2a event-queue spans, v1.4 = OTEL context isolation for pooled MCP conns, v1.3 = MCP pool rebuild on token recycle, v1.2 = contextId sanitize)
   eksMcp:         { registry: "", tag: "" }   # eks-read-mcp
   gitlabMcp:      { registry: "", tag: "" }
   chatUi:         { registry: "", tag: "v1.4" }   # v1.4 = fleet-level default suggestion prompts (v1.3 = copy buttons + scrollable suggestions + auto-grow, v1.2 = markdown/suggestions overhaul)
