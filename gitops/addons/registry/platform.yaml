@@ -803,15 +803,15 @@ aiops-agent:
     #                  v1.2 = deterministic open-MR dup-check, v1.1 = poller.py contextId sanitize)
     #   skillsMcp v3 -> manage-addons: override-key convention (kebab registry key vs snake
     #                  enable_<addon>) + read-the-ApplicationSet-first guardrail (v2 = remediation guardrails)
-    #   gitlabMcp v1.2 -> @zereight/mcp-gitlab pinned 2.1.69: commit_id is OPTIONAL on
-    #                  create_or_update_file, so the agent can commit a brand-new file and open its
-    #                  own remediation MR (v1/v1.1 baked an older build where commit_id was REQUIRED -> 400)
+    #   gitlabMcp v2 -> @zereight/mcp-gitlab 2.1.69 (commit_id OPTIONAL on create_or_update_file) + baked
+    #                  GITLAB_DENIED_TOOLS_REGEX curating 118 default tools -> ~35 repo/MR/commit tools, so the agent can commit a new file + open its
+    #                  own remediation MR without 118-tool bloat (v1/v1.1: commit_id REQUIRED -> 400; v1.2: 2.1.69 pin, no curation)
     # The other components inherit the global tag (:v1).
     images:
       skillsMcp:      { registry: "", tag: "v3" }
       agent:          { registry: "", tag: "v1.11" }
       eksMcp:         { registry: "", tag: "" }
-      gitlabMcp:      { registry: "", tag: "v1.2" }
+      gitlabMcp:      { registry: "", tag: "v2" }
       chatUi:         { registry: "", tag: "v1.4" }
       incidentBridge: { registry: "", tag: "v1.4" }
     accountId: '{{.metadata.annotations.aws_account_id}}'

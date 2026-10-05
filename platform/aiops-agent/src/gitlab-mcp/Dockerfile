@@ -16,6 +16,13 @@ FROM public.ecr.aws/docker/library/node:22-bookworm-slim
 # could not commit a brand-new file (MCPError "Invalid arguments: commit_id: Required"
 # -> GitLab API 400) and could never open its own remediation MR.
 RUN npm install -g supergateway@4.0.0 @zereight/mcp-gitlab@2.1.69
+# Curate the tool surface. 2.1.69 exposes 118 tools by default, bloating every LLM
+# call. This DENY regex drops the pipeline/issue/label/wiki/group/emoji/etc. clusters,
+# keeping ~35 repo+MR+commit+project tools the agent actually uses. It is the IMAGE
+# DEFAULT (so a bare `docker run` is already curated); the k8s Deployment sets the same
+# value explicitly as the tunable, GitOps-visible override. Constraints (denied-regex.js):
+# <=200 chars, SAFE_PATTERN_CHARS excludes '!' so NO negative-lookahead allowlist.
+ENV GITLAB_DENIED_TOOLS_REGEX="issue|emoji|draft|group|label|protect|discussion|thread|todo|namespace|commit_status|catalog|ci_lint|approv|fork|_user|member|_event|whoami|health|download|upload|pipeline|create_note|create_repo"
 EXPOSE 8000
 # The k8s Deployment sets securityContext.runAsNonRoot=true with no runAsUser, so the
 # image MUST define a non-root user or kubelet refuses to start it. The node base image

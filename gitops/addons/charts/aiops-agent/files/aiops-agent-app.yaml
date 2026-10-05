@@ -413,6 +413,15 @@ spec:
                 # Write path (branches/MRs) — read-only would block the agent's fix flow.
                 - name: GITLAB_READ_ONLY_MODE
                   value: "false"
+                # Curate the tool surface: @zereight/mcp-gitlab 2.1.69 exposes 118 tools by
+                # default, bloating every LLM call (token cost + tool-selection noise). This
+                # DENY regex (<=200 chars, no lookahead allowed — see denied-regex.js) drops the
+                # pipeline/issue/label/wiki/group/emoji/etc. clusters, keeping ~35 repo+MR+commit
+                # +project tools (create_branch/create_or_update_file/push_files/create_merge_request
+                # /get_file_contents/get_repository_tree/list_merge_requests/... all retained).
+                # Baked as the image default too (gitlab-mcp:v2); this env is the tunable override.
+                - name: GITLAB_DENIED_TOOLS_REGEX
+                  value: "issue|emoji|draft|group|label|protect|discussion|thread|todo|namespace|commit_status|catalog|ci_lint|approv|fork|_user|member|_event|whoami|health|download|upload|pipeline|create_note|create_repo"
                 - name: GITLAB_PERSONAL_ACCESS_TOKEN
                   valueFrom:
                     secretKeyRef:
