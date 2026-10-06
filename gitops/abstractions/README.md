@@ -87,51 +87,22 @@ The conditional creation uses `function-cel-filter` in the composition pipeline.
 
 All resources use `matchControllerRef` for cross-referencing -- no manual wiring between resources.
 
-## Which Clusters Get Each Crossplane Abstraction
+## Which Clusters Get the Crossplane Abstractions
 
-`bootstrap/abstractions.yaml` installs each directory under `abstractions/crossplane/`
-(its XRD and Composition) on every cluster whose ArgoCD cluster secret has that
-abstraction's label. It works like addons: appmod defines the abstraction and its label,
-and the consumer decides which clusters get it in its own `enabled-addons.yaml`.
-
-| Directory | `enabled-addons.yaml` key | Cluster-secret label | Hub | Spokes |
-|-----------|---------------------------|----------------------|-----|--------|
-| `aws-resources` | `abstraction_aws_resources` | `enable_abstraction_aws_resources` | on | off |
-| `platform-cluster` | `abstraction_platform_cluster` | `enable_abstraction_platform_cluster` | on | off |
-| `pod-identity` | `abstraction_pod_identity` | `enable_abstraction_pod_identity` | on | off |
-
-The hub defaults are set in `bootstrap/hub-fleet-secret.yaml` (`defaultEnabledAddons`),
-not in an `enabled-addons.yaml`, so they apply even when the fleet repo is a consumer
-repo. A consumer's `enabledAddons` always wins over them.
-
-**To put PodIdentity on a spoke** (needed by the `aws-service-identity` OAM trait, which
-creates a `PodIdentity` claim in the workload's own cluster), add this to that
-environment's `gitops/overlays/environments/<env>/enabled-addons.yaml`:
+The hub gets all of `crossplane/*`. To run microservices that use them on a spoke (for
+example the `aws-service-identity` OAM trait, which creates a `PodIdentity` claim in the
+workload's own cluster), add one line to that environment's `enabled-addons.yaml`, next to
+`crossplane: true`:
 
 ```yaml
 enabledAddons:
-  abstraction_pod_identity: true
+  abstractions: true
 ```
 
-The spoke also needs what the pod-identity Composition uses: Crossplane with
-`function-environment-configs` and `function-patch-and-transform`, `provider-aws-iam` and
-`provider-aws-eks`, the `default` ProviderConfig, and the `env-config` EnvironmentConfig
-(`clusterName`, `region`). These come from the `crossplane-base` and `env_config` registry
-entries, which are both enabled by `crossplane: true`.
-
-Leave `platform-cluster` off spokes: it provisions clusters and belongs on the hub.
-
-**To turn an abstraction off**, set its key to `false`. The ApplicationSet never deletes
-Applications (`applicationsSync: create-update`) and its template has no
-`resources-finalizer`, because deleting an XRD deletes every claim of that kind (for
-`platform-cluster`, the spoke clusters themselves). So after setting `false`, delete the
-`<directory>-<cluster>` Application explicitly. The XRD and Composition stay on the
-cluster; remove them by hand only once no claims of that kind remain.
-
-**To add an abstraction**, add a generator for its directory in
-`bootstrap/abstractions.yaml` and, if the hub should have it by default, a key in
-`defaultEnabledAddons` in `bootstrap/hub-fleet-secret.yaml`. There is no wildcard, so a
-new directory is installed nowhere until it has a label.
+That installs every abstraction except `platform-cluster`, which provisions clusters and
+stays on the hub. Applications are never deleted by the ApplicationSet, so turning the
+switch off leaves the XRDs in place (deleting an XRD deletes its claims); remove the
+`<abstraction>-<cluster>` Application by hand once no claims remain.
 
 ## How It Is Used
 

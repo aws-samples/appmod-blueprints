@@ -72,12 +72,6 @@ overlay:
 # Addon enablement map — populated from enabled-addons.yaml via valueFiles
 enabledAddons: {}
 
-# Platform defaults under enabledAddons, same keys. A key here is enabled unless
-# the consumer's enabledAddons sets it (an explicit `false` turns it off). Empty
-# for spokes; gitops/bootstrap/hub-fleet-secret.yaml sets it for the hub so the
-# Crossplane abstractions stay on there without any consumer change.
-defaultEnabledAddons: {}
-
 # OIDC configuration — used to derive oidc_issuer_url on spoke cluster secrets.
 # issuerUrlTemplate is a Go template evaluated with:
 #   .domain      = hub.domain (ingress_domain_name)
