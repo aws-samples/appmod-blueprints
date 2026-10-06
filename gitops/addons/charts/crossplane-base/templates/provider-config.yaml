@@ -47,38 +47,40 @@ spec:
             # the writes out. Override per-provider via providers.<name>.maxReconcileRate.
             args:
               - --max-reconcile-rate={{ $provider.maxReconcileRate | default ($.Values.providerDefaults).maxReconcileRate | default 6 }}
-            # Pod resources come from providerResources in values.yaml, which documents how
-            # the defaults were measured. The limit was previously hardcoded at 2Gi with no
-            # override, so a consumer could lower the request but never the cap.
-            #
-            # GOMEMLIMIT makes the memory limit enforceable BY THE GO RUNTIME instead of only
-            # by the kernel. These providers are Go programs, and without GOMEMLIMIT the Go
-            # GC has no knowledge of the cgroup limit at all: it paces the heap purely off
-            # GOGC (default 100, so the heap grows to roughly twice the live heap before a
-            # collection) and a pod that crosses the limit is OOMKilled rather than collected.
-            # With it set just under the limit, approaching the ceiling triggers GC instead,
-            # so the failure mode degrades from "killed" to "spends more CPU on GC".
-            #
-            # Resolved with hasKey, not `| default`, so the three cases stay distinct:
-            #   key absent       -> the default below (a nil providerResources must NOT get a
-            #                       lowered limit with the runtime unaware of it)
-            #   key set to ""    -> deliberately disabled (pre-change behaviour)
-            #   key set to a size-> that value
-            {{- $pr := $.Values.providerResources | default dict }}
-            {{- $goMemLimit := "460MiB" }}
-            {{- if hasKey $pr "goMemLimit" }}
-            {{-   $goMemLimit = $pr.goMemLimit }}
+            # Resources and Go GC settings: providerResources in values.yaml (measurements
+            # and rationale there), overridden key by key by providers.<name>.resources.
+            # hasKey (not `| default`) so an explicit "" is honoured: for goMemLimit/goGC
+            # it means "do not set the env var".
+            {{- $r := dict "cpuRequest" "250m" "memoryRequest" "320Mi" "memoryLimit" "512Mi" "goGC" "50" }}
+            {{- range $k, $v := ($.Values.providerResources | default dict) }}{{ $_ := set $r $k $v }}{{ end }}
+            {{- range $k, $v := ($provider.resources | default dict) }}{{ $_ := set $r $k $v }}{{ end }}
+            {{- /* GOMEMLIMIT defaults to 90% of the memory limit (Go GC guide: 5-10% headroom
+                   for non-Go memory), so it can never drift away from the limit it protects. */}}
+            {{- if not (hasKey $r "goMemLimit") }}
+            {{-   $lim := toString $r.memoryLimit }}
+            {{-   $mib := 0 }}
+            {{-   if hasSuffix "Gi" $lim }}{{ $mib = mul (atoi (trimSuffix "Gi" $lim)) 1024 }}
+            {{-   else if hasSuffix "Mi" $lim }}{{ $mib = atoi (trimSuffix "Mi" $lim) }}
+            {{-   else }}{{ fail (printf "crossplane-base: memoryLimit %q for %s must end in Mi or Gi (or set goMemLimit explicitly)" $lim $name) }}
+            {{-   end }}
+            {{-   $_ := set $r "goMemLimit" (printf "%dMiB" (div (mul $mib 9) 10)) }}
             {{- end }}
-            {{- if $goMemLimit }}
+            {{- if or $r.goMemLimit $r.goGC }}
             env:
+              {{- if $r.goMemLimit }}
               - name: GOMEMLIMIT
-                value: {{ $goMemLimit | quote }}
+                value: {{ $r.goMemLimit | quote }}
+              {{- end }}
+              {{- if $r.goGC }}
+              - name: GOGC
+                value: {{ $r.goGC | quote }}
+              {{- end }}
             {{- end }}
             resources:
               requests:
-                cpu: {{ ($.Values.providerResources).cpuRequest | default "250m" }}
-                memory: {{ ($.Values.providerResources).memoryRequest | default "384Mi" }}
+                cpu: {{ $r.cpuRequest }}
+                memory: {{ $r.memoryRequest }}
               limits:
-                memory: {{ ($.Values.providerResources).memoryLimit | default "512Mi" }}
+                memory: {{ $r.memoryLimit }}
 {{- end }}
 {{- end }}
