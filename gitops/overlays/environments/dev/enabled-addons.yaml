@@ -19,6 +19,10 @@ enabledAddons:
   # Platform
   platform_manifests_bootstrap: true
   crossplane: true
+  # Crossplane abstractions on this spoke (all except platform-cluster, which stays on
+  # the hub). Enables the aws-service-identity OAM trait -> PodIdentity for agent
+  # workloads that may run on this spoke. Companion to appmod PR #960 (enable_abstractions).
+  abstractions: true
   kro_manifests: true
   # Agent Platform (OAP) -- enable the agentic layer on this spoke so agent
   # workloads run here: agent runtime ComponentDefinitions (mcp-server / agent /
