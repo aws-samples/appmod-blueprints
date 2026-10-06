@@ -11,3 +11,7 @@ ARG SKILLS_MCP_IMAGE=public.ecr.aws/oap/skills-mcp:latest
 FROM ${SKILLS_MCP_IMAGE}
 # Replace the base image's placeholder skills with the PEEKS skills.
 COPY .kiro/skills /payload/skills
+# Bake the PEEKS steering corpus so skills.list_steering()/get_steering() have a
+# backing (the base image ships none → those tools returned empty before). Served
+# read-only by the skills-mcp server from $PAYLOAD_DIR/steering.
+COPY .kiro/steering /payload/steering

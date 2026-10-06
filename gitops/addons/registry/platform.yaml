@@ -801,14 +801,18 @@ aiops-agent:
     #                  (v1.3 = _subject dedup keyed on COMPONENT only: PodOOMKilled/CrashLoopBackOff/
     #                  FrequentRestarts of one pod collapse to ONE remediation;
     #                  v1.2 = deterministic open-MR dup-check, v1.1 = poller.py contextId sanitize)
-    #   skillsMcp v3 -> manage-addons: override-key convention (kebab registry key vs snake
-    #                  enable_<addon>) + read-the-ApplicationSet-first guardrail (v2 = remediation guardrails)
+    #   skillsMcp v4 -> steering reinforcement: ArgoCD/kro/ACK run as EKS Managed Capabilities, so the
+    #                  argocd namespace has ZERO in-cluster control-plane pods (and no kro/ACK controller
+    #                  pods) BY DESIGN — assess ArgoCD health via Application CRs, never flag "0 pods" as
+    #                  an incident (added to .kiro/steering/troubleshooting.md "ArgoCD 3.x EKS Capability")
+    #                  (v3 = manage-addons: override-key convention (kebab registry key vs snake
+    #                  enable_<addon>) + read-the-ApplicationSet-first guardrail; v2 = remediation guardrails)
     #   gitlabMcp v2 -> @zereight/mcp-gitlab 2.1.69 (commit_id OPTIONAL on create_or_update_file) + baked
     #                  GITLAB_DENIED_TOOLS_REGEX curating 118 default tools -> ~35 repo/MR/commit tools, so the agent can commit a new file + open its
     #                  own remediation MR without 118-tool bloat (v1/v1.1: commit_id REQUIRED -> 400; v1.2: 2.1.69 pin, no curation)
     # The other components inherit the global tag (:v1).
     images:
-      skillsMcp:      { registry: "", tag: "v3" }
+      skillsMcp:      { registry: "", tag: "v4" }
       agent:          { registry: "", tag: "v1.12" }
       eksMcp:         { registry: "", tag: "" }
       gitlabMcp:      { registry: "", tag: "v2" }
