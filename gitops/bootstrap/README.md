@@ -48,7 +48,7 @@ Values are layered: default values, then per-tenant overrides.
 
 ## The control-plane Label
 
-Every ApplicationSet in this directory uses the same generator selector:
+Most ApplicationSets in this directory use the same generator selector:
 
 ```yaml
 selector:

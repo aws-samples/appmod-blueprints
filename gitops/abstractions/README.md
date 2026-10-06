@@ -87,6 +87,23 @@ The conditional creation uses `function-cel-filter` in the composition pipeline.
 
 All resources use `matchControllerRef` for cross-referencing -- no manual wiring between resources.
 
+## Which Clusters Get the Crossplane Abstractions
+
+The hub gets all of `crossplane/*`. To run microservices that use them on a spoke (for
+example the `aws-service-identity` OAM trait, which creates a `PodIdentity` claim in the
+workload's own cluster), add one line to that environment's `enabled-addons.yaml`, next to
+`crossplane: true`:
+
+```yaml
+enabledAddons:
+  abstractions: true
+```
+
+That installs every abstraction except `platform-cluster`, which provisions clusters and
+stays on the hub. Applications are never deleted by the ApplicationSet, so turning the
+switch off leaves the XRDs in place (deleting an XRD deletes its claims); remove the
+`<abstraction>-<cluster>` Application by hand once no claims remain.
+
 ## How It Is Used
 
 ### During Bootstrap (Kind)
