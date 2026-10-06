@@ -5,11 +5,15 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "4"
+    # Hub: every abstraction. Spokes: set `abstractions: true` in the environment's
+    # enabled-addons.yaml (-> label enable_abstractions) to get all but platform-cluster,
+    # which provisions clusters and stays on the hub. Spokes need `crossplane: true`.
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   syncPolicy:
     preserveResourcesOnDeletion: true
+    applicationsSync: create-update  # never delete Apps: deleting an XRD deletes its claims
   generators:
     - matrix:
         generators:
@@ -22,11 +26,24 @@ spec:
               revision: '{{ .metadata.annotations.addonsRepoRevision }}'
               directories:
                 - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/*'
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  enable_abstractions: 'true'
+                matchExpressions:
+                  - {key: fleet_member, operator: NotIn, values: [control-plane]}
+          - git:
+              repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
+              revision: '{{ .metadata.annotations.addonsRepoRevision }}'
+              directories:
+                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/*'
+                - path: '{{ .metadata.annotations.addonsRepoBasepath }}abstractions/crossplane/platform-cluster'
+                  exclude: true
   template:
     metadata:
       name: '{{ .path.basename }}-{{ .name }}'
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
     spec:
       project: default
       sources:

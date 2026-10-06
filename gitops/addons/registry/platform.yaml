@@ -353,6 +353,13 @@ kubevela:
         values: ['true']
   valuesObject:
     systemDefinitionNamespace: vela-system
+    # Ambient environment config for the OAM definitions this chart ships. The
+    # aws-service-identity trait injects awsRegion into every workload it grants an
+    # identity to, so the region never has to appear in a developer's OAM (the same
+    # Application deploys unchanged to any region). See the chart's values.yaml
+    # `global` block.
+    global:
+      awsRegion: '{{.metadata.annotations.aws_region}}'
   # Replicates the inherited default syncPolicy and adds ServerSideApply so the
   # apiserver-defaulted fields on the vela-core admission webhooks
   # (matchPolicy/namespaceSelector/objectSelector/timeoutSeconds/rules.scope) are

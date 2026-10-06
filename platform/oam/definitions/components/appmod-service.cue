@@ -1,0 +1,534 @@
+// DEPRECATED — superseded by `service-rollout`
+// (platform/oam/definitions/components/service-rollout.cue). Kept only so Applications that still
+// say `type: appmod-service` keep rendering during the migration window; it will be
+// removed once nothing references it.
+//
+// `service-rollout` is this component with the same canary strategy and the same
+// functional/performance/metric gates, differing in identity only: it owns a
+// ServiceAccount named after the component, drops the `serviceAccount` and
+// `image_name` parameters, and delegates all EKS Pod Identity wiring to the
+// `aws-service-identity` trait. See that file's header for the full rationale.
+//
+// Migration: rename `type: appmod-service` to `type: service-rollout`, delete the
+// `serviceAccount` and `image_name` properties, and attach `aws-service-identity`
+// if the workload needs AWS credentials.
+//
+// This CUE file is the source of truth. The YAML under
+// gitops/addons/charts/kubevela/templates/ is generated from it by
+// platform/oam/generate.sh; do not edit the YAML.
+
+import "strings"
+
+"appmod-service": {
+	"alias": ""
+	"annotations": {}
+	"attributes": {
+		"workload": {
+			"type": "autodetects.core.oam.dev"
+		}
+	}
+	"description": "DEPRECATED (use service-rollout): Appmod deployment with canary support"
+	"labels": {}
+	"type": "component"
+}
+
+template: {
+	let previewService = "\(context.name)-preview"
+
+	// The amp-workspace-url / amp-workspace-region values are injected at trait
+	// render time via KubeVela trait args and consumed below by the
+	// Prometheus analysis provider used for canary metric checks. This intentionally
+	// mixes KubeVela arg templating with CUE; the args are supplied by the AppmodService
+	// RGD from the amp-workspace secret.
+	let ampWorkspaceUrl = #"{{ "{{" }}args.amp-workspace-url{{ "}}" }}"#
+	let ampWorkspaceRegion = #"{{ "{{" }}args.amp-workspace-region{{ "}}" }}"#
+	let prometheusTargetQuery = "k8s_container_name=\"\(parameter.image_name)\", k8s_namespace_name=\"\(context.namespace)\""
+
+	output: {
+		apiVersion: "argoproj.io/v1alpha1"
+		kind:       "Rollout"
+		metadata: name: context.name
+		spec: {
+			replicas:             parameter.replicas
+			revisionHistoryLimit: 2
+			selector: matchLabels: app: context.name
+			strategy: canary:
+			{
+				canaryService: previewService
+				steps: [
+					{
+						setWeight: 20
+					},
+					if parameter.functionalGate != _|_ {
+						{
+							pause: duration: parameter.functionalGate.pause
+						}
+					},
+					if parameter.functionalGate != _|_ {
+						{
+							analysis: {
+								templates: [
+									{
+										templateName: "functional-gate-\(context.name)"
+									},
+								]
+								args: [
+									{
+										name:  "service-name"
+										value: previewService
+									},
+								]
+							}
+						}
+					},
+					{
+						setWeight: 40
+					},
+					{
+						pause: duration: "5s"
+					},
+					{
+						setWeight: 60
+					},
+					{
+						pause: duration: "5s"
+					},
+					{
+						setWeight: 80
+					},
+					if parameter.performanceGate != _|_ {
+						{
+							pause: duration: parameter.performanceGate.pause
+						}
+					},
+					if parameter.performanceGate != _|_ {
+						{
+							analysis: {
+								templates: [
+									{
+										templateName: "performance-gate-\(context.name)"
+									},
+								]
+								args: [
+									{
+										name:  "service-name"
+										value: previewService
+									},
+								]
+							}
+						}
+					},
+					if parameter.MetricGate != _|_ {
+						{
+							pause: duration: parameter.MetricGate.pause
+						}
+					},
+					if parameter.metrics != _|_ {
+						{
+							analysis: {
+								templates: [
+									{
+										templateName: "metrics-\(context.name)"
+									},
+								]
+								args: [
+									{
+										name:  "service-name"
+										value: previewService
+									},
+								]
+							}
+						}
+					},
+				]
+			}
+			template: {
+				metadata: {
+					labels: app: context.name
+					annotations: {
+						if parameter.functionalGate != _|_ {
+							color: parameter.functionalGate.extraArgs
+						}
+						replicas:                       "\(parameter.replicas)"
+						"rollout.argoproj.io/revision": parameter.image
+					}
+				}
+				spec: {
+					// EKS Pod Identity: explicitly project the pod-identity token and point
+					// the AWS SDK at the Pod Identity Agent. This makes credential resolution
+					// deterministic instead of relying on webhook mutation / init-container waits
+					// (see git history: this wiring was lost during an OAM regeneration).
+					if parameter.serviceAccount != "default" {
+						volumes: [{
+							name: "eks-pod-identity-token"
+							projected: {
+								defaultMode: 420
+								sources: [{
+									serviceAccountToken: {
+										audience:          "pods.eks.amazonaws.com"
+										expirationSeconds: 86400
+										path:              "eks-pod-identity-token"
+									}
+								}]
+							}
+						}]
+					}
+					containers: [{
+						image:           parameter.image
+						imagePullPolicy: "Always"
+						name:            parameter.image_name
+						ports: [{
+							containerPort: parameter.targetPort
+						}]
+						if parameter.serviceAccount != "default" {
+							volumeMounts: [{
+								name:      "eks-pod-identity-token"
+								mountPath: "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/"
+								readOnly:  true
+							}]
+						}
+						env: [
+							if parameter.env != _|_ for _, e in parameter.env if e.name != "APP_BASE_PATH" {e},
+							// APP_BASE_PATH is derived from appPath so prefixed asset/image URLs follow the app path.
+							// NOTE (kubevela): appPath and the path-based-ingress trait path are SEPARATE inputs and
+							// MUST be set to the same value, or prefixed assets 404. (The kro RGD derives both from
+							// a single ingress.path; on the OAM path the manifest/scaffolder must keep them in sync.)
+							{
+								name:  "APP_BASE_PATH"
+								value: parameter.appPath
+							},
+							if parameter.serviceAccount != "default" {
+								{
+									name:  "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"
+									value: "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token"
+								}
+							},
+							if parameter.serviceAccount != "default" {
+								{
+									name:  "AWS_CONTAINER_CREDENTIALS_FULL_URI"
+									value: "http://169.254.170.23/v1/credentials"
+								}
+							},
+						]
+						if parameter.readinessProbe != _|_ {
+							readinessProbe: parameter.readinessProbe
+						}
+						if parameter.resources != _|_ {
+							resources: parameter.resources
+						}
+					}]
+					serviceAccountName: parameter.serviceAccount
+					topologySpreadConstraints: [{
+						maxSkew:           1
+						topologyKey:       "topology.kubernetes.io/zone"
+						whenUnsatisfiable: "ScheduleAnyway"
+						labelSelector: matchLabels: app: context.name
+					}]
+				}
+			}
+		}
+	}
+	outputs: {
+		"appmod-service-service": {
+			apiVersion: "v1"
+			kind:       "Service"
+			metadata: name: context.name
+			spec: {
+				selector: app: context.name
+				ports: [{
+					port:       parameter.port
+					targetPort: parameter.targetPort
+				}]
+			}
+		}
+		"appmod-service-preview": {
+			apiVersion: "v1"
+			kind:       "Service"
+			metadata: name: previewService
+			spec: {
+				selector: app: context.name
+				ports: [{
+					port:       parameter.port
+					targetPort: parameter.targetPort
+				}]
+			}
+		}
+		"amp-workspace-secrets": {
+			apiVersion: "external-secrets.io/v1"
+			kind:       "ExternalSecret"
+			metadata: {
+				name:      "amp-workspace-secrets-\(context.name)"
+				namespace: context.namespace
+			}
+			spec: {
+				secretStoreRef: {
+					name: "aws-secrets-manager"
+					kind: "ClusterSecretStore"
+				}
+				target: {
+					name: "amp-workspace-\(context.name)"
+					template: type: "Opaque"
+				}
+				data: [
+					{
+						secretKey: "amp-workspace-url"
+						remoteRef: {
+							key:      "peeks/platform/amp"
+							property: "amp-workspace"
+						}
+					},
+					{
+						secretKey: "amp-workspace-region"
+						remoteRef: {
+							key:      "peeks/platform/amp"
+							property: "amp-region"
+						}
+					},
+				]
+			}
+		}
+		if parameter.metrics != _|_ {
+			"success-rate-analysis-template": {
+				apiVersion: "argoproj.io/v1alpha1"
+				kind:       "AnalysisTemplate"
+				metadata: name: "metrics-\(context.name)"
+				spec: {
+					args: [{
+						name: "amp-workspace-url"
+						valueFrom: secretKeyRef: {
+							name: "amp-workspace-\(context.name)"
+							key:  "amp-workspace-url"
+						}
+					}, {
+						name: "amp-workspace-region"
+						valueFrom: secretKeyRef: {
+							name: "amp-workspace-\(context.name)"
+							key:  "amp-workspace-region"
+						}
+					}]
+					metrics:
+					[
+						for idx, criteria in parameter.metrics.evaluationCriteria {
+							name: "metric[\(idx)]-\(context.name): \(criteria.metric)"
+							if criteria.successOrFailCondition == "success" {
+								interval:         criteria.interval
+								count:            criteria.count
+								successCondition: "result[0] \(criteria.comparisonType) \(criteria.threshold)"
+							}
+							if criteria.successOrFailCondition == "fail" {
+								interval:         criteria.interval
+								count:            criteria.count
+								failureCondition: "result[0] \(criteria.comparisonType) \(criteria.threshold)"
+							}
+							provider: prometheus: {
+								address: ampWorkspaceUrl
+								query: [
+									if criteria.function != _|_ if criteria.rateInterval != _|_ {
+										"\(criteria.function)(rate(\(criteria.metric){\(prometheusTargetQuery)}[\(criteria.rateInterval)]))"
+									},
+									if criteria.function != _|_ if criteria.rateInterval == _|_ {
+										"\(criteria.function)(\(criteria.metric){\(prometheusTargetQuery)})"
+									},
+									if criteria.function == _|_ if criteria.rateInterval != _|_ {
+										"rate(\(criteria.metric){\(prometheusTargetQuery)}[\(criteria.rateInterval)])"
+									},
+									if criteria.function == _|_ if criteria.rateInterval == _|_ {
+										"\(criteria.metric){\(prometheusTargetQuery)}"
+									},
+								][0]
+								authentication: sigv4: region: ampWorkspaceRegion
+							}
+						},
+					]
+				}
+			}
+		}
+		if parameter.functionalGate != _|_ {
+			"appmod-functional-analysis-template": {
+				kind:       "AnalysisTemplate"
+				apiVersion: "argoproj.io/v1alpha1"
+				metadata: name: "functional-gate-\(context.name)"
+				spec: metrics: [
+					{
+						name: "\(context.name)-metrics"
+						provider: job: spec: {
+							template: spec: {
+								containers: [
+									{
+										name:  "test"
+										image: parameter.functionalGate.image
+										command: ["sh"]
+										args: [
+											"-c",
+											"set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://\(previewService):\(parameter.port)\(parameter.appPath)/ 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: \(parameter.functionalGate.extraArgs)'; if echo \"$RESPONSE\" | grep -q '\(parameter.functionalGate.extraArgs)'; then echo 'PASS: Found \(parameter.functionalGate.extraArgs)'; exit 0; else echo 'FAIL: \(parameter.functionalGate.extraArgs) not found'; exit 1; fi",
+										]
+									},
+								]
+								restartPolicy: "Never"
+							}
+							backoffLimit: 0
+						}
+					},
+				]
+			}
+		}
+		if parameter.performanceGate != _|_ {
+			"appmod-performance-analysis-template": {
+				kind:       "AnalysisTemplate"
+				apiVersion: "argoproj.io/v1alpha1"
+				metadata: name: "performance-gate-\(context.name)"
+				spec: metrics: [
+					{
+						name: "\(context.name)-metrics"
+						provider: job: spec: {
+							template: spec: {
+								containers: [
+									if strings.Contains(context.name, "java") {
+										{
+											name:  "test"
+											image: parameter.performanceGate.image
+											command: ["sh"]
+											args: [
+												"-c",
+												"RESULT=$(ab -n 1000 -c 10 http://\(previewService):\(parameter.port)\(parameter.appPath)/ 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); [ $RESULT -lt \(parameter.performanceGate.extraArgs) ] && exit 0 || exit 1",
+											]
+										}
+									},
+									if strings.Contains(context.name, "rust") {
+										{
+											name:  "test"
+											image: parameter.performanceGate.image
+											command: ["run"]
+											args: [
+												"run",
+												"-t",
+												"http://\(previewService):\(parameter.port)",
+												"/benchmark.yaml",
+											]
+											volumeMounts: [{
+												name:      "benchmark-config"
+												mountPath: "/benchmark.yaml"
+												subPath:   "benchmark.yaml"
+											}]
+										}
+									},
+								]
+								if strings.Contains(context.name, "rust") {
+									volumes: [{
+										name: "benchmark-config"
+										configMap: name: "benchmark-config-\(context.name)"
+									}]
+								}
+								restartPolicy: "Never"
+							}
+							backoffLimit: 0
+						}
+					},
+				]
+			}
+		}
+		if parameter.performanceGate != _|_ && strings.Contains(context.name, "rust") {
+			"benchmark-configmap": {
+				apiVersion: "v1"
+				kind:       "ConfigMap"
+				metadata: name: "benchmark-config-\(context.name)"
+				data: {
+					"benchmark.yaml": """
+						config:
+						  target: "http://127.0.0.1:80"
+						  phases:
+						    - duration: 5
+						      arrivalRate: 1
+						      rampTo: 10
+						      name: Warm up
+						    - duration: 10
+						      arrivalRate: 10
+						      rampTo: 100
+						      name: Burn
+						    - duration: 10
+						      arrivalRate: 100
+						      name: End
+
+						  plugins:
+						    ensure: {}
+						    apdex: {}
+						    metrics-by-endpoint: {}
+						  apdex:
+						    threshold: 100
+						  ensure:
+						    thresholds:
+						      - http.response_time.p99: 6000
+						      - http.response_time.p95: 6000
+
+						scenarios:
+						  - name: "Navigate Menus"
+						    flow:
+						      - get:
+						          url: "/collection/FRONT_PAGE"
+						      - post:
+						          url: "/products/"
+						          json: "Shirt"
+						      - post:
+						          url: "/products/"
+						          json: "Keyboard"
+						"""
+				}
+			}
+		}
+		"appmod-service-pdb": {
+			apiVersion: "policy/v1"
+			kind:       "PodDisruptionBudget"
+			metadata: name: context.name
+			spec: {
+				maxUnavailable: 1
+				selector: matchLabels: app: context.name
+			}
+		}
+	}
+
+	#QualityGate: {
+		image:     string
+		pause:     string
+		extraArgs: *"" | string
+	}
+
+	#MetricGate: {
+		pause: *"1s" | string
+		evaluationCriteria:
+		[...{
+			interval:               *"1s" | string
+			count:                  *1 | int
+			function?:              "sum" | "avg" | "max" | "min" | "count"
+			rateInterval?:          string
+			successOrFailCondition: *"success" | "fail"
+			metric:                 string
+			comparisonType:         *">" | ">=" | "<" | "<=" | "==" | "!="
+			threshold:              *0 | number
+		}]
+	}
+
+	parameter: {
+		image_name:     string
+		image:          string
+		replicas:       *3 | int
+		port:           *80 | int
+		targetPort:     *8080 | int
+		serviceAccount: *"default" | string
+		appPath:        *"/" | string
+		env?: [...{name: string, value: string}]
+		readinessProbe?: {...}
+		resources?: {
+			requests?: {
+				cpu?:    string
+				memory?: string
+			}
+			limits?: {
+				cpu?:    string
+				memory?: string
+			}
+		}
+		functionalGate?:  #QualityGate
+		performanceGate?: #QualityGate
+		metrics?:         #MetricGate
+	}
+}

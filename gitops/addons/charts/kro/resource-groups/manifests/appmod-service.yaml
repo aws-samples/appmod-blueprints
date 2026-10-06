@@ -242,7 +242,7 @@ spec:
               controller: false
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            kro.run/depends-on: ${podidentity.metadata.name}
+            peeks/depends-on: ${podidentity.metadata.name}
     - id: serviceaccountWithoutDynamoDB
       includeWhen:
         - ${schema.spec.components.dynamodb.enabled == false}
@@ -649,11 +649,11 @@ spec:
           data:
             - secretKey: amp-workspace-url
               remoteRef:
-                key: peeks/platform/amp
+                key: ${schema.spec.resourcePrefix}/platform/amp
                 property: amp-workspace
             - secretKey: amp-workspace-region
               remoteRef:
-                key: peeks/platform/amp
+                key: ${schema.spec.resourcePrefix}/platform/amp
                 property: amp-region
 
     - id: functionalanalysis
