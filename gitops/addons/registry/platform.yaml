@@ -809,7 +809,7 @@ aiops-agent:
     # The other components inherit the global tag (:v1).
     images:
       skillsMcp:      { registry: "", tag: "v3" }
-      agent:          { registry: "", tag: "v1.11" }
+      agent:          { registry: "", tag: "v1.12" }
       eksMcp:         { registry: "", tag: "" }
       gitlabMcp:      { registry: "", tag: "v2" }
       chatUi:         { registry: "", tag: "v1.4" }
