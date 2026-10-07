@@ -20,6 +20,13 @@ hub:
   addonsRepoURL: ""
   addonsRepoRevision: ""
   addonsRepoBasepath: ""
+  # OAP (agentic) addon-repo coordinates, mirrored from the hub so spoke registration
+  # secrets carry the snake_case addons_repo_url / addons_repo_revision annotations the
+  # OAP agent-platform appsets read (default "<upstream>"/"main" under missingkey=error —
+  # a MISSING key errors before `default` can catch it, so the spoke must carry them).
+  # Empty -> annotations omitted (non-agentic deploy; OAP falls back to its upstream default).
+  agenticRepoURL: ""
+  agenticRepoRevision: ""
   fleetRepoURL: ""
   fleetRepoRevision: ""
   fleetRepoBasepath: ""
