@@ -1,5 +1,12 @@
 # Agent Platform on EKS - User Guide
 
+> **⚠️ HISTORICAL — superseded.** This guide describes the **archived**
+> Kagent/LiteLLM/Jaeger/Tofu-Controller agent-platform design (the
+> `sample-agent-platform-on-eks` bridge-chart approach). It is kept for reference
+> only. The current design is
+> [`AGENTS-MANAGING-PLATFORM-ON-EKS.md`](./AGENTS-MANAGING-PLATFORM-ON-EKS.md)
+> (OAP-based `aiops-agent`). Do not follow this guide for new deployments.
+
 ## Overview
 
 The Agent Platform on EKS extends the Platform Engineering on EKS solution with AI agent capabilities, including Kagent (Kubernetes-native AI agent framework), LiteLLM (LLM gateway), observability tools (Langfuse, Jaeger), and infrastructure automation (Tofu Controller).
