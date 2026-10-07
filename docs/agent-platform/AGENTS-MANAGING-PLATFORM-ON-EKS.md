@@ -816,9 +816,51 @@ removes the whole bundle). Core platform is unaffected.
 Review follow-ups from the design review are tracked as issues; each line links the
 tracking issue so this doc is the index.
 
-- **Enforce the human merge-gate — 🔴 settle before impl PRs cite this doc.** Scope
-  the `gitlab-mcp` PAT to branch+MR only (not merge); protected branches so the bot
-  cannot approve/merge its own MR. §12 ·
+**2026-10-07 review digest (PR [#926](https://github.com/aws-samples/appmod-blueprints/pull/926), Elamaran + Mikhail).**
+Status of the latest review items, splitting what shipped in #926 from what is
+**explicitly deferred** (not in #926):
+
+_Resolved in #926:_
+- **GitLab bot merge-gate.** The bot is now a dedicated `aiops-agent` **Developer**
+  identity with a **random, GitLab-minted PAT** (previously `aiops-<owner-password>`,
+  from which stripping the prefix recovered user1/Owner's credential); fleet-config
+  `main` is protected (push/merge = Maintainer), so the bot opens MRs but cannot
+  merge/push `main`. The PAT keeps `api` scope **by necessity** — opening an MR
+  requires `api` (`write_repository` alone only permits git push, not the MR API),
+  so merge-vs-open is enforced structurally by the Developer role + branch protection,
+  not by token scope. The bot user + PAT + protection are created in the authoritative
+  `gitlab:init-ec2` path (the EKS `gitlab` chart is off), which is the single writer of
+  the PAT value into `<hub>/secrets.aiops_agent_git_token`. Closes the §12 blocker.
+  [appmod #956]
+- **incident-bridge poller correctness (§8.1).** The dedup **subject now includes the
+  namespace** (dropping it collapsed distinct same-named components across namespaces →
+  fail-closed suppression of the second incident); the fragile title/branch **substring**
+  dup-check was removed in favour of the exact `Incident-Component:` marker (now fails
+  **open** when the marker is absent, never silently dropping a real incident); SQS
+  `visibilityTimeout` 120 → 360 (≥ the agent's processing budget) so an in-flight
+  incident is not redelivered mid-RCA (which caused duplicate forwards).
+- **SQS DLQ + redrive (§8.1).** The incident queue now has a dead-letter queue
+  (14-day retention) and `redrivePolicy{maxReceiveCount:5}`, so a poison-pill incident
+  the agent can never process is parked for inspection instead of looping forever.
+  Partially closes the "DLQ-on-throttle" item under [OAP #51].
+
+_Deferred — NOT addressed in #926 (TODO):_ these are OAP image-build / release-pipeline
+concerns, intentionally out of scope for the appmod platform PR and gated on cutting a
+real OAP release tag (today the live event rides the `integration/peeks-e2e` branch).
+- **OAP image build uses one `$TAG` for all component pushes.** `buildspec-public-ecr.yaml`
+  tags every pushed image with a single `$TAG`, while the manifest/`values.yaml` pins
+  **distinct per-component versions**; the build must emit **per-component tags** so the
+  built images match the pinned refs. 🔴 blocker-class, OAP/build-side.
+- **Agent runtime image built from a personal fork @ a feature branch.** The agent image
+  is built from a fork at a feature/integration ref (`APPMOD_REF` / `fix/*`); cut a real
+  **OAP release tag** and pin both the build and the CFN `AGENTIC_REPO_REVISION` to it
+  instead of a moving branch. Ties to the Sonnet-5 / model-id lockstep item below. 🔴
+- **`buildspec` does not build `gitlab-mcp`** even though the aiops-agent manifest requires
+  that image — add `gitlab-mcp` to the image build. 🔴 genuine gap.
+
+- **Enforce the human merge-gate — ✅ resolved in [#926](https://github.com/aws-samples/appmod-blueprints/pull/926)** (see the 2026-10-07 digest above): dedicated
+  `aiops-agent` Developer bot with a random GitLab-minted PAT, fleet-config `main`
+  protected (push/merge = Maintainer) so the bot cannot approve/merge its own MR. §12 ·
   [appmod #956](https://github.com/aws-samples/appmod-blueprints/issues/956).
 - **Autonomous path runs half-blind on an incomplete toolset — 🟠 fix soon.**
   Lazy/retrying MCP discovery; fail readiness when tools are missing; refuse to
