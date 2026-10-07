@@ -37,6 +37,11 @@ providers:
     serviceAccount: provider-aws-ec2
     roleName: CrossplaneEC2ProviderRole
     createIdentity: true
+    # ec2 holds the most (live heap ~203MB, ~5k goroutines, highest fragmentation), so it
+    # gets more room than the default. Any key of providerResources can be set here.
+    resources:
+      memoryRequest: 384Mi
+      memoryLimit: 640Mi
   eks:
     version: ""
     serviceAccount: provider-aws-eks
@@ -87,6 +92,36 @@ namespace: crossplane-system
 # providers.<name>.maxReconcileRate.
 providerDefaults:
   maxReconcileRate: 6
+
+# Provider pod resources and Go GC settings, applied to every provider's
+# DeploymentRuntimeConfig. Override any key per provider via providers.<name>.resources.
+#
+# What the memory is (measured, bedrockagentcore v2.5.3 run locally against kind with the
+# hub's 790 CRDs, GODEBUG=gctrace=1): building the in-process Terraform AWS provider holds
+# ~140MB briefly and keeps ~66MB; starting the controllers takes live heap to 150-190MB.
+# It does not depend on managed-resource count or the number of CRDs, so it is a fixed cost
+# per provider. On the clusters, every aws provider's live heap is 174-203MB.
+#
+# Why the old pods were large and some were OOMKilled: Go does not know the cgroup limit.
+# Without GOMEMLIMIT it lets the heap grow to 2x live (GOGC=100) whatever the limit is.
+# Locally, the same binary at a 280Mi limit was OOMKilled without GOMEMLIMIT and ran with it.
+#
+#   goGC 50          heap goal 1.5x live instead of 2x. Roughly halved steady memory in the
+#                    tests; GC uses 0.06-0.5% CPU on the clusters, so the extra GC is cheap.
+#   goMemLimit       defaults to 90% of memoryLimit (Go GC guide: 5-10% headroom for
+#                    non-Go memory). Makes the runtime collect near the limit instead of
+#                    being killed. "" disables.
+#   memoryLimit 512Mi  OOM safety. Startup peaks at ~190MB live; 256Mi was OOMKilled even with
+#                    GOMEMLIMIT, 288Mi was the smallest that survived. On Auto Mode the limit
+#                    costs nothing; only the request reserves capacity.
+#   memoryRequest 320Mi  expected steady usage with GOGC=50 (to be confirmed on a cluster).
+#
+# Raise these if a provider is OOMKilled or its usage stays above its request.
+providerResources:
+  cpuRequest: 250m
+  memoryRequest: 320Mi
+  memoryLimit: 512Mi
+  goGC: "50"
 
 # PostSync hook that restarts credential-less Crossplane provider pods so they
 # pick up their EKS Pod Identity token once the PIA is active (spoke-side
