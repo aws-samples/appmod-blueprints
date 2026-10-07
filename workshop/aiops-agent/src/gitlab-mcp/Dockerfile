@@ -32,7 +32,7 @@ USER node
 # needs a warm process + per-session routing, otherwise each request spawns a fresh
 # process that never received `initialize` and tools/list fails. Config is env-driven
 # (GITLAB_API_URL / GITLAB_PERSONAL_ACCESS_TOKEN / GITLAB_READ_ONLY_MODE) — see the
-# gitlab-mcp Deployment in the peeks-agent chart.
+# gitlab-mcp Deployment in the aiops-agent chart.
 CMD ["supergateway", "--stdio", "mcp-gitlab", \
      "--outputTransport", "streamableHttp", "--port", "8000", \
      "--streamableHttpPath", "/mcp", "--healthEndpoint", "/health", "--stateful", "--logLevel", "info"]

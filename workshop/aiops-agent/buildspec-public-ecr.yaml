@@ -36,7 +36,7 @@ phases:
       - git clone --depth 1 -b "$OAP_REF" "$OAP_REPO" /oap
       # public ECR login (control plane is always us-east-1); also raises anonymous pull limits
       - aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
-      - REG="$PUBLIC_REGISTRY"; TAG="${IMAGE_TAG:-v1}"; SRC=/src/platform/peeks-agent/src
+      - REG="$PUBLIC_REGISTRY"; TAG="${IMAGE_TAG:-v1}"; SRC=/src/workshop/aiops-agent/src
       - echo "Publishing generic PEEKS agent images to $REG @ $TAG"
   build:
     commands:
@@ -47,7 +47,7 @@ phases:
       - docker build -t "$REG/incident-bridge:$TAG" "$SRC/incident-bridge"
       # 2) skills-mcp: base + PEEKS overlay (context = appmod repo ROOT for .kiro/skills)
       - docker build -t "skills-mcp-base:$TAG" "$SRC/skills-mcp"
-      - docker build -f /src/platform/peeks-agent/skills-overlay/Dockerfile
+      - docker build -f /src/workshop/aiops-agent/skills-overlay/Dockerfile
           --build-arg SKILLS_MCP_IMAGE="skills-mcp-base:$TAG"
           -t "$REG/skills-mcp:$TAG" /src
       # 3) agent runtime from the OAP fork (configurable max_tokens — issue #34 / PR #35)

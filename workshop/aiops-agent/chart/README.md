@@ -48,9 +48,10 @@ by a cluster-secret annotation `aiops_agent_img_<component>_{registry,tag}`.
 > `images.incidentBridge` in the overlay). Alternatively pin the **whole** set with global
 > `imageTag: v1.1` (all 6 are published at `v1.1` on `seb-demo`).
 
-> The imperative `platform/aiops-agent/deploy/aiops-agent-app.yaml` (single `kubectl apply`,
-> private-ECR `buildspec.yaml`) is the legacy self-contained path and does **not** pin the
-> strands-agent image. This chart is the GitOps source of truth; keep the two in sync.
+> This chart is the **single GitOps source of truth** for the agent Application. The
+> former imperative standalone bundle (`deploy/aiops-agent-app.yaml` + `BUNDLE.md`,
+> single `kubectl apply`) has been **removed** to avoid a divergent second copy of the
+> manifest — the canonical manifest now lives only at `chart/files/aiops-agent-app.yaml`.
 
 ## Enable / disable (default OFF)
 

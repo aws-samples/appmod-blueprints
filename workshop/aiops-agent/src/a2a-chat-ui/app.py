@@ -11,7 +11,7 @@ The chat itself is proxied server-side to the agent's in-cluster A2A endpoint
 Env:
   AGENT_A2A_URL       agent A2A JSON-RPC URL (default: in-cluster stable svc)
   KEYCLOAK_TOKEN_URL  Keycloak token endpoint (default: public CloudFront Keycloak)
-  KEYCLOAK_CLIENT_ID  public client with Direct Access Grants (default peeks-agent-chat)
+  KEYCLOAK_CLIENT_ID  public client with Direct Access Grants (default a2a-chat)
   KEYCLOAK_CLIENT_SECRET  optional (confidential client)
   SESSION_SECRET      HMAC key for the session cookie (default: random per pod)
   SESSION_TTL         seconds (default 3600)

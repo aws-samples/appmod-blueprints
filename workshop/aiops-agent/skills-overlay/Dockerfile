@@ -4,7 +4,7 @@
 #
 # Build context MUST be the appmod-blueprints repo ROOT (to access .kiro/skills):
 #   docker build \
-#     -f platform/peeks-agent/skills-overlay/Dockerfile \
+#     -f workshop/aiops-agent/skills-overlay/Dockerfile \
 #     --build-arg SKILLS_MCP_IMAGE=<registry>/skills-mcp:<tag> \
 #     -t <registry>/<your-ecr-namespace>/skills-mcp:<tag> .
 ARG SKILLS_MCP_IMAGE=public.ecr.aws/oap/skills-mcp:latest

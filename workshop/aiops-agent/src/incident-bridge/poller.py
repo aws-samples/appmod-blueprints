@@ -29,7 +29,7 @@ REGION = os.getenv("AWS_REGION", "us-west-2")
 QUEUE_URL = os.getenv("SQS_QUEUE_URL", "")
 AGENT_A2A_URL = os.getenv(
     "AGENT_A2A_URL",
-    "http://peeks-agent-stable.peeks-agent.svc.cluster.local:8083/",
+    "http://aiops-agent-stable.aiops-agent.svc.cluster.local:8083/",
 )
 DEDUP_TTL = int(os.getenv("DEDUP_TTL", "3600"))
 POLL_WAIT = int(os.getenv("POLL_WAIT", "20"))
