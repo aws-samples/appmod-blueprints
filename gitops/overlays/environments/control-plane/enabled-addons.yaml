@@ -31,18 +31,6 @@ enabledAddons:
   kube_state_metrics: true
   prometheus_node_exporter: true
   opentelemetry_operator: false
-  # OTel Collector (chart lives in the OAP repo; the enable_otel_collector label
-  # emitted here is consumed by the OAP `observability` appset). Enables the
-  # Agent -> collector -> Langfuse trace pipeline out of the box. GitOps-native
-  # default so fresh deployments capture agent traces even if an older OAP
-  # bootstrap.sh (which also stamps this label imperatively) is in play.
-  otel_collector: true
-  # Langfuse (OAP chart): trace backend the OTel collector exports to
-  # (endpoint https://<ingress>/api/public/otel). enable_langfuse label is
-  # consumed by the OAP `observability` appset. Enabled alongside otel_collector
-  # so a fresh deploy has a working Agent -> collector -> Langfuse pipeline
-  # instead of a Degraded collector with no backend.
-  langfuse: true
   cw_prometheus: false
   aws_for_fluentbit: false
   cni_metrics_helper: false
@@ -57,12 +45,6 @@ enabledAddons:
   backstage: true
   kubevela: true
   devlake: true
-  # PEEKS read-only platform-engineering agent (OAP Strands agent + skills-mcp +
-  # eks-read-mcp + chat-ui + AgentCore memory + incident bridge). Requires KubeVela +
-  # OAP agent-platform-addons on the hub. Default ON in this unified integration branch
-  # (config-unique 2b + #926); flip to false in the fleet-config overlay to disable
-  # per-deployment (overlays/environments/control-plane/enabled-addons.yaml).
-  aiops_agent: true
   gitlab: false  # GitLab runs on EC2 (docker-compose), not EKS
   # ACK controllers
   ack_iam: false
@@ -83,19 +65,5 @@ enabledAddons:
   aws_resources: true
   # Observability AWS (AMP + AMG via Crossplane)
   observability_aws: true
-  # Agent Platform (OAP) — GitOps enablement of the open-agentic-platform layer.
-  # These keys make the hub fleet-secret ExternalSecret emit
-  # enable_agent_platform / enable_bifrost / enable_agent_gateway /
-  # enable_oam_components on the hub cluster secret, which the OAP
-  # `agent-platform-addons` appsets (useSelectors) select on to deploy the agent
-  # ComponentDefinitions (mcp-server / agent / agentcore-memory), bifrost,
-  # agent-gateway and OAM components. This REPLACES the imperative `kubectl label`
-  # in the CDK SETUP_SCRIPT: the hub is a GitOps-managed member of this
-  # control-plane overlay and its fleet-secret ExternalSecret is ESO-owned
-  # (creationPolicy Owner) — a live label is reconciled away within ~1 min, so
-  # enablement MUST be declared here. Required by aiops_agent: true (the agent
-  # references these ComponentDefinitions).
-  agent_platform: true
-  bifrost: true
-  agent_gateway: true
-  oam_components: true
+  # Agent Platform (deploys from sample-agent-platform-on-eks repo)
+  agent_platform: false

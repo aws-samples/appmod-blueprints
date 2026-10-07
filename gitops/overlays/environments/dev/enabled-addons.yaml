@@ -19,23 +19,4 @@ enabledAddons:
   # Platform
   platform_manifests_bootstrap: true
   crossplane: true
-  # Crossplane abstractions on this spoke (all except platform-cluster, which stays on
-  # the hub). Enables the aws-service-identity OAM trait -> PodIdentity for agent
-  # workloads that may run on this spoke. Companion to appmod PR #960 (enable_abstractions).
-  abstractions: true
   kro_manifests: true
-  # Agent Platform (OAP) -- enable the agentic layer on this spoke so agent
-  # workloads run here: agent runtime ComponentDefinitions (mcp-server / agent /
-  # agentcore-memory), Bifrost (model gateway), Agent Gateway, and the ADOT
-  # (otel_collector) that ships traces to the SINGLE hub Langfuse. These keys
-  # make the spoke fleet-secret emit enable_agent_platform / enable_bifrost /
-  # enable_agent_gateway / enable_oam_components / enable_otel_collector, which
-  # the hub-resident OAP agent-platform-addons appsets (useSelectors) select on
-  # to deploy onto this spoke.
-  # NOT set here (hub-only): langfuse (the single trace backend lives on the
-  # hub) and aiops_agent (the read-only platform agent stays on the hub).
-  agent_platform: true
-  bifrost: true
-  agent_gateway: true
-  oam_components: true
-  otel_collector: true

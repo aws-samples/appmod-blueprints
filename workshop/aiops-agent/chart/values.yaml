@@ -38,7 +38,7 @@ gitlabMrProject: ""
 
 # NOTE: no ampWorkspaceId. The AMP incident path (AlertManagerDefinition + SNS/SQS) is
 # provisioned by the AmpIncident kro RGD (ampincident.kro.run — shipped via kro-manifests /
-# kro-aiops-agent-rgd-hub), which reads the workspace id LIVE from the Crossplane AMP
+# kro-amp-incident-rgd-hub), which reads the workspace id LIVE from the Crossplane AMP
 # Workspace CR via externalRef — no literal id, no cluster-secret stamp. The AmpIncident
 # INSTANCE is the `amp-incident` component in files/aiops-agent-app.yaml; its workspaceName
 # defaults to "<clusterPrefix>-amp" — edit that component if your AMP Workspace CR differs.
