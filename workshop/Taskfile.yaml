@@ -968,10 +968,18 @@ tasks:
             # Seed content at gitops/fleet/ so both paths align.
             mkdir -p "$TMP/gitops/fleet"
             cp -r "$SRC/." "$TMP/gitops/fleet/"
-            # Seed workshop-specific overlay overrides (e.g. Kargo ALB ingress on the hub —
-            # kept out of the generic solution, see workshop/overlay/README.md). Copied to the
-            # fleet-config ROOT (overlay_repo_basepath="") so ArgoCD's $overlay source resolves
-            # overlays/environments/<env>/overrides.yaml exactly like the base solution does.
+            # Seed workshop-specific overlay content (enabled-addons, overrides, per-addon
+            # values; e.g. Kargo ALB ingress on the hub — kept out of the generic solution,
+            # see workshop/overlay/README.md). Copied to the fleet-config ROOT
+            # (overlay_repo_basepath=""): the bootstrap appsets (hub-fleet-secret /
+            # fleet-secrets / addons) read $overlay/<overlay_repo_basepath>overlays/* using
+            # overlay_repo_basepath AS-IS — they intentionally do NOT apply the gitops/
+            # fallback to the overlay (only the $overlay fleet/* reads keep `or … fleetRepoBasepath`),
+            # matching the appset-chart's root convention for configs/per-addon values. So the
+            # overlay's overlays/environments/<env>/{enabled-addons,overrides}.yaml resolve at
+            # root here. (Validated e2e 2026-10-07: OAP addons fan out to hub+spokes, aiops_agent
+            # + langfuse stay hub-only.) NOTE: this differs from the base solution, whose own
+            # $defaults overrides read under gitops/ (addonsRepoBasepath).
             if [ -d "$WORKSHOP_DIR/workshop/overlay" ]; then
               cp -r "$WORKSHOP_DIR/workshop/overlay/." "$TMP/"
             fi
