@@ -355,8 +355,10 @@ spec:
   # fleet-config + app repos). supergateway wrapping the upstream @zereight/gitlab-mcp
   # server (stateful, port 8000, path /mcp), exposed to the agent via AgentGateway
   # exactly like eks-read-mcp. The GitLab PAT is NEVER baked into the image — it is
-  # pulled from Secrets Manager (<prefix>-hub/secrets:git_token, the same canonical PAT
-  # the ArgoCD repo-creds use) by an ExternalSecret and injected as an env var.
+  # pulled from Secrets Manager (<prefix>-hub/secrets:aiops_agent_git_token) by an
+  # ExternalSecret and injected as an env var. This is the DEDICATED aiops-agent bot
+  # PAT (a Developer member on fleet-config, NOT the shared Owner git_token): with
+  # fleet-config main protected it can open MRs but cannot merge them (human merge-gate).
   - name: gitlab-mcp
     type: k8s-objects
     properties:
@@ -381,7 +383,7 @@ spec:
             - secretKey: GITLAB_PERSONAL_ACCESS_TOKEN
               remoteRef:
                 key: REPLACE_CLUSTER_PREFIX-hub/secrets
-                property: git_token
+                property: aiops_agent_git_token
                 conversionStrategy: Default
                 decodingStrategy: None
                 metadataPolicy: None

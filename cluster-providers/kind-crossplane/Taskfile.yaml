@@ -1247,6 +1247,13 @@ tasks:
           BS_PG_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
           UPDATED=$(echo "$UPDATED" | jq --arg p "$BS_PG_PASS" '. + {backstage_postgres_password: $p}')
         fi
+        # aiops_agent_git_token: the DEDICATED PAT for the aiops-agent bot (a Developer
+        # member on fleet-config — created by the gitlab-init job). Deterministic value
+        # (aiops-<user_password>) matching the PAT the init-job force-sets on the bot user;
+        # the agent's gitlab-mcp ExternalSecret reads it from here. Seed only if absent.
+        if ! echo "$UPDATED" | jq -e 'has("aiops_agent_git_token")' >/dev/null; then
+          UPDATED=$(echo "$UPDATED" | jq --arg p "aiops-${USER_PASS}" '. + {aiops_agent_git_token: $p}')
+        fi
         # git_token is seeded by CDK at deploy time (root-<ide_password>) — no runtime seeding needed.
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" \
