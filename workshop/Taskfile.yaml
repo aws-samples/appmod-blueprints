@@ -1021,21 +1021,20 @@ tasks:
         # <hub>/secrets.aiops_agent_git_token (mirrors how git_token is captured above), so the
         # agent's gitlab-mcp ExternalSecret and the real PAT can never diverge.
         BOT_USERNAME="aiops-agent"
-        # RANDOM PAT — the bot's write token is NOT derived from any human credential. Stripping
-        # any prefix yields only random hex, never user1/Owner's password. init-ec2 is the single
-        # source of truth: it sets this value on the PAT (via set_token) AND writes the SAME value
-        # into <hub>/secrets.aiops_agent_git_token below, so determinism is unnecessary and no
-        # formula can leak the Owner credential. The glpat- prefix keeps the value in GitLab's
-        # routable PAT format so it authenticates like any native token.
-        BOT_TOKEN="glpat-$(openssl rand -hex 20)"
-        # The bot LOGIN password is SEPARATE from its PAT: GitLab's NoWeakPasswordValidator rejects
-        # a login password that contains the username, and the bot never logs in interactively
-        # (only its PAT is used by gitlab-mcp). Create the user with the plain git password (the
-        # same value user1 is created with → passes the validator); the random PAT above is set
-        # independently via set_token (which bypasses the password validator).
+        # RANDOM PAT — the bot's write token is GitLab-generated, NOT derived from any human
+        # credential. We let GitLab mint the PAT and capture its own plaintext value (readable
+        # once, on the freshly-created in-memory token object), then treat init-ec2 as the single
+        # source of truth by writing that exact value into <hub>/secrets.aiops_agent_git_token
+        # below. Nothing about user1/Owner's password is recoverable from it, and because GitLab
+        # mints it, it is a native routable token guaranteed to authenticate (no custom set_token
+        # value that might not match GitLab's expected token format).
+        # The bot LOGIN password is SEPARATE and immaterial — the bot never logs in interactively
+        # (only its PAT is used by gitlab-mcp). Use the plain git password (the same value user1
+        # is created with) so it passes GitLab's NoWeakPasswordValidator, which rejects a login
+        # password containing the username ("aiops" ⊂ "aiops-agent").
         BOT_LOGIN_PW="{{.GIT_PASSWORD}}"
         printf '  Ensuring %s bot user + random least-privilege PAT...\n' "$BOT_USERNAME"
-        docker exec gitlab-gitlab-1 env BOTUSER="$BOT_USERNAME" BOTLOGINPW="$BOT_LOGIN_PW" BOTPW="$BOT_TOKEN" gitlab-rails runner '
+        BOT_OUT=$(docker exec gitlab-gitlab-1 env BOTUSER="$BOT_USERNAME" BOTLOGINPW="$BOT_LOGIN_PW" gitlab-rails runner '
           u = User.find_by_username(ENV["BOTUSER"])
           if u.nil?
             Users::CreateService.new(User.find(1), {
@@ -1052,14 +1051,19 @@ tasks:
             u.personal_access_tokens.where(name: "aiops-agent token").delete_all
             t = u.personal_access_tokens.create!(name: "aiops-agent token",
               scopes: ["api","read_repository","write_repository"], expires_at: 365.days.from_now)
-            t.set_token(ENV["BOTPW"]); t.save!
+            # Emit the GitLab-generated plaintext token so bash can capture it as the SM source of
+            # truth (available only on this in-memory object, right after create!).
+            puts "AIOPS_PAT=" + t.token
             puts "aiops-agent bot ready id=" + u.id.to_s
           else
             # Fail loud: a silent creation failure (e.g. weak-password rejection) must be visible
             # in the init log instead of a dangling SM token with no bot behind it.
             STDERR.puts "aiops-agent bot creation FAILED: " + (u ? u.errors.full_messages.join("; ") : "user not persisted")
           end
-        ' 2>&1 | tail -3 || true
+        ' 2>&1)
+        # Capture the generated PAT; log the remaining lines WITHOUT echoing the secret.
+        BOT_TOKEN=$(printf '%s\n' "$BOT_OUT" | sed -n 's/^AIOPS_PAT=//p' | tail -1)
+        printf '%s\n' "$BOT_OUT" | grep -v '^AIOPS_PAT=' | tail -3 || true
         # ROOT_TOKEN can be empty on a re-run: find_or_initialize_by('root-api').token returns nil
         # for an already-existing (hashed) token, so the protection/membership calls below would
         # silently skip. Recreate root-api to force a usable plaintext token when that happens.
